@@ -1653,7 +1653,7 @@ async fn list_stored_sessions() -> Result<Vec<StoredSession>, String> {
         });
     }
     // Newest first.
-    out.sort_by(|a, b| b.mtime_ms.cmp(&a.mtime_ms));
+    out.sort_by_key(|session| std::cmp::Reverse(session.mtime_ms));
     Ok(out)
 }
 

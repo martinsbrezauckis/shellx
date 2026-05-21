@@ -399,10 +399,8 @@ pub(crate) fn scrub_credentials(value: &mut serde_json::Value) {
         // Strings under non-sensitive keys: apply the credential-shape
         // heuristic so a bearer-shaped value in `body`/`content`/an
         // arbitrary field gets caught even when the key name is benign.
-        serde_json::Value::String(s) => {
-            if looks_like_credential(s) {
-                *value = serde_json::Value::String("***REDACTED***".to_string());
-            }
+        serde_json::Value::String(s) if looks_like_credential(s) => {
+            *value = serde_json::Value::String("***REDACTED***".to_string());
         }
         _ => {}
     }

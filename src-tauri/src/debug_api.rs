@@ -2609,7 +2609,7 @@ async fn list_session_history(State(_s): State<ApiState>) -> impl IntoResponse {
         rows.push((id, mtime, size));
     }
     // sort by mtime DESC
-    rows.sort_by(|a, b| b.1.cmp(&a.1));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.1));
     let out: Vec<serde_json::Value> = rows
         .into_iter()
         .take(50)
