@@ -1,0 +1,141 @@
+/**
+ * src/styles/tokens.css — design tokens for grok-shell renderer
+ * * Palette is locked for visual consistency; update deliberately and
+ * verify the full renderer, not one surface in isolation.
+ * * Variables:
+ * --bg / --bg-grad / --surface-* : warm-tinged near-black surface scale
+ * --hairline / --border : low-contrast dividers
+ * --ink-1..4 : type contrast spread (4 levels)
+ * --orange / --green / --warm : status + accent (xAI uses warm orange
+ * + green only, no cyan/purple)
+ * --sans / --display / --mono : Onest (free, replaces paid universalSans),
+ * Onest again for display, Geist Mono for code
+ * --space-1..7 : 4px scale (4/8/12/16/24/32/48)
+ * * The mockup's @font-face for universalSans is intentionally NOT copied
+ * here — that's a paid NewGlyph foundry font and can't be redistributed.
+ * Onest (free, GPL) is the agreed substitute and is bundled via
+ * @fontsource-variable/onest, imported in main.tsx.
+ */
+
+@font-face {
+ /* Geist Mono — local woff2 (variable axis 100..900). */
+  font-family: "GeistMono";
+  src: url("../assets/fonts/geist-mono.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+ /* surface — warm-tinged near-black, NOT cold #000. xAI uses ~#0a0a08 */
+  --bg: #0a0a0a;
+  --bg-grad: linear-gradient(180deg, #0d0d0c 0%, #080807 100%);
+  --surface: #0e0e0d;
+  --surface-2: #131312;
+  --surface-3: #1a1a18;
+  --hairline: #1f1f1d;
+  --hairline-2: #2a2a28;
+  --border: #353532;
+
+ /* type — generous contrast spread */
+  --ink: #f5f5f4;       /* primary, headlines */
+  --ink-2: #a8a8a4;     /* secondary body, the "Grok Heavy" trail-word grey */
+  --ink-3: #6f6f6c;     /* tertiary, meta */
+  --ink-4: #3a3a38;     /* line numbers, labels at low priority */
+
+ /* accents — warm orange + green for status, sparingly */
+  --orange: #f97316;    /* running / active */
+  --orange-soft: #fb923c;
+  --green: #22c55e;     /* complete */
+  --green-soft: #4ade80;
+  --warm: #fef3c7;      /* hover highlights */
+  --accent: #ffffff;    /* white IS the strongest accent */
+
+ /* status semantics */
+  --ok: var(--green);
+  --warn: var(--orange);
+  --err: #ef4444;
+
+ /* audit fix — semantic aliases for ghost-fallback consumers.
+ * Earlier components were written with `var(--fg-muted, #888)` /
+ * `var(--bg-elev, #111)` / `var(--fg-error, #f55)` patterns but
+ * the tokens were never defined here, so the fallback hex was the
+ * real rendered value. Adding these aliases makes those 30+
+ * call-sites snap to the real ink/surface/err palette without
+ * touching each component. */
+  --fg-muted: var(--ink-3);
+  --fg-error: var(--err);
+  --bg-elev: var(--surface-2);
+  --fg: var(--ink);
+
+ /* fonts — Onest substitutes the paid universalSans. Variable axis,
+     fetched at build time from @fontsource-variable/onest. */
+  --sans: "Onest Variable", "Onest", -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --display: "Onest Variable", "Onest", -apple-system, "Segoe UI Variable Display", system-ui, sans-serif;
+  --mono: "GeistMono", "Geist Mono", "JetBrains Mono", "SF Mono", "IBM Plex Mono", ui-monospace, monospace;
+  --serif: "Instrument Serif", "EB Garamond", Georgia, serif;
+
+ /* rhythm (4px scale) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+ /* radius scale — mapped 1:1 to xAI's Tailwind scale
+ * (rounded-md/lg/xl/2xl/3xl/full). The hero token is the xAI
+ * signature composer shape; using it on .composer + .prompt-frame
+ * is the single biggest visual upgrade. */
+  --radius-pill:   999px;  /* chips, pills, avatars, status pills */
+  --radius-dot:    50%;    /* circular status dots only */
+  --radius-chip:   6px;    /* kbd, small inline code, badges */
+  --radius-button: 8px;    /* buttons, inputs, hover cells */
+  --radius-card:   12px;   /* cards, popovers, tool blocks */
+  --radius-modal:  16px;   /* primary modals (settings, plugins, palette) */
+  --radius-hero:   24px;   /* composer surround — xAI signature shape */
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+ /* 4K readability bump: 16px → 19px (≈ 1.2rem). Most child font-sizes are explicit-px
+ * and won't cascade — they're bumped individually in App.css. This sets
+ * the rem-relative baseline + lifts default un-sized text. */
+  font-size: 19px;
+  font-weight: 400;
+  line-height: 1.6;
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+/* 4K-comfort token scale — used by new components and the
+ * App.css-bumped sites below. */
+:root {
+  --fs-body:      19px;   /* chat body, composer textarea */
+  --fs-body-md:   17px;   /* secondary body */
+  --fs-ui:        15px;   /* sidebar items, scope pills, common labels */
+  --fs-ui-sm:     13px;   /* small labels, tab strip, btns */
+  --fs-ui-xs:     11px;   /* kbd hints, tiny meta only */
+  --fs-title-xl:  38px;   /* mid-head hero ("new session") */
+  --fs-title-md:  26px;   /* modal title */
+  --fs-title-sm:  15px;   /* brand caps */
+  --fs-code:      15px;   /* code preview body */
+  --fs-code-sm:   13px;   /* code line numbers, mono labels */
+ /* mono-stream tier driven by the Settings font
+ * slider. applyTheme overrides this at runtime so logs / stderr /
+ * acp-terminal scrollback resize with the chat slider. Default sits
+ * a touch under --fs-body so mono streams stay readable without
+ * dominating the chat. */
+  --fs-mono:      14px;   /* logs, stderr, acp-terminal scrollback */
+}

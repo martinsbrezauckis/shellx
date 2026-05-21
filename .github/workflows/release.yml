@@ -1,0 +1,97 @@
+# shellX release workflow
+#
+# Triggers: pushed tag matching `v*` (e.g. `v0.1.29`).
+# Builds Windows installers and experimental Linux bundles, signs them
+# with the Tauri updater private key, and uploads to GitHub Releases
+# along with the updater manifest `latest.json`.
+#
+# The running app polls
+# https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+# and surfaces an "Install & restart" banner when a new version lands.
+#
+# REQUIRED SECRETS (set in repo Settings → Secrets):
+# TAURI_SIGNING_PRIVATE_KEY — contents of ~/.shellx-keys/updater.key
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD — empty string if key has no password
+#
+# To cut a release:
+# git tag v0.1.29
+# git push origin v0.1.29
+# CI does the rest.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: ubuntu-22.04
+            args: ""
+ # macOS deferred until cert ready
+ # - platform: macos-latest
+ # args: "--target universal-apple-darwin"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build + sign + bundle (tauri)
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+ # Auto-create or update a Draft release per tag, attach the
+ # generated installers + the updater manifest. After CI
+ # finishes, manually flip the draft to "published" in the
+ # Releases UI to make the auto-updater see it.
+          tagName: ${{ github.ref_name }}
+          releaseName: "shellX ${{ github.ref_name }}"
+          releaseBody: |
+            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/CHANGELOG.md) for what's new.
+
+            Auto-update is enabled for users on previous versions; this release ships once published.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }} --features debug-api

@@ -1,0 +1,71 @@
+node_modules/
+dist/
+build/
+.next/
+target/
+src-tauri/target/
+src-tauri/gen/
+
+*.log
+.DS_Store
+
+# Local-only development state — not shipped but kept for forensics
+logs/
+.env
+.env.local
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+
+# Evidence/ holds session-replay calibration data. Kept local only —
+# regenerate from a fresh test user before any public push.
+evidence/
+
+# Operational notes — local-only dev memory; public skill bundles now live
+# under skills/ and other shipped docs live under docs/.
+.project/
+
+# Dev-history artifacts were moved out of the release tree during
+# public-push cleanup. Preserved on disk, never re-added.
+# If anyone tries to commit these paths again, .gitignore wins.
+.project/mockups/
+.project/test-reports/
+.project/MEMORY.md
+.project/UX_RESEARCH.md
+.project/P_VERIFY_DESIGN.md
+
+# Verification screenshots from agent sessions — kept locally for review
+screenshots/
+.claude/worktrees/
+
+# L3: archived scraps moved out of the repo root — kept locally for
+# reference but never shipped publicly.
+.project/archive/scraps/
+
+# 12.74 pre-deploy: .grok/config.toml carries an auto-managed Bearer
+# token for the shellx-host-http MCP. It rotates per install and must
+# never be committed. Also covers grok-build's session caches that
+# would otherwise pollute the repo with per-user state.
+.grok/
+.shellx/
+
+# Installer + signed artifacts — keep them outside git; published
+# only via GitHub Releases.
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.sig
+latest.json
+*-setup-*.sig
+
+# Backup / scratch
+*.bak
+*.orig
+
+# Claude Code worktrees + agent scratch — never want in public repo
+.claude/
+.shellx-scratch/

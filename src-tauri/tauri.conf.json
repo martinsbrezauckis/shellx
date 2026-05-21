@@ -1,0 +1,71 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "shellX",
+  "version": "0.1.29",
+  "identifier": "lv.shellx.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: blob: data: https://asset.localhost; media-src 'self' asset: blob: data: https://asset.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' asset: https://asset.localhost ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:* http://localhost:5173; frame-src 'self' asset: blob:; worker-src 'self' blob:;",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/.grok/**",
+          "$APPDATA/grok-shell/**",
+          "$APPLOCALDATA/grok-shell/**",
+          "/home/**/.grok/**",
+          "//wsl$/*/home/**/.grok/**",
+          "//wsl.localhost/*/home/**/.grok/**",
+          "/tmp/shellx-*/**"
+        ]
+      }
+    },
+    "windows": [
+      {
+        "title": "shellX",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "dragDropEnabled": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer-hooks.nsh"
+      }
+    },
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/MartinsBrezauckis/shellx/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIwNTE4MzIwQzc1OTlCMkQKUldRdG0xbkhJSU5Sc0FROTNvVnlsMXNDTG1kMnFZWDdnSUE2UGxQMitNTlNxV2JiWG5aQ3NncEYK",
+      "dialog": false
+    }
+  }
+}

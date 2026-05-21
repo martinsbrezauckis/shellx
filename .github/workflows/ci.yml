@@ -1,0 +1,77 @@
+# shellX CI — pre-merge checks
+#
+# Runs on every push + pull request against any branch. Gates:
+# - Frontend type-check (tsc)
+# - Frontend lint (TS scripts/test-*.ts unit checks)
+# - Rust test suite (cargo test --all-targets --features debug-api)
+# - Rust lints (cargo clippy -D warnings)
+# - Rust formatting (cargo fmt --check)
+# - Dependency audit (cargo audit)
+#
+# Failure on any step blocks merge. The release workflow stays in
+# `.github/workflows/release.yml` and runs only on `v*` tags.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend (tsc + unit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: tsc --noEmit
+        run: pnpm exec tsc --noEmit
+      - name: test scripts
+        run: pnpm test
+
+  rust:
+    name: Rust (test + clippy + fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install Linux Tauri deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: cargo clippy -D warnings
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --features debug-api -- -D warnings
+      - name: cargo test --all-targets --features debug-api
+        working-directory: src-tauri
+        run: cargo test --all-targets --features debug-api
+
+  audit:
+    name: Rust dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rustsec/audit-check@v1.4.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: src-tauri

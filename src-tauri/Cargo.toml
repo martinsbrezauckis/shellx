@@ -1,0 +1,230 @@
+# src-tauri/Cargo.toml
+#
+# Rust backend for the Grok Shell Tauri app.
+#
+# Architecture: hand-rolled JSON-RPC over `grok agent stdio` child process.
+# We don't use the `agent-client-protocol` crate yet — the wire format is
+# small enough that hand-rolling stays simple and gives us full visibility
+# (every frame is logged + emitted, not abstracted away).
+#
+# debug-api feature (off by default for now) will enable the axum-based
+# HTTP/WS surface in P2b — the agent-first protocol that lets scripts
+# and external orchestrators drive the running app end-to-end.
+
+[package]
+name = "app"
+version = "0.1.29"
+description = "shellX — cross-platform desktop host for Grok Build and any ACP-speaking agent"
+authors = ["Martins Brezauckis <martins.brezauckis@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/MartinsBrezauckis/shellx"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.2", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.2", features = ["protocol-asset"] }
+tauri-plugin-log = "2"
+# P-UX-Impl §10.1: file picker dialog for Attach + workspace-folder
+# picker. Loaded unconditionally — same low cost as plugin-log.
+tauri-plugin-dialog = "2"
+
+# Phase 13 (#221, shellXagent screenshot endpoint): captures the shellX
+# native window as PNG. Cross-platform — uses Win32 GDI BitBlt on
+# Windows and X11/Wayland capture on Linux. Apache-2.0 licensed.
+xcap = "0.1.1"
+
+# JSON-RPC frames + general (de)serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async runtime for spawning grok + piping stdio
+tokio = { version = "1", features = ["full"] }
+
+# Structured logs (info!/warn!/error!) used inside acp.rs
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# log facade — tauri-plugin-log uses it; keep for compatibility
+log = "0.4"
+
+# Agent-first debug surface (HTTP+WS server). OFF by default — enable in
+# P2b with `cargo tauri dev --features debug-api`. The acp.rs module
+# already has #[cfg(feature = "debug-api")] gates ready.
+axum = { version = "0.7", features = ["ws", "json"], optional = true }
+# CORS preflight handling. Windows WebView2 origin is
+# `http://tauri.localhost`; fetches to `http://127.0.0.1:5757` with the
+# Authorization header trigger a CORS preflight OPTIONS. Without a
+# matching response, the browser blocks the actual GET and reports
+# "Failed to fetch". Linux
+# dev works because Vite + the API both run on `localhost` (same origin
+# = no preflight). tower-http's CorsLayer responds to OPTIONS with the
+# right Access-Control-Allow-* headers for the loopback origins we
+# already allow in origin_allowed().
+tower-http = { version = "0.5", features = ["cors", "catch-panic"], optional = true }
+
+# Native host tools (Phase Native-MCP):
+#   notify       — filesystem watcher backing the fs_watch host tool.
+#   sysinfo      — cross-platform cpu/rss/vsz/threads for process_stats.
+#   nix (Unix)   — Unix signal sending (SIGTERM/SIGINT/SIGKILL/SIGHUP/SIGUSR1)
+#                  used by process_signal. Windows falls back to taskkill.
+notify = "6"
+sysinfo = "0.30"
+
+# P-Vault deps (added 2026-05-17):
+#   keyring               — cross-platform OS-keyring master-key store.
+#                           Linux uses secret-service; macOS Keychain;
+#                           Windows Credential Manager. Single source of
+#                           truth for the 256-bit master encryption key.
+#   chacha20poly1305      — AEAD cipher for envelope-encrypting the vault
+#                           blob. Chosen over aes-gcm because (a) modern,
+#                           constant-time on hardware that lacks AES-NI,
+#                           (b) no nonce-reuse footguns at our scale, and
+#                           (c) the RustCrypto implementation is audited.
+#                           96-bit nonce, 256-bit key, 128-bit tag.
+#   base64                — envelope-encode the ciphertext+nonce for the
+#                           on-disk JSON. No raw bytes ever touch disk in
+#                           the JSON envelope.
+#   rand                  — CSPRNG for nonces (OsRng under the hood).
+#   uuid                  — stable connection-preset ids (P-Transport-1).
+keyring = "2"
+chacha20poly1305 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-notification = "2"
+# Single-instance guard (#311): ensures only ONE shellX runs. Second-
+# launch (clicking shortcut while window is open, or upgrade-time
+# race where installer launches new instance before old fully exits)
+# focuses the existing window instead of spawning a second app.exe.
+# Pairs with retry-bind in mcp_http/debug_api to survive transient
+# TIME_WAIT after a clean shutdown.
+tauri-plugin-single-instance = "2"
+
+# P-Voice (#75, 2026-05-18): xAI Grok STT REST API client. multipart for
+# the audio file upload, rustls-tls for a TLS implementation that
+# cross-compiles cleanly via cargo-xwin (avoids the system OpenSSL
+# dependency that breaks Windows builds). gzip stays off — STT
+# responses are small JSON.
+reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"], default-features = false }
+
+# P-Terminal-A (2026-05-18): wezterm's cross-platform PTY library. Single
+# `native_pty_system()` API returns a Unix-PTY implementation on Linux/macOS
+# and a ConPTY implementation on Windows — no per-platform forks here.
+# MIT-licensed, production-hardened (wezterm + zellij both ship it).
+# Cross-compile note: portable-pty depends on `nix` (already in the tree) on
+# Unix and `winapi` on Windows; both work under cargo-xwin without extra
+# lib.exe gymnastics, so the Windows build path remains green.
+portable-pty = "0.8"
+# Phase A: read PTY output into 8 KiB chunks before fanning out to xterm.js.
+# `bytes::Bytes` cheap-clones the buffer for the broadcast subscribers and
+# avoids per-chunk allocations on the hot path.
+bytes = "1"
+
+# Tooling manifest (#107): SHA-256 for host_skill_status's
+# body_hash field. Settings UI uses the hash to detect when the on-disk
+# manifest drifts from the binary-bundled body (e.g. user-edited file)
+# without having to read + diff the full ~6 KB body every poll. RustCrypto
+# implementation; pulled in nowhere else today.
+sha2 = "0.10"
+
+# SQLite backend for the cross-tab durable kv store
+# (host_mem.rs). `bundled` feature compiles SQLite C from source via the
+# `cc` crate — no system libsqlite3 or pkg-config required, so cargo-xwin
+# Windows builds stay clean (same reason `reqwest` uses rustls-tls and
+# not native-tls). The whole rusqlite surface we use is synchronous; the
+# host_mem module parks every call inside `tokio::task::spawn_blocking`
+# so the MCP dispatcher never holds a Connection across an .await point.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# net_fetch allow-list parser for `~/.grok-shell/net_allow.toml`,
+# the host-allow list that gates which URLs the `net_fetch` MCP tool may
+# actually reach. We use the same crate version family as serde_spanned
+# elsewhere in the dependency tree, so this is a near-zero compile cost
+# add. `default-features` left on — we want the basic deserializer path.
+toml = "0.8"
+
+# Host MCP `clock_now`: chrono already lives in the tree
+# transitively (iana-time-zone + serde + Windows backend) — make it an
+# explicit dep so the formatter for ISO-8601 / RFC-3339 strings is part
+# of our API contract. `default-features = false` + `clock` keeps the
+# wasm-only / oldtime baggage out; `serde` is harmless and matches the
+# transitive feature set so the resolver picks the same chrono build.
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+
+# Host MCP `fs_grep` regex-over-files tool (#171). The
+# `ignore` crate is ripgrep's workhorse — respects .gitignore, hidden-
+# file rules, parallel walk if we ever want it. `regex` for the pattern
+# itself. Together ~2 MB of binary growth which is acceptable since we
+# already ship rusqlite (~1 MB) + portable-pty + chrono with similar
+# weight. Without these grok ends up spawning Agent subagents to shell
+# `grep -r`, which costs ~8-10 s per call in verification probes.
+ignore = "0.4"
+regex = "1.11"
+
+# "Download all artifacts" (#207) packages cwd + grok's
+# session scratch dir into one zip. `zip` v2.x supports both writing
+# and reading; we only need the writer. `deflate` is the standard
+# compression — keeps the dep tree slim by skipping bzip2/zstd/lzma
+# features. `walkdir` recurses the cwd; the `ignore` crate would also
+# work but its .gitignore semantics aren't appropriate for a "give me
+# every byte" archive.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+walkdir = "2"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.27", features = ["signal"] }
+
+# Tauri-HWND screenshot capture (#262). xcap's
+# Window::all() does NOT enumerate shellX's window on Windows
+# (verified via startup.log: 9 windows reported, none
+# is shellX, title='' for every entry that could be ours). The fix
+# is to ask Tauri for the main window's HWND directly and call
+# PrintWindow against it. PW_RENDERFULLCONTENT (flag 0x2) is the
+# critical flag — without it WebView2 renders blank to the bitmap
+# DC because the modern compositor draws to its own surface.
+#
+# windows-sys 0.61 chosen because it's already heavily present in
+# the transitive dep tree (see Cargo.lock — 12 instances) so adding
+# it here costs ~0 KB of additional binary footprint.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_Xps",
+    "Win32_UI_WindowsAndMessaging",
+    # #297 (2026-05-20): kill-on-close Job Object so grok.exe / wsl.exe /
+    # ssh.exe children are reaped when shellX itself dies (crash, taskkill,
+    # logoff). Without this, an installer-killed shellX leaves orphans on
+    # Windows. Pairs with PR_SET_PDEATHSIG on Unix (via nix crate).
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_Security",
+    # #365: dynamic LoadLibraryW + GetProcAddress to resolve
+    # NtSuspendProcess / NtResumeProcess from ntdll for proper
+    # Windows pause/resume (parity with Unix SIGSTOP/SIGCONT).
+    "Win32_System_LibraryLoader",
+] }
+
+[features]
+# Black-screen-crash investigation:
+# debug-api MUST be in every shipped binary, otherwise search /
+# /sessions/history / /vault and the external-agent surfaces are dark
+# on Windows. The cause of the "Failed to fetch" regression and the
+# missing port 5757 binding: the binary was being compiled without
+# --features debug-api, so the axum router code was never linked in
+# (the only references to `start_debug_server` and `Router::new()`
+# live behind `#[cfg(feature = "debug-api")]` gates in lib.rs and
+# debug_api.rs). Promote to default so `pnpm tauri build` always
+# ships the agent-first surface. Opt out with `--no-default-features`
+# only for a hand-rolled minimal binary.
+default = ["debug-api"]
+debug-api = ["dep:axum", "dep:tower-http"]
