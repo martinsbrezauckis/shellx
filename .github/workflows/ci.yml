@@ -61,6 +61,15 @@ jobs:
       - name: cargo clippy -D warnings
         working-directory: src-tauri
         run: cargo clippy --all-targets --features debug-api -- -D warnings
+      - name: Install fake grok for subagent tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/shellx-fake-bin"
+          cat > "$RUNNER_TEMP/shellx-fake-bin/grok" <<'EOF'
+          #!/usr/bin/env sh
+          echo "fake grok"
+          EOF
+          chmod +x "$RUNNER_TEMP/shellx-fake-bin/grok"
+          echo "GROK_BIN=$RUNNER_TEMP/shellx-fake-bin/grok" >> "$GITHUB_ENV"
       - name: cargo test --all-targets --features debug-api
         working-directory: src-tauri
         run: cargo test --all-targets --features debug-api
