@@ -2,8 +2,9 @@
 
 Desktop client that hosts xAI's **Grok Build CLI** — or any agent
 speaking the Agent Client Protocol — with tabs, an encrypted vault,
-voice in / out, session tool health, an MCP marketplace, file/media
-preview, autonomous goal mode, and a typed HTTP API for local scripting.
+voice in / out, session tool health, traceable file activity, Git review
+workflows, an MCP marketplace, file/media preview, autonomous goal mode,
+and a typed HTTP API for local scripting.
 
 **Status:** Beta. Windows installer is the primary signed release.
 Linux bundles are experimental release artifacts when CI passes. macOS
@@ -32,6 +33,12 @@ are ready.
   chat or logs.
 - **Persistent sessions.** Each chat saved as JSONL. Full-content
   search across history.
+- **Traceable agent work.** Review file searches, reads, writes,
+  deletes, generated media, and activity graph nodes for the active
+  session when the connected agent exposes enough log detail.
+- **Git workflow surface.** Inspect dirty state and diffs, create local
+  checkpoints, and create worktrees from the active session without
+  leaving shellX.
 - **Autonomous mode.** `/goal "<objective>"` writes a scratchboard,
   lets the agent plan + work across multiple turns, requires a
   reviewer/check subagent gate for code changes when available, and

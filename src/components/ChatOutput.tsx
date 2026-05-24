@@ -17,6 +17,7 @@ import remarkGfm from "remark-gfm";
 import { SafeMarkdownLink } from "../lib/markdown-links";
 import { TerminalView } from "./TerminalView";
 import { SafeImg, SafeVideo } from "./MediaPreview";
+import { ShellIcon, type ShellIconName } from "./icons";
 import type {
   DoomLoopGroup,
   HostMcpUnreachableGroup,
@@ -227,6 +228,9 @@ export function ChatOutput({
             alignSelf: "center",
             marginLeft: "auto",
             marginRight: "auto",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
             padding: "4px 12px",
             borderRadius: 999,
             background: "var(--card-bg, rgba(0,0,0,0.7))",
@@ -237,7 +241,8 @@ export function ChatOutput({
             zIndex: 5,
           }}
         >
-          ↓ Jump to latest
+          <ShellIcon name="chevron-down" size={13} />
+          <span>Jump to latest</span>
         </button>
       )}
       {hasAnyDiff && (
@@ -293,7 +298,7 @@ function CopyableCodeBlock({ children }: { children?: React.ReactNode }): JSX.El
         title={copied ? "Copied" : "Copy to clipboard"}
         aria-label={copied ? "Copied" : "Copy to clipboard"}
       >
-        {copied ? "✓" : "⧉"}
+        <ShellIcon name={copied ? "check" : "copy"} size={14} />
       </button>
     </div>
   );
@@ -374,7 +379,8 @@ function TurnCompletePill({ g }: { g: MarkerGroup }): JSX.Element {
       <Time t={g.t} />
       <span className="pi" />
       <span className="label">
-        ✓ turn complete
+        <ShellIcon name="check" size={13} />
+        turn complete
         {elapsedLabel ? <span style={{ marginLeft: 6, opacity: 0.75 }}>· {elapsedLabel}</span> : null}
         {g.stopReason && g.stopReason !== "end_turn"
           ? <span style={{ marginLeft: 6, opacity: 0.6 }}>({g.stopReason})</span>
@@ -400,7 +406,10 @@ function McpInitPill({ g }: { g: McpInitGroup }): JSX.Element {
     >
       <Time t={g.t} />
       <span className="pi" />
-      <span className="label">{g.ready ? "✓" : "↺"} {label}</span>
+      <span className="label">
+        <ShellIcon name={g.ready ? "check" : "loader"} size={13} />
+        {label}
+      </span>
     </div>
   );
 }
@@ -422,11 +431,15 @@ function UserBubble({ g, tabId }: { g: UiTextGroup; tabId?: string }): JSX.Eleme
   const text = g.text.replace(/^→ prompt:\s*/i, "");
   if (g.text.startsWith("→ connect") || g.text.startsWith("✓ ") || g.text.startsWith("⏹") || g.text.startsWith("✗")) {
  // Lifecycle ui events render as compact system pills.
+    const status = uiEventStatus(g.text);
     return (
       <div className="row-pill system">
         <Time t={g.t} />
         <span className="pi" />
-        <span className="label">{g.text}</span>
+        <span className="label">
+          <ShellIcon name={status.icon} size={13} />
+          {status.label}
+        </span>
       </div>
     );
   }
@@ -684,7 +697,7 @@ function ToolCard({
  * duplicates an earlier card's output path. */}
           {g.imagePath && duplicateMedia?.image ? (
             <div className="tool-image dup-media-pill" style={{ padding: "8px 12px", fontSize: 12, color: "var(--ink-3)", borderTop: "1px solid var(--hairline)" }}>
-              ↻ duplicate generation — same output path as earlier card
+              <ShellIcon name="rotate" size={13} /> duplicate generation - same output path as earlier card
             </div>
           ) : g.imagePath ? (
             <div className="tool-image">
@@ -699,7 +712,7 @@ function ToolCard({
  * asset:// → Rust-base64 fallback chain as SafeImg. */}
           {g.videoPath && duplicateMedia?.video ? (
             <div className="tool-video dup-media-pill" style={{ padding: "8px 12px", fontSize: 12, color: "var(--ink-3)", borderTop: "1px solid var(--hairline)" }}>
-              ↻ duplicate generation — same output path as earlier card
+              <ShellIcon name="rotate" size={13} /> duplicate generation - same output path as earlier card
             </div>
           ) : g.videoPath ? (
             <div className="tool-video">
@@ -866,10 +879,32 @@ function SystemPill({ g }: { g: SystemGroup }): JSX.Element {
     <div className="row-pill system">
       <Time t={g.t} />
       <span className="pi" />
-      <span className="label">{g.icon} {g.label}</span>
+      <span className="label">
+        <SystemIcon icon={g.icon} />
+        {g.label}
+      </span>
       {g.detail && <span className="detail">{truncate(g.detail, 120)}</span>}
     </div>
   );
+}
+
+function SystemIcon({ icon }: { icon?: string }): JSX.Element {
+  const name: ShellIconName =
+    icon === "✎" ? "pencil" :
+    icon === "⚠" ? "alert" :
+    icon === "⏹" ? "square" :
+    icon === "⊞" ? "plus" :
+    icon === "≡" ? "terminal" :
+    "circle";
+  return <ShellIcon name={name} size={13} />;
+}
+
+function uiEventStatus(text: string): { icon: ShellIconName; label: string } {
+  if (text.startsWith("✓ ")) return { icon: "check", label: text.slice(2) };
+  if (text.startsWith("✗ ")) return { icon: "alert", label: text.slice(2) };
+  if (text.startsWith("⏹")) return { icon: "square", label: text.replace(/^⏹\s*/, "") };
+  if (text.startsWith("→ connect")) return { icon: "link", label: text.replace(/^→\s*/, "") };
+  return { icon: "circle", label: text };
 }
 
 /**
@@ -901,7 +936,10 @@ function DoomLoopChip({ g }: { g: DoomLoopGroup }): JSX.Element | null {
     >
       <Time t={g.t} />
       <span className="pi" />
-      <span className="label" style={{ fontWeight: 500 }}>⚠ {summary}</span>
+      <span className="label" style={{ fontWeight: 500 }}>
+        <ShellIcon name="alert" size={13} />
+        {summary}
+      </span>
       {g.message && g.message !== summary && (
         <span className="detail">{truncate(g.message, 120)}</span>
       )}
@@ -933,7 +971,8 @@ function HostMcpUnreachableChip({
       <Time t={g.t} />
       <span className="pi" />
       <span className="label" style={{ fontWeight: 600 }}>
-        ! host-MCP unreachable{toolLabel}{haltedLabel}
+        <ShellIcon name="alert" size={13} />
+        host-MCP unreachable{toolLabel}{haltedLabel}
       </span>
       {g.repeatCount > 1 && <span className="detail">repeat {g.repeatCount}</span>}
       {g.message && (

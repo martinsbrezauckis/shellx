@@ -3,8 +3,8 @@
  * * Shows the Projects tree (with nested open + past chats), the
  * "Unfiled" / "Past chats" sections, and the GitHub strip + footer.
  * * Tree shape:
- * - Header: "Projects · N" + "+folder" (creates a new project)
- * - Per project: caret + 📁 + name + chat-count, click toggles collapse
+ * - Header: "Projects · N" + add icon (creates a new project)
+ * - Per project: caret + folder icon + name + chat-count, click toggles collapse
  * - Chats nested under a project: status dot + transport + title
  * - "Open chats" section: tabs without a projectId
  * - "Past chats" section: on-disk sessions not assigned to any project
@@ -14,15 +14,15 @@
 import { useEffect, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { api } from "../lib/debug-api";
+import { ShellIcon, TransportIcon, transportTitle } from "./icons";
 import { RowActions } from "./RowActions";
 
-type TransportEmoji = "💻" | "🐧" | "🔐" | "🌐" | "☁" | "🔗";
 type ChatStatus = "run" | "done" | "idle" | "input";
 
 interface ChatMeta {
   id: string;
   title: string;
-  transport: TransportEmoji;
+  transport: string;
   status: ChatStatus;
 }
 
@@ -309,7 +309,7 @@ export function LeftRail({
           title={allCollapsed ? "Expand all projects" : "Collapse all projects"}
         >
           <span style={{ display: "inline-block", width: 12, fontSize: 10, color: "var(--ink-3)" }}>
-            {allCollapsed ? "▸" : "▾"}
+            <ShellIcon name={allCollapsed ? "chevron-right" : "chevron-down"} size={12} />
           </span>
           Projects <span className="ct">· {projects.length}</span>
         </span>
@@ -320,7 +320,7 @@ export function LeftRail({
           title="New project folder"
           aria-label="New project folder"
         >
-          +
+          <ShellIcon name="plus" size={15} />
         </button>
       </div>
 
@@ -374,9 +374,9 @@ export function LeftRail({
                   title={isExpanded ? "Collapse project" : "Expand project"}
                   style={{ cursor: "pointer" }}
                 >
-                  {isExpanded ? "▾" : "▸"}
+                  <ShellIcon name={isExpanded ? "chevron-down" : "chevron-right"} size={12} />
                 </span>
-                <span className="pico">📁</span>
+                <span className="pico"><ShellIcon name="folder" size={14} /></span>
                 {isRenaming ? (
                   <input
                     ref={inputRef}
@@ -424,7 +424,7 @@ export function LeftRail({
                       padding: "0 6px", fontSize: 14, lineHeight: 1,
                     }}
                   >
-                    ✕
+                    <ShellIcon name="close" size={13} />
                   </button>
                 )}
               </div>
@@ -459,7 +459,9 @@ export function LeftRail({
                   title={`Open chat "${c.title}" in a new tab — hover for edit, right-click or drag to move`}
                   style={{ cursor: "pointer" }}
                 >
-                  <span className="ttr">{c.transport}</span>
+                  <span className="ttr" title={transportTitle(c.transport)}>
+                    <TransportIcon value={c.transport} />
+                  </span>
                   <span className="ctitle">{c.title}</span>
  {/* project-row rename + delete affordances.
  * Mirrors the unfiled/open-chat rows: hover-revealed
@@ -506,7 +508,9 @@ export function LeftRail({
  {/* Recorded transport emoji (falls back to 💬) so
  * project-filed past chats match the unfiled
  * past-chat list visually. */}
-                  <span className="ttr">{c.connectionTransport ?? "💬"}</span>
+                  <span className="ttr" title={transportTitle(c.connectionTransport)}>
+                    <TransportIcon value={c.connectionTransport} />
+                  </span>
                   <span className="ctitle" style={{
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>{c.title}</span>
@@ -565,7 +569,7 @@ export function LeftRail({
               }}
               title={unfiledCollapsed ? "Show open chats — drop here to unfile" : "Hide open chats — drop here to unfile"}
             >
-              <span className="pcaret">{unfiledCollapsed ? "▸" : "▾"}</span>
+              <span className="pcaret"><ShellIcon name={unfiledCollapsed ? "chevron-right" : "chevron-down"} size={12} /></span>
               Open chats · {openChats.length}
             </button>
             {!unfiledCollapsed && openChats.map((c) => {
@@ -596,7 +600,9 @@ export function LeftRail({
                 title={isRenamingThisChat ? "" : `Focus tab: ${c.title} — hover for edit, right-click or drag to move`}
                 style={{ cursor: isRenamingThisChat ? "text" : "pointer" }}
               >
-                <span className="ttr">{c.connectionTransport ?? "💻"}</span>
+                <span className="ttr" title={transportTitle(c.connectionTransport)}>
+                  <TransportIcon value={c.connectionTransport} />
+                </span>
                 {isRenamingThisChat ? (
                   <input
                     ref={inputRef}
@@ -662,7 +668,7 @@ export function LeftRail({
                 onClick={() => setPastCollapsed((v) => !v)}
                 title={pastCollapsed ? "Show past chats" : "Hide past chats"}
               >
-                <span className="pcaret">{pastCollapsed ? "▸" : "▾"}</span>
+                <span className="pcaret"><ShellIcon name={pastCollapsed ? "chevron-right" : "chevron-down"} size={12} /></span>
                 Past chats · {closed.length}
               </button>
               {!pastCollapsed && closed.slice(0, 50).map((c) => {
@@ -719,7 +725,9 @@ export function LeftRail({
  {/* Transport emoji (falls back to 💬 for legacy
  * entries) so closed sessions show Local / WSL /
  * SSH at a glance. */}
-                  <span className="ttr">{c.connectionTransport ?? "💬"}</span>
+                  <span className="ttr" title={transportTitle(c.connectionTransport)}>
+                    <TransportIcon value={c.connectionTransport} />
+                  </span>
                   {isRenamingThisPast ? (
                     <input
                       ref={inputRef}
@@ -831,7 +839,7 @@ export function LeftRail({
               onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--hairline)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
             >
-              📁 {p.name}
+              <ShellIcon name="folder" size={13} /> {p.name}
             </div>
           ))}
           <div style={{ borderTop: "1px solid var(--hairline)", margin: "4px 0" }} />
@@ -847,7 +855,7 @@ export function LeftRail({
             onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--hairline)"; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
           >
-            ✕ Unfile (remove from project)
+            <ShellIcon name="close" size={13} /> Unfile (remove from project)
           </div>
         </div>
       )}
@@ -886,7 +894,7 @@ export function LeftRail({
               onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--hairline)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
             >
-              📁 {p.name}
+              <ShellIcon name="folder" size={13} /> {p.name}
             </div>
           ))}
           <div style={{ borderTop: "1px solid var(--hairline)", margin: "4px 0" }} />
@@ -902,7 +910,7 @@ export function LeftRail({
             onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--hairline)"; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
           >
-            ✕ Unfile (remove from project)
+            <ShellIcon name="close" size={13} /> Unfile (remove from project)
           </div>
         </div>
       )}
@@ -1052,16 +1060,24 @@ function GitHubStrip({ cwd, activeTabId }: { cwd: string; activeTabId?: string |
   return (
     <div className="gh-strip">
       <div className="git-line">
-        <span className="gh-ic">⎇</span>
+        <span className="gh-ic">
+          <ShellIcon name="git-branch" size={13} />
+        </span>
         <span className="branch">{branchLabel}</span>
         <span className="remote">{remoteLabel}</span>
       </div>
       <div className="gh-meta">
         {typeof info.ahead === "number" && info.ahead > 0 && (
-          <span className="ahead">↑ {info.ahead} AHEAD</span>
+          <span className="ahead">
+            <ShellIcon name="arrow-up" size={11} />
+            {info.ahead} AHEAD
+          </span>
         )}
         {typeof info.behind === "number" && info.behind > 0 && (
-          <span className="behind">↓ {info.behind} BEHIND</span>
+          <span className="behind">
+            <ShellIcon name="chevron-down" size={11} />
+            {info.behind} BEHIND
+          </span>
         )}
         {info.staged && <span className="changes">{info.staged}</span>}
       </div>
@@ -1084,21 +1100,11 @@ function shortRemote(remote: string): string {
 }
 
 function LeftFooter(): JSX.Element {
- // Single live status line — shows the real chat count when the
- // debug-api responds, otherwise the resolved session-log path so
- // the user can find their JSONLs.
-  const [chatCount, setChatCount] = useState<number | null>(null);
  // Resolve the session-log path from get_home_dir so the displayed
  // path matches the running OS. Outside Tauri (browser preview) we
  // fall back to "~/.shellx/sessions/".
   const [sessionLogPath, setSessionLogPath] = useState<string>("~/.shellx/sessions/");
   useEffect(() => {
-    void api("/state/footer")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (j && typeof j.chats === "number") setChatCount(j.chats);
-      })
-      .catch(() => { /* endpoint absent in some builds — leave null */ });
  // Live path resolution — only meaningful inside Tauri.
     if (typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ === "undefined") return;
     void invoke<string>("get_home_dir")
@@ -1112,16 +1118,12 @@ function LeftFooter(): JSX.Element {
 
   return (
     <div className="left-foot">
-      {chatCount !== null ? (
-        <div className="left-foot-row"><span>chats</span><span className="v">{chatCount}</span></div>
-      ) : (
-        <div className="left-foot-row" style={{ color: "var(--ink-4)" }} title={sessionLogPath}>
-          <span>session log</span>
-          <span className="v" style={{
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl",
-          }}>{sessionLogPath}</span>
-        </div>
-      )}
+      <div className="left-foot-row" style={{ color: "var(--ink-4)" }} title={sessionLogPath}>
+        <span>history</span>
+        <span className="v" style={{
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl",
+        }}>{sessionLogPath}</span>
+      </div>
     </div>
   );
 }

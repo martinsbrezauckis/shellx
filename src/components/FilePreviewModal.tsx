@@ -26,6 +26,7 @@ import { ShikiHighlight } from "./ShikiHighlight";
 import { inTauri } from "../lib/tauri-bridge";
 import { SafeMarkdownLink } from "../lib/markdown-links";
 import { SafeImg, SafeVideo } from "./MediaPreview";
+import { ShellIcon } from "./icons";
 import {
   previewKindForPath,
   shouldReadTextForPreviewKind,
@@ -176,7 +177,7 @@ export function FilePreviewModal({
             aria-label="Close (Esc)"
             title="Close (Esc)"
           >
-            ✕
+            <ShellIcon name="close" size={14} />
           </button>
         </div>
 
@@ -287,7 +288,8 @@ export function FilePreviewModal({
             onClick={onCopyPath}
             title="Copy absolute path to clipboard"
           >
-            ⎘ Copy path
+            <ShellIcon name="copy" size={14} />
+            <span>Copy path</span>
           </button>
           <button
             type="button"
@@ -295,7 +297,8 @@ export function FilePreviewModal({
             onClick={onCopyMention}
             title="Copies `@<path>` to clipboard. Paste into the composer to mention the file in your next prompt."
           >
-            {copied ? "✓ Copied @mention" : "@ Copy as mention"}
+            {copied ? <ShellIcon name="check" size={14} /> : <span className="pact-at">@</span>}
+            <span>{copied ? "Copied @mention" : "Copy as mention"}</span>
           </button>
           <button
             type="button"

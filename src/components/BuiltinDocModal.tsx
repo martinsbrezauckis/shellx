@@ -21,6 +21,7 @@ import remarkGfm from "remark-gfm";
 import { BUILTIN_DOCS } from "../lib/builtin-docs";
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import { SafeMarkdownLink } from "../lib/markdown-links";
+import { ShellIcon } from "./icons";
 
 interface BuiltinDocModalProps {
  /** Doc id from BUILTIN_DOCS ("features" / "readme"). Null = closed. */
@@ -47,7 +48,9 @@ export function BuiltinDocModal({ docId, onClose }: BuiltinDocModalProps): JSX.E
         <div className="preview-modal" onClick={(e) => e.stopPropagation()}>
           <div className="preview-head">
             <span className="preview-fname">Unknown doc</span>
-            <button type="button" className="preview-close" onClick={onClose}>✕</button>
+            <button type="button" className="preview-close" onClick={onClose}>
+              <ShellIcon name="close" size={14} />
+            </button>
           </div>
           <div className="preview-body">
             <div className="preview-err">No doc registered for id "{docId}".</div>
@@ -73,7 +76,7 @@ export function BuiltinDocModal({ docId, onClose }: BuiltinDocModalProps): JSX.E
             aria-label="Close (Esc)"
             title="Close (Esc)"
           >
-            ✕
+            <ShellIcon name="close" size={14} />
           </button>
         </div>
         <div className="preview-body preview-body-markdown" onMouseUp={onMouseUpAutoCopy}>
@@ -95,7 +98,7 @@ export function BuiltinDocModal({ docId, onClose }: BuiltinDocModalProps): JSX.E
 }
 
 /** Reuses the same wrapper pattern as ChatOutput's CopyableCodeBlock —
- * floating Copy button top-right + `✓` flash on success. Lives here
+ * floating Copy button top-right + check flash on success. Lives here
  * instead of being imported to keep the doc-modal self-contained. */
 function DocCodeBlock({ children }: { children?: React.ReactNode }): JSX.Element {
   const preRef = useRef<HTMLPreElement | null>(null);
@@ -119,7 +122,7 @@ function DocCodeBlock({ children }: { children?: React.ReactNode }): JSX.Element
         title={copied ? "Copied" : "Copy to clipboard"}
         aria-label={copied ? "Copied" : "Copy to clipboard"}
       >
-        {copied ? "✓" : "⧉"}
+        <ShellIcon name={copied ? "check" : "copy"} size={13} />
       </button>
     </div>
   );

@@ -2,8 +2,8 @@
  * src/components/SessionTabs.tsx — middle pane session tab strip.
  *
  * each tab has a fixed max-width with mid-ellipsis truncation,
- * the strip itself is a horizontal-scrolling rail with «/» arrows when
- * overflow occurs, and a ▾ dropdown at the right end shows every open
+ * the strip itself is a horizontal-scrolling rail with icon arrows when
+ * overflow occurs, and a dropdown at the right end shows every open
  * session with its status indicator for fast switching.
  *
  * double-click any tab title to rename
@@ -11,6 +11,7 @@
  * so the user can rename from either surface and the change syncs.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
+import { ShellIcon, TransportIcon, transportTitle } from "./icons";
 
 export interface SessionTab {
   id: string;
@@ -155,7 +156,7 @@ export function SessionTabs({
           title="Scroll tabs left"
           aria-label="Scroll left"
         >
-          «
+          <ShellIcon name="chevrons-left" size={15} />
         </button>
       )}
       <div className="session-tabs-rail" ref={railRef} onScroll={measure}>
@@ -193,7 +194,11 @@ export function SessionTabs({
             role="button"
             tabIndex={0}
           >
-            {s.transport && <span className="ttr">{s.transport}</span>}
+            {s.transport && (
+              <span className="ttr" title={transportTitle(s.transport)}>
+                <TransportIcon value={s.transport} />
+              </span>
+            )}
             <span
               className={`stab-num ${s.status}`}
               aria-label={`Session ${sessionNo}, ${statusLabel(s.status)}`}
@@ -237,7 +242,7 @@ export function SessionTabs({
                 title="Rename session (F2)"
                 aria-label="Rename session"
               >
-                ✎
+                <ShellIcon name="pencil" size={12} />
               </span>
             )}
             <span
@@ -247,7 +252,7 @@ export function SessionTabs({
               title="Close session"
               aria-label="Close session"
             >
-              ✕
+              <ShellIcon name="close" size={12} />
             </span>
           </div>
           );
@@ -261,7 +266,7 @@ export function SessionTabs({
           onClick={onNew}
           title="New session (⌘T)"
         >
-          +
+          <ShellIcon name="plus" size={16} />
         </button>
       </div>
       {canScrollRight && (
@@ -272,7 +277,7 @@ export function SessionTabs({
           title="Scroll tabs right"
           aria-label="Scroll right"
         >
-          »
+          <ShellIcon name="chevrons-right" size={15} />
         </button>
       )}
       <div className="stab-dropdown-wrap">
@@ -283,7 +288,7 @@ export function SessionTabs({
           title="All open sessions"
           aria-label="All sessions"
         >
-          ▾
+          <ShellIcon name="chevron-down" size={15} />
         </button>
         {dropdownOpen && (
           <div className="stab-dropdown" role="listbox">
@@ -305,7 +310,11 @@ export function SessionTabs({
                 >
                   {index + 1}
                 </span>
-                {s.transport && <span className="ttr">{s.transport}</span>}
+                {s.transport && (
+                  <span className="ttr" title={transportTitle(s.transport)}>
+                    <TransportIcon value={s.transport} />
+                  </span>
+                )}
                 <span className="stab-dropdown-title">{s.title || "(untitled)"}</span>
                 <span
                   className="sx"
@@ -313,7 +322,7 @@ export function SessionTabs({
                   onClick={(e) => { e.stopPropagation(); onClose(s.id); }}
                   title="Close"
                 >
-                  ✕
+                  <ShellIcon name="close" size={12} />
                 </span>
               </div>
             ))}

@@ -1,5 +1,6 @@
 import { type JSX, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { ShellIcon } from "../components/icons";
 
 function isHttpUrl(href: unknown): href is string {
   return typeof href === "string" && /^https?:\/\//i.test(href);
@@ -91,9 +92,13 @@ export function SafeMarkdownLink({
     const target = resolveMarkdownPreviewHref(currentPath, href);
     return (
       <button type="button" className="flink" onClick={() => onPreviewFile(target)}>
-        <span className="ic">▸</span>
+        <span className="ic">
+          <ShellIcon name="chevron-right" size={12} />
+        </span>
         <span className="name">{fileDisplayName(href)}</span>
-        <span className="arr">↗</span>
+        <span className="arr">
+          <ShellIcon name="external-link" size={12} />
+        </span>
       </button>
     );
   }

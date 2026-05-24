@@ -7,6 +7,35 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
+## [0.1.31] - 2026-05-24
+
+### Added
+
+- Session **Trace** opens an Activity Browser with file/search/write/delete
+  activity, an activity graph, and session-scoped media references.
+- Session **Git** panel with repository status, diff review, local
+  checkpoints, and worktree creation for the active tab's real working
+  directory.
+- Session-scoped update diagnostics so updater state can be reviewed from
+  the connected session instead of guessing from global UI state.
+
+### Changed
+
+- Right-rail and bottom workspace tabs are now icon-first with hover
+  explanations, keeping narrow layouts usable as more panels are added.
+- Generated image/video paths now resolve consistently for local Windows,
+  WSL, and SSH sessions in chat, media tabs, and preview.
+- Session Trace now treats idle reconnect sessions as `No file activity`
+  instead of surfacing internal missing-log wording.
+- Terminal tasks can be killed or removed from Background Tasks even after
+  switching away from the Terminal tab.
+- Header search now keeps long result lists scrollable while letting the
+  selected result preview use the full available popover height.
+- The left rail history footer no longer shows an ambiguous total chat
+  count below Past chats.
+- Composer scope chips now truncate long connection, project, branch, and
+  autonomy labels instead of crowding adjacent controls.
+
 ## [0.1.30] - 2026-05-24
 
 ### Added

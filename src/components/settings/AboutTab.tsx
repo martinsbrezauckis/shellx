@@ -30,6 +30,7 @@ import remarkGfm from "remark-gfm";
 import pkg from "../../../package.json";
 import { SafeMarkdownLink } from "../../lib/markdown-links";
 import { cleanUpdateNotes } from "../../lib/update-notes";
+import { ShellIcon } from "../icons";
 
 /**
  * Open `url` in the user's external default browser via the Tauri
@@ -249,7 +250,8 @@ export function AboutTab(): JSX.Element {
             onClick={(e) => { e.preventDefault(); openExternal("https://theshellx.com"); }}
             className="about-link"
           >
-            theshellx.com ↗
+            <span>theshellx.com</span>
+            <ShellIcon name="external-link" size={13} />
           </a>
         </dd>
 
@@ -260,7 +262,8 @@ export function AboutTab(): JSX.Element {
             onClick={(e) => { e.preventDefault(); openExternal("https://x.com/theshellx"); }}
             className="about-link"
           >
-            @theshellx ↗
+            <span>@theshellx</span>
+            <ShellIcon name="external-link" size={13} />
           </a>
         </dd>
 
@@ -286,7 +289,8 @@ export function AboutTab(): JSX.Element {
           onClick={() => openBuiltinDoc("features")}
           title="Read the shellX features overview"
         >
-          📄 Features (in-app)
+          <ShellIcon name="file" size={13} />
+          <span>Features</span>
         </button>
         <button
           type="button"
@@ -294,21 +298,24 @@ export function AboutTab(): JSX.Element {
           onClick={() => openBuiltinDoc("readme")}
           title="Read the shellX quick-start guide"
         >
-          📄 Quick start (in-app)
+          <ShellIcon name="file" size={13} />
+          <span>Quick start</span>
         </button>
         <a
           href="#"
           onClick={(e) => { e.preventDefault(); openExternal("https://github.com/MartinsBrezauckis/shellx"); }}
           className="settings-pill"
         >
-          GitHub ↗
+          <span>GitHub</span>
+          <ShellIcon name="external-link" size={13} />
         </a>
         <a
           href="#"
           onClick={(e) => { e.preventDefault(); openExternal("https://github.com/MartinsBrezauckis/shellx/issues"); }}
           className="settings-pill"
         >
-          Issues ↗
+          <span>Issues</span>
+          <ShellIcon name="external-link" size={13} />
         </a>
         <button
           type="button"
@@ -316,7 +323,8 @@ export function AboutTab(): JSX.Element {
           onClick={() => openBuiltinDoc("changelog")}
           title="Read bundled release notes"
         >
-          📄 Changelog (in-app)
+          <ShellIcon name="file" size={13} />
+          <span>Changelog</span>
         </button>
       </div>
 

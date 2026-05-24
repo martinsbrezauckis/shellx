@@ -21,6 +21,7 @@
  */
 import { useEffect, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { ShellIcon } from "../icons";
 
 /** Default port the debug-api server prefers — used as a display fallback
  * ONLY when the Tauri command hasn't returned yet or the server isn't
@@ -204,9 +205,14 @@ export function ShellxagentTab(): JSX.Element {
       <div className="settings-row">
         <label className="settings-label">Rotate token</label>
         <span className="settings-suffix">
-          {justRotated
-            ? "✓ Rotated. Old token invalidated immediately."
-            : "Issues a new 32-char hex token and persists to disk."}
+          {justRotated ? (
+            <>
+              <ShellIcon name="check" size={13} />
+              Rotated. Old token invalidated immediately.
+            </>
+          ) : (
+            "Issues a new 32-char hex token and persists to disk."
+          )}
         </span>
         <button
           type="button"

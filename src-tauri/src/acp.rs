@@ -504,6 +504,9 @@ pub struct GrokAcpSession {
     app_handle: Option<tauri::AppHandle>,
     /// Session working directory (for resolving relative fs paths in capability handlers) — always Windows-style from UI
     cwd: Option<String>,
+    /// Working directory passed to Grok inside its own filesystem frame.
+    /// This differs from `cwd` for WSL and SSH transports.
+    agent_cwd: Option<String>,
     /// Handle to the reader task (for clean shutdown / detection)
     reader_handle: Option<tokio::task::JoinHandle<()>>,
     // Phase 3.6 WSL Bridge config (set before start if using WSL backend)
@@ -587,6 +590,7 @@ impl GrokAcpSession {
                    "hasSession": self.session_id.is_some(),
                    "sessionId": self.session_id,
                    "cwd": self.cwd,
+                   "agentCwd": self.agent_cwd,
                    "isWsl": self.wsl_distro.is_some(),
                    "wslDistro": self.wsl_distro,
                    "isSsh": self.ssh_config.is_some(),
@@ -644,6 +648,7 @@ impl GrokAcpSession {
             pending_responses: Arc::new(TokioMutex::new(HashMap::new())),
             app_handle: None,
             cwd: None,
+            agent_cwd: None,
             reader_handle: None,
             wsl_distro: None,
             wsl_grok_path: None,
@@ -1556,6 +1561,7 @@ impl GrokAcpSession {
         self.app_handle = Some(app_handle.clone());
         // Always Windows path for fs resolve_path + tool events.
         self.cwd = Some(rust_cwd.clone());
+        self.agent_cwd = Some(agent_cwd.clone());
         // Reset for fresh session (fixes stale next_id / pending / session_id on restart).
         self.next_id.store(1, Ordering::SeqCst);
         self.session_id = None;

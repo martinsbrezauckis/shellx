@@ -62,8 +62,10 @@ import { PluginsModal } from "./components/PluginsModal";
 import { TAB_KEY as SETTINGS_TAB_KEY } from "./components/Settings";
 import { hydrateUserData, persistUserData } from "./lib/userStore";
 import { FilePreviewModal } from "./components/FilePreviewModal";
+import { ActivityBrowserModal } from "./components/ActivityBrowserModal";
 import { BuiltinDocModal } from "./components/BuiltinDocModal";
 import { GoalPlanReviewModal } from "./components/GoalPlanReviewModal";
+import { ShellIcon } from "./components/icons";
 import type { HashItem } from "./components/HashAutocomplete";
 import {
   Settings,
@@ -181,7 +183,7 @@ function newTabEntry(cwd: string, autonomy: AutonomyMode): TabEntry {
     projectId: undefined,
     connectionId: null,
     connectionLabel: "Local",
-    connectionTransport: "💻",
+    connectionTransport: "local",
     branchName: undefined,
     branchAhead: undefined,
   };
@@ -450,6 +452,7 @@ export default function App(): JSX.Element {
   // File preview modal opened by ChatOutput clicks on file paths.
   // Read-only.
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
   // in-app docs (Features / Quick start) routed through a
   // global event from AboutTab. Avoids the cross-import dance and
   // keeps BuiltinDocModal mounted at App scope (same level as the
@@ -1297,7 +1300,7 @@ export default function App(): JSX.Element {
                     _meta: { tabId: tag, kind: "connection-metadata" },
                     connectionId: tab.connectionId ?? null,
                     connectionLabel: tab.connectionLabel ?? "Local",
-                    connectionTransport: tab.connectionTransport ?? "💻",
+                    connectionTransport: tab.connectionTransport ?? "local",
                     cwd: tab.cwd,
                   },
                 };
@@ -2236,7 +2239,7 @@ export default function App(): JSX.Element {
       ?? (t.connectionId ? "Saved connection" : "Local");
     t.connectionTransport =
       past?.connectionTransport ?? closed?.connectionTransport ?? fallbackMeta?.connectionTransport
-      ?? "💻";
+      ?? "local";
     // Apply any user rename override and set titleLocked up-front so
     // the session_summary_generated handler can't clobber the renamed
     // title during the rehydration replay.
@@ -2529,7 +2532,7 @@ export default function App(): JSX.Element {
         findCorpus={tabs.map((t) => ({
           id: t.tabId,
           title: t.title || "(untitled)",
-          transport: (t.connectionTransport ?? "💻") as ChatHit["transport"],
+          transport: t.connectionTransport ?? "local",
           project: t.projectId ?? "—",
           ageLabel: "open",
           status: t.status === "Connected" ? "run" : "idle",
@@ -2585,7 +2588,7 @@ export default function App(): JSX.Element {
                   .map((t) => ({
                     id: t.tabId,
                     title: t.title || "(untitled)",
-                    transport: (t.connectionTransport ?? "💻") as "💻" | "🐧" | "🔐" | "🌐" | "☁" | "🔗",
+                    transport: t.connectionTransport ?? "local",
                     status: (t.isSending ? "run" : (t.status === "Connected" ? "done" : "idle")) as "run" | "done" | "idle" | "input",
                   })),
               }))}
@@ -2959,6 +2962,7 @@ export default function App(): JSX.Element {
                      * tab — same pipeline as the dialog branch. */
                     onAttachPaths={(paths) => void processAttachedPaths(paths)}
                     onPreviewFile={handlePreviewFile}
+                    onOpenActivity={() => setActivityOpen(true)}
                     hashItems={hashItems}
                     skills={skills.map((s: any) => ({ name: s.name, description: s.description }))}
                     autonomy={autonomy}
@@ -2997,21 +3001,15 @@ export default function App(): JSX.Element {
                      * fresh tab after that point. */
                     connectionLocked={Boolean(activeTab?.firstMessageMs)}
                     scopeConnection={activeTab?.connectionLabel ?? "Local"}
-                    scopeConnectionTransport={activeTab?.connectionTransport ?? "💻"}
+                    scopeConnectionTransport={activeTab?.connectionTransport ?? "local"}
                     scopeBranch={activeTab?.branchName ?? "—"}
                     scopeBranchAhead={activeTab?.branchAhead}
                     onSelectConnection={(preset) => {
                       const t = preset.transport.kind;
-                      const icon = t === "local" ? "💻"
-                        : t === "wsl" ? "🐧"
-                        : t === "ssh" ? "🔐"
-                        : t === "tailscale" ? "🌐"
-                        : t === "ws_tunnel" ? "☁"
-                        : "🔗";
                       updateActiveTab({
                         connectionId: preset.id,
                         connectionLabel: preset.label,
-                        connectionTransport: icon,
+                        connectionTransport: t === "ws_tunnel" ? "cloud" : t,
                       });
                     }}
                     onSelectBranch={(name) => updateActiveTab({ branchName: name })}
@@ -3051,7 +3049,7 @@ export default function App(): JSX.Element {
                       requestedTabSeq={rightRailRequest?.seq}
                       onOpenGoalReview={() => setGoalReviewRequestSeq((seq) => seq + 1)}
                       connectionLabel={activeTab?.connectionLabel ?? "Local"}
-                      connectionTransport={activeTab?.connectionTransport ?? "💻"}
+                      connectionTransport={activeTab?.connectionTransport ?? "local"}
                       sessionStatus={activeTab?.status ?? "Idle"}
                       onSendPromptToActiveTab={(text) => void sendPromptText(text, activeTabId)}
                     />
@@ -3106,6 +3104,16 @@ export default function App(): JSX.Element {
         sessionCwd={activeTab?.cwd ?? cwd}
         onClose={() => setPreviewPath(null)}
         onPreviewFile={handlePreviewFile}
+      />
+      <ActivityBrowserModal
+        open={activityOpen}
+        tabId={activeTabId}
+        sessionId={activeTab?.sessionId ?? null}
+        sessionCwd={activeTab?.cwd ?? cwd}
+        transport={activeTab?.connectionTransport ?? "local"}
+        onClose={() => setActivityOpen(false)}
+        onPreviewFile={handlePreviewFile}
+        onAskAgent={(text) => void sendPromptText(text, activeTabId)}
       />
       <GoalPlanReviewModal
         activeTabId={activeTabId}
@@ -3421,7 +3429,9 @@ function ClipboardCopiedToast(): JSX.Element | null {
   if (chars === null) return null;
   return (
     <div className="copy-toast" role="status" aria-live="polite">
-      <span className="copy-toast-icon">✓</span>
+      <span className="copy-toast-icon">
+        <ShellIcon name="check" size={14} />
+      </span>
       <span>Copied {chars} char{chars === 1 ? "" : "s"}</span>
     </div>
   );

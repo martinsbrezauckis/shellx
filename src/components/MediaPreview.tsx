@@ -7,6 +7,7 @@ import {
   type VideoHTMLAttributes,
 } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { normalizeRendererFilePath } from "../lib/media-paths";
 import { inTauri } from "../lib/tauri-bridge";
 
 export function SafeImg({
@@ -21,13 +22,14 @@ export function SafeImg({
     setFallback(null);
   }, [src]);
   if (!src) return <span className="img-broken">[image: {alt}]</span>;
-  const dataUrl = fallback?.src === src ? fallback.dataUrl : null;
-  let resolved = dataUrl ?? src;
+  const requestPath = normalizeRendererFilePath(src);
+  const dataUrl = fallback?.src === requestPath ? fallback.dataUrl : null;
+  let resolved = dataUrl ?? requestPath;
   if (!dataUrl) {
-    if (/^(https?:|data:|asset:|tauri:|file:)/i.test(src)) {
-      resolved = src;
-    } else if (src.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(src)) {
-      try { resolved = convertFileSrc(src, "asset"); } catch { /* fall through */ }
+    if (/^(https?:|data:|asset:|tauri:|file:)/i.test(requestPath)) {
+      resolved = requestPath;
+    } else if (requestPath.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(requestPath)) {
+      try { resolved = convertFileSrc(requestPath, "asset"); } catch { /* fall through */ }
     }
   }
   return (
@@ -38,9 +40,8 @@ export function SafeImg({
       loading="lazy"
       onError={() => {
         if (dataUrl || !inTauri()) return;
-        const requestSrc = src;
-        void invoke<string>("read_image_as_data_url", { path: src, tabId, sessionCwd })
-          .then((url) => { if (url) setFallback({ src: requestSrc, dataUrl: url }); })
+        void invoke<string>("read_image_as_data_url", { path: requestPath, tabId, sessionCwd })
+          .then((url) => { if (url) setFallback({ src: requestPath, dataUrl: url }); })
           .catch(() => { /* leave broken */ });
       }}
       {...rest}
@@ -72,13 +73,14 @@ export function SafeVideo({
     setFallback(null);
   }, [src]);
   if (!src) return <span className="img-broken">[video: {title}]</span>;
-  const dataUrl = fallback?.src === src ? fallback.dataUrl : null;
-  let resolved = dataUrl ?? src;
+  const requestPath = normalizeRendererFilePath(src);
+  const dataUrl = fallback?.src === requestPath ? fallback.dataUrl : null;
+  let resolved = dataUrl ?? requestPath;
   if (!dataUrl) {
-    if (/^(https?:|data:|asset:|tauri:|file:)/i.test(src)) {
-      resolved = src;
-    } else if (src.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(src)) {
-      try { resolved = convertFileSrc(src, "asset"); } catch { /* fall through */ }
+    if (/^(https?:|data:|asset:|tauri:|file:)/i.test(requestPath)) {
+      resolved = requestPath;
+    } else if (requestPath.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(requestPath)) {
+      try { resolved = convertFileSrc(requestPath, "asset"); } catch { /* fall through */ }
     }
   }
   return (
@@ -91,9 +93,8 @@ export function SafeVideo({
       onClick={onClick}
       onError={() => {
         if (dataUrl || !inTauri()) return;
-        const requestSrc = src;
-        void invoke<string>("read_image_as_data_url", { path: src, tabId, sessionCwd })
-          .then((url) => { if (url) setFallback({ src: requestSrc, dataUrl: url }); })
+        void invoke<string>("read_image_as_data_url", { path: requestPath, tabId, sessionCwd })
+          .then((url) => { if (url) setFallback({ src: requestPath, dataUrl: url }); })
           .catch(() => { /* leave broken */ });
       }}
     />

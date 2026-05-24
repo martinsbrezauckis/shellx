@@ -44,6 +44,7 @@
 import { useCallback, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PermissionGroup } from "../lib/grouping";
+import { ShellIcon } from "./icons";
 
 interface Props {
   g: PermissionGroup;
@@ -125,7 +126,7 @@ export function PermissionPill({ g, tabId }: Props): JSX.Element {
       >
         <div className="perm-pill-head">
           <span className="perm-pill-icon" aria-hidden>
-            ⚠
+            <ShellIcon name="shield-alert" size={15} />
           </span>
           <span className="perm-pill-tool">
             {g.toolName}
@@ -147,7 +148,8 @@ export function PermissionPill({ g, tabId }: Props): JSX.Element {
             className="perm-pill-btn perm-pill-allow"
             onClick={() => void respond("allow")}
           >
-            ✓ Allow
+            <ShellIcon name="check" size={13} />
+            <span>Allow</span>
           </button>
           <button
             type="button"
@@ -155,14 +157,16 @@ export function PermissionPill({ g, tabId }: Props): JSX.Element {
             onClick={() => void respond("allow_always")}
             title="Allow this tool every time without asking"
           >
-            ✓✓ Allow always
+            <ShellIcon name="circle-check" size={13} />
+            <span>Allow always</span>
           </button>
           <button
             type="button"
             className="perm-pill-btn perm-pill-deny"
             onClick={() => void respond("deny")}
           >
-            ✗ Deny
+            <ShellIcon name="circle-x" size={13} />
+            <span>Deny</span>
           </button>
         </div>
       </div>
@@ -190,7 +194,7 @@ export function PermissionPill({ g, tabId }: Props): JSX.Element {
       aria-label={`${verb} ${g.toolName}`}
     >
       <span className="perm-pill-icon" aria-hidden>
-        {isAllowed ? "✓" : "✗"}
+        <ShellIcon name={isAllowed ? "circle-check" : "circle-x"} size={14} />
       </span>
       <span className="perm-pill-resolved-label">
         {verb}: <strong>{g.toolName}</strong>

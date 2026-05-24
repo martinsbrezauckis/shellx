@@ -70,7 +70,9 @@ pub mod mcp_health;
 // the invoke_handler below.
 #[cfg(feature = "debug-api")]
 mod mcp_events_tail;
+pub(crate) mod session_activity;
 mod session_archive;
+mod session_git;
 
 use serde::Serialize;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -80,7 +82,7 @@ use tracing::{info, warn};
 
 use crate::acp::{tab_id_or_default, PendingPermissionRegistry, SessionRegistry};
 use crate::outside_connectors::{OutsideConnector, OutsideConnectorStore};
-use crate::process_registry::ProcessRegistry;
+use crate::process_registry::{ProcessRegistry, ProcessSource, ProcessStatus};
 use crate::terminal::TerminalRegistry;
 
 #[cfg(feature = "debug-api")]
@@ -142,6 +144,7 @@ pub(crate) async fn run_tab_cwd_command(
     let arc = registry.get_or_create(&tab_key).await;
     let s = arc.lock().await;
     let session_info = s.get_debug_session_info();
+    let command_cwd = crate::session_git::effective_command_cwd_from_debug(&session_info, &cwd);
     let wsl_distro = session_info
         .get("wslDistro")
         .and_then(|v| v.as_str())
@@ -160,13 +163,13 @@ pub(crate) async fn run_tab_cwd_command(
         let remote = if remote_args.is_empty() {
             format!(
                 "cd -- {} && {}",
-                crate::acp::shell_quote_for_remote(&cwd),
+                crate::acp::shell_quote_for_remote(&command_cwd),
                 crate::acp::shell_quote_for_remote(&program),
             )
         } else {
             format!(
                 "cd -- {} && {} {}",
-                crate::acp::shell_quote_for_remote(&cwd),
+                crate::acp::shell_quote_for_remote(&command_cwd),
                 crate::acp::shell_quote_for_remote(&program),
                 remote_args,
             )
@@ -190,13 +193,13 @@ pub(crate) async fn run_tab_cwd_command(
             let script = if quoted_args.is_empty() {
                 format!(
                     "cd -- {} && {}",
-                    crate::acp::shell_quote_for_remote(&cwd),
+                    crate::acp::shell_quote_for_remote(&command_cwd),
                     crate::acp::shell_quote_for_remote(&program),
                 )
             } else {
                 format!(
                     "cd -- {} && {} {}",
-                    crate::acp::shell_quote_for_remote(&cwd),
+                    crate::acp::shell_quote_for_remote(&command_cwd),
                     crate::acp::shell_quote_for_remote(&program),
                     quoted_args,
                 )
@@ -211,12 +214,12 @@ pub(crate) async fn run_tab_cwd_command(
             c
         } else {
             let mut c = tokio::process::Command::new(&program);
-            c.args(&args).current_dir(&cwd);
+            c.args(&args).current_dir(&command_cwd);
             c
         }
     } else {
         let mut c = tokio::process::Command::new(&program);
-        c.args(&args).current_dir(&cwd);
+        c.args(&args).current_dir(&command_cwd);
         c
     };
     cmd.no_window();
@@ -707,10 +710,21 @@ async fn send_prompt(
 async fn abort_session(
     #[allow(non_snake_case)] tab_id: Option<String>,
     registry: State<'_, Arc<SessionRegistry>>,
+    process_registry: State<'_, Arc<ProcessRegistry>>,
 ) -> Result<String, String> {
-    let arc = registry.get_or_create(&tab_id_or_default(tab_id)).await;
-    let mut s = arc.lock().await;
-    s.abort_session().await?;
+    let tab_key = tab_id_or_default(tab_id);
+    let arc = registry.get_or_create(&tab_key).await;
+    {
+        let mut s = arc.lock().await;
+        s.abort_session().await?;
+    }
+    let cleaned = cleanup_host_mcp_children_for_tab(&process_registry, &tab_key).await;
+    if cleaned > 0 {
+        info!(
+            "abort_session: cleaned {} host_mcp child process(es) for tab_id={}",
+            cleaned, tab_key
+        );
+    }
     Ok("Session aborted".to_string())
 }
 
@@ -842,6 +856,7 @@ async fn drop_tab_session(
     #[allow(non_snake_case)] tab_id: String,
     registry: State<'_, Arc<SessionRegistry>>,
     orch: State<'_, Arc<goal_orchestrator::GoalOrchestrator>>,
+    process_registry: State<'_, Arc<ProcessRegistry>>,
 ) -> Result<bool, String> {
     let removed = registry.drop_tab(&tab_id).await;
     if removed {
@@ -854,6 +869,13 @@ async fn drop_tab_session(
         crate::mcp_health::global().clear_tab(&tab_id).await;
         orch.clear_state(&tab_id, "tab_closed").await;
         crate::acp::clear_host_mcp_transport_failure_for_tab(&tab_id);
+    }
+    let cleaned = cleanup_host_mcp_children_for_tab(&process_registry, &tab_id).await;
+    if cleaned > 0 {
+        info!(
+            "drop_tab_session: cleaned {} host_mcp child process(es) for tab_id={}",
+            cleaned, tab_id
+        );
     }
     Ok(removed)
 }
@@ -908,6 +930,18 @@ fn strip_wsl_unc_prefix(normalized: &str) -> String {
         }
         None => normalized.to_string(),
     }
+}
+
+fn strip_windows_extended_path_prefix(path: &str) -> String {
+    let normalized = path.trim().replace('\\', "/");
+    let lower = normalized.to_ascii_lowercase();
+    if lower.starts_with("//?/unc/") {
+        return format!("\\\\{}", normalized["//?/UNC/".len()..].replace('/', "\\"));
+    }
+    if lower.starts_with("//?/") {
+        return normalized["//?/".len()..].replace('/', "\\");
+    }
+    path.trim().to_string()
 }
 
 fn preview_path_is_under_user_home_segment(path_lower: &str, prefix: &str, child: &str) -> bool {
@@ -1000,6 +1034,7 @@ async fn read_text_file_for_path(
     #[allow(non_snake_case)] session_cwd: Option<String>,
     registry: State<'_, Arc<SessionRegistry>>,
 ) -> Result<String, String> {
+    let path = strip_windows_extended_path_prefix(&path);
     if path.is_empty() {
         return Err("empty path".to_string());
     }
@@ -1150,6 +1185,7 @@ async fn read_image_as_data_url(
     #[allow(non_snake_case)] session_cwd: Option<String>,
     registry: State<'_, Arc<SessionRegistry>>,
 ) -> Result<String, String> {
+    let path = strip_windows_extended_path_prefix(&path);
     if path.is_empty() {
         return Err("empty path".to_string());
     }
@@ -2207,9 +2243,9 @@ async fn copy_to_scope(src: String, dest_dir: String) -> Result<String, String> 
 // 2. ACP-origin terminals — via TerminalRegistry (origin="acp_term").
 // 3. User-origin terminals — via TerminalRegistry (origin="user_term").
 //
-// Host-MCP children / debug-api spawns are filed under origin="host_mcp"
-// but those are aspirational today — the registries don't track them yet
-// so the slot is empty. Adding them later is additive.
+// Host-MCP children are appended from ProcessRegistry under
+// origin="host_mcp". Future debug-api spawns can use the same registry
+// pattern without changing the renderer row shape.
 
 /// One uniform task row the Tasks panel renders. CamelCase JSON shape
 /// matches the renderer's TypeScript types.
@@ -2217,7 +2253,8 @@ async fn copy_to_scope(src: String, dest_dir: String) -> Result<String, String> 
 #[serde(rename_all = "camelCase")]
 pub struct TaskSnapshot {
     /// Stable identifier — `grok-<tabId>` for grok subprocesses,
-    /// `<tabId>:<terminalId>` for terminals. The renderer uses this
+    /// `<tabId>:<terminalId>` for terminals, `gs-*` for ProcessRegistry
+    /// rows such as host_mcp children. The renderer uses this
     /// as a React key and as the argument to pause/resume/kill.
     pub task_id: String,
     /// One of "grok" | "acp_term" | "user_term" | "host_mcp".
@@ -2232,8 +2269,8 @@ pub struct TaskSnapshot {
     pub started_at_ms: i64,
     /// Last ≤1024 bytes of recent stdout/stderr output, lossily decoded.
     pub recent_output_tail: String,
-    /// Tab the task belongs to (for grok subprocesses + terminals — the
-    /// renderer can group rows by tab when there are many).
+    /// Tab the task belongs to, when known. Used to scope grok,
+    /// terminals, and host_mcp children to the visible session.
     pub tab_id: Option<String>,
 }
 
@@ -2361,14 +2398,16 @@ async fn list_background_tasks(
     // surface HostMcp rows (Terminal-origin rows are already aggregated
     // upstream via TerminalRegistry).
     for r in proc_rows {
-        if r.source != crate::process_registry::ProcessSource::HostMcp {
+        if r.source != ProcessSource::HostMcp {
             continue;
         }
+        let stopped = r.pid.map(is_pid_stopped).unwrap_or(false);
         let status = match r.status {
-            crate::process_registry::ProcessStatus::Running => "running",
-            crate::process_registry::ProcessStatus::Exited => "exited",
-            crate::process_registry::ProcessStatus::Killed => "killed",
-            crate::process_registry::ProcessStatus::Failed => "exited",
+            ProcessStatus::Running if stopped => "stopped",
+            ProcessStatus::Running => "running",
+            ProcessStatus::Exited => "exited",
+            ProcessStatus::Killed => "killed",
+            ProcessStatus::Failed => "exited",
         };
         // #364: fetch tail BEFORE moving task_id into the
         // snapshot (task_id is a String, not Copy). Last 200 lines
@@ -2433,10 +2472,16 @@ async fn list_background_tasks(
 /// - "grok-<tabId>" → grok subprocess for tab `tabId` (signal directly).
 /// - "<tabId>:<terminalId>" → PTY child; signal its pid (delegating to
 /// the OS — we don't kill the master fd here, just signal the leader).
+/// - "gs-<id>" → ProcessRegistry row, currently used for host_mcp children.
 fn parse_task_id(task_id: &str) -> Option<TaskTarget> {
     if let Some(rest) = task_id.strip_prefix("grok-") {
         return Some(TaskTarget::Grok {
             tab_id: rest.to_string(),
+        });
+    }
+    if task_id.starts_with("gs-") {
+        return Some(TaskTarget::Registered {
+            task_id: task_id.to_string(),
         });
     }
     if let Some(idx) = task_id.find(':') {
@@ -2449,9 +2494,38 @@ fn parse_task_id(task_id: &str) -> Option<TaskTarget> {
     None
 }
 
+#[derive(Debug)]
 enum TaskTarget {
     Grok { tab_id: String },
     Terminal { tab_id: String, terminal_id: String },
+    Registered { task_id: String },
+}
+
+#[cfg(test)]
+mod task_target_tests {
+    use super::*;
+
+    #[test]
+    fn parse_task_id_accepts_registry_task_ids() {
+        match parse_task_id("gs-0000002a") {
+            Some(TaskTarget::Registered { task_id }) => assert_eq!(task_id, "gs-0000002a"),
+            other => panic!("expected registered task target, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_task_id_accepts_terminal_task_ids() {
+        match parse_task_id("tab-abc:pty-123") {
+            Some(TaskTarget::Terminal {
+                tab_id,
+                terminal_id,
+            }) => {
+                assert_eq!(tab_id, "tab-abc");
+                assert_eq!(terminal_id, "pty-123");
+            }
+            other => panic!("expected terminal task target, got {:?}", other),
+        }
+    }
 }
 
 /// Task signal mapping. Pause/Resume use SIGSTOP/SIGCONT on Unix.
@@ -2610,6 +2684,69 @@ fn kill9_pid(pid: u32) -> Result<(), String> {
     }
 }
 
+fn schedule_sigkill_escalation(pid: u32, label: &'static str) {
+    // We do NOT await — invoke returns now; the SIGKILL fires from a
+    // detached task on the tokio runtime.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        if pid_is_alive(pid) {
+            if let Err(e) = kill9_pid(pid) {
+                warn!("{}: escalation SIGKILL pid={} failed: {}", label, pid, e);
+            } else {
+                info!("{}: escalated to SIGKILL after 3s (pid={})", label, pid);
+            }
+        }
+    });
+}
+
+async fn cleanup_host_mcp_children_for_tab(
+    process_registry: &Arc<ProcessRegistry>,
+    tab_id: &str,
+) -> usize {
+    let task_ids = process_registry
+        .running_task_ids_for_tab_source(tab_id, ProcessSource::HostMcp)
+        .await;
+    let mut cleaned = 0usize;
+    for task_id in task_ids {
+        let pid = process_registry.pid_for(&task_id).await;
+        match process_registry.signal(&task_id, "SIGTERM").await {
+            Ok(()) => {
+                cleaned += 1;
+                process_registry
+                    .mark_exited(&task_id, None, ProcessStatus::Killed)
+                    .await;
+                if let Some(pid) = pid {
+                    schedule_sigkill_escalation(pid, "cleanup_host_mcp_children_for_tab");
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "cleanup_host_mcp_children_for_tab: SIGTERM failed task_id={} tab_id={}: {}",
+                    task_id, tab_id, e
+                );
+                if pid.map(|p| !pid_is_alive(p)).unwrap_or(true) {
+                    cleaned += 1;
+                    process_registry
+                        .mark_exited(&task_id, None, ProcessStatus::Killed)
+                        .await;
+                }
+            }
+        }
+    }
+    cleaned
+}
+
+#[tauri::command]
+async fn cleanup_mcp_children_for_tab(
+    #[allow(non_snake_case)] tab_id: String,
+    process_registry: tauri::State<'_, Arc<ProcessRegistry>>,
+) -> Result<usize, String> {
+    if tab_id.trim().is_empty() {
+        return Err("tabId is required".to_string());
+    }
+    Ok(cleanup_host_mcp_children_for_tab(&process_registry, &tab_id).await)
+}
+
 /// Resolve a task_id to a pid by re-walking the registries. We don't
 /// cache the (task_id → pid) map; the registries are tiny and the
 /// renderer's polling cadence (500ms) means the indirection is cheap.
@@ -2617,6 +2754,7 @@ async fn resolve_task_pid(
     target: &TaskTarget,
     session_registry: &Arc<crate::acp::SessionRegistry>,
     terminal_registry: &Arc<crate::terminal::TerminalRegistry>,
+    process_registry: &Arc<ProcessRegistry>,
 ) -> Result<u32, String> {
     match target {
         TaskTarget::Grok { tab_id } => {
@@ -2637,6 +2775,10 @@ async fn resolve_task_pid(
                 .and_then(|r| r.pid)
                 .ok_or_else(|| format!("no terminal {}:{} or pid unknown", tab_id, terminal_id))
         }
+        TaskTarget::Registered { task_id } => process_registry
+            .pid_for(task_id)
+            .await
+            .ok_or_else(|| format!("no registered task '{}' or pid unknown", task_id)),
     }
 }
 
@@ -2646,9 +2788,16 @@ async fn task_pause(
     task_id: String,
     session_registry: tauri::State<'_, Arc<crate::acp::SessionRegistry>>,
     terminal_registry: tauri::State<'_, Arc<crate::terminal::TerminalRegistry>>,
+    process_registry: tauri::State<'_, Arc<ProcessRegistry>>,
 ) -> Result<(), String> {
     let target = parse_task_id(&task_id).ok_or_else(|| format!("bad task_id: {}", task_id))?;
-    let pid = resolve_task_pid(&target, &session_registry, &terminal_registry).await?;
+    let pid = resolve_task_pid(
+        &target,
+        &session_registry,
+        &terminal_registry,
+        &process_registry,
+    )
+    .await?;
     pause_pid(pid)
 }
 
@@ -2658,9 +2807,16 @@ async fn task_resume(
     task_id: String,
     session_registry: tauri::State<'_, Arc<crate::acp::SessionRegistry>>,
     terminal_registry: tauri::State<'_, Arc<crate::terminal::TerminalRegistry>>,
+    process_registry: tauri::State<'_, Arc<ProcessRegistry>>,
 ) -> Result<(), String> {
     let target = parse_task_id(&task_id).ok_or_else(|| format!("bad task_id: {}", task_id))?;
-    let pid = resolve_task_pid(&target, &session_registry, &terminal_registry).await?;
+    let pid = resolve_task_pid(
+        &target,
+        &session_registry,
+        &terminal_registry,
+        &process_registry,
+    )
+    .await?;
     resume_pid(pid)
 }
 
@@ -2673,24 +2829,47 @@ async fn task_kill(
     task_id: String,
     session_registry: tauri::State<'_, Arc<crate::acp::SessionRegistry>>,
     terminal_registry: tauri::State<'_, Arc<crate::terminal::TerminalRegistry>>,
+    process_registry: tauri::State<'_, Arc<ProcessRegistry>>,
 ) -> Result<(), String> {
     let target = parse_task_id(&task_id).ok_or_else(|| format!("bad task_id: {}", task_id))?;
-    let pid = resolve_task_pid(&target, &session_registry, &terminal_registry).await?;
-    term_pid(pid)?;
-    // Schedule the escalation. We do NOT await — invoke returns now;
-    // the SIGKILL fires from a detached task on the tokio runtime.
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        // Probe the pid: if it's still alive (kill 0 succeeds on Unix /
-        // OpenProcess succeeds on Windows) we send SIGKILL.
-        if pid_is_alive(pid) {
-            if let Err(e) = kill9_pid(pid) {
-                warn!("task_kill: escalation SIGKILL pid={} failed: {}", pid, e);
-            } else {
-                info!("task_kill: escalated to SIGKILL after 3s (pid={})", pid);
+    if let TaskTarget::Terminal {
+        tab_id,
+        terminal_id,
+    } = &target
+    {
+        let rows = terminal_registry.list_task_rows().await;
+        let row = rows
+            .into_iter()
+            .find(|r| r.tab_id == *tab_id && r.terminal_id == *terminal_id)
+            .ok_or_else(|| format!("no terminal {}:{} found", tab_id, terminal_id))?;
+        if let Some(pid) = row.pid {
+            let _ = term_pid(pid);
+            if pid_is_alive(pid) {
+                kill9_pid(pid)?;
             }
         }
-    });
+        terminal_registry.drop_record(tab_id, terminal_id).await;
+        return Ok(());
+    }
+
+    let registered_task_id = match &target {
+        TaskTarget::Registered { task_id } => Some(task_id.clone()),
+        _ => None,
+    };
+    let pid = resolve_task_pid(
+        &target,
+        &session_registry,
+        &terminal_registry,
+        &process_registry,
+    )
+    .await?;
+    term_pid(pid)?;
+    if let Some(task_id) = registered_task_id {
+        process_registry
+            .mark_exited(&task_id, None, ProcessStatus::Killed)
+            .await;
+    }
+    schedule_sigkill_escalation(pid, "task_kill");
     Ok(())
 }
 
@@ -3838,6 +4017,10 @@ pub fn run() {
             read_text_file_for_path,
             open_url_in_browser,
             git_branches,
+            crate::session_git::git_session_status,
+            crate::session_git::git_session_diff,
+            crate::session_git::git_session_create_checkpoint,
+            crate::session_git::git_session_create_worktree,
             crate::voice::synthesize_voice,
             read_image_as_data_url,
             read_preview_file_as_data_url,
@@ -3848,6 +4031,7 @@ pub fn run() {
             read_text_file_if_text,
             // Background-task manager.
             list_background_tasks,
+            cleanup_mcp_children_for_tab,
             task_pause,
             task_resume,
             task_kill,
@@ -3905,6 +4089,7 @@ pub fn run() {
             // .zip at a user-chosen save_path. Local + WSL transports
             // supported; SSH returns an explanatory error.
             crate::session_archive::archive_session_artifacts,
+            crate::session_activity::read_session_activity_source,
             // shellXagent token reveal + regenerate. Settings UI →
             // click to reveal current key,
             // Regenerate button rotates it.
@@ -4437,5 +4622,17 @@ mod preview_scope_tests {
             "C:/Users/User/Project/src/main.rs",
             Some("c:/users/user/project"),
         ));
+    }
+
+    #[test]
+    fn strips_windows_extended_prefix_for_preview_scope() {
+        let p = strip_windows_extended_path_prefix(
+            r"\\?\C:\Users\User\.grok\sessions\C%3A%5CUsers%5CUser\sid\images\1.jpg",
+        );
+        assert_eq!(
+            p,
+            r"C:\Users\User\.grok\sessions\C%3A%5CUsers%5CUser\sid\images\1.jpg"
+        );
+        assert!(preview_path_is_under_home_grok(&p));
     }
 }

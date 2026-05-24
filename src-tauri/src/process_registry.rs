@@ -292,6 +292,30 @@ impl ProcessRegistry {
         }
     }
 
+    /// Return live task ids for one tab/source pair. Used by the app
+    /// lifecycle cleanup path to terminate only MCP children proven to
+    /// belong to the closing/aborted tab.
+    pub async fn running_task_ids_for_tab_source(
+        &self,
+        tab_id: &str,
+        source: ProcessSource,
+    ) -> Vec<String> {
+        let mut inner = self.inner.lock().await;
+        sweep_exited_locked(&mut inner, now_ms() - EXITED_RECORD_TTL_MS);
+        let mut ids: Vec<String> = inner
+            .records
+            .values()
+            .filter(|rec| {
+                rec.status == ProcessStatus::Running
+                    && rec.source == source
+                    && rec.tab_id.as_deref() == Some(tab_id)
+            })
+            .map(|rec| rec.task_id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
     /// Append a line of captured output.
     pub async fn push_line(&self, task_id: &str, stream: &'static str, line: String) {
         let mut inner = self.inner.lock().await;
@@ -589,5 +613,46 @@ mod tests {
         assert_eq!(tail.len(), 2);
         assert_eq!(tail[0].line, "line1");
         assert_eq!(tail[1].line, "line2");
+    }
+
+    #[tokio::test]
+    async fn running_task_ids_for_tab_source_filters_by_tab_source_and_status() {
+        let reg = ProcessRegistry::new();
+        let owned = reg
+            .register(
+                "grok -p owned",
+                ProcessSource::HostMcp,
+                Some(std::process::id()),
+            )
+            .await;
+        let other_tab = reg
+            .register(
+                "grok -p other-tab",
+                ProcessSource::HostMcp,
+                Some(std::process::id()),
+            )
+            .await;
+        let terminal = reg
+            .register("bash", ProcessSource::Terminal, Some(std::process::id()))
+            .await;
+        let exited = reg
+            .register(
+                "grok -p exited",
+                ProcessSource::HostMcp,
+                Some(std::process::id()),
+            )
+            .await;
+
+        reg.set_tab_id(&owned, "tab-a".to_string()).await;
+        reg.set_tab_id(&other_tab, "tab-b".to_string()).await;
+        reg.set_tab_id(&terminal, "tab-a".to_string()).await;
+        reg.set_tab_id(&exited, "tab-a".to_string()).await;
+        reg.mark_exited(&exited, Some(0), ProcessStatus::Exited)
+            .await;
+
+        let ids = reg
+            .running_task_ids_for_tab_source("tab-a", ProcessSource::HostMcp)
+            .await;
+        assert_eq!(ids, vec![owned]);
     }
 }

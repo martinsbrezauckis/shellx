@@ -30,7 +30,7 @@ debug bearer token from `~/.shellx/shellxagent.token` or
 
 | Method | Path |
 | --- | --- |
-| GET | `/health`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/marketplace_health`, `/state/session_tooling`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/vault/status`, `/vault/keys`, `/connections`, `/outside-connectors` |
+| GET | `/health`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/marketplace_health`, `/state/session_tooling`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/vault/status`, `/vault/keys`, `/connections`, `/outside-connectors` |
 | POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/permissions/:reqId/respond`, `/diagnostics`, `/github/pr/create`, `/vault/get`, `/vault/set`, `/vault/delete`, `/connections`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test` |
 | DELETE | `/connections/:id`, `/outside-connectors/:id` |
 
@@ -68,7 +68,7 @@ do not own.
 
 | Pattern | Use |
 | --- | --- |
-| `GET /state/<noun>` | Read-only snapshot of UI state (header, footer, sessions, subagents, ui, skills, github, github/items, marketplace_health, session_tooling) |
+| `GET /state/<noun>` | Read-only snapshot of UI state (header, footer, sessions, subagents, ui, skills, github, github/items, marketplace_health, session_tooling, session_activity) |
 | `GET /<resource>` / `GET /<resource>/:id` | Read a domain resource (sessions, settings, panels, autonomy, plan, github) |
 | `POST /<resource>` | Create / write a domain resource (sessions, settings, prompt, abort, autonomy) |
 | `POST /<resource>/:id/<action>` | Verb-named action on a specific resource (`/sessions/:id/switch`, `/sessions/:id/rename`, `/pr/:n/preview`) |
@@ -383,7 +383,34 @@ for live debug-api sessions.
 }
 ```
 
-### 3.9 `GET /state/files?path=<rel>` *(roadmap, not wired)*
+### 3.9 `GET /state/session_activity?tabId=<tab>`
+
+Read-only source payload for the Activity Browser. The response exposes
+the local evidence ShellX can currently inspect: Grok's
+`hunk_records.jsonl` for verified file hunks plus a filtered
+`updates.jsonl` subset containing only tool-call records. Local and WSL
+sessions resolve to the user's reachable `~/.grok/sessions/...` folder.
+SSH sessions return `remote-not-mirrored` until ShellX mirrors remote
+trace artifacts locally.
+
+```ts
+{
+  tabId: string;
+  sessionId: string | null;
+  cwd: string | null;
+  transport: "local" | "wsl" | "ssh" | "unknown";
+  status: "ready" | "missing-hunk-records" | "remote-not-mirrored" | string;
+  readable: boolean;
+  scratchDir: string | null;
+  hunkRecordsPath: string | null;
+  hunkRecordsJsonl: string;
+  updatesPath: string | null;
+  updatesJsonl: string; // tool_call / tool_call_update lines only
+  note: string | null;
+}
+```
+
+### 3.10 `GET /state/files?path=<rel>` *(roadmap, not wired)*
 
 File tree rooted at the active session's cwd, or at `path` if given
 (must be **inside** cwd; otherwise `403 forbidden`).

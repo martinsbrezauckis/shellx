@@ -29,6 +29,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 // Push-to-talk dictation via xAI Grok STT.
 import { MicButton, type MicButtonHandle } from "./MicButton";
 import { SafeImg, SafeVideo } from "./MediaPreview";
+import { ShellIcon, TransportIcon } from "./icons";
 
 export type BottomTab = "Chat" | "Terminal" | "Images" | "Videos" | "Logs" | "Stderr";
 
@@ -204,6 +205,7 @@ export function BottomPanel({
  // dialog uses.
   onAttachPaths,
   onPreviewFile,
+  onOpenActivity,
  // PR/issue list for `#N` autocomplete.
   hashItems = [],
  // grok's available_commands — drives "/" autocomplete in PromptComposer.
@@ -252,6 +254,8 @@ export function BottomPanel({
   onAttachPaths?: (paths: string[]) => void;
  /** Open a generated media item in the App-level FilePreviewModal. */
   onPreviewFile?: (path: string) => void;
+ /** Open the session Activity Browser in the App-level preview surface. */
+  onOpenActivity?: () => void;
   hashItems?: HashItem[];
  /** grok's slash commands from `available_commands_update`
  * events. Each `{name, description?}` becomes an autocomplete entry
@@ -320,16 +324,33 @@ export function BottomPanel({
           type="button"
           className={`btab ${tab === "Chat" ? "active" : ""}`}
           onClick={() => setTab("Chat")}
+          title="Chat - prompt and session transcript"
+          aria-label="Chat - prompt and session transcript"
         >
-          Chat
+          <ShellIcon name="message" size={14} />
+          <span className="btab-label">Chat</span>
         </button>
         <button
           type="button"
           className={`btab ${tab === "Terminal" ? "active" : ""}`}
           onClick={() => setTab("Terminal")}
+          title="Terminal - persistent session shell"
+          aria-label="Terminal - persistent session shell"
         >
-          <span className="bdot" />
-          Terminal
+          <ShellIcon name="terminal" size={14} />
+          <span className="btab-label">Terminal</span>
+        </button>
+        <button
+          type="button"
+          className="btab btab-action"
+          onClick={onOpenActivity}
+          disabled={!onOpenActivity}
+          aria-disabled={!onOpenActivity}
+          title="Trace - open session activity browser"
+          aria-label="Trace - open session activity browser"
+        >
+          <ShellIcon name="activity" size={14} />
+          <span className="btab-label">Trace</span>
         </button>
         <button
           type="button"
@@ -337,9 +358,12 @@ export function BottomPanel({
           onClick={() => setTab("Images")}
           disabled={imageCount === 0}
           aria-disabled={imageCount === 0}
-          title={imageCount === 0 ? "No generated images in this session" : "Generated images"}
+          title={imageCount === 0 ? "Images - none in this session" : `Images - ${imageCount} in this session`}
+          aria-label={imageCount === 0 ? "Images - none in this session" : `Images - ${imageCount} in this session`}
         >
-          Images <span className="bcnt">{imageCount}</span>
+          <ShellIcon name="image" size={14} />
+          <span className="btab-label">Images</span>
+          <span className="bcnt">{imageCount}</span>
         </button>
         <button
           type="button"
@@ -347,23 +371,33 @@ export function BottomPanel({
           onClick={() => setTab("Videos")}
           disabled={videoCount === 0}
           aria-disabled={videoCount === 0}
-          title={videoCount === 0 ? "No generated videos in this session" : "Generated videos"}
+          title={videoCount === 0 ? "Videos - none in this session" : `Videos - ${videoCount} in this session`}
+          aria-label={videoCount === 0 ? "Videos - none in this session" : `Videos - ${videoCount} in this session`}
         >
-          Videos <span className="bcnt">{videoCount}</span>
+          <ShellIcon name="video" size={14} />
+          <span className="btab-label">Videos</span>
+          <span className="bcnt">{videoCount}</span>
         </button>
         <button
           type="button"
           className={`btab ${tab === "Logs" ? "active" : ""}`}
           onClick={() => setTab("Logs")}
+          title={`Logs - ${events.length} raw event${events.length === 1 ? "" : "s"}`}
+          aria-label={`Logs - ${events.length} raw event${events.length === 1 ? "" : "s"}`}
         >
-          Logs <span className="bcnt">{events.length}</span>
+          <ShellIcon name="file" size={14} />
+          <span className="btab-label">Logs</span>
+          <span className="bcnt">{events.length}</span>
         </button>
         <button
           type="button"
           className={`btab ${tab === "Stderr" ? "active" : ""}`}
           onClick={() => setTab("Stderr")}
+          title={`Stderr - ${stderrCount} event${stderrCount === 1 ? "" : "s"}`}
+          aria-label={`Stderr - ${stderrCount} event${stderrCount === 1 ? "" : "s"}`}
         >
-          Stderr{" "}
+          <ShellIcon name="terminal" size={14} />
+          <span className="btab-label">Stderr</span>
           <span
             className="bcnt"
             style={stderrCount > 0
@@ -576,7 +610,7 @@ function PromptComposer({
   modelEffort = "high",
   scopeProject = "grok-shell",
   scopeConnection = "Local · current worktree",
-  scopeConnectionTransport = "💻",
+  scopeConnectionTransport = "local",
   scopeBranch = "—",
   scopeBranchAhead,
   onSelectConnection: onSelectConnectionExt,
@@ -1088,21 +1122,23 @@ function PromptComposer({
             type="button"
             className="attach-btn"
             title="Attach file (⌘U) — image, PDF, code, anything"
+            aria-label="Attach file"
             onClick={onAttach}
             disabled={!onAttach}
           >
-            <span className="plus">+</span>
-            <span>Attach</span>
+            <span className="plus"><ShellIcon name="paperclip" size={14} /></span>
+            <span className="attach-label">Attach</span>
           </button>
           <button
             type="button"
             className="attach-btn"
             title="Attach a screenshot of this shellX window"
+            aria-label="Attach screenshot"
             onClick={onAttachScreenshot}
             disabled={!onAttachScreenshot}
           >
-            <span className="plus">▣</span>
-            <span>Screen</span>
+            <span className="plus"><ShellIcon name="camera" size={14} /></span>
+            <span className="attach-label">Screen</span>
           </button>
 
  {/* IDLE/CONNECTED status pill. Autonomy-chip moved to the
@@ -1237,7 +1273,7 @@ function PromptComposer({
               title="Turn voice chat off"
               aria-label="Turn voice chat off and cancel active listening"
             >
-              ✕
+              <ShellIcon name="close" size={13} />
             </button>
           )}
 
@@ -1256,7 +1292,8 @@ function PromptComposer({
               : "Send (Enter)"
             }
           >
-            {isSending ? "Stop" : anyRecording ? "Send 🎙" : "Send"}
+            <ShellIcon name={isSending ? "square" : anyRecording ? "mic" : "send"} size={14} />
+            <span className="send-label">{isSending ? "Stop" : anyRecording ? "Send voice" : "Send"}</span>
           </button>
         </div>
 
@@ -1279,9 +1316,11 @@ function PromptComposer({
               onClick={() => { if (!connectionLocked) setConnectionPickerOpen((v) => !v); }}
               disabled={connectionLocked}
             >
-              <span className="sico">{scopeConnectionTransport}</span>
-              <span>{scopeConnection}</span>
-              <span className="scaret">{connectionLocked ? "🔒" : "▾"}</span>
+              <span className="sico"><TransportIcon value={scopeConnectionTransport} /></span>
+              <span className="scope-label">{scopeConnection}</span>
+              <span className="scaret">
+                <ShellIcon name={connectionLocked ? "lock" : "chevron-down"} size={12} />
+              </span>
             </button>
             <ConnectionPicker
               key={presetListVersion}
@@ -1328,9 +1367,9 @@ function PromptComposer({
             onClick={() => onPickProject?.()}
             disabled={!onPickProject}
           >
-            <span className="sico">📁</span>
-            <span>{scopeProject}</span>
-            <span className="scaret">▾</span>
+            <span className="sico"><ShellIcon name="folder" size={14} /></span>
+            <span className="scope-label">{scopeProject}</span>
+            <span className="scaret"><ShellIcon name="chevron-down" size={12} /></span>
           </button>
           <div style={{ position: "relative" }}>
             <button
@@ -1340,12 +1379,15 @@ function PromptComposer({
               title="Pick branch — also offers +create worktree from branch"
               onClick={() => setBranchPickerOpen((v) => !v)}
             >
-              <span className="sico">🌿</span>
-              <span>{scopeBranch}</span>
+              <span className="sico"><ShellIcon name="git-branch" size={14} /></span>
+              <span className="scope-label">{scopeBranch}</span>
               {typeof scopeBranchAhead === "number" && scopeBranchAhead > 0 && (
-                <span className="ssub">↑{scopeBranchAhead}</span>
+                <span className="ssub scope-ahead">
+                  <ShellIcon name="arrow-up" size={11} />
+                  {scopeBranchAhead}
+                </span>
               )}
-              <span className="scaret">▾</span>
+              <span className="scaret"><ShellIcon name="chevron-down" size={12} /></span>
             </button>
             <BranchPicker
               open={branchPickerOpen}
@@ -1373,8 +1415,8 @@ function PromptComposer({
             disabled={!onAutonomyChange}
           >
             <span className="adot" />
-            <span>{chipLabel}</span>
-            <span className="acaret">▾</span>
+            <span className="scope-label">{chipLabel}</span>
+            <span className="acaret"><ShellIcon name="chevron-down" size={12} /></span>
           </button>
         </div>
 

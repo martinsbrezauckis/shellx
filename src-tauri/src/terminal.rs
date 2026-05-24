@@ -327,6 +327,17 @@ impl TerminalRegistry {
         inner.remove(key)
     }
 
+    /// Drop a terminal row from the registry. This is intentionally a
+    /// registry operation only; callers that know a PID should signal it
+    /// before dropping the row.
+    pub async fn drop_record(&self, tab_id: &str, terminal_id: &str) -> bool {
+        let key = TerminalKey {
+            tab_id: tab_id.to_string(),
+            terminal_id: terminal_id.to_string(),
+        };
+        self.remove(&key).await.is_some()
+    }
+
     /// Mint the next ACP terminal id (`gs-term-NNNNNNNN`).
     fn mint_acp_id(&self) -> String {
         let n = self.acp_seq.fetch_add(1, Ordering::Relaxed);

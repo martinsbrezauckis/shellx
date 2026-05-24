@@ -2,7 +2,7 @@
  * src/components/RowActions.tsx — shared rename + delete affordance for
  * sidebar/list rows.
  *
- * Renders the canonical hover-revealed "✎ rename + 🗑 delete" cluster used
+ * Renders the canonical hover-revealed rename + delete icon cluster used
  * across LeftRail's chat/past-chat rows. CSS (.row-edit / .row-del) hides
  * the spans until the parent row is hovered, exactly as the inline
  * duplicates did before extraction.
@@ -21,6 +21,7 @@
  * .row-del) keeps working identically.
  */
 import type { JSX } from "react";
+import { ShellIcon } from "./icons";
 
 export interface RowActionsProps {
  /** Click handler for the rename pencil. Omit to hide the pencil. */
@@ -34,7 +35,7 @@ export interface RowActionsProps {
 }
 
 /**
- * Renders the ✎ + 🗑 affordance pair for a list row. Returns null when
+ * Renders the rename + delete affordance pair for a list row. Returns null when
  * both handlers are absent so the parent row doesn't render an empty
  * fragment.
  */
@@ -59,7 +60,7 @@ export function RowActions({
           title={renameTitle ?? "Rename"}
           aria-label={renameTitle ?? "Rename"}
         >
-          ✎
+          <ShellIcon name="pencil" size={12} />
         </span>
       )}
       {onDelete && (
@@ -74,7 +75,7 @@ export function RowActions({
           title={deleteTitle ?? "Delete"}
           aria-label={deleteTitle ?? "Delete"}
         >
-          🗑
+          <ShellIcon name="trash" size={12} />
         </span>
       )}
     </>

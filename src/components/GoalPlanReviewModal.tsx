@@ -12,6 +12,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import { fileDisplayName, SafeMarkdownLink } from "../lib/markdown-links";
+import { ShellIcon } from "./icons";
 
 interface GoalState {
   active: boolean;
@@ -293,7 +294,7 @@ export function GoalPlanReviewModal({
               aria-label="Review later"
               title="Review later in the Plan tab"
             >
-              ✕
+              <ShellIcon name="close" size={14} />
             </button>
           </div>
           <div className="plan-review-title-block">

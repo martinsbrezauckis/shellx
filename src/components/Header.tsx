@@ -1,6 +1,6 @@
 /**
  * src/components/Header.tsx — top header bar.
- * * Layout: brand · Find · spacer · autonomy chip · live-pills · plugins · ⚙.
+ * * Layout: brand · Find · spacer · autonomy chip · live-pills · plugins · settings.
  * 64 px header height; type from --sans + --display tokens.
  * * Autonomy chip maps UI label → grok --permission-mode value:
  * Confirm → default
@@ -12,6 +12,7 @@ import { useCallback, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { apiPostJson } from "../lib/debug-api";
 import { FindPopover, type ChatHit } from "./FindPopover";
+import { ShellIcon } from "./icons";
 
 // brand-shellx.png is a tight crop of the source brand sheet — icon
 // tile + "Shell X" wordmark, no subtitle. The tile/background blends
@@ -194,7 +195,7 @@ export function Header({
             title="Plugins · MCP servers, connectors, skills"
             aria-label="Open plugins"
           >
-            🔌
+            <ShellIcon name="plug" size={16} />
           </button>
         )}
         {onOpenSettings && (
@@ -205,7 +206,7 @@ export function Header({
             title="Settings (⌘,)"
             aria-label="Open settings"
           >
-            ⚙
+            <ShellIcon name="settings" size={16} />
           </button>
         )}
       </div>

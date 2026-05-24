@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { ShellIcon } from "./icons";
 
 export interface BranchInfo {
  /** Short name. "master", "feature/foo", "origin/main" etc. */
@@ -207,7 +208,9 @@ export function BranchPicker({
             onMouseEnter={() => setActiveIndex(index)}
             onClick={() => { onSelect(b.name); onClose(); }}
           >
-            <span style={{ width: 10, opacity: b.isCurrent ? 1 : 0 }}>{b.isCurrent ? "●" : ""}</span>
+            <span className="bp-current-mark" style={{ width: 10, opacity: b.isCurrent ? 1 : 0 }}>
+              {b.isCurrent ? <ShellIcon name="circle-check" size={12} /> : null}
+            </span>
             <span style={{ flex: 1 }}>{b.name}</span>
             {b.isRemote && <span style={{ opacity: 0.5, fontSize: "var(--fs-ui-xs)" }}>remote</span>}
             {b.upstream && <span style={{ opacity: 0.5, fontSize: "var(--fs-ui-xs)" }}>{b.upstream}</span>}

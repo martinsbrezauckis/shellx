@@ -38,6 +38,7 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
+import { ShellIcon } from "./icons";
 
 export interface TaskSnapshot {
   taskId: string;
@@ -58,10 +59,9 @@ export function TasksPanel({
   activeTabId,
 }: {
  /** when set, the panel filters out rows
- * whose tabId does NOT match. Subagent rows (host_mcp origin) have
- * no tabId in the current registry — they appear in a separate
- * "Unattributed" section below the active-tab list with a one-line
- * note documenting the limitation. */
+ * whose tabId does NOT match. Current host_mcp children carry the
+ * owning tab when shellX spawned them; legacy/null rows still fold into
+ * the active tab for visibility. */
   activeTabId?: string | null;
 } = {}): JSX.Element {
   const [tasks, setTasks] = useState<TaskSnapshot[]>([]);
@@ -142,13 +142,35 @@ export function TasksPanel({
       setBusy(false);
     }
   }
-  async function handleKill(taskId: string, commandDisplay: string) {
-    if (!window.confirm(`Kill task "${commandDisplay}"? Sends SIGTERM, then SIGKILL after 3s.`)) {
+  async function handleKill(task: TaskSnapshot) {
+    const terminalNoPid = isTerminalTask(task) && task.pid === null;
+    const action = terminalNoPid
+      ? "ShellX will drop this terminal record because no OS pid was reported."
+      : isTerminalTask(task)
+        ? "Terminal tasks are killed immediately and removed from the registry."
+        : "Sends SIGTERM, then SIGKILL after 3s.";
+    if (!window.confirm(`Kill task "${task.commandDisplay}"? ${action}`)) {
       return;
     }
     setBusy(true);
     try {
-      await invoke("task_kill", { taskId });
+      await invoke("task_kill", { taskId: task.taskId });
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCleanupMcpChildren() {
+    if (!activeTabId) return;
+    if (!window.confirm("Clean Host MCP child processes for this tab? Sends SIGTERM, then SIGKILL after 3s if needed.")) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await invoke<number>("cleanup_mcp_children_for_tab", { tabId: activeTabId });
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -193,22 +215,9 @@ export function TasksPanel({
       )
   ).filter(visibilityFilter);
 
- /* scope by active session tab. Rows with a
- * tabId matching activeTabId pass; rows with tabId=null are split
- * into the "unattributed" bucket (host_mcp subagents — see below).
- * If no activeTabId is set (no session active), don't filter — fall
- * back to global view so power users can still inspect everything. */
- /* folding
- * `tab_id == null` rows into the active-tab list rather than a
- * separate "Unattributed" section. The previous bucket confused
- * users — host-MCP subagents (Agent_spawn) almost always originate
- * from the currently active grok session, but the host_mcp child
- * process doesn't propagate the parent tab id into the subagent
- * registry yet (#10 known limitation). Treating null as "belongs to
- * active session" is correct in 99%+ of cases and removes a phantom
- * UI section. Real attribution fix needs `parent_tab_id` column in
- * host_subagents + thread tabId from MCP-Tab-Id header through
- * dispatch — filed separately. */
+ /* scope by active session tab. Rows with a matching tabId pass.
+ * Legacy/null rows are still folded into the active tab rather than
+ * hidden so older session data remains visible. */
   const filteredTasks: TaskSnapshot[] = [];
   for (const t of searchFiltered) {
     if (!activeTabId) {
@@ -234,6 +243,14 @@ export function TasksPanel({
     }
   }
 
+  const scopedHostMcpCount = activeTabId
+    ? filteredTasks.filter((t) =>
+        t.origin === "host_mcp"
+        && t.tabId === activeTabId
+        && (t.status === "running" || t.status === "stopped"),
+      ).length
+    : 0;
+
   return (
     <div
       className="tasks-pane"
@@ -252,8 +269,8 @@ export function TasksPanel({
           padding: "8px 10px",
           borderBottom: "1px solid var(--border, #222)",
         }}
-      >
-        <strong style={{ fontSize: "var(--fs-ui-sm)" }}>Background Tasks</strong>
+        >
+        <strong style={{ fontSize: "var(--right-heading-size, var(--fs-ui-sm))" }}>Background Tasks</strong>
  {/* dropped the "X this session · Y total"
  * sub-label. Redundant noise: the same count is now visible
  * in the header pill ("X working"), and the panel itself
@@ -264,7 +281,7 @@ export function TasksPanel({
  * rail only renders live (running) tasks — finished rows hide
  * as soon as the next poll sees them as exited/killed. */}
         <label
-          style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "var(--fs-ui-xs)", color: "var(--fg-muted, #888)", userSelect: "none" }}
+          style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted, #888)", userSelect: "none" }}
           title="Include finished (exited/killed) rows in the list"
         >
           <input
@@ -288,7 +305,7 @@ export function TasksPanel({
             border: "1px solid var(--border, #333)",
             color: "inherit",
             borderRadius: 4,
-            fontSize: "var(--fs-ui-xs)",
+            fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
             width: 120,
           }}
         />
@@ -302,19 +319,39 @@ export function TasksPanel({
             border: "1px solid var(--border, #333)",
             color: "inherit",
             borderRadius: 4,
-            fontSize: "var(--fs-ui-xs)",
+            fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
             cursor: busy ? "wait" : "pointer",
           }}
         >
-          ↻
+          <ShellIcon name="refresh" size={13} />
         </button>
+        {scopedHostMcpCount > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleCleanupMcpChildren()}
+            disabled={busy}
+            aria-label="Clean Host MCP children for this tab"
+            title={`Clean ${scopedHostMcpCount} Host MCP child process${scopedHostMcpCount === 1 ? "" : "es"} for this tab`}
+            style={{
+              padding: "2px 8px",
+              background: "transparent",
+              border: "1px solid var(--fg-error, #f55)",
+              color: "var(--fg-error, #f55)",
+              borderRadius: 4,
+              fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
+              cursor: busy ? "wait" : "pointer",
+            }}
+          >
+            <ShellIcon name="trash" size={13} />
+          </button>
+        )}
       </div>
       {error && (
         <div
           role="alert"
           style={{
             color: "var(--fg-error, #f55)",
-            fontSize: 12,
+            fontSize: "var(--right-body-size, 13px)",
             padding: "6px 10px",
             background: "rgba(255, 85, 85, 0.05)",
             borderBottom: "1px solid var(--border, #222)",
@@ -325,7 +362,7 @@ export function TasksPanel({
       )}
       <div style={{ flex: 1, overflow: "auto" }}>
         {tasks.length === 0 ? (
-          <div style={{ padding: 16, fontSize: 12, color: "var(--fg-muted, #888)" }}>
+          <div style={{ padding: 16, fontSize: "var(--right-body-size, 13px)", color: "var(--fg-muted, #888)" }}>
             No live background tasks. Spawn a grok session or open a terminal to see them here.
           </div>
         ) : (
@@ -334,7 +371,7 @@ export function TasksPanel({
               <div key={sec.origin}>
                 <div
                   style={{
-                    fontSize: 10,
+                    fontSize: "var(--right-meta-size, 11px)",
                     textTransform: "uppercase",
                     letterSpacing: 0.6,
                     padding: "6px 10px 2px",
@@ -352,7 +389,7 @@ export function TasksPanel({
                     onToggle={() => toggleExpanded(t.taskId)}
                     onPause={() => void handlePause(t.taskId)}
                     onResume={() => void handleResume(t.taskId)}
-                    onKill={() => void handleKill(t.taskId, t.commandDisplay)}
+                    onKill={() => void handleKill(t)}
                   />
                 ))}
               </div>
@@ -380,6 +417,10 @@ function originLabel(o: string): string {
   }
 }
 
+function isTerminalTask(task: TaskSnapshot): boolean {
+  return task.origin === "user_term" || task.origin === "acp_term";
+}
+
 interface TaskRowProps {
   task: TaskSnapshot;
   expanded: boolean;
@@ -402,6 +443,7 @@ function TaskRow({
   const isRunning = task.status === "running";
   const isStopped = task.status === "stopped";
   const isDead = task.status === "exited" || task.status === "killed";
+  const canKill = !busy && !isDead && (task.pid !== null || isTerminalTask(task));
 
  /* Status color cue. Aligns with the system pill colors used elsewhere
  * (.tool-hdr .run/.done/.fail classes). Stopped uses a muted amber to
@@ -420,7 +462,7 @@ function TaskRow({
         opacity: isDead ? 0.55 : 1,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--right-body-size, 13px)" }}>
         <button
           type="button"
           onClick={onToggle}
@@ -434,7 +476,7 @@ function TaskRow({
             padding: 0,
           }}
         >
-          {expanded ? "▾" : "▸"}
+          <ShellIcon name={expanded ? "chevron-down" : "chevron-right"} size={12} />
         </button>
         <span
           aria-label={`status ${task.status}`}
@@ -451,7 +493,7 @@ function TaskRow({
         <span
           style={{
             fontFamily: "var(--mono, monospace)",
-            fontSize: 12,
+            fontSize: "var(--right-body-size, 13px)",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
@@ -461,7 +503,7 @@ function TaskRow({
         >
           {task.commandDisplay}
         </span>
-        <span style={{ fontSize: "var(--fs-ui-xs)", color: "var(--fg-muted, #888)", flexShrink: 0 }}>
+        <span style={{ fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted, #888)", flexShrink: 0 }}>
           {task.pid !== null ? `pid ${task.pid}` : "no pid"}
         </span>
       </div>
@@ -472,7 +514,7 @@ function TaskRow({
           gap: 6,
           marginLeft: 24,
           marginTop: 3,
-          fontSize: "var(--fs-ui-xs)",
+          fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
           color: "var(--fg-muted, #888)",
         }}
       >
@@ -495,7 +537,7 @@ function TaskRow({
             title="Pause (SIGSTOP on Unix, NtSuspendProcess on Windows)"
             style={btnStyle}
           >
-            ⏸ Pause
+            <ShellIcon name="pause" size={12} /> Pause
           </button>
         )}
         {isStopped && (
@@ -506,18 +548,18 @@ function TaskRow({
             title="Resume (SIGCONT on Unix, NtResumeProcess on Windows)"
             style={btnStyle}
           >
-            ▶ Resume
+            <ShellIcon name="play" size={12} /> Resume
           </button>
         )}
         {!isDead && (
           <button
             type="button"
             onClick={onKill}
-            disabled={busy || task.pid === null}
-            title="Kill (SIGTERM then SIGKILL after 3s)"
+            disabled={!canKill}
+            title={isTerminalTask(task) ? "Kill terminal and remove its task row" : "Kill (SIGTERM then SIGKILL after 3s)"}
             style={{ ...btnStyle, borderColor: "var(--fg-error, #f55)", color: "var(--fg-error, #f55)" }}
           >
-            ✕ Kill
+            <ShellIcon name="close" size={12} /> Kill
           </button>
         )}
       </div>
@@ -527,7 +569,7 @@ function TaskRow({
             marginLeft: 24,
             marginTop: 4,
             padding: 6,
-            fontSize: "var(--fs-ui-xs)",
+            fontSize: "var(--right-code-size, 12px)",
             lineHeight: 1.35,
             background: "var(--bg-elev, #0d0d0d)",
             border: "1px solid var(--border, #222)",
@@ -546,7 +588,7 @@ function TaskRow({
           style={{
             marginLeft: 24,
             marginTop: 4,
-            fontSize: "var(--fs-ui-xs)",
+            fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
             color: "var(--fg-muted, #666)",
             fontStyle: "italic",
           }}
@@ -560,7 +602,7 @@ function TaskRow({
 
 const btnStyle: React.CSSProperties = {
   padding: "2px 6px",
-  fontSize: "var(--fs-ui-xs)",
+  fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
   background: "transparent",
   border: "1px solid var(--border, #333)",
   color: "inherit",

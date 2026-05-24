@@ -641,6 +641,9 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         .route("/state/sessions", get(state_sessions))
         .route("/state/marketplace_health", get(state_marketplace_health))
         .route("/state/session_tooling", get(state_session_tooling))
+        .route("/state/session_activity", get(state_session_activity))
+        .route("/state/session_git", get(state_session_git))
+        .route("/state/session_git/diff", get(state_session_git_diff))
         // GET /screenshot returns a PNG of the shellX window. Used by
         // orchestrating agents (and the diagnostics suite) for visual
         // verification.
@@ -1991,6 +1994,73 @@ async fn state_session_tooling(
     let tab_id = q.tab_id.unwrap_or_else(|| "default".to_string());
     let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
     match crate::session_tooling_snapshot_for_tab(tab_id, &registry, false, false).await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+/// `GET /state/session_activity?tabId=X` — read-only source payload for
+/// the Activity Browser. The React preview parses the returned Grok
+/// hunk_records JSONL and external agents can consume the same source
+/// without scraping UI.
+async fn state_session_activity(
+    Query(q): Query<MarketplaceHealthQuery>,
+    State(s): State<ApiState>,
+) -> impl IntoResponse {
+    let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
+    match crate::session_activity::session_activity_source_for_tab(
+        q.tab_id,
+        registry.inner().clone(),
+    )
+    .await
+    {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionGitQuery {
+    #[serde(rename = "tabId", alias = "tab", alias = "tab_id")]
+    tab_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+/// `GET /state/session_git?tabId=X` — read-only mirror of the Git rail
+/// status model. The route runs git in the active tab environment and
+/// prefers the tab's `agentCwd`, so WSL/SSH reports match what the agent
+/// actually touched.
+async fn state_session_git(
+    Query(q): Query<SessionGitQuery>,
+    State(s): State<ApiState>,
+) -> impl IntoResponse {
+    let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
+    match crate::session_git::git_session_status_for_tab(registry.inner().clone(), q.tab_id, q.cwd)
+        .await
+    {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+/// `GET /state/session_git/diff?tabId=X&scope=head` — read-only diff
+/// preview for external agents and diagnostics scripts.
+async fn state_session_git_diff(
+    Query(q): Query<SessionGitQuery>,
+    State(s): State<ApiState>,
+) -> impl IntoResponse {
+    let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
+    match crate::session_git::git_session_diff_for_tab(
+        registry.inner().clone(),
+        q.tab_id,
+        q.cwd,
+        q.scope,
+    )
+    .await
+    {
         Ok(snapshot) => Json(snapshot).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }

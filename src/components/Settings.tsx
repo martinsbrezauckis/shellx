@@ -30,6 +30,7 @@ import { ConnectorsTab } from "./settings/ConnectorsTab";
 import { AboutTab } from "./settings/AboutTab";
 import { ShellxagentTab } from "./settings/ShellxagentTab";
 import { DataTab } from "./settings/DataTab";
+import { ShellIcon } from "./icons";
 
 export type DensityMode = "compact" | "default" | "comfortable";
 export type ThemeMode = "black" | "black_warm";
@@ -252,7 +253,7 @@ export function Settings({
             aria-label="Close settings"
             title="Close (Esc)"
           >
-            ✕
+            <ShellIcon name="close" size={14} />
           </button>
         </div>
 

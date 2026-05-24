@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
+import { ShellIcon } from "./icons";
 
 type McpKind = "stdio" | "http" | "sse";
 type McpTier = "s" | "a" | "b" | "c";
@@ -218,7 +219,9 @@ export function PluginsModal({
         <header className="pmodal-hdr">
           <span className="pmodal-title">Plugins</span>
           <span className="pmodal-sub">MCP servers, connectors, skills</span>
-          <button className="pmodal-x" onClick={onClose} aria-label="Close" title="Close (Esc)">✕</button>
+          <button className="pmodal-x" onClick={onClose} aria-label="Close" title="Close (Esc)">
+            <ShellIcon name="close" size={14} />
+          </button>
         </header>
 
         <div className="pmodal-body">
@@ -232,7 +235,10 @@ export function PluginsModal({
                 <div className="mp-row-main">
                   <span className="mp-name">shellx-host</span>
                   <span className="mp-kind mp-kind-mcp">MCP</span>
-                  <span className="mp-status mp-status-builtin">● built-in</span>
+                  <span className="mp-status mp-status-builtin">
+                    <ShellIcon name="plug" size={11} />
+                    built-in
+                  </span>
                 </div>
                 <p className="mp-desc">Native fs / process / screenshot / vault / Agent / mem tools.</p>
                 <div className="mp-row-foot">
@@ -303,7 +309,9 @@ export function PluginsModal({
                   style={{ cursor: "pointer" }}
                   title={collapsed ? "Click to expand" : "Click to collapse"}
                 >
-                  <span className="mp-tier-toggle">{collapsed ? "▶" : "▼"}</span>
+                  <span className="mp-tier-toggle">
+                    <ShellIcon name={collapsed ? "chevron-right" : "chevron-down"} size={13} />
+                  </span>
                   {TIER_TITLES[tier]}
                   <span className="ct">
                     · {installedCount}/{list.length}
@@ -400,13 +408,33 @@ function MarketplaceRow({
 
   let statusPill: JSX.Element;
   if (entry.installed && !entry.enabled) {
-    statusPill = <span className="mp-status mp-status-disabled">○ disabled</span>;
+    statusPill = (
+      <span className="mp-status mp-status-disabled">
+        <ShellIcon name="ban" size={11} />
+        disabled
+      </span>
+    );
   } else if (needsKey) {
-    statusPill = <span className="mp-status mp-status-keyneeded">◉ key needed</span>;
+    statusPill = (
+      <span className="mp-status mp-status-keyneeded">
+        <ShellIcon name="lock" size={11} />
+        key needed
+      </span>
+    );
   } else if (entry.installed && entry.enabled) {
-    statusPill = <span className="mp-status mp-status-ready">● enabled</span>;
+    statusPill = (
+      <span className="mp-status mp-status-ready">
+        <ShellIcon name="circle-check" size={11} />
+        enabled
+      </span>
+    );
   } else {
-    statusPill = <span className="mp-status mp-status-available">+ available</span>;
+    statusPill = (
+      <span className="mp-status mp-status-available">
+        <ShellIcon name="plus" size={11} />
+        available
+      </span>
+    );
   }
 
   let action: JSX.Element;
@@ -556,7 +584,11 @@ function MarketplaceRow({
                   disabled={!values[k] || saving === k}
                   style={{ minWidth: 60 }}
                 >
-                  {saving === k ? "…" : savedFlash === k ? "✓" : "Save"}
+                  {saving === k
+                    ? "..."
+                    : savedFlash === k
+                      ? <ShellIcon name="check" size={13} />
+                      : "Save"}
                 </button>
               </div>
             );

@@ -46,6 +46,7 @@
  */
 import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { ShellIcon } from "../icons";
 
 /** Mirrors crate::vault::VaultStatus on the Rust side. camelCase wire. */
 interface VaultStatus {
@@ -300,7 +301,7 @@ export function VaultTab(): JSX.Element {
             onClick={() => setToast(null)}
             aria-label="Dismiss notification"
           >
-            ✕
+            <ShellIcon name="close" size={13} />
           </button>
         </div>
       )}
@@ -429,7 +430,8 @@ function VaultRow({
               aria-label={`Replace value for ${name}`}
               title="Replace value"
             >
-              ✎ Replace
+              <ShellIcon name="pencil" size={13} />
+              <span>Replace</span>
             </button>
           )}
           <button
@@ -443,7 +445,7 @@ function VaultRow({
             }
             title={row.confirmingDelete ? "Click again to confirm" : "Delete secret"}
           >
-            {row.confirmingDelete ? "Delete?" : "🗑"}
+            {row.confirmingDelete ? "Delete?" : <ShellIcon name="trash" size={13} />}
           </button>
         </div>
       </div>
@@ -481,7 +483,7 @@ function VaultRow({
             Save
           </button>
           <button type="button" className="settings-pill" onClick={onCancelReplace}>
-            ✕
+            <ShellIcon name="close" size={13} />
           </button>
         </form>
       )}
@@ -567,7 +569,8 @@ function XaiKeyRow(props: {
             xAI API Key <span style={{ opacity: 0.6, fontWeight: 400, fontSize: "var(--fs-ui-xs)", marginLeft: 6 }}>(optional)</span>
             {props.present && (
               <span style={{ marginLeft: 8, color: "#7fb482" }} aria-label="set">
-                ✓ set
+                <ShellIcon name="check" size={13} />
+                set
               </span>
             )}
             {credSource && credSource !== "none" && (
@@ -609,7 +612,8 @@ function XaiKeyRow(props: {
             className="settings-pill"
             onClick={() => setEditing(true)}
           >
-            ✎ Replace
+            <ShellIcon name="pencil" size={13} />
+            <span>Replace</span>
           </button>
         )}
       </div>
@@ -654,7 +658,7 @@ function XaiKeyRow(props: {
                 setEditing(false);
               }}
             >
-              ✕
+              <ShellIcon name="close" size={13} />
             </button>
           )}
         </form>

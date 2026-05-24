@@ -17,12 +17,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { api } from "../lib/debug-api";
+import { ShellIcon, TransportIcon } from "./icons";
 
 export interface ChatHit {
   id: string;
   title: string;
- /** transport emoji shown on the result row */
-  transport: "💻" | "🐧" | "🔐" | "🌐" | "☁" | "🔗";
+ /** stable transport id; legacy emoji values are still normalized by TransportIcon */
+  transport: string;
  /** project name (or "—" for unfiled) */
   project: string;
  /** human-readable "12 min ago" / "2d" */
@@ -364,7 +365,9 @@ export function FindPopover({
   return (
     <div className="find-wrap">
       <div className="find-bar" onClick={() => inputRef.current?.focus()}>
-        <span className="find-ic">⌕</span>
+        <span className="find-ic">
+          <ShellIcon name="search" size={13} />
+        </span>
         <input
           ref={inputRef}
           type="text"
@@ -400,14 +403,17 @@ export function FindPopover({
             </span>
           </div>
 
-          <div className="find-pop-body" style={{ display: "flex", minHeight: 0 }}>
+          <div className="find-pop-body">
  {/* List column */}
-            <div className="find-list-col" style={{ flex: selectedIdx != null ? "0 0 320px" : "1 1 auto", minWidth: 0 }}>
+            <div
+              className="find-list-col"
+              style={{ flex: selectedIdx != null ? "0 0 320px" : "1 1 auto" }}
+            >
  {/* surface backend search errors so we never
  * silently empty-state when the request actually failed. */}
               {searchError && q.trim() !== "" && (
                 <div style={{ padding: "8px 14px", color: "var(--err)", fontSize: 12, fontFamily: "var(--mono)", borderBottom: "1px solid var(--hairline)" }}>
-                  ✗ search: {searchError}
+                  <ShellIcon name="alert" size={13} /> search: {searchError}
                 </div>
               )}
 
@@ -448,7 +454,9 @@ export function FindPopover({
                       aria-selected={i === selectedIdx}
                     >
                       <span className={`csd ${h.status}`} />
-                      <span className="ttr">{h.transport}</span>
+                      <span className="ttr">
+                        <TransportIcon value={h.transport} size={14} />
+                      </span>
                       <span className="ftitle">{highlight(h.title, q)}</span>
                       <span className="fmeta">{h.project} · {h.ageLabel}</span>
                     </div>
@@ -467,7 +475,9 @@ export function FindPopover({
                     title={h.snippet}
                   >
                     <span className="csd done" />
-                    <span className="ttr">📁</span>
+                    <span className="ttr">
+                      <ShellIcon name="folder" size={14} />
+                    </span>
                     <span className="ftitle" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                       <span>{highlight(h.title, q)}</span>
                       <span style={{ fontSize: "var(--fs-ui-xs)", color: "var(--ink-3)", fontFamily: "var(--mono)" }}>
@@ -486,10 +496,6 @@ export function FindPopover({
                 className="find-preview"
                 style={{
                   flex: "1 1 auto",
-                  borderLeft: "1px solid var(--hairline)",
-                  minWidth: 0,
-                  display: "flex",
-                  flexDirection: "column",
                 }}
               >
                 <div
@@ -531,17 +537,14 @@ export function FindPopover({
                   </button>
                 </div>
                 <div
+                  className="find-preview-body"
                   style={{
-                    flex: 1,
-                    overflow: "auto",
                     padding: "10px 12px",
                     fontFamily: "var(--mono)",
                     fontSize: 12,
                     color: "var(--ink-2)",
                     whiteSpace: "pre-wrap",
                     wordBreak: "break-word",
-                    minHeight: 0,
-                    maxHeight: 360,
                   }}
                 >
                   {previewLoading

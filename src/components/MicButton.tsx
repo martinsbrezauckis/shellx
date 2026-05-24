@@ -29,6 +29,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
+import { ShellIcon, type ShellIconName } from "./icons";
 
 type MicState = "idle" | "recording" | "transcribing" | "error" | "no-key";
 
@@ -42,7 +43,7 @@ export interface MicButtonProps {
   disabled?: boolean;
  /** tells the parent whenever recording state flips
  * so BottomPanel can relabel the Send button while the mic is hot
- * ("Send 🎙"). Saves the click of "stop recording" — Send now
+ * ("Send voice"). Saves the click of "stop recording" — Send now
  * doubles as stop+transcribe+send. */
   onRecordingChange?: (isRecording: boolean) => void;
  /**  voice mode. "talk" = STT-only (default, classic
@@ -52,7 +53,7 @@ export interface MicButtonProps {
   mode?: "talk" | "voice-chat";
  /** Visible label rendered alongside the icon. Empty = icon-only. */
   label?: string;
- /** Glyph shown when idle. Default 🎙. "voice-chat" mode uses 🎧. */
+ /** Legacy idle glyph override. Kept for API compatibility; SVG icons render by mode. */
   idleIcon?: string;
  /** Optional start gate. Return false to keep the mic idle. */
   onBeforeStart?: () => boolean;
@@ -290,16 +291,16 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
  // "transcribing" click is a no-op; user waits for round-trip.
   }
 
- //  idle glyph chosen by mode (overridable via prop).
- // 🎤 Talk = STT-only dictation; 🎧 Voice chat = (next phase) STT +
- // TTS-back. The recording / transcribing / no-key glyphs are mode-
- // agnostic so the user gets consistent feedback regardless of mode.
-  const idleGlyph = idleIcon ?? (mode === "voice-chat" ? "🎧" : "🎤");
-  const icon =
-    state === "recording" ? "⏺"
-    : state === "transcribing" ? "…"
-    : state === "no-key" ? "🔑"
-    : idleGlyph;
+ // SVG icon chosen by state and mode. This keeps the voice controls
+ // visually stable across Windows, Linux, and macOS instead of relying
+ // on platform emoji fonts.
+  void idleIcon;
+  const iconName: ShellIconName =
+    state === "recording" ? "circle"
+    : state === "transcribing" ? "activity"
+    : state === "no-key" ? "lock"
+    : mode === "voice-chat" ? "headphones"
+    : "mic";
   const modeLabel = mode === "voice-chat" ? "Voice chat" : "Talk";
   const title =
     state === "recording" ? `Recording ${elapsed.toFixed(1)}s — click to stop, Esc to cancel`
@@ -319,7 +320,7 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
       title={title}
       aria-label={title}
     >
-      <span className="mic-ic">{icon}</span>
+      <span className="mic-ic"><ShellIcon name={iconName} size={14} /></span>
       {(label ?? modeLabel) && (
         <span className="mic-label">{label ?? modeLabel}</span>
       )}

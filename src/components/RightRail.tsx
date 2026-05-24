@@ -14,17 +14,65 @@ import { useEffect, useMemo, useState, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import pkg from "../../package.json";
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import { ShikiHighlight } from "./ShikiHighlight";
 import { inTauri } from "../lib/tauri-bridge";
 import { SafeMarkdownLink } from "../lib/markdown-links";
 import { grokSearchCapabilities, type SearchCapability } from "../lib/session-capabilities";
+import {
+  branchNameFromSource,
+  gitDirtyTotal,
+  gitStatusSummary,
+  normalizeGitDiffScope,
+  type GitCheckpointResponse,
+  type GitDiffResponse,
+  type GitDiffScope,
+  type GitSessionStatus,
+  type GitWorktreeResponse,
+} from "../lib/git-workflows";
+import {
+  summarizeUpdateDiagnostic,
+  updateErrorIsQuiet,
+  type UpdateDiagnosticInput,
+} from "../lib/update-diagnostics";
+import { cleanUpdateNotes, firstUpdateNotesUrl } from "../lib/update-notes";
 import { TasksPanel } from "./TasksPanel";
 import { apiPost } from "../lib/debug-api";
 import type { RawEventFrame } from "../types/acp";
+import { ShellIcon, TransportIcon, type ShellIconName } from "./icons";
 
-export type RightTab = "Tasks" | "Tooling" | "Plan" | "Files";
+export type RightTab = "Tasks" | "Tooling" | "Git" | "Plan" | "Files";
 const TAB_KEY = "grok-shell.rightTab";
+const VERSION = (pkg as { version?: string }).version ?? "0.0.0";
+
+const RIGHT_TAB_META: Record<RightTab, { label: string; icon: ShellIconName; title: string }> = {
+  Tasks: {
+    label: "Tasks",
+    icon: "activity",
+    title: "Tasks - running session work",
+  },
+  Tooling: {
+    label: "Tools",
+    icon: "plug",
+    title: "Tools - session MCP and capability health",
+  },
+  Git: {
+    label: "Git",
+    icon: "git-branch",
+    title: "Git - status, diffs, checkpoints, and worktrees",
+  },
+  Plan: {
+    label: "Plan",
+    icon: "file",
+    title: "Plan - active goal scratchboard and review",
+  },
+  Files: {
+    label: "Files",
+    icon: "folder",
+    title: "Files - project browser",
+  },
+};
 
 type McpKind = "stdio" | "http" | "sse";
 type McpTier = "s" | "a" | "b" | "c";
@@ -84,7 +132,7 @@ export function RightRail({
   requestedTabSeq,
   onOpenGoalReview,
   connectionLabel = "Local",
-  connectionTransport = "💻",
+  connectionTransport = "local",
   sessionStatus = "Idle",
   onSendPromptToActiveTab,
 }: {
@@ -120,7 +168,7 @@ export function RightRail({
       const v = localStorage.getItem(TAB_KEY);
  // Legacy "Preview" stored from older installs falls through
  // to the new default "Tasks".
-      if (v === "Tasks" || v === "Tooling" || v === "Plan" || v === "Files") return v;
+      if (v === "Tasks" || v === "Tooling" || v === "Git" || v === "Plan" || v === "Files") return v;
     } catch { /* no-op */ }
     return "Tasks";
   });
@@ -136,36 +184,24 @@ export function RightRail({
 
   return (
     <aside className="right">
- {/* Tab order: Tasks (default) | Tools | Plan | Files. Preview dropped. */}
+ {/* Tab order: Tasks (default) | Tools | Git | Plan | Files. Preview dropped. */}
       <div className="right-tabs tabs">
-        <button
-          type="button"
-          className={`tab ${tab === "Tasks" ? "active" : ""}`}
-          onClick={() => setTab("Tasks")}
-        >
-          Tasks
-        </button>
-        <button
-          type="button"
-          className={`tab ${tab === "Tooling" ? "active" : ""}`}
-          onClick={() => setTab("Tooling")}
-        >
-          Tools
-        </button>
-        <button
-          type="button"
-          className={`tab ${tab === "Plan" ? "active" : ""}`}
-          onClick={() => setTab("Plan")}
-        >
-          Plan
-        </button>
-        <button
-          type="button"
-          className={`tab ${tab === "Files" ? "active" : ""}`}
-          onClick={() => setTab("Files")}
-        >
-          Files
-        </button>
+        {(Object.keys(RIGHT_TAB_META) as RightTab[]).map((rightTab) => {
+          const meta = RIGHT_TAB_META[rightTab];
+          return (
+            <button
+              key={rightTab}
+              type="button"
+              className={`tab ${tab === rightTab ? "active" : ""}`}
+              onClick={() => setTab(rightTab)}
+              title={meta.title}
+              aria-label={meta.title}
+            >
+              <ShellIcon name={meta.icon} size={15} />
+              <span className="right-tab-label">{meta.label}</span>
+            </button>
+          );
+        })}
       </div>
 
  {/* TasksPanel scopes by activeTabId so each session sees its
@@ -183,6 +219,7 @@ export function RightRail({
           onSendPromptToActiveTab={onSendPromptToActiveTab}
         />
       )}
+      {tab === "Git" && <GitPane activeTabId={activeTabId ?? null} cwd={cwd} />}
       {tab === "Plan"  && <PlanPane autonomy={autonomy} events={events} activeTabId={activeTabId} prefetchedPlanText={prefetchedPlanText} onPreviewFile={onPreviewFile ?? (() => {})} onOpenGoalReview={onOpenGoalReview} />}
       {tab === "Files" && <FilesPane cwd={cwd} onPreviewFile={onPreviewFile ?? (() => {})} />}
     </aside>
@@ -285,12 +322,17 @@ function ToolingPane({
       <div className="tooling-head">
         <div className="tooling-title">Session Tools</div>
         <div className="tooling-meta">
-          <span>{connectionTransport} {connectionLabel}</span>
+          <span className="tooling-transport">
+            <TransportIcon value={connectionTransport} size={12} />
+            {connectionLabel}
+          </span>
           <span className={!hasConnectedEnvironment && hasLoaded ? "muted" : ""}>{environmentLabel}</span>
           <span>{readySearchCapabilities}/{searchCapabilities.length} search</span>
           <span>{desired.length} desired MCP{desired.length === 1 ? "" : "s"}</span>
         </div>
       </div>
+
+      <UpdateDiagnosticsCard />
 
       {error && (
         <div className="rail-empty tooling-error">
@@ -341,6 +383,139 @@ function ToolingPane({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function openExternal(url: string): void {
+  void invoke("open_url_in_browser", { url })
+    .catch(() => {
+      try { window.open(url, "_blank", "noopener,noreferrer"); } catch { /* ignore */ }
+    });
+}
+
+function UpdateDiagnosticsCard(): JSX.Element {
+  const [state, setState] = useState<UpdateDiagnosticInput>({
+    currentVersion: VERSION,
+    kind: "idle",
+  });
+  const [body, setBody] = useState<string>("");
+
+  async function checkForUpdates(): Promise<void> {
+    if (!inTauri()) return;
+    setState((prev) => ({ ...prev, kind: "checking", errorMessage: null }));
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      const checkedAtMs = Date.now();
+      if (update) {
+        setBody(cleanUpdateNotes(update.body));
+        setState({
+          currentVersion: VERSION,
+          kind: "available",
+          remoteVersion: update.version,
+          checkedAtMs,
+        });
+      } else {
+        setBody("");
+        setState({
+          currentVersion: VERSION,
+          kind: "current",
+          checkedAtMs,
+        });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setBody("");
+      setState({
+        currentVersion: VERSION,
+        kind: "error",
+        errorMessage: msg,
+        checkedAtMs: Date.now(),
+      });
+    }
+  }
+
+  async function installUpdate(): Promise<void> {
+    setState((prev) => ({ ...prev, kind: "installing", progress: 0, errorMessage: null }));
+    try {
+      const [{ check }, { relaunch }] = await Promise.all([
+        import("@tauri-apps/plugin-updater"),
+        import("@tauri-apps/plugin-process"),
+      ]);
+      const update = await check();
+      if (!update) {
+        setState({ currentVersion: VERSION, kind: "current", checkedAtMs: Date.now() });
+        return;
+      }
+      let total = 0;
+      let downloaded = 0;
+      await update.downloadAndInstall((evt) => {
+        if (evt.event === "Started") total = evt.data.contentLength ?? 0;
+        if (evt.event === "Progress") {
+          downloaded += evt.data.chunkLength;
+          if (total > 0) {
+            setState((prev) => ({ ...prev, kind: "installing", progress: downloaded / total }));
+          }
+        }
+      });
+      await relaunch();
+    } catch (e) {
+      setState({
+        currentVersion: VERSION,
+        kind: "error",
+        errorMessage: e instanceof Error ? e.message : String(e),
+        checkedAtMs: Date.now(),
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (!inTauri()) return;
+    void checkForUpdates();
+  }, []);
+
+  const summary = summarizeUpdateDiagnostic(state);
+  const releaseNotesUrl = firstUpdateNotesUrl(body);
+  const quietError = state.kind === "error" && updateErrorIsQuiet(state.errorMessage);
+
+  return (
+    <div className={`tooling-row update-diagnostic update-diagnostic-${summary.accent}`}>
+      <div className="tooling-row-top">
+        <span className="tooling-name">Update diagnostics</span>
+        <span className={`tooling-status ${summary.accent === "bad" ? "bad" : summary.accent === "ok" ? "ok" : summary.accent === "warn" ? "warn" : "muted"}`}>
+          {summary.statusLabel}
+        </span>
+      </div>
+      <div className="tooling-detail">
+        <div>{summary.detail}</div>
+        <div>
+          Host app <code>v{VERSION}</code>
+          {state.checkedAtMs ? ` · checked ${new Date(state.checkedAtMs).toLocaleTimeString()}` : ""}
+        </div>
+        {quietError && <div className="tooling-issue">Updater endpoint is not advertising a usable release manifest right now.</div>}
+      </div>
+      <div className="tooling-actions">
+        {releaseNotesUrl && (
+          <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => openExternal(releaseNotesUrl)}>
+            Notes
+          </button>
+        )}
+        {state.kind === "available" && (
+          <button type="button" className="mp-action-btn mp-action-btn-primary" onClick={() => void installUpdate()}>
+            Install
+          </button>
+        )}
+        <button
+          type="button"
+          className="mp-action-btn mp-action-btn-secondary"
+          onClick={() => void checkForUpdates()}
+          disabled={state.kind === "checking" || state.kind === "installing"}
+        >
+          <ShellIcon name="refresh" size={12} />
+          Check
+        </button>
+      </div>
     </div>
   );
 }
@@ -451,6 +626,317 @@ function toolingIssue(entry: McpEntryStatus, health?: MarketplaceHealthEntry): s
   return null;
 }
 
+/* ─────────────── Git tab ─────────────── */
+
+function GitPane({
+  activeTabId,
+  cwd,
+}: {
+  activeTabId: string | null;
+  cwd: string;
+}): JSX.Element {
+  const [status, setStatus] = useState<GitSessionStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [diffScope, setDiffScope] = useState<GitDiffScope>("head");
+  const [diff, setDiff] = useState<GitDiffResponse | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  const refresh = async (): Promise<void> => {
+    if (!activeTabId || !inTauri()) return;
+    setLoading(true);
+    try {
+      const next = await invoke<GitSessionStatus>("git_session_status", {
+        cwd: cwd || null,
+        tabId: activeTabId,
+      });
+      setStatus(next);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadDiff = async (scopeInput: GitDiffScope): Promise<void> => {
+    if (!activeTabId || !inTauri()) return;
+    const scope = normalizeGitDiffScope(scopeInput);
+    setDiffScope(scope);
+    setDiffLoading(true);
+    try {
+      const next = await invoke<GitDiffResponse>("git_session_diff", {
+        cwd: cwd || null,
+        tabId: activeTabId,
+        scope,
+      });
+      setDiff(next);
+    } catch (e) {
+      setDiff({
+        ok: false,
+        scope,
+        repoRoot: status?.repoRoot ?? null,
+        branch: status?.branch ?? null,
+        diff: "",
+        truncated: false,
+        bytes: 0,
+        lastError: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setDiffLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setStatus(null);
+    setDiff(null);
+    setError(null);
+    setActionMessage(null);
+    if (!activeTabId || !inTauri()) return;
+    let cancelled = false;
+    const tick = async () => {
+      setLoading(true);
+      try {
+        const next = await invoke<GitSessionStatus>("git_session_status", {
+          cwd: cwd || null,
+          tabId: activeTabId,
+        });
+        if (!cancelled) {
+          setStatus(next);
+          setError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 6000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [activeTabId, cwd]);
+
+  async function createCheckpoint(): Promise<void> {
+    if (!activeTabId) return;
+    setActionMessage("Creating checkpoint...");
+    try {
+      const res = await invoke<GitCheckpointResponse>("git_session_create_checkpoint", {
+        cwd: cwd || null,
+        tabId: activeTabId,
+        label: `Before review ${new Date().toLocaleString()}`,
+      });
+      if (!res.ok || !res.checkpoint) {
+        setActionMessage(res.lastError || "Checkpoint failed.");
+      } else {
+        setActionMessage(`Checkpoint saved: ${res.checkpoint.label}`);
+        await refresh();
+      }
+    } catch (e) {
+      setActionMessage(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function createWorktree(): Promise<void> {
+    if (!activeTabId || !status?.ok) return;
+    const sourceBranch = status.branch || "HEAD";
+    const newBranch = branchNameFromSource(sourceBranch);
+    setActionMessage(`Creating ${newBranch}...`);
+    try {
+      const res = await invoke<GitWorktreeResponse>("git_session_create_worktree", {
+        cwd: cwd || null,
+        tabId: activeTabId,
+        sourceBranch,
+        newBranch,
+      });
+      if (!res.ok) {
+        setActionMessage(res.lastError || "Worktree creation failed.");
+      } else {
+        setActionMessage(`Worktree ready: ${res.worktreePath}`);
+        await refresh();
+      }
+    } catch (e) {
+      setActionMessage(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (!activeTabId) {
+    return (
+      <div className="rail-empty">
+        <div className="rail-empty-line">No active session.</div>
+        <div className="rail-empty-hint">Open or start a tab to inspect repository state.</div>
+      </div>
+    );
+  }
+
+  if (!inTauri()) {
+    return (
+      <div className="rail-empty">
+        <div className="rail-empty-line">Git checks need Tauri.</div>
+        <div className="rail-empty-hint">The desktop backend runs git inside the active tab environment.</div>
+      </div>
+    );
+  }
+
+  const dirtyTotal = status?.ok ? gitDirtyTotal(status) : 0;
+  const ready = status?.ok === true;
+
+  return (
+    <div className="git-pane">
+      <div className="git-head">
+        <div>
+          <div className="git-title">Session Git</div>
+          <div className="git-subtitle">{status ? gitStatusSummary(status) : "Checking repository..."}</div>
+        </div>
+        <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void refresh()} disabled={loading}>
+          <ShellIcon name="refresh" size={12} />
+        </button>
+      </div>
+
+      {error && (
+        <div className="rail-empty tooling-error">
+          <div className="rail-empty-line">Git snapshot failed.</div>
+          <div className="rail-empty-hint"><code>{error}</code></div>
+        </div>
+      )}
+
+      {!error && loading && !status && (
+        <div className="rail-empty"><div className="rail-empty-line">Checking git...</div></div>
+      )}
+
+      {!error && status && !status.ok && (
+        <div className="rail-empty">
+          <div className="rail-empty-line">No git repository detected.</div>
+          <div className="rail-empty-hint"><code>{status.lastError ?? status.cwd}</code></div>
+        </div>
+      )}
+
+      {ready && status && (
+        <>
+          <div className="git-card">
+            <div className="git-row">
+              <span>Repository</span>
+              <code title={status.repoRoot ?? status.cwd}>{status.repoName ?? status.repoRoot ?? status.cwd}</code>
+            </div>
+            <div className="git-row">
+              <span>Branch</span>
+              <code>{status.branch ?? "detached"}</code>
+            </div>
+            <div className="git-row">
+              <span>Transport</span>
+              <span className="git-pill"><TransportIcon value={status.transport} size={12} /> {status.transport}</span>
+            </div>
+            {status.upstream && (
+              <div className="git-row">
+                <span>Upstream</span>
+                <code>{status.upstream}</code>
+              </div>
+            )}
+          </div>
+
+          <div className="git-metrics" aria-label="Git change counters">
+            <GitMetric label="Staged" value={status.staged} tone={status.staged ? "ok" : "muted"} />
+            <GitMetric label="Unstaged" value={status.unstaged} tone={status.unstaged ? "warn" : "muted"} />
+            <GitMetric label="Untracked" value={status.untracked} tone={status.untracked ? "warn" : "muted"} />
+            <GitMetric label="Conflicts" value={status.conflicts} tone={status.conflicts ? "bad" : "muted"} />
+          </div>
+
+          <div className="git-actions">
+            <button type="button" className="mp-action-btn mp-action-btn-primary" onClick={() => void loadDiff("head")}>
+              <ShellIcon name="file" size={12} />
+              Review diff
+            </button>
+            <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void createCheckpoint()} disabled={loading}>
+              <ShellIcon name="check" size={12} />
+              Checkpoint
+            </button>
+            <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void createWorktree()}>
+              <ShellIcon name="git-branch" size={12} />
+              Worktree
+            </button>
+          </div>
+
+          {actionMessage && <div className="git-action-message">{actionMessage}</div>}
+
+          <div className="tooling-section-label">Diff review</div>
+          <div className="git-diff-tabs">
+            {(["head", "working", "staged", "lastCommit"] as GitDiffScope[]).map((scope) => (
+              <button
+                key={scope}
+                type="button"
+                className={diffScope === scope ? "active" : ""}
+                onClick={() => void loadDiff(scope)}
+              >
+                {scope === "lastCommit" ? "last commit" : scope}
+              </button>
+            ))}
+          </div>
+          {diffLoading && <div className="rail-empty"><div className="rail-empty-line">Loading diff...</div></div>}
+          {diff && !diffLoading && (
+            <div className="git-diff-box" onMouseUp={onMouseUpAutoCopy}>
+              {!diff.ok && <div className="git-action-message bad">{diff.lastError ?? "Diff failed."}</div>}
+              {diff.ok && diff.diff.trim().length === 0 && (
+                <div className="rail-empty">
+                  <div className="rail-empty-line">No changes in this scope.</div>
+                  <div className="rail-empty-hint">{dirtyTotal === 0 ? "The worktree is clean." : "Try another diff scope."}</div>
+                </div>
+              )}
+              {diff.ok && diff.diff.trim().length > 0 && (
+                <ShikiHighlight code={diff.diff} path={`session-${diff.scope}.diff`} />
+              )}
+              {diff.truncated && <div className="git-action-message">Large diff truncated at rail preview limit.</div>}
+            </div>
+          )}
+
+          <div className="tooling-section-label">Checkpoints</div>
+          <div className="git-list">
+            {status.checkpoints.length === 0 ? (
+              <div className="git-muted">No local shellX checkpoints yet.</div>
+            ) : status.checkpoints.slice(0, 5).map((cp) => (
+              <div className="git-list-row" key={cp.id} title={cp.path}>
+                <span>{cp.label}</span>
+                <code>{new Date(cp.createdAtMs).toLocaleString()}</code>
+              </div>
+            ))}
+          </div>
+
+          <div className="tooling-section-label">Worktrees</div>
+          <div className="git-list">
+            {status.worktrees.length === 0 ? (
+              <div className="git-muted">No git worktrees reported.</div>
+            ) : status.worktrees.slice(0, 5).map((wt) => (
+              <div className="git-list-row" key={wt.path} title={wt.path}>
+                <span>{wt.branch ?? (wt.detached ? "detached" : "worktree")}</span>
+                <code>{wt.path}</code>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function GitMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "ok" | "warn" | "bad" | "muted";
+}): JSX.Element {
+  return (
+    <div className={`git-metric git-metric-${tone}`}>
+      <span>{value}</span>
+      <small>{label}</small>
+    </div>
+  );
+}
+
 /* ─────────────── Files tab ─────────────── */
 
 /**
@@ -531,7 +1017,9 @@ function FilesPane({
           {subpath ? `…/${subpath}` : cwd.split("/").filter(Boolean).pop() ?? "/"}
         </span>
         {subpath && (
-          <button type="button" className="fv-up" onClick={goUp} title="Up one level">↑</button>
+          <button type="button" className="fv-up" onClick={goUp} title="Up one level">
+            <ShellIcon name="arrow-up" size={13} />
+          </button>
         )}
       </div>
       {error && (
@@ -570,7 +1058,9 @@ function FilesPane({
           title={`${e.kind} · ${e.size} bytes${e.kind === "file" ? " · drag onto composer to attach" : ""}`}
           style={{ cursor: e.kind === "file" ? "grab" : "pointer" }}
         >
-          <span className="fv-ic">{e.kind === "dir" ? "📁" : "📄"}</span>
+          <span className="fv-ic">
+            <ShellIcon name={e.kind === "dir" ? "folder" : "file"} size={14} />
+          </span>
           <span className="fv-name">{e.name}</span>
         </div>
         );
@@ -799,12 +1289,14 @@ function PlanPane({
           <div className="plan-entries" onMouseUp={onMouseUpAutoCopy}>
             {planEntries.map((entry, i) => {
               const status = entry.status ?? "pending";
-              const glyph =
-                status === "completed" ? "✓" :
-                status === "in_progress" ? "⟳" : "○";
+              const icon =
+                status === "completed" ? "check" :
+                status === "in_progress" ? "loader" : "circle";
               return (
                 <div key={i} className={`plan-entry plan-entry-${status}`}>
-                  <span className={`plan-entry-glyph plan-entry-glyph-${status}`}>{glyph}</span>
+                  <span className={`plan-entry-glyph plan-entry-glyph-${status}`}>
+                    <ShellIcon name={icon} size={14} />
+                  </span>
                   <span className="plan-entry-content">{entry.content}</span>
                   {entry.priority && entry.priority !== "medium" && (
                     <span className={`plan-entry-prio plan-entry-prio-${entry.priority}`}>
@@ -967,7 +1459,8 @@ function GoalStatusBar({
     <>
       <div className="goal-status" title={`Goal: ${state.objective.slice(0, 200)}`}>
         <span className={`goal-status-pill goal-status-${statusLabel.toLowerCase().replace(/[^a-z]/g, "")}`}>
-          ⟳ Goal {statusLabel}
+          <ShellIcon name="activity" size={13} />
+          Goal {statusLabel}
         </span>
         <span className="goal-status-meta">
           {state.continuationsTotal} cont · {elapsedStr}
@@ -998,7 +1491,8 @@ function GoalStatusBar({
               onClick={onTogglePause}
               title={state.pausedByUser ? "Resume auto-continuation" : "Pause auto-continuation (only user can pause)"}
             >
-              {state.pausedByUser ? "▶ Resume" : "⏸ Pause"}
+              <ShellIcon name={state.pausedByUser ? "play" : "pause"} size={12} />
+              <span>{state.pausedByUser ? "Resume" : "Pause"}</span>
             </button>
             <button
               type="button"
@@ -1006,7 +1500,8 @@ function GoalStatusBar({
               onClick={onMarkComplete}
               title="Mark goal as complete — stops the auto-continuation loop. Use when grok finished but didn't call the goal_complete tool itself."
             >
-              ✓ Mark Complete
+              <ShellIcon name="check" size={12} />
+              <span>Mark Complete</span>
             </button>
           </>
         )}
