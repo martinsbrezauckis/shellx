@@ -1991,6 +1991,43 @@ fn percentile(samples: &mut [u128], pct: f64) -> Value {
 mod tests {
     use super::*;
 
+    fn fake_grok_bin() -> &'static Path {
+        static FAKE_GROK: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        FAKE_GROK
+            .get_or_init(|| {
+                let dir =
+                    std::env::temp_dir().join(format!("shellx-fake-grok-{}", std::process::id()));
+                std::fs::create_dir_all(&dir).expect("create fake grok dir");
+                let path = if cfg!(target_os = "windows") {
+                    dir.join("grok.cmd")
+                } else {
+                    dir.join("grok")
+                };
+                if cfg!(target_os = "windows") {
+                    std::fs::write(&path, "@echo off\r\necho fake grok ok\r\nexit /b 0\r\n")
+                        .expect("write fake grok cmd");
+                } else {
+                    std::fs::write(&path, "#!/bin/sh\nprintf 'fake grok ok\\n'\nexit 0\n")
+                        .expect("write fake grok script");
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let mut perms = std::fs::metadata(&path)
+                            .expect("fake grok metadata")
+                            .permissions();
+                        perms.set_mode(0o755);
+                        std::fs::set_permissions(&path, perms).expect("chmod fake grok executable");
+                    }
+                }
+                path
+            })
+            .as_path()
+    }
+
+    fn use_fake_grok_bin() {
+        std::env::set_var("GROK_BIN", fake_grok_bin());
+    }
+
     #[test]
     fn personas_embed_with_expected_header_shape() {
         // Every persona's line 1 must start with `# <name> — <description>`.
@@ -2087,14 +2124,20 @@ mod tests {
     /// the spawned child's pid + a 60-char command display. We use a
     /// fresh registry per test so other test cases don't pollute counts.
     ///
-    /// The grok binary may not exist on PATH in CI — that's fine; the row
-    /// gets registered BEFORE spawn failure, and `run_to_completion`
-    /// flips it to a terminal status. We assert on the row being present
-    /// and origin-tagged, not on the child's eventual fate.
+    /// CI does not install a real grok CLI, so this test points GROK_BIN
+    /// at a tiny fake executable and asserts on shellX's registry behavior
+    /// rather than upstream grok behavior.
     #[tokio::test]
     async fn spawn_registers_into_process_registry_under_host_mcp() {
-        let reg = Arc::new(ProcessRegistry::new());
-        set_process_registry(reg.clone());
+        use_fake_grok_bin();
+        let reg = match process_registry() {
+            Some(existing) => existing.clone(),
+            None => {
+                let reg = Arc::new(ProcessRegistry::new());
+                set_process_registry(reg.clone());
+                reg
+            }
+        };
 
         // Use a unique persona-tagged task so we can find our row amongst
         // any other parallel tests' rows in the same global subagent
@@ -2110,22 +2153,11 @@ mod tests {
             None,
         )
         .await
-        .expect("spawn returns a handle even when grok is missing");
+        .expect("spawn returns a handle with fake grok");
 
-        // Race window: the row insert happens after `cmd.spawn` succeeds.
-        // On CI without grok installed, spawn fails and we early-return —
-        // in that case NO row is registered (the brief asks for registration
-        // ON spawn, not on attempt). So this test only meaningfully asserts
-        // when grok is on PATH. We skip the assertion silently otherwise.
         let snaps = reg.list().await;
         let matching: Vec<_> = snaps.iter().filter(|s| s.cmd.contains(&needle)).collect();
-        if matching.is_empty() {
-            // grok missing on PATH — no row was ever registered. Soft-pass.
-            eprintln!(
-                "spawn_registers_into_process_registry_under_host_mcp: skipping (grok not on PATH)"
-            );
-            return;
-        }
+        assert!(!matching.is_empty(), "expected registry row for fake grok");
         let row = matching[0];
         assert_eq!(
             row.source,
@@ -2337,30 +2369,21 @@ mod tests {
     }
 
     /// Concurrency proof: drive the registry through the public spawn/status
-    /// path with PATH stripped (so `grok` is not found and each child marks
-    /// Failed quickly). Verifies N parallel spawns produce N distinct
+    /// path with GROK_BIN pointed at a fake executable. Verifies N parallel
+    /// spawns produce N distinct
     /// subagent_ids, the registry tracks them concurrently, and each one's
     /// status is independently queryable. This is the load-bearing claim
     /// behind "drop the one-at-a-time constraint" — see the user's brief
     /// 2026-05-18.
     #[tokio::test]
     async fn concurrent_spawns_get_distinct_ids_and_resolve_independently() {
-        // PATH is global to the test process; the spawn just needs to
-        // produce a *deterministic* outcome (Failed) so we don't depend on
-        // grok being installed. The handles we collect are what we assert
-        // on — not the child's behaviour.
+        use_fake_grok_bin();
         // Raise the cap — prior tests in the same process can leave the
         // registry pre-populated, which would race the 6-cap. 20 is
         // safe-margin for the 5 spawns this test does.
         std::env::set_var("SHELLX_MAX_SUBAGENTS", "20");
         let mut tasks = Vec::new();
         for i in 0..5 {
-            // wait=true so each call returns a terminal-state result;
-            // the spawn task internally transitions to Failed when grok
-            // isn't on PATH (verified above via env -i PATH=/usr/bin:/bin),
-            // but here PATH may still have grok — that's fine, the
-            // status is whatever the child resolves to. We only assert
-            // on registry mechanics: distinct ids, independent rows.
             let t = tokio::spawn(async move {
                 spawn_subagent(
                     "general-purpose",
@@ -2407,17 +2430,16 @@ mod tests {
 
     /// When `ledger_dir` is passed to `spawn_subagent`, the spawn must
     /// atomically write `<ledger_dir>/<subagent_id>.md` AFTER the child
-    /// has been spawned successfully (or — when spawn fails — must NOT
-    /// produce the file). On CI/WSL where `grok` may not be on PATH the
-    /// child still gets spawned in the OS sense long enough to be
-    /// reaped; the test asserts on file presence + content shape
-    /// regardless of the eventual exit status of the child.
+    /// has been spawned successfully. CI does not install grok, so the
+    /// test uses a fake executable and asserts on file presence + content
+    /// shape regardless of the eventual exit status of the child.
     ///
     /// Load-bearing invariant: the parent /goal skill no longer touches
     /// the file from its own write path, so Windows file-lock contention
     /// is eliminated.
     #[tokio::test]
     async fn spawn_with_ledger_dir_writes_atomic_record() {
+        use_fake_grok_bin();
         // Fresh tempdir under /tmp/ so we don't collide with any other
         // test or with a real session's `~/.grok/goals/.../subagents/`.
         let unique = format!(
@@ -2441,7 +2463,7 @@ mod tests {
             None,
         )
         .await
-        .expect("spawn returns a handle (even if grok is missing on PATH)");
+        .expect("spawn returns a handle with fake grok");
 
         let id_str = v["subagent_id"]
             .as_str()
@@ -2451,23 +2473,9 @@ mod tests {
         // The ledger file is written synchronously inside spawn_subagent
         // (after pid persist, before the detached run_to_completion
         // task is fired), so by the time spawn_subagent returns the
-        // file MUST exist on disk if grok was on PATH.
-        //
-        // If grok is NOT on PATH, the `cmd.spawn` call inside
-        // spawn_subagent fails early and we never reach the ledger
-        // branch — by design (failed spawns do not produce phantom
-        // rows). In that case we accept "no file written" as a soft
-        // pass, matching the pattern of the registry-mirror test above.
+        // file MUST exist on disk.
         let expected_path = ledger.join(format!("{}.md", id_str));
-        if !expected_path.exists() {
-            // Cleanup before bailing in case mkdir did get as far as
-            // creating the dir.
-            let _ = std::fs::remove_dir_all(&ledger);
-            eprintln!(
-                "spawn_with_ledger_dir_writes_atomic_record: skipping (grok not on PATH, no ledger written)"
-            );
-            return;
-        }
+        assert!(expected_path.exists(), "expected ledger file for fake grok");
 
         // Assert file shape: contains the persona, the subagent id, an
         // ISO timestamp, status: running, and the task preview.
@@ -2482,8 +2490,8 @@ mod tests {
             "ledger missing persona line"
         );
         assert!(
-            body.contains("- status: running"),
-            "ledger missing status line"
+            body.contains("- status: running") || body.contains("- status: completed"),
+            "ledger missing expected status line"
         );
         assert!(
             body.contains(&needle),
