@@ -21,7 +21,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/test-media-extraction.ts && tsx scripts/test-session-media.ts && tsx scripts/test-markdown-links.ts && tsx scripts/test-file-preview-types.ts && tsx scripts/test-session-capabilities.ts && tsx scripts/test-pending-local-events.ts && tsx scripts/test-chat-rendering.tsx && tsx scripts/test-terminal-b.ts && tsx scripts/test-permission-pill.ts && tsx scripts/test-voice-chat.ts",
+    "test": "tsx scripts/test-media-extraction.ts && tsx scripts/test-session-media.ts && tsx scripts/test-markdown-links.ts && tsx scripts/test-update-notes.ts && tsx scripts/test-file-preview-types.ts && tsx scripts/test-session-capabilities.ts && tsx scripts/test-pending-local-events.ts && tsx scripts/test-chat-rendering.tsx && tsx scripts/test-terminal-b.ts && tsx scripts/test-permission-pill.ts && tsx scripts/test-voice-chat.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

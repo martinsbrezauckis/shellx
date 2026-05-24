@@ -93,9 +93,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "shellX ${{ github.ref_name }}"
           releaseBody: |
-            See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/CHANGELOG.md) for what's new.
-
-            This draft is not visible to auto-update clients until the release is published.
+            See the changelog on GitHub for what's new.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }} --features debug-api

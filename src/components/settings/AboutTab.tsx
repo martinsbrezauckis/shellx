@@ -25,7 +25,11 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import pkg from "../../../package.json";
+import { SafeMarkdownLink } from "../../lib/markdown-links";
+import { cleanUpdateNotes } from "../../lib/update-notes";
 
 /**
  * Open `url` in the user's external default browser via the Tauri
@@ -85,7 +89,7 @@ export function AboutTab(): JSX.Element {
         setUpdateState({
           kind: "available",
           remoteVersion: update.version,
-          message: update.body,
+          message: cleanUpdateNotes(update.body) || `Update v${update.version} is available.`,
         });
       } else {
         setUpdateState({
@@ -202,7 +206,17 @@ export function AboutTab(): JSX.Element {
                       : "var(--ink-3)",
               }}
             >
-              {updateState.message}
+              {updateState.kind === "available" ? (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    p: ({ children }) => <span>{children}</span>,
+                    a: ({ href, children }) => <SafeMarkdownLink href={href}>{children}</SafeMarkdownLink>,
+                  }}
+                >
+                  {updateState.message}
+                </ReactMarkdown>
+              ) : updateState.message}
             </div>
           )}
         </dd>

@@ -20,7 +20,9 @@
  * UI stays clean.
  */
 import { useEffect, useState, type JSX } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
+import { cleanUpdateNotes, firstUpdateNotesUrl } from "../lib/update-notes";
 
 interface UpdateState {
   available: boolean;
@@ -37,6 +39,13 @@ const INITIAL: UpdateState = {
   progress: 0,
   error: null,
 };
+
+function openExternal(url: string): void {
+  void invoke("open_url_in_browser", { url })
+    .catch(() => {
+      try { window.open(url, "_blank", "noopener,noreferrer"); } catch { /* ignore */ }
+    });
+}
 
 export function UpdateBanner(): JSX.Element | null {
   const [state, setState] = useState<UpdateState>(INITIAL);
@@ -55,7 +64,7 @@ export function UpdateBanner(): JSX.Element | null {
           ...prev,
           available: true,
           version: update.version,
-          body: update.body,
+          body: cleanUpdateNotes(update.body),
           error: null,
         }));
       } catch (err: unknown) {
@@ -117,6 +126,7 @@ export function UpdateBanner(): JSX.Element | null {
   }
 
   if (!state.available && !state.error) return null;
+  const releaseNotesUrl = firstUpdateNotesUrl(state.body);
 
   return (
     <div
@@ -142,8 +152,26 @@ export function UpdateBanner(): JSX.Element | null {
         <>
           <span>
             <strong style={{ color: "var(--ink)" }}>Update v{state.version}</strong> available.
-            {state.body ? ` ${state.body.slice(0, 80)}` : ""}
           </span>
+          {releaseNotesUrl && (
+            <button
+              type="button"
+              onClick={() => openExternal(releaseNotesUrl)}
+              style={{
+                fontFamily: "var(--sans)",
+                fontSize: "var(--fs-ui-sm)",
+                background: "transparent",
+                color: "var(--accent)",
+                border: "1px solid color-mix(in srgb, var(--accent), transparent 70%)",
+                borderRadius: "var(--radius-button)",
+                padding: "3px 10px",
+                cursor: "pointer",
+                fontWeight: 500,
+              }}
+            >
+              Release notes
+            </button>
+          )}
           <span style={{ flex: 1 }} />
           {state.downloading ? (
             <span>
