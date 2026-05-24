@@ -284,16 +284,16 @@ async fn session_activity_source_for_tab_with_fallback(
                 ),
             });
         };
-        return read_ssh_activity_source(
-            tab_key,
+        return read_ssh_activity_source(SshActivitySourceRequest {
+            tab_id: tab_key,
             session_id,
-            source_cwd,
+            cwd: source_cwd,
             transport,
-            &ssh_config,
+            ssh_config: &ssh_config,
             linux_home,
-            &agent_cwd_s,
-            &session_id_s,
-        )
+            cwd_s: &agent_cwd_s,
+            session_id_s: &session_id_s,
+        })
         .await;
     }
 
@@ -467,16 +467,30 @@ fn remote_join(base: &str, name: &str) -> String {
     format!("{}/{}", base.trim_end_matches('/'), name)
 }
 
-async fn read_ssh_activity_source(
+struct SshActivitySourceRequest<'a> {
     tab_id: String,
     session_id: Option<String>,
     cwd: Option<String>,
     transport: String,
-    ssh_config: &SshSpawnConfig,
-    linux_home: &str,
-    cwd_s: &str,
-    session_id_s: &str,
+    ssh_config: &'a SshSpawnConfig,
+    linux_home: &'a str,
+    cwd_s: &'a str,
+    session_id_s: &'a str,
+}
+
+async fn read_ssh_activity_source(
+    request: SshActivitySourceRequest<'_>,
 ) -> Result<SessionActivitySource, String> {
+    let SshActivitySourceRequest {
+        tab_id,
+        session_id,
+        cwd,
+        transport,
+        ssh_config,
+        linux_home,
+        cwd_s,
+        session_id_s,
+    } = request;
     let scratch_dir = remote_scratch_dir(linux_home, cwd_s, session_id_s);
     let hunk_path = remote_join(&scratch_dir, "hunk_records.jsonl");
     let updates_path = remote_join(&scratch_dir, "updates.jsonl");
@@ -695,7 +709,7 @@ async fn ssh_run_activity_command(
     Ok(out.stdout)
 }
 
-fn path_to_string(path: &PathBuf) -> String {
+fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 

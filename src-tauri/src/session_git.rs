@@ -436,7 +436,7 @@ fn list_checkpoints(repo_root: &str, tab_id: &str) -> Vec<GitCheckpointSummary> 
         .filter_map(|entry| entry.ok())
         .filter_map(|entry| read_checkpoint(entry.path()))
         .collect::<Vec<_>>();
-    out.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+    out.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_ms));
     out.truncate(20);
     out
 }
