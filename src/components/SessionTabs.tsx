@@ -26,6 +26,15 @@ function truncTitle(s: string, max = 28): string {
   return s.slice(0, half) + "…" + s.slice(s.length - half);
 }
 
+function statusLabel(status: SessionTab["status"]): string {
+  switch (status) {
+    case "run": return "running";
+    case "done": return "complete";
+    case "input": return "needs input";
+    case "idle": return "idle";
+  }
+}
+
 export function SessionTabs({
   sessions,
   activeId,
@@ -150,8 +159,9 @@ export function SessionTabs({
         </button>
       )}
       <div className="session-tabs-rail" ref={railRef} onScroll={measure}>
-        {sessions.map((s) => {
+        {sessions.map((s, index) => {
           const isRenaming = renamingId === s.id;
+          const sessionNo = index + 1;
           return (
           <div
             key={s.id}
@@ -179,12 +189,18 @@ export function SessionTabs({
                 startRename(s.id, s.title || "");
               }
             }}
-            title={isRenaming ? "" : s.title}
+            title={isRenaming ? "" : `#${sessionNo} ${s.title}`}
             role="button"
             tabIndex={0}
           >
             {s.transport && <span className="ttr">{s.transport}</span>}
-            <span className={`sd ${s.status}`} />
+            <span
+              className={`stab-num ${s.status}`}
+              aria-label={`Session ${sessionNo}, ${statusLabel(s.status)}`}
+              title={`Session ${sessionNo} · ${statusLabel(s.status)}`}
+            >
+              {sessionNo}
+            </span>
             {isRenaming ? (
               <input
                 ref={inputRef}
@@ -274,16 +290,21 @@ export function SessionTabs({
             <div className="stab-dropdown-head">
               {sessions.length} {sessions.length === 1 ? "session" : "sessions"}
             </div>
-            {sessions.map((s) => (
+            {sessions.map((s, index) => (
               <div
                 key={s.id}
                 className={`stab-dropdown-row ${s.id === activeId ? "active" : ""}`}
                 onClick={() => { onActivate(s.id); setDropdownOpen(false); }}
                 role="option"
                 aria-selected={s.id === activeId}
-                title={s.title}
+                title={`#${index + 1} ${s.title}`}
               >
-                <span className={`sd ${s.status}`} />
+                <span
+                  className={`stab-num ${s.status}`}
+                  aria-label={`Session ${index + 1}, ${statusLabel(s.status)}`}
+                >
+                  {index + 1}
+                </span>
                 {s.transport && <span className="ttr">{s.transport}</span>}
                 <span className="stab-dropdown-title">{s.title || "(untitled)"}</span>
                 <span

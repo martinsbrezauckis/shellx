@@ -375,6 +375,7 @@ pub struct RawEvent {
 /// loopback HTTP so the parallel testing cycle can verify React's state
 /// without a human looking at the window.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UiState {
     /// Current panel sizes (percentages 0..100). Mirrors the React
     /// `react-resizable-panels` group sizes; localStorage persists in
@@ -395,7 +396,7 @@ pub struct UiState {
     /// Left rail active tab (Projects / Files / Skills).
     #[serde(default)]
     pub left_tab: Option<String>,
-    /// Right rail active tab (Plan / Preview).
+    /// Right rail active tab (Tasks / Tooling / Plan / Files).
     #[serde(default)]
     pub right_tab: Option<String>,
 }
@@ -580,7 +581,7 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         // rail-pane (and external drivers) can render fan-out subagents
         // without parsing the raw event stream.
         .route("/state/subagents", get(state_subagents))
-        .route("/state/ui", get(state_ui))
+        .route("/state/ui", get(state_ui).post(set_ui_state))
         // #367: /state/files removed. Files tab in RightRail
         // calls `list_project_files` Tauri command directly; the HTTP
         // stub had no caller.
@@ -639,6 +640,7 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         // drivers, React session-recovery flow, headless diagnostics).
         .route("/state/sessions", get(state_sessions))
         .route("/state/marketplace_health", get(state_marketplace_health))
+        .route("/state/session_tooling", get(state_session_tooling))
         // GET /screenshot returns a PNG of the shellX window. Used by
         // orchestrating agents (and the diagnostics suite) for visual
         // verification.
@@ -689,6 +691,18 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
             axum::routing::delete(connections_delete_http),
         )
         .route("/connections/:id/test", post(connections_test_http))
+        .route(
+            "/outside-connectors",
+            get(outside_connectors_list_http).post(outside_connectors_save_http),
+        )
+        .route(
+            "/outside-connectors/:id",
+            axum::routing::delete(outside_connectors_delete_http),
+        )
+        .route(
+            "/outside-connectors/:id/test",
+            post(outside_connectors_test_http),
+        )
         .with_state(app_state);
 
     // Token + origin gate everything except /health. Token
@@ -881,7 +895,7 @@ struct RecentQuery {
     /// pull the entire global ring and post-filter client-side.
     /// `tab_id` over the wire (we re-export as both casings since
     /// existing callers use the camel form too).
-    #[serde(alias = "tabId", alias = "tab")]
+    #[serde(alias = "tabId", alias = "tab", alias = "sessionId")]
     tab_id: Option<String>,
     /// When `1`, wrap the result in
     /// `{ events, count, earliestT, latestT }`. Default 0 keeps the
@@ -1032,7 +1046,13 @@ struct ConnectBody {
     // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
     // drivers + test agents that reach for the shorter `tab` form stop
     // silently collapsing to the default tab.
-    #[serde(rename = "tabId", alias = "tab", alias = "tab_id", default)]
+    #[serde(
+        rename = "tabId",
+        alias = "tab",
+        alias = "tab_id",
+        alias = "sessionId",
+        default
+    )]
     tab_id: Option<String>,
     /// Saved-preset id from
     /// `~/.shellx/connections.json`. When set, takes priority over
@@ -1042,6 +1062,11 @@ struct ConnectBody {
     /// debug-api drivers can exercise SSH presets too.
     #[serde(rename = "connectionId", default)]
     connection_id: Option<String>,
+    /// Explicit restart opt-in. Without this, /connect is idempotent:
+    /// an already-active tab returns ok/alreadyActive instead of spawning
+    /// over the existing child handle.
+    #[serde(default)]
+    restart: bool,
 }
 
 async fn connect(
@@ -1062,16 +1087,29 @@ async fn connect(
     // test agent calling /connect with the WSL preset saw an existing
     // SSH session retained and `{ok:true}` returned — confusing.
     // Caller must explicitly /abort first when switching transports.
-    if guard.has_active_child() && body.connection_id.is_some() {
+    if guard.has_active_child() && body.connection_id.is_some() && !body.restart {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({
                 "error": "session_already_active",
                 "tabId": tab_key,
-                "hint": "POST /abort?tabId=<tab> before /connect with a new connectionId. To re-connect the same session use /connect without connectionId.",
+                "hint": "POST /abort?tabId=<tab> before /connect with a new connectionId, or pass restart:true for an explicit restart.",
             })),
         )
             .into_response();
+    }
+    if guard.has_active_child() && !body.restart {
+        let existing_cwd = guard
+            .get_cwd_for_restart()
+            .unwrap_or_else(|| body.cwd.clone());
+        return Json(serde_json::json!({
+            "ok": true,
+            "tabId": tab_key,
+            "cwd": existing_cwd,
+            "alreadyActive": true,
+            "hint": "Existing session kept. Pass restart:true or POST /abort before reconnecting.",
+        }))
+        .into_response();
     }
     // If a connectionId is supplied, resolve the preset through the
     // ConnectionStore and apply its transport.
@@ -1180,9 +1218,9 @@ async fn connect(
     // process_*, fs_watch) and grok dead-ends trying to use them via
     // `use_tool`.
     let mut servers = crate::inject_host_mcp_server(body.mcp_servers, Some(tab_key.as_str()));
-    // Marketplace injection on the /connect path too — transport-aware
-    // per AGENT-B8 so stdio entries don't get injected into a WSL/SSH
-    // session where their binaries aren't on the remote PATH.
+    // Marketplace compatibility hook on the /connect path too. The
+    // marketplace now writes Grok-native config.toml entries instead of
+    // injecting duplicate session/new mcp_servers.
     let transport_kind = guard.transport_kind();
     if let serde_json::Value::Array(arr) =
         crate::mcp_marketplace::build_session_new_entries_for_transport(transport_kind).await
@@ -1309,6 +1347,16 @@ async fn connect(
                 .await;
         }
     }
+    if body.restart && guard.has_active_child() {
+        if let Err(e) = guard.abort_session().await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("restart abort failed: {}", e),
+            )
+                .into_response();
+        }
+    }
+
     match guard.start(&body.cwd, s.app.clone()).await {
         Ok(_) => {
             info!("debug-api /connect ok cwd={}", body.cwd);
@@ -1349,7 +1397,13 @@ struct PromptBody {
     // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
     // drivers + test agents that reach for the shorter `tab` form stop
     // silently collapsing to the default tab.
-    #[serde(rename = "tabId", alias = "tab", alias = "tab_id", default)]
+    #[serde(
+        rename = "tabId",
+        alias = "tab",
+        alias = "tab_id",
+        alias = "sessionId",
+        default
+    )]
     tab_id: Option<String>,
 }
 
@@ -1368,7 +1422,43 @@ async fn prompt(
     // Query first, body fallback. Matches /connect semantics so
     // multi-tab drivers can use the same routing scheme.
     let tab_key = crate::acp::tab_id_or_default(q.tab_id.clone().or_else(|| body.tab_id.clone()));
-    let session_arc = registry.get_or_create(&tab_key).await;
+    let Some(session_arc) = registry.get_existing(&tab_key).await else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "session_not_connected",
+                "tabId": tab_key,
+                "hint": "POST /connect for this tab before /prompt.",
+            })),
+        )
+            .into_response();
+    };
+
+    let needs_restart = {
+        let guard = session_arc.lock().await;
+        guard.is_wedged() && guard.get_cwd_for_restart().is_some()
+    };
+    if needs_restart {
+        let restart_cwd = {
+            let guard = session_arc.lock().await;
+            guard.get_cwd_for_restart().unwrap_or_default()
+        };
+        info!(
+            "debug-api /prompt: session wedged for tab '{}'; auto-restarting with cwd='{}'",
+            tab_key, restart_cwd
+        );
+        let mut guard = session_arc.lock().await;
+        let _ = guard.abort_session().await;
+        guard.mark_prompt_responded();
+        if let Err(e) = guard.start(&restart_cwd, s.app.clone()).await {
+            warn!("debug-api /prompt: wedge auto-restart failed: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("wedge auto-restart failed: {}", e),
+            )
+                .into_response();
+        }
+    }
 
     // B2 — server-side `/goal <objective>` intercept. Without
     // this, external `/prompt` callers (shellXagent test scripts, curl
@@ -1442,6 +1532,19 @@ async fn prompt(
         match guard.initiate_and_send_prompt(&final_prompt).await {
             Ok(rx) => rx,
             Err(e) => {
+                if crate::goal_orchestrator::GoalOrchestrator::parse_goal_command(&body.prompt)
+                    .is_some()
+                {
+                    let orch = s
+                        .app
+                        .state::<std::sync::Arc<crate::goal_orchestrator::GoalOrchestrator>>()
+                        .inner()
+                        .clone();
+                    let tab_for_clear = tab_key.clone();
+                    tokio::spawn(async move {
+                        orch.clear_state(&tab_for_clear, "prompt-send-failed").await;
+                    });
+                }
                 return (StatusCode::CONFLICT, e).into_response();
             }
         }
@@ -1449,11 +1552,21 @@ async fn prompt(
 
     // Don't block on the response — events stream over WS. A 60-min
     // timeout keeps the task from leaking if grok hangs.
+    let wait_session_arc = session_arc.clone();
+    let wait_tab_key = tab_key.clone();
     tokio::spawn(async move {
         match timeout(Duration::from_secs(3600), rx).await {
-            Ok(Ok(_)) => info!("debug-api /prompt response received"),
+            Ok(Ok(_)) => {
+                let mut guard = wait_session_arc.lock().await;
+                guard.mark_prompt_responded();
+                info!("debug-api /prompt response received");
+            }
             Ok(Err(_)) => warn!("debug-api /prompt channel closed"),
-            Err(_) => warn!("debug-api /prompt timed out"),
+            Err(_) => {
+                let mut guard = wait_session_arc.lock().await;
+                guard.mark_prompt_timeout();
+                warn!("debug-api /prompt timed out for tab '{}'", wait_tab_key);
+            }
         }
     });
 
@@ -1466,14 +1579,25 @@ struct AbortBody {
     // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
     // drivers + test agents that reach for the shorter `tab` form stop
     // silently collapsing to the default tab.
-    #[serde(rename = "tabId", alias = "tab", alias = "tab_id", default)]
+    #[serde(
+        rename = "tabId",
+        alias = "tab",
+        alias = "tab_id",
+        alias = "sessionId",
+        default
+    )]
     tab_id: Option<String>,
-    /// Accept `soft` in the JSON body as
-    /// alias for the `?keepSession=1` query param. Some drivers pass
-    /// flags in the body (curl --data) and were getting hard-abort
-    /// silently when they expected soft. The query param remains the
-    /// canonical form.
-    #[serde(default, alias = "keep_session", alias = "keepSession")]
+    /// Accept soft-cancel flags in the JSON body as aliases for the
+    /// `?keepSession=1` query param. Some drivers pass flags in the body
+    /// (curl --data) and were getting hard-abort silently when they
+    /// expected soft. The query param remains the canonical form.
+    #[serde(
+        default,
+        alias = "keep_session",
+        alias = "keepSession",
+        alias = "cancel_prompt_only",
+        alias = "cancelPromptOnly"
+    )]
     soft: Option<bool>,
 }
 
@@ -1557,7 +1681,13 @@ struct AbortQuery {
     // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
     // drivers + test agents that reach for the shorter `tab` form stop
     // silently collapsing to the default tab.
-    #[serde(rename = "tabId", alias = "tab", alias = "tab_id", default)]
+    #[serde(
+        rename = "tabId",
+        alias = "tab",
+        alias = "tab_id",
+        alias = "sessionId",
+        default
+    )]
     tab_id: Option<String>,
     /// `1` = soft abort (interrupt prompt, keep session). Default 0
     /// preserves legacy "tear it all down" behavior.
@@ -1610,7 +1740,7 @@ async fn set_autonomy(
     // intuitive names to the canonical mode the registry expects.
     let canonical = match body.mode.as_str() {
         // Canonical (pass-through).
-        "plan" | "acceptEdits" | "default" | "bypassPermissions" | "alwaysApprove" => {
+        "plan" | "acceptEdits" | "default" | "bypassPermissions" | "alwaysApprove" | "dontAsk" => {
             body.mode.clone()
         }
         // UX-label aliases.
@@ -1623,7 +1753,7 @@ async fn set_autonomy(
                 Json(serde_json::json!({
                     "error": "invalid_mode",
                     "received": body.mode,
-                    "accepted": ["plan", "acceptEdits", "default", "bypassPermissions", "alwaysApprove", "confirm", "auto"],
+                    "accepted": ["plan", "acceptEdits", "default", "bypassPermissions", "alwaysApprove", "dontAsk", "confirm", "auto"],
                     "hint": "Use `default` for per-tool gate (alias: `confirm`) or `bypassPermissions` for auto-approve (alias: `auto`).",
                 })),
             ).into_response();
@@ -1789,6 +1919,14 @@ async fn state_ui(State(s): State<ApiState>) -> impl IntoResponse {
     Json(s.hub().ui_snapshot()).into_response()
 }
 
+async fn set_ui_state(
+    State(s): State<ApiState>,
+    Json(body): Json<UiStatePatch>,
+) -> impl IntoResponse {
+    s.hub().ui_apply(body);
+    Json(s.hub().ui_snapshot()).into_response()
+}
+
 /// `GET /state/subagents` — list every subagent spawned via the host
 /// MCP `Agent` tool. Returns the wire shape
 /// produced by `subagent::list_summaries` — one row per registry
@@ -1839,6 +1977,23 @@ async fn state_marketplace_health(
         "tabId": tab_id,
         "entries": entries,
     }))
+}
+
+/// `GET /state/session_tooling?tabId=X` — read-only mirror of the
+/// right-rail Tooling tab model. Unlike the Tauri command used by the
+/// desktop pane, this endpoint does not create ghost sessions or kick
+/// off probes; `/connect` already schedules probes for live debug-api
+/// sessions.
+async fn state_session_tooling(
+    Query(q): Query<MarketplaceHealthQuery>,
+    State(s): State<ApiState>,
+) -> impl IntoResponse {
+    let tab_id = q.tab_id.unwrap_or_else(|| "default".to_string());
+    let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
+    match crate::session_tooling_snapshot_for_tab(tab_id, &registry, false, false).await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
 }
 
 async fn state_sessions(State(s): State<ApiState>) -> impl IntoResponse {
@@ -3084,6 +3239,46 @@ struct ScreenshotQuery {
     full_screen: Option<u8>,
 }
 
+#[cfg(target_os = "macos")]
+fn xcap_window_title(win: &xcap::Window) -> String {
+    win.title().unwrap_or_default()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn xcap_window_title(win: &xcap::Window) -> String {
+    win.title().to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn xcap_window_app_name(win: &xcap::Window) -> String {
+    win.app_name().unwrap_or_default()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn xcap_window_app_name(win: &xcap::Window) -> String {
+    win.app_name().to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn xcap_window_width(win: &xcap::Window) -> u32 {
+    win.width().unwrap_or(0)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn xcap_window_width(win: &xcap::Window) -> u32 {
+    win.width()
+}
+
+#[cfg(target_os = "macos")]
+fn xcap_window_height(win: &xcap::Window) -> u32 {
+    win.height().unwrap_or(0)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn xcap_window_height(win: &xcap::Window) -> u32 {
+    win.height()
+}
+
 /// Tauri-HWND screenshot path. Uses PrintWindow with
 /// PW_RENDERFULLCONTENT (flag 0x2) — the only flag that captures
 /// WebView2's compositor surface; without it the bitmap is blank
@@ -3365,15 +3560,23 @@ async fn screenshot(
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
                 let _ = writeln!(f, "[/screenshot] xcap enumerated {} windows", windows.len());
                 for (i, w) in windows.iter().enumerate().take(20) {
-                    let _ = writeln!(f, "  [{}] title='{}' app='{}' wxh={}x{}", i, w.title(), w.app_name(), w.width(), w.height());
+                    let _ = writeln!(
+                        f,
+                        "  [{}] title='{}' app='{}' wxh={}x{}",
+                        i,
+                        xcap_window_title(w),
+                        xcap_window_app_name(w),
+                        xcap_window_width(w),
+                        xcap_window_height(w)
+                    );
                 }
             }
         }
         let big_window = windows
             .into_iter()
             .filter(|w| {
-                let app = w.app_name().to_ascii_lowercase();
-                let title = w.title().to_string();
+                let app = xcap_window_app_name(w).to_ascii_lowercase();
+                let title = xcap_window_title(w);
                 let title_lc = title.to_ascii_lowercase();
                 let app_is_shellx = app == "shellx.exe" || app == "shellx" || app == "app.exe" || app == "app";
                 let title_is_shellx_exact = title.eq_ignore_ascii_case("shellX");
@@ -3386,10 +3589,10 @@ async fn screenshot(
                     && !title_lc.contains(".json")
                     && !title_lc.contains(".rs");
                 (app_is_shellx || title_is_shellx_exact || title_contains_shellx_app)
-                    && w.height() > 100
-                    && w.width() > 200
+                    && xcap_window_height(w) > 100
+                    && xcap_window_width(w) > 200
             })
-            .max_by_key(|w| (w.width() as u64) * (w.height() as u64));
+            .max_by_key(|w| (xcap_window_width(w) as u64) * (xcap_window_height(w) as u64));
         let img = if let Some(win) = big_window {
             win.capture_image().map_err(|e| format!("window capture: {}", e))?
         } else if allow_full_screen {
@@ -4249,14 +4452,16 @@ async fn diagnostics_run(
             let big = windows
                 .into_iter()
                 .filter(|w| {
-                    let app = w.app_name().to_ascii_lowercase();
-                    let title = w.title().to_string();
+                    let app = xcap_window_app_name(w).to_ascii_lowercase();
+                    let title = xcap_window_title(w);
                     let app_is_shellx =
                         app == "shellx.exe" || app == "shellx" || app == "app.exe" || app == "app";
                     let title_is_shellx_exact = title.eq_ignore_ascii_case("shellX");
-                    (app_is_shellx || title_is_shellx_exact) && w.height() > 100 && w.width() > 200
+                    (app_is_shellx || title_is_shellx_exact)
+                        && xcap_window_height(w) > 100
+                        && xcap_window_width(w) > 200
                 })
-                .max_by_key(|w| (w.width() as u64) * (w.height() as u64));
+                .max_by_key(|w| (xcap_window_width(w) as u64) * (xcap_window_height(w) as u64));
             let img = if let Some(win) = big {
                 win.capture_image().map_err(|e| format!("window: {}", e))?
             } else {
@@ -4654,22 +4859,68 @@ struct PrCreateBody {
     draft: Option<bool>,
     #[serde(default)]
     head: Option<String>,
+    #[serde(
+        rename = "tabId",
+        alias = "tab",
+        alias = "tab_id",
+        alias = "sessionId",
+        default
+    )]
+    tab_id: Option<String>,
+    /// Per-operation approval gate for a remote GitHub mutation.
+    /// Auth to the local debug API proves caller identity, not intent.
+    #[serde(
+        rename = "confirmRemoteCreate",
+        alias = "confirm_remote_create",
+        default
+    )]
+    confirm_remote_create: bool,
 }
 
 async fn github_pr_create(
     State(s): State<ApiState>,
     Json(body): Json<PrCreateBody>,
 ) -> impl IntoResponse {
+    if !body.confirm_remote_create {
+        return (
+            StatusCode::PRECONDITION_REQUIRED,
+            Json(serde_json::json!({
+                "error": "approval_required",
+                "hint": "Creating a GitHub PR mutates remote state. Re-submit with confirmRemoteCreate:true after explicit per-operation approval.",
+            })),
+        )
+            .into_response();
+    }
     let cwd = {
         let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
-        let session_arc = registry.get_or_create("default").await;
+        let tab_key = crate::acp::tab_id_or_default(body.tab_id.clone());
+        let Some(session_arc) = registry.get_existing(&tab_key).await else {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "session_not_connected",
+                    "tabId": tab_key,
+                    "hint": "Open or connect the tab whose cwd should own this PR, then try again.",
+                })),
+            )
+                .into_response();
+        };
         let guard = session_arc.lock().await;
         guard
             .get_debug_session_info()
             .get("cwd")
             .and_then(|v| v.as_str().map(String::from))
     };
-    let cwd = cwd.unwrap_or_else(|| ".".to_string());
+    let Some(cwd) = cwd else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "session_cwd_missing",
+                "hint": "The active tab has no cwd yet; connect it before creating a PR.",
+            })),
+        )
+            .into_response();
+    };
 
     let mut args: Vec<String> = vec![
         "pr".into(),
@@ -5061,6 +5312,102 @@ async fn connections_test_http(
     Json(r).into_response()
 }
 
+// ─────────── Outside connector HTTP surface ───────────
+//
+// Auth inherits the existing bearer-token middleware. Secrets are not
+// accepted here; bodies contain only vault-key references.
+
+use crate::outside_connectors::OutsideConnector;
+
+async fn outside_connectors_list_http(State(_s): State<ApiState>) -> impl IntoResponse {
+    match crate::get_or_open_outside_connectors() {
+        Ok(store) => {
+            let connectors = store.list().await;
+            Json(serde_json::json!({ "connectors": connectors })).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": { "code": "store_open_failed", "message": e }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn outside_connectors_save_http(
+    State(_s): State<ApiState>,
+    Json(body): Json<OutsideConnector>,
+) -> impl IntoResponse {
+    let store = match crate::get_or_open_outside_connectors() {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": { "code": "store_open_failed", "message": e }
+                })),
+            )
+                .into_response();
+        }
+    };
+    match store.save(body).await {
+        Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "bad_request", "message": e }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn outside_connectors_delete_http(
+    State(_s): State<ApiState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let store = match crate::get_or_open_outside_connectors() {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": { "code": "store_open_failed", "message": e }
+                })),
+            )
+                .into_response();
+        }
+    };
+    match store.delete(&id).await {
+        Ok(true) => (StatusCode::NO_CONTENT, "").into_response(),
+        Ok(false) => Json(serde_json::json!({ "alreadyGone": true })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": { "code": "internal", "message": e }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn outside_connectors_test_http(
+    State(_s): State<ApiState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    match crate::get_or_open_outside_connectors() {
+        Ok(store) => Json(store.test(&id).await).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": { "code": "store_open_failed", "message": e }
+            })),
+        )
+            .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod snippet_tests {
     use super::*;
@@ -5079,6 +5426,63 @@ mod snippet_tests {
         ] {
             assert!(!valid_session_id(bad), "accepted invalid id: {bad}");
         }
+    }
+
+    #[test]
+    fn abort_body_accepts_cancel_prompt_only_alias_for_soft_abort() {
+        let body: AbortBody = serde_json::from_value(serde_json::json!({
+            "tabId": "t1",
+            "cancelPromptOnly": true
+        }))
+        .expect("abort body should parse");
+
+        assert_eq!(body.tab_id.as_deref(), Some("t1"));
+        assert_eq!(body.soft, Some(true));
+    }
+
+    #[test]
+    fn prompt_body_accepts_session_id_alias_for_docs_compat() {
+        let body: PromptBody = serde_json::from_value(serde_json::json!({
+            "prompt": "hello",
+            "sessionId": "tab-docs"
+        }))
+        .expect("prompt body should parse");
+
+        assert_eq!(body.tab_id.as_deref(), Some("tab-docs"));
+    }
+
+    #[test]
+    fn connect_body_accepts_session_id_alias_for_docs_compat() {
+        let body: ConnectBody = serde_json::from_value(serde_json::json!({
+            "cwd": "/tmp/project",
+            "sessionId": "tab-docs"
+        }))
+        .expect("connect body should parse");
+
+        assert_eq!(body.tab_id.as_deref(), Some("tab-docs"));
+    }
+
+    #[test]
+    fn pr_create_body_requires_explicit_remote_create_confirmation() {
+        let body: PrCreateBody = serde_json::from_value(serde_json::json!({
+            "base": "main",
+            "title": "Test",
+            "body": "Body",
+            "tabId": "tab-pr"
+        }))
+        .expect("pr body should parse");
+
+        assert_eq!(body.tab_id.as_deref(), Some("tab-pr"));
+        assert!(!body.confirm_remote_create);
+
+        let approved: PrCreateBody = serde_json::from_value(serde_json::json!({
+            "base": "main",
+            "title": "Test",
+            "body": "Body",
+            "confirmRemoteCreate": true
+        }))
+        .expect("approved pr body should parse");
+        assert!(approved.confirm_remote_create);
     }
 
     #[test]

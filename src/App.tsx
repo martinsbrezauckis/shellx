@@ -9,7 +9,7 @@
  * │ (proj/  │ masthead                         │                │
  * │  past   │ output (chat bubbles + tools)    │                │
  * │  chats) ├──────────────────────────────────┤                │
- * │         │ bottom tabs (Chat/Term/Logs/Std) │                │
+ * │         │ bottom tabs (Chat/Term/Media/Log)│                │
  * │         │ prompt input                     │                │
  * └─────────┴──────────────────────────────────┴────────────────┘
  * * react-resizable-panels handles the horizontal + vertical divisions;
@@ -75,9 +75,10 @@ import {
   type SettingsValues,
 } from "./components/Settings";
 import { useKeyboardShortcuts } from "./lib/shortcuts";
-import { api, apiPost } from "./lib/debug-api";
+import { api, apiPost, apiPostJson } from "./lib/debug-api";
 import { inTauri } from "./lib/tauri-bridge";
 import { groupEvents } from "./lib/grouping";
+import { PendingLocalEventQueue, localEventTabId } from "./lib/pending-local-events";
 import { extractAssistantTurnAfterIndex, getVoiceTurnToSpeak } from "./lib/voice-chat";
 import type { AcpCommand, RawEventFrame } from "./types/acp";
 
@@ -1181,6 +1182,8 @@ export default function App(): JSX.Element {
   }, []);
   const persistRef = useRef(persist);
   useEffect(() => { persistRef.current = persist; }, [persist]);
+  const pendingLocalEvents = useRef(new PendingLocalEventQueue());
+  const pendingLocalFlushTimers = useRef<Map<string, number>>(new Map());
 
   /* One-shot rehydration on mount. Empty deps + a Set ref dedupe
    * already-loaded sessionIds so this doesn't re-append on tab switch.
@@ -1282,6 +1285,7 @@ export default function App(): JSX.Element {
             ?? null;
           if (tag) {
             tabSessionByTab.current.set(tag, sid);
+            flushPendingLocalEvents(tag);
             if (!sessionConnectionMetaWritten.current.has(sid)) {
               sessionConnectionMetaWritten.current.add(sid);
               const tab = tabsRef.current.find((t) => t.tabId === tag);
@@ -1492,16 +1496,25 @@ export default function App(): JSX.Element {
    * Keyed by tabId so a failed spawn in tab A never blocks tab B.
    */
   const spawnInFlight = useRef<Set<string>>(new Set());
-  async function connect(): Promise<void> {
-    const myTabId = activeTab?.tabId ?? null;
+  type ConnectTarget = {
+    tabId?: string | null;
+    cwd?: string | null;
+    connectionId?: string | null;
+    autonomy?: AutonomyMode | null;
+  };
+  async function connect(target: ConnectTarget = {}): Promise<boolean> {
+    const targetTab = target.tabId
+      ? tabsRef.current.find((t) => t.tabId === target.tabId) ?? null
+      : activeTab;
+    const myTabId = target.tabId ?? targetTab?.tabId ?? null;
     if (myTabId && spawnInFlight.current.has(myTabId)) {
       pushUiEvent(`· connect[${myTabId}]: another spawn already in flight for this tab, skipping`);
-      return;
+      return false;
     }
     if (!inTauri()) {
       pushUiEvent("· connect: skipped (browser preview, no Tauri IPC bridge)");
       updateTabById(myTabId, { status: "Idle" });
-      return;
+      return false;
     }
     if (myTabId) spawnInFlight.current.add(myTabId);
     setError(null);
@@ -1509,27 +1522,35 @@ export default function App(): JSX.Element {
     /* Use the active tab's cwd; fall back to the app-level cwd when
      * the tab has not been folder-picked yet. The tab-scoped cwd is
      * the canonical working directory once a tab is active. */
-    const spawnCwd = activeTab?.cwd && activeTab.cwd.trim() ? activeTab.cwd : cwd;
+    const spawnCwd =
+      (target.cwd && target.cwd.trim())
+        ? target.cwd
+        : (targetTab?.cwd && targetTab.cwd.trim())
+          ? targetTab.cwd
+          : cwd;
     if (!spawnCwd) {
       pushUiEvent("✗ connect: no folder set. Pick one via the 📁 pill below.");
       updateTabById(myTabId, { status: "Error" });
       if (myTabId) spawnInFlight.current.delete(myTabId);
-      return;
+      return false;
     }
     pushUiEvent(`→ connect ${spawnCwd}`);
     try {
       // Push the active autonomy BEFORE spawning grok.
       // set_permission_mode only applies to the NEXT spawn (acp.rs
       // composes --always-approve at spawn time), so order matters.
+      const spawnAutonomy = target.autonomy ?? targetTab?.autonomy ?? autonomy;
       try {
-        await invoke("set_permission_mode", { mode: autonomy, tabId: myTabId });
+        await invoke("set_permission_mode", { mode: spawnAutonomy, tabId: myTabId });
       } catch { /* non-fatal — falls back to "default" / Confirm */ }
       const result = await invoke<string>("start_grok_session", {
         cwd: spawnCwd,
         wslDistro: null,
         wslGrokPath: null,
         mcpServers: null,
-        connectionId: activeTab?.connectionId ?? null,
+        connectionId: target.connectionId !== undefined
+          ? target.connectionId
+          : targetTab?.connectionId ?? null,
         tabId: myTabId,
       });
       pushUiEvent(`✓ ${result}`);
@@ -1541,10 +1562,12 @@ export default function App(): JSX.Element {
         });
         if (typeof max === "number" && max > 0) setMaxTokens(max);
       } catch { /* non-fatal */ }
+      return true;
     } catch (err: any) {
       setError(String(err));
       updateTabById(myTabId, { status: "Error" });
       pushUiEvent(`✗ ${err}`);
+      return false;
     } finally {
       if (myTabId) spawnInFlight.current.delete(myTabId);
     }
@@ -1611,8 +1634,9 @@ export default function App(): JSX.Element {
       // normal send path).
       if (activeTab && activeTab.status !== "Connected") {
         pushUiEvent(`→ auto-connect (goal-mode start)`);
-        try { await connect(); } catch (err: any) {
-          setError(`Auto-connect failed: ${err}`);
+        const connected = await connect();
+        if (!connected) {
+          setError("Auto-connect failed");
           return;
         }
       }
@@ -1687,10 +1711,9 @@ export default function App(): JSX.Element {
     // first so the user's prompt isn't lost on a fresh empty session.
     if (activeTab && activeTab.status !== "Connected") {
       pushUiEvent(`→ auto-connect (resume-then-send)`);
-      try {
-        await connect();
-      } catch (err: any) {
-        setError(`Auto-connect failed: ${err}`);
+      const connected = await connect();
+      if (!connected) {
+        setError("Auto-connect failed");
         return;
       }
       // The local `activeTab` capture doesn't observe the post-connect
@@ -1828,11 +1851,25 @@ export default function App(): JSX.Element {
     if (ev.kind === "ui") {
       void persistRef.current(ev).then((ok) => {
         if (ok) return;
-        window.setTimeout(() => {
-          void persistRef.current(ev);
-        }, 250);
+        const tabId = localEventTabId(ev, activeTabIdRef.current);
+        if (!tabId) return;
+        pendingLocalEvents.current.enqueue(tabId, ev);
+        schedulePendingLocalFlush(tabId, 250);
       });
     }
+  }
+
+  function schedulePendingLocalFlush(tabId: string, delayMs: number): void {
+    if (pendingLocalFlushTimers.current.has(tabId)) return;
+    const timer = window.setTimeout(() => {
+      pendingLocalFlushTimers.current.delete(tabId);
+      flushPendingLocalEvents(tabId);
+    }, delayMs);
+    pendingLocalFlushTimers.current.set(tabId, timer);
+  }
+
+  function flushPendingLocalEvents(tabId: string): void {
+    void pendingLocalEvents.current.flush(tabId, persistRef.current);
   }
 
   function pushUiEvent(text: string): void {
@@ -1860,7 +1897,7 @@ export default function App(): JSX.Element {
   }
 
   function handleAutonomyChange(mode: AutonomyMode): void {
-    setAutonomy(mode);
+    void setAutonomyAndPersist(mode);
   }
 
   /**
@@ -2089,7 +2126,12 @@ export default function App(): JSX.Element {
     });
     setActiveTabId(t.tabId);
     if (status === "Idle" || status === "Error") {
-      void connect();
+      void connect({
+        tabId: t.tabId,
+        cwd: t.cwd,
+        connectionId: t.connectionId ?? null,
+        autonomy: t.autonomy,
+      });
     }
   }
 
@@ -2110,7 +2152,12 @@ export default function App(): JSX.Element {
     setTabs((prev) => [...prev, t]);
     setActiveTabId(t.tabId);
     if (status === "Idle" || status === "Error") {
-      void connect();
+      void connect({
+        tabId: t.tabId,
+        cwd: t.cwd,
+        connectionId: t.connectionId ?? null,
+        autonomy: t.autonomy,
+      });
     }
   }
 
@@ -2319,7 +2366,7 @@ export default function App(): JSX.Element {
     "new-session": handleNewTab,
     "close-session": () => handleCloseTab(),
     attach: () => { void handleAttach(); },
-    "cycle-autonomy": () => setAutonomy((mode) => cycleAutonomy(mode)),
+    "cycle-autonomy": () => void setAutonomyAndPersist(cycleAutonomy(autonomy)),
     // j/k/y/n/e are handled inside ChatOutput (per-card focus). Leave
     // them un-mapped here so the registry's skipInInput logic doesn't
     // block focus-aware behavior.
@@ -2351,7 +2398,21 @@ export default function App(): JSX.Element {
 
   async function setAutonomyAndPersist(mode: AutonomyMode): Promise<void> {
     setAutonomy(mode);
+    updateActiveTab({ autonomy: mode });
     try { await invoke("set_permission_mode", { mode, tabId: activeTab?.tabId ?? null }); } catch { /* non-fatal */ }
+    try {
+      const res = await apiPostJson<{ appliesAfterReconnect?: boolean }>("/autonomy", {
+        mode,
+        tabId: activeTabIdRef.current ?? activeTab?.tabId ?? null,
+      });
+      if (res?.appliesAfterReconnect) {
+        window.dispatchEvent(
+          new CustomEvent("shellx:autonomy-needs-reconnect", {
+            detail: { mode },
+          }),
+        );
+      }
+    } catch { /* debug API may be off */ }
   }
 
   function insertSlashIntoPrompt(name: string): void {
@@ -2889,6 +2950,7 @@ export default function App(): JSX.Element {
                     /* Filter to the active tab's events so the
                      * Logs/Stderr tabs don't mix all tabs. */
                     events={eventsForActiveTab}
+                    groups={groups}
                     tab={bottomTab}
                     onTabChange={setBottomTab}
                     onAttach={() => void handleAttach()}
@@ -2896,6 +2958,7 @@ export default function App(): JSX.Element {
                     /* Drag-and-drop attach from the right-rail Files
                      * tab — same pipeline as the dialog branch. */
                     onAttachPaths={(paths) => void processAttachedPaths(paths)}
+                    onPreviewFile={handlePreviewFile}
                     hashItems={hashItems}
                     skills={skills.map((s: any) => ({ name: s.name, description: s.description }))}
                     autonomy={autonomy}
@@ -2987,6 +3050,10 @@ export default function App(): JSX.Element {
                       requestedTab={rightRailRequest?.tab ?? null}
                       requestedTabSeq={rightRailRequest?.seq}
                       onOpenGoalReview={() => setGoalReviewRequestSeq((seq) => seq + 1)}
+                      connectionLabel={activeTab?.connectionLabel ?? "Local"}
+                      connectionTransport={activeTab?.connectionTransport ?? "💻"}
+                      sessionStatus={activeTab?.status ?? "Idle"}
+                      onSendPromptToActiveTab={(text) => void sendPromptText(text, activeTabId)}
                     />
                   </Panel>
                 </PanelGroup>
@@ -3035,6 +3102,8 @@ export default function App(): JSX.Element {
       <FilePreviewModal
         open={previewPath !== null}
         path={previewPath}
+        tabId={activeTabId}
+        sessionCwd={activeTab?.cwd ?? cwd}
         onClose={() => setPreviewPath(null)}
         onPreviewFile={handlePreviewFile}
       />
@@ -3057,6 +3126,7 @@ export default function App(): JSX.Element {
         defaultTitle={prDraftTitle}
         defaultBody={prDraftBody}
         transcriptAppendix={prTranscript}
+        activeTabId={activeTabId}
         onCreated={(url) => {
           pushUiEvent(url ? `→ PR opened ↗ ${url}` : "→ PR created");
         }}

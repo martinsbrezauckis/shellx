@@ -1171,6 +1171,11 @@ impl GrokAcpSession {
         perm_args.push("--disallowed-tools".to_string());
         perm_args.push("run_terminal_command".to_string());
 
+        let marketplace_env = crate::mcp_marketplace::marketplace_env_vars().await;
+        let marketplace_env_names: Vec<String> =
+            marketplace_env.iter().map(|(k, _)| k.clone()).collect();
+        let marketplace_config_blocks = crate::mcp_marketplace::enabled_project_config_blocks();
+
         let mut cmd = if use_ssh {
             // SSH transport. Reuses the shared
             // `build_command_for_transport` builder which already knows the
@@ -1206,7 +1211,7 @@ impl GrokAcpSession {
                     "ssh: vault key '{}' is not set — open Settings → Vault and add it, or remove key_vault_ref from the preset",
                     vault_ref
                 ))
-            }, &tab_for_ssh)
+            }, &tab_for_ssh, &marketplace_env_names, &marketplace_config_blocks)
             .await?
         } else if use_wsl {
             let distro = self.wsl_distro.as_ref().unwrap();
@@ -1332,8 +1337,13 @@ impl GrokAcpSession {
                 // `MCP-Tab-Id = "<tab>"` — host-MCP gate resolves
                 // calling-tab autonomy from this header.
                 let tab = self.tab_id.as_deref().unwrap_or("default");
-                match crate::skill_install::ensure_project_mcp_http_config(&unc, port, &token, tab)
-                {
+                match crate::skill_install::ensure_project_mcp_http_config(
+                    &unc,
+                    port,
+                    &token,
+                    tab,
+                    &marketplace_config_blocks,
+                ) {
                     Ok(true) => info!(
                         "WSL project .grok/config.toml installed at {}",
                         unc.display()
@@ -1375,12 +1385,19 @@ impl GrokAcpSession {
             // boundary drops the value silently.
             let mcp_token_for_wsl = crate::mcp_http::resolve_or_create_mcp_token();
             let existing_wslenv = std::env::var("WSLENV").unwrap_or_default();
+            let mut wslenv_names = Vec::with_capacity(1 + marketplace_env_names.len());
+            wslenv_names.push(crate::mcp_http::MCP_TOKEN_ENV_VAR.to_string());
+            wslenv_names.extend(marketplace_env_names.clone());
+            let wslenv_suffix = wslenv_names.join(":");
             let combined_wslenv = if existing_wslenv.is_empty() {
-                crate::mcp_http::MCP_TOKEN_ENV_VAR.to_string()
+                wslenv_suffix
             } else {
-                format!("{}:{}", existing_wslenv, crate::mcp_http::MCP_TOKEN_ENV_VAR)
+                format!("{}:{}", existing_wslenv, wslenv_suffix)
             };
             c.env(crate::mcp_http::MCP_TOKEN_ENV_VAR, &mcp_token_for_wsl);
+            for (name, value) in &marketplace_env {
+                c.env(name, value);
+            }
             c.env("WSLENV", combined_wslenv);
             // Base args before the grok binary
             c.args(["-d", distro, "--cd", &agent_cwd, "-e", grok_wsl]);
@@ -1439,6 +1456,9 @@ impl GrokAcpSession {
                 crate::mcp_http::MCP_TOKEN_ENV_VAR,
                 crate::mcp_http::resolve_or_create_mcp_token(),
             );
+            for (name, value) in &marketplace_env {
+                c.env(name, value);
+            }
             // --always-approve only when chip is in "Always Approve"
             // position — grok rejects --permission-mode.
             for a in &perm_args {
@@ -1503,6 +1523,18 @@ impl GrokAcpSession {
         // sees. Token never appears in any argv.
         if use_ssh {
             use tokio::io::AsyncWriteExt;
+            for (name, value) in &marketplace_env {
+                stdin_handle
+                    .write_all(value.as_bytes())
+                    .await
+                    .map_err(|e| format!("Failed to write SSH marketplace env {}: {}", name, e))?;
+                stdin_handle.write_all(b"\n").await.map_err(|e| {
+                    format!(
+                        "Failed to write SSH marketplace env newline {}: {}",
+                        name, e
+                    )
+                })?;
+            }
             let token = crate::mcp_http::resolve_or_create_mcp_token();
             stdin_handle
                 .write_all(token.as_bytes())
@@ -5334,6 +5366,11 @@ impl Transport {
 /// REMOTE filesystem's frame for ssh; the local frame for local/wsl).
 /// `resolve_vault_ref` is a closure the caller supplies to translate
 /// vault refs → real values (only called for SSH key_vault_ref today).
+/// `marketplace_env_names` are env var names the remote shim reads from
+/// stdin before the shellX MCP token, so Grok-native MCP config can use
+/// `${SHELLX_MCP_MARKETPLACE_*}` secrets without putting them in argv.
+/// `marketplace_config_blocks` are project-scoped marketplace MCP blocks
+/// appended beside shellx-host for remote transports.
 ///
 /// Returns either the configured Command (with stdin/stdout/stderr
 /// piped) or a structured error describing why the transport can't be
@@ -5344,6 +5381,8 @@ pub async fn build_command_for_transport<F, Fut>(
     perm_args: &[String],
     resolve_vault_ref: F,
     tab_id: &str,
+    marketplace_env_names: &[String],
+    marketplace_config_blocks: &str,
 ) -> Result<Command, String>
 where
     F: Fn(String) -> Fut,
@@ -5521,6 +5560,15 @@ where
                 &mcp_token_for_remote,
                 tab_id,
             );
+            let snippet = if marketplace_config_blocks.trim().is_empty() {
+                snippet
+            } else {
+                format!(
+                    "{}\n{}\n",
+                    snippet.trim_end(),
+                    marketplace_config_blocks.trim()
+                )
+            };
             // base64 standard alphabet, no line wrapping. The remote
             // `base64 -d` accepts both wrapped and non-wrapped input.
             use base64::engine::general_purpose::STANDARD as B64;
@@ -5541,36 +5589,46 @@ where
                 skill_b64 = shell_quote_for_remote(&skill_b64),
             );
             let mcp_setup = format!(
-                "{remote_skill_chain}mkdir -p {cwd}/.grok && \
-                 echo {b64} | base64 -d > {cwd}/.grok/config.toml && \
-                 chmod 600 {cwd}/.grok/config.toml && ",
-                remote_skill_chain = remote_skill_chain,
-                cwd = cwd_for_remote,
-                b64 = shell_quote_for_remote(&snippet_b64),
+                "{}{}",
+                remote_skill_chain,
+                remote_project_mcp_config_setup_chain(&cwd_for_remote, &snippet_b64)
             );
 
             // Token delivery (audit fix): instead of inlining the
             // bearer into the remote exec argv as `SHELLX_MCP_TOKEN=<val>
-            // exec grok …`, read the first line of stdin into the env
-            // var, then exec grok with the remaining stdin reserved for
-            // ACP traffic. The token therefore never appears in any
-            // process's argv (local ssh, remote sshd, remote sh, remote
-            // grok). Caller writes `<token>\n` to grok's stdin BEFORE
-            // any ACP frame — see start spawn site below.
+            // exec grok …`, read prelude lines from stdin into env vars,
+            // then exec grok with the remaining stdin reserved for ACP
+            // traffic. Token and marketplace vault values therefore never
+            // appear in any process's argv (local ssh, remote sshd, remote
+            // sh, remote grok). Caller writes `<value>\n` lines BEFORE any
+            // ACP frame — see start spawn site below.
             // // `IFS= read -r` consumes exactly one line without word-
-            // splitting; `export` makes the var visible to the exec'd
+            // splitting; `export` makes each var visible to the exec'd
             // grok; `exec` replaces sh with grok so the remaining stdin
             // (ACP JSON-RPC) flows directly to it.
             // // We DO NOT rely on `ssh -o SendEnv=SHELLX_MCP_TOKEN` because
             // that requires a matching `AcceptEnv` on the remote sshd
             // we cannot assume operators have set up. The read-from-
             // stdin shim works on any POSIX sh remote.
+            let mut env_read_chain = String::new();
+            for name in marketplace_env_names {
+                env_read_chain.push_str("IFS= read -r ");
+                env_read_chain.push_str(name);
+                env_read_chain.push_str(" && export ");
+                env_read_chain.push_str(name);
+                env_read_chain.push_str(" && ");
+            }
+            env_read_chain.push_str("IFS= read -r ");
+            env_read_chain.push_str(crate::mcp_http::MCP_TOKEN_ENV_VAR);
+            env_read_chain.push_str(" && export ");
+            env_read_chain.push_str(crate::mcp_http::MCP_TOKEN_ENV_VAR);
+            env_read_chain.push_str(" && ");
             let _ = mcp_token_for_remote; // value now flows via stdin, not argv
             let remote_cmd = format!(
-                "{mcp_setup}cd {cwd} && IFS= read -r {env_name} && export {env_name} && exec {grok} ",
+                "{mcp_setup}cd {cwd} && {env_read_chain}exec {grok} ",
                 mcp_setup = mcp_setup,
                 cwd = cwd_for_remote,
-                env_name = crate::mcp_http::MCP_TOKEN_ENV_VAR,
+                env_read_chain = env_read_chain,
                 grok = shell_quote_for_remote(remote_grok_path),
             );
             let mut remote_full = remote_cmd;
@@ -5684,6 +5742,40 @@ pub fn shell_quote_for_remote(s: &str) -> String {
     out
 }
 
+/// POSIX-shell setup chain that merges shellX's project-scoped HTTP MCP
+/// snippet into a remote `<cwd>/.grok/config.toml` without clobbering
+/// user-defined Grok config. The remote shell gets a base64 snippet, strips
+/// prior shellX-managed/orphan `shellx-host-http`, stale `grok-shell-host`
+/// stdio entries, and `shellx-mp-*` sections with awk, then appends the
+/// fresh snippet.
+pub fn remote_project_mcp_config_setup_chain(cwd_q: &str, snippet_b64: &str) -> String {
+    let awk = r#"
+/shellX:managed-mcp:shellx-host-http BEGIN/ { managed=1; next }
+/shellX:managed-mcp:shellx-host-http END/ { managed=0; next }
+/shellX:managed-mcp:grok-shell-host BEGIN/ { managed=1; next }
+/shellX:managed-mcp:grok-shell-host END/ { managed=0; next }
+/shellX:managed-mcp-marketplace:.* BEGIN/ { managed=1; next }
+/shellX:managed-mcp-marketplace:.* END/ { managed=0; next }
+managed { next }
+/^\[mcp_servers\.shellx-host-http(\.headers)?\]/ { drop=1; next }
+/^\[mcp_servers\.grok-shell-host\]/ { drop=1; next }
+/^\[mcp_servers\.shellx-mp-[^]]*(\.headers|\.env)?\]/ { drop=1; next }
+/^\[/ { drop=0 }
+!drop { print }
+"#;
+    format!(
+        "mkdir -p {cwd}/.grok && \
+         cfg={cwd}/.grok/config.toml && \
+         tmp=\"$cfg.shellx.$$\" && snip=\"$tmp.snip\" && \
+         printf %s {b64} | base64 -d > \"$snip\" && \
+         ( [ -f \"$cfg\" ] && awk {awk} \"$cfg\" || true; printf '\\n\\n'; cat \"$snip\" ) > \"$tmp\" && \
+         mv \"$tmp\" \"$cfg\" && rm -f \"$snip\" && chmod 600 \"$cfg\" && ",
+        cwd = cwd_q,
+        b64 = shell_quote_for_remote(snippet_b64),
+        awk = shell_quote_for_remote(awk),
+    )
+}
+
 /// Validate the single SSH destination argument before handing it to
 /// OpenSSH. A value beginning with '-' can otherwise be parsed as a
 /// local ssh option. shellX stores one destination, not an ssh command
@@ -5760,6 +5852,8 @@ mod transport_tests {
             &[],
             |_| async { Ok::<_, String>("ignored".to_string()) },
             "default",
+            &[],
+            "",
         )
         .await;
         assert!(r.is_err(), "WsDirect must error today");

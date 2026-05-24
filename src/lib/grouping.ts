@@ -626,14 +626,8 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
             }
           }
           for (const t of texts) {
-            if (!g.imagePath) {
-              const m = t.match(/((?:\/[^\s"]+|[A-Za-z]:[\\/][^\s"]+)\.(?:jpe?g|png|gif|webp|bmp|svg))/i);
-              if (m) g.imagePath = m[1];
-            }
-            if (!g.videoPath) {
-              const m = t.match(/((?:\/[^\s"]+|[A-Za-z]:[\\/][^\s"]+)\.(?:mp4|webm|mov|m4v|mkv))/i);
-              if (m) g.videoPath = m[1];
-            }
+            if (!g.imagePath) g.imagePath = extractMediaPath(t, "image");
+            if (!g.videoPath) g.videoPath = extractMediaPath(t, "video");
           }
  /* also capture the plain-text body so fs_read / bash /
  * web_fetch / fs_list_dir results actually surface in the
@@ -1264,4 +1258,47 @@ function isPlanPath(p: unknown): boolean {
 function looksMarkdown(s: string): boolean {
   if (s.length === 0) return false;
   return /(^|\n)(#{1,6}\s|[-*]\s|```)/.test(s);
+}
+
+function extractMediaPath(text: string, kind: "image" | "video"): string | undefined {
+  const ext = kind === "image"
+    ? "jpe?g|png|gif|webp|bmp|svg|ico"
+    : "mp4|webm|mov|m4v|mkv";
+  const patterns = [
+    new RegExp(`(?:src|href)=["']([^"']+\\.(${ext})(?:\\?[^"']*)?)["']`, "i"),
+    new RegExp(`\\]\\((.+\\.(${ext})(?:\\?[^)]*)?)\\)`, "i"),
+    new RegExp(`(file://[^\\s"'<>]+\\.(${ext})(?:\\?[^\\s"'<>]*)?)`, "i"),
+    new RegExp(`([A-Za-z]:[\\\\/][^\\n\\r"'<>]*\\.(${ext}))`, "i"),
+    new RegExp(`(/[^\\n\\r"'<>]*\\.(${ext}))`, "i"),
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const raw = match?.[1];
+    if (!raw) continue;
+    return cleanMediaPath(raw);
+  }
+  return undefined;
+}
+
+function cleanMediaPath(path: string): string {
+  let out = path.trim();
+  out = out.replace(/&amp;/g, "&");
+  out = out.replace(/^file:\/\/\/([A-Za-z]:[\\/])/, "$1");
+  try {
+    out = decodeURIComponent(out);
+  } catch {
+    // Leave malformed percent escapes as-is.
+  }
+  while (out.endsWith(")") && countChar(out, ")") > countChar(out, "(")) {
+    out = out.slice(0, -1);
+  }
+  return out;
+}
+
+function countChar(value: string, needle: string): number {
+  let count = 0;
+  for (const ch of value) {
+    if (ch === needle) count += 1;
+  }
+  return count;
 }

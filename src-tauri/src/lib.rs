@@ -17,6 +17,7 @@
 mod acp;
 mod connections;
 mod host_mcp;
+mod outside_connectors;
 // SQLite-backed cross-tab durable key-value store. Backs
 // the `mem_set` / `mem_get` / `mem_list` / `mem_delete` host MCP tools
 // (registered in host_mcp.rs). One db file at `~/.shellx/memory.db`,
@@ -71,12 +72,14 @@ pub mod mcp_health;
 mod mcp_events_tail;
 mod session_archive;
 
+use serde::Serialize;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, State};
 use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
 
 use crate::acp::{tab_id_or_default, PendingPermissionRegistry, SessionRegistry};
+use crate::outside_connectors::{OutsideConnector, OutsideConnectorStore};
 use crate::process_registry::ProcessRegistry;
 use crate::terminal::TerminalRegistry;
 
@@ -417,10 +420,10 @@ async fn start_grok_session(
     // Shared helper so both this path (UI start_grok_session) AND the
     // debug-api /connect path inject the same server.
     let mut servers = inject_host_mcp_server(mcp_servers, Some(tab_key.as_str()));
-    // Marketplace injection: merge installed + enabled marketplace
-    // entries into the session/new mcp_servers list, filtered by
-    // transport (AGENT-B8 — stdio entries are skipped on remote
-    // transports since their binaries aren't on the remote PATH).
+    // Marketplace compatibility hook. The marketplace now writes
+    // Grok-native config.toml entries instead of injecting duplicate
+    // session/new mcp_servers. The helper remains a no-op so older
+    // call paths keep compiling while shellx-host stays injected here.
     let transport_kind = s.transport_kind();
     if let serde_json::Value::Array(arr) =
         mcp_marketplace::build_session_new_entries_for_transport(transport_kind).await
@@ -509,8 +512,10 @@ async fn start_grok_session(
         // Drop the session lock before scheduling so the probe task
         // doesn't deadlock against a parallel set_permission_mode etc.
         drop(s);
+        let health = crate::mcp_health::global();
+        health.clear_tab(&tab_key).await;
         crate::mcp_health::schedule_probes_for_tab_with_hint(
-            crate::mcp_health::global(),
+            health,
             tab_key.clone(),
             is_wsl,
             is_ssh,
@@ -775,6 +780,7 @@ fn reject_if_sensitive_path(normalized: &str, original: &str) -> Result<(), Stri
         "/.pgpass",
     ];
     if SENSITIVE_NAMES.iter().any(|name| lower.ends_with(name))
+        || lower.ends_with("/.grok/config.toml")
         || lower.contains("/.ssh/id_")
         || lower.contains("/.aws/credentials")
         || lower.contains("/.password-store/")
@@ -865,10 +871,133 @@ async fn drop_tab_session(
 ///
 /// Security: traversal segments (`/../`) are rejected unconditionally.
 /// 16 MiB cap to keep the modal responsive.
+fn effective_preview_session_cwd(
+    registry_cwd: Option<String>,
+    _frontend_cwd: Option<String>,
+) -> Option<String> {
+    non_empty_string(registry_cwd)
+}
+
+fn non_empty_string(v: Option<String>) -> Option<String> {
+    v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+fn is_windows_like_path(path: &str) -> bool {
+    let p = path.replace('\\', "/");
+    p.starts_with("//")
+        || p.get(1..3) == Some(":/")
+        || p.to_ascii_lowercase().starts_with("/mnt/c/")
+}
+
+fn strip_wsl_unc_prefix(normalized: &str) -> String {
+    let n_lower = normalized.to_ascii_lowercase();
+    let prefix_len = if n_lower.starts_with("//wsl$/") {
+        Some("//wsl$/".len())
+    } else if n_lower.starts_with("//wsl.localhost/") {
+        Some("//wsl.localhost/".len())
+    } else {
+        None
+    };
+    match prefix_len {
+        Some(plen) => {
+            let after_prefix = &normalized[plen..];
+            match after_prefix.find('/') {
+                Some(p) => format!("/{}", &after_prefix[p + 1..]),
+                None => normalized.to_string(),
+            }
+        }
+        None => normalized.to_string(),
+    }
+}
+
+fn preview_path_is_under_user_home_segment(path_lower: &str, prefix: &str, child: &str) -> bool {
+    let Some(after_prefix) = path_lower.strip_prefix(prefix) else {
+        return false;
+    };
+    let Some((user, rest)) = after_prefix.split_once('/') else {
+        return false;
+    };
+    !user.is_empty() && (rest == child || rest.starts_with(&format!("{child}/")))
+}
+
+fn preview_path_is_under_home_grok(path_for_cwd_check: &str) -> bool {
+    let p = path_for_cwd_check.replace('\\', "/");
+    let lower = p.to_ascii_lowercase();
+    let home_match = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+        .map(|h| {
+            let h_norm = h.replace('\\', "/").trim_end_matches('/').to_string();
+            let cmp_path = if is_windows_like_path(&p) || is_windows_like_path(&h_norm) {
+                p.to_ascii_lowercase()
+            } else {
+                p.clone()
+            };
+            let cmp_home = if is_windows_like_path(&p) || is_windows_like_path(&h_norm) {
+                h_norm.to_ascii_lowercase()
+            } else {
+                h_norm
+            };
+            cmp_path == format!("{cmp_home}/.grok")
+                || cmp_path.starts_with(&format!("{cmp_home}/.grok/"))
+        })
+        .unwrap_or(false);
+    home_match
+        || preview_path_is_under_user_home_segment(&lower, "/home/", ".grok")
+        || preview_path_is_under_user_home_segment(&lower, "/users/", ".grok")
+        || preview_path_is_under_user_home_segment(&lower, "/mnt/c/users/", ".grok")
+        || preview_path_is_under_user_home_segment(&lower, "c:/users/", ".grok")
+}
+
+fn preview_path_is_under_downloads(path_for_cwd_check: &str) -> bool {
+    let p = path_for_cwd_check.replace('\\', "/").to_ascii_lowercase();
+    preview_path_is_under_user_home_segment(&p, "/home/", "downloads")
+        || preview_path_is_under_user_home_segment(&p, "/users/", "downloads")
+        || preview_path_is_under_user_home_segment(&p, "/mnt/c/users/", "downloads")
+        || preview_path_is_under_user_home_segment(&p, "c:/users/", "downloads")
+}
+
+fn preview_path_is_under_session_cwd(path_for_cwd_check: &str, session_cwd: Option<&str>) -> bool {
+    match session_cwd {
+        Some(cwd) if !cwd.trim().is_empty() => {
+            let mut cwd_norm = cwd.replace('\\', "/");
+            cwd_norm = cwd_norm.trim_end_matches('/').to_string();
+            let mut path_norm = path_for_cwd_check.replace('\\', "/");
+            if is_windows_like_path(&cwd_norm) || is_windows_like_path(&path_norm) {
+                cwd_norm = cwd_norm.to_ascii_lowercase();
+                path_norm = path_norm.to_ascii_lowercase();
+            }
+            !cwd_norm.is_empty()
+                && (path_norm == cwd_norm || path_norm.starts_with(&format!("{}/", cwd_norm)))
+        }
+        _ => false,
+    }
+}
+
+fn validate_no_symlink_components(path: &str) -> Result<(), String> {
+    let mut current = std::path::PathBuf::new();
+    for component in std::path::Path::new(path).components() {
+        current.push(component.as_os_str());
+        if current.as_os_str().is_empty() {
+            continue;
+        }
+        if let Ok(meta) = std::fs::symlink_metadata(&current) {
+            if meta.file_type().is_symlink() {
+                return Err(format!(
+                    "preview does not follow symbolic links: {}",
+                    current.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn read_text_file_for_path(
     path: String,
     #[allow(non_snake_case)] tab_id: Option<String>,
+    #[allow(non_snake_case)] session_cwd: Option<String>,
     registry: State<'_, Arc<SessionRegistry>>,
 ) -> Result<String, String> {
     if path.is_empty() {
@@ -879,103 +1008,37 @@ async fn read_text_file_for_path(
         return Err("path contains traversal segment".to_string());
     }
 
-    let arc = registry.get_or_create(&tab_id_or_default(tab_id)).await;
-    let s = arc.lock().await;
-    let session_info = s.get_debug_session_info();
-    let wsl_distro = session_info
-        .get("wslDistro")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let ssh_config = s.ssh_config().cloned();
-    let session_cwd = session_info
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    drop(s);
+    let (wsl_distro, ssh_config, registry_cwd) =
+        if let Some(arc) = registry.get_existing(&tab_id_or_default(tab_id)).await {
+            let s = arc.lock().await;
+            let session_info = s.get_debug_session_info();
+            let wsl_distro = session_info
+                .get("wslDistro")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let ssh_config = s.ssh_config().cloned();
+            let registry_cwd = session_info
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            (wsl_distro, ssh_config, registry_cwd)
+        } else {
+            (None, None, None)
+        };
+    let session_cwd = effective_preview_session_cwd(registry_cwd, session_cwd);
 
     // UNC-prefix strip — mirror of read_image_as_data_url so a
     // Windows-side picker result against a WSL cwd still matches.
-    let path_for_cwd_check = {
-        let n_lower = normalized.to_ascii_lowercase();
-        let prefix_len = if n_lower.starts_with("//wsl$/") {
-            Some("//wsl$/".len())
-        } else if n_lower.starts_with("//wsl.localhost/") {
-            Some("//wsl.localhost/".len())
-        } else {
-            None
-        };
-        match prefix_len {
-            Some(plen) => {
-                let after_prefix = &normalized[plen..];
-                match after_prefix.find('/') {
-                    Some(p) => format!("/{}", &after_prefix[p + 1..]),
-                    None => normalized.clone(),
-                }
-            }
-            None => normalized.clone(),
-        }
-    };
-
-    // Anchor `in_grok_scope` so a hostile path like
-    // `/tmp/sneaky/.grok/foo` cannot piggy-back. Accept ~/.grok/,
-    // /home/*/.grok/, /Users/*/.grok/, or C:/Users/*/.grok/.
-    let in_grok_scope = {
-        let lower = path_for_cwd_check.to_ascii_lowercase();
-        let home_lower = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .ok()
-            .map(|h| h.replace('\\', "/").to_ascii_lowercase());
-        let anchored = home_lower
-            .as_ref()
-            .map(|h| lower.starts_with(&format!("{}/.grok/", h.trim_end_matches('/'))))
-            .unwrap_or(false);
-        anchored
-            || (lower.starts_with("/home/") && lower.contains("/.grok/"))
-            || (lower.starts_with("/users/") && lower.contains("/.grok/"))
-            || (lower.starts_with("c:/users/") && lower.contains("/.grok/"))
-    };
-    let in_session_cwd = match &session_cwd {
-        Some(cwd) if !cwd.is_empty() => {
-            let cwd_norm = cwd
-                .replace('\\', "/")
-                .trim_end_matches('/')
-                .to_ascii_lowercase();
-            let path_norm_lc = path_for_cwd_check.to_ascii_lowercase();
-            !cwd_norm.is_empty()
-                && (path_norm_lc == cwd_norm || path_norm_lc.starts_with(&format!("{}/", cwd_norm)))
-        }
-        _ => false,
-    };
+    let path_for_cwd_check = strip_wsl_unc_prefix(&normalized);
+    let in_grok_scope = preview_path_is_under_home_grok(&path_for_cwd_check);
+    let in_session_cwd =
+        preview_path_is_under_session_cwd(&path_for_cwd_check, session_cwd.as_deref());
     // Downloads-folder allowance. Tighten to the real Downloads
     // root: must be under /home/<user>/Downloads, /Users/<user>/Downloads,
     // /mnt/c/Users/<user>/Downloads, or C:/Users/<user>/Downloads. The
     // earlier `contains("/downloads/")` check matched any path with that
     // substring (e.g. `/etc/foo/downloads/leak`); regex anchors fix it.
-    let in_downloads = {
-        let p = path_for_cwd_check.to_ascii_lowercase();
-        // Compile-time-cheap match — fixed string starts. We accept
-        // POSIX home, /mnt/c WSL mount, and Windows C: + WSL UNC root.
-        // The user's actual username appears after the prefix; we let
-        // any non-empty segment through so multi-user installs work.
-        let prefixes = [
-            "/home/",        // Linux/macOS home root
-            "/users/",       // macOS native
-            "/mnt/c/users/", // WSL mount of Windows C:
-            "c:/users/",     // Windows native (after backslash→forward replace)
-        ];
-        prefixes.iter().any(|prefix| {
-            if let Some(after) = p.strip_prefix(prefix) {
-                if let Some(slash_idx) = after.find('/') {
-                    let rest = &after[slash_idx + 1..];
-                    rest.starts_with("downloads/") || rest == "downloads"
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        })
-    };
+    let in_downloads = preview_path_is_under_downloads(&path_for_cwd_check);
 
     if !in_grok_scope && !in_session_cwd && !in_downloads {
         return Err(format!(
@@ -987,9 +1050,21 @@ async fn read_text_file_for_path(
     reject_if_sensitive_path(&path_for_cwd_check, &path)?;
 
     if let Some(ssh) = ssh_config.as_ref() {
-        return crate::acp::ssh_read_file(ssh, &normalized)
+        let resolved = ssh_realpath_for_preview(ssh, &normalized).await?;
+        let resolved_scope_path = strip_wsl_unc_prefix(&resolved.replace('\\', "/"));
+        let resolved_allowed = preview_path_is_under_home_grok(&resolved_scope_path)
+            || preview_path_is_under_session_cwd(&resolved_scope_path, session_cwd.as_deref())
+            || preview_path_is_under_downloads(&resolved_scope_path);
+        if !resolved_allowed {
+            return Err(format!(
+                "remote path resolves outside allowed preview scope: {} -> {}",
+                path, resolved
+            ));
+        }
+        reject_if_sensitive_path(&resolved_scope_path, &resolved)?;
+        return ssh_read_text_file_for_preview(ssh, &resolved)
             .await
-            .map_err(|e| format!("read failed for SSH path '{}': {}", normalized, e));
+            .map_err(|e| format!("read failed for SSH path '{}': {}", resolved, e));
     }
 
     let read_path = if cfg!(target_os = "windows") && path.starts_with('/') {
@@ -1001,6 +1076,7 @@ async fn read_text_file_for_path(
     } else {
         path.clone()
     };
+    validate_no_symlink_components(&read_path)?;
     // Pre-read size cap via metadata — avoids loading a 1 GB file
     // into RAM only to reject it. 16 MiB ceiling.
     const CAP: u64 = 16 * 1024 * 1024;
@@ -1031,15 +1107,27 @@ fn preview_media_mime(path: &std::path::Path) -> Result<&'static str, String> {
         "webp" => Ok("image/webp"),
         "svg" => Ok("image/svg+xml"),
         "bmp" => Ok("image/bmp"),
+        "ico" => Ok("image/x-icon"),
         "mp4" | "m4v" => Ok("video/mp4"),
         "webm" => Ok("video/webm"),
         "mov" => Ok("video/quicktime"),
         "mkv" => Ok("video/x-matroska"),
+        "pdf" => Ok("application/pdf"),
         _ => Err(format!(
             "unsupported preview media extension: {}",
             path.display()
         )),
     }
+}
+
+#[tauri::command]
+async fn read_preview_file_as_data_url(
+    path: String,
+    #[allow(non_snake_case)] tab_id: Option<String>,
+    #[allow(non_snake_case)] session_cwd: Option<String>,
+    registry: State<'_, Arc<SessionRegistry>>,
+) -> Result<String, String> {
+    read_image_as_data_url(path, tab_id, session_cwd, registry).await
 }
 
 /// Grok writes images to
@@ -1050,7 +1138,8 @@ fn preview_media_mime(path: &std::path::Path) -> Result<&'static str, String> {
 /// - Translates /home/.../.grok/... to \\wsl$\<distro>\... on Windows
 /// when the active tab has a WSL config.
 /// - Reads the file as bytes, returns a data:image/...;base64,... URL.
-/// Frontend SafeImg falls back to this when convertFileSrc fails.
+/// Frontend SafeImg/SafeVideo and the PDF preview fall back to this
+/// data-URL path when convertFileSrc / asset iframes fail.
 ///
 /// Security: path-traversal guard restricts to paths containing
 /// `/.grok/` (Linux) or `\.grok\` (Windows). Anything else rejected.
@@ -1058,6 +1147,7 @@ fn preview_media_mime(path: &std::path::Path) -> Result<&'static str, String> {
 async fn read_image_as_data_url(
     path: String,
     #[allow(non_snake_case)] tab_id: Option<String>,
+    #[allow(non_snake_case)] session_cwd: Option<String>,
     registry: State<'_, Arc<SessionRegistry>>,
 ) -> Result<String, String> {
     if path.is_empty() {
@@ -1067,19 +1157,24 @@ async fn read_image_as_data_url(
     if normalized.contains("/..") {
         return Err("path contains traversal segment".to_string());
     }
-    let arc = registry.get_or_create(&tab_id_or_default(tab_id)).await;
-    let s = arc.lock().await;
-    let session_info = s.get_debug_session_info();
-    let wsl_distro = session_info
-        .get("wslDistro")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let ssh_config = s.ssh_config().cloned();
-    let session_cwd = session_info
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    drop(s);
+    let (wsl_distro, ssh_config, registry_cwd) =
+        if let Some(arc) = registry.get_existing(&tab_id_or_default(tab_id)).await {
+            let s = arc.lock().await;
+            let session_info = s.get_debug_session_info();
+            let wsl_distro = session_info
+                .get("wslDistro")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let ssh_config = s.ssh_config().cloned();
+            let registry_cwd = session_info
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            (wsl_distro, ssh_config, registry_cwd)
+        } else {
+            (None, None, None)
+        };
+    let session_cwd = effective_preview_session_cwd(registry_cwd, session_cwd);
 
     // Allow if EITHER
     // (a) path is anchored under ~/.grok/ (grok-generated content), OR
@@ -1098,60 +1193,13 @@ async fn read_image_as_data_url(
     // Lowercase the prefix region for matching, but slice the ORIGINAL
     // normalized string after the distro so we don't lose case in the
     // path body (Linux fs IS case-sensitive).
-    let path_for_cwd_check = {
-        let n_lower = normalized.to_ascii_lowercase();
-        let prefix_len = if n_lower.starts_with("//wsl$/") {
-            Some("//wsl$/".len())
-        } else if n_lower.starts_with("//wsl.localhost/") {
-            Some("//wsl.localhost/".len())
-        } else {
-            None
-        };
-        match prefix_len {
-            Some(plen) => {
-                // After the prefix, locate the next '/' which separates
-                // distro from path. Slice using char-safe boundaries on
-                // the lowercase string (ASCII content here so byte-index
-                // matches).
-                let after_prefix = &normalized[plen..];
-                match after_prefix.find('/') {
-                    Some(p) => format!("/{}", &after_prefix[p + 1..]),
-                    None => normalized.clone(),
-                }
-            }
-            None => normalized.clone(),
-        }
-    };
+    let path_for_cwd_check = strip_wsl_unc_prefix(&normalized);
     // Anchor in_grok_scope HERE (after path_for_cwd_check
     // is computed). Accept ~/.grok/, /home/*/.grok/, /Users/*/.grok/,
     // or C:/Users/*/.grok/.
-    let in_grok_scope = {
-        let lower = path_for_cwd_check.to_ascii_lowercase();
-        let home_lower = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .ok()
-            .map(|h| h.replace('\\', "/").to_ascii_lowercase());
-        let anchored = home_lower
-            .as_ref()
-            .map(|h| lower.starts_with(&format!("{}/.grok/", h.trim_end_matches('/'))))
-            .unwrap_or(false);
-        anchored
-            || (lower.starts_with("/home/") && lower.contains("/.grok/"))
-            || (lower.starts_with("/users/") && lower.contains("/.grok/"))
-            || (lower.starts_with("c:/users/") && lower.contains("/.grok/"))
-    };
-    let in_session_cwd = match &session_cwd {
-        Some(cwd) if !cwd.is_empty() => {
-            let cwd_norm = cwd
-                .replace('\\', "/")
-                .trim_end_matches('/')
-                .to_ascii_lowercase();
-            let path_norm_lc = path_for_cwd_check.to_ascii_lowercase();
-            !cwd_norm.is_empty()
-                && (path_norm_lc == cwd_norm || path_norm_lc.starts_with(&format!("{}/", cwd_norm)))
-        }
-        _ => false,
-    };
+    let in_grok_scope = preview_path_is_under_home_grok(&path_for_cwd_check);
+    let in_session_cwd =
+        preview_path_is_under_session_cwd(&path_for_cwd_check, session_cwd.as_deref());
     if !in_grok_scope && !in_session_cwd {
         return Err(format!(
             "path outside allowed scope (not in /.grok/ and not under session cwd '{}'): {}",
@@ -1162,8 +1210,19 @@ async fn read_image_as_data_url(
     reject_if_sensitive_path(&path_for_cwd_check, &path)?;
 
     if let Some(ssh) = ssh_config.as_ref() {
-        let mime = preview_media_mime(std::path::Path::new(&normalized))?;
-        let bytes = ssh_read_file_bytes_for_preview(ssh, &normalized).await?;
+        let resolved = ssh_realpath_for_preview(ssh, &normalized).await?;
+        let resolved_scope_path = strip_wsl_unc_prefix(&resolved.replace('\\', "/"));
+        let resolved_allowed = preview_path_is_under_home_grok(&resolved_scope_path)
+            || preview_path_is_under_session_cwd(&resolved_scope_path, session_cwd.as_deref());
+        if !resolved_allowed {
+            return Err(format!(
+                "remote media path resolves outside allowed preview scope: {} -> {}",
+                path, resolved
+            ));
+        }
+        reject_if_sensitive_path(&resolved_scope_path, &resolved)?;
+        let mime = preview_media_mime(std::path::Path::new(&resolved))?;
+        let bytes = ssh_read_file_bytes_for_preview(ssh, &resolved).await?;
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
         return Ok(format!("data:{};base64,{}", mime, b64));
@@ -1178,6 +1237,7 @@ async fn read_image_as_data_url(
     } else {
         path.clone()
     };
+    validate_no_symlink_components(&read_path)?;
     let mime = preview_media_mime(std::path::Path::new(&read_path))?;
     const MEDIA_PREVIEW_CAP: u64 = 16 * 1024 * 1024;
     let meta = std::fs::metadata(&read_path)
@@ -1196,9 +1256,10 @@ async fn read_image_as_data_url(
     Ok(format!("data:{};base64,{}", mime, b64))
 }
 
-async fn ssh_read_file_bytes_for_preview(
+async fn ssh_run_preview_command(
     ssh: &crate::acp::SshSpawnConfig,
-    remote_path: &str,
+    remote_command: String,
+    label: &str,
 ) -> Result<Vec<u8>, String> {
     crate::acp::validate_ssh_destination_arg(&ssh.host)?;
     let mut cmd = tokio::process::Command::new("ssh");
@@ -1209,10 +1270,7 @@ async fn ssh_read_file_bytes_for_preview(
         cmd.arg("-p").arg(p.to_string());
     }
     cmd.arg("--").arg(&ssh.host);
-    cmd.arg(format!(
-        "cat -- {}",
-        crate::acp::shell_quote_for_remote(remote_path)
-    ));
+    cmd.arg(remote_command);
     use crate::winproc::NoWindowExt as _;
     cmd.no_window();
     cmd.stdout(std::process::Stdio::piped());
@@ -1225,7 +1283,8 @@ async fn ssh_read_file_bytes_for_preview(
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(format!(
-            "ssh cat exited {:?}: {}",
+            "ssh {} exited {:?}: {}",
+            label,
             out.status.code(),
             if stderr.is_empty() {
                 "no stderr".into()
@@ -1234,15 +1293,73 @@ async fn ssh_read_file_bytes_for_preview(
             }
         ));
     }
-    const MEDIA_PREVIEW_CAP: usize = 16 * 1024 * 1024;
-    if out.stdout.len() > MEDIA_PREVIEW_CAP {
+    Ok(out.stdout)
+}
+
+async fn ssh_realpath_for_preview(
+    ssh: &crate::acp::SshSpawnConfig,
+    remote_path: &str,
+) -> Result<String, String> {
+    let q = crate::acp::shell_quote_for_remote(remote_path);
+    let script = format!(
+        "p={q}; if command -v realpath >/dev/null 2>&1; then realpath -- \"$p\" 2>/dev/null || realpath \"$p\"; else python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \"$p\"; fi"
+    );
+    let out = ssh_run_preview_command(ssh, script, "realpath").await?;
+    let resolved = String::from_utf8_lossy(&out).trim().to_string();
+    if resolved.is_empty() {
         return Err(format!(
-            "remote media preview too large ({} bytes, cap {} bytes)",
-            out.stdout.len(),
-            MEDIA_PREVIEW_CAP
+            "remote realpath returned an empty path for {}",
+            remote_path
         ));
     }
-    Ok(out.stdout)
+    Ok(resolved)
+}
+
+async fn ssh_preview_file_size(
+    ssh: &crate::acp::SshSpawnConfig,
+    remote_path: &str,
+) -> Result<u64, String> {
+    let q = crate::acp::shell_quote_for_remote(remote_path);
+    let script = format!(
+        "p={q}; if stat -c %s -- \"$p\" >/dev/null 2>&1; then stat -c %s -- \"$p\"; else stat -f %z \"$p\"; fi"
+    );
+    let out = ssh_run_preview_command(ssh, script, "stat").await?;
+    let s = String::from_utf8_lossy(&out).trim().to_string();
+    s.parse::<u64>()
+        .map_err(|e| format!("remote stat returned invalid size '{}': {}", s, e))
+}
+
+async fn ssh_read_file_bytes_for_preview(
+    ssh: &crate::acp::SshSpawnConfig,
+    remote_path: &str,
+) -> Result<Vec<u8>, String> {
+    const PREVIEW_CAP: u64 = 16 * 1024 * 1024;
+    let size = ssh_preview_file_size(ssh, remote_path).await?;
+    if size > PREVIEW_CAP {
+        return Err(format!(
+            "remote preview too large ({} bytes, cap {} bytes)",
+            size, PREVIEW_CAP
+        ));
+    }
+    let q = crate::acp::shell_quote_for_remote(remote_path);
+    let script = format!("cat -- {q}");
+    let out = ssh_run_preview_command(ssh, script, "cat").await?;
+    if out.len() as u64 > PREVIEW_CAP {
+        return Err(format!(
+            "remote preview too large ({} bytes, cap {} bytes)",
+            out.len(),
+            PREVIEW_CAP
+        ));
+    }
+    Ok(out)
+}
+
+async fn ssh_read_text_file_for_preview(
+    ssh: &crate::acp::SshSpawnConfig,
+    remote_path: &str,
+) -> Result<String, String> {
+    let bytes = ssh_read_file_bytes_for_preview(ssh, remote_path).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// List local + remote-tracking branches in a working directory via
@@ -1414,7 +1531,7 @@ async fn open_url_in_browser(url: String) -> Result<(), String> {
             .arg(&url)
             .spawn()
             .map_err(|e| format!("open failed: {}", e))?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -1653,7 +1770,7 @@ async fn list_stored_sessions() -> Result<Vec<StoredSession>, String> {
         });
     }
     // Newest first.
-    out.sort_by_key(|session| std::cmp::Reverse(session.mtime_ms));
+    out.sort_by_key(|item| std::cmp::Reverse(item.mtime_ms));
     Ok(out)
 }
 
@@ -1958,11 +2075,21 @@ async fn append_session_log(session_id: String, line: String) -> Result<(), Stri
     let _guard = session_log_append_lock()
         .lock()
         .map_err(|_| "session log append lock poisoned".to_string())?;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts
         .open(&path)
         .map_err(|e| format!("open failed: {}", e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
     let mut buf = Vec::with_capacity(line.len() + 1);
     buf.extend_from_slice(line.as_bytes());
     buf.push(b'\n');
@@ -2785,6 +2912,15 @@ fn shellxagent_token_regenerate() -> Result<String, String> {
 
 // ─── MCP marketplace Tauri command wrappers ───────
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionToolingSnapshot {
+    tab_id: String,
+    session: serde_json::Value,
+    desired: Vec<mcp_marketplace::McpEntryStatus>,
+    health: Vec<mcp_health::MarketplaceHealthEntry>,
+}
+
 /// List the full marketplace catalog merged with the user's installed/
 /// enabled state and live vault availability. UI calls this on
 /// PluginsModal mount + after every vault change.
@@ -2802,56 +2938,168 @@ async fn mcp_marketplace_health(
     registry: State<'_, Arc<acp::SessionRegistry>>,
 ) -> Result<Vec<mcp_health::MarketplaceHealthEntry>, String> {
     let h = mcp_health::global();
-    let existing = h.get_for_tab(&tab_id).await;
-    // fix: if no probes have been scheduled yet for this tab (the
-    // user opened Plugins modal before /connect ran, or the marketplace
-    // state changed since the last probe pass), kick off a fresh probe
-    // round inline. Cheap — the probe semaphore caps concurrency and the
-    // existing dedupe in schedule_probes_for_tab prevents double-runs.
-    if existing.is_empty() {
-        // SessionRegistry doesn't expose a peek-only getter, so we go
-        // through get_or_create. That allocates an empty session record
-        // for tabs that don't exist yet — harmless: it's the same record
-        // /connect would have made on first prompt. We just read the
-        // transport flags off it and drop the guard immediately.
-        let arc = registry.get_or_create(&tab_id).await;
-        let guard = arc.lock().await;
-        let is_wsl = guard.wsl_distro().is_some();
-        let is_ssh = guard.ssh_config().is_some();
-        let probe_transport = mcp_health::ProbeTransport {
-            wsl_distro: guard.wsl_distro().map(str::to_string),
-            ssh_target: guard.ssh_config().map(|ssh| ssh.host.clone()),
-        };
-        drop(guard);
-        mcp_health::schedule_probes_for_tab_with_hint(
-            h.clone(),
-            tab_id.clone(),
-            is_wsl,
-            is_ssh,
-            probe_transport,
-        );
-    }
+    ensure_marketplace_health_for_tab(&tab_id, &registry, h.clone(), None).await?;
     Ok(h.get_for_tab(&tab_id).await)
+}
+
+/// Session-scoped tool snapshot for the right-rail Tooling tab.
+/// Rust composes global desired MCP state with the active tab's
+/// transport/session metadata and per-environment launcher probes, so
+/// the UI does not have to merge global and local state itself.
+#[tauri::command]
+async fn session_tooling_snapshot(
+    #[allow(non_snake_case)] tab_id: String,
+    registry: State<'_, Arc<acp::SessionRegistry>>,
+) -> Result<SessionToolingSnapshot, String> {
+    session_tooling_snapshot_for_tab(tab_id, &registry, true, false).await
+}
+
+pub(crate) async fn session_tooling_snapshot_for_tab(
+    tab_id: String,
+    registry: &Arc<acp::SessionRegistry>,
+    ensure_health: bool,
+    create_if_missing: bool,
+) -> Result<SessionToolingSnapshot, String> {
+    let arc = match registry.get_existing(&tab_id).await {
+        Some(existing) => existing,
+        None if create_if_missing => registry.get_or_create(&tab_id).await,
+        None => {
+            let desired = mcp_marketplace::list_marketplace().await?;
+            let health = mcp_health::global().get_for_tab(&tab_id).await;
+            return Ok(SessionToolingSnapshot {
+                tab_id,
+                session: serde_json::json!({
+                    "transport": "none",
+                    "cwd": serde_json::Value::Null,
+                    "hasActiveChild": false,
+                    "sessionId": serde_json::Value::Null,
+                    "debug": serde_json::Value::Null,
+                }),
+                desired,
+                health,
+            });
+        }
+    };
+    let guard = arc.lock().await;
+    let session_info = guard.get_debug_session_info();
+    let has_active_child = session_info
+        .get("hasActiveChild")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let transport = if guard.ssh_config().is_some() {
+        "ssh"
+    } else if guard.wsl_distro().is_some() {
+        "wsl"
+    } else {
+        "local"
+    };
+    let session = serde_json::json!({
+        "transport": transport,
+        "cwd": session_info.get("cwd").cloned().unwrap_or(serde_json::Value::Null),
+        "hasActiveChild": has_active_child,
+        "sessionId": session_info
+            .get("sessionId")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "debug": session_info,
+    });
+    drop(guard);
+
+    let desired = mcp_marketplace::list_marketplace().await?;
+    let h = mcp_health::global();
+    if ensure_health && has_active_child {
+        ensure_marketplace_health_for_tab(&tab_id, registry, h.clone(), Some(&desired)).await?;
+    } else if ensure_health {
+        h.clear_tab(&tab_id).await;
+    }
+    let health = h.get_for_tab(&tab_id).await;
+
+    Ok(SessionToolingSnapshot {
+        tab_id,
+        session,
+        desired,
+        health,
+    })
+}
+
+async fn ensure_marketplace_health_for_tab(
+    tab_id: &str,
+    registry: &Arc<acp::SessionRegistry>,
+    health: Arc<mcp_health::MarketplaceHealth>,
+    desired_hint: Option<&[mcp_marketplace::McpEntryStatus]>,
+) -> Result<(), String> {
+    let owned_desired;
+    let desired = match desired_hint {
+        Some(entries) => entries,
+        None => {
+            owned_desired = mcp_marketplace::list_marketplace().await?;
+            &owned_desired
+        }
+    };
+    let arc = registry.get_or_create(tab_id).await;
+    let guard = arc.lock().await;
+    let is_wsl = guard.wsl_distro().is_some();
+    let is_ssh = guard.ssh_config().is_some();
+    let probe_transport = mcp_health::ProbeTransport {
+        wsl_distro: guard.wsl_distro().map(str::to_string),
+        ssh_target: guard.ssh_config().map(|ssh| ssh.host.clone()),
+    };
+    drop(guard);
+    let current_transport_key = mcp_health::probe_transport_key(is_wsl, is_ssh, &probe_transport);
+    let existing = health.get_for_tab(tab_id).await;
+    if existing
+        .iter()
+        .any(|row| row.transport_key != current_transport_key)
+    {
+        health.clear_tab(tab_id).await;
+    }
+    let existing = health.get_for_tab(tab_id).await;
+    let missing_probe_row = desired
+        .iter()
+        .filter(|entry| matches!(entry.kind, mcp_marketplace::McpKind::Stdio))
+        .any(|entry| !existing.iter().any(|row| row.entry_id == entry.id));
+    // If no probes have been scheduled yet for this tab, if the
+    // session environment changed, or if the desired connector set
+    // changed and at least one stdio connector has no row, kick off a
+    // fresh probe round. The probe loop is bounded and publishes
+    // "checking" rows immediately.
+    if !existing.is_empty() && !missing_probe_row {
+        return Ok(());
+    }
+    mcp_health::schedule_probes_for_tab_with_hint(
+        health,
+        tab_id.to_string(),
+        is_wsl,
+        is_ssh,
+        probe_transport,
+    );
+    Ok(())
 }
 
 /// Mark a catalog entry as installed + enabled. Idempotent.
 #[tauri::command]
-fn mcp_marketplace_install(id: String) -> Result<(), String> {
-    mcp_marketplace::install_marketplace_entry(&id)
+async fn mcp_marketplace_install(id: String) -> Result<(), String> {
+    mcp_marketplace::install_marketplace_entry(&id)?;
+    mcp_health::global().clear_all().await;
+    Ok(())
 }
 
 /// Mark a catalog entry as uninstalled. Preserves the enabled flag for
 /// later re-install (so toggling Install → Remove → Install keeps the
 /// previous on/off preference).
 #[tauri::command]
-fn mcp_marketplace_uninstall(id: String) -> Result<(), String> {
-    mcp_marketplace::uninstall_marketplace_entry(&id)
+async fn mcp_marketplace_uninstall(id: String) -> Result<(), String> {
+    mcp_marketplace::uninstall_marketplace_entry(&id)?;
+    mcp_health::global().clear_all().await;
+    Ok(())
 }
 
 /// Toggle enabled without changing installed.
 #[tauri::command]
-fn mcp_marketplace_set_enabled(id: String, enabled: bool) -> Result<(), String> {
-    mcp_marketplace::set_marketplace_entry_enabled(&id, enabled)
+async fn mcp_marketplace_set_enabled(id: String, enabled: bool) -> Result<(), String> {
+    mcp_marketplace::set_marketplace_entry_enabled(&id, enabled)?;
+    mcp_health::global().clear_all().await;
+    Ok(())
 }
 
 // ─── Goal orchestrator — Tauri commands ───────
@@ -3335,6 +3583,45 @@ async fn connections_test(id: String) -> Result<serde_json::Value, String> {
     Ok(serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
 }
 
+static OUTSIDE_CONNECTORS_CELL: OnceLock<Arc<OutsideConnectorStore>> = OnceLock::new();
+
+pub(crate) fn get_or_open_outside_connectors() -> Result<Arc<OutsideConnectorStore>, String> {
+    if let Some(s) = OUTSIDE_CONNECTORS_CELL.get() {
+        return Ok(s.clone());
+    }
+    let s = Arc::new(OutsideConnectorStore::open()?);
+    let _ = OUTSIDE_CONNECTORS_CELL.set(s.clone());
+    Ok(OUTSIDE_CONNECTORS_CELL
+        .get()
+        .expect("OUTSIDE_CONNECTORS_CELL just set")
+        .clone())
+}
+
+#[tauri::command]
+async fn outside_connectors_list() -> Result<Vec<OutsideConnector>, String> {
+    let s = get_or_open_outside_connectors()?;
+    Ok(s.list().await)
+}
+
+#[tauri::command]
+async fn outside_connectors_save(connector: OutsideConnector) -> Result<OutsideConnector, String> {
+    let s = get_or_open_outside_connectors()?;
+    s.save(connector).await
+}
+
+#[tauri::command]
+async fn outside_connectors_delete(id: String) -> Result<bool, String> {
+    let s = get_or_open_outside_connectors()?;
+    s.delete(&id).await
+}
+
+#[tauri::command]
+async fn outside_connectors_test(id: String) -> Result<serde_json::Value, String> {
+    let s = get_or_open_outside_connectors()?;
+    let r = s.test(&id).await;
+    Ok(serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Data-dir migration from legacy `~/.grok-shell/` to current `~/.shellx/`.
 ///
@@ -3553,6 +3840,7 @@ pub fn run() {
             git_branches,
             crate::voice::synthesize_voice,
             read_image_as_data_url,
+            read_preview_file_as_data_url,
             capture_app_screenshot_to_file,
             // Attach-UX inlining: classify a picked file as text vs binary
             // so the renderer can decide between embedded_context
@@ -3582,6 +3870,13 @@ pub fn run() {
             connections_save,
             connections_delete,
             connections_test,
+            // Outside connectors: Telegram + generic relay presets.
+            // Non-secret config is stored under ~/.shellx; provider
+            // secrets are referenced by vault key.
+            outside_connectors_list,
+            outside_connectors_save,
+            outside_connectors_delete,
+            outside_connectors_test,
             // Real PTY for the bottom-panel Terminal tab. The same
             // registry ALSO services grok's ACP `terminal/*` requests;
             // `pty_attach` is the read-only attach surface for chat-
@@ -3619,6 +3914,7 @@ pub fn run() {
             // install/uninstall, vault-aware availability.
             mcp_marketplace_list,
             mcp_marketplace_health,
+            session_tooling_snapshot,
             mcp_marketplace_install,
             mcp_marketplace_uninstall,
             mcp_marketplace_set_enabled,
@@ -4013,6 +4309,12 @@ mod sensitive_path_tests {
     }
 
     #[test]
+    fn rejects_grok_config_toml() {
+        let r = reject_if_sensitive_path("/home/x/.grok/config.toml", "/home/x/.grok/config.toml");
+        assert!(r.is_err(), "grok config.toml must be rejected");
+    }
+
+    #[test]
     fn rejects_vault_files() {
         for name in ["vault.enc", "vault.salt", "vault.master.key"] {
             let p = format!("/home/x/.shellx/{name}");
@@ -4070,5 +4372,70 @@ mod sensitive_path_tests {
             reject_if_sensitive_path(p, p).is_err(),
             "case-insensitive match required"
         );
+    }
+}
+
+#[cfg(test)]
+mod preview_scope_tests {
+    use super::*;
+
+    #[test]
+    fn frontend_cwd_does_not_authorize_preview_scope() {
+        let cwd = effective_preview_session_cwd(None, Some("C:\\Users\\User".to_string()));
+        assert!(!preview_path_is_under_session_cwd(
+            "C:/Users/User/shx-body-prompt.json",
+            cwd.as_deref(),
+        ));
+    }
+
+    #[test]
+    fn registry_cwd_wins_over_frontend_fallback() {
+        let cwd = effective_preview_session_cwd(
+            Some("C:\\Users\\User\\project".to_string()),
+            Some("C:\\Users\\User".to_string()),
+        );
+        assert!(!preview_path_is_under_session_cwd(
+            "C:/Users/User/shx-body-prompt.json",
+            cwd.as_deref(),
+        ));
+        assert!(preview_path_is_under_session_cwd(
+            "C:/Users/User/project/src/main.rs",
+            cwd.as_deref(),
+        ));
+    }
+
+    #[test]
+    fn pdf_is_previewable_binary_media() {
+        let mime = preview_media_mime(std::path::Path::new("C:/Users/User/report.pdf"));
+        assert_eq!(mime.as_deref(), Ok("application/pdf"));
+    }
+
+    #[test]
+    fn ico_is_previewable_binary_media() {
+        let mime = preview_media_mime(std::path::Path::new("C:/Users/User/icon.ico"));
+        assert_eq!(mime.as_deref(), Ok("image/x-icon"));
+    }
+
+    #[test]
+    fn rejects_project_local_grok_scope() {
+        assert!(!preview_path_is_under_home_grok(
+            "/home/x/project/.grok/sessions/leak.txt"
+        ));
+    }
+
+    #[test]
+    fn posix_session_cwd_match_is_case_sensitive() {
+        assert!(!preview_path_is_under_session_cwd(
+            "/home/user/project/src/main.rs",
+            Some("/home/user/Project"),
+        ));
+    }
+
+    #[test]
+    fn windows_session_cwd_match_is_case_insensitive() {
+        assert!(preview_path_is_under_session_cwd(
+            "C:/Users/User/Project/src/main.rs",
+            Some("c:/users/user/project"),
+        ));
     }
 }

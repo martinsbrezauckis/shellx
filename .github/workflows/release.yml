@@ -1,6 +1,6 @@
 # shellX release workflow
 #
-# Triggers: pushed tag matching `v*` (e.g. `v0.1.29`).
+# Triggers: pushed tag matching `v*` (e.g. `v0.1.30`).
 # Builds Windows installers and experimental Linux bundles, signs them
 # with the Tauri updater private key, and uploads to GitHub Releases
 # along with the updater manifest `latest.json`.
@@ -13,10 +13,10 @@
 # TAURI_SIGNING_PRIVATE_KEY — contents of ~/.shellx-keys/updater.key
 # TAURI_SIGNING_PRIVATE_KEY_PASSWORD — empty string if key has no password
 #
-# To cut a release:
-# git tag v0.1.29
-# git push origin v0.1.29
-# CI does the rest.
+# To cut a release after explicit per-operation approval:
+# git tag v0.1.x
+# git push origin v0.1.x
+# CI builds a draft GitHub Release for manual review.
 
 name: Release
 
@@ -38,9 +38,9 @@ jobs:
             args: ""
           - platform: ubuntu-22.04
             args: ""
- # macOS deferred until cert ready
- # - platform: macos-latest
- # args: "--target universal-apple-darwin"
+          # macOS deferred until Developer ID signing/notarization is ready.
+          # - platform: macos-latest
+          #   args: "--target universal-apple-darwin"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -57,7 +57,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 10.33.0
 
       - name: Setup node
         uses: actions/setup-node@v4
@@ -85,16 +85,17 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
- # Auto-create or update a Draft release per tag, attach the
- # generated installers + the updater manifest. After CI
- # finishes, manually flip the draft to "published" in the
- # Releases UI to make the auto-updater see it.
+          # Auto-create or update a Draft release per tag, attach the
+          # generated installers + the updater manifest. After CI
+          # finishes, review the draft notes/artifacts before publishing
+          # in the Releases UI. The auto-updater sees only published
+          # releases.
           tagName: ${{ github.ref_name }}
           releaseName: "shellX ${{ github.ref_name }}"
           releaseBody: |
             See the [CHANGELOG](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/CHANGELOG.md) for what's new.
 
-            Auto-update is enabled for users on previous versions; this release ships once published.
+            This draft is not visible to auto-update clients until the release is published.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }} --features debug-api

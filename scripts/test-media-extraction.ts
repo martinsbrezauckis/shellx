@@ -74,6 +74,38 @@ const cases = [
     tool: "video_gen",
     id: "vid2",
   },
+  {
+    name: "video_gen raw html src with spaces",
+    text: '<video controls src="/home/user/.grok/sessions/abc/videos/demo clip.mp4"></video>',
+    expectImage: undefined,
+    expectVideo: "/home/user/.grok/sessions/abc/videos/demo clip.mp4",
+    tool: "video_gen",
+    id: "vid3",
+  },
+  {
+    name: "video_gen markdown link Windows path with spaces",
+    text: "Preview: [clip](C:\\Users\\User\\.grok\\sessions\\019xyz\\videos\\demo clip.mov)",
+    expectImage: undefined,
+    expectVideo: "C:\\Users\\User\\.grok\\sessions\\019xyz\\videos\\demo clip.mov",
+    tool: "video_gen",
+    id: "vid4",
+  },
+  {
+    name: "video_gen markdown link path with parentheses",
+    text: "Preview: [clip](/home/user/.grok/sessions/abc/videos/demo (final).mp4)",
+    expectImage: undefined,
+    expectVideo: "/home/user/.grok/sessions/abc/videos/demo (final).mp4",
+    tool: "video_gen",
+    id: "vid5",
+  },
+  {
+    name: "image_gen text path with parentheses",
+    text: "Saved to /home/user/.grok/sessions/abc/images/mockup (1).png",
+    expectImage: "/home/user/.grok/sessions/abc/images/mockup (1).png",
+    expectVideo: undefined,
+    tool: "image_gen",
+    id: "img3",
+  },
 ];
 
 let pass = 0, fail = 0;

@@ -13,7 +13,7 @@
 
 [package]
 name = "app"
-version = "0.1.29"
+version = "0.1.30"
 description = "shellX — cross-platform desktop host for Grok Build and any ACP-speaking agent"
 authors = ["Martins Brezauckis <martins.brezauckis@gmail.com>"]
 license = "MIT"
@@ -34,11 +34,6 @@ tauri-plugin-log = "2"
 # P-UX-Impl §10.1: file picker dialog for Attach + workspace-folder
 # picker. Loaded unconditionally — same low cost as plugin-log.
 tauri-plugin-dialog = "2"
-
-# Phase 13 (#221, shellXagent screenshot endpoint): captures the shellX
-# native window as PNG. Cross-platform — uses Win32 GDI BitBlt on
-# Windows and X11/Wayland capture on Linux. Apache-2.0 licensed.
-xcap = "0.1.1"
 
 # JSON-RPC frames + general (de)serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -179,6 +174,16 @@ regex = "1.11"
 # every byte" archive.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 walkdir = "2"
+
+# Phase 13 (#221, shellXagent screenshot endpoint): captures the shellX
+# native window as PNG. `xcap` 0.1.1 still builds cleanly on Linux and
+# Windows without extra PipeWire dev packages. macOS needs 0.9.x because
+# 0.1.1 fails to compile on current Apple Rust toolchains.
+[target.'cfg(target_os = "macos")'.dependencies]
+xcap = "0.9.5"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+xcap = "0.1.1"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.27", features = ["signal"] }

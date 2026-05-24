@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10.33.0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -61,18 +61,25 @@ jobs:
       - name: cargo clippy -D warnings
         working-directory: src-tauri
         run: cargo clippy --all-targets --features debug-api -- -D warnings
-      - name: Install fake grok for subagent tests
-        run: |
-          mkdir -p "$RUNNER_TEMP/shellx-fake-bin"
-          cat > "$RUNNER_TEMP/shellx-fake-bin/grok" <<'EOF'
-          #!/usr/bin/env sh
-          echo "fake grok"
-          EOF
-          chmod +x "$RUNNER_TEMP/shellx-fake-bin/grok"
-          echo "GROK_BIN=$RUNNER_TEMP/shellx-fake-bin/grok" >> "$GITHUB_ENV"
       - name: cargo test --all-targets --features debug-api
         working-directory: src-tauri
         run: cargo test --all-targets --features debug-api
+
+  rust-cross-platform:
+    name: Rust check (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - windows-latest
+          - macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo check --all-targets --features debug-api
+        working-directory: src-tauri
+        run: cargo check --all-targets --features debug-api
 
   audit:
     name: Rust dependency audit
@@ -80,8 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
-      - name: cargo audit
-        working-directory: src-tauri
-        run: cargo audit
+      - uses: rustsec/audit-check@v1.4.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: src-tauri

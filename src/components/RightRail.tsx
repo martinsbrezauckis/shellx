@@ -1,6 +1,6 @@
 /**
  * src/components/RightRail.tsx — right-rail tab container.
- * * Tab order: Tasks (default) | Plan | Files. Persisted to localStorage
+ * * Tab order: Tasks (default) | Tools | Plan | Files. Persisted to localStorage
  * via TAB_KEY.
  * * - Tasks: TasksPanel — running background subprocesses scoped to the
  * active tab. Polling is mount-gated.
@@ -18,10 +18,53 @@ import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import { ShikiHighlight } from "./ShikiHighlight";
 import { inTauri } from "../lib/tauri-bridge";
 import { SafeMarkdownLink } from "../lib/markdown-links";
+import { grokSearchCapabilities, type SearchCapability } from "../lib/session-capabilities";
 import { TasksPanel } from "./TasksPanel";
+import { apiPost } from "../lib/debug-api";
+import type { RawEventFrame } from "../types/acp";
 
-export type RightTab = "Tasks" | "Plan" | "Files";
+export type RightTab = "Tasks" | "Tooling" | "Plan" | "Files";
 const TAB_KEY = "grok-shell.rightTab";
+
+type McpKind = "stdio" | "http" | "sse";
+type McpTier = "s" | "a" | "b" | "c";
+
+interface McpEntryStatus {
+  id: string;
+  name: string;
+  tier: McpTier;
+  kind: McpKind;
+  description: string;
+  category: string;
+  vaultKeys: string[];
+  installed: boolean;
+  enabled: boolean;
+  keysAvailable: boolean[];
+  allKeysPresent: boolean;
+}
+
+interface MarketplaceHealthEntry {
+  entryId: string;
+  tabId: string;
+  status: "running" | "missing" | "failed" | "disabled" | "available" | "checking";
+  transportKey?: string;
+  launcher: string;
+  installHint: string | null;
+  stderrTail: string | null;
+  lastCheckMs: number;
+}
+
+interface SessionToolingSnapshot {
+  tabId: string;
+  session: {
+    transport?: string;
+    cwd?: string | null;
+    hasActiveChild?: boolean;
+    sessionId?: string | null;
+  };
+  desired: McpEntryStatus[];
+  health: MarketplaceHealthEntry[];
+}
 
 export interface PreviewTarget {
   kind: "file" | "url" | "image" | "markdown" | "diff";
@@ -40,6 +83,10 @@ export function RightRail({
   requestedTab,
   requestedTabSeq,
   onOpenGoalReview,
+  connectionLabel = "Local",
+  connectionTransport = "💻",
+  sessionStatus = "Idle",
+  onSendPromptToActiveTab,
 }: {
   preview: PreviewTarget | null;
   onPreviewClear: () => void;
@@ -47,8 +94,8 @@ export function RightRail({
   autonomy?: string;
  /** Click handler for FilesPane rows + future flink chips. */
   onPreviewFile?: (path: string) => void;
- /** ACP event stream — PlanPane filters for plan-events here. */
-  events?: { kind: string; payload?: unknown }[];
+ /** ACP event stream — Tools derives advertised capabilities; PlanPane filters plan-events. */
+  events?: RawEventFrame[];
  /** Active tab's cwd; FilesPane roots its tree here. */
   cwd: string;
  /** Active tab id, threaded into PlanPane so extractPlanState can
@@ -63,19 +110,24 @@ export function RightRail({
   requestedTab?: RightTab | null;
   requestedTabSeq?: number;
   onOpenGoalReview?: () => void;
+  connectionLabel?: string;
+  connectionTransport?: string;
+  sessionStatus?: string;
+  onSendPromptToActiveTab?: (text: string) => void;
 }): JSX.Element {
   const [tab, setTab] = useState<RightTab>(() => {
     try {
       const v = localStorage.getItem(TAB_KEY);
  // Legacy "Preview" stored from older installs falls through
  // to the new default "Tasks".
-      if (v === "Tasks" || v === "Plan" || v === "Files") return v;
+      if (v === "Tasks" || v === "Tooling" || v === "Plan" || v === "Files") return v;
     } catch { /* no-op */ }
     return "Tasks";
   });
 
   useEffect(() => {
     try { localStorage.setItem(TAB_KEY, tab); } catch { /* no-op */ }
+    void apiPost("/state/ui", { rightTab: tab }).catch(() => { /* no-op */ });
   }, [tab]);
   useEffect(() => {
     if (!requestedTab) return;
@@ -84,7 +136,7 @@ export function RightRail({
 
   return (
     <aside className="right">
- {/* Tab order: Tasks (default) | Plan | Files. Preview dropped. */}
+ {/* Tab order: Tasks (default) | Tools | Plan | Files. Preview dropped. */}
       <div className="right-tabs tabs">
         <button
           type="button"
@@ -92,6 +144,13 @@ export function RightRail({
           onClick={() => setTab("Tasks")}
         >
           Tasks
+        </button>
+        <button
+          type="button"
+          className={`tab ${tab === "Tooling" ? "active" : ""}`}
+          onClick={() => setTab("Tooling")}
+        >
+          Tools
         </button>
         <button
           type="button"
@@ -114,10 +173,282 @@ export function RightRail({
  * tabId and surface in an "Unattributed" section inside the
  * panel. */}
       {tab === "Tasks" && <TasksPanel activeTabId={activeTabId ?? null} />}
+      {tab === "Tooling" && (
+        <ToolingPane
+          activeTabId={activeTabId ?? null}
+          connectionLabel={connectionLabel}
+          connectionTransport={connectionTransport}
+          sessionStatus={sessionStatus}
+          events={events}
+          onSendPromptToActiveTab={onSendPromptToActiveTab}
+        />
+      )}
       {tab === "Plan"  && <PlanPane autonomy={autonomy} events={events} activeTabId={activeTabId} prefetchedPlanText={prefetchedPlanText} onPreviewFile={onPreviewFile ?? (() => {})} onOpenGoalReview={onOpenGoalReview} />}
       {tab === "Files" && <FilesPane cwd={cwd} onPreviewFile={onPreviewFile ?? (() => {})} />}
     </aside>
   );
+}
+
+/* ─────────────── Tools tab ─────────────── */
+
+function ToolingPane({
+  activeTabId,
+  connectionLabel,
+  connectionTransport,
+  sessionStatus,
+  onSendPromptToActiveTab,
+  events,
+}: {
+  activeTabId: string | null;
+  connectionLabel: string;
+  connectionTransport: string;
+  sessionStatus: string;
+  events: RawEventFrame[];
+  onSendPromptToActiveTab?: (text: string) => void;
+}): JSX.Element {
+  const [entries, setEntries] = useState<McpEntryStatus[]>([]);
+  const [health, setHealth] = useState<Record<string, MarketplaceHealthEntry>>({});
+  const [sessionInfo, setSessionInfo] = useState<SessionToolingSnapshot["session"] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEntries([]);
+    setHealth({});
+    setSessionInfo(null);
+    setHasLoaded(false);
+    setError(null);
+    if (!activeTabId || !inTauri()) return;
+
+    let cancelled = false;
+    const refresh = async () => {
+      setLoading(true);
+      try {
+        const snapshot = await invoke<SessionToolingSnapshot>("session_tooling_snapshot", { tabId: activeTabId });
+        if (cancelled) return;
+        const nextHealth: Record<string, MarketplaceHealthEntry> = {};
+        for (const row of snapshot.health) {
+          if (row.tabId === activeTabId) nextHealth[row.entryId] = row;
+        }
+        setEntries(snapshot.desired);
+        setHealth(nextHealth);
+        setSessionInfo(snapshot.session);
+        setHasLoaded(true);
+        setError(null);
+      } catch (e) {
+        if (!cancelled) setError(typeof e === "string" ? e : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void refresh();
+    const id = window.setInterval(() => void refresh(), 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [activeTabId, connectionLabel, connectionTransport]);
+
+  const desired = useMemo(
+    () => entries.filter((entry) => entry.installed && entry.enabled),
+    [entries],
+  );
+  const searchCapabilities = useMemo(() => grokSearchCapabilities(events), [events]);
+  const readySearchCapabilities = searchCapabilities.filter((cap) => cap.ready).length;
+  const hasConnectedEnvironment = sessionInfo?.hasActiveChild === true;
+  const environmentLabel = hasLoaded
+    ? (hasConnectedEnvironment ? sessionStatus : "awaiting session")
+    : sessionStatus;
+
+  if (!activeTabId) {
+    return (
+      <div className="rail-empty">
+        <div className="rail-empty-line">No active session.</div>
+        <div className="rail-empty-hint">Open or start a tab to inspect environment tooling.</div>
+      </div>
+    );
+  }
+
+  if (!inTauri()) {
+    return (
+      <div className="rail-empty">
+        <div className="rail-empty-line">Tool checks need Tauri.</div>
+        <div className="rail-empty-hint">This pane reads session-scoped MCP health from the desktop host.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tooling-pane">
+      <div className="tooling-head">
+        <div className="tooling-title">Session Tools</div>
+        <div className="tooling-meta">
+          <span>{connectionTransport} {connectionLabel}</span>
+          <span className={!hasConnectedEnvironment && hasLoaded ? "muted" : ""}>{environmentLabel}</span>
+          <span>{readySearchCapabilities}/{searchCapabilities.length} search</span>
+          <span>{desired.length} desired MCP{desired.length === 1 ? "" : "s"}</span>
+        </div>
+      </div>
+
+      {error && (
+        <div className="rail-empty tooling-error">
+          <div className="rail-empty-line">Tools snapshot failed.</div>
+          <div className="rail-empty-hint"><code>{error}</code></div>
+        </div>
+      )}
+
+      {!error && loading && !hasLoaded && desired.length === 0 && (
+        <div className="rail-empty"><div className="rail-empty-line">Checking tools…</div></div>
+      )}
+
+      {!error && hasLoaded && !hasConnectedEnvironment && (
+        <div className="rail-empty">
+          <div className="rail-empty-line">Awaiting session.</div>
+          <div className="rail-empty-hint">Connect this tab to local, WSL, or SSH; tool checks will run inside that environment.</div>
+        </div>
+      )}
+
+      {!error && hasLoaded && hasConnectedEnvironment && (
+        <>
+          <div className="tooling-section-label">Grok capabilities</div>
+          <div className="tooling-list">
+            {searchCapabilities.map((entry) => (
+              <CapabilityRow key={entry.id} entry={entry} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {!error && hasLoaded && hasConnectedEnvironment && desired.length === 0 && (
+        <div className="rail-empty">
+          <div className="rail-empty-line">No desired MCP connectors enabled.</div>
+          <div className="rail-empty-hint">Use Plugins to choose global connectors, then this tab shows whether they work here.</div>
+        </div>
+      )}
+
+      {!error && hasConnectedEnvironment && desired.length > 0 && (
+        <div className="tooling-list">
+          {desired.map((entry) => (
+            <ToolingRow
+              key={entry.id}
+              entry={entry}
+              health={health[entry.id]}
+              connectionLabel={connectionLabel}
+              onSendPromptToActiveTab={onSendPromptToActiveTab}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CapabilityRow({ entry }: { entry: SearchCapability }): JSX.Element {
+  const status = entry.ready
+    ? { label: "ready here", className: "ok" }
+    : { label: "waiting", className: "muted" };
+  return (
+    <div className="tooling-row tooling-row-capability">
+      <div className="tooling-row-top">
+        <span className="tooling-name">{entry.name}</span>
+        <span className={`mp-kind mp-kind-${entry.source === "grok" ? "http" : "stdio"}`}>
+          {entry.source === "grok" ? "GROK" : "HOST"}
+        </span>
+        <span className={`tooling-status ${status.className}`}>{status.label}</span>
+      </div>
+      <div className="tooling-detail">
+        <div>{entry.description}</div>
+        <div>Tool: <code>{entry.toolName}</code></div>
+        {!entry.ready && <div className="tooling-issue">{entry.unavailableHint}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ToolingRow({
+  entry,
+  health,
+  connectionLabel,
+  onSendPromptToActiveTab,
+}: {
+  entry: McpEntryStatus;
+  health?: MarketplaceHealthEntry;
+  connectionLabel: string;
+  onSendPromptToActiveTab?: (text: string) => void;
+}): JSX.Element {
+  const status = toolingStatus(entry, health);
+  const issue = toolingIssue(entry, health);
+  const canRepair = health?.status === "missing" || health?.status === "failed";
+  const actionLabel = health?.status === "missing" ? "Install" : "Fix";
+  const actionPrompt = health?.status === "missing"
+    ? (
+        `Install the missing launcher for the ${entry.name} MCP connector in this ${connectionLabel} environment. ` +
+        `The session Tools check reported ${health.launcher ? `\`${health.launcher}\`` : "the launcher"} missing. ` +
+        "First inspect the environment and package manager, then ask before running installer commands."
+      )
+    : (
+        `Check and fix the ${entry.name} MCP connector in this ${connectionLabel} environment. ` +
+        "First inspect what is failing, then propose or run the safest config command only after permission."
+      );
+
+  return (
+    <div className="tooling-row">
+      <div className="tooling-row-top">
+        <span className="tooling-name">{entry.name}</span>
+        <span className={`mp-kind mp-kind-${entry.kind}`}>{entry.kind.toUpperCase()}</span>
+        <span className={`tooling-status ${status.className}`}>{status.label}</span>
+      </div>
+      <div className="tooling-detail">
+        <div>{entry.description}</div>
+        <div>
+          Desired: enabled globally
+          {entry.vaultKeys.length > 0 ? ` · keys ${entry.allKeysPresent ? "present" : "missing"}` : " · no key"}
+        </div>
+        {health?.launcher && <div>Launcher: <code>{health.launcher}</code></div>}
+        {issue && <div className="tooling-issue">{issue}</div>}
+      </div>
+      {canRepair && (
+        <div className="tooling-actions">
+          <button
+            type="button"
+            className="mp-action-btn mp-action-btn-secondary"
+            onClick={() => {
+              onSendPromptToActiveTab?.(actionPrompt);
+            }}
+          >
+            {actionLabel}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function toolingStatus(
+  entry: McpEntryStatus,
+  health?: MarketplaceHealthEntry,
+): { label: string; className: string } {
+  if (!entry.allKeysPresent) return { label: "key needed", className: "warn" };
+  if (!health) return { label: "waiting", className: "muted" };
+  if (health.status === "running") return { label: "ready here", className: "ok" };
+  if (health.status === "checking") return { label: "checking", className: "muted" };
+  if (health.status === "missing") return { label: "missing tool", className: "warn" };
+  if (health.status === "failed") return { label: "probe failed", className: "bad" };
+  return { label: health.status, className: "muted" };
+}
+
+function toolingIssue(entry: McpEntryStatus, health?: MarketplaceHealthEntry): string | null {
+  if (!entry.allKeysPresent) {
+    const missing = entry.vaultKeys.filter((_, i) => !entry.keysAvailable[i]);
+    return `Missing vault key${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`;
+  }
+  if (!health) return "Waiting for this tab's environment probe.";
+  if (health.status === "missing") return health.installHint ?? "Required launcher is not on this environment PATH.";
+  if (health.status === "failed") return health.stderrTail ?? "Launcher probe failed.";
+  if (health.status === "checking") return "Probe is running in the active tab environment.";
+  return null;
 }
 
 /* ─────────────── Files tab ─────────────── */

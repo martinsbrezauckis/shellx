@@ -30,9 +30,9 @@ debug bearer token from `~/.shellx/shellxagent.token` or
 
 | Method | Path |
 | --- | --- |
-| GET | `/health`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/marketplace_health`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/vault/status`, `/vault/keys`, `/connections` |
-| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/panels`, `/preview`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/permissions/:reqId/respond`, `/diagnostics`, `/github/pr/create`, `/vault/get`, `/vault/set`, `/vault/delete`, `/connections`, `/connections/:id/test` |
-| DELETE | `/connections/:id` |
+| GET | `/health`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/marketplace_health`, `/state/session_tooling`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/vault/status`, `/vault/keys`, `/connections`, `/outside-connectors` |
+| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/permissions/:reqId/respond`, `/diagnostics`, `/github/pr/create`, `/vault/get`, `/vault/set`, `/vault/delete`, `/connections`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test` |
+| DELETE | `/connections/:id`, `/outside-connectors/:id` |
 
 Not currently wired despite older roadmap text below: `GET /`, `GET /version`,
 `GET /state/projects`, `GET /state/files`, `GET /state/preview`,
@@ -68,7 +68,7 @@ do not own.
 
 | Pattern | Use |
 | --- | --- |
-| `GET /state/<noun>` | Read-only snapshot of UI state (header, footer, sessions, subagents, ui, skills, github, github/items, marketplace_health) |
+| `GET /state/<noun>` | Read-only snapshot of UI state (header, footer, sessions, subagents, ui, skills, github, github/items, marketplace_health, session_tooling) |
 | `GET /<resource>` / `GET /<resource>/:id` | Read a domain resource (sessions, settings, panels, autonomy, plan, github) |
 | `POST /<resource>` | Create / write a domain resource (sessions, settings, prompt, abort, autonomy) |
 | `POST /<resource>/:id/<action>` | Verb-named action on a specific resource (`/sessions/:id/switch`, `/sessions/:id/rename`, `/pr/:n/preview`) |
@@ -271,25 +271,27 @@ model badge, daily-cost.
 }
 ```
 
-### 3.4 `GET /state/ui`
+### 3.4 `GET /state/ui`, `POST /state/ui`
 
-Current UI snapshot for the active tab. Older drafts called this
-`/state/sidebar`; the wired route is `/state/ui`.
+Current debug-visible UI snapshot. Older drafts called this
+`/state/sidebar`; the wired route is `/state/ui`. `POST /state/ui`
+accepts a partial patch, mainly for tab control surfaces.
 
 ```ts
 {
-  activeTab: "projects" | "files" | "skills";
-  projects: { id: string; name: string; pinned: boolean; chats: number }[];
-  files: { path: string; gitState: "modified"|"untracked"|"deleted"|"clean" }[];
-  skills: { name: string; source: "builtin"|"mcp"|"user"; enabled: boolean }[];
-  github: { branch: string; ahead: number; behind: number; remoteUrl: string | null };
-  worktreeCount: number;
+  panels: { horizontal: [number, number, number]; vertical: [number, number] };
+  preview: unknown | null;
+  autonomy: string | null;
+  bottomTab: string | null;
+  leftTab: string | null;
+  rightTab: "Tasks" | "Tooling" | "Plan" | "Files" | null;
 }
 ```
 
 The wired detail variants are `GET /state/skills`, `GET /state/github`,
 and `GET /state/github/items`. `GET /state/projects` and
-`GET /state/files` remain roadmap routes.
+`GET /state/files` remain roadmap routes. RightRail writes
+`rightTab` here when the user selects Tasks, Tooling, Plan, or Files.
 
 ### 3.5 `GET /state/footer`
 
@@ -349,7 +351,39 @@ corresponding sub-objects in §3.4 with per-row metadata (paths,
 tool counts, PR titles, etc.). Implementers must add typed examples to
 a fixture under `tests/` so the driver can pin them.
 
-### 3.8 `GET /state/files?path=<rel>` *(roadmap, not wired)*
+### 3.8 `GET /state/session_tooling?tabId=<tab>`
+
+Read-only mirror of the right-rail Tooling tab. It returns the active
+tab transport/session metadata, global MCP desired state, and the
+environment-specific health rows last produced for that tab. It does
+not create missing sessions or start probes; `/connect` schedules probes
+for live debug-api sessions.
+
+```ts
+{
+  tabId: string;
+  session: {
+    transport: "local" | "wsl" | "ssh" | "none";
+    cwd: string | null;
+    hasActiveChild: boolean;
+    sessionId: string | null;
+    debug: unknown;
+  };
+  desired: Array<unknown>; // MCP marketplace entries with installed/enabled state
+  health: Array<{
+    entryId: string;
+    tabId: string;
+    transportKey: string;
+    status: "checking" | "running" | "missing" | "failed" | string;
+    launcher: string;
+    installHint?: string | null;
+    stderrTail?: string | null;
+    lastCheckMs: number;
+  }>;
+}
+```
+
+### 3.9 `GET /state/files?path=<rel>` *(roadmap, not wired)*
 
 File tree rooted at the active session's cwd, or at `path` if given
 (must be **inside** cwd; otherwise `403 forbidden`).
@@ -367,7 +401,7 @@ File tree rooted at the active session's cwd, or at `path` if given
 }
 ```
 
-### 3.9 `GET /state/preview`, `GET /state/plan`, `GET /state/panels`
+### 3.10 `GET /state/preview`, `GET /state/plan`, `GET /state/panels`
 
 - `preview`: what the right pane is currently showing (path/url + kind).
 - `plan`: current plan-mode step list with statuses (mirrors §15).
@@ -383,9 +417,11 @@ the legacy UI design proposal. The v1.0
 endpoints below introduce explicit session identifiers and run in
 parallel with the singleton.
 
-When **both** are used, `/connect` operates on a session with the
-sentinel id `"default"`. New code should prefer the multi-session
-endpoints.
+`/connect` accepts `tabId` / `tab` / `tab_id` / `sessionId` in the query or
+body. If no id is supplied it operates on the sentinel id `"default"`.
+Calling `/connect` for an already-active tab is a no-op and returns
+`alreadyActive: true`; pass `restart: true` only when intentionally replacing
+that child process.
 
 ### 4.1 `POST /sessions` *(roadmap, not wired)*
 
@@ -460,7 +496,8 @@ Title length capped at 120 chars. `unprocessable` if empty.
 ```ts
 {
   prompt: string;
-  sessionId?: string;            // defaults to active session
+  sessionId?: string;            // alias of tabId; defaults to "default"
+  tabId?: string;
   attachments?: Array<
     | { kind: "file"; path: string }
     | { kind: "image"; base64: string; mimeType: string }
@@ -473,8 +510,8 @@ Attachments translate to ACP `image` / `resource` PromptParts inside
 the agent call. The `path` form must resolve inside the session cwd
 (otherwise `403`).
 
-**Response:** unchanged — `{ ok: true, queued: <prompt> }` with HTTP 202
-(was 200; new status preferred). Events stream over WS.
+**Response:** unchanged — `{ ok: true, queued: <prompt> }`. Events stream over
+WS. If the tab has not been connected, returns `409 session_not_connected`.
 
 **Idempotent:** with `idempotencyKey` and same `sessionId`, yes. Without,
 **no** — each call sends a new turn.
@@ -483,22 +520,47 @@ the agent call. The `path` form must resolve inside the session cwd
 
 ### 5.2 `POST /abort` *(v1.0, exists — extended)*
 
-**v1.1 extension:** optional body `{ sessionId?: string }`. Without
-`sessionId`, aborts the active session (existing behavior).
+Default behavior is a hard abort: it cancels the active prompt, removes the
+tab's session registry entry, and the next `/prompt` for that tab requires a
+fresh `/connect`.
+
+Soft prompt-only cancel keeps the session entry alive. Use any one of:
+
+```ts
+POST /abort?keepSession=1
+POST /abort { soft: true }
+POST /abort { keepSession: true }
+POST /abort { cancelPromptOnly: true }
+```
+
+Optional tab selectors are accepted as query/body `tabId`, `tab`, or
+`tab_id`. The response shape is:
+
+```ts
+{ ok: true; tabId: string; registryRemoved: boolean; keepSession: boolean }
+```
+
+`POST /disconnect` is a semantic alias for hard `/abort` unless one of the
+soft-cancel flags above is supplied.
 
 **Driver:** not yet, but trivial to add.
 
 ### 5.3 `POST /autonomy`
 
 ```ts
-{ mode: "observe" | "propose" | "confirm" | "auto"; sessionId?: string }
+{
+  mode: "plan" | "acceptEdits" | "default" | "bypassPermissions" | "dontAsk"
+      | "confirm" | "auto";
+  sessionId?: string;            // alias of tabId
+  tabId?: string;
+}
 ```
 
-Sets the autonomy mode. Passes through to grok agent as
-`--permission-mode` on next spawn; for a running session, sets the
-permission rule applied to subsequent tool requests.
+Sets the autonomy mode. Passes through to grok agent as `--permission-mode` on
+next spawn. For a running session the response includes
+`appliesAfterReconnect: true` because the CLI flag is already baked into argv.
 
-**Response 200:** `{ mode, sessionId, appliedAtMs }`.
+**Response 200:** `{ ok, mode, tabId, appliesAfterReconnect }`.
 
 ### 5.4 `GET /autonomy?sessionId=<id>`
 
@@ -539,13 +601,13 @@ can predict the UI layout.
 
 ```ts
 {
-  left: { widthPx: number; collapsed: boolean };
-  right: { widthPx: number; hidden: boolean };
-  bottom: { heightPx: number; activeTab: "chat"|"terminal"|"logs"|"stderr" };
+  horizontal: [number, number, number]; // left, center, right percentages
+  vertical: [number, number];           // output, bottom percentages
 }
 ```
 
-**Idempotent:** yes. Values are clamped server-side to layout minimums.
+**Idempotent:** yes. Right-rail active tab is tracked separately via
+`POST /state/ui` with `rightTab`.
 
 ---
 
@@ -625,6 +687,43 @@ progress streams as WS events with `kind: "skill-install"` and
 
 **Non-idempotent** without `idempotencyKey`.
 
+### 9.4 Outside connectors
+
+Outside connectors are user-facing channels such as Telegram bots and
+local relay bridges for WhatsApp/Discord. Secrets are never posted to
+these routes; connector bodies contain Vault key references only.
+
+```ts
+type OutsideConnector = {
+  id: string;
+  label: string;
+  enabled: boolean;
+  provider:
+    | { kind: "telegram"; botTokenVaultKey: string; allowedChatIds: string[] }
+    | { kind: "generic_relay"; sharedSecretVaultKey: string; allowedSenderIds: string[] };
+  target:
+    | { mode: "activeTab" }
+    | { mode: "fixedTab"; tabId: string };
+  dispatchMode: "inbox" | "autoPrompt";
+  requireApproval: boolean;
+  createdMs: number;
+  updatedMs: number;
+  lastTestMs?: number | null;
+  lastError?: string | null;
+};
+```
+
+Routes:
+
+- `GET /outside-connectors` → `{ connectors: OutsideConnector[] }`
+- `POST /outside-connectors` with `OutsideConnector` → saved connector
+- `DELETE /outside-connectors/:id`
+- `POST /outside-connectors/:id/test` → `{ reachable, provider, latencyMs, identity, error }`
+
+Telegram test calls Bot API `getMe` using the token stored at
+`botTokenVaultKey`. Generic relay test verifies the shared-secret
+vault key exists and is non-empty.
+
 ---
 
 ## 10. GitHub
@@ -648,12 +747,14 @@ limit. Cached server-side for 15 seconds to spare the `gh` rate limit.
   body: string;
   draft?: boolean;
   attachTranscript?: boolean;     // appendix from session log
-  sessionId?: string;
+  tabId?: string;                 // sessionId alias also accepted
+  confirmRemoteCreate: true;      // explicit per-operation approval
   idempotencyKey?: string;
 }
 ```
 
-**Response 201:** the new PR's metadata (number, url, head, base).
+**Response 200:** `{ ok, url, output }` from `gh pr create`.
+**Error 428 `approval_required`:** missing `confirmRemoteCreate: true`.
 **Non-idempotent** without `idempotencyKey`.
 
 ### 10.3 `GET /github/issues/:id`

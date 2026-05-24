@@ -733,11 +733,7 @@ pub async fn spawn_subagent_with_transport(
             use base64::engine::general_purpose::STANDARD as B64;
             use base64::Engine as _;
             let snippet_b64 = B64.encode(snippet.as_bytes());
-            let mcp_setup = format!(
-                "mkdir -p {cwd}/.grok && echo {b64} | base64 -d > {cwd}/.grok/config.toml && chmod 600 {cwd}/.grok/config.toml && ",
-                cwd = cwd_q,
-                b64 = crate::acp::shell_quote_for_remote(&snippet_b64),
-            );
+            let mcp_setup = crate::acp::remote_project_mcp_config_setup_chain(&cwd_q, &snippet_b64);
             let remote_full = format!(
                 "{mcp_setup}cd {cwd} && IFS= read -r {env_name} && export {env_name} && exec {grok} -p {prompt} --no-subagents --always-approve --allow {allow} --output-format plain",
                 mcp_setup = mcp_setup,

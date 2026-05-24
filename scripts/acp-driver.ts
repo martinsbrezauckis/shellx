@@ -649,8 +649,17 @@ async function runAppMode(args: CliArgs): Promise<number> {
   // bump Node or polyfill ws package.
   const ws = new WebSocket(opts.wsUrl);
   let promptCompleteSeen = false;
-  const promptComplete = new Promise<void>((resolve) => {
-    ws.addEventListener("message", (msg: MessageEvent) => {
+  let promptCompleteWaiters: Array<() => void> = [];
+  const resolvePromptWaiters = () => {
+    const waiters = promptCompleteWaiters;
+    promptCompleteWaiters = [];
+    for (const resolve of waiters) resolve();
+  };
+  const waitForPromptComplete = () =>
+    new Promise<void>((resolve) => {
+      promptCompleteWaiters.push(resolve);
+    });
+  ws.addEventListener("message", (msg: MessageEvent) => {
       let parsed: any;
       try {
         parsed = JSON.parse(String(msg.data));
@@ -674,9 +683,9 @@ async function runAppMode(args: CliArgs): Promise<number> {
       if (m === "_x.ai/session/prompt_complete") {
         promptCompleteSeen = true;
         process.stdout.write(`  · prompt_complete\n`);
-        resolve();
+        resolvePromptWaiters();
       } else if (parsed?.kind === "session-ended") {
-        resolve();
+        resolvePromptWaiters();
       } else if (typeof m === "string") {
         const su = parsed?.payload?.params?.update?.sessionUpdate;
         process.stdout.write(`  · ${su ? `${m}/${su}` : m}\n`);
@@ -684,13 +693,12 @@ async function runAppMode(args: CliArgs): Promise<number> {
     });
     ws.addEventListener("close", () => {
       logger.write({ t: Date.now(), dir: "log", note: "ws closed" });
-      resolve();
+      resolvePromptWaiters();
     });
     ws.addEventListener("error", () => {
       logger.write({ t: Date.now(), dir: "log", note: "ws error" });
-      resolve();
+      resolvePromptWaiters();
     });
-  });
 
   // Wait for WS open.
   await new Promise<void>((resolve, reject) => {
@@ -741,6 +749,7 @@ async function runAppMode(args: CliArgs): Promise<number> {
   // 3. For each prompt: POST /prompt, wait for prompt_complete (or timeout).
   for (const prompt of args.prompts) {
     promptCompleteSeen = false;
+    const promptComplete = waitForPromptComplete();
     logger.write({ t: Date.now(), dir: "log", note: `send /prompt: ${prompt}` });
     console.log(`[driver] prompt: ${JSON.stringify(prompt)}`);
     try {

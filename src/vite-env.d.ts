@@ -49,3 +49,7 @@ declare module "*.png?url" {
   const url: string;
   export default url;
 }
+declare module "*.md?raw" {
+  const raw: string;
+  export default raw;
+}

@@ -18,6 +18,7 @@
  * - Concrete commands and click paths beat prose.
  * - One section per concept. Short.
  */
+import CHANGELOG from "../../CHANGELOG.md?raw";
 
 export interface BuiltinDoc {
  /** Filename-style id ("features", "quickstart"). Stable key for
@@ -34,7 +35,8 @@ const FEATURES = `# shellX — what it does
 **shellX** is a desktop client that hosts xAI's
 [Grok Build CLI](https://x.ai/grok) (or any agent that speaks
 the Agent Client Protocol). Tabs, vault, voice, file preview, MCP
-marketplace, autonomous goal mode — wrapped around a real agent.
+marketplace, session tool health, autonomous goal mode — wrapped
+around a real agent.
 
 ---
 
@@ -48,6 +50,8 @@ marketplace, autonomous goal mode — wrapped around a real agent.
   click ✕ next to the mic to switch it off.
 - **Smart file links.** Markdown links to local files open in the
   built-in preview; external links open in your default browser.
+- **Generated media tabs.** Images and videos generated during a
+  session are collected into dedicated preview grids.
 - **Inline tool output.** File reads, fetches, terminal commands render
   inside the chat card instead of getting buried in args.
 - **Grok Imagine media.** Image and video generations from grok-build
@@ -83,16 +87,34 @@ Use \`/pause\`, \`/resume\`, \`/stop\` to control it. The right rail's
 
 The Plugins button lists curated MCP servers (Fetch, Git, Memory,
 Playwright, Context7, Stripe, Sentry, Cloudflare, Supabase, Vercel,
-Auth0, …). Install with one click. Servers that need a key get an
-inline field right in the row — no jumping to the vault tab.
+GitHub, ...). Use it for global connector settings and API keys.
+After a tab connects, the right rail's **Tools** tab shows what is
+actually ready in that environment and where a missing tool needs to
+be installed.
+
+## Search capabilities
+
+When the connected Grok build exposes them, **Tools** shows Web
+Search, Web Fetch, and shellX X Search capability status. Ask grok to
+use those tools from chat; shellX keeps the result links clickable.
 
 ## File preview + workspace
 
-- Click any file link in chat → preview opens (markdown,
-  syntax-highlighted code, image, PDF).
+- Click any file link in chat -> preview opens (markdown,
+  syntax-highlighted code/config, image, video, PDF).
+- HTML opens as code first. Use the preview toggle only when you want
+  a sandboxed static render.
+- Unsupported binary files show a clear unsupported-preview message.
 - The right rail's **Files** tab shows the active tab's cwd with
   drag-and-drop attach.
 - **Download all** zips the workspace for backup or hand-off.
+
+## Outside connectors
+
+Settings -> Connectors stores Telegram bot or local relay credentials,
+allowed sender lists, and target-session rules. Use credential tests
+before enabling a connector; keep dispatch review-first until you
+trust the channel.
 
 ## Encrypted vault
 
@@ -198,10 +220,10 @@ auto-continues each turn until grok calls \`goal_complete\`. You can
 
 Open **Settings → Connections** and add a connection preset:
 
-- **WSL** — pick the distro from the dropdown. shellX runs
+- **WSL** — enter the distro name. shellX runs
   \`wsl.exe -d <distro> -- grok\` and routes filesystem reads via
   UNC paths.
-- **SSH** — host + user + auth (key file or password from the vault).
+- **SSH** — host + user using your SSH config, key file, or ssh-agent.
   Optional pre-set cwd; if missing, shellX auto-creates it.
 
 The connection pill in the composer footer lets you switch a tab
@@ -209,14 +231,16 @@ between presets. Each tab can have a different transport.
 
 ## Adding MCPs
 
-Open **Settings → Plugins**. MCPs are organized by tier
-(recommended first). Click **Install**; if a server needs an API key,
-an inline input appears right in the row.
+Open **Plugins** from the header to enable global connectors and add
+any required API keys. After a session connects, open the right rail's
+**Tools** tab for environment-specific status and install hints.
 
 ## Tips
 
 - The right rail's **Plan** tab shows whether a \`/goal\` is active and
   what the scratchboard says.
+- The right rail's **Tools** tab shows what the active environment can
+  actually use.
 - Select text in chat — it auto-copies on mouse release.
 - The 🎤 button lights up red while recording. Pressing **Send** while
   hot stops recording, transcribes, and submits in one click.
@@ -255,4 +279,5 @@ or platform package for the launcher binary.
 export const BUILTIN_DOCS: Record<string, BuiltinDoc> = {
   features: { id: "features", title: "Features", body: FEATURES },
   readme: { id: "readme", title: "Quick start", body: README },
+  changelog: { id: "changelog", title: "Changelog", body: CHANGELOG },
 };

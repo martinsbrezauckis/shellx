@@ -8,8 +8,8 @@
 //! - `running` — `<launcher> --version` exits 0 within 5 s.
 //! - `missing` — binary not on PATH (exit -2 / "not recognized" / ENOENT).
 //! - `failed` — binary present but errored (timeout, non-zero exit).
-//! - `disabled` — user toggled the entry off (no probe fires).
-//! - `available` — catalog entry not installed yet (no probe fires).
+//! - `disabled` — user toggled the entry off.
+//! - `available` — catalog entry not installed yet.
 //! - `checking` — probe in flight.
 //!
 //! ## Algorithm validated 2026-05-20 against live shellX via
@@ -46,6 +46,7 @@ pub fn global() -> Arc<MarketplaceHealth> {
 pub struct MarketplaceHealthEntry {
     pub entry_id: String,
     pub tab_id: String,
+    pub transport_key: String,
     pub status: String,
     pub launcher: String,
     pub install_hint: Option<String>,
@@ -98,6 +99,11 @@ impl MarketplaceHealth {
         let mut g = self.inner.write().await;
         g.by_tab.retain(|(tid, _), _| tid != tab_id);
     }
+
+    pub async fn clear_all(&self) {
+        let mut g = self.inner.write().await;
+        g.by_tab.clear();
+    }
 }
 
 fn now_ms() -> u64 {
@@ -113,17 +119,61 @@ fn derive_launcher(cmd: &str) -> &str {
     cmd.trim().split_ascii_whitespace().next().unwrap_or("")
 }
 
-/// Install hint per-launcher. Surfaces in PluginsModal tooltip.
-fn install_hint_for(launcher: &str) -> Option<String> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProbeTarget {
+    Local,
+    Wsl,
+    Ssh,
+}
+
+/// Install hint per launcher and target environment. Surfaces in the
+/// session Tools pane; keep it scoped to where the probe actually ran.
+fn install_hint_for(launcher: &str, target: ProbeTarget) -> Option<String> {
     match launcher {
-        "uvx" | "uv" => {
-            Some("Install via `winget install astral-sh.uv` or `pipx install uv`.".to_string())
-        }
-        "npx" | "npm" | "node" => {
-            Some("Install Node.js from https://nodejs.org/ (npm/npx come bundled).".to_string())
-        }
-        "docker" => Some("Install Docker Desktop from https://docker.com.".to_string()),
-        "git" => Some("Install Git from https://git-scm.com.".to_string()),
+        "uvx" | "uv" => Some(match target {
+            ProbeTarget::Local if cfg!(windows) => {
+                "Install via `winget install astral-sh.uv` or `pipx install uv`.".to_string()
+            }
+            ProbeTarget::Local if cfg!(target_os = "macos") => {
+                "Install via `brew install uv`, the official uv installer, or `pipx install uv`."
+                    .to_string()
+            }
+            _ => {
+                "Install `uv` in this Linux environment, for example with the official uv installer or `pipx install uv`."
+                    .to_string()
+            }
+        }),
+        "npx" | "npm" | "node" => Some(match target {
+            ProbeTarget::Local if cfg!(windows) => {
+                "Install Node.js from https://nodejs.org/ or via `winget install OpenJS.NodeJS`."
+                    .to_string()
+            }
+            ProbeTarget::Local if cfg!(target_os = "macos") => {
+                "Install Node.js via `brew install node` or from https://nodejs.org/.".to_string()
+            }
+            _ => "Install Node.js/npm in this Linux environment using its package manager or nvm."
+                .to_string(),
+        }),
+        "docker" => Some(match target {
+            ProbeTarget::Local if cfg!(windows) => {
+                "Install Docker Desktop from https://docker.com.".to_string()
+            }
+            ProbeTarget::Local if cfg!(target_os = "macos") => {
+                "Install Docker Desktop or a compatible Docker engine.".to_string()
+            }
+            _ => "Install Docker Engine in this Linux environment, or enable Docker Desktop WSL integration."
+                .to_string(),
+        }),
+        "git" => Some(match target {
+            ProbeTarget::Local if cfg!(windows) => {
+                "Install Git from https://git-scm.com/ or via `winget install Git.Git`.".to_string()
+            }
+            ProbeTarget::Local if cfg!(target_os = "macos") => {
+                "Install Git via Xcode command line tools or `brew install git`.".to_string()
+            }
+            _ => "Install Git in this Linux environment, for example `sudo apt install git`."
+                .to_string(),
+        }),
         _ => None,
     }
 }
@@ -259,7 +309,12 @@ async fn probe_launcher_ssh(ssh_target: &str, launcher: &str) -> (i32, String) {
 }
 
 /// Classify the probe result.
-fn classify(exit: i32, stderr: &str, launcher: &str) -> (String, Option<String>, Option<String>) {
+fn classify(
+    exit: i32,
+    stderr: &str,
+    launcher: &str,
+    target: ProbeTarget,
+) -> (String, Option<String>, Option<String>) {
     let stderr_tail = if stderr.is_empty() {
         None
     } else {
@@ -288,7 +343,7 @@ fn classify(exit: i32, stderr: &str, launcher: &str) -> (String, Option<String>,
     if exit == -2 || missing_signals.iter().any(|s| lower.contains(s)) {
         return (
             "missing".to_string(),
-            install_hint_for(launcher),
+            install_hint_for(launcher, target),
             stderr_tail,
         );
     }
@@ -305,7 +360,23 @@ pub struct ProbeTransport {
     pub ssh_target: Option<String>, // e.g. "user@host"
 }
 
-/// Spawn probes for every enabled marketplace entry against the current
+pub fn probe_transport_key(is_wsl: bool, is_ssh: bool, transport: &ProbeTransport) -> String {
+    if is_wsl {
+        return format!(
+            "wsl:{}",
+            transport.wsl_distro.as_deref().unwrap_or("<unknown>")
+        );
+    }
+    if is_ssh {
+        return format!(
+            "ssh:{}",
+            transport.ssh_target.as_deref().unwrap_or("<unknown>")
+        );
+    }
+    "local".to_string()
+}
+
+/// Spawn launcher probes for stdio marketplace entries against the current
 /// tab's transport. Bounded concurrent (max 4 in flight). Updates the
 /// shared `MarketplaceHealth` state asynchronously.
 ///
@@ -335,6 +406,7 @@ pub fn schedule_probes_for_tab_with_hint(
     transport: ProbeTransport,
 ) {
     tokio::spawn(async move {
+        let transport_key = probe_transport_key(is_wsl, is_ssh, &transport);
         let entries = match crate::mcp_marketplace::list_marketplace().await {
             Ok(v) => v,
             Err(e) => {
@@ -342,9 +414,9 @@ pub fn schedule_probes_for_tab_with_hint(
                 return;
             }
         };
-        let active: Vec<_> = entries
+        let probe_targets: Vec<_> = entries
             .into_iter()
-            .filter(|e| e.installed && e.enabled)
+            .filter(|e| matches!(e.kind, crate::mcp_marketplace::McpKind::Stdio))
             .collect();
 
         // WSL/SSH paths: real probes via wsl.exe / ssh.
@@ -358,10 +430,11 @@ pub fn schedule_probes_for_tab_with_hint(
             // machine-specific target. Surface a checking row with a
             // useful hint until /connect provides the real distro/host.
             if target_label.is_empty() {
-                for e in &active {
+                for e in &probe_targets {
                     let entry = MarketplaceHealthEntry {
                         entry_id: e.id.clone(),
                         tab_id: tab_id.clone(),
+                        transport_key: transport_key.clone(),
                         status: "checking".to_string(),
                         launcher: String::new(),
                         install_hint: Some(if is_wsl {
@@ -377,8 +450,8 @@ pub fn schedule_probes_for_tab_with_hint(
                 return;
             }
             let sem = Arc::new(tokio::sync::Semaphore::new(2));
-            let mut handles = Vec::with_capacity(active.len());
-            for e in active {
+            let mut handles = Vec::with_capacity(probe_targets.len());
+            for e in probe_targets {
                 let health = Arc::clone(&health);
                 let tab_id = tab_id.clone();
                 let sem = Arc::clone(&sem);
@@ -392,6 +465,7 @@ pub fn schedule_probes_for_tab_with_hint(
                     .set(MarketplaceHealthEntry {
                         entry_id: e.id.clone(),
                         tab_id: tab_id.clone(),
+                        transport_key: transport_key.clone(),
                         status: "checking".to_string(),
                         launcher: launcher.clone(),
                         install_hint: None,
@@ -399,6 +473,7 @@ pub fn schedule_probes_for_tab_with_hint(
                         last_check_ms: now_ms(),
                     })
                     .await;
+                let row_transport_key = transport_key.clone();
                 handles.push(tokio::spawn(async move {
                     let _permit = match sem.acquire_owned().await {
                         Ok(p) => p,
@@ -409,11 +484,18 @@ pub fn schedule_probes_for_tab_with_hint(
                     } else {
                         probe_launcher_ssh(&target, &launcher).await
                     };
-                    let (status, install_hint, stderr_tail) = classify(exit, &stderr, &launcher);
+                    let target_kind = if is_wsl {
+                        ProbeTarget::Wsl
+                    } else {
+                        ProbeTarget::Ssh
+                    };
+                    let (status, install_hint, stderr_tail) =
+                        classify(exit, &stderr, &launcher, target_kind);
                     health
                         .set(MarketplaceHealthEntry {
                             entry_id: e.id,
                             tab_id,
+                            transport_key: row_transport_key,
                             status,
                             launcher,
                             install_hint,
@@ -431,8 +513,8 @@ pub fn schedule_probes_for_tab_with_hint(
 
         // Local Windows: bounded concurrent probe loop. Max 4 in flight.
         let sem = Arc::new(tokio::sync::Semaphore::new(4));
-        let mut handles = Vec::with_capacity(active.len());
-        for e in active {
+        let mut handles = Vec::with_capacity(probe_targets.len());
+        for e in probe_targets {
             let health = Arc::clone(&health);
             let tab_id = tab_id.clone();
             let sem = Arc::clone(&sem);
@@ -449,6 +531,7 @@ pub fn schedule_probes_for_tab_with_hint(
                 .set(MarketplaceHealthEntry {
                     entry_id: e.id.clone(),
                     tab_id: tab_id.clone(),
+                    transport_key: transport_key.clone(),
                     status: "checking".to_string(),
                     launcher: launcher.clone(),
                     install_hint: None,
@@ -457,16 +540,18 @@ pub fn schedule_probes_for_tab_with_hint(
                 })
                 .await;
 
+            let row_transport_key = transport_key.clone();
             handles.push(tokio::spawn(async move {
                 let _permit = match sem.acquire().await {
                     Ok(p) => p,
                     Err(_) => return,
                 };
                 let (exit, stderr) = probe_launcher_local(&launcher).await;
-                let (status, hint, tail) = classify(exit, &stderr, &launcher);
+                let (status, hint, tail) = classify(exit, &stderr, &launcher, ProbeTarget::Local);
                 let row = MarketplaceHealthEntry {
                     entry_id: e.id.clone(),
                     tab_id: tab_id.clone(),
+                    transport_key: row_transport_key,
                     status,
                     launcher,
                     install_hint: hint,
@@ -480,4 +565,38 @@ pub fn schedule_probes_for_tab_with_hint(
         // endpoint polls for current state.
         let _ = handles;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_ssh_uv_hint_targets_remote_linux() {
+        let (status, hint, tail) = classify(
+            127,
+            "bash: line 1: uvx: command not found",
+            "uvx",
+            ProbeTarget::Ssh,
+        );
+
+        assert_eq!(status, "missing");
+        let hint = hint.expect("uvx should have an install hint");
+        assert!(hint.contains("Linux environment"));
+        assert!(!hint.contains("winget"));
+        assert_eq!(
+            tail.as_deref(),
+            Some("bash: line 1: uvx: command not found")
+        );
+    }
+
+    #[test]
+    fn missing_local_uv_hint_keeps_windows_guidance_on_windows() {
+        let hint = install_hint_for("uvx", ProbeTarget::Local).expect("uvx hint");
+        if cfg!(windows) {
+            assert!(hint.contains("winget"));
+        } else {
+            assert!(!hint.contains("winget"));
+        }
+    }
 }

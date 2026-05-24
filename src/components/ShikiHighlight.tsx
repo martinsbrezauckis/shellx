@@ -22,6 +22,7 @@
  * `<CodePreview>` impl to this one.
  */
 import { useEffect, useState, type JSX } from "react";
+import { shikiLangForPath } from "../lib/file-preview-types";
 
 /* Loaded once, shared across all instances. */
 let highlighterPromise: Promise<any> | null = null;
@@ -42,49 +43,6 @@ function loadShiki(): Promise<any> {
   return highlighterPromise;
 }
 
-/** Map file extension → Shiki language id. Add as needed. */
-function extToLang(ext: string): string | null {
-  const map: Record<string, string> = {
-    rs: "rust",
-    ts: "typescript",
-    tsx: "tsx",
-    js: "javascript",
-    jsx: "jsx",
-    py: "python",
-    go: "go",
-    java: "java",
-    kt: "kotlin",
-    swift: "swift",
-    c: "c",
-    h: "c",
-    cpp: "cpp",
-    cc: "cpp",
-    hpp: "cpp",
-    cs: "csharp",
-    rb: "ruby",
-    php: "php",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    fish: "fish",
-    json: "json",
-    yaml: "yaml",
-    yml: "yaml",
-    toml: "toml",
-    md: "markdown",
-    markdown: "markdown",
-    html: "html",
-    css: "css",
-    scss: "scss",
-    sql: "sql",
-    xml: "xml",
-    dockerfile: "dockerfile",
-    makefile: "makefile",
-    mk: "makefile",
-  };
-  return map[ext.toLowerCase()] ?? null;
-}
-
 export function ShikiHighlight({
   code,
   path,
@@ -98,8 +56,7 @@ export function ShikiHighlight({
 
   useEffect(() => {
     let cancelled = false;
-    const ext = (path.split(".").pop() ?? "").toLowerCase();
-    const lang = extToLang(ext);
+    const lang = shikiLangForPath(path);
     (async () => {
       try {
         const hi = await loadShiki();

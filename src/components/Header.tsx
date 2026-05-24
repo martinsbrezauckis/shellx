@@ -127,7 +127,7 @@ export function Header({
         className="brand"
         onClick={() => onOpenAbout?.()}
         title="About shellX"
-        aria-label="About shellX — version, source, report a bug"
+        aria-label="About shellX — version and source"
         style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0 }}
       >
         <img src={brandUrl} alt="shellX" height={32} />

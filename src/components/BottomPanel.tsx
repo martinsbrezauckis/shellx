@@ -1,17 +1,20 @@
 /**
  * src/components/BottomPanel.tsx — bottom-panel tabs + prompt composer.
- * * Tabs: Chat (default) / Terminal / Logs / Stderr.
+ * * Tabs: Chat (default) / Terminal / Images / Videos / Logs / Stderr.
  * - Chat: prompt textarea + Attach + Send pill.
  * - Terminal: real xterm.js view backed by tauri-plugin-pty.
+ * - Images/Videos: generated media from the active session.
  * - Logs: raw event stream.
  * - Stderr: filtered grok-stderr events.
  * * Tab state is mirrored to localStorage. Counts come from the parent's
  * events[]. Prompt wiring: parent passes onSend(text); Enter sends,
  * Shift+Enter newline, ⌘U opens the file picker.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import type { RawEventFrame } from "../types/acp";
+import type { UiGroup } from "../lib/grouping";
+import { extractSessionMedia, type SessionMediaItem, type SessionMediaKind } from "../lib/session-media";
 import { HashAutocomplete, type HashItem } from "./HashAutocomplete";
 import type { AutonomyMode } from "./Header";
 import { ConnectionPicker, type ConnectionPreset } from "./ConnectionPicker";
@@ -25,8 +28,9 @@ import { TerminalView } from "./TerminalView";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 // Push-to-talk dictation via xAI Grok STT.
 import { MicButton, type MicButtonHandle } from "./MicButton";
+import { SafeImg, SafeVideo } from "./MediaPreview";
 
-export type BottomTab = "Chat" | "Terminal" | "Logs" | "Stderr";
+export type BottomTab = "Chat" | "Terminal" | "Images" | "Videos" | "Logs" | "Stderr";
 
 const TAB_KEY = "grok-shell.bottomTab";
 const VOICE_LEGACY_KEY = "shellx.voiceChatMode";
@@ -165,7 +169,14 @@ export function highlightSlashTokens(text: string): React.ReactNode[] {
 export function readPersistedBottomTab(): BottomTab {
   try {
     const v = localStorage.getItem(TAB_KEY) as BottomTab | null;
-    if (v === "Chat" || v === "Terminal" || v === "Logs" || v === "Stderr") return v;
+    if (
+      v === "Chat" ||
+      v === "Terminal" ||
+      v === "Images" ||
+      v === "Videos" ||
+      v === "Logs" ||
+      v === "Stderr"
+    ) return v;
   } catch { /* no-op */ }
   return "Chat";
 }
@@ -178,6 +189,7 @@ export function BottomPanel({
   isSending,
   connected,
   events,
+  groups = [],
  // controlled tab — parent owns the state so ⌘`
  // can flip Chat ↔ Terminal globally. When `tab` is undefined the
  // component falls back to its own state (preserves old callers).
@@ -191,6 +203,7 @@ export function BottomPanel({
  // tab. App routes to the same processAttachedPaths pipeline the
  // dialog uses.
   onAttachPaths,
+  onPreviewFile,
  // PR/issue list for `#N` autocomplete.
   hashItems = [],
  // grok's available_commands — drives "/" autocomplete in PromptComposer.
@@ -229,6 +242,7 @@ export function BottomPanel({
   isSending: boolean;
   connected: boolean;
   events: RawEventFrame[];
+  groups?: UiGroup[];
   tab?: BottomTab;
   onTabChange?: (t: BottomTab) => void;
   onAttach?: () => void;
@@ -236,6 +250,8 @@ export function BottomPanel({
  /** same as onAttach but with explicit paths
  * (no dialog). Wired from App.processAttachedPaths. */
   onAttachPaths?: (paths: string[]) => void;
+ /** Open a generated media item in the App-level FilePreviewModal. */
+  onPreviewFile?: (path: string) => void;
   hashItems?: HashItem[];
  /** grok's slash commands from `available_commands_update`
  * events. Each `{name, description?}` becomes an autocomplete entry
@@ -275,10 +291,18 @@ export function BottomPanel({
     if (onTabChange) onTabChange(next);
     else setLocalTab(next);
   };
+  const sessionMedia = useMemo(() => extractSessionMedia(groups), [groups]);
+  const imageCount = sessionMedia.images.length;
+  const videoCount = sessionMedia.videos.length;
 
   useEffect(() => {
     try { localStorage.setItem(TAB_KEY, tab); } catch { /* no-op */ }
   }, [tab]);
+
+  useEffect(() => {
+    if (tab === "Images" && imageCount === 0) setTab("Chat");
+    if (tab === "Videos" && videoCount === 0) setTab("Chat");
+  }, [tab, imageCount, videoCount]);
 
  /** Defer Terminal mount until the user clicks the Terminal tab.
  * Once shown, TerminalView stays mounted across tab switches so
@@ -306,6 +330,26 @@ export function BottomPanel({
         >
           <span className="bdot" />
           Terminal
+        </button>
+        <button
+          type="button"
+          className={`btab ${tab === "Images" ? "active" : ""}`}
+          onClick={() => setTab("Images")}
+          disabled={imageCount === 0}
+          aria-disabled={imageCount === 0}
+          title={imageCount === 0 ? "No generated images in this session" : "Generated images"}
+        >
+          Images <span className="bcnt">{imageCount}</span>
+        </button>
+        <button
+          type="button"
+          className={`btab ${tab === "Videos" ? "active" : ""}`}
+          onClick={() => setTab("Videos")}
+          disabled={videoCount === 0}
+          aria-disabled={videoCount === 0}
+          title={videoCount === 0 ? "No generated videos in this session" : "Generated videos"}
+        >
+          Videos <span className="bcnt">{videoCount}</span>
         </button>
         <button
           type="button"
@@ -380,8 +424,132 @@ export function BottomPanel({
             </div>
           ))
           : (tab === "Terminal" && <TerminalPlaceholder />)}
+        {tab === "Images" && (
+          <MediaGallery
+            kind="image"
+            items={sessionMedia.images}
+            tabId={activeTabId ?? undefined}
+            onPreviewFile={onPreviewFile}
+          />
+        )}
+        {tab === "Videos" && (
+          <MediaGallery
+            kind="video"
+            items={sessionMedia.videos}
+            tabId={activeTabId ?? undefined}
+            onPreviewFile={onPreviewFile}
+          />
+        )}
         {tab === "Logs"     && <LogsView events={events} />}
         {tab === "Stderr"   && <StderrView events={events} />}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────── Generated media tabs ─────────────── */
+
+function formatMediaTime(t: number): string {
+  if (!Number.isFinite(t) || t <= 0) return "";
+  try {
+    return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+function MediaGallery({
+  kind,
+  items,
+  tabId,
+  onPreviewFile,
+}: {
+  kind: SessionMediaKind;
+  items: SessionMediaItem[];
+  tabId?: string;
+  onPreviewFile?: (path: string) => void;
+}): JSX.Element {
+  if (items.length === 0) {
+    return (
+      <div className="media-empty">
+        <div>No {kind === "image" ? "images" : "videos"} in this session yet.</div>
+      </div>
+    );
+  }
+
+  const openItem = (path: string) => {
+    if (onPreviewFile) onPreviewFile(path);
+  };
+
+  return (
+    <div className="media-gallery">
+      <div className="media-grid">
+        {items.map((item) => (
+          <MediaCard
+            key={item.id}
+            item={item}
+            kind={kind}
+            tabId={tabId}
+            onOpen={onPreviewFile ? openItem : undefined}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MediaCard({
+  item,
+  kind,
+  tabId,
+  onOpen,
+}: {
+  item: SessionMediaItem;
+  kind: SessionMediaKind;
+  tabId?: string;
+  onOpen?: (path: string) => void;
+}): JSX.Element {
+  const time = formatMediaTime(item.t);
+
+  return (
+    <div
+      className="media-card"
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : -1}
+      title={item.path}
+      onClick={() => onOpen?.(item.path)}
+      onKeyDown={(e) => {
+        if (!onOpen) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(item.path);
+        }
+      }}
+    >
+      <div className="media-thumb">
+        {kind === "image" ? (
+          <SafeImg
+            src={item.path}
+            alt={item.title}
+            tabId={tabId}
+            className="media-image-thumb"
+          />
+        ) : (
+          <SafeVideo
+            src={item.path}
+            title={item.title}
+            tabId={tabId}
+            controls={false}
+            className="media-video-thumb"
+          />
+        )}
+      </div>
+      <div className="media-meta">
+        <span className="media-name">{item.title}</span>
+        <span className="media-sub">
+          {item.toolTitle}
+          {time ? ` · ${time}` : ""}
+        </span>
       </div>
     </div>
   );

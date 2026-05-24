@@ -99,24 +99,31 @@ export function GeneralTab({
  */}
       <div className="settings-row">
         <label className="settings-label">Permission UX</label>
-        <div className="settings-pills">
-          {(["pill", "modal", "both"] as const).map((m: PermissionUxMode) => (
-            <button
-              key={m}
-              type="button"
-              className={`settings-pill ${s.permissionUx === m ? "active" : ""}`}
-              onClick={() => onPatch({ permissionUx: m })}
-              title={
-                m === "pill"
-                  ? "In-chat chip only (default)"
-                  : m === "modal"
-                    ? "Popup modal only (legacy)"
-                    : "Both chip and modal"
-              }
-            >
-              {m === "pill" ? "Pill" : m === "modal" ? "Modal" : "Both"}
-            </button>
-          ))}
+        <div className="settings-field-stack">
+          <div className="settings-pills">
+            {(["pill", "modal", "both"] as const).map((m: PermissionUxMode) => (
+              <button
+                key={m}
+                type="button"
+                className={`settings-pill ${s.permissionUx === m ? "active" : ""}`}
+                onClick={() => onPatch({ permissionUx: m })}
+                title={
+                  m === "pill"
+                    ? "In-chat chip only (default)"
+                    : m === "modal"
+                      ? "Popup plus audit chip"
+                      : "Popup and chat chip"
+                }
+              >
+                {m === "pill" ? "Pill" : m === "modal" ? "Modal" : "Both"}
+              </button>
+            ))}
+          </div>
+          <p className="settings-inline-hint">
+            Used only in Confirm mode when Grok asks before a gated tool call.
+            Auto mode bypasses this prompt. The chat pill stays as the audit trail;
+            Modal adds the older popup interrupt.
+          </p>
         </div>
       </div>
 

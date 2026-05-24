@@ -2,12 +2,13 @@
 
 Desktop client that hosts xAI's **Grok Build CLI** — or any agent
 speaking the Agent Client Protocol — with tabs, an encrypted vault,
-voice in / out, an MCP marketplace, file preview, autonomous goal
-mode, and a typed HTTP API for local scripting.
+voice in / out, session tool health, an MCP marketplace, file/media
+preview, autonomous goal mode, and a typed HTTP API for local scripting.
 
 **Status:** Beta. Windows installer is the primary signed release.
-Linux artifacts may be attached from CI as experimental builds; macOS
-packaging is deferred.
+Linux bundles are experimental release artifacts when CI passes. macOS
+public packaging is deferred until Developer ID signing and notarization
+are ready.
 
 ## What it does
 
@@ -54,8 +55,9 @@ list.
 
 ### Linux
 
-Linux release artifacts are experimental. If a Linux bundle is not
-attached for your distro, build from source:
+Linux release artifacts are experimental. Download the `.deb`, `.rpm`,
+or `.AppImage` from the Releases page if one matches your distro. If a
+bundle is not attached for your distro, build from source:
 
 ```bash
 git clone https://github.com/MartinsBrezauckis/shellx
@@ -72,13 +74,15 @@ For a Windows installer from WSL, use the staged Windows build helper:
 
 ### macOS
 
-Not yet packaged. Build from source:
+No public notarized macOS download yet. The app can be built from
+source for local development/testing, but public distribution waits on
+Developer ID signing and notarization.
 
 ```bash
 git clone https://github.com/MartinsBrezauckis/shellx
 cd shellx
 pnpm install
-pnpm tauri build
+pnpm tauri build --bundles app
 ```
 
 Requires Node 20+, pnpm, Rust 1.80+, and the

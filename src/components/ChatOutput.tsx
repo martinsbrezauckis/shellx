@@ -14,10 +14,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "rea
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { inTauri } from "../lib/tauri-bridge";
 import { SafeMarkdownLink } from "../lib/markdown-links";
 import { TerminalView } from "./TerminalView";
+import { SafeImg, SafeVideo } from "./MediaPreview";
 import type {
   DoomLoopGroup,
   HostMcpUnreachableGroup,
@@ -960,81 +959,6 @@ function VendorPill({ g }: { g: VendorGroup }): JSX.Element {
 }
 
 /* ─────────────── Helpers ─────────────── */
-
-function SafeImg({
-  src,
-  alt,
-  tabId,
-  ...rest
-}: { src?: string; alt: string; tabId?: string } & React.ImgHTMLAttributes<HTMLImageElement>): JSX.Element {
- /* Image-load fallback chain for grok-generated paths:
- * 1. convertFileSrc + asset:// (fast, no Tauri round trip).
- * 2. On <img> error → invoke read_image_as_data_url which UNC-
- * translates WSL/SSH paths and returns base64.
- * tabId is required for step 2 to resolve the right wslDistro /
- * sshHost; without it Rust falls back to the "default" tab and
- * `/home/...` paths never UNC-translate, leaving broken previews
- * on Windows hosts. */
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
-  if (!src) return <span className="img-broken">[image: {alt}]</span>;
-  let resolved = dataUrl ?? src;
-  if (!dataUrl) {
-    if (/^(https?:|data:|asset:|tauri:|file:)/i.test(src)) {
-      resolved = src;
-    } else if (src.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(src)) {
-      try { resolved = convertFileSrc(src, "asset"); } catch { /* fall through */ }
-    }
-  }
-  return (
-    <img
-      src={resolved}
-      alt={alt}
-      className="md-img"
-      loading="lazy"
-      onError={() => {
- // Fallback: ask Rust to read + base64. Only attempt once.
-        if (dataUrl || !inTauri()) return;
-        void invoke<string>("read_image_as_data_url", { path: src, tabId })
-          .then((url) => { if (url) setDataUrl(url); })
-          .catch(() => { /* leave broken */ });
-      }}
-      {...rest}
-    />
-  );
-}
-
-/* video_gen counterpart to SafeImg. Same asset:// → Rust-base64
- * fallback chain. read_image_as_data_url handles video MIME types too,
- * so WSL/SSH-side video paths UNC-translate identically. */
-function SafeVideo({ src, title, tabId }: { src?: string; title: string; tabId?: string }): JSX.Element {
- /* tabId is required for the Rust fallback to UNC-translate;
- * see SafeImg above. */
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
-  if (!src) return <span className="img-broken">[video: {title}]</span>;
-  let resolved = dataUrl ?? src;
-  if (!dataUrl) {
-    if (/^(https?:|data:|asset:|tauri:|file:)/i.test(src)) {
-      resolved = src;
-    } else if (src.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(src)) {
-      try { resolved = convertFileSrc(src, "asset"); } catch { /* fall through */ }
-    }
-  }
-  return (
-    <video
-      src={resolved}
-      controls
-      preload="metadata"
-      className="md-video"
-      title={title}
-      onError={() => {
-        if (dataUrl || !inTauri()) return;
-        void invoke<string>("read_image_as_data_url", { path: src, tabId })
-          .then((url) => { if (url) setDataUrl(url); })
-          .catch(() => { /* leave broken */ });
-      }}
-    />
-  );
-}
 
 function Time({ t }: { t: number }): JSX.Element {
   return <span className="time">{fmtTime(t)}</span>;

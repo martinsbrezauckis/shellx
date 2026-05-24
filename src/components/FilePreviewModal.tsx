@@ -3,8 +3,10 @@
  *
  * Renders a file based on its extension:
  * - .md / .markdown → ReactMarkdown + remark-gfm
+ * - .html / .htm → Code by default, optional sandboxed static output preview
  * - source code → ShikiHighlight (same renderer as RightRail)
  * - .png/.jpg/.jpeg/.gif/.webp/.svg → <img> via Tauri assetProtocol
+ * - .mp4/.webm/.mov/.m4v/.mkv → <video> via Tauri assetProtocol
  * - .pdf → <iframe> with native PDF viewer (browser
  * preview mode falls back to text)
  * - everything else → <pre> with monospace text
@@ -23,52 +25,38 @@ import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import { ShikiHighlight } from "./ShikiHighlight";
 import { inTauri } from "../lib/tauri-bridge";
 import { SafeMarkdownLink } from "../lib/markdown-links";
-
-type Kind = "markdown" | "code" | "image" | "pdf" | "text" | "unknown";
-
-/** Determine render branch from path extension. Defaults to text/code. */
-function kindOf(path: string): Kind {
-  const ext = path.toLowerCase().split(".").pop() ?? "";
-  if (ext === "md" || ext === "markdown") return "markdown";
-  if (
-    ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"].includes(ext)
-  )
-    return "image";
-  if (ext === "pdf") return "pdf";
-  if (
-    [
-      "ts", "tsx", "js", "jsx", "mjs", "cjs",
-      "rs", "py", "go", "java", "kt", "swift",
-      "json", "toml", "yaml", "yml", "xml",
-      "css", "scss", "html", "vue", "svelte",
-      "sh", "bash", "zsh", "fish", "ps1",
-      "sql", "graphql", "proto", "lua", "rb",
-      "c", "cc", "cpp", "h", "hpp", "cs", "php",
-      "dockerfile", "makefile", "envfile",
-    ].includes(ext)
-  )
-    return "code";
-  if (["txt", "log", "csv", "tsv", "ini", "conf", "cfg"].includes(ext))
-    return "text";
-  return "unknown";
-}
+import { SafeImg, SafeVideo } from "./MediaPreview";
+import {
+  previewKindForPath,
+  shouldReadTextForPreviewKind,
+  type PreviewKind,
+} from "../lib/file-preview-types";
 
 export function FilePreviewModal({
   open,
   path,
+  tabId,
+  sessionCwd,
   onClose,
   onPreviewFile,
 }: {
   open: boolean;
   path: string | null;
+  tabId?: string | null;
+  sessionCwd?: string | null;
   onClose: () => void;
   onPreviewFile?: (path: string) => void;
 }): JSX.Element | null {
   const [text, setText] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [err, setErr] = useState<string | null>(null);
+  const [htmlMode, setHtmlMode] = useState<"code" | "preview">("code");
 
-  const kind = useMemo<Kind>(() => (path ? kindOf(path) : "unknown"), [path]);
+  const kind = useMemo<PreviewKind>(() => (path ? previewKindForPath(path) : "unknown"), [path]);
+
+  useEffect(() => {
+    setHtmlMode("code");
+  }, [path]);
 
  // Esc closes. Click on backdrop closes. The modal body stops propagation.
   useEffect(() => {
@@ -80,15 +68,30 @@ export function FilePreviewModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
- // Fetch text content for text-like kinds. Images/PDFs skip this.
+ // Fetch text content only for known text-like kinds. Binary or
+ // unsupported formats must not be lossy-decoded into visual garbage.
   useEffect(() => {
-    if (!open || !path) { setText(""); setErr(null); return; }
-    if (kind === "image" || kind === "pdf") return;
+    if (!open || !path) {
+      setText("");
+      setErr(null);
+      setLoading(false);
+      return;
+    }
+    if (!shouldReadTextForPreviewKind(kind)) {
+      setText("");
+      setErr(null);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setErr(null);
     if (inTauri()) {
-      void invoke<string>("read_text_file_for_path", { path })
+      void invoke<string>("read_text_file_for_path", {
+        path,
+        tabId: tabId ?? undefined,
+        sessionCwd: sessionCwd ?? undefined,
+      })
         .then((t) => { if (!cancelled) setText(t); })
         .catch((e) => {
           if (!cancelled) setErr(typeof e === "string" ? e : String(e));
@@ -103,7 +106,7 @@ export function FilePreviewModal({
         .finally(() => { if (!cancelled) setLoading(false); });
     }
     return () => { cancelled = true; };
-  }, [open, path, kind]);
+  }, [open, path, kind, tabId, sessionCwd]);
 
   const onCopyPath = useCallback(() => {
     if (!path) return;
@@ -146,6 +149,26 @@ export function FilePreviewModal({
           <span className="preview-fname" title={path}>{fname}</span>
           <span className="preview-kind">{kind}</span>
           {lineCount > 0 && <span className="preview-lines">{lineCount} lines</span>}
+          {kind === "html" && (
+            <div className="preview-mode-toggle" role="tablist" aria-label="HTML preview mode">
+              <button
+                type="button"
+                className={htmlMode === "code" ? "active" : ""}
+                onClick={() => setHtmlMode("code")}
+                aria-selected={htmlMode === "code"}
+              >
+                Code
+              </button>
+              <button
+                type="button"
+                className={htmlMode === "preview" ? "active" : ""}
+                onClick={() => setHtmlMode("preview")}
+                aria-selected={htmlMode === "preview"}
+              >
+                Preview
+              </button>
+            </div>
+          )}
           <button
             type="button"
             className="preview-close"
@@ -186,17 +209,36 @@ export function FilePreviewModal({
             <ShikiHighlight code={text} path={path} />
           )}
 
-          {!loading && !err && (kind === "text" || kind === "unknown") && (
+          {!loading && !err && kind === "html" && (
+            htmlMode === "preview" ? (
+              <HtmlPreview html={text} title={fname} />
+            ) : (
+              <ShikiHighlight code={text} path={path} />
+            )
+          )}
+
+          {!loading && !err && kind === "text" && (
             <pre className="preview-text">{text}</pre>
+          )}
+
+          {!loading && !err && kind === "unknown" && (
+            <div className="preview-unsupported">
+              <div className="preview-unsupported-title">Preview not supported</div>
+              <div className="preview-unsupported-detail">
+                This file type cannot be rendered safely inside shellX yet.
+              </div>
+            </div>
           )}
 
           {!err && kind === "image" && (
             <div className="preview-image">
               {inTauri() ? (
-                <img
-                  src={convertFileSrc(path, "asset")}
+                <SafeImg
+                  src={path}
                   alt={fname}
-                  onError={() => setErr("Could not load image")}
+                  tabId={tabId ?? undefined}
+                  sessionCwd={sessionCwd ?? undefined}
+                  className="preview-image-img"
                 />
               ) : (
                 <div className="preview-err">Image preview requires Tauri</div>
@@ -204,13 +246,32 @@ export function FilePreviewModal({
             </div>
           )}
 
+          {!err && kind === "video" && (
+            <div className="preview-video">
+              {inTauri() ? (
+                <SafeVideo
+                  src={path}
+                  title={fname}
+                  tabId={tabId ?? undefined}
+                  sessionCwd={sessionCwd ?? undefined}
+                  controls
+                  className="preview-video-player"
+                  preload="metadata"
+                />
+              ) : (
+                <div className="preview-err">Video preview requires Tauri</div>
+              )}
+            </div>
+          )}
+
           {!err && kind === "pdf" && (
             <div className="preview-pdf">
               {inTauri() ? (
-                <iframe
-                  src={convertFileSrc(path, "asset")}
+                <PdfPreview
+                  path={path}
                   title={fname}
-                  className="preview-pdf-iframe"
+                  tabId={tabId ?? undefined}
+                  sessionCwd={sessionCwd ?? undefined}
                 />
               ) : (
                 <div className="preview-err">PDF preview requires Tauri</div>
@@ -248,4 +309,127 @@ export function FilePreviewModal({
       </div>
     </div>
   );
+}
+
+function HtmlPreview({ html, title }: { html: string; title: string }): JSX.Element {
+  const srcDoc = useMemo(() => buildSafeHtmlPreviewDocument(html), [html]);
+  return (
+    <iframe
+      srcDoc={srcDoc}
+      title={`Rendered HTML preview: ${title}`}
+      className="preview-html-iframe"
+      sandbox=""
+      referrerPolicy="no-referrer"
+    />
+  );
+}
+
+function PdfPreview({
+  path,
+  title,
+  tabId,
+  sessionCwd,
+}: {
+  path: string;
+  title: string;
+  tabId?: string;
+  sessionCwd?: string;
+}): JSX.Element {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let url: string | null = null;
+    setBlobUrl(null);
+    setErr(null);
+
+    void invoke<string>("read_preview_file_as_data_url", { path, tabId, sessionCwd })
+      .then((dataUrl) => {
+        const blob = dataUrlToBlob(dataUrl);
+        url = URL.createObjectURL(blob);
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        setBlobUrl(url);
+      })
+      .catch((e) => {
+        if (!cancelled) setErr(typeof e === "string" ? e : String(e));
+      });
+
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [path, tabId, sessionCwd]);
+
+  if (err) return <div className="preview-err">{err}</div>;
+  if (!blobUrl) return <div className="preview-loading">Loading PDF…</div>;
+
+  return (
+    <iframe
+      src={blobUrl}
+      title={title}
+      className="preview-pdf-iframe"
+      referrerPolicy="no-referrer"
+    />
+  );
+}
+
+const HTML_PREVIEW_CSP = [
+  "default-src 'none'",
+  "script-src 'none'",
+  "connect-src 'none'",
+  "img-src data: blob:",
+  "style-src 'unsafe-inline'",
+  "font-src data:",
+  "media-src data: blob:",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "worker-src 'none'",
+  "manifest-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+
+const HTML_PREVIEW_HEAD = `<meta http-equiv="Content-Security-Policy" content="${HTML_PREVIEW_CSP}"><meta charset="utf-8"><style>html,body{min-height:100%;margin:0;background:#fff;color:#111;}body{box-sizing:border-box;}</style>`;
+
+function buildSafeHtmlPreviewDocument(html: string): string {
+  let styles = "";
+  let body = html;
+  if (typeof DOMParser !== "undefined") {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc
+      .querySelectorAll("script, iframe, object, embed, link, base, meta[http-equiv]")
+      .forEach((node) => node.remove());
+    styles = Array.from(doc.head.querySelectorAll("style"))
+      .map((node) => node.outerHTML)
+      .join("\n");
+    body = doc.body.innerHTML;
+  } else {
+    body = `<pre>${escapeHtml(html)}</pre>`;
+  }
+  return `<!doctype html><html><head>${HTML_PREVIEW_HEAD}${styles}</head><body>${body}</body></html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(dataUrl);
+  if (!match) throw new Error("invalid PDF data URL");
+  const mime = match[1] ?? "application/octet-stream";
+  const isBase64 = Boolean(match[2]);
+  const body = match[3] ?? "";
+  const binary = isBase64 ? atob(body) : decodeURIComponent(body);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
 }

@@ -1,34 +1,26 @@
 //! src-tauri/src/mcp_marketplace.rs — MCP marketplace v1.
 //!
-//! Architecture: **Option C — spawn-time injection.** Catalog entries +
-//! vault secrets are merged into the `mcp_servers` param of `session/new`
-//! at grok spawn time. Nothing auto-installs. `~/.grok/config.toml` stays
-//! untouched by secrets.
+//! Architecture: catalog-driven UI backed by Grok's native MCP config.
+//! Installs write managed `[mcp_servers.shellx-mp-*]` sections into
+//! `~/.grok/config.toml`, so Grok owns discovery, MCP startup, and
+//! `grok mcp list/remove/doctor` visibility. ShellX keeps only the
+//! curated catalog and local vault UX.
 //!
-//! Two pieces of state:
-//! 1. CATALOG (compile-time const) — list of all installable connectors
-//! grouped by Tier S/A/B. Source of truth for shape + install spec.
-//! 2. `~/.shellx/mcp-marketplace.json` — per-user enabled-list. Maps
-//! catalog id → { installed: bool, enabled: bool }. Survives across
-//! shellX restarts.
-//!
-//! At session/new time, `inject_marketplace_into_session_new` is called
-//! by `acp::start_grok_session`. It reads the enabled-list, resolves vault
-//! refs to plaintext (only into the spawned grok's stdin via session/new),
-//! and merges the resulting MCP server entries into the existing
-//! `mcp_servers` array. Secrets never touch disk via the marketplace path.
+//! Secrets never touch `config.toml`: generated sections reference
+//! environment variables such as `${SHELLX_MCP_MARKETPLACE_GITHUB_PAT}`.
+//! At Grok process spawn, shellX resolves the corresponding vault keys
+//! into those env vars for the child process only.
 //!
 //! UX guarantees (PluginsModal contract):
-//! - "Install" toggles `installed: true, enabled: true`.
+//! - "Install" writes/enables Grok's native MCP config block.
 //! - "Remove" toggles `installed: false`.
-//! - "Disable" toggles `enabled: false` but keeps the install.
+//! - "Disable" sets `enabled = false` but keeps the config block.
 //! - All operations are idempotent (re-install on existing entry is a no-op).
 //! - Vault-key absence does NOT block install; the catalog row simply
-//! can't be applied at session/new until the key lands. UI shows
-//! "key needed" pill in that state.
+//! can't authenticate until the key lands. UI shows "key needed" in that state.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -307,7 +299,7 @@ pub const CATALOG: &[McpCatalogEntry] = &[
         id: "linear",
         name: "Linear",
         tier: McpTier::B,
-        kind: McpKind::Http,
+        kind: McpKind::Sse,
         description: "list_issues, create_issue, cycle",
         category: "issues",
         stdio_command: "",
@@ -504,6 +496,382 @@ fn state_file_path() -> Result<PathBuf, String> {
     Ok(dir.join("mcp-marketplace.json"))
 }
 
+/// Resolve Grok's user config. Mirrors skill_install's home convention
+/// intentionally; this is the canonical file `grok mcp` manages.
+fn grok_config_path() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE not set".to_string())?;
+    Ok(PathBuf::from(home).join(".grok").join("config.toml"))
+}
+
+fn server_name_for_entry(id: &str) -> String {
+    format!("shellx-mp-{}", id)
+}
+
+fn begin_marker(id: &str) -> String {
+    format!(
+        "# shellX:managed-mcp-marketplace:{} BEGIN - do not edit by hand",
+        id
+    )
+}
+
+fn end_marker(id: &str) -> String {
+    format!("# shellX:managed-mcp-marketplace:{} END", id)
+}
+
+fn vault_env_name(key: &str) -> String {
+    let mut out = String::from("SHELLX_MCP_MARKETPLACE_");
+    for ch in key.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_uppercase());
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
+
+fn toml_string(s: &str) -> String {
+    let escaped = s
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{}\"", escaped)
+}
+
+fn push_enabled(out: &mut String, enabled: bool) {
+    out.push_str("enabled = ");
+    out.push_str(if enabled { "true" } else { "false" });
+    out.push('\n');
+}
+
+fn expand_vault_placeholders_to_env_refs(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"$VAULT:") {
+            let after = &s[i + 7..];
+            let end = after
+                .find(|c: char| c.is_whitespace() || c == '=' || c == '"' || c == '\'')
+                .unwrap_or(after.len());
+            let key = &after[..end];
+            out.push_str("${");
+            out.push_str(&vault_env_name(key));
+            out.push('}');
+            i += 7 + end;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn stdio_env_for_entry(entry: &McpCatalogEntry) -> Vec<(&'static str, String)> {
+    match entry.id {
+        "notion" => vec![(
+            "OPENAPI_MCP_HEADERS",
+            "{\"Authorization\":\"Bearer $VAULT:notion/integration-token\",\"Notion-Version\":\"2022-06-28\"}".to_string(),
+        )],
+        "firecrawl" => vec![("FIRECRAWL_API_KEY", "$VAULT:firecrawl/api-key".to_string())],
+        "brave-search" => vec![("BRAVE_API_KEY", "$VAULT:brave/api-key".to_string())],
+        "slack" => vec![("SLACK_BOT_TOKEN", "$VAULT:slack/bot-token".to_string())],
+        "telegram" => vec![("TELEGRAM_BOT_TOKEN", "$VAULT:telegram/bot-token".to_string())],
+        "gitlab" => vec![(
+            "GITLAB_PERSONAL_ACCESS_TOKEN",
+            "$VAULT:gitlab/pat".to_string(),
+        )],
+        "jira" => vec![
+            ("ATLASSIAN_USERNAME", "$VAULT:atlassian/email".to_string()),
+            ("ATLASSIAN_API_TOKEN", "$VAULT:atlassian/api-token".to_string()),
+            ("JIRA_URL", "$VAULT:atlassian/site-url".to_string()),
+        ],
+        "discord" => vec![("DISCORD_TOKEN", "$VAULT:discord/bot-token".to_string())],
+        "google-workspace" => vec![
+            (
+                "GOOGLE_REFRESH_TOKEN",
+                "$VAULT:google/oauth-refresh-token".to_string(),
+            ),
+            ("GOOGLE_CLIENT_ID", "$VAULT:google/client-id".to_string()),
+            (
+                "GOOGLE_CLIENT_SECRET",
+                "$VAULT:google/client-secret".to_string(),
+            ),
+        ],
+        "1password" => vec![(
+            "OP_SERVICE_ACCOUNT_TOKEN",
+            "$VAULT:1password/service-account-token".to_string(),
+        )],
+        "qdrant" => vec![
+            ("QDRANT_URL", "$VAULT:qdrant/url".to_string()),
+            ("QDRANT_API_KEY", "$VAULT:qdrant/api-key".to_string()),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn managed_block_range(source: &str, id: &str) -> Option<(usize, usize)> {
+    let begin = begin_marker(id);
+    let end = end_marker(id);
+    let b = source.find(&begin)?;
+    let line_start = source[..b].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let e = source[b + begin.len()..].find(&end)? + b + begin.len();
+    let line_end = source[e..]
+        .find('\n')
+        .map(|i| e + i + 1)
+        .unwrap_or(source.len());
+    Some((line_start, line_end))
+}
+
+fn strip_managed_block_for_entry(source: &str, id: &str) -> String {
+    let mut out = source.to_string();
+    while let Some((start, end)) = managed_block_range(&out, id) {
+        let before = out[..start].trim_end_matches('\n');
+        let after = out[end..].trim_start_matches('\n');
+        out = match (before.is_empty(), after.is_empty()) {
+            (true, true) => String::new(),
+            (true, false) => after.to_string(),
+            (false, true) => before.to_string(),
+            (false, false) => format!("{}\n{}", before, after),
+        };
+    }
+    out
+}
+
+fn strip_unmanaged_server_section(source: &str, server_name: &str) -> String {
+    let headers = [
+        format!("mcp_servers.{}", server_name),
+        format!("mcp_servers.{}.headers", server_name),
+        format!("mcp_servers.{}.env", server_name),
+    ];
+    let mut out = source.to_string();
+    for header in headers {
+        out = strip_toml_section(&out, &header);
+    }
+    out
+}
+
+pub fn strip_managed_marketplace_config(source: &str) -> String {
+    let mut out = source.to_string();
+    for entry in CATALOG {
+        out = strip_managed_block_for_entry(&out, entry.id);
+        out = strip_unmanaged_server_section(&out, &server_name_for_entry(entry.id));
+    }
+    out
+}
+
+fn strip_toml_section(source: &str, header: &str) -> String {
+    let mut out = source.to_string();
+    loop {
+        let next = strip_toml_section_once(&out, header);
+        if next == out {
+            return out;
+        }
+        out = next;
+    }
+}
+
+fn strip_toml_section_once(source: &str, header: &str) -> String {
+    let needle = format!("[{}]", header);
+    let Some(idx) = source.find(&needle) else {
+        return source.to_string();
+    };
+    let after_section_start = idx + needle.len();
+    let after = &source[after_section_start..];
+    let cut_end = match after.find("\n[") {
+        Some(rel) => after_section_start + rel + 1,
+        None => source.len(),
+    };
+    let mut out = String::with_capacity(source.len());
+    out.push_str(&source[..idx]);
+    if cut_end < source.len() {
+        out.push_str(&source[cut_end..]);
+    }
+    out
+}
+
+fn server_section(source: &str, server_name: &str) -> Option<String> {
+    let needle = format!("[mcp_servers.{}]", server_name);
+    let idx = source.find(&needle)?;
+    let after_start = idx + needle.len();
+    let after = &source[after_start..];
+    let end = after
+        .find("\n[")
+        .map(|rel| after_start + rel + 1)
+        .unwrap_or(source.len());
+    Some(source[idx..end].to_string())
+}
+
+fn section_enabled(section: &str) -> bool {
+    for line in section.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, val)) = trimmed.split_once('=') {
+            if key.trim() == "enabled" {
+                return val.trim().trim_end_matches(',') != "false";
+            }
+        }
+    }
+    true
+}
+
+fn config_section_for_entry(entry: &McpCatalogEntry, enabled: bool) -> String {
+    config_section_for_entry_for_platform(entry, enabled, cfg!(windows))
+}
+
+fn config_section_for_entry_for_platform(
+    entry: &McpCatalogEntry,
+    enabled: bool,
+    windows_stdio: bool,
+) -> String {
+    let id = entry.id;
+    let server_name = server_name_for_entry(id);
+    let mut out = String::new();
+    out.push_str(&begin_marker(id));
+    out.push('\n');
+    out.push_str(&format!("[mcp_servers.{}]\n", server_name));
+    match entry.kind {
+        McpKind::Stdio => {
+            let resolved_cmd = expand_vault_placeholders_to_env_refs(entry.stdio_command);
+            let parts: Vec<&str> = resolved_cmd.split_whitespace().collect();
+            if let Some((cmd, args)) = parts.split_first() {
+                let (cmd, args): (String, Vec<String>) = if windows_stdio {
+                    let mut wrapped = vec!["/c".to_string()];
+                    wrapped.extend(parts.iter().map(|s| (*s).to_string()));
+                    ("cmd.exe".to_string(), wrapped)
+                } else {
+                    (
+                        (*cmd).to_string(),
+                        args.iter().map(|s| (*s).to_string()).collect(),
+                    )
+                };
+                out.push_str("command = ");
+                out.push_str(&toml_string(&cmd));
+                out.push('\n');
+                out.push_str("args = [");
+                for (idx, arg) in args.iter().enumerate() {
+                    if idx > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&toml_string(arg));
+                }
+                out.push_str("]\n");
+            }
+            push_enabled(&mut out, enabled);
+            let env = stdio_env_for_entry(entry);
+            if !env.is_empty() {
+                out.push_str(&format!("[mcp_servers.{}.env]\n", server_name));
+                for (key, value) in env {
+                    out.push_str(key);
+                    out.push_str(" = ");
+                    out.push_str(&toml_string(&expand_vault_placeholders_to_env_refs(&value)));
+                    out.push('\n');
+                }
+            }
+        }
+        McpKind::Http | McpKind::Sse => {
+            out.push_str("url = ");
+            out.push_str(&toml_string(entry.http_url));
+            out.push('\n');
+            out.push_str("type = ");
+            out.push_str(&toml_string(match entry.kind {
+                McpKind::Http => "http",
+                McpKind::Sse => "sse",
+                McpKind::Stdio => unreachable!(),
+            }));
+            out.push('\n');
+            let mut headers: Vec<(String, String)> = Vec::new();
+            for hdr in entry.http_auth.split(';').filter(|s| !s.trim().is_empty()) {
+                if let Some((k, v)) = hdr.split_once('=') {
+                    headers.push((
+                        k.trim().to_string(),
+                        expand_vault_placeholders_to_env_refs(v.trim()),
+                    ));
+                }
+            }
+            if !headers.is_empty() {
+                out.push_str("headers = { ");
+                for (idx, (k, v)) in headers.iter().enumerate() {
+                    if idx > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&toml_string(k));
+                    out.push_str(" = ");
+                    out.push_str(&toml_string(v));
+                }
+                out.push_str(" }\n");
+            }
+            push_enabled(&mut out, enabled);
+        }
+    }
+    out.push_str(&end_marker(id));
+    out.push('\n');
+    out
+}
+
+fn upsert_grok_config_entry(entry: &McpCatalogEntry, enabled: bool) -> Result<(), String> {
+    let path = grok_config_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
+    }
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let server_name = server_name_for_entry(entry.id);
+    let stripped = strip_managed_block_for_entry(&existing, entry.id);
+    let stripped = strip_unmanaged_server_section(&stripped, &server_name);
+    let new_block = config_section_for_entry(entry, enabled);
+    let updated = if stripped.trim().is_empty() {
+        new_block
+    } else {
+        format!("{}\n\n{}", stripped.trim_end(), new_block)
+    };
+    write_grok_config_validated(&path, &updated)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+fn remove_grok_config_entry(id: &str) -> Result<(), String> {
+    let path = grok_config_path()?;
+    let existing = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("read {}: {}", path.display(), e)),
+    };
+    let server_name = server_name_for_entry(id);
+    let stripped = strip_managed_block_for_entry(&existing, id);
+    let stripped = strip_unmanaged_server_section(&stripped, &server_name);
+    write_grok_config_validated(&path, stripped.trim_end())?;
+    Ok(())
+}
+
+fn write_grok_config_validated(path: &PathBuf, updated: &str) -> Result<(), String> {
+    if !updated.trim().is_empty() {
+        toml::from_str::<toml::Value>(updated)
+            .map_err(|e| format!("generated TOML for {} is invalid: {}", path.display(), e))?;
+    }
+    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
+    fs::write(&tmp, updated.as_bytes())
+        .map_err(|e| format!("write tmp {}: {}", tmp.display(), e))?;
+    fs::rename(&tmp, path).map_err(|e| format!("rename {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+fn installed_enabled_from_grok_config(id: &str) -> Option<(bool, bool)> {
+    let path = grok_config_path().ok()?;
+    let source = fs::read_to_string(path).ok()?;
+    let section = server_section(&source, &server_name_for_entry(id))?;
+    Some((true, section_enabled(&section)))
+}
+
 /// Read-and-parse the on-disk state. Missing file = empty state.
 /// Malformed file = empty state + warn (so a corrupted file doesn't
 /// nuke the user's setup; UI re-saves on next change).
@@ -571,6 +939,7 @@ pub struct McpEntryStatus {
 /// vault availability. UI calls this on PluginsModal open + on every
 /// vault change event.
 pub async fn list_marketplace() -> Result<Vec<McpEntryStatus>, String> {
+    migrate_legacy_state_to_grok_config();
     let file = read_state();
     // Vault is OPTIONAL. If it's unreachable (e.g. master.key not yet
     // generated), entries with required keys simply show
@@ -580,6 +949,13 @@ pub async fn list_marketplace() -> Result<Vec<McpEntryStatus>, String> {
     let mut out = Vec::with_capacity(CATALOG.len());
     for entry in CATALOG {
         let st = file.entries.get(entry.id).cloned().unwrap_or_default();
+        let config_state = installed_enabled_from_grok_config(entry.id);
+        let installed = config_state
+            .map(|(installed, _)| installed)
+            .unwrap_or(st.installed);
+        let enabled = config_state
+            .map(|(_, enabled)| enabled)
+            .unwrap_or(st.enabled);
         let mut keys_available = Vec::with_capacity(entry.vault_keys.len());
         for key in entry.vault_keys {
             let has = match vault_opt.as_ref() {
@@ -597,8 +973,8 @@ pub async fn list_marketplace() -> Result<Vec<McpEntryStatus>, String> {
             description: entry.description.to_string(),
             category: entry.category.to_string(),
             vault_keys: entry.vault_keys.iter().map(|s| s.to_string()).collect(),
-            installed: st.installed,
-            enabled: st.enabled,
+            installed,
+            enabled,
             keys_available,
             all_keys_present,
         });
@@ -612,9 +988,11 @@ pub fn install_marketplace_entry(id: &str) -> Result<(), String> {
     let _guard = STATE_LOCK
         .lock()
         .map_err(|e| format!("lock poisoned: {}", e))?;
-    if !CATALOG.iter().any(|e| e.id == id) {
-        return Err(format!("unknown marketplace id: {}", id));
-    }
+    let entry = CATALOG
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| format!("unknown marketplace id: {}", id))?;
+    upsert_grok_config_entry(entry, true)?;
     let mut file = read_state();
     file.entries.insert(
         id.to_string(),
@@ -634,6 +1012,7 @@ pub fn uninstall_marketplace_entry(id: &str) -> Result<(), String> {
     let _guard = STATE_LOCK
         .lock()
         .map_err(|e| format!("lock poisoned: {}", e))?;
+    remove_grok_config_entry(id)?;
     let mut file = read_state();
     if let Some(st) = file.entries.get_mut(id) {
         st.installed = false;
@@ -648,6 +1027,11 @@ pub fn set_marketplace_entry_enabled(id: &str, enabled: bool) -> Result<(), Stri
     let _guard = STATE_LOCK
         .lock()
         .map_err(|e| format!("lock poisoned: {}", e))?;
+    let entry = CATALOG
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| format!("unknown marketplace id: {}", id))?;
+    upsert_grok_config_entry(entry, enabled)?;
     let mut file = read_state();
     let st = file.entries.entry(id.to_string()).or_default();
     st.enabled = enabled;
@@ -656,182 +1040,230 @@ pub fn set_marketplace_entry_enabled(id: &str, enabled: bool) -> Result<(), Stri
     Ok(())
 }
 
-/// Build a JSON array of mcp_server entries ready to merge into the
-/// `session/new` request's `mcp_servers` param. Resolves `$VAULT:path`
-/// placeholders to plaintext values from the vault at injection time.
-///
-/// Entries with missing vault keys are SKIPPED (with a warning log) —
-/// the install lingers on disk but stays inactive until the user
-/// provides the key. Mirrors the proposal's "key needed" UX state.
-///
-/// Returns Ok(Value::Array). Empty array if no entries are
-/// installed+enabled or vault is unreachable. Never errors hard — a
-/// broken marketplace MUST NOT block grok from spawning.
-#[allow(dead_code)]
-pub async fn build_session_new_entries() -> Value {
-    build_session_new_entries_for_transport("local").await
+/// One-time compatibility migration from the legacy shellX-only state file
+/// into Grok's native MCP config. Best-effort by design: plugin-panel reads
+/// must never block because config migration failed.
+fn migrate_legacy_state_to_grok_config() {
+    let _guard = match STATE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::warn!("mcp_marketplace: migration lock poisoned: {}", e);
+            return;
+        }
+    };
+    migrate_legacy_state_to_grok_config_locked();
 }
 
-/// Transport-aware variant. AGENT-B8 fix: when grok runs on a remote
-/// box (WSL / SSH), stdio marketplace entries spawn the command in
-/// grok's own process — i.e. on the remote box. The packaged stdio
-/// commands (`uvx`, `npx`, `cmd.exe`, …) are not present on the
-/// remote PATH, so grok logs 6× `Failed to spawn MCP server
-/// 'shellx-mp-*': No such file or directory` and the marketplace
-/// servers are effectively dead on those transports. Skipping stdio
-/// entries when transport != "local" turns those silent failures into
-/// honest no-ops (the user can see the entries are not loaded in the
-/// marketplace panel for that tab). HTTP/SSE entries stay on every
-/// transport — they're network fetches that don't need a remote
-/// binary.
-///
-/// `transport_kind` accepts: "local" | "wsl" | "ssh" (other values
-/// are treated as remote).
-pub async fn build_session_new_entries_for_transport(transport_kind: &str) -> Value {
+fn migrate_legacy_state_to_grok_config_locked() {
     let file = read_state();
-    let is_remote = !matches!(transport_kind, "local");
-    let vault_opt = crate::vault::Vault::open().ok();
-    let mut out = Vec::new();
     for entry in CATALOG {
         let Some(st) = file.entries.get(entry.id) else {
             continue;
         };
-        if !(st.installed && st.enabled) {
+        if !st.installed || installed_enabled_from_grok_config(entry.id).is_some() {
             continue;
         }
-        // Resolve vault refs first — bail this entry if any key missing.
-        let mut resolved: HashMap<String, String> = HashMap::new();
-        let mut skip_reason: Option<String> = None;
-        if !entry.vault_keys.is_empty() {
-            let Some(vault) = vault_opt.as_ref() else {
-                tracing::warn!(
-                    "mcp_marketplace: skipping '{}' — vault unreachable (vault.master.key missing) but entry requires {} key(s)",
-                    entry.id, entry.vault_keys.len()
-                );
-                continue;
-            };
-            for key in entry.vault_keys {
-                match vault.get(key).await.ok().flatten() {
-                    Some(v) if !v.is_empty() => {
-                        resolved.insert(key.to_string(), v);
-                    }
-                    _ => {
-                        skip_reason = Some(format!("vault key '{}' missing", key));
-                        break;
-                    }
-                }
-            }
-        }
-        if let Some(r) = skip_reason {
-            tracing::warn!("mcp_marketplace: skipping '{}' — {}", entry.id, r);
-            continue;
-        }
-        // Build the JSON entry per kind. #431 — server prefix uses a
-        // single dash (`shellx-mp-<id>`) NOT `shellx-mp__<id>`. Grok-
-        // build treats `__` as the server/tool boundary in qualified
-        // names; with the old `__` prefix, every tool from a
-        // marketplace server became `shellx-mp__<id>__<tool>` (two
-        // `__` instances) and was silently dropped with
-        // "qualified name contains '__' more than once". Single dash
-        // keeps the namespace-prefix readable while leaving exactly
-        // one `__` at the server/tool boundary.
-        let server_name = format!("shellx-mp-{}", entry.id);
-        // AGENT-B8 fix: stdio entries spawn the command IN GROK'S PROCESS,
-        // i.e. on whichever machine grok is running on. For WSL/SSH
-        // transports that means the binary (uvx, npx, cmd.exe…) has to
-        // exist on the REMOTE box's PATH — and it almost never does.
-        // grok logs N× "Failed to spawn MCP server: No such file or
-        // directory" and the marketplace ends up effectively disabled
-        // on those transports. Skip the entry instead of injecting a
-        // doomed config row.
-        if is_remote && matches!(entry.kind, McpKind::Stdio) {
-            tracing::info!(
-                "mcp_marketplace: skipping stdio entry '{}' on {} transport \
-                 (binary would need to be installed on the remote box)",
+        if let Err(e) = upsert_grok_config_entry(entry, st.enabled) {
+            tracing::warn!(
+                "mcp_marketplace: legacy migration for '{}' failed: {}",
                 entry.id,
-                transport_kind
+                e
             );
-            continue;
-        }
-        match entry.kind {
-            McpKind::Stdio => {
-                let resolved_cmd = expand_vault_placeholders(entry.stdio_command, &resolved);
-                let parts: Vec<&str> = resolved_cmd.split_whitespace().collect();
-                if parts.is_empty() {
-                    tracing::warn!(
-                        "mcp_marketplace: '{}' stdio_command empty after resolve",
-                        entry.id
-                    );
-                    continue;
-                }
-                // #416 — on Windows, `uvx` / `npx` are PATHEXT shims (.cmd /
-                // .exe) and grok-build's `CreateProcessW` lookup fails on
-                // the bare name. Wrapping with `cmd.exe /c` lets the shell
-                // resolve through PATHEXT. We do NOT wrap on non-Windows
-                // (Linux/macOS grok-build resolves them natively).
-                let (cmd_str, args_vec): (String, Vec<String>) = if cfg!(windows) {
-                    let mut a: Vec<String> = vec!["/c".to_string()];
-                    a.extend(parts.iter().map(|s| (*s).to_string()));
-                    ("cmd.exe".to_string(), a)
-                } else {
-                    (
-                        parts[0].to_string(),
-                        parts[1..].iter().map(|s| (*s).to_string()).collect(),
-                    )
-                };
-                out.push(json!({
-                    "name": server_name,
-                    "command": cmd_str,
-                    "args": args_vec.iter().map(|s| Value::String(s.clone())).collect::<Vec<_>>(),
-                    "env": [],
-                }));
-            }
-            McpKind::Http | McpKind::Sse => {
-                let mut headers = serde_json::Map::new();
-                for hdr in entry.http_auth.split(';').filter(|s| !s.trim().is_empty()) {
-                    let (k, v) = match hdr.split_once('=') {
-                        Some((k, v)) => (k.trim(), v.trim()),
-                        None => continue,
-                    };
-                    let resolved_v = expand_vault_placeholders(v, &resolved);
-                    headers.insert(k.to_string(), Value::String(resolved_v));
-                }
-                out.push(json!({
-                    "name": server_name,
-                    "url": entry.http_url,
-                    "headers": Value::Object(headers),
-                }));
-            }
         }
     }
-    Value::Array(out)
 }
 
-/// Substitute every `$VAULT:path` placeholder with the resolved
-/// plaintext value from the supplied map. Unmatched placeholders are
-/// left as-is so they're visible if a future refactor changes vault paths.
-fn expand_vault_placeholders(s: &str, resolved: &HashMap<String, String>) -> String {
-    let mut out = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i..].starts_with(b"$VAULT:") {
-            let after = &s[i + 7..];
-            let end = after
-                .find(|c: char| c.is_whitespace() || c == '=' || c == '"' || c == '\'')
-                .unwrap_or(after.len());
-            let key = &after[..end];
-            if let Some(v) = resolved.get(key) {
-                out.push_str(v);
-            } else {
-                out.push_str("$VAULT:");
-                out.push_str(key);
+/// Build a JSON array of mcp_server entries ready to merge into the
+/// `session/new` request's `mcp_servers` param.
+///
+/// Since Grok 0.1.216/0.1.217, generic MCP belongs in Grok's native
+/// `~/.grok/config.toml` and is visible to `grok mcp list/doctor`.
+/// shellX keeps this function as a compatibility no-op so existing call
+/// sites keep their shape while avoiding duplicate MCP registration.
+#[allow(dead_code)]
+pub async fn build_session_new_entries() -> Value {
+    Value::Array(Vec::new())
+}
+
+/// Compatibility no-op; see `build_session_new_entries`.
+pub async fn build_session_new_entries_for_transport(_transport_kind: &str) -> Value {
+    Value::Array(Vec::new())
+}
+
+/// Enabled marketplace config blocks for project-scoped remote config.
+/// Local sessions use `~/.grok/config.toml` directly, but WSL/SSH Grok
+/// reads the project config shellX writes just before spawn.
+pub fn enabled_project_config_blocks() -> String {
+    migrate_legacy_state_to_grok_config();
+    let mut out = String::new();
+    for entry in CATALOG {
+        let Some((installed, enabled)) = installed_enabled_from_grok_config(entry.id) else {
+            continue;
+        };
+        if installed && enabled {
+            if !out.is_empty() {
+                out.push('\n');
             }
-            i += 7 + end;
-        } else {
-            out.push(bytes[i] as char);
-            i += 1;
+            out.push_str(&config_section_for_entry_for_platform(entry, true, false));
         }
     }
     out
+}
+
+/// Environment variables needed by Grok-native marketplace config blocks.
+/// Config stores `${SHELLX_MCP_MARKETPLACE_*}` placeholders, while this
+/// returns plaintext values resolved from the local vault just before Grok
+/// is spawned.
+pub async fn marketplace_env_vars() -> Vec<(String, String)> {
+    migrate_legacy_state_to_grok_config();
+    let vault_opt = crate::vault::Vault::open().ok();
+    let Some(vault) = vault_opt.as_ref() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in CATALOG {
+        let Some((installed, enabled)) = installed_enabled_from_grok_config(entry.id) else {
+            continue;
+        };
+        if !(installed && enabled) {
+            continue;
+        }
+        for key in entry.vault_keys {
+            match vault.get(key).await.ok().flatten() {
+                Some(v) if !v.is_empty() => {
+                    out.push((vault_env_name(key), v));
+                }
+                _ => {
+                    tracing::warn!(
+                        "mcp_marketplace: env for '{}' missing vault key '{}'",
+                        entry.id,
+                        key
+                    );
+                }
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vault_placeholders_become_env_refs() {
+        assert_eq!(
+            expand_vault_placeholders_to_env_refs("Authorization=Bearer $VAULT:github/pat"),
+            "Authorization=Bearer ${SHELLX_MCP_MARKETPLACE_GITHUB_PAT}"
+        );
+    }
+
+    #[test]
+    fn http_config_block_uses_grok_native_mcp_shape_without_plain_secret() {
+        let github = CATALOG.iter().find(|e| e.id == "github").unwrap();
+        let block = config_section_for_entry(github, true);
+        assert!(block.contains("[mcp_servers.shellx-mp-github]"));
+        assert!(block.contains("url = \"https://api.githubcopilot.com/mcp/\""));
+        assert!(block.contains("type = \"http\""));
+        assert!(
+            block.contains("\"Authorization\" = \"Bearer ${SHELLX_MCP_MARKETPLACE_GITHUB_PAT}\"")
+        );
+        assert!(!block.contains("$VAULT:github/pat"));
+    }
+
+    #[test]
+    fn generated_config_block_is_valid_toml() {
+        for entry in CATALOG {
+            let block = config_section_for_entry(entry, true);
+            toml::from_str::<toml::Value>(&block)
+                .unwrap_or_else(|e| panic!("{} config must parse as TOML: {}", entry.id, e));
+        }
+    }
+
+    #[test]
+    fn stdio_keyed_entries_emit_per_server_env_table() {
+        let notion = CATALOG.iter().find(|e| e.id == "notion").unwrap();
+        let block = config_section_for_entry(notion, true);
+        assert!(block.contains("[mcp_servers.shellx-mp-notion.env]"));
+        assert!(block.contains("OPENAPI_MCP_HEADERS"));
+        assert!(block.contains("${SHELLX_MCP_MARKETPLACE_NOTION_INTEGRATION_TOKEN}"));
+        assert!(!block.contains("$VAULT:notion/integration-token"));
+        toml::from_str::<toml::Value>(&block).expect("notion config must parse as TOML");
+    }
+
+    #[test]
+    fn linear_uses_sse_transport_type() {
+        let linear = CATALOG.iter().find(|e| e.id == "linear").unwrap();
+        let block = config_section_for_entry(linear, true);
+        assert!(block.contains("url = \"https://mcp.linear.app/sse\""));
+        assert!(block.contains("type = \"sse\""));
+    }
+
+    #[test]
+    fn remote_project_config_uses_posix_stdio_commands() {
+        let context7 = CATALOG.iter().find(|e| e.id == "context7").unwrap();
+        let block = config_section_for_entry_for_platform(context7, true, false);
+        assert!(block.contains("command = \"npx\""));
+        assert!(!block.contains("cmd.exe"));
+
+        let windows_block = config_section_for_entry_for_platform(context7, true, true);
+        assert!(windows_block.contains("command = \"cmd.exe\""));
+    }
+
+    #[test]
+    fn strip_unmanaged_server_section_removes_main_and_headers_sections() {
+        let source = r#"
+[mcp_servers.keep]
+command = "ok"
+
+[mcp_servers.shellx-mp-demo]
+url = "https://example.invalid/mcp"
+enabled = true
+
+[mcp_servers.shellx-mp-demo.headers]
+Authorization = "Bearer nope"
+
+[mcp_servers.shellx-mp-demo.env]
+TOKEN = "nope"
+
+[mcp_servers.after]
+command = "still"
+"#;
+        let stripped = strip_unmanaged_server_section(source, "shellx-mp-demo");
+        assert!(stripped.contains("[mcp_servers.keep]"));
+        assert!(stripped.contains("[mcp_servers.after]"));
+        assert!(!stripped.contains("shellx-mp-demo"));
+    }
+
+    #[test]
+    fn strip_unmanaged_server_section_removes_duplicate_sections() {
+        let source = r#"
+[mcp_servers.shellx-mp-demo]
+url = "https://one.invalid"
+
+[mcp_servers.keep]
+command = "ok"
+
+[mcp_servers.shellx-mp-demo]
+url = "https://two.invalid"
+
+[mcp_servers.shellx-mp-demo.env]
+TOKEN = "nope"
+
+[mcp_servers.shellx-mp-demo.env]
+TOKEN = "still-nope"
+"#;
+        let stripped = strip_unmanaged_server_section(source, "shellx-mp-demo");
+        assert!(stripped.contains("[mcp_servers.keep]"));
+        assert!(!stripped.contains("shellx-mp-demo"));
+        toml::from_str::<toml::Value>(&stripped).expect("stripped config should parse");
+    }
+
+    #[test]
+    fn section_enabled_defaults_true_and_respects_false() {
+        assert!(section_enabled("[mcp_servers.x]\nurl = \"u\"\n"));
+        assert!(!section_enabled(
+            "[mcp_servers.x]\nurl = \"u\"\nenabled = false\n"
+        ));
+    }
 }

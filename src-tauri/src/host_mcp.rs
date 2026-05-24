@@ -451,7 +451,7 @@ for subagent fan-out (Agent + Agent_status + Agent_output + Agent_poll_all).
 
 5. Other host-MCP tools: mem_* for cross-tab durable state, vision_describe \
 for image understanding, secret_get for vault keys, clock_now/sleep_ms \
-for timing, net_fetch for typed HTTP, fs_grep for content search. \
+for timing, net_fetch for typed HTTP, x_search for X post search, fs_grep for content search. \
 **get_session_info** returns the tab's cwd + transport + linuxHome in \
 ONE call — use it instead of spawning a subagent or probing fs_list_dir \
 when you need to know where you're running. Subagents inherit the same \
@@ -1075,6 +1075,33 @@ fn tool_specs() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "x_search",
+            "description": "Search X posts through xAI's server-side Responses API `x_search` tool using the existing Grok OAuth bearer from ~/.grok/auth.json. Returns {answer, citations, toolCalls, xSearchCalls}. Use this only when X posts/current X discussion are specifically relevant; for ordinary web pages use Grok's native web_search/web_fetch.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Natural-language question or search request about X posts." },
+                    "allowed_x_handles": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional handle allow-list, without @. Max 20. Cannot be combined with excluded_x_handles."
+                    },
+                    "excluded_x_handles": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional handle deny-list, without @. Max 20. Cannot be combined with allowed_x_handles."
+                    },
+                    "from_date": { "type": "string", "description": "Optional ISO date lower bound, YYYY-MM-DD." },
+                    "to_date": { "type": "string", "description": "Optional ISO date upper bound, YYYY-MM-DD." },
+                    "enable_image_understanding": { "type": "boolean", "default": false },
+                    "enable_video_understanding": { "type": "boolean", "default": false },
+                    "model": { "type": "string", "description": "Responses API model. Default grok-4.3." },
+                    "max_answer_chars": { "type": "integer", "description": "Cap returned answer text. Default 6000.", "default": 6000 }
+                },
+                "required": ["query"]
+            }
+        }),
+        json!({
             "name": "voice_stt_v2",
             "description": "Transcribe audio via xAI grok-stt using the OAuth bearer from ~/.grok/auth.json (run `grok login` first). Multipart upload, returns the raw xAI response object (typically {text, language, duration, words[]}). Audio formats: mp3, wav, ogg/opus, webm, m4a/mp4, flac. Cap 30 MB.",
             "inputSchema": {
@@ -1225,6 +1252,7 @@ async fn handle_tools_call(
         // OAuth-token-backed xAI tools (TTS/STT/Vision).
         // Use the bearer JWT from ~/.grok/auth.json — no api-key.
         "voice_tts" => tool_voice_tts(arguments).await,
+        "x_search" => tool_x_search(arguments).await,
         "voice_stt_v2" => tool_voice_stt_v2(arguments).await,
         "vision_describe_v2" => tool_vision_describe_v2(arguments).await,
         // goal_complete: claim the active /goal is finished.
@@ -4109,6 +4137,219 @@ pub fn read_grok_oauth_token() -> Result<String, String> {
     find_key(&v).ok_or_else(|| "no OAuth token in auth.json (run `grok login`)".to_string())
 }
 
+fn optional_handle_list(args: &Value, key: &str) -> Result<Option<Vec<String>>, String> {
+    let Some(value) = args.get(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let arr = value
+        .as_array()
+        .ok_or_else(|| format!("x_search: '{}' must be an array of strings", key))?;
+    if arr.len() > 20 {
+        return Err(format!("x_search: '{}' supports at most 20 handles", key));
+    }
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        let handle = item
+            .as_str()
+            .ok_or_else(|| format!("x_search: '{}' entries must be strings", key))?
+            .trim()
+            .trim_start_matches('@')
+            .to_string();
+        if !handle.is_empty() {
+            out.push(handle);
+        }
+    }
+    if out.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(out))
+    }
+}
+
+fn add_optional_string_field(
+    out: &mut serde_json::Map<String, Value>,
+    args: &Value,
+    key: &str,
+) -> Result<(), String> {
+    let Some(value) = args.get(key) else {
+        return Ok(());
+    };
+    if value.is_null() {
+        return Ok(());
+    }
+    let s = value
+        .as_str()
+        .ok_or_else(|| format!("x_search: '{}' must be a string", key))?
+        .trim();
+    if !s.is_empty() {
+        out.insert(key.to_string(), Value::String(s.to_string()));
+    }
+    Ok(())
+}
+
+fn add_optional_bool_field(out: &mut serde_json::Map<String, Value>, args: &Value, key: &str) {
+    if let Some(b) = args.get(key).and_then(|v| v.as_bool()) {
+        out.insert(key.to_string(), Value::Bool(b));
+    }
+}
+
+fn parse_x_search_response(value: &Value, max_answer_chars: usize) -> Value {
+    let mut answer_parts: Vec<String> = Vec::new();
+    let mut citations: Vec<Value> = Vec::new();
+    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut tool_calls: Vec<Value> = Vec::new();
+
+    if let Some(output) = value.get("output").and_then(|v| v.as_array()) {
+        for item in output {
+            if item.get("type").and_then(|v| v.as_str()) == Some("custom_tool_call") {
+                tool_calls.push(json!({
+                    "name": item.get("name").cloned().unwrap_or(Value::Null),
+                    "input": item.get("input").cloned().unwrap_or(Value::Null),
+                }));
+            }
+            if let Some(content) = item.get("content").and_then(|v| v.as_array()) {
+                for block in content {
+                    if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                        if !text.is_empty() {
+                            answer_parts.push(text.to_string());
+                        }
+                    }
+                    if let Some(annotations) = block.get("annotations").and_then(|v| v.as_array()) {
+                        for ann in annotations {
+                            let url = ann.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                            if url.is_empty() || !seen_urls.insert(url.to_string()) {
+                                continue;
+                            }
+                            citations.push(json!({
+                                "url": url,
+                                "title": ann.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                                "type": ann.get("type").and_then(|v| v.as_str()).unwrap_or("url_citation"),
+                                "startIndex": ann.get("start_index").and_then(|v| v.as_u64()),
+                                "endIndex": ann.get("end_index").and_then(|v| v.as_u64()),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut answer = answer_parts.join("\n\n").trim().to_string();
+    let mut truncated = false;
+    if answer.chars().count() > max_answer_chars {
+        answer = answer.chars().take(max_answer_chars).collect::<String>();
+        truncated = true;
+    }
+    let x_search_calls = value
+        .pointer("/usage/server_side_tool_usage_details/x_search_calls")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    json!({
+        "answer": answer,
+        "citations": citations,
+        "toolCalls": tool_calls,
+        "xSearchCalls": x_search_calls,
+        "responseId": value.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+        "model": value.get("model").and_then(|v| v.as_str()).unwrap_or(""),
+        "truncated": truncated,
+    })
+}
+
+/// `x_search` — server-side X post search via xAI Responses API using
+/// the same OAuth bearer Grok Build stores under `~/.grok/auth.json`.
+async fn tool_x_search(args: Value) -> Result<Value, String> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("x_search: missing 'query'")?
+        .trim();
+    if query.is_empty() {
+        return Err("x_search: query is empty".to_string());
+    }
+    if query.chars().count() > 2000 {
+        return Err("x_search: query exceeds 2000 character cap".to_string());
+    }
+
+    let allowed = optional_handle_list(&args, "allowed_x_handles")?;
+    let excluded = optional_handle_list(&args, "excluded_x_handles")?;
+    if allowed.is_some() && excluded.is_some() {
+        return Err(
+            "x_search: allowed_x_handles and excluded_x_handles cannot be combined".to_string(),
+        );
+    }
+
+    let mut tool = serde_json::Map::new();
+    tool.insert("type".to_string(), Value::String("x_search".to_string()));
+    if let Some(handles) = allowed {
+        tool.insert("allowed_x_handles".to_string(), json!(handles));
+    }
+    if let Some(handles) = excluded {
+        tool.insert("excluded_x_handles".to_string(), json!(handles));
+    }
+    add_optional_string_field(&mut tool, &args, "from_date")?;
+    add_optional_string_field(&mut tool, &args, "to_date")?;
+    add_optional_bool_field(&mut tool, &args, "enable_image_understanding");
+    add_optional_bool_field(&mut tool, &args, "enable_video_understanding");
+
+    let model = args
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("grok-4.3")
+        .trim();
+    let max_answer_chars = args
+        .get("max_answer_chars")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(6000)
+        .clamp(1000, 20_000) as usize;
+    let bearer = read_grok_oauth_token()?;
+    let body = json!({
+        "model": if model.is_empty() { "grok-4.3" } else { model },
+        "input": [
+            { "role": "user", "content": query }
+        ],
+        "tools": [Value::Object(tool)],
+    });
+    let start = std::time::Instant::now();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("x_search: client: {}", e))?;
+    let res = client
+        .post("https://api.x.ai/v1/responses")
+        .bearer_auth(&bearer)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("x_search: POST /v1/responses: {}", e))?;
+    let status = res.status().as_u16();
+    let body_text = res
+        .text()
+        .await
+        .map_err(|e| format!("x_search: read body: {}", e))?;
+    if status != 200 {
+        return Err(format!(
+            "x_search: xAI Responses HTTP {}: {}",
+            status,
+            body_text.chars().take(700).collect::<String>()
+        ));
+    }
+    let response: Value =
+        serde_json::from_str(&body_text).map_err(|e| format!("x_search: parse json: {}", e))?;
+    let mut parsed = parse_x_search_response(&response, max_answer_chars);
+    if let Value::Object(ref mut map) = parsed {
+        map.insert(
+            "msTotal".to_string(),
+            Value::Number(serde_json::Number::from(start.elapsed().as_millis() as u64)),
+        );
+    }
+    Ok(parsed)
+}
+
 /// `voice_tts` — synthesize speech via xAI Grok-TTS. Writes an MP3 blob to
 /// `out_path` (defaults to `<cwd>/.shellx-out/tts-<unix_secs>.mp3`). Uses
 /// the OAuth bearer from `~/.grok/auth.json` — no api-key plumbing needed.
@@ -5573,6 +5814,47 @@ status: DONE
             .collect();
         assert!(names.contains(&"search_tool"));
         assert!(names.contains(&"net_fetch"));
+    }
+
+    #[test]
+    fn x_search_extracts_text_citations_and_usage_from_responses_payload() {
+        let payload = json!({
+            "id": "resp_123",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "xAI shipped X Search support.",
+                            "annotations": [
+                                {
+                                    "type": "url_citation",
+                                    "url": "https://x.com/xai/status/123",
+                                    "title": "xAI on X",
+                                    "start_index": 0,
+                                    "end_index": 3
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "usage": {
+                "server_side_tool_usage_details": {
+                    "x_search_calls": 1
+                }
+            }
+        });
+
+        let parsed = parse_x_search_response(&payload, 1000);
+        assert_eq!(parsed["answer"], "xAI shipped X Search support.");
+        assert_eq!(
+            parsed["citations"][0]["url"],
+            "https://x.com/xai/status/123"
+        );
+        assert_eq!(parsed["xSearchCalls"], 1);
+        assert_eq!(parsed["truncated"], false);
     }
 
     #[test]

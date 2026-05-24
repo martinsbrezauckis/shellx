@@ -37,16 +37,16 @@ import pkg from "../../../package.json";
  * / Homepage anchors produces no visible effect at all.
  */
 function openExternal(url: string): void {
-  try {
-    void invoke("open_url_in_browser", { url });
-  } catch {
-    try { window.open(url, "_blank", "noopener,noreferrer"); } catch { /* ignore */ }
-  }
+  void invoke("open_url_in_browser", { url })
+    .catch(() => {
+      try { window.open(url, "_blank", "noopener,noreferrer"); } catch { /* ignore */ }
+    });
 }
 
 const VERSION = (pkg as { version?: string }).version ?? "0.0.0";
 const TIP_COMMIT: string =
   typeof __APP_GIT_TIP__ === "string" ? __APP_GIT_TIP__ : "unknown";
+const AUTHOR_EMAIL = "martins.brezauckis@gmail.com";
 
 interface UpdateState {
   kind: "idle" | "checking" | "available" | "current" | "installing" | "error";
@@ -63,6 +63,7 @@ interface BoundPorts {
 export function AboutTab(): JSX.Element {
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "idle" });
   const [ports, setPorts] = useState<BoundPorts | null>(null);
+  const [emailCopied, setEmailCopied] = useState(false);
 
  // #333: read the actually-bound ports from the Rust backend. With the
  // #311 orphan-socket fallback the running ports may differ from the
@@ -142,10 +143,16 @@ export function AboutTab(): JSX.Element {
  // App.tsx, which mounts BuiltinDocModal with curated in-app docs.
  // The docs live in src/lib/builtin-docs.ts as TypeScript constants
  // so they ship inside the installer with no filesystem dependency.
-  function openBuiltinDoc(docId: "features" | "readme"): void {
+  function openBuiltinDoc(docId: "features" | "readme" | "changelog"): void {
     try {
       window.dispatchEvent(new CustomEvent("shellx:open-builtin-doc", { detail: { docId } }));
     } catch { /* no-op */ }
+  }
+
+  function copyAuthorEmail(): void {
+    try { void navigator.clipboard.writeText(AUTHOR_EMAIL); } catch { /* no-op */ }
+    setEmailCopied(true);
+    window.setTimeout(() => setEmailCopied(false), 1500);
   }
 
   return (
@@ -210,14 +217,15 @@ export function AboutTab(): JSX.Element {
 
         <dt>Author</dt>
         <dd>
-          Martins Brezauckis{" "}
-          <a
-            href="#"
-            onClick={(e) => { e.preventDefault(); openExternal("mailto:martins.brezauckis@gmail.com"); }}
-            className="about-link"
+          Martins Brezauckis <code>{AUTHOR_EMAIL}</code>{" "}
+          <button
+            type="button"
+            className="settings-pill"
+            onClick={copyAuthorEmail}
+            style={{ marginLeft: 8 }}
           >
-            &lt;martins.brezauckis@gmail.com&gt;
-          </a>
+            {emailCopied ? "Copied" : "Copy email"}
+          </button>
         </dd>
 
         <dt>Homepage</dt>
@@ -288,14 +296,14 @@ export function AboutTab(): JSX.Element {
         >
           Issues ↗
         </a>
-        <a
-          href="#"
-          onClick={(e) => { e.preventDefault(); openExternal("https://github.com/MartinsBrezauckis/shellx/issues/new?title=%5Bbug%5D%20&body=%23%23%20Summary%0A%0A%23%23%20Steps%20to%20reproduce%0A1.%20%0A2.%20%0A%0A%23%23%20Environment%0Aversion%3A%20" + encodeURIComponent(VERSION)); }}
+        <button
+          type="button"
           className="settings-pill"
-          title="Opens GitHub Issues with a pre-filled bug-report template"
+          onClick={() => openBuiltinDoc("changelog")}
+          title="Read bundled release notes"
         >
-          🐛 Report a bug
-        </a>
+          📄 Changelog (in-app)
+        </button>
       </div>
 
       <p className="about-fineprint" style={{ marginTop: 16 }}>

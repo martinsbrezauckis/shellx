@@ -26,6 +26,7 @@ export function PRCreateModal({
   defaultTitle,
   defaultBody,
   transcriptAppendix,
+  activeTabId,
   onCreated,
 }: {
   open: boolean;
@@ -35,6 +36,7 @@ export function PRCreateModal({
   defaultBody: string;
  /** Pre-built transcript chunk; appended when the user opts in. */
   transcriptAppendix: string;
+  activeTabId?: string | null;
   onCreated: (url: string) => void;
 }): JSX.Element | null {
   const [base, setBase] = useState(defaultBase);
@@ -42,6 +44,7 @@ export function PRCreateModal({
   const [body, setBody] = useState(defaultBody);
   const [draft, setDraft] = useState(false);
   const [includeTranscript, setIncludeTranscript] = useState(false);
+  const [confirmRemoteCreate, setConfirmRemoteCreate] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +57,7 @@ export function PRCreateModal({
     setBase(defaultBase);
     setTitle(defaultTitle);
     setBody(defaultBody);
+    setConfirmRemoteCreate(false);
   }, [open, defaultBase, defaultTitle, defaultBody]);
 
   useEffect(() => {
@@ -77,7 +81,14 @@ export function PRCreateModal({
       const r = await api("/github/pr/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base, title, body: fullBody, draft }),
+        body: JSON.stringify({
+          base,
+          title,
+          body: fullBody,
+          draft,
+          tabId: activeTabId ?? null,
+          confirmRemoteCreate,
+        }),
       });
       if (!r.ok) {
         const text = await r.text();
@@ -160,6 +171,18 @@ export function PRCreateModal({
           </div>
         </div>
 
+        <div className="settings-row">
+          <label className="settings-label">Approval</label>
+          <label className="settings-check">
+            <input
+              type="checkbox"
+              checked={confirmRemoteCreate}
+              onChange={(e) => setConfirmRemoteCreate(e.target.checked)}
+            />
+            <span>I approve creating this GitHub PR</span>
+          </label>
+        </div>
+
         {error && (
           <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>
         )}
@@ -172,7 +195,7 @@ export function PRCreateModal({
             type="button"
             className="settings-pill active"
             onClick={() => void submit()}
-            disabled={submitting || !title.trim() || !base.trim()}
+            disabled={submitting || !title.trim() || !base.trim() || !confirmRemoteCreate}
           >
             {submitting ? "Submitting…" : "Create PR"}
           </button>

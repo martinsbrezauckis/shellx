@@ -71,6 +71,7 @@ function Get-SigningKeyText {
 $repo = (Get-Location).Path
 $vcvars = Find-Vcvars64
 Ensure-LocalPnpmShim
+$nsisDir = Join-Path $repo "src-tauri\target\$Configuration\bundle\nsis"
 
 $deferUpdaterSigning = $false
 $encryptedSigningKey = $false
@@ -98,6 +99,11 @@ Write-Host "repo=$repo"
 Write-Host "vcvars=$vcvars"
 
 Invoke-Cmd "`"$vcvars`" && corepack pnpm install --frozen-lockfile"
+if (Test-Path $nsisDir) {
+  Get-ChildItem $nsisDir -Filter "shellX_*_x64-setup.exe*" -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+}
+$buildStartedAt = (Get-Date).AddSeconds(-5)
 $tauriBuildCommand = "`"$vcvars`" && corepack pnpm tauri build --features $Features"
 if ($deferUpdaterSigning) {
   $deferredSigningConfig = Join-Path ([System.IO.Path]::GetTempPath()) "shellx-tauri-defer-updater-signing.json"
@@ -132,13 +138,13 @@ try {
   }
 }
 
-$nsisDir = Join-Path $repo "src-tauri\target\$Configuration\bundle\nsis"
 $installer = Get-ChildItem $nsisDir -Filter "shellX_*_x64-setup.exe" |
+  Where-Object { $_.LastWriteTime -ge $buildStartedAt } |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
 
 if (!$installer) {
-  throw "NSIS installer not found under $nsisDir"
+  throw "Fresh NSIS installer not found under $nsisDir"
 }
 
 $sigPath = "$($installer.FullName).sig"

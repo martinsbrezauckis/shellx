@@ -202,7 +202,7 @@ pub fn ensure_grok_mcp_config_installed(exe_path: &Path) -> Result<bool, String>
     // Escape backslashes for TOML basic-string. Forward slashes are
     // fine, but on Windows std::env::current_exe returns backslash.
     let exe_escaped = exe_path.to_string_lossy().replace('\\', "\\\\");
-    let new_section = format!(
+    let new_section_raw = format!(
         "{begin}\n[mcp_servers.grok-shell-host]\ncommand = \"{exe}\"\nargs = [\"--mcp-server\"]\nenabled = true\nstartup_timeout_sec = 15\n{end}\n",
         begin = BEGIN,
         end = END,
@@ -210,6 +210,14 @@ pub fn ensure_grok_mcp_config_installed(exe_path: &Path) -> Result<bool, String>
     );
 
     let existing = std::fs::read_to_string(&config_path).unwrap_or_default();
+    let preserve_enabled = find_managed_block_range(&existing)
+        .map(|(start, end)| block_is_enabled(&existing[start..end]))
+        .unwrap_or(true);
+    let new_section = if preserve_enabled {
+        new_section_raw
+    } else {
+        comment_block(&new_section_raw)
+    };
 
     // Strip any prior managed block, regardless of position. Re-attach
     // ours at the end of the file.
@@ -232,8 +240,8 @@ pub fn ensure_grok_mcp_config_installed(exe_path: &Path) -> Result<bool, String>
     std::fs::write(&config_path, &updated)
         .map_err(|e| format!("write {}: {}", config_path.display(), e))?;
     info!(
-        "config.toml updated: {} bytes ({} → {} bytes)",
-        updated.len() - existing.len(),
+        "config.toml updated: {:+} bytes ({} → {} bytes)",
+        updated.len() as isize - existing.len() as isize,
         existing.len(),
         updated.len()
     );
@@ -249,6 +257,17 @@ pub fn ensure_grok_mcp_config_installed(exe_path: &Path) -> Result<bool, String>
 /// comment lines `#` directly above the section are also removed —
 /// they're typically header docs for that section.
 fn strip_unmanaged_section(source: &str, header: &str) -> String {
+    let mut out = source.to_string();
+    loop {
+        let next = strip_unmanaged_section_once(&out, header);
+        if next == out {
+            return out;
+        }
+        out = next;
+    }
+}
+
+fn strip_unmanaged_section_once(source: &str, header: &str) -> String {
     let needle = format!("[{}]", header);
     let Some(idx) = source.find(&needle) else {
         return source.to_string();
@@ -286,28 +305,37 @@ fn strip_unmanaged_section(source: &str, header: &str) -> String {
 /// unchanged. Used by `ensure_grok_mcp_config_installed` so re-writes
 /// are idempotent.
 fn strip_managed_block(source: &str, begin: &str, end: &str) -> String {
+    let mut out = source.to_string();
+    loop {
+        let next = strip_managed_block_once(&out, begin, end);
+        if next == out {
+            return out;
+        }
+        out = next;
+    }
+}
+
+fn strip_managed_block_once(source: &str, begin: &str, end: &str) -> String {
     let Some(b) = source.find(begin) else {
         return source.to_string();
     };
     let Some(e) = source[b..].find(end) else {
         return source.to_string();
     };
-    let after_end_offset = b + e + end.len();
-    // Consume the rest of the END line so we don't leave a trailing newline.
-    let mut after = &source[after_end_offset..];
-    if after.starts_with('\n') {
-        after = &after[1..];
+    let cut_start = source[..b].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let end_match = b + e;
+    let cut_end = source[end_match..]
+        .find('\n')
+        .map(|i| end_match + i + 1)
+        .unwrap_or(source.len());
+    let before = source[..cut_start].trim_end_matches('\n');
+    let after = source[cut_end..].trim_start_matches('\n');
+    match (before.is_empty(), after.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => after.to_string(),
+        (false, true) => before.to_string(),
+        (false, false) => format!("{}\n{}", before, after),
     }
-    let before = &source[..b];
-    format!(
-        "{}{}",
-        before.trim_end_matches('\n'),
-        if after.is_empty() {
-            String::new()
-        } else {
-            format!("\n{}", after)
-        }
-    )
 }
 
 // ──────────── Project-scoped HTTP MCP config writer ────────────
@@ -319,9 +347,14 @@ fn strip_managed_block(source: &str, begin: &str, end: &str) -> String {
 ///
 /// The snippet itself comes from `mcp_http::http_config_snippet_toml`
 /// (bound port + `bearer_token_env_var`, not the literal token). We
-/// strip any prior sentinel-wrapped block before injecting a fresh one
-/// so re-runs are idempotent. Other
-/// `[mcp_servers.*]` entries in the project config are preserved.
+/// strip any prior sentinel-wrapped block and stale unmanaged
+/// `[mcp_servers.shellx-host-http]` tables before injecting a fresh one
+/// so re-runs are idempotent. We also strip stale project-scoped
+/// `grok-shell-host` stdio entries: remote Grok cannot launch the local
+/// desktop binary, so remote host access must use `shellx-host-http`.
+/// Other `[mcp_servers.*]` entries in the project config are preserved.
+/// `extra_mcp_config` carries additional shellX-managed project MCP
+/// blocks such as enabled marketplace entries for WSL/SSH sessions.
 ///
 /// Idempotency contract:
 /// - File missing → mkdir parent, write fresh, return Ok(true).
@@ -341,12 +374,19 @@ pub fn ensure_project_mcp_http_config(
     port: u16,
     token: &str,
     tab_id: &str,
+    extra_mcp_config: &str,
 ) -> Result<bool, String> {
     let dir = project_dir.join(".grok");
     let path = dir.join("config.toml");
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {}", dir.display(), e))?;
 
-    let new_section = crate::mcp_http::http_config_snippet_toml(port, token, tab_id);
+    let mut new_section = crate::mcp_http::http_config_snippet_toml(port, token, tab_id);
+    let extra_mcp_config = extra_mcp_config.trim();
+    if !extra_mcp_config.is_empty() {
+        new_section.push('\n');
+        new_section.push_str(extra_mcp_config);
+        new_section.push('\n');
+    }
 
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let stripped = strip_managed_block(
@@ -354,6 +394,11 @@ pub fn ensure_project_mcp_http_config(
         crate::mcp_http::HTTP_SNIPPET_BEGIN,
         crate::mcp_http::HTTP_SNIPPET_END,
     );
+    let stripped = crate::mcp_marketplace::strip_managed_marketplace_config(&stripped);
+    let stripped = strip_unmanaged_section(&stripped, "mcp_servers.shellx-host-http");
+    let stripped = strip_unmanaged_section(&stripped, "mcp_servers.shellx-host-http.headers");
+    let stripped = strip_managed_block(&stripped, MCP_BEGIN_NEEDLE, MCP_END_NEEDLE);
+    let stripped = strip_unmanaged_section(&stripped, "mcp_servers.grok-shell-host");
     let mut updated = stripped.trim_end().to_string();
     if !updated.is_empty() {
         updated.push_str("\n\n");
@@ -414,12 +459,7 @@ pub fn wsl_path_to_unc(distro: &str, linux_path: &str) -> Option<std::path::Path
 /// unchanged), Err on IO failure.
 pub fn ensure_user_agents_md_shellx_section() -> Result<bool, String> {
     let section_body = MANAGED_AGENTS_MD_SECTION;
-    let block = format!(
-        "{}\n{}\n{}\n",
-        MANAGED_AGENTS_BEGIN,
-        section_body.trim(),
-        MANAGED_AGENTS_END
-    );
+    let block = managed_agents_block(section_body);
 
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -474,6 +514,21 @@ fn append_managed(existing: &str, block: &str) -> String {
     } else {
         format!("{}\n\n{}", trimmed, block)
     }
+}
+
+fn managed_agents_block(section_body: &str) -> String {
+    format!(
+        "{}\n{}\n{}\n",
+        MANAGED_AGENTS_BEGIN,
+        section_body.trim(),
+        MANAGED_AGENTS_END
+    )
+}
+
+fn refresh_shellx_agents_managed_block(existing: &str) -> String {
+    let block = managed_agents_block(MANAGED_AGENTS_MD_SECTION);
+    let cleaned = strip_shellx_managed_blocks(existing);
+    append_managed(&cleaned, &block)
 }
 
 const MANAGED_AGENTS_BEGIN: &str = "<!-- BEGIN shellX-managed (do not edit between markers; shellX rewrites this section on session start) -->";
@@ -555,25 +610,24 @@ file. User edits outside this managed block are preserved.
 /// Returns Ok(true) on write, Ok(false) on no-op/missing-source,
 /// Err(...) on IO failure. Caller treats Err as non-fatal warning.
 ///
-/// shellX-controlled usage rules now ride along the MCP `initialize`
-/// response's `serverInfo.instructions` field — no file write needed
-/// for rule updates. This function still runs on /connect, but ONLY
-/// writes if no AGENTS.md exists yet on the remote. Existing AGENTS.md
-/// is preserved untouched — overwriting clobbers user edits.
+/// Existing AGENTS.md user content is preserved, but shellX's managed
+/// block is refreshed on every connect so stale transport guidance does
+/// not survive forever inside WSL.
 pub fn ensure_wsl_agents_md(distro: &str, linux_home: &str) -> Result<bool, String> {
     let dst = wsl_path_to_unc(
         distro,
         &format!("{}/.grok/AGENTS.md", linux_home.trim_end_matches('/')),
     )
     .ok_or("ensure_wsl_agents_md: cannot build UNC path".to_string())?;
-    // Only write if MISSING. Never overwrite a user's existing file.
-    // When missing, push the FULL Windows-side AGENTS.md (not just a
-    // stub) — we can't verify grok-build consumes MCP
-    // serverInfo.instructions, so AGENTS.md remains the practical rules
-    // carrier. The non-overwrite invariant protects user customizations
-    // on re-connects.
     if dst.exists() {
-        return Ok(false);
+        let existing =
+            std::fs::read_to_string(&dst).map_err(|e| format!("read {}: {}", dst.display(), e))?;
+        let updated = refresh_shellx_agents_managed_block(&existing);
+        if updated == existing {
+            return Ok(false);
+        }
+        std::fs::write(&dst, updated).map_err(|e| format!("write {}: {}", dst.display(), e))?;
+        return Ok(true);
     }
     let src_root = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
@@ -581,14 +635,12 @@ pub fn ensure_wsl_agents_md(distro: &str, linux_home: &str) -> Result<bool, Stri
     let src = std::path::Path::new(&src_root)
         .join(".grok")
         .join("AGENTS.md");
-    if !src.exists() {
-        // No source file to copy; skip without error.
-        return Ok(false);
-    }
-    let bytes = std::fs::read(&src).map_err(|e| format!("read {}: {}", src.display(), e))?;
-    if bytes.is_empty() {
-        return Ok(false);
-    }
+    let seed = if src.exists() {
+        std::fs::read_to_string(&src).map_err(|e| format!("read {}: {}", src.display(), e))?
+    } else {
+        String::new()
+    };
+    let bytes = refresh_shellx_agents_managed_block(&seed).into_bytes();
     if let Some(parent) = dst.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1081,6 +1133,131 @@ mod tests {
         assert_eq!(out.matches(MANAGED_AGENTS_END).count(), 1);
         assert!(out.contains("prefix"));
         assert!(!out.contains("stale"));
+    }
+
+    #[test]
+    fn ensure_grok_mcp_config_installed_preserves_disabled_block_on_rewrite() {
+        let unique = format!("shellx-grok-mcp-disabled-{}", uuid_like());
+        let root = std::env::temp_dir().join(unique);
+        let config = root.join(".grok").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+
+        const BEGIN: &str = "# shellX:managed-mcp:grok-shell-host BEGIN — do not edit by hand";
+        const END: &str = "# shellX:managed-mcp:grok-shell-host END";
+        let old_block = format!(
+            "{BEGIN}\n[mcp_servers.grok-shell-host]\ncommand = \"/old/shellx\"\nargs = [\"--mcp-server\"]\nenabled = true\nstartup_timeout_sec = 15\n{END}\n"
+        );
+        std::fs::write(
+            &config,
+            format!(
+                "[mcp_servers.keep]\ncommand = \"/bin/echo\"\n\n{}",
+                comment_block(&old_block)
+            ),
+        )
+        .unwrap();
+
+        let old_home = std::env::var_os("HOME");
+        let old_userprofile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::set_var("HOME", &root);
+            std::env::remove_var("USERPROFILE");
+        }
+
+        let changed = ensure_grok_mcp_config_installed(Path::new("/new/shellx")).expect("rewrite");
+
+        unsafe {
+            match old_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match old_userprofile {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+        }
+
+        assert!(changed, "new exe path should rewrite the managed block");
+        let rewritten = std::fs::read_to_string(&config).unwrap();
+        let (start, end) = find_managed_block_range(&rewritten).expect("managed block");
+        let block = &rewritten[start..end];
+        assert!(
+            !block_is_enabled(block),
+            "disabled managed block must stay commented after auto-install rewrite:\n{}",
+            rewritten
+        );
+        assert!(block.contains("# command = \"/new/shellx\""));
+        assert!(rewritten.contains("[mcp_servers.keep]"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ensure_project_mcp_http_config_removes_unmanaged_shellx_host_http_sections() {
+        let unique = format!("shellx-project-mcp-config-{}", uuid_like());
+        let root = std::env::temp_dir().join(unique);
+        let config = root.join(".grok").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config,
+            concat!(
+                "[mcp_servers.user]\n",
+                "command = \"/bin/echo\"\n\n",
+                "# orphan from a crashed prior shellX process\n",
+                "[mcp_servers.shellx-host-http]\n",
+                "url = \"http://localhost:5762/mcp\"\n",
+                "enabled = true\n",
+                "[mcp_servers.shellx-host-http.headers]\n",
+                "MCP-Tab-Id = \"stale-tab\"\n\n",
+                "[mcp_servers.shellx-host-http]\n",
+                "url = \"http://localhost:5763/mcp\"\n",
+                "enabled = true\n",
+                "[mcp_servers.shellx-host-http.headers]\n",
+                "MCP-Tab-Id = \"stale-tab-2\"\n\n",
+                "[mcp_servers.keep-me]\n",
+                "url = \"http://localhost:9999/mcp\"\n",
+            ),
+        )
+        .unwrap();
+
+        let changed = ensure_project_mcp_http_config(
+            &root,
+            5764,
+            "0123456789abcdef0123456789abcdef",
+            "fresh-tab",
+            "",
+        )
+        .expect("rewrite project MCP config");
+        assert!(
+            changed,
+            "orphan shellx-host-http section should be rewritten"
+        );
+
+        let rewritten = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(
+            rewritten.matches("[mcp_servers.shellx-host-http]").count(),
+            1,
+            "rewritten config must contain exactly one shellx-host-http table:\n{}",
+            rewritten
+        );
+        assert_eq!(
+            rewritten
+                .matches("[mcp_servers.shellx-host-http.headers]")
+                .count(),
+            1,
+            "rewritten config must contain exactly one shellx-host-http headers table:\n{}",
+            rewritten
+        );
+        assert!(
+            !rewritten.contains("stale-tab"),
+            "orphan header survived:\n{}",
+            rewritten
+        );
+        assert!(rewritten.contains("MCP-Tab-Id = \"fresh-tab\""));
+        assert!(rewritten.contains("[mcp_servers.user]"));
+        assert!(rewritten.contains("[mcp_servers.keep-me]"));
+        toml::from_str::<toml::Value>(&rewritten).expect("rewritten config should parse as TOML");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Tiny uuid-like helper for test scratch-dir names. Avoids pulling
