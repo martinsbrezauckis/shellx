@@ -474,16 +474,17 @@ Status: AWAITING_APPROVAL\n\n\
                 runtime.state.review_required = true;
                 runtime.state.verification_required = true;
             }
-            BuildReceiptKind::ReviewCompleted => {
-                if receipt.confidence != BuildReceiptConfidence::ModelDeclared {
-                    runtime.state.review_satisfied = true;
-                }
+            BuildReceiptKind::ReviewCompleted
+                if receipt.confidence != BuildReceiptConfidence::ModelDeclared =>
+            {
+                runtime.state.review_satisfied = true;
             }
-            BuildReceiptKind::VerificationCompleted => {
-                if receipt.confidence != BuildReceiptConfidence::ModelDeclared {
-                    runtime.state.verification_satisfied = true;
-                }
+            BuildReceiptKind::VerificationCompleted
+                if receipt.confidence != BuildReceiptConfidence::ModelDeclared =>
+            {
+                runtime.state.verification_satisfied = true;
             }
+            BuildReceiptKind::ReviewCompleted | BuildReceiptKind::VerificationCompleted => {}
             BuildReceiptKind::BlockerOpened => {
                 runtime.state.status = BuildRunStatus::Blocked;
                 runtime.state.open_blocker = Some(receipt.summary.clone());
