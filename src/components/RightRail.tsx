@@ -36,8 +36,16 @@ import {
   updateErrorIsQuiet,
   type UpdateDiagnosticInput,
 } from "../lib/update-diagnostics";
+import {
+  getBuildReceipts,
+  getBuildState,
+  isBuildTerminalStatus,
+  type BuildReceipt,
+  type BuildRunState,
+} from "../lib/build-run";
 import { cleanUpdateNotes, firstUpdateNotesUrl } from "../lib/update-notes";
 import { TasksPanel } from "./TasksPanel";
+import { BuildRunCockpit } from "./BuildRunCockpit";
 import { apiPost } from "../lib/debug-api";
 import type { RawEventFrame } from "../types/acp";
 import { ShellIcon, TransportIcon, type ShellIconName } from "./icons";
@@ -1127,6 +1135,10 @@ function PlanPane({
   const [goalScratchboardText, setGoalScratchboardText] = useState<string>("");
   const [goalActive, setGoalActive] = useState<boolean>(false);
   const [goalContinuationsTotal, setGoalContinuationsTotal] = useState<number>(0);
+  const [buildState, setBuildState] = useState<BuildRunState | null>(null);
+  const [buildReceipts, setBuildReceipts] = useState<BuildReceipt[]>([]);
+  const [buildScratchboardText, setBuildScratchboardText] = useState<string>("");
+  const [buildRefreshSeq, setBuildRefreshSeq] = useState(0);
   useEffect(() => {
     if (!inTauri() || !activeTabId) return;
     let cancelled = false;
@@ -1154,6 +1166,37 @@ function PlanPane({
     return () => { cancelled = true; window.clearInterval(id); };
   }, [activeTabId, events.length]);
   useEffect(() => {
+    if (!inTauri() || !activeTabId) {
+      setBuildState(null);
+      setBuildReceipts([]);
+      return;
+    }
+    let cancelled = false;
+    const poll = () => {
+      void getBuildState(activeTabId)
+        .then((st) => {
+          if (cancelled) return;
+          setBuildState(st);
+          if (!st) {
+            setBuildReceipts([]);
+            return;
+          }
+          void getBuildReceipts(activeTabId)
+            .then((rows) => { if (!cancelled) setBuildReceipts(rows); })
+            .catch(() => { if (!cancelled) setBuildReceipts([]); });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setBuildState(null);
+            setBuildReceipts([]);
+          }
+        });
+    };
+    poll();
+    const id = window.setInterval(poll, 2500);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [activeTabId, events.length, buildRefreshSeq]);
+  useEffect(() => {
     if (!goalScratchboardPath) { setGoalScratchboardText(""); return; }
     let cancelled = false;
     const set = (t: string) => {
@@ -1171,6 +1214,25 @@ function PlanPane({
     }
     return () => { cancelled = true; };
   }, [goalScratchboardPath, events.length, activeTabId]);
+  useEffect(() => {
+    const path = buildState?.scratchboardPath;
+    if (!path) { setBuildScratchboardText(""); return; }
+    let cancelled = false;
+    const set = (t: string) => {
+      if (cancelled) return;
+      setBuildScratchboardText((cur) => (cur === t ? cur : t));
+    };
+    if (inTauri()) {
+      void invoke<string>("read_text_file_for_path", {
+        path,
+        tabId: activeTabId ?? undefined,
+      }).then(set).catch(() => set(""));
+    } else {
+      const url = convertFileSrc(path, "asset");
+      fetch(url).then((r) => (r.ok ? r.text() : "")).then(set).catch(() => set(""));
+    }
+    return () => { cancelled = true; };
+  }, [buildState?.scratchboardPath, events.length, activeTabId]);
 
  // When App's cache updates with a fresher body, adopt it — but
  // only when non-empty, so an empty/undefined cache can't blank a
@@ -1228,18 +1290,23 @@ function PlanPane({
  // file. Without this, /goal runs show "Plan view is empty" even
  // though the orchestrator has a structured plan in hand.
   const hasEntries = planEntries.length > 0;
+  const hasBuildScratchboard = buildState !== null && buildScratchboardText.trim().length > 0;
   const hasScratchboard = goalActive && goalScratchboardText.trim().length > 0;
-  const planEmpty = !hasEntries && !hasScratchboard && (!planFilePath || !planText.trim());
+  const planEmpty = !hasEntries && !hasBuildScratchboard && !hasScratchboard && (!planFilePath || !planText.trim());
   const planHeaderName = planFilePath
     ? "plan.md"
-    : hasScratchboard
+    : hasBuildScratchboard
+      ? (buildState?.scratchboardPath.split(/[\\\/]/).pop() ?? "build.md")
+      : hasScratchboard
       ? (goalScratchboardPath?.split(/[\\\/]/).pop() ?? "goal.md")
       : hasEntries
         ? "goal steps"
         : "—";
   const planHeaderStatus = planActive
     ? "· active"
-    : goalActive
+    : buildState
+      ? `· build-mode · ${isBuildTerminalStatus(buildState.status) ? buildState.status : `${buildState.continuationsTotal} pushes`}`
+      : goalActive
       ? `· goal-mode · ${goalContinuationsTotal} pushes`
       : hasEntries
         ? `· ${planEntries.length} steps`
@@ -1258,11 +1325,20 @@ function PlanPane({
  {/* Goal-orchestrator status bar. Renders only when goal_mode
  * is on for the active tab. Polls the Rust orchestrator via
  * get_goal_state. */}
+      <BuildRunCockpit
+        activeTabId={activeTabId}
+        state={buildState}
+        receipts={buildReceipts}
+        onChanged={() => setBuildRefreshSeq((n) => n + 1)}
+      />
       <GoalStatusBar activeTabId={activeTabId} eventsLen={events.length} onOpenGoalReview={onOpenGoalReview} />
       <div className="plan">
         {planEmpty ? (
           <div className="plan-empty">
-            {goalActive ? (
+            {buildState ? (
+              <>Build Mode is active. Waiting for the scratchboard to
+              populate or for the next receipt from this run.</>
+            ) : goalActive ? (
               <>Goal mode is active. grok hasn't emitted a structured plan yet
               (and hasn't written to the scratchboard at{" "}
               <code>{goalScratchboardPath?.split(/[\\\/]/).pop() ?? "goal.md"}</code>).
@@ -1306,6 +1382,27 @@ function PlanPane({
                 </div>
               );
             })}
+          </div>
+        ) : hasBuildScratchboard ? (
+ /* Build Mode scratchboard. Host receipts render above this block;
+ * the markdown keeps Grok's manager plan and progress visible. */
+          <div className="plan-md" onMouseUp={onMouseUpAutoCopy}>
+            <div style={{
+              fontSize: "var(--fs-ui-xs)", color: "var(--ink-3)",
+              padding: "0 0 8px 0", letterSpacing: 0.04,
+            }}>
+              build · {buildState?.status ?? "unknown"} · {buildState?.continuationsTotal ?? 0} continuation{buildState?.continuationsTotal === 1 ? "" : "s"} · scratchboard
+            </div>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                a: ({ href, children }) => (
+                  <SafeMarkdownLink href={href} onPreviewFile={onPreviewFile}>
+                    {children}
+                  </SafeMarkdownLink>
+                ),
+              }}
+            >{buildScratchboardText}</ReactMarkdown>
           </div>
         ) : hasScratchboard ? (
  /* #395: Goal scratchboard (goal.md / plan.md under

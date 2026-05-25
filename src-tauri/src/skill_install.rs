@@ -43,6 +43,47 @@ use tracing::info;
 /// still bakes the manifest into the binary.
 pub const BUNDLED_SKILL_BODY: &str = include_str!("../../skills/shellx-host/SKILL.md");
 
+#[derive(Debug, Clone, Copy)]
+pub struct BundledWorkflowSkill {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub short_description: &'static str,
+    pub body: &'static str,
+}
+
+pub const BUNDLED_WORKFLOW_SKILLS: &[BundledWorkflowSkill] = &[
+    BundledWorkflowSkill {
+        id: "shellx-build-app",
+        title: "Build app",
+        short_description: "Plan, build, run, and verify a small app.",
+        body: include_str!("../../skills/shellx-build-app/SKILL.md"),
+    },
+    BundledWorkflowSkill {
+        id: "shellx-fix-bug",
+        title: "Fix bug",
+        short_description: "Reproduce, isolate, patch, and verify a bug.",
+        body: include_str!("../../skills/shellx-fix-bug/SKILL.md"),
+    },
+    BundledWorkflowSkill {
+        id: "shellx-polish-ui",
+        title: "Polish UI",
+        short_description: "Tighten layout, icons, typography, and responsive fit.",
+        body: include_str!("../../skills/shellx-polish-ui/SKILL.md"),
+    },
+    BundledWorkflowSkill {
+        id: "shellx-review-repo",
+        title: "Review repo",
+        short_description: "Map a project and identify useful next work.",
+        body: include_str!("../../skills/shellx-review-repo/SKILL.md"),
+    },
+    BundledWorkflowSkill {
+        id: "shellx-prepare-release",
+        title: "Prepare release",
+        short_description: "Run release checks without surprise publishing.",
+        body: include_str!("../../skills/shellx-prepare-release/SKILL.md"),
+    },
+];
+
 /// Resolve the on-disk path where the host-skill manifest must land.
 ///
 /// Linux/macOS: `$HOME/.grok/skills/shellx-host/SKILL.md`.
@@ -54,6 +95,10 @@ pub const BUNDLED_SKILL_BODY: &str = include_str!("../../skills/shellx-host/SKIL
 /// Returns `None` when neither HOME nor USERPROFILE is set — vanishingly
 /// rare in practice but it must not panic in `pub fn` callers.
 pub fn target_skill_path() -> Option<PathBuf> {
+    target_skill_path_for("shellx-host")
+}
+
+pub fn target_skill_path_for(skill_id: &str) -> Option<PathBuf> {
     let home = if cfg!(target_os = "windows") {
         // Windows uses USERPROFILE; HOME may also be set under
         // git-bash / msys but USERPROFILE is the canonical native env.
@@ -64,7 +109,7 @@ pub fn target_skill_path() -> Option<PathBuf> {
     let mut p = PathBuf::from(home);
     p.push(".grok");
     p.push("skills");
-    p.push("shellx-host");
+    p.push(skill_id);
     p.push("SKILL.md");
     Some(p)
 }
@@ -151,6 +196,45 @@ fn ensure_installed_at(path: &Path, body: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+fn validate_skill_install_parent(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+        if let (Ok(home), Ok(canon_parent)) = (
+            std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")),
+            std::fs::canonicalize(parent),
+        ) {
+            if let Ok(canon_home) = std::fs::canonicalize(&home) {
+                if !canon_parent.starts_with(&canon_home) {
+                    return Err(format!(
+                        "refusing skill install: parent {} canonicalizes outside $HOME ({}); \
+                         possible symlink-redirect attack",
+                        parent.display(),
+                        canon_home.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn home_relative_path_display(path: &Path) -> String {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+        .and_then(|home| {
+            path.strip_prefix(&home).ok().map(|rel| {
+                let sep = if cfg!(target_os = "windows") {
+                    "\\"
+                } else {
+                    "/"
+                };
+                format!("~{}{}", sep, rel.to_string_lossy())
+            })
+        })
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
 /// Ensure the bundled host-skill manifest is installed at the canonical
 /// path.
 ///
@@ -182,7 +266,10 @@ fn ensure_installed_at(path: &Path, body: &str) -> Result<bool, String> {
 /// preserve everything. We only touch the
 /// `[mcp_servers.grok-shell-host]` block.
 ///
-/// We do NOT touch other [mcp_servers.*] sections or top-level keys.
+/// We do NOT touch unrelated [mcp_servers.*] sections or top-level keys.
+/// We do strip shellX-owned HTTP MCP sections from the global config:
+/// `shellx-host-http` is regenerated as project-scoped config for WSL/SSH
+/// sessions and a stale global copy causes noisy failed MCP spawns.
 /// On any IO/parse failure we return Err — caller treats as non-fatal
 /// (lib.rs setup just warns).
 pub fn ensure_grok_mcp_config_installed(exe_path: &Path) -> Result<bool, String> {
@@ -228,6 +315,13 @@ pub fn ensure_grok_mcp_config_installed(exe_path: &Path) -> Result<bool, String>
     // shellX boots" path — without this, TOML parsers reject the
     // duplicate section.
     let stripped = strip_unmanaged_section(&stripped, "mcp_servers.grok-shell-host");
+    let stripped = strip_managed_block(
+        &stripped,
+        crate::mcp_http::HTTP_SNIPPET_BEGIN,
+        crate::mcp_http::HTTP_SNIPPET_END,
+    );
+    let stripped = strip_unmanaged_section(&stripped, "mcp_servers.shellx-host-http");
+    let stripped = strip_unmanaged_section(&stripped, "mcp_servers.shellx-host-http.headers");
     let mut updated = stripped.trim_end().to_string();
     if !updated.is_empty() {
         updated.push_str("\n\n");
@@ -912,25 +1006,22 @@ pub fn ensure_shellx_host_skill_installed() -> Result<bool, String> {
      * The check runs only at the production-entry boundary so the unit
      * tests against `ensure_installed_at` (which write to tempfile dirs
      * outside $HOME) keep working without an opt-out flag. */
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-        if let (Ok(home), Ok(canon_parent)) = (
-            std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")),
-            std::fs::canonicalize(parent),
-        ) {
-            if let Ok(canon_home) = std::fs::canonicalize(&home) {
-                if !canon_parent.starts_with(&canon_home) {
-                    return Err(format!(
-                        "refusing skill install: parent {} canonicalizes outside $HOME ({}); \
-                         possible symlink-redirect attack",
-                        parent.display(),
-                        canon_home.display()
-                    ));
-                }
-            }
+    validate_skill_install_parent(&path)?;
+    ensure_installed_at(&path, BUNDLED_SKILL_BODY)
+}
+
+pub fn ensure_shellx_workflow_skills_installed() -> Result<usize, String> {
+    let mut changed = 0usize;
+    for skill in BUNDLED_WORKFLOW_SKILLS {
+        let path = target_skill_path_for(skill.id).ok_or_else(|| {
+            "neither HOME nor USERPROFILE is set; cannot resolve ~/.grok/skills/".to_string()
+        })?;
+        validate_skill_install_parent(&path)?;
+        if ensure_installed_at(&path, skill.body)? {
+            changed += 1;
         }
     }
-    ensure_installed_at(&path, BUNDLED_SKILL_BODY)
+    Ok(changed)
 }
 
 /// Result shape for the `host_skill_status` Tauri command. Settings UI
@@ -958,6 +1049,17 @@ pub struct HostSkillStatus {
     pub body_hash: String,
 }
 
+#[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowSkillStatus {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub short_description: &'static str,
+    pub installed: bool,
+    pub path: String,
+    pub body_hash: String,
+}
+
 /// Lookup current status of the shellx-host skill file.
 ///
 /// Pure read — never writes. The frontend can poll this safely. Errors
@@ -979,25 +1081,31 @@ pub fn host_skill_status() -> HostSkillStatus {
      * path which leaks the username to anyone with access to poll the
      * Tauri command (shared-machine info-disclosure). Falls back to the
      * absolute display only when HOME/USERPROFILE is unset. */
-    let path_display = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok()
-        .and_then(|home| {
-            path.strip_prefix(&home).ok().map(|rel| {
-                let sep = if cfg!(target_os = "windows") {
-                    "\\"
-                } else {
-                    "/"
-                };
-                format!("~{}{}", sep, rel.to_string_lossy())
-            })
-        })
-        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let path_display = home_relative_path_display(&path);
     HostSkillStatus {
         installed,
         path: path_display,
         body_hash,
     }
+}
+
+pub fn workflow_skill_statuses() -> Vec<WorkflowSkillStatus> {
+    BUNDLED_WORKFLOW_SKILLS
+        .iter()
+        .map(|skill| {
+            let (installed, path) = target_skill_path_for(skill.id)
+                .map(|p| (p.is_file(), home_relative_path_display(&p)))
+                .unwrap_or((false, String::new()));
+            WorkflowSkillStatus {
+                id: skill.id,
+                title: skill.title,
+                short_description: skill.short_description,
+                installed,
+                path,
+                body_hash: body_sha256_hex(skill.body),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1011,6 +1119,49 @@ mod tests {
         // YAML frontmatter so >100 bytes is a safe floor.
         assert!(BUNDLED_SKILL_BODY.len() > 100, "bundled body too small");
         assert!(BUNDLED_SKILL_BODY.contains("shellx-host"));
+    }
+
+    #[test]
+    fn bundled_workflow_skills_are_compact_and_valid() {
+        assert_eq!(
+            BUNDLED_WORKFLOW_SKILLS.len(),
+            5,
+            "ship exactly the small starter pack set for now"
+        );
+        for skill in BUNDLED_WORKFLOW_SKILLS {
+            assert!(
+                skill.body.starts_with("---\nname: "),
+                "{} must start with skill frontmatter",
+                skill.id
+            );
+            assert!(
+                skill.body.contains("description:"),
+                "{} must include a trigger description",
+                skill.id
+            );
+            assert!(
+                skill.body.len() < 2600,
+                "{} should stay compact, got {} bytes",
+                skill.id,
+                skill.body.len()
+            );
+            assert!(
+                skill.id.starts_with("shellx-"),
+                "{} should be namespaced to avoid upstream collisions",
+                skill.id
+            );
+        }
+    }
+
+    #[test]
+    fn workflow_skill_target_path_uses_skill_id() {
+        let path = target_skill_path_for("shellx-build-app").expect("home should resolve in tests");
+        let s = path.to_string_lossy();
+        assert!(
+            s.ends_with(".grok/skills/shellx-build-app/SKILL.md"),
+            "unexpected workflow skill path: {}",
+            s
+        );
     }
 
     #[test]

@@ -82,6 +82,7 @@ import { inTauri } from "./lib/tauri-bridge";
 import { groupEvents } from "./lib/grouping";
 import { PendingLocalEventQueue, localEventTabId } from "./lib/pending-local-events";
 import { extractAssistantTurnAfterIndex, getVoiceTurnToSpeak } from "./lib/voice-chat";
+import { parseBuildCommand, startBuildMode } from "./lib/build-run";
 import type { AcpCommand, RawEventFrame } from "./types/acp";
 
 type Status = "Idle" | "Starting" | "Connected" | "Aborting" | "Error";
@@ -109,6 +110,7 @@ const TAURI_CHANNELS = [
   // here is the only subscription path.
   "prompt-complete",
   "auth-unhealthy",
+  "build-event",
 ] as const;
 
 const PANEL_SIZE_KEY_H = "grok-shell.panels.horizontal";
@@ -1614,6 +1616,37 @@ export default function App(): JSX.Element {
         setPrompt("");
       } catch (err: any) {
         setError(`${stripped} failed: ${err}`);
+      }
+      return;
+    }
+    const buildObjective = parseBuildCommand(currentPrompt);
+    if (buildObjective !== null) {
+      if (!buildObjective) {
+        pushUiEvent("✗ /build requires an objective: /build <what to accomplish>");
+        return;
+      }
+      const myTabId = activeTab?.tabId ?? null;
+      if (!myTabId) {
+        pushUiEvent("✗ /build needs an active tab — connect first");
+        return;
+      }
+      if (activeTab && activeTab.status !== "Connected") {
+        pushUiEvent(`→ auto-connect (build-mode start)`);
+        const connected = await connect();
+        if (!connected) {
+          setError("Auto-connect failed");
+          return;
+        }
+      }
+      const activeCwd = activeTab?.cwd ?? cwd;
+      try {
+        const started = await startBuildMode(myTabId, buildObjective, activeCwd);
+        pushUiEvent(`◎ build mode: ${buildObjective}`);
+        setRightRailRequest({ tab: "Plan", seq: Date.now() });
+        setPrompt("");
+        void sendPromptText(started.kickoffPrompt, myTabId);
+      } catch (err: any) {
+        setError(`start_build_mode failed: ${err}`);
       }
       return;
     }

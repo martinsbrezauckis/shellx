@@ -71,6 +71,8 @@ pub const PERSONA_EXPLORE: &str = include_str!("../personas/explore.md");
 pub const PERSONA_IMPLEMENTER: &str = include_str!("../personas/implementer.md");
 pub const PERSONA_REVIEWER: &str = include_str!("../personas/reviewer.md");
 pub const PERSONA_SECURITY: &str = include_str!("../personas/security-auditor.md");
+pub const PERSONA_VERIFIER: &str = include_str!("../personas/verifier.md");
+pub const PERSONA_RELEASE_MANAGER: &str = include_str!("../personas/release-manager.md");
 
 /// The canonical persona names exposed in the `Agent` tool's enum.
 /// Order matches the brief's listing order so the schema is stable.
@@ -80,6 +82,8 @@ pub const PERSONA_NAMES: &[&str] = &[
     "implementer",
     "reviewer",
     "security-auditor",
+    "verifier",
+    "release-manager",
 ];
 
 /// Resolve a persona name to its full embedded prompt body. Returns None
@@ -92,6 +96,8 @@ pub fn persona_prompt(name: &str) -> Option<&'static str> {
         "implementer" => Some(PERSONA_IMPLEMENTER),
         "reviewer" => Some(PERSONA_REVIEWER),
         "security-auditor" => Some(PERSONA_SECURITY),
+        "verifier" => Some(PERSONA_VERIFIER),
+        "release-manager" => Some(PERSONA_RELEASE_MANAGER),
         _ => None,
     }
 }

@@ -34,15 +34,36 @@ Keep these outside the public repo root:
 - local screenshots, transcripts, and evidence captures
 - private release checklists before they are promoted into `CHANGELOG.md`
 
+## Release Readiness Checklist
+
+Use the internal release-readiness checklist before staging or
+publishing a release. It is the public release gate for version sync,
+public-boundary review, Rust/TypeScript verification, CI parity,
+artifact/signature checks, and explicit publish approvals.
+
+This is an internal maintainer tool, not a normal product surface. The
+About-tab panel is hidden in production builds unless shellX is built
+with `VITE_SHELLX_INTERNAL_TOOLS=1`.
+
+When a real release risk is found, add it to this checklist and cover it
+in `scripts/test-release-readiness.ts`. Examples include the CI fake
+`grok` shim (`GROK_BIN`) for tests that spawn Grok, Rust fmt/clippy with
+warnings denied, dependency audit, and Windows installer signature/hash
+presence.
+
+The checklist is still partly manual. Keep improving it toward automatic
+evidence collection instead of replacing it with private notes.
+
 ## Pre-Push Check
 
 Before pushing the public repo:
 
 1. Run `rg -n "\\.project|private|notebook|night_run|mockups" .`.
 2. Review every match as either public history, public source, or a bug.
-3. Run the normal verification stack.
-4. Update `CHANGELOG.md` under `Unreleased`; keep entries short and
+3. Use the internal release-readiness checklist as the release gate.
+4. Run the normal verification stack.
+5. Update `CHANGELOG.md` under `Unreleased`; keep entries short and
    user-visible.
-5. Re-check README platform status if release artifacts changed.
-6. Get explicit per-operation approval before any tag push, release
+6. Re-check README platform status if release artifacts changed.
+7. Get explicit per-operation approval before any tag push, release
    publish, or other remote mutation.

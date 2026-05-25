@@ -5,6 +5,7 @@
 // ~/.shellx/outside-connectors.json; provider tokens remain in Vault
 // and are referenced by key name only.
 
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -246,13 +247,47 @@ fn persist(path: &PathBuf, connectors: &[OutsideConnector]) -> Result<(), String
     let json = serde_json::to_string_pretty(&store)
         .map_err(|e| format!("outside_connectors: serialize failed: {}", e))?;
     let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, &json).map_err(|e| {
+    #[cfg(unix)]
+    let mut tmp_file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&tmp)
+    }
+    .map_err(|e| {
+        format!(
+            "outside_connectors: open private tmp {} failed: {}",
+            tmp.display(),
+            e
+        )
+    })?;
+    #[cfg(not(unix))]
+    let mut tmp_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&tmp)
+        .map_err(|e| {
+            format!(
+                "outside_connectors: open tmp {} failed: {}",
+                tmp.display(),
+                e
+            )
+        })?;
+    tmp_file.write_all(json.as_bytes()).map_err(|e| {
         format!(
             "outside_connectors: write tmp {} failed: {}",
             tmp.display(),
             e
         )
     })?;
+    tmp_file
+        .sync_all()
+        .map_err(|e| format!("outside_connectors: sync tmp failed: {}", e))?;
+    drop(tmp_file);
     std::fs::rename(&tmp, path).map_err(|e| format!("outside_connectors: rename failed: {}", e))?;
     #[cfg(unix)]
     {

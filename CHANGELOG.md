@@ -7,6 +7,30 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
+## [0.1.32] - 2026-05-25
+
+### Added
+
+- Experimental `/build` mode with a dedicated Build Run cockpit,
+  approval gate, scratchboard, receipt log, checkpoints, and completion
+  gates.
+- Build receipts in Trace so plan writes, file changes, subagent starts
+  and completions, checkpoints, verification, and accepted completion are
+  auditable.
+
+### Changed
+
+- Local/WSL/SSH debug API sessions now expose stronger build-run state,
+  receipts, and git checkpoint evidence for automated validation.
+- Session Activity and Trace surfaces now show more complete tool
+  activity for file, git, subagent, and build events.
+
+### Fixed
+
+- Checkpoint receipts with captured diffs now mark a build as
+  code-changing, so review and verification gates stay enforced even
+  when a transport misses a direct file-write observation.
+
 ## [0.1.31] - 2026-05-24
 
 ### Added
@@ -18,6 +42,8 @@ explain a visible behavior change.
   directory.
 - Session-scoped update diagnostics so updater state can be reviewed from
   the connected session instead of guessing from global UI state.
+- Five compact bundled Grok workflow skills for app building, bug fixing,
+  UI polish, repo review, and release preparation.
 
 ### Changed
 

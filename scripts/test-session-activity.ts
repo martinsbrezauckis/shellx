@@ -205,6 +205,22 @@ const updatesJsonl = [
       },
     },
   }),
+  JSON.stringify({
+    timestamp: 1779582884,
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-inventory",
+        title: "search_tool",
+        status: "completed",
+        rawOutput: {
+          type: "Text",
+          text: "Tool docs: Path must end in .png/.jpg/.jpeg/.webp/.gif/.bmp before reading arbitrary non-image files.",
+        },
+      },
+    },
+  }),
 ].join("\n");
 
 const updateTrace = parseGrokUpdatesJsonl(updatesJsonl, {
@@ -220,6 +236,7 @@ assert(updateTrace.actions.some((a) => a.kind === "created" && a.path === "C:\\U
 assert(updateTrace.actions.some((a) => a.kind === "created" && a.path === "C:\\Users\\User\\.grok\\sessions\\C%3A%5CUsers%5CUser\\sid\\videos\\1.mp4"), "parses generated video output as created file trace without decoding Grok cwd segment");
 assert(updateTrace.actions.some((a) => a.kind === "created" && a.path === "/home/user/.grok/sessions/%2Fhome%2Fuser%2Fproject/sid/images/1.jpg"), "parses WSL generated image output as created file trace");
 assert(updateTrace.actions.some((a) => a.kind === "created" && a.path === "/home/deploy/.grok/sessions/%2Fsrv%2Fapp/sid/videos/1.mp4"), "parses SSH generated video output as created file trace");
+assert(!updateTrace.actions.some((a) => a.kind === "created" && a.relativePath.includes(".jpg/.jpeg")), "does not treat tool inventory extension lists as generated media");
 
 const combined = combineActivityTraces([trace, updateTrace]);
 assert(

@@ -119,14 +119,7 @@ pub async fn read_session_activity_source(
     .await
 }
 
-pub async fn session_activity_source_for_tab(
-    tab_id: Option<String>,
-    registry: Arc<SessionRegistry>,
-) -> Result<SessionActivitySource, String> {
-    session_activity_source_for_tab_with_fallback(tab_id, None, None, None, registry).await
-}
-
-async fn session_activity_source_for_tab_with_fallback(
+pub(crate) async fn session_activity_source_for_tab_with_fallback(
     tab_id: Option<String>,
     fallback_session_id: Option<String>,
     fallback_cwd: Option<String>,

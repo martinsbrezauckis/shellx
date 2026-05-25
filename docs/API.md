@@ -9,7 +9,7 @@
 > publishes its port to `~/.shellx/mcp-http.port` the same way.
 
 **Status:** Implementation guide plus v1.x roadmap (drafted 2026-05-17,
-current route inventory refreshed 2026-05-21).
+current route inventory refreshed 2026-05-25).
 **Audience:** Any future implementer (human or agent) extending shellX's
 debug API beyond what is already wired in `src-tauri/src/debug_api.rs`.
 **Goal:** Make every UI surface driveable without a GUI, so the
@@ -30,8 +30,8 @@ debug bearer token from `~/.shellx/shellxagent.token` or
 
 | Method | Path |
 | --- | --- |
-| GET | `/health`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/marketplace_health`, `/state/session_tooling`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/vault/status`, `/vault/keys`, `/connections`, `/outside-connectors` |
-| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/permissions/:reqId/respond`, `/diagnostics`, `/github/pr/create`, `/vault/get`, `/vault/set`, `/vault/delete`, `/connections`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test` |
+| GET | `/health`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/marketplace_health`, `/state/session_tooling`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/vault/status`, `/vault/keys`, `/connections`, `/outside-connectors` |
+| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/state/session_git/checkpoint`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/diagnostics`, `/github/pr/create`, `/vault/get`, `/vault/set`, `/vault/delete`, `/connections`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test` |
 | DELETE | `/connections/:id`, `/outside-connectors/:id` |
 
 Not currently wired despite older roadmap text below: `GET /`, `GET /version`,
@@ -43,6 +43,39 @@ Not currently wired despite older roadmap text below: `GET /`, `GET /version`,
 
 This document does not contain runnable code. It defines what each
 endpoint accepts, what it returns, and what gets logged.
+
+---
+
+## Experimental Build Mode
+
+`/build <objective>` is an experimental shellX-owned workflow that runs
+beside `/goal`. It keeps host-local state under
+`~/.shellx/build-runs/<tab>/<run>/`, asks Grok to write a tab/run-scoped
+scratchboard in the connected cwd (`build.<tab>.<run>.md`), and records
+typed receipts for file mutations, checkpoints, Agent work, review,
+verification, blockers, and completion attempts.
+
+Debug API endpoints:
+
+| Method | Path | Body/query |
+| --- | --- | --- |
+| POST | `/build/start` | `{ tabId, objective, cwd? }` |
+| GET | `/build/state` | `?tabId=<tab>` |
+| GET | `/build/receipts` | `?tabId=<tab>` |
+| POST | `/build/approve` | `{ tabId, inject? }` |
+| POST | `/build/reject` | `{ tabId }` |
+| POST | `/build/pause` | `{ tabId }` |
+| POST | `/build/resume` | `{ tabId }` |
+| POST | `/build/complete` | `{ tabId, summary? }` |
+| POST | `/build/receipt` | `{ tabId, kind, summary, actor?, confidence?, data? }` |
+| POST | `/build/stop` | `{ tabId }` |
+| POST | `/state/session_git/checkpoint` | `{ tabId, cwd?, label? }` |
+
+The host MCP surface adds `build_receipt`, `build_checkpoint`, and
+`build_complete`. ShellX-owned receipts from `fs_write`, `fs_append`,
+`fs_copy`, `fs_delete`, git checkpoints, and `Agent` are trusted;
+model-declared receipts are visible in the UI but cannot satisfy hard
+destructive-change gates by themselves.
 
 ---
 
@@ -392,6 +425,11 @@ the local evidence ShellX can currently inspect: Grok's
 sessions resolve to the user's reachable `~/.grok/sessions/...` folder.
 SSH sessions return `remote-not-mirrored` until ShellX mirrors remote
 trace artifacts locally.
+
+Optional restored-session parameters mirror the Tauri command:
+`sessionId`, `sessionCwd` (or `cwd`), and `transport`. When a tab is no
+longer live, local sessions can still be inspected if the caller supplies
+the durable Grok session id and cwd.
 
 ```ts
 {

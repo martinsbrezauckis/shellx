@@ -130,6 +130,9 @@ Settings → Vault stores API keys, tokens, and shared secrets locally:
 
 Type \`/\` in the composer for autocomplete of grok's slash commands.
 Custom skills under \`~/.grok/skills/\` are loaded on session start.
+shellX also installs five compact workflow skills for common coding
+loops: build an app, fix a bug, polish UI, review a repo, and prepare
+a release.
 
 ## Tasks rail
 
@@ -178,7 +181,7 @@ const README = `# shellX — quick start
 
 1. Download the latest installer from
    [github.com/MartinsBrezauckis/shellx/releases](https://github.com/MartinsBrezauckis/shellx/releases).
-2. Run it. The installer self-signs and shellX auto-updates from
+2. Run the installer and launch shellX. Updates are delivered from
    GitHub Releases.
 3. Launch shellX from the Start Menu.
 

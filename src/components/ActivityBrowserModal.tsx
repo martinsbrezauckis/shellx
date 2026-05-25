@@ -15,6 +15,13 @@ import {
   type ActivityKind,
   type ActivityTreeNode,
 } from "../lib/session-activity";
+import {
+  buildStatusLabel,
+  getBuildReceipts,
+  getBuildState,
+  type BuildReceipt,
+  type BuildRunState,
+} from "../lib/build-run";
 import { inTauri } from "../lib/tauri-bridge";
 import { ShellIcon } from "./icons";
 
@@ -56,6 +63,8 @@ export function ActivityBrowserModal({
 }): JSX.Element | null {
   const [view, setView] = useState<ActivityView>("files");
   const [source, setSource] = useState<SessionActivitySource | null>(null);
+  const [buildState, setBuildState] = useState<BuildRunState | null>(null);
+  const [buildReceipts, setBuildReceipts] = useState<BuildReceipt[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(["root:"]));
@@ -75,6 +84,8 @@ export function ActivityBrowserModal({
   useEffect(() => {
     if (!open) {
       setSource(null);
+      setBuildState(null);
+      setBuildReceipts([]);
       setErr(null);
       setLoading(false);
       return;
@@ -106,6 +117,26 @@ export function ActivityBrowserModal({
         if (!cancelled) setLoading(false);
       });
 
+    if (tabId) {
+      void getBuildState(tabId)
+        .then((next) => {
+          if (!cancelled) setBuildState(next);
+        })
+        .catch(() => {
+          if (!cancelled) setBuildState(null);
+        });
+      void getBuildReceipts(tabId)
+        .then((next) => {
+          if (!cancelled) setBuildReceipts(next);
+        })
+        .catch(() => {
+          if (!cancelled) setBuildReceipts([]);
+        });
+    } else {
+      setBuildState(null);
+      setBuildReceipts([]);
+    }
+
     return () => {
       cancelled = true;
     };
@@ -126,6 +157,7 @@ export function ActivityBrowserModal({
   }, [rootPath, source]);
 
   const actions = trace?.actions ?? [];
+  const hasBuildAudit = Boolean(buildState) || buildReceipts.length > 0;
   const tree = useMemo(() => buildActivityTree(actions, rootPath), [actions, rootPath]);
   const graph = useMemo(() => buildActivityGraph(actions, rootPath, { maxTargetNodes: 48 }), [actions, rootPath]);
   const summary = useMemo(() => summarizeActivity(actions), [actions]);
@@ -156,10 +188,14 @@ export function ActivityBrowserModal({
   const askAgent = useCallback(() => {
     if (!tabId || !onAskAgent) return;
     onClose();
+    const query = new URLSearchParams({ tabId });
+    if (source?.sessionId) query.set("sessionId", source.sessionId);
+    if (source?.cwd) query.set("sessionCwd", source.cwd);
+    if (source?.transport) query.set("transport", source.transport);
     onAskAgent(
-      `Use the ShellX debug API endpoint GET /state/session_activity?tabId=${tabId} and summarize this session's file activity. Separate verified hunk records from observed tool calls and inferred terminal-command activity. Call out local/remote storage gaps.`,
+      `Use the ShellX debug API endpoint GET /state/session_activity?${query.toString()} and summarize this session's file activity. Separate verified hunk records from observed tool calls and inferred terminal-command activity. Call out local/remote storage gaps.`,
     );
-  }, [onAskAgent, onClose, tabId]);
+  }, [onAskAgent, onClose, source, tabId]);
 
   const copySummary = useCallback(() => {
     const lines = [
@@ -239,7 +275,11 @@ export function ActivityBrowserModal({
           {err && <div className="preview-err">{err}</div>}
           {loading && !err && <div className="preview-loading">Loading activity trace...</div>}
 
-          {!loading && !err && source && !source.readable && (
+          {!loading && !err && source && !source.readable && hasBuildAudit && (
+            <ActivityBuildAudit source={source} buildState={buildState} receipts={buildReceipts} />
+          )}
+
+          {!loading && !err && source && !source.readable && !hasBuildAudit && (
             <ActivityEmpty source={source} />
           )}
 
@@ -284,7 +324,13 @@ export function ActivityBrowserModal({
           )}
 
           {!loading && !err && source?.readable && actions.length > 0 && view === "summary" && (
-            <ActivitySummaryView source={source} summary={summary} actions={actions} />
+            <ActivitySummaryView
+              source={source}
+              summary={summary}
+              actions={actions}
+              buildState={buildState}
+              buildReceipts={buildReceipts}
+            />
           )}
         </div>
 
@@ -496,6 +542,34 @@ function ActivityEmpty({ source }: { source: SessionActivitySource }): JSX.Eleme
   );
 }
 
+function ActivityBuildAudit({
+  source,
+  buildState,
+  receipts,
+}: {
+  source: SessionActivitySource;
+  buildState: BuildRunState | null;
+  receipts: BuildReceipt[];
+}): JSX.Element {
+  return (
+    <div className="activity-empty">
+      <div className="activity-empty-title">Build receipt ledger available</div>
+      <div className="activity-empty-detail">
+        {source.note || "The file trace source is unavailable, but Build Mode receipts are still persisted for this tab."}
+      </div>
+      <div className="activity-source-grid">
+        <ActivityMeta label="Trace status" value={activityStatusLabel(source.status)} rawValue={source.status} />
+        <ActivityMeta label="Build status" value={buildStatusLabel(buildState?.status)} rawValue={buildState?.status} />
+        <ActivityMeta label="Run" value={buildState?.runId ?? receipts[0]?.runId ?? "-"} />
+        <ActivityMeta label="Receipts" value={String(receipts.length)} />
+        <ActivityMeta label="Checkpoint" value={buildState?.checkpointId ?? "-"} />
+        <ActivityMeta label="Workspace" value={buildState?.cwd ?? source.cwd ?? "-"} />
+      </div>
+      <BuildReceiptLedger receipts={receipts} />
+    </div>
+  );
+}
+
 function emptyTitle(status: string): string {
   if (status === "remote-not-mirrored") return "Remote trace is not mirrored locally";
   if (status === "restored-transport-not-live") return "Trace needs a live transport";
@@ -655,10 +729,14 @@ function ActivitySummaryView({
   source,
   summary,
   actions,
+  buildState,
+  buildReceipts,
 }: {
   source: SessionActivitySource;
   summary: ReturnType<typeof summarizeActivity>;
   actions: ActivityAction[];
+  buildState: BuildRunState | null;
+  buildReceipts: BuildReceipt[];
 }): JSX.Element {
   const newest = actions[actions.length - 1];
   const oldest = actions[0];
@@ -676,8 +754,41 @@ function ActivitySummaryView({
         <ActivityMeta label="First event" value={formatTime(oldest?.timestampMs)} />
         <ActivityMeta label="Last event" value={formatTime(newest?.timestampMs)} />
       </div>
+      {(buildState || buildReceipts.length > 0) && (
+        <div className="activity-build-audit">
+          <div className="activity-build-title">
+            Build receipt ledger · {buildReceipts.length}
+          </div>
+          <div className="activity-source-grid">
+            <ActivityMeta label="Build status" value={buildStatusLabel(buildState?.status)} rawValue={buildState?.status} />
+            <ActivityMeta label="Run" value={buildState?.runId ?? buildReceipts[0]?.runId ?? "-"} />
+            <ActivityMeta label="Checkpoint" value={buildState?.checkpointId ?? "-"} />
+          </div>
+          <BuildReceiptLedger receipts={buildReceipts} />
+        </div>
+      )}
     </div>
   );
+}
+
+function BuildReceiptLedger({ receipts }: { receipts: BuildReceipt[] }): JSX.Element {
+  if (receipts.length === 0) return <div className="activity-empty-detail">No Build Mode receipts are available for this tab.</div>;
+  return (
+    <div className="build-receipts activity-build-receipts">
+      {receipts.slice().reverse().map((receipt) => (
+        <div key={receipt.receiptId} className={`build-receipt build-receipt-${receipt.confidence}`} title={receipt.summary}>
+          <ShellIcon name="activity" size={12} />
+          <span className="build-receipt-kind">{buildReceiptKindLabel(receipt.kind)}</span>
+          <span className="build-receipt-summary">{receipt.summary}</span>
+          <span className="build-receipt-time">{formatTime(receipt.createdAtMs)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function buildReceiptKindLabel(kind: string): string {
+  return kind.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase());
 }
 
 function ActivityMeta({ label, value, rawValue }: { label: string; value: string; rawValue?: string }): JSX.Element {

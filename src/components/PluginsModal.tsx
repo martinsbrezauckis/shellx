@@ -39,6 +39,15 @@ interface McpEntryStatus {
   allKeysPresent: boolean;
 }
 
+interface WorkflowSkillStatus {
+  id: string;
+  title: string;
+  shortDescription: string;
+  installed: boolean;
+  path: string;
+  bodyHash: string;
+}
+
 const TIER_TITLES: Record<McpTier, string> = {
   s: "Recommended",
   a: "With key",
@@ -84,6 +93,7 @@ export function PluginsModal({
   const [hostMcpEnabled, setHostMcpEnabled] = useState<boolean>(true);
   const [hostMcpStatus, setHostMcpStatus] = useState<"idle" | "loading" | "error">("idle");
   const [hostMcpError, setHostMcpError] = useState<string | null>(null);
+  const [workflowSkills, setWorkflowSkills] = useState<WorkflowSkillStatus[]>([]);
 
   // ─── marketplace state ────────────────────────────────────────────
   const [marketplace, setMarketplace] = useState<McpEntryStatus[]>([]);
@@ -117,6 +127,8 @@ export function PluginsModal({
     setHostMcpStatus("loading");
     setHostMcpError(null);
     void (async () => {
+      const skills = await invoke<WorkflowSkillStatus[]>("workflow_skill_statuses").catch(() => []);
+      if (!cancelled) setWorkflowSkills(skills);
       try {
         const cur = await invoke<boolean>("read_host_mcp_enabled");
         if (cancelled) return;
@@ -268,6 +280,33 @@ export function PluginsModal({
               </div>
             </div>
           </section>
+
+          {workflowSkills.length > 0 && (
+            <section className="pmodal-section">
+              <h3 className="pmodal-section-hdr">
+                Workflow skills <span className="ct">· {workflowSkills.filter((s) => s.installed).length}/{workflowSkills.length}</span>
+              </h3>
+              <div className="mp-list">
+                {workflowSkills.map((skill) => (
+                  <div className="mp-row" key={skill.id}>
+                    <div className="mp-row-main">
+                      <span className="mp-name">{skill.title}</span>
+                      <span className="plugin-kind skill">SKILL</span>
+                      <span className={skill.installed ? "mp-status mp-status-ready" : "mp-status mp-status-keyneeded"}>
+                        <ShellIcon name={skill.installed ? "circle-check" : "alert"} size={11} />
+                        {skill.installed ? "installed" : "missing"}
+                      </span>
+                    </div>
+                    <p className="mp-desc">{skill.shortDescription}</p>
+                    <div className="mp-row-foot">
+                      <span className="mp-source">{skill.path || "~/.grok/skills"}</span>
+                      <span className="mp-source">/{skill.id}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
           {/* ─── First-run hero ─────────────────────────────────── */}
           {tierSNoneInstalled && (

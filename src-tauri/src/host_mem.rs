@@ -67,6 +67,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+const MAX_MEM_VALUE_BYTES: usize = 1024 * 1024;
+
 // ───── path resolution ─────
 
 /// Test-only override for the db path. Production code path never reads
@@ -180,12 +182,24 @@ pub async fn set(args: Value) -> Result<Value, String> {
         .and_then(|v| v.as_str())
         .ok_or("mem_set: missing 'value'")?
         .to_string();
+    if value.len() > MAX_MEM_VALUE_BYTES {
+        return Err(format!(
+            "mem_set: value too large ({} bytes > {} byte cap)",
+            value.len(),
+            MAX_MEM_VALUE_BYTES
+        ));
+    }
     // ttl_ms is wall-clock millis; spec allows null. Stored as
     // expires_at = now + ttl_ms so reads are a simple `expires_at < now`
     // compare — no recomputation needed.
     let ttl_ms = args.get("ttl_ms").and_then(|v| v.as_i64());
     let now = now_ms();
-    let expires_at = ttl_ms.map(|t| now + t);
+    let expires_at = ttl_ms
+        .map(|t| {
+            now.checked_add(t)
+                .ok_or_else(|| "mem_set: ttl_ms overflow computing expiry".to_string())
+        })
+        .transpose()?;
 
     let ns_for_blocking = namespace.clone();
     let key_for_blocking = key.clone();
@@ -603,6 +617,40 @@ mod tests {
             json!(0),
             "expired row must be filtered from mem_list: {}",
             l
+        );
+    }
+
+    #[tokio::test]
+    async fn set_rejects_values_over_memory_cap() {
+        let _td = TempDb::new("value-cap");
+        let oversized = "x".repeat(MAX_MEM_VALUE_BYTES + 1);
+        let err = set(json!({
+            "key": "too-big",
+            "value": oversized,
+        }))
+        .await
+        .expect_err("mem_set must reject oversized values");
+        assert!(
+            err.contains("too large") || err.contains("cap"),
+            "error should explain value cap, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn set_rejects_ttl_overflow() {
+        let _td = TempDb::new("ttl-overflow");
+        let err = set(json!({
+            "key": "overflow",
+            "value": "value",
+            "ttl_ms": i64::MAX,
+        }))
+        .await
+        .expect_err("mem_set must reject ttl overflow");
+        assert!(
+            err.contains("ttl_ms") && err.contains("overflow"),
+            "error should explain ttl overflow, got: {}",
+            err
         );
     }
 }

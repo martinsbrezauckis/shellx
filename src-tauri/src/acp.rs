@@ -1451,6 +1451,19 @@ impl GrokAcpSession {
                 ));
             }
 
+            match ensure_local_project_mcp_http_config(
+                &agent_cwd,
+                self.tab_id.as_deref(),
+                &marketplace_config_blocks,
+            ) {
+                Ok(true) => info!("Local project .grok/config.toml installed at {}", agent_cwd),
+                Ok(false) => info!("Local project .grok/config.toml already up-to-date"),
+                Err(e) => warn!(
+                    "Local project .grok/config.toml install failed (non-fatal): {}",
+                    e
+                ),
+            }
+
             let mut c = Command::new(grok_exe);
             // H2 token strategy (2026-05-20): the project-scoped
             // config.toml declares `bearer_token_env_var = "SHELLX_MCP_TOKEN"`
@@ -2346,11 +2359,16 @@ async fn read_loop(
                         // if present, else use a generic marker so callers
                         // can distinguish synthetic from real envelopes.
                         let result_obj = msg.result.as_ref();
-                        let stop_reason = result_obj
-                            .and_then(|v| v.get("stopReason"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| "completed".to_string());
+                        let error_text = msg.error.as_ref().map(|e| e.to_string());
+                        let stop_reason = if error_text.is_some() {
+                            "error".to_string()
+                        } else {
+                            result_obj
+                                .and_then(|v| v.get("stopReason"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "completed".to_string())
+                        };
                         let session_id = result_obj
                             .and_then(|v| v.get("sessionId"))
                             .and_then(|v| v.as_str())
@@ -2384,6 +2402,13 @@ async fn read_loop(
                             "synthesized prompt-complete for tab='{}' (grok skipped _x.ai/session/prompt_complete) — elapsed_ms={}",
                             tab_key, elapsed_ms
                         );
+                        maybe_mark_build_transport_failure(
+                            &app_handle,
+                            tab_id.as_deref(),
+                            Some(&stop_reason),
+                            error_text.as_deref(),
+                        )
+                        .await;
                         // Goal orchestrator hook (synthetic-fallback
                         // site). Mirrors the real envelope call inside
                         // handle_notification. Mutually exclusive paths:
@@ -3008,6 +3033,46 @@ fn recover_host_mcp_goal_session(
     })
 }
 
+async fn record_observed_build_file_write(
+    handle: &tauri::AppHandle,
+    tab_id: Option<&str>,
+    path: &str,
+    tool: &str,
+) {
+    let Some(tab) = tab_id else {
+        return;
+    };
+    use tauri::Manager as _;
+    let Some(orch_state) = handle.try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
+    else {
+        return;
+    };
+    let orch = orch_state.inner().clone();
+    let Some(state) = orch.get_state(tab).await else {
+        return;
+    };
+    let created_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let _ = orch
+        .append_receipt(crate::build_types::BuildReceipt {
+            receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
+            run_id: state.run_id,
+            tab_id: tab.to_string(),
+            kind: crate::build_types::BuildReceiptKind::FileWrite,
+            created_at_ms,
+            actor: "grok-acp".into(),
+            summary: format!("ACP file edit observed: {}", path),
+            confidence: crate::build_types::BuildReceiptConfidence::ObservedAcp,
+            data: serde_json::json!({
+                "tool": tool,
+                "path": path,
+            }),
+        })
+        .await;
+}
+
 async fn handle_notification(
     method: String,
     params: serde_json::Value,
@@ -3097,6 +3162,17 @@ async fn handle_notification(
                                 emit_and_debug(handle, "plan-event", plan_payload, tab_id);
                             }
                         }
+                        if let Some(applied) = raw.get("EditsApplied") {
+                            if let Some(path) =
+                                applied.get("absolute_path").and_then(|v| v.as_str())
+                            {
+                                let tool = raw
+                                    .get("type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("native_edit");
+                                record_observed_build_file_write(handle, tab_id, path, tool).await;
+                            }
+                        }
                     }
                 }
 
@@ -3170,6 +3246,7 @@ async fn handle_notification(
             let local_elapsed = take_prompt_elapsed_ms(tab_id.unwrap_or("default"));
             let elapsed_ms = server_elapsed.or(local_elapsed);
             let session_id = params.get("sessionId").and_then(|v| v.as_str());
+            let agent_result = params.get("agentResult").and_then(|v| v.as_str());
             // Classify a bare `cancelled` stopReason
             // as user_aborted vs agent_chose. record_abort stamps a
             // per-tab Instant on /abort; if it's set we know the cancel
@@ -3196,9 +3273,58 @@ async fn handle_notification(
                 "reasonDetail": reason_detail,
             });
             emit_and_debug(handle, "prompt-complete", payload, tab_id);
+            maybe_mark_build_transport_failure(app_handle, tab_id, stop_reason, agent_result).await;
             // Goal orchestrator hook (real envelope site).
             maybe_inject_goal_continuation(app_handle, tab_id, stop_reason).await;
         }
+    }
+}
+
+async fn maybe_mark_build_transport_failure(
+    app_handle: &Option<tauri::AppHandle>,
+    tab_id: Option<&str>,
+    stop_reason: Option<&str>,
+    detail: Option<&str>,
+) {
+    use tauri::Manager as _;
+    if stop_reason != Some("error") {
+        return;
+    }
+    let Some(handle) = app_handle else {
+        return;
+    };
+    let Some(build_state) = handle.try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
+    else {
+        return;
+    };
+    let tab = tab_id.unwrap_or("default");
+    let summary = detail
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("Build prompt failed: {}", s))
+        .unwrap_or_else(|| "Build prompt failed with stopReason=error".to_string());
+    match build_state
+        .inner()
+        .mark_transport_failed(tab, &summary)
+        .await
+    {
+        Ok(true) => {
+            emit_and_debug(
+                handle,
+                "build-event",
+                serde_json::json!({
+                    "kind": "transport_failed",
+                    "tabId": tab,
+                    "summary": summary,
+                }),
+                Some(tab),
+            );
+        }
+        Ok(false) => {}
+        Err(e) => warn!(
+            "build_orchestrator: tab='{}' failed to record transport failure: {}",
+            tab, e
+        ),
     }
 }
 
@@ -3234,6 +3360,88 @@ async fn maybe_inject_goal_continuation(
     };
     let stop = stop_reason.unwrap_or("");
     let tab = tab_id.unwrap_or("default");
+
+    if let Some(build_state) =
+        handle.try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
+    {
+        let build_orch = build_state.inner().clone();
+        if let Some(prompt_text) = build_orch.consider_continue(tab, stop).await {
+            let reg = match handle.try_state::<Arc<SessionRegistry>>() {
+                Some(s) => s,
+                None => {
+                    warn!("build_orchestrator: SessionRegistry missing — cannot inject");
+                    return;
+                }
+            };
+            let sess_arc = match reg.get_existing(tab).await {
+                Some(s) => s,
+                None => {
+                    warn!(
+                        "build_orchestrator: tab='{}' has no live session — skipping inject",
+                        tab
+                    );
+                    return;
+                }
+            };
+            use std::time::Duration;
+            const INJECT_SEND_TIMEOUT: Duration = Duration::from_secs(120);
+            let inject_attempt = async {
+                let mut sess = sess_arc.lock().await;
+                sess.initiate_and_send_prompt(&prompt_text).await
+            };
+            let inject_result = match tokio::time::timeout(INJECT_SEND_TIMEOUT, inject_attempt)
+                .await
+            {
+                Ok(r) => r,
+                Err(_) => {
+                    warn!(
+                        "build_orchestrator: tab='{}' inject TIMEOUT after {:?} — leaving build active",
+                        tab, INJECT_SEND_TIMEOUT
+                    );
+                    let payload = serde_json::json!({
+                        "kind": "inject_timeout",
+                        "tabId": tab,
+                        "timeoutMs": INJECT_SEND_TIMEOUT.as_millis() as u64,
+                        "buildStillActive": true,
+                    });
+                    emit_and_debug(handle, "build-event", payload, Some(tab));
+                    return;
+                }
+            };
+            match inject_result {
+                Ok(_rx) => {
+                    let payload = serde_json::json!({
+                        "kind": "injected",
+                        "tabId": tab,
+                        "continuationsTotal": build_orch
+                            .get_state(tab)
+                            .await
+                            .map(|s| s.continuations_total)
+                            .unwrap_or(0),
+                        "stopReason": stop,
+                    });
+                    emit_and_debug(handle, "build-event", payload, Some(tab));
+                    info!(
+                        "build_orchestrator: tab='{}' injected continuation (stop_reason={})",
+                        tab, stop
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "build_orchestrator: tab='{}' inject failed: {} — leaving state as-is",
+                        tab, e
+                    );
+                    let payload = serde_json::json!({
+                        "kind": "inject_failed",
+                        "tabId": tab,
+                        "error": e,
+                    });
+                    emit_and_debug(handle, "build-event", payload, Some(tab));
+                }
+            }
+            return;
+        }
+    }
 
     let orch_state = match handle.try_state::<Arc<crate::goal_orchestrator::GoalOrchestrator>>() {
         Some(s) => s,
@@ -3721,16 +3929,9 @@ async fn handle_agent_request(
                     .map(|s| s.inner().clone())
             });
             let Some(reg) = reg_opt else {
-                // No registry available — fall back to YOLO so we don't
-                // hang grok on a wedged state.
-                let selected = pick_option(&params);
-                let resp = match selected {
-                    Some(opt_id) => serde_json::json!({
-                        "outcome": { "outcome": "selected", "optionId": opt_id }
-                    }),
-                    None => serde_json::json!({ "outcome": { "outcome": "cancelled" } }),
-                };
-                send_response(id, resp, stdin).await;
+                // No registry available means no trusted approval path.
+                // Fail closed instead of selecting an allow option.
+                send_response(id, permission_registry_missing_response(), stdin).await;
                 return;
             };
 
@@ -4561,21 +4762,29 @@ fn validate_remote_ssh_fs_path(
         ));
     }
 
-    if let Some(home) = remote_home.as_deref().filter(|h| h.starts_with('/')) {
-        let home = home.trim_end_matches('/');
-        if remote_path != home
-            && !remote_path
-                .strip_prefix(home)
-                .is_some_and(|rest| rest.starts_with('/'))
-        {
-            return Err(format!(
-                "{}: remote SSH path must stay under {}, got {}",
-                tool, home, remote_path
-            ));
-        }
+    let Some(home) = remote_home.as_deref().filter(|h| h.starts_with('/')) else {
+        return Err(format!(
+            "{}: remote SSH HOME probe unavailable; refusing remote filesystem path {}",
+            tool, remote_path
+        ));
+    };
+    let home = home.trim_end_matches('/');
+    if remote_path != home
+        && !remote_path
+            .strip_prefix(home)
+            .is_some_and(|rest| rest.starts_with('/'))
+    {
+        return Err(format!(
+            "{}: remote SSH path must stay under {}, got {}",
+            tool, home, remote_path
+        ));
     }
 
     Ok(())
+}
+
+fn permission_registry_missing_response() -> serde_json::Value {
+    serde_json::json!({ "outcome": { "outcome": "cancelled" } })
 }
 
 /// Shell out to `ssh -- host 'cat -- <path>'` and
@@ -4892,6 +5101,17 @@ mod tests {
         assert!(
             validate_remote_ssh_fs_path("fs/write_text_file", "/tmp/outside-home.txt", &home)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn remote_ssh_fs_path_validator_fails_closed_without_home_probe() {
+        let err = validate_remote_ssh_fs_path("fs/read_text_file", "/tmp/outside-home.txt", &None)
+            .expect_err("remote SSH fs validation must fail closed when $HOME probe is missing");
+        assert!(
+            err.contains("HOME") || err.contains("home"),
+            "error should explain the missing remote HOME boundary, got: {}",
+            err
         );
     }
 
@@ -5682,6 +5902,37 @@ fn default_local_grok_path() -> String {
     }
 }
 
+fn ensure_local_project_mcp_http_config(
+    agent_cwd: &str,
+    tab_id: Option<&str>,
+    marketplace_config_blocks: &str,
+) -> Result<bool, String> {
+    let token = crate::mcp_http::resolve_or_create_mcp_token();
+    ensure_local_project_mcp_http_config_with(
+        std::path::Path::new(agent_cwd),
+        crate::mcp_http::mcp_port(),
+        &token,
+        tab_id.unwrap_or("default"),
+        marketplace_config_blocks,
+    )
+}
+
+fn ensure_local_project_mcp_http_config_with(
+    project_dir: &std::path::Path,
+    port: u16,
+    token: &str,
+    tab_id: &str,
+    marketplace_config_blocks: &str,
+) -> Result<bool, String> {
+    crate::skill_install::ensure_project_mcp_http_config(
+        project_dir,
+        port,
+        token,
+        tab_id,
+        marketplace_config_blocks,
+    )
+}
+
 /// Robust grok-binary resolver. The naive
 /// "look at ~/.grok/bin/grok.exe" check would crash Windows installs
 /// where grok CLI was installed via Scoop / Chocolatey (which add
@@ -5888,6 +6139,51 @@ mod transport_tests {
         assert!(validate_ssh_destination_arg("user@example.com\nProxyCommand=sh").is_err());
         assert!(validate_ssh_destination_arg("../host").is_err());
     }
+
+    #[test]
+    fn local_spawn_installs_project_http_mcp_config() {
+        let unique = format!("shellx-local-project-http-mcp-{}", test_unique_suffix());
+        let root = std::env::temp_dir().join(unique);
+
+        let changed = ensure_local_project_mcp_http_config_with(
+            &root,
+            5858,
+            "0123456789abcdef0123456789abcdef",
+            "tab-local",
+            "",
+        )
+        .expect("install local project HTTP MCP config");
+
+        assert!(changed, "first install should write project config");
+        let config_path = root.join(".grok").join("config.toml");
+        let config = std::fs::read_to_string(&config_path).unwrap();
+        assert!(config.contains("[mcp_servers.shellx-host-http]"));
+        assert!(config.contains("url = \"http://localhost:5858/mcp\""));
+        assert!(config.contains("bearer_token_env_var = \"SHELLX_MCP_TOKEN\""));
+        assert!(config.contains("MCP-Tab-Id = \"tab-local\""));
+        toml::from_str::<toml::Value>(&config).expect("local project config should parse");
+
+        let changed_again = ensure_local_project_mcp_http_config_with(
+            &root,
+            5858,
+            "0123456789abcdef0123456789abcdef",
+            "tab-local",
+            "",
+        )
+        .expect("second install should be idempotent");
+        assert!(!changed_again, "unchanged config should be idempotent");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn test_unique_suffix() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("{}-{}", std::process::id(), nanos)
+    }
 }
 
 #[cfg(test)]
@@ -5905,6 +6201,15 @@ mod pending_permission_tests {
     use super::*;
     use std::sync::Arc;
     use tokio::time::{timeout, Duration};
+
+    #[test]
+    fn missing_permission_registry_response_fails_closed() {
+        let resp = permission_registry_missing_response();
+        assert_eq!(
+            resp.pointer("/outcome/outcome").and_then(|v| v.as_str()),
+            Some("cancelled")
+        );
+    }
 
     #[tokio::test]
     async fn insert_then_resolve_allow_delivers_true() {

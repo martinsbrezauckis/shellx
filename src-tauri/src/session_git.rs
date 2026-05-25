@@ -394,6 +394,10 @@ async fn git_text_optional(
         .ok()
 }
 
+fn checkpoint_text_result(step: &str, result: Result<String, String>) -> Result<String, String> {
+    result.map_err(|e| format!("checkpoint {} failed: {}", step, e))
+}
+
 fn shellx_dir() -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -670,15 +674,14 @@ pub async fn git_session_diff(
     git_session_diff_for_tab(registry.inner().clone(), tab_id, cwd, scope).await
 }
 
-#[tauri::command]
-pub async fn git_session_create_checkpoint(
+pub async fn git_session_create_checkpoint_for_tab(
+    registry: Arc<SessionRegistry>,
+    build_orch: Arc<crate::build_orchestrator::BuildOrchestrator>,
+    tab_id: Option<String>,
     cwd: Option<String>,
-    #[allow(non_snake_case)] tab_id: Option<String>,
     label: Option<String>,
-    registry: State<'_, Arc<SessionRegistry>>,
 ) -> Result<GitCheckpointCreateResponse, String> {
-    let status =
-        git_session_status_for_tab(registry.inner().clone(), tab_id.clone(), cwd.clone()).await?;
+    let status = git_session_status_for_tab(registry.clone(), tab_id.clone(), cwd.clone()).await?;
     if !status.ok {
         return Ok(GitCheckpointCreateResponse {
             ok: false,
@@ -693,39 +696,72 @@ pub async fn git_session_create_checkpoint(
             last_error: Some("not inside a git repository".to_string()),
         });
     };
-    let ctx = command_context(registry.inner(), tab_id.clone(), cwd).await;
-    let unstaged = git_text(
-        registry.inner().clone(),
-        Some(ctx.tab_id.clone()),
-        &ctx.cwd,
-        vec!["diff".into(), "--binary".into(), "--".into()],
-        12,
-    )
-    .await
-    .unwrap_or_default();
-    let staged = git_text(
-        registry.inner().clone(),
-        Some(ctx.tab_id.clone()),
-        &ctx.cwd,
-        vec![
-            "diff".into(),
-            "--cached".into(),
-            "--binary".into(),
-            "--".into(),
-        ],
-        12,
-    )
-    .await
-    .unwrap_or_default();
-    let status_text = git_text(
-        registry.inner().clone(),
-        Some(ctx.tab_id.clone()),
-        &ctx.cwd,
-        vec!["status".into(), "--porcelain=v1".into(), "-b".into()],
-        8,
-    )
-    .await
-    .unwrap_or_default();
+    let ctx = command_context(&registry, tab_id.clone(), cwd).await;
+    let unstaged = match checkpoint_text_result(
+        "unstaged diff",
+        git_text(
+            registry.clone(),
+            Some(ctx.tab_id.clone()),
+            &ctx.cwd,
+            vec!["diff".into(), "--binary".into(), "--".into()],
+            12,
+        )
+        .await,
+    ) {
+        Ok(text) => text,
+        Err(e) => {
+            return Ok(GitCheckpointCreateResponse {
+                ok: false,
+                checkpoint: None,
+                last_error: Some(e),
+            });
+        }
+    };
+    let staged = match checkpoint_text_result(
+        "staged diff",
+        git_text(
+            registry.clone(),
+            Some(ctx.tab_id.clone()),
+            &ctx.cwd,
+            vec![
+                "diff".into(),
+                "--cached".into(),
+                "--binary".into(),
+                "--".into(),
+            ],
+            12,
+        )
+        .await,
+    ) {
+        Ok(text) => text,
+        Err(e) => {
+            return Ok(GitCheckpointCreateResponse {
+                ok: false,
+                checkpoint: None,
+                last_error: Some(e),
+            });
+        }
+    };
+    let status_text = match checkpoint_text_result(
+        "status",
+        git_text(
+            registry.clone(),
+            Some(ctx.tab_id.clone()),
+            &ctx.cwd,
+            vec!["status".into(), "--porcelain=v1".into(), "-b".into()],
+            8,
+        )
+        .await,
+    ) {
+        Ok(text) => text,
+        Err(e) => {
+            return Ok(GitCheckpointCreateResponse {
+                ok: false,
+                checkpoint: None,
+                last_error: Some(e),
+            });
+        }
+    };
     let label = label
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -756,11 +792,53 @@ pub async fn git_session_create_checkpoint(
         .map_err(|e| format!("checkpoint serialize failed: {}", e))?;
     std::fs::write(base.join("checkpoint.json"), meta)
         .map_err(|e| format!("checkpoint write metadata failed: {}", e))?;
+    if let Some(build_state) = build_orch.get_state(&ctx.tab_id).await {
+        let _ = build_orch
+            .append_receipt(crate::build_types::BuildReceipt {
+                receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
+                run_id: build_state.run_id,
+                tab_id: ctx.tab_id.clone(),
+                kind: crate::build_types::BuildReceiptKind::CheckpointCreated,
+                created_at_ms: now_ms() as u64,
+                actor: "shellx-git".into(),
+                summary: format!("Git checkpoint created: {}", checkpoint.label),
+                confidence: crate::build_types::BuildReceiptConfidence::TrustedHost,
+                data: serde_json::json!({
+                    "checkpointId": checkpoint.id,
+                    "path": checkpoint.path,
+                    "repoRoot": checkpoint.repo_root,
+                    "branch": checkpoint.branch,
+                    "head": checkpoint.head,
+                    "staged": checkpoint.staged,
+                    "unstaged": checkpoint.unstaged,
+                    "untracked": checkpoint.untracked,
+                }),
+            })
+            .await;
+    }
     Ok(GitCheckpointCreateResponse {
         ok: true,
         checkpoint: Some(checkpoint),
         last_error: None,
     })
+}
+
+#[tauri::command]
+pub async fn git_session_create_checkpoint(
+    cwd: Option<String>,
+    #[allow(non_snake_case)] tab_id: Option<String>,
+    label: Option<String>,
+    registry: State<'_, Arc<SessionRegistry>>,
+    build_orch: State<'_, Arc<crate::build_orchestrator::BuildOrchestrator>>,
+) -> Result<GitCheckpointCreateResponse, String> {
+    git_session_create_checkpoint_for_tab(
+        registry.inner().clone(),
+        build_orch.inner().clone(),
+        tab_id,
+        cwd,
+        label,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -913,6 +991,17 @@ mod tests {
         assert_eq!(
             target_worktree_path("C:\\Users\\User\\app", "shellx/feature-demo-1"),
             "C:\\Users\\User\\app-shellx-feature-demo-1",
+        );
+    }
+
+    #[test]
+    fn checkpoint_text_result_propagates_git_command_errors() {
+        let err = checkpoint_text_result("unstaged diff", Err("git diff timed out".to_string()))
+            .expect_err("checkpoint creation must not silently replace failed git output");
+        assert!(
+            err.contains("unstaged diff") && err.contains("git diff timed out"),
+            "error should include checkpoint step and git error, got: {}",
+            err
         );
     }
 }

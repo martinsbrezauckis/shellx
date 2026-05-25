@@ -22,12 +22,14 @@
  * (set up in App.tsx) so in-repo docs render in the FilePreviewModal
  * instead of an external browser tab.
  */
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import type { JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import pkg from "../../../package.json";
+import cargoToml from "../../../src-tauri/Cargo.toml?raw";
+import tauriConfRaw from "../../../src-tauri/tauri.conf.json?raw";
 import { SafeMarkdownLink } from "../../lib/markdown-links";
 import { cleanUpdateNotes } from "../../lib/update-notes";
 import { ShellIcon } from "../icons";
@@ -49,9 +51,25 @@ function openExternal(url: string): void {
 }
 
 const VERSION = (pkg as { version?: string }).version ?? "0.0.0";
+const CARGO_VERSION = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1] ?? VERSION;
+const TAURI_VERSION = (() => {
+  try {
+    return (JSON.parse(tauriConfRaw) as { version?: string }).version ?? VERSION;
+  } catch {
+    return VERSION;
+  }
+})();
 const TIP_COMMIT: string =
   typeof __APP_GIT_TIP__ === "string" ? __APP_GIT_TIP__ : "unknown";
 const AUTHOR_EMAIL = "martins.brezauckis@gmail.com";
+const RELEASE_INTERNAL_TOOLS = import.meta.env.VITE_SHELLX_INTERNAL_TOOLS;
+const SHOW_RELEASE_READINESS =
+  import.meta.env.DEV ||
+  RELEASE_INTERNAL_TOOLS === "1" ||
+  RELEASE_INTERNAL_TOOLS === "true";
+const ReleaseReadinessPanel = SHOW_RELEASE_READINESS
+  ? lazy(() => import("./ReleaseReadinessPanel"))
+  : null;
 
 interface UpdateState {
   kind: "idle" | "checking" | "available" | "current" | "installing" | "error";
@@ -327,6 +345,16 @@ export function AboutTab(): JSX.Element {
           <span>Changelog</span>
         </button>
       </div>
+
+      {ReleaseReadinessPanel ? (
+        <Suspense fallback={null}>
+          <ReleaseReadinessPanel
+            version={VERSION}
+            cargoVersion={CARGO_VERSION}
+            tauriVersion={TAURI_VERSION}
+          />
+        </Suspense>
+      ) : null}
 
       <p className="about-fineprint" style={{ marginTop: 16 }}>
         Settings and secrets are stored at <code>~/.shellx/</code> (Linux/macOS) or{" "}

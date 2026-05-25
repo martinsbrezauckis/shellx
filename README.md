@@ -39,6 +39,9 @@ are ready.
 - **Git workflow surface.** Inspect dirty state and diffs, create local
   checkpoints, and create worktrees from the active session without
   leaving shellX.
+- **Workflow skills.** shellX installs compact Grok skills for common
+  coding loops: build an app, fix a bug, polish UI, review a repo, and
+  prepare a release.
 - **Autonomous mode.** `/goal "<objective>"` writes a scratchboard,
   lets the agent plan + work across multiple turns, requires a
   reviewer/check subagent gate for code changes when available, and

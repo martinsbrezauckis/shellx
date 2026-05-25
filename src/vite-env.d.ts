@@ -53,3 +53,11 @@ declare module "*.md?raw" {
   const raw: string;
   export default raw;
 }
+declare module "*.toml?raw" {
+  const raw: string;
+  export default raw;
+}
+declare module "*.json?raw" {
+  const raw: string;
+  export default raw;
+}

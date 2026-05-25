@@ -15,6 +15,9 @@
 // everything without going through the React UI.
 
 mod acp;
+pub mod build_orchestrator;
+pub mod build_store;
+pub mod build_types;
 mod connections;
 mod host_mcp;
 mod outside_connectors;
@@ -243,11 +246,9 @@ pub(crate) async fn run_tab_cwd_command(
 /// UI form added something, or a script registered other servers).
 /// - We append the shellx-host entry UNLESS the caller already
 /// included one with `name == grok-shell-host` (UI toggle wins).
-/// - In dev mode (binary path contains `target/`) we SKIP the
-/// injection — re-invoking the binary would launch a second Tauri
-/// window instead of the `--mcp-server` stdio handler. The release
-/// installer places the binary outside `target/`, so the heuristic
-/// is safe.
+/// - Dev binaries are safe here: `main.rs` dispatches `--mcp-server`
+/// before Tauri starts, so re-invoking the current executable runs the
+/// headless stdio server rather than opening another window.
 ///
 /// The MCP server entry shape matches what `session/new.mcpServers`
 /// expects per `acp.rs:SessionNewParams.mcp_servers` (camelCase JSON):
@@ -275,10 +276,6 @@ pub fn inject_host_mcp_server(
         return servers;
     };
     let exe_str = exe.to_string_lossy().to_string();
-    let is_cargo_target = exe_str.contains("/target/") || exe_str.contains("\\target\\");
-    if is_cargo_target {
-        return servers;
-    }
     // Per the ACP MCP spec the `env` field is an array of {name, value}
     // pairs (NOT a map). Build the entries for tab_id when known.
     let env_entries: Vec<serde_json::Value> = tab_id
@@ -856,6 +853,7 @@ async fn drop_tab_session(
     #[allow(non_snake_case)] tab_id: String,
     registry: State<'_, Arc<SessionRegistry>>,
     orch: State<'_, Arc<goal_orchestrator::GoalOrchestrator>>,
+    build_orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
     process_registry: State<'_, Arc<ProcessRegistry>>,
 ) -> Result<bool, String> {
     let removed = registry.drop_tab(&tab_id).await;
@@ -868,6 +866,7 @@ async fn drop_tab_session(
         // the same id gets a fresh probe set on next /connect.
         crate::mcp_health::global().clear_tab(&tab_id).await;
         orch.clear_state(&tab_id, "tab_closed").await;
+        build_orch.clear_tab(&tab_id).await;
         crate::acp::clear_host_mcp_transport_failure_for_tab(&tab_id);
     }
     let cleaned = cleanup_host_mcp_children_for_tab(&process_registry, &tab_id).await;
@@ -3040,6 +3039,14 @@ fn host_skill_status() -> skill_install::HostSkillStatus {
     skill_install::host_skill_status()
 }
 
+/// Status of the compact shellX workflow skills bundled for Grok.
+/// These are user-facing starter workflows installed under
+/// `~/.grok/skills/shellx-*` so they appear as normal Grok skills.
+#[tauri::command]
+fn workflow_skill_statuses() -> Vec<skill_install::WorkflowSkillStatus> {
+    skill_install::workflow_skill_statuses()
+}
+
 // ──────────── Host MCP toggle ────────────
 //
 // PluginsModal now wires a real on/off switch for the
@@ -3607,6 +3614,179 @@ async fn mark_goal_complete(
     Ok(())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildStartResponse {
+    state: build_types::BuildRunState,
+    kickoff_prompt: String,
+}
+
+#[tauri::command]
+async fn start_build_mode(
+    #[allow(non_snake_case)] tab_id: String,
+    objective: String,
+    cwd: String,
+    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
+    reg: State<'_, Arc<crate::acp::SessionRegistry>>,
+) -> Result<BuildStartResponse, String> {
+    let objective = objective.trim().to_string();
+    if objective.is_empty() {
+        return Err("/build requires an objective".to_string());
+    }
+    let cwd_path = std::path::PathBuf::from(&cwd);
+    let (transport_kind, ssh_config) = if let Some(sess_arc) = reg.get_existing(&tab_id).await {
+        let sess = sess_arc.lock().await;
+        (
+            sess.transport_kind().to_string(),
+            sess.ssh_config().cloned(),
+        )
+    } else {
+        ("local".to_string(), None)
+    };
+    let state = orch
+        .start_run_with_transport_context(
+            &tab_id,
+            &objective,
+            &cwd_path,
+            &transport_kind,
+            ssh_config,
+        )
+        .await?;
+    let kickoff_prompt = build_orchestrator::BuildOrchestrator::plan_kickoff_text_for_path(
+        &objective,
+        &state.scratchboard_path,
+    );
+    Ok(BuildStartResponse {
+        state,
+        kickoff_prompt,
+    })
+}
+
+#[tauri::command]
+async fn get_build_state(
+    #[allow(non_snake_case)] tab_id: String,
+    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
+) -> Result<Option<build_types::BuildRunState>, String> {
+    Ok(orch.get_state(&tab_id).await)
+}
+
+#[tauri::command]
+async fn get_build_receipts(
+    #[allow(non_snake_case)] tab_id: String,
+    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
+) -> Result<Vec<build_types::BuildReceipt>, String> {
+    orch.get_receipts(&tab_id).await
+}
+
+fn build_approval_kickoff_prompt(state: Option<&build_types::BuildRunState>) -> String {
+    let objective = state
+        .map(|s| s.objective.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("(no objective recorded)");
+    let path = state
+        .map(|s| s.scratchboard_path.as_str())
+        .unwrap_or("build.md");
+    format!(
+        "The Build Mode plan in build.md has been approved.\n\nObjective: {}\n\nScratchboard: {}\n\nBegin executing it now. Work as manager: use shellX Agent personas when useful, record evidence in build.md, and call build_complete only after checkpoint, review, and verification gates are satisfied.",
+        objective, path
+    )
+}
+
+#[tauri::command]
+async fn approve_build_plan(
+    #[allow(non_snake_case)] tab_id: String,
+    app: tauri::AppHandle,
+    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
+    reg: State<'_, Arc<crate::acp::SessionRegistry>>,
+) -> Result<bool, String> {
+    let Some(sess_arc) = reg.get_existing(&tab_id).await else {
+        return Err(
+            "No live session for this tab; reconnect before approving the build plan.".to_string(),
+        );
+    };
+    let flipped = orch.approve_plan(&tab_id).await?;
+    if flipped {
+        let active = orch.get_state(&tab_id).await;
+        let prompt = build_approval_kickoff_prompt(active.as_ref());
+        use std::time::Duration;
+        let attempt = async {
+            let mut sess = sess_arc.lock().await;
+            sess.initiate_and_send_prompt(&prompt).await
+        };
+        match tokio::time::timeout(Duration::from_secs(120), attempt).await {
+            Ok(Ok(_)) => {
+                use tauri::Emitter as _;
+                let payload = serde_json::json!({
+                    "kind": "build_approve_kickoff_injected",
+                    "tabId": tab_id,
+                });
+                let _ = app.emit("build-event", payload);
+            }
+            Ok(Err(e)) => return Err(format!("build approve kickoff inject failed: {}", e)),
+            Err(_) => {
+                return Err(
+                    "build approve kickoff inject timed out while writing to grok".to_string(),
+                )
+            }
+        }
+    }
+    Ok(flipped)
+}
+
+#[tauri::command]
+async fn reject_build_plan(
+    #[allow(non_snake_case)] tab_id: String,
+    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
+) -> Result<bool, String> {
+    orch.reject_plan(&tab_id).await
+}
+
+#[tauri::command]
+async fn pause_build(
+    #[allow(non_snake_case)] tab_id: String,
+    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
+) -> Result<bool, String> {
+    orch.pause(&tab_id).await
+}
+
+#[tauri::command]
+async fn resume_build(
+    #[allow(non_snake_case)] tab_id: String,
+    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
+) -> Result<bool, String> {
+    orch.resume(&tab_id).await
+}
+
+#[tauri::command]
+async fn mark_build_complete(
+    #[allow(non_snake_case)] tab_id: String,
+    summary: Option<String>,
+    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
+) -> Result<bool, String> {
+    orch.mark_complete(
+        &tab_id,
+        summary
+            .as_deref()
+            .unwrap_or("Manually marked complete from shellX UI"),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn halt_build(
+    #[allow(non_snake_case)] tab_id: String,
+    summary: Option<String>,
+    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
+) -> Result<bool, String> {
+    orch.halt(
+        &tab_id,
+        summary
+            .as_deref()
+            .unwrap_or("Stopped manually from shellX UI"),
+    )
+    .await
+}
+
 /// #333: surface the actually-bound debug-api + mcp-http ports to the
 /// React UI. After the orphan-socket fallback (#311), the running ports
 /// may differ from the defaults — the footer + About tab read this
@@ -3983,7 +4163,10 @@ pub fn run() {
         // watchdog spawn moved INTO .setup below — calling
         // tokio::spawn from .manage panics because the Tauri runtime
         // isn't fully bootstrapped at that point.
-        .manage(Arc::new(goal_orchestrator::GoalOrchestrator::new()));
+        .manage(Arc::new(goal_orchestrator::GoalOrchestrator::new()))
+        .manage(Arc::new(build_orchestrator::BuildOrchestrator::new(
+            build_orchestrator::BuildOrchestrator::default_store_base(),
+        )));
 
     #[cfg(feature = "debug-api")]
     let builder = builder.manage(debug_hub.clone());
@@ -4040,6 +4223,7 @@ pub fn run() {
             get_debug_port,
             // Bundled host-skill manifest status (read-only).
             host_skill_status,
+            workflow_skill_statuses,
             // Permission-modal resolution.
             resolve_permission_request,
             // Vault
@@ -4120,6 +4304,17 @@ pub fn run() {
             reject_goal_plan,
             request_goal_replan,
             mark_goal_complete,
+            // Experimental Build Mode — parallel successor candidate
+            // to /goal. Kept separate so /goal remains stable.
+            start_build_mode,
+            get_build_state,
+            get_build_receipts,
+            approve_build_plan,
+            reject_build_plan,
+            pause_build,
+            resume_build,
+            mark_build_complete,
+            halt_build,
             // #333 — bound-port surface for the UI footer/About.
             get_bound_ports,
         ])
@@ -4152,6 +4347,12 @@ pub fn run() {
                 ),
             }
 
+            match crate::skill_install::ensure_shellx_workflow_skills_installed() {
+                Ok(0) => info!("shellX workflow skills already up-to-date"),
+                Ok(n) => info!("shellX workflow skills installed/updated: {}", n),
+                Err(e) => warn!("shellX workflow skill install failed (non-fatal): {}", e),
+            }
+
             // rewrite the shellX-managed section in ~/.grok/AGENTS.md
             // so grok picks up current shellX runtime rules (MCP install
             // nudge, voice-chat formatting, transport-aware fs rules) at
@@ -4172,24 +4373,14 @@ pub fn run() {
             // MCP server at session start. The session/new mcpServers
             // field is ignored by grok-build for MCP setup per its docs.
             if let Ok(exe) = std::env::current_exe() {
-                let exe_str = exe.to_string_lossy().to_string();
-                // Same target/-skip heuristic as inject_host_mcp_server:
-                // dev binary re-invoking itself with --mcp-server would
-                // launch a second Tauri window instead of stdio.
-                let is_cargo_target =
-                    exe_str.contains("/target/") || exe_str.contains("\\target\\");
-                if !is_cargo_target {
-                    match crate::skill_install::ensure_grok_mcp_config_installed(&exe) {
-                        Ok(true) => {
-                            info!("grok config.toml updated with grok-shell-host MCP entry")
-                        }
-                        Ok(false) => {
-                            info!("grok config.toml grok-shell-host entry already up-to-date")
-                        }
-                        Err(e) => warn!("grok config.toml install failed (non-fatal): {}", e),
+                match crate::skill_install::ensure_grok_mcp_config_installed(&exe) {
+                    Ok(true) => {
+                        info!("grok config.toml updated with grok-shell-host MCP entry")
                     }
-                } else {
-                    info!("skipping grok config.toml install in dev (exe in target/)");
+                    Ok(false) => {
+                        info!("grok config.toml grok-shell-host entry already up-to-date")
+                    }
+                    Err(e) => warn!("grok config.toml install failed (non-fatal): {}", e),
                 }
             }
 

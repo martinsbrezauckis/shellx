@@ -140,6 +140,63 @@ pub struct ArchiveSummary {
     pub roots: Vec<String>,
 }
 
+fn archive_path_has_allowed_extension(path: &str, is_ssh: bool) -> bool {
+    let lower = path.to_ascii_lowercase();
+    if is_ssh {
+        lower.ends_with(".tar.gz") || lower.ends_with(".tgz") || lower.ends_with(".zip")
+    } else {
+        lower.ends_with(".zip")
+    }
+}
+
+fn archive_path_is_absolute(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    Path::new(path).is_absolute()
+        || normalized.starts_with("//")
+        || (normalized.len() >= 3
+            && normalized.as_bytes()[1] == b':'
+            && normalized.as_bytes()[2] == b'/')
+}
+
+fn validate_archive_save_path(save_path: &str, is_ssh: bool) -> Result<String, String> {
+    let trimmed = save_path.trim();
+    if trimmed.is_empty() {
+        return Err("archive_session_artifacts: save_path is empty".to_string());
+    }
+    if trimmed.contains('\0') {
+        return Err("archive_session_artifacts: save_path contains NUL byte".to_string());
+    }
+    let normalized = trimmed.replace('\\', "/");
+    if normalized.contains("/../")
+        || normalized.starts_with("../")
+        || normalized.ends_with("/..")
+        || normalized == ".."
+    {
+        return Err("archive_session_artifacts: save_path contains traversal".to_string());
+    }
+    if !archive_path_is_absolute(trimmed) {
+        return Err("archive_session_artifacts: save_path must be absolute".to_string());
+    }
+    if !archive_path_has_allowed_extension(trimmed, is_ssh) {
+        let expected = if is_ssh {
+            ".tar.gz, .tgz, or .zip"
+        } else {
+            ".zip"
+        };
+        return Err(format!(
+            "archive_session_artifacts: archive save_path must end with {}",
+            expected
+        ));
+    }
+    let path = PathBuf::from(trimmed);
+    crate::host_mcp::enforce_home_containment(
+        "archive_session_artifacts(savePath)",
+        &path,
+        crate::host_mcp::FsAccessKind::Write,
+    )?;
+    Ok(trimmed.to_string())
+}
+
 /// Orchestration-API entry point. Same
 /// body as the Tauri command but takes `Arc<SessionRegistry>` directly
 /// so the shellXagent HTTP route at `POST /sessions/:tabId/archive`
@@ -149,9 +206,6 @@ pub async fn archive_session_artifacts_inner(
     save_path: String,
     registry: Arc<SessionRegistry>,
 ) -> Result<ArchiveSummary, String> {
-    if save_path.trim().is_empty() {
-        return Err("archive_session_artifacts: save_path is empty".to_string());
-    }
     let tab_key = crate::acp::tab_id_or_default(tab_id.clone());
     let arc = registry.get_or_create(&tab_key).await;
     let guard = arc.lock().await;
@@ -166,6 +220,7 @@ pub async fn archive_session_artifacts_inner(
         .get("isWsl")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let save_path = validate_archive_save_path(&save_path, is_ssh)?;
     let cwd = info_val
         .get("cwd")
         .and_then(|v| v.as_str())
@@ -665,5 +720,16 @@ mod tests {
         assert_eq!(urlencoded_cwd("/home/user"), "%2Fhome%2Fuser");
         // Unreserved chars left alone.
         assert_eq!(urlencoded_cwd("abc-XYZ_123.tar"), "abc-XYZ_123.tar");
+    }
+
+    #[test]
+    fn archive_save_path_policy_rejects_non_archive_targets() {
+        let err = validate_archive_save_path("/home/alice/.bashrc", false)
+            .expect_err("archive save path must not accept arbitrary non-archive targets");
+        assert!(
+            err.contains(".zip") || err.contains("archive"),
+            "error should explain archive extension policy, got: {}",
+            err
+        );
     }
 }

@@ -5106,6 +5106,83 @@ a.settings-pill:hover {
   gap: 10px;
 }
 
+.release-readiness {
+  margin-top: 16px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+.release-readiness-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.release-readiness-title {
+  font-family: var(--sans);
+  font-size: var(--fs-ui-sm);
+  font-weight: 650;
+  color: var(--ink);
+}
+.release-readiness-meta {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-3);
+}
+.release-version-chip {
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-2);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 3px 7px;
+  background: var(--surface-2);
+}
+.release-readiness-list {
+  display: flex;
+  flex-direction: column;
+}
+.release-check {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.release-check:last-child {
+  border-bottom: 0;
+}
+.release-check-main {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.release-check-pass .sx-icon { color: var(--green); }
+.release-check-warn .sx-icon { color: var(--orange); }
+.release-check-fail .sx-icon { color: var(--danger); }
+.release-check-label {
+  font-size: var(--fs-ui-sm);
+  color: var(--ink);
+  font-weight: 600;
+}
+.release-check-detail {
+  margin-top: 2px;
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-3);
+  line-height: 1.35;
+}
+.release-check-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Kind pill — small text label, neutral background */
 .mp-kind {
   font-size: 9.5px;
@@ -5554,6 +5631,129 @@ a.settings-pill:hover {
 .goal-status-btn:hover {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.2);
+}
+.build-cockpit {
+  margin: 4px 6px 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(212, 166, 87, 0.24);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(212, 166, 87, 0.08), rgba(212, 166, 87, 0.03));
+  font-size: var(--right-body-size, 12px);
+}
+.build-cockpit-top,
+.build-actions,
+.build-gates,
+.build-receipt {
+  display: flex;
+  align-items: center;
+}
+.build-cockpit-top { gap: 8px; }
+.build-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 650;
+  color: #d4a657;
+}
+.build-status-paused { color: #999; }
+.build-status-blocked,
+.build-status-transportFailed,
+.build-status-halted { color: #c8423a; }
+.build-status-complete { color: #59b56d; }
+.build-meta {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: var(--right-meta-size, 11px);
+  font-variant-numeric: tabular-nums;
+}
+.build-objective {
+  margin-top: 6px;
+  color: var(--ink-1);
+  line-height: 1.35;
+}
+.build-gates {
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.build-gate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--ink-3);
+  font-size: var(--right-meta-size, 11px);
+}
+.build-gate-ok { color: #59b56d; border-color: rgba(89, 181, 109, 0.28); }
+.build-gate-required { color: #d4a657; border-color: rgba(212, 166, 87, 0.3); }
+.build-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.build-message {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--ink-2);
+  font-size: var(--right-meta-size, 11px);
+}
+.build-message-warn { color: #d4a657; }
+.build-receipts {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+.build-receipts-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-3);
+  font-size: var(--right-meta-size, 11px);
+}
+.build-receipts-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-2);
+  padding: 1px 6px;
+  font-size: var(--right-meta-size, 11px);
+  cursor: pointer;
+}
+.build-receipts-toggle:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.build-receipt {
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--right-meta-size, 11px);
+}
+.build-receipt-trustedHost .sx-icon { color: #59b56d; }
+.build-receipt-observedAcp .sx-icon { color: #d4a657; }
+.build-receipt-modelDeclared .sx-icon { color: var(--ink-3); }
+.build-receipt-kind {
+  flex: 0 0 auto;
+  color: var(--ink-3);
+}
+.build-receipt-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.build-receipt-time {
+  margin-left: auto;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
 }
 .goal-edit-panel {
   margin: -2px 6px 6px 6px;
@@ -6217,6 +6417,18 @@ a.settings-pill:hover {
   margin-left: 0;
   margin-right: 0;
 }
+.activity-build-audit {
+  padding: 0 16px 16px;
+}
+.activity-build-title {
+  margin: 14px 0 -4px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+.activity-build-receipts {
+  margin-top: 12px;
+}
 .activity-meta {
   display: contents;
 }
@@ -6566,6 +6778,7 @@ a.settings-pill:hover {
 .plan-empty,
 .plan-md,
 .plan-entries,
+.build-cockpit,
 .right .rail-empty-line,
 .right .rail-empty-hint {
   font-size: var(--right-body-size);
@@ -6582,7 +6795,11 @@ a.settings-pill:hover {
 .fv-path,
 .fv-row .fvgit,
 .goal-status-meta,
-.goal-status-btn {
+.goal-status-btn,
+.build-meta,
+.build-gate,
+.build-message,
+.build-receipt {
   font-size: var(--right-meta-size);
 }
 .tooling-detail {

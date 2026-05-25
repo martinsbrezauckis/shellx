@@ -1146,6 +1146,64 @@ fn tool_specs() -> Vec<Value> {
                 "required": ["summary"]
             }
         }),
+        json!({
+            "name": "build_receipt",
+            "description": "Record an experimental /build receipt for the active Build Mode run. Use only for review, verification, blocker-opened, or blocker-resolved evidence when shellX cannot observe a stronger host signal.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["reviewCompleted", "verificationCompleted", "blockerOpened", "blockerResolved"],
+                        "description": "Receipt kind to record."
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Short receipt summary."
+                    },
+                    "data": {
+                        "type": "object",
+                        "description": "Optional structured evidence details."
+                    }
+                },
+                "required": ["kind", "summary"]
+            }
+        }),
+        json!({
+            "name": "build_checkpoint",
+            "description": "Create a local git checkpoint for the active Build Mode run and record a trusted checkpointCreated receipt. This never pushes or mutates a remote.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "label": {
+                        "type": "string",
+                        "description": "Optional short checkpoint label."
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional repository cwd override. Omit to use the active tab cwd."
+                    }
+                }
+            }
+        }),
+        json!({
+            "name": "build_complete",
+            "description": "Mark the active experimental /build run complete. shellX validates build.md and the host receipt gates before accepting. REJECTS if checklist items remain, a blocker is open, or required checkpoint/reviewer/verifier receipts are missing.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "One-paragraph summary of what was delivered."
+                    },
+                    "verification": {
+                        "type": "string",
+                        "description": "Short evidence summary for the final verification gate."
+                    }
+                },
+                "required": ["summary"]
+            }
+        }),
     ]
 }
 
@@ -1213,10 +1271,10 @@ async fn handle_tools_call(
         "secret_delete" => tool_secret_delete(arguments).await,
         // Agent family (see crate::subagent).
         "Agent" => tool_agent_spawn(arguments, ctx, tab_id).await,
-        "Agent_status" => tool_agent_status(arguments).await,
-        "Agent_output" => tool_agent_output(arguments).await,
+        "Agent_status" => tool_agent_status(arguments, ctx, tab_id).await,
+        "Agent_output" => tool_agent_output(arguments, ctx, tab_id).await,
         // Batch poll + fs primitives.
-        "Agent_poll_all" => tool_agent_poll_all(arguments).await,
+        "Agent_poll_all" => tool_agent_poll_all(arguments, ctx, tab_id).await,
         "fs_exists" => tool_fs_exists(arguments).await,
         "fs_stat" => tool_fs_stat(arguments).await,
         "fs_ensure_dir" => tool_fs_ensure_dir(arguments).await,
@@ -1260,8 +1318,15 @@ async fn handle_tools_call(
         // (every Phase status:DONE + every - [ ] flipped) and rejects
         // with a specific failure list if anything is unchecked.
         "goal_complete" => tool_goal_complete(arguments, ctx, tab_id).await,
+        "build_receipt" => tool_build_receipt(arguments, ctx, tab_id).await,
+        "build_checkpoint" => tool_build_checkpoint(arguments, ctx, tab_id).await,
+        "build_complete" => tool_build_complete(arguments, ctx, tab_id).await,
         other => Err(format!("unknown tool: {}", other)),
     };
+
+    if let Ok(value) = &result {
+        record_build_tool_receipt(&name, &arguments_snapshot, value, ctx, tab_id).await;
+    }
 
     // Emit a typed tool-call event so the running shellX UI can see
     // stdio MCP traffic. The stdio child runs
@@ -2083,7 +2148,7 @@ async fn tool_agent_spawn(
         .get("timeout_ms")
         .and_then(|v| v.as_u64())
         .map(|n| n.min(60 * 60 * 1000));
-    crate::subagent::spawn_subagent_with_transport(
+    let result = crate::subagent::spawn_subagent_with_transport(
         &persona,
         &task,
         cwd,
@@ -2092,7 +2157,30 @@ async fn tool_agent_spawn(
         timeout_ms,
         parent_transport,
     )
-    .await
+    .await;
+
+    if let Ok(value) = &result {
+        record_build_agent_receipt(
+            BuildAgentReceiptEvent::Started,
+            &persona,
+            &task,
+            Some(wait),
+            ctx,
+            tab_id,
+        )
+        .await;
+        record_build_agent_receipt(
+            BuildAgentReceiptEvent::Completed(value),
+            &persona,
+            &task,
+            Some(wait),
+            ctx,
+            tab_id,
+        )
+        .await;
+    }
+
+    result
 }
 
 /// AGENT-B3 helper: pull the parent tab's transport from the
@@ -2154,16 +2242,26 @@ async fn resolve_parent_transport_for_subagent(
 }
 
 /// `Agent_status` — poll status without consuming output.
-async fn tool_agent_status(args: Value) -> Result<Value, String> {
+async fn tool_agent_status(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
     let id = args
         .get("subagent_id")
         .and_then(|v| v.as_str())
         .ok_or("Agent_status: missing 'subagent_id'")?;
-    crate::subagent::status(id).await
+    let value = crate::subagent::status(id).await?;
+    record_build_agent_completion_from_poll(&value, ctx, tab_id, "Agent_status").await;
+    Ok(value)
 }
 
 /// `Agent_output` — fetch the final stdout (optionally waiting).
-async fn tool_agent_output(args: Value) -> Result<Value, String> {
+async fn tool_agent_output(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
     let id = args
         .get("subagent_id")
         .and_then(|v| v.as_str())
@@ -2173,7 +2271,9 @@ async fn tool_agent_output(args: Value) -> Result<Value, String> {
         .get("wait_for_complete")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    crate::subagent::output(&id, wait_for_complete).await
+    let value = crate::subagent::output(&id, wait_for_complete).await?;
+    record_build_agent_completion_from_poll(&value, ctx, tab_id, "Agent_output").await;
+    Ok(value)
 }
 
 /// `Agent_poll_all` — non-blocking batch status. Returns
@@ -2181,7 +2281,11 @@ async fn tool_agent_output(args: Value) -> Result<Value, String> {
 /// are returned inline as `{subagent_id, error: <msg>}` so a single
 /// bad id doesn't fail the whole batch. Replaces the
 /// "issue 15 sequential Agent_status calls" pattern.
-async fn tool_agent_poll_all(args: Value) -> Result<Value, String> {
+async fn tool_agent_poll_all(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
     let ids: Vec<String> = args
         .get("subagent_ids")
         .and_then(|v| v.as_array())
@@ -2195,7 +2299,10 @@ async fn tool_agent_poll_all(args: Value) -> Result<Value, String> {
     let mut snapshots: Vec<Value> = Vec::with_capacity(ids.len());
     for id in &ids {
         match crate::subagent::status(id).await {
-            Ok(v) => snapshots.push(v),
+            Ok(v) => {
+                record_build_agent_completion_from_poll(&v, ctx, tab_id, "Agent_poll_all").await;
+                snapshots.push(v)
+            }
             Err(msg) => snapshots.push(json!({
                 "subagent_id": id,
                 "error": msg,
@@ -2284,10 +2391,10 @@ async fn tool_fs_stat(args: Value) -> Result<Value, String> {
 /// (use `recursive: true`). Symlinks themselves are removed without
 /// following the target. Idempotent: missing path returns
 /// `removed: false, missing: true` instead of an error so callers
-/// can use this for cleanup without first stat-ing. Path is bounded
-/// by the same `validate_fs_path` HOME-tree check the other fs_*
-/// tools use, plus an explicit refusal to delete the HOME tree's
-/// root (depth-0) to avoid catastrophic typo damage.
+/// can use this for cleanup without first stat-ing. Path is bounded by
+/// the shared HOME/denylist gate the other mutating fs_* tools use,
+/// plus an explicit refusal to delete high-level paths to avoid
+/// catastrophic typo damage.
 async fn tool_fs_delete(args: Value) -> Result<Value, String> {
     let path_s = args
         .get("path")
@@ -2298,10 +2405,11 @@ async fn tool_fs_delete(args: Value) -> Result<Value, String> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let p = validate_fs_path("fs_delete", path_s)?;
-    // Belt-and-braces: refuse paths that look like the HOME tree's
-    // top-level (very few path components). validate_fs_path already
-    // bounds to HOME, but `rm -rf $HOME/x` where `x` is the entire
-    // user dir is a footgun the type signature can't prevent.
+    enforce_home_containment("fs_delete", &p, FsAccessKind::Write)?;
+    // Belt-and-braces: refuse paths that look high-level (very few
+    // path components). HOME containment already bounded the path, but
+    // `rm -rf $HOME/x` where `x` is the entire user dir is a footgun
+    // the type signature can't prevent.
     let normalized = p.to_string_lossy();
     let segs = normalized
         .split(['/', '\\'])
@@ -3170,6 +3278,7 @@ async fn tool_fs_copy(args: Value) -> Result<Value, String> {
         .ok_or("fs_copy: missing 'dst'")?;
     let src = validate_fs_path("fs_copy(src)", src_s)?;
     let dst = validate_fs_path("fs_copy(dst)", dst_s)?;
+    enforce_home_containment("fs_copy(dst)", &dst, FsAccessKind::Write)?;
     let overwrite = args
         .get("overwrite")
         .and_then(|v| v.as_bool())
@@ -3178,13 +3287,6 @@ async fn tool_fs_copy(args: Value) -> Result<Value, String> {
         .get("create_dirs")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-
-    // HOME boundary — refuse to read/write outside the user tree.
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "fs_copy: HOME/USERPROFILE unset".to_string())?;
-    let home_canon = std::fs::canonicalize(&home)
-        .map_err(|e| format!("fs_copy: canonicalize home failed: {}", e))?;
 
     // src must exist as a regular file (no symlinks, no devices).
     let src_meta = tokio::fs::symlink_metadata(&src)
@@ -3202,14 +3304,9 @@ async fn tool_fs_copy(args: Value) -> Result<Value, String> {
             src.display()
         ));
     }
+    enforce_home_containment("fs_copy(src)", &src, FsAccessKind::Read)?;
     let src_canon = std::fs::canonicalize(&src)
         .map_err(|e| format!("fs_copy: canonicalize src failed: {}", e))?;
-    if !src_canon.starts_with(&home_canon) {
-        return Err(format!(
-            "fs_copy: refusing src outside HOME tree: {}",
-            src_canon.display()
-        ));
-    }
 
     // dst: symlink_metadata (does NOT follow) so dangling links count
     // as "exists" — otherwise overwrite=false is bypassed by a dangling
@@ -3238,18 +3335,12 @@ async fn tool_fs_copy(args: Value) -> Result<Value, String> {
             .await
             .map_err(|e| format!("fs_copy: mkdir parent: {}", e))?;
     }
-    let dst_parent_canon = std::fs::canonicalize(dst_parent).map_err(|e| {
+    std::fs::canonicalize(dst_parent).map_err(|e| {
         format!(
             "fs_copy: canonicalize dst parent failed (does it exist? pass create_dirs=true): {}",
             e
         )
     })?;
-    if !dst_parent_canon.starts_with(&home_canon) {
-        return Err(format!(
-            "fs_copy: refusing dst outside HOME tree: {}",
-            dst_parent_canon.display()
-        ));
-    }
 
     let bytes_copied = tokio::fs::copy(&src_canon, &dst)
         .await
@@ -5034,6 +5125,778 @@ pub(crate) fn patch_goal_complete_status(text: &str) -> String {
     patched
 }
 
+enum BuildAgentReceiptEvent<'a> {
+    Started,
+    Completed(&'a Value),
+}
+
+struct BuildHostReceipt<'a> {
+    kind: crate::build_types::BuildReceiptKind,
+    actor: &'a str,
+    summary: String,
+    confidence: crate::build_types::BuildReceiptConfidence,
+    data: Value,
+}
+
+async fn active_build_run_for_mcp(
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+    tool_name: &str,
+) -> Option<(
+    Arc<crate::build_orchestrator::BuildOrchestrator>,
+    String,
+    crate::build_types::BuildRunState,
+)> {
+    use tauri::Manager as _;
+
+    let tab = resolve_mcp_tab_id(tab_id, tool_name).ok()?;
+    let app_handle = ctx.app_handle.as_ref()?;
+    let orch_state = app_handle.try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()?;
+    let orch = orch_state.inner().clone();
+    let state = orch.get_state(&tab).await?;
+    Some((orch, tab, state))
+}
+
+async fn append_build_host_receipt(
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+    tool_name: &str,
+    receipt: BuildHostReceipt<'_>,
+) {
+    use crate::build_types::{BuildReceiptKind, BuildRunStatus};
+    let BuildHostReceipt {
+        kind,
+        actor,
+        summary,
+        confidence,
+        data,
+    } = receipt;
+
+    let Some((orch, tab, state)) = active_build_run_for_mcp(ctx, tab_id, tool_name).await else {
+        if let Ok(tab) = resolve_mcp_tab_id(tab_id, tool_name) {
+            if let Err(e) =
+                post_build_receipt_to_debug_api(&tab, kind, actor, summary, confidence, data).await
+            {
+                tracing::debug!(
+                    "build receipt debug-api fallback failed for {}: {}",
+                    tool_name,
+                    e
+                );
+            }
+        }
+        return;
+    };
+    if matches!(
+        state.status,
+        BuildRunStatus::Complete | BuildRunStatus::Halted | BuildRunStatus::TransportFailed
+    ) {
+        return;
+    }
+    let mut kind = kind;
+    let mut summary = summary;
+    let mut data = data;
+    let path_for_receipt = data
+        .get("path")
+        .or_else(|| data.get("dst"))
+        .and_then(|v| v.as_str());
+    if let Some(path) = path_for_receipt {
+        if build_receipt_path_matches(path, &state.scratchboard_path) {
+            if kind == BuildReceiptKind::FileWrite {
+                kind = BuildReceiptKind::PlanWritten;
+                summary = format!("Build scratchboard written: {}", path);
+                if let Value::Object(ref mut map) = data {
+                    map.insert("scratchboard".into(), Value::Bool(true));
+                }
+            } else if matches!(
+                kind,
+                BuildReceiptKind::FileDelete | BuildReceiptKind::FileCopy
+            ) {
+                return;
+            }
+        }
+    }
+    if matches!(
+        kind,
+        BuildReceiptKind::AgentCompleted
+            | BuildReceiptKind::ReviewCompleted
+            | BuildReceiptKind::VerificationCompleted
+    ) {
+        if let Some(subagent_id) = data.get("subagentId").and_then(|v| v.as_str()) {
+            if let Ok(receipts) = orch.get_receipts(&tab).await {
+                if receipts.iter().any(|receipt| {
+                    receipt.kind == kind
+                        && receipt.data.get("subagentId").and_then(|v| v.as_str())
+                            == Some(subagent_id)
+                }) {
+                    return;
+                }
+            }
+        }
+    }
+    if let Err(e) = orch
+        .append_receipt(crate::build_types::BuildReceipt {
+            receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
+            run_id: state.run_id,
+            tab_id: tab,
+            kind,
+            created_at_ms: now_millis_for_build_receipt(),
+            actor: actor.to_string(),
+            summary,
+            confidence,
+            data,
+        })
+        .await
+    {
+        tracing::warn!("build receipt append failed for {}: {}", tool_name, e);
+    }
+}
+
+fn build_receipt_path_matches(a: &str, b: &str) -> bool {
+    let normalize = |s: &str| {
+        s.replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase()
+    };
+    normalize(a) == normalize(b)
+}
+
+async fn record_build_tool_receipt(
+    tool_name: &str,
+    args: &Value,
+    result: &Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) {
+    use crate::build_types::{BuildReceiptConfidence, BuildReceiptKind};
+
+    let mut receipt: Option<(BuildReceiptKind, String, Value)> = None;
+    match tool_name {
+        "fs_write" => {
+            let path = result
+                .get("path")
+                .and_then(|v| v.as_str())
+                .or_else(|| args.get("path").and_then(|v| v.as_str()))
+                .unwrap_or("<unknown>");
+            let bytes = result
+                .get("bytes_written")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            receipt = Some((
+                BuildReceiptKind::FileWrite,
+                format!("File written: {} ({} bytes)", path, bytes),
+                json!({
+                    "tool": tool_name,
+                    "path": path,
+                    "bytesWritten": bytes,
+                    "encoding": result.get("encoding").and_then(|v| v.as_str()).unwrap_or("utf8"),
+                    "createDirs": args.get("create_dirs").and_then(|v| v.as_bool()).unwrap_or(false),
+                }),
+            ));
+        }
+        "fs_append" => {
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>");
+            let bytes = result
+                .get("bytes_appended")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            receipt = Some((
+                BuildReceiptKind::FileWrite,
+                format!("File appended: {} ({} bytes)", path, bytes),
+                json!({
+                    "tool": tool_name,
+                    "path": path,
+                    "bytesAppended": bytes,
+                    "newSize": result.get("new_size").and_then(|v| v.as_u64()).unwrap_or(0),
+                }),
+            ));
+        }
+        "fs_copy" => {
+            let src = result
+                .get("src")
+                .and_then(|v| v.as_str())
+                .or_else(|| args.get("src").and_then(|v| v.as_str()))
+                .unwrap_or("<unknown>");
+            let dst = result
+                .get("dst")
+                .and_then(|v| v.as_str())
+                .or_else(|| args.get("dst").and_then(|v| v.as_str()))
+                .unwrap_or("<unknown>");
+            receipt = Some((
+                BuildReceiptKind::FileCopy,
+                format!("File copied: {} -> {}", src, dst),
+                json!({
+                    "tool": tool_name,
+                    "src": src,
+                    "dst": dst,
+                    "bytesCopied": result.get("bytes_copied").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "overwrite": args.get("overwrite").and_then(|v| v.as_bool()).unwrap_or(false),
+                }),
+            ));
+        }
+        "fs_delete" => {
+            let removed = result
+                .get("removed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if removed {
+                let path = result
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| args.get("path").and_then(|v| v.as_str()))
+                    .unwrap_or("<unknown>");
+                let kind = result
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("path");
+                receipt = Some((
+                    BuildReceiptKind::FileDelete,
+                    format!("Deleted {}: {}", kind, path),
+                    json!({
+                        "tool": tool_name,
+                        "path": path,
+                        "kind": kind,
+                        "recursive": result.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false),
+                    }),
+                ));
+            }
+        }
+        _ => {}
+    }
+
+    let Some((kind, summary, data)) = receipt else {
+        return;
+    };
+    append_build_host_receipt(
+        ctx,
+        tab_id,
+        tool_name,
+        BuildHostReceipt {
+            kind,
+            actor: "shellx-host-mcp",
+            summary,
+            confidence: BuildReceiptConfidence::TrustedHost,
+            data,
+        },
+    )
+    .await;
+}
+
+async fn post_build_receipt_to_debug_api(
+    tab_id: &str,
+    kind: crate::build_types::BuildReceiptKind,
+    actor: &str,
+    summary: String,
+    confidence: crate::build_types::BuildReceiptConfidence,
+    data: Value,
+) -> Result<(), String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
+    let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
+    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
+        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
+        .unwrap_or_else(|_| "5757".to_string());
+    let url = format!("http://127.0.0.1:{}/build/receipt", port.trim());
+    let body = json!({
+        "tabId": tab_id,
+        "kind": kind,
+        "summary": summary,
+        "actor": actor,
+        "confidence": confidence,
+        "data": data,
+    });
+    let send = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(token.trim())
+        .json(&body)
+        .send();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), send)
+        .await
+        .map_err(|_| "debug-api receipt post timed out".to_string())?
+        .map_err(|e| format!("debug-api receipt post failed: {}", e))?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        Err(format!(
+            "debug-api receipt post returned {}: {}",
+            status, text
+        ))
+    }
+}
+
+async fn post_build_complete_to_debug_api(tab_id: &str, summary: &str) -> Result<(), String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
+    let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
+    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
+        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
+        .unwrap_or_else(|_| "5757".to_string());
+    let url = format!("http://127.0.0.1:{}/build/complete", port.trim());
+    let body = json!({
+        "tabId": tab_id,
+        "summary": summary,
+    });
+    let send = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(token.trim())
+        .json(&body)
+        .send();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(15), send)
+        .await
+        .map_err(|_| "debug-api build_complete post timed out".to_string())?
+        .map_err(|e| format!("debug-api build_complete post failed: {}", e))?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        Err(format!(
+            "debug-api build_complete returned {}: {}",
+            status, text
+        ))
+    }
+}
+
+async fn record_build_agent_completion_from_poll(
+    value: &Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+    tool_name: &str,
+) {
+    let status = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    if status == "running" {
+        return;
+    }
+    let Some(persona) = value.get("persona").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let task = value
+        .get("task_preview")
+        .and_then(|v| v.as_str())
+        .unwrap_or(tool_name);
+    record_build_agent_receipt(
+        BuildAgentReceiptEvent::Completed(value),
+        persona,
+        task,
+        None,
+        ctx,
+        tab_id,
+    )
+    .await;
+}
+
+async fn record_build_agent_receipt(
+    event: BuildAgentReceiptEvent<'_>,
+    persona: &str,
+    task: &str,
+    wait: Option<bool>,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) {
+    use crate::build_types::{BuildReceiptConfidence, BuildReceiptKind};
+
+    let preview: String = task.chars().take(180).collect();
+    match event {
+        BuildAgentReceiptEvent::Started => {
+            append_build_host_receipt(
+                ctx,
+                tab_id,
+                "Agent",
+                BuildHostReceipt {
+                    kind: BuildReceiptKind::AgentStarted,
+                    actor: "shellx-host-mcp",
+                    summary: format!("{} Agent started: {}", persona, preview),
+                    confidence: BuildReceiptConfidence::TrustedHost,
+                    data: json!({
+                        "persona": persona,
+                        "taskPreview": preview,
+                        "wait": wait,
+                    }),
+                },
+            )
+            .await;
+        }
+        BuildAgentReceiptEvent::Completed(value) => {
+            let status = value
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            if status == "running" {
+                return;
+            }
+            let subagent_id = value
+                .get("subagent_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let elapsed_ms = value.get("elapsed_ms").and_then(|v| v.as_u64());
+            let data = json!({
+                "persona": persona,
+                "taskPreview": preview,
+                "subagentId": subagent_id,
+                "status": status,
+                "exitCode": value.get("exit_code").cloned().unwrap_or(Value::Null),
+                "elapsedMs": elapsed_ms,
+                "stdoutChars": value.get("stdout").and_then(|v| v.as_str()).map(|s| s.chars().count()).unwrap_or(0),
+                "stderrTailChars": value.get("stderr_tail").and_then(|v| v.as_str()).map(|s| s.chars().count()).unwrap_or(0),
+                "wait": wait,
+            });
+            append_build_host_receipt(
+                ctx,
+                tab_id,
+                "Agent",
+                BuildHostReceipt {
+                    kind: BuildReceiptKind::AgentCompleted,
+                    actor: "shellx-host-mcp",
+                    summary: format!("{} Agent finished with status {}", persona, status),
+                    confidence: BuildReceiptConfidence::TrustedHost,
+                    data: data.clone(),
+                },
+            )
+            .await;
+            if status != "completed" {
+                return;
+            }
+            let gate_kind = build_agent_gate_kind_for_persona(persona);
+            if let Some(kind) = gate_kind {
+                append_build_host_receipt(
+                    ctx,
+                    tab_id,
+                    "Agent",
+                    BuildHostReceipt {
+                        kind,
+                        actor: persona,
+                        summary: format!("{} Agent completed successfully", persona),
+                        confidence: BuildReceiptConfidence::TrustedHost,
+                        data,
+                    },
+                )
+                .await;
+            }
+        }
+    }
+}
+
+fn build_agent_gate_kind_for_persona(
+    persona: &str,
+) -> Option<crate::build_types::BuildReceiptKind> {
+    match persona {
+        "reviewer" => Some(crate::build_types::BuildReceiptKind::ReviewCompleted),
+        "verifier" => Some(crate::build_types::BuildReceiptKind::VerificationCompleted),
+        _ => None,
+    }
+}
+
+fn resolve_mcp_tab_id(tab_id: Option<&str>, tool_name: &str) -> Result<String, String> {
+    match tab_id {
+        Some(t) if !t.is_empty() => Ok(t.to_string()),
+        _ => match std::env::var("SHELLX_HOST_MCP_TAB_ID") {
+            Ok(t) if !t.is_empty() => Ok(t),
+            _ => Err(format!(
+                "{}: no tab identity available — neither the MCP-Tab-Id header nor SHELLX_HOST_MCP_TAB_ID env was set",
+                tool_name
+            )),
+        },
+    }
+}
+
+async fn post_build_checkpoint_to_debug_api(
+    tab_id: &str,
+    cwd: Option<String>,
+    label: Option<String>,
+) -> Result<Value, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
+    let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
+    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
+        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
+        .unwrap_or_else(|_| "5757".to_string());
+    let url = format!(
+        "http://127.0.0.1:{}/state/session_git/checkpoint",
+        port.trim()
+    );
+    let body = json!({
+        "tabId": tab_id,
+        "cwd": cwd,
+        "label": label,
+    });
+    let send = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(token.trim())
+        .json(&body)
+        .send();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(15), send)
+        .await
+        .map_err(|_| "debug-api checkpoint post timed out".to_string())?
+        .map_err(|e| format!("debug-api checkpoint post failed: {}", e))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if status.is_success() {
+        serde_json::from_str(&text).map_err(|e| format!("debug-api checkpoint JSON: {}", e))
+    } else {
+        Err(format!(
+            "debug-api checkpoint returned {}: {}",
+            status, text
+        ))
+    }
+}
+
+fn build_receipt_kind_from_str(raw: &str) -> Option<crate::build_types::BuildReceiptKind> {
+    match raw {
+        "reviewCompleted" => Some(crate::build_types::BuildReceiptKind::ReviewCompleted),
+        "verificationCompleted" => {
+            Some(crate::build_types::BuildReceiptKind::VerificationCompleted)
+        }
+        "blockerOpened" => Some(crate::build_types::BuildReceiptKind::BlockerOpened),
+        "blockerResolved" => Some(crate::build_types::BuildReceiptKind::BlockerResolved),
+        _ => None,
+    }
+}
+
+async fn tool_build_checkpoint(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
+    use tauri::Manager as _;
+    let tab = resolve_mcp_tab_id(tab_id, "build_checkpoint")?;
+    let label = args
+        .get("label")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+    let cwd = args
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+
+    let snapshot = if let Some(app_handle) = &ctx.app_handle {
+        let registry = app_handle
+            .try_state::<Arc<crate::acp::SessionRegistry>>()
+            .ok_or_else(|| "build_checkpoint: SessionRegistry is not registered".to_string())?;
+        let build_orch = app_handle
+            .try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
+            .ok_or_else(|| "build_checkpoint: BuildOrchestrator is not registered".to_string())?;
+        serde_json::to_value(
+            crate::session_git::git_session_create_checkpoint_for_tab(
+                registry.inner().clone(),
+                build_orch.inner().clone(),
+                Some(tab.clone()),
+                cwd,
+                label,
+            )
+            .await?,
+        )
+        .map_err(|e| format!("build_checkpoint response serialize: {}", e))?
+    } else {
+        post_build_checkpoint_to_debug_api(&tab, cwd, label).await?
+    };
+
+    if snapshot.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let message = snapshot
+            .get("lastError")
+            .or_else(|| snapshot.get("last_error"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("checkpoint creation failed");
+        return Err(format!("build_checkpoint: {}", message));
+    }
+    let checkpoint_id = snapshot
+        .get("checkpoint")
+        .and_then(|v| v.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unknown)");
+    Ok(json!({
+        "content": [{
+            "type": "text",
+            "text": format!("build checkpoint created for /build tab {}: {}", tab, checkpoint_id),
+        }],
+        "structuredContent": snapshot,
+        "isError": false
+    }))
+}
+
+async fn tool_build_receipt(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
+    use tauri::Manager as _;
+    let tab = resolve_mcp_tab_id(tab_id, "build_receipt")?;
+    let kind_raw = args
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let kind = build_receipt_kind_from_str(kind_raw)
+        .ok_or_else(|| format!("build_receipt: unsupported kind `{}`", kind_raw))?;
+    let summary = args
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if summary.is_empty() {
+        return Err("build_receipt: summary is required".to_string());
+    }
+    let data = args.get("data").cloned().unwrap_or_else(|| json!({}));
+    if ctx.app_handle.is_none() {
+        post_build_receipt_to_debug_api(
+            &tab,
+            kind,
+            "grok",
+            summary.clone(),
+            crate::build_types::BuildReceiptConfidence::ModelDeclared,
+            data,
+        )
+        .await?;
+        return Ok(json!({
+            "content": [{
+                "type": "text",
+                "text": format!("build_receipt recorded for /build tab {}: {}", tab, summary),
+            }],
+            "isError": false
+        }));
+    }
+    let app_handle = ctx.app_handle.as_ref().expect("checked above");
+    let orch_state = app_handle
+        .try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .ok_or_else(|| "build_receipt: BuildOrchestrator is not registered".to_string())?;
+    let orch = orch_state.inner().clone();
+    let state = orch
+        .get_state(&tab)
+        .await
+        .ok_or_else(|| "build_receipt: no active /build run for this tab".to_string())?;
+    orch.append_receipt(crate::build_types::BuildReceipt {
+        receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
+        run_id: state.run_id,
+        tab_id: tab.clone(),
+        kind,
+        created_at_ms: now_millis_for_build_receipt(),
+        actor: "grok".into(),
+        summary: summary.clone(),
+        confidence: crate::build_types::BuildReceiptConfidence::ModelDeclared,
+        data,
+    })
+    .await?;
+    Ok(json!({
+        "content": [{
+            "type": "text",
+            "text": format!("build_receipt recorded for /build tab {}: {}", tab, summary),
+        }],
+        "isError": false
+    }))
+}
+
+async fn tool_build_complete(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
+    use tauri::Manager as _;
+    let summary = args
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if summary.is_empty() {
+        return Err("build_complete: 'summary' is required".to_string());
+    }
+    let tab = resolve_mcp_tab_id(tab_id, "build_complete")?;
+
+    if ctx.app_handle.is_none() {
+        match post_build_complete_to_debug_api(&tab, &summary).await {
+            Ok(()) => {
+                return Ok(json!({
+                    "content": [{
+                        "type": "text",
+                        "text": format!("build_complete accepted. Summary: {}", summary),
+                    }],
+                    "isError": false
+                }));
+            }
+            Err(reason) => {
+                return Ok(json!({
+                    "content": [{
+                        "type": "text",
+                        "text": reason,
+                    }],
+                    "isError": true
+                }));
+            }
+        }
+    }
+
+    let app_handle = ctx.app_handle.as_ref().expect("checked above");
+    let orch_state = app_handle
+        .try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .ok_or_else(|| "build_complete: BuildOrchestrator is not registered".to_string())?;
+    let orch = orch_state.inner().clone();
+    match orch.validate_complete(&tab, &summary).await {
+        Ok(()) => {
+            let payload = serde_json::json!({
+                "kind": "build_complete",
+                "tabId": tab,
+                "summary": summary,
+            });
+            let _ = tauri::Emitter::emit(app_handle, "build-event", payload);
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!("build_complete accepted. Summary: {}", summary),
+                }],
+                "isError": false
+            }))
+        }
+        Err(reason) => {
+            if let Some(state) = orch.get_state(&tab).await {
+                let _ = orch
+                    .append_receipt(crate::build_types::BuildReceipt {
+                        receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
+                        run_id: state.run_id,
+                        tab_id: tab.clone(),
+                        kind: crate::build_types::BuildReceiptKind::CompletionRejected,
+                        created_at_ms: now_millis_for_build_receipt(),
+                        actor: "shellx".into(),
+                        summary: reason.clone(),
+                        confidence: crate::build_types::BuildReceiptConfidence::TrustedHost,
+                        data: json!({}),
+                    })
+                    .await;
+            }
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": reason,
+                }],
+                "isError": true
+            }))
+        }
+    }
+}
+
+fn now_millis_for_build_receipt() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 // goal_complete tool. Validates the per-tab scratchboard
 // (every Phase status:DONE + every - [ ] flipped). Rejects with a
 // specific failure list when grok claims completion prematurely.
@@ -5366,6 +6229,34 @@ mod tests {
     /// rejects valid paths. Tests that touch HOME must `.lock` this.
     static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe {
+                    std::env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.key);
+                },
+            }
+        }
+    }
+
     #[test]
     fn tool_specs_well_formed() {
         let specs = tool_specs();
@@ -5385,6 +6276,7 @@ mod tests {
             "Agent",
             "Agent_status",
             "Agent_output",
+            "build_checkpoint",
             // Kill + metrics.
             "Agent_kill",
             "Agent_metrics",
@@ -5417,6 +6309,19 @@ mod tests {
         let got: Vec<&str> = enum_vals.iter().filter_map(|v| v.as_str()).collect();
         let expected: Vec<&str> = crate::subagent::PERSONA_NAMES.to_vec();
         assert_eq!(got, expected, "Agent enum vs PERSONA_NAMES drift");
+    }
+
+    #[test]
+    fn build_agent_gate_kind_maps_review_and_verifier_personas() {
+        assert_eq!(
+            build_agent_gate_kind_for_persona("reviewer"),
+            Some(crate::build_types::BuildReceiptKind::ReviewCompleted)
+        );
+        assert_eq!(
+            build_agent_gate_kind_for_persona("verifier"),
+            Some(crate::build_types::BuildReceiptKind::VerificationCompleted)
+        );
+        assert_eq!(build_agent_gate_kind_for_persona("implementer"), None);
     }
 
     #[test]
@@ -5637,11 +6542,8 @@ status: DONE
         symlink(&outside, &symlinked_src).expect("symlink");
         let dst = home.join("copied");
         // Temporarily point HOME at our tmp so canonicalize resolves
-        // to tmp/home. Restore after.
-        let prev_home = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", &home);
-        }
+        // to tmp/home.
+        let _home_guard = EnvVarGuard::set_path("HOME", &home);
         let args = serde_json::json!({
             "src": symlinked_src.to_string_lossy(),
             "dst": dst.to_string_lossy(),
@@ -5653,12 +6555,65 @@ status: DONE
             "error should mention symlink: {:?}",
             r
         );
-        // Restore + cleanup
-        match prev_home {
-            Some(h) => unsafe { std::env::set_var("HOME", h) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn fs_copy_rejects_sensitive_source_inside_home() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempdir_lite::TempDir::new();
+        let home = tmp.path().join("home");
+        let grok_dir = home.join(".grok");
+        std::fs::create_dir_all(&grok_dir).expect("mk .grok");
+        let sensitive = grok_dir.join("auth.json");
+        std::fs::write(&sensitive, br#"{"access_token":"secret"}"#).expect("seed auth");
+        let dst = home.join("copied-auth.json");
+        let _home_guard = EnvVarGuard::set_path("HOME", &home);
+
+        let err = tool_fs_copy(json!({
+            "src": sensitive.to_string_lossy(),
+            "dst": dst.to_string_lossy(),
+        }))
+        .await
+        .expect_err("fs_copy must reject sensitive source paths");
+
+        assert!(
+            err.contains("sensitive") || err.contains("denylist"),
+            "denial should mention sensitive denylist, got: {}",
+            err
+        );
+        assert!(
+            !dst.exists(),
+            "sensitive source must not be copied to a readable path"
+        );
+    }
+
+    #[tokio::test]
+    async fn fs_delete_rejects_sensitive_path_inside_home() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let tmp = tempdir_lite::TempDir::new();
+        let home = tmp.path().join("home");
+        let shellx_dir = home.join(".shellx");
+        std::fs::create_dir_all(&shellx_dir).expect("mk .shellx");
+        let sensitive = shellx_dir.join("debug.token");
+        std::fs::write(&sensitive, b"debug-token").expect("seed token");
+        let _home_guard = EnvVarGuard::set_path("HOME", &home);
+
+        let err = tool_fs_delete(json!({
+            "path": sensitive.to_string_lossy(),
+        }))
+        .await
+        .expect_err("fs_delete must reject sensitive paths");
+
+        assert!(
+            err.contains("sensitive") || err.contains("denylist"),
+            "denial should mention sensitive denylist, got: {}",
+            err
+        );
+        assert!(
+            sensitive.exists(),
+            "rejected fs_delete must leave the sensitive file in place"
+        );
     }
 
     // ─── net_fetch + search_tool tests ───

@@ -644,6 +644,10 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         .route("/state/session_activity", get(state_session_activity))
         .route("/state/session_git", get(state_session_git))
         .route("/state/session_git/diff", get(state_session_git_diff))
+        .route(
+            "/state/session_git/checkpoint",
+            post(state_session_git_checkpoint),
+        )
         // GET /screenshot returns a PNG of the shellX window. Used by
         // orchestrating agents (and the diagnostics suite) for visual
         // verification.
@@ -665,6 +669,16 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         .route("/goal/approve", post(goal_approve_http))
         .route("/goal/reject", post(goal_reject_http))
         .route("/goal/state", get(goal_state_http))
+        .route("/build/start", post(build_start_http))
+        .route("/build/stop", post(build_stop_http))
+        .route("/build/complete", post(build_complete_http))
+        .route("/build/receipt", post(build_receipt_http))
+        .route("/build/pause", post(build_pause_http))
+        .route("/build/resume", post(build_resume_http))
+        .route("/build/approve", post(build_approve_http))
+        .route("/build/reject", post(build_reject_http))
+        .route("/build/state", get(build_state_http))
+        .route("/build/receipts", get(build_receipts_http))
         .route("/permissions/:reqId/respond", post(permission_respond))
         // Structural diagnostics suite.
         .route("/diagnostics", post(diagnostics_run))
@@ -1463,6 +1477,11 @@ async fn prompt(
         }
     }
 
+    // Experimental `/build <objective>` intercept. Keep this before
+    // `/goal` so the stronger Build Mode path is fully shellX-owned
+    // and never leaks through to a future Grok-native skill name.
+    let build_obj = crate::build_orchestrator::BuildOrchestrator::parse_build_command(&body.prompt);
+
     // B2 — server-side `/goal <objective>` intercept. Without
     // this, external `/prompt` callers (shellXagent test scripts, curl
     // automation) bypass App.tsx's client-side intercept and the raw
@@ -1473,7 +1492,55 @@ async fn prompt(
     // and rewrite the prompt to the plan-only kickoff text. Both code
     // paths (HTTP here, Tauri command in lib.rs) produce the same
     // first turn that App.tsx already produces client-side.
-    let final_prompt =
+    let final_prompt = if let Some(obj) = build_obj {
+        if obj.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                "/build requires an objective: /build <what to accomplish>".to_string(),
+            )
+                .into_response();
+        }
+        let cwd = {
+            let guard = session_arc.lock().await;
+            guard
+                .get_cwd_for_restart()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::env::var("HOME")
+                        .or_else(|_| std::env::var("USERPROFILE"))
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                })
+        };
+        let orch = s
+            .app
+            .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+            .inner()
+            .clone();
+        let (transport_kind, ssh_config) = {
+            let guard = session_arc.lock().await;
+            (
+                guard.transport_kind().to_string(),
+                guard.ssh_config().cloned(),
+            )
+        };
+        match orch
+            .start_run_with_transport_context(&tab_key, &obj, &cwd, &transport_kind, ssh_config)
+            .await
+        {
+            Ok(state) => {
+                info!(
+                    "debug-api /prompt: /build intercepted — tab={} objective={:?}",
+                    tab_key, obj
+                );
+                crate::build_orchestrator::BuildOrchestrator::plan_kickoff_text_for_path(
+                    &obj,
+                    &state.scratchboard_path,
+                )
+            }
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        }
+    } else {
         match crate::goal_orchestrator::GoalOrchestrator::parse_goal_command(&body.prompt) {
             Some(obj) if !obj.is_empty() => {
                 // Look up cwd from the session so scratchboard_path resolves
@@ -1528,15 +1595,30 @@ async fn prompt(
                     .into_response();
             }
             None => body.prompt.clone(),
-        };
+        }
+    };
 
     let rx = {
         let mut guard = session_arc.lock().await;
         match guard.initiate_and_send_prompt(&final_prompt).await {
             Ok(rx) => rx,
             Err(e) => {
-                if crate::goal_orchestrator::GoalOrchestrator::parse_goal_command(&body.prompt)
+                if crate::build_orchestrator::BuildOrchestrator::parse_build_command(&body.prompt)
                     .is_some()
+                {
+                    let orch = s
+                        .app
+                        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+                        .inner()
+                        .clone();
+                    let tab_for_clear = tab_key.clone();
+                    tokio::spawn(async move {
+                        orch.clear_tab(&tab_for_clear).await;
+                    });
+                } else if crate::goal_orchestrator::GoalOrchestrator::parse_goal_command(
+                    &body.prompt,
+                )
+                .is_some()
                 {
                     let orch = s
                         .app
@@ -1999,17 +2081,32 @@ async fn state_session_tooling(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct SessionActivityQuery {
+    #[serde(rename = "tabId", alias = "tab", alias = "tab_id")]
+    tab_id: Option<String>,
+    #[serde(rename = "sessionId", alias = "session_id")]
+    session_id: Option<String>,
+    #[serde(rename = "sessionCwd", alias = "cwd", alias = "session_cwd")]
+    session_cwd: Option<String>,
+    #[serde(default)]
+    transport: Option<String>,
+}
+
 /// `GET /state/session_activity?tabId=X` — read-only source payload for
 /// the Activity Browser. The React preview parses the returned Grok
 /// hunk_records JSONL and external agents can consume the same source
 /// without scraping UI.
 async fn state_session_activity(
-    Query(q): Query<MarketplaceHealthQuery>,
+    Query(q): Query<SessionActivityQuery>,
     State(s): State<ApiState>,
 ) -> impl IntoResponse {
     let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
-    match crate::session_activity::session_activity_source_for_tab(
+    match crate::session_activity::session_activity_source_for_tab_with_fallback(
         q.tab_id,
+        q.session_id,
+        q.session_cwd,
+        q.transport,
         registry.inner().clone(),
     )
     .await
@@ -2029,6 +2126,16 @@ struct SessionGitQuery {
     scope: Option<String>,
 }
 
+#[derive(Deserialize, Default)]
+struct SessionGitCheckpointBody {
+    #[serde(rename = "tabId")]
+    tab_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+}
+
 /// `GET /state/session_git?tabId=X` — read-only mirror of the Git rail
 /// status model. The route runs git in the active tab environment and
 /// prefers the tab's `agentCwd`, so WSL/SSH reports match what the agent
@@ -2040,6 +2147,35 @@ async fn state_session_git(
     let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
     match crate::session_git::git_session_status_for_tab(registry.inner().clone(), q.tab_id, q.cwd)
         .await
+    {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+/// `POST /state/session_git/checkpoint` — local checkpoint creation for
+/// headless diagnostics and debug-api drivers. This mirrors the desktop
+/// Git rail command and never mutates a remote.
+async fn state_session_git_checkpoint(
+    Query(q): Query<SessionGitQuery>,
+    State(s): State<ApiState>,
+    body: Option<Json<SessionGitCheckpointBody>>,
+) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let tab_id = body.tab_id.or(q.tab_id);
+    let cwd = body.cwd.or(q.cwd);
+    let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
+    let build_orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>();
+    match crate::session_git::git_session_create_checkpoint_for_tab(
+        registry.inner().clone(),
+        build_orch.inner().clone(),
+        tab_id,
+        cwd,
+        body.label,
+    )
+    .await
     {
         Ok(snapshot) => Json(snapshot).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
@@ -2557,6 +2693,29 @@ struct SecretGetBody {
     path: String,
 }
 
+fn validate_secret_get_path(path: &str) -> Result<(), String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("secret_get: path cannot be empty".to_string());
+    }
+    if trimmed.chars().any(|c| "|;`$<>\n\"'\\".contains(c)) {
+        return Err("secret_get: path contains forbidden characters".to_string());
+    }
+    if trimmed.starts_with('/') || trimmed.starts_with('\\') {
+        return Err("secret_get: path must be relative to the password store".to_string());
+    }
+    let normalized = trimmed.replace('\\', "/");
+    if normalized.contains("/../")
+        || normalized.starts_with("../")
+        || normalized.ends_with("/..")
+        || normalized == ".."
+        || normalized.contains("//")
+    {
+        return Err("secret_get: path traversal is not allowed".to_string());
+    }
+    Ok(())
+}
+
 /// Wraps `pass show <path>`. NEVER logs the payload; never records it
 /// to DebugHub. Loopback-only by virtue of axum binding to 127.0.0.1.
 async fn tool_secret_get_http(
@@ -2566,12 +2725,8 @@ async fn tool_secret_get_http(
     // Same logic as host_mcp::tool_secret_get — duplicated here so we
     // don't pull MCP context into the HTTP path. If pass is locked we
     // return 423 (Locked) + a structured body.
-    if body.path.chars().any(|c| "|;`$<>\n\"'\\".contains(c)) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "secret_get: path contains forbidden characters".to_string(),
-        )
-            .into_response();
+    if let Err(e) = validate_secret_get_path(&body.path) {
+        return (StatusCode::BAD_REQUEST, e).into_response();
     }
     let path = body.path.clone();
     let run = tokio::task::spawn_blocking(move || {
@@ -4336,6 +4491,423 @@ async fn goal_state_http(State(s): State<ApiState>, Query(q): Query<GoalStateQue
 }
 
 #[derive(Deserialize)]
+struct BuildStartBody {
+    #[serde(rename = "tabId")]
+    tab_id: Option<String>,
+    objective: String,
+    cwd: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct BuildTabBody {
+    #[serde(rename = "tabId")]
+    tab_id: Option<String>,
+    summary: Option<String>,
+    #[serde(default)]
+    inject: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildReceiptBody {
+    #[serde(rename = "tabId")]
+    tab_id: Option<String>,
+    kind: crate::build_types::BuildReceiptKind,
+    summary: String,
+    #[serde(default)]
+    actor: Option<String>,
+    #[serde(default)]
+    confidence: Option<crate::build_types::BuildReceiptConfidence>,
+    #[serde(default)]
+    data: serde_json::Value,
+}
+
+async fn build_start_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    Json(body): Json<BuildStartBody>,
+) -> Response {
+    let tab_id = q
+        .tab_id
+        .clone()
+        .or(body.tab_id.clone())
+        .unwrap_or_else(|| "default".to_string());
+    if body.objective.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "objective: must be non-empty").into_response();
+    }
+    let registry = s
+        .app
+        .state::<std::sync::Arc<crate::acp::SessionRegistry>>()
+        .inner()
+        .clone();
+    let cwd = if let Some(c) = body.cwd.filter(|c| !c.trim().is_empty()) {
+        std::path::PathBuf::from(c)
+    } else if let Some(arc) = registry.get_existing(&tab_id).await {
+        let guard = arc.lock().await;
+        guard
+            .get_cwd_for_restart()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+    } else {
+        std::env::current_dir().unwrap_or_default()
+    };
+    let (transport_kind, ssh_config) = if let Some(arc) = registry.get_existing(&tab_id).await {
+        let guard = arc.lock().await;
+        (
+            guard.transport_kind().to_string(),
+            guard.ssh_config().cloned(),
+        )
+    } else {
+        ("local".to_string(), None)
+    };
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    match orch
+        .start_run_with_transport_context(
+            &tab_id,
+            &body.objective,
+            &cwd,
+            &transport_kind,
+            ssh_config,
+        )
+        .await
+    {
+        Ok(state) => {
+            let kickoff_prompt =
+                crate::build_orchestrator::BuildOrchestrator::plan_kickoff_text_for_path(
+                    &body.objective,
+                    &state.scratchboard_path,
+                );
+            Json(serde_json::json!({
+                "ok": true,
+                "tabId": tab_id,
+                "state": state,
+                "kickoffPrompt": kickoff_prompt,
+            }))
+            .into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+async fn build_stop_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    body: Option<Json<BuildTabBody>>,
+) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let tab_id = q
+        .tab_id
+        .clone()
+        .or(body.tab_id)
+        .unwrap_or_else(|| "default".to_string());
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    let summary = body
+        .summary
+        .unwrap_or_else(|| "Stopped via debug API".to_string());
+    match orch.halt(&tab_id, &summary).await {
+        Ok(stopped) => Json(serde_json::json!({
+            "ok": true,
+            "tabId": tab_id,
+            "stopped": stopped,
+            "active": false,
+        }))
+        .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+async fn build_pause_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    body: Option<Json<BuildTabBody>>,
+) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let tab_id = q
+        .tab_id
+        .clone()
+        .or(body.tab_id)
+        .unwrap_or_else(|| "default".to_string());
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    match orch.pause(&tab_id).await {
+        Ok(paused) => {
+            Json(serde_json::json!({"ok": true, "tabId": tab_id, "paused": paused})).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+async fn build_resume_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    body: Option<Json<BuildTabBody>>,
+) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let tab_id = q
+        .tab_id
+        .clone()
+        .or(body.tab_id)
+        .unwrap_or_else(|| "default".to_string());
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    match orch.resume(&tab_id).await {
+        Ok(resumed) => Json(serde_json::json!({"ok": true, "tabId": tab_id, "resumed": resumed}))
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+async fn build_approve_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    body: Option<Json<BuildTabBody>>,
+) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let tab_id = q
+        .tab_id
+        .clone()
+        .or(body.tab_id)
+        .unwrap_or_else(|| "default".to_string());
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    let changed = match orch.approve_plan(&tab_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "tabId": tab_id,
+                    "approved": false,
+                    "injected": false,
+                    "message": e,
+                })),
+            )
+                .into_response();
+        }
+    };
+    let mut injected = false;
+    if changed && body.inject.unwrap_or(true) {
+        let active = orch.get_state(&tab_id).await;
+        let objective = active
+            .as_ref()
+            .map(|st| st.objective.as_str())
+            .unwrap_or("(unknown objective)");
+        let path = active
+            .as_ref()
+            .map(|st| st.scratchboard_path.as_str())
+            .unwrap_or("build.md");
+        let prompt = format!(
+            "The Build Mode plan in build.md has been approved.\n\nObjective: {}\n\nScratchboard: {}\n\nBegin executing it now. Use shellX Agent personas when useful, record evidence, and call build_complete only after required gates are satisfied.",
+            objective, path
+        );
+        let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
+        if let Some(sess_arc) = registry.get_existing(&tab_id).await {
+            let attempt = async {
+                let mut sess = sess_arc.lock().await;
+                sess.initiate_and_send_prompt(&prompt).await
+            };
+            injected = matches!(
+                tokio::time::timeout(Duration::from_secs(120), attempt).await,
+                Ok(Ok(_))
+            );
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "tabId": tab_id,
+        "approved": changed,
+        "injected": injected,
+    }))
+    .into_response()
+}
+
+async fn build_reject_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    body: Option<Json<BuildTabBody>>,
+) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let tab_id = q
+        .tab_id
+        .clone()
+        .or(body.tab_id)
+        .unwrap_or_else(|| "default".to_string());
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    match orch.reject_plan(&tab_id).await {
+        Ok(rejected) => {
+            Json(serde_json::json!({"ok": true, "tabId": tab_id, "rejected": rejected}))
+                .into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+async fn build_complete_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    body: Option<Json<BuildTabBody>>,
+) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let tab_id = q
+        .tab_id
+        .clone()
+        .or(body.tab_id)
+        .unwrap_or_else(|| "default".to_string());
+    let summary = body
+        .summary
+        .unwrap_or_else(|| "Completed via debug API".to_string());
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    match orch.validate_complete(&tab_id, &summary).await {
+        Ok(()) => {
+            Json(serde_json::json!({"ok": true, "tabId": tab_id, "complete": true})).into_response()
+        }
+        Err(e) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "ok": false,
+                "tabId": tab_id,
+                "complete": false,
+                "message": e,
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn build_receipt_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    Json(body): Json<BuildReceiptBody>,
+) -> Response {
+    let tab_id = q
+        .tab_id
+        .clone()
+        .or(body.tab_id)
+        .unwrap_or_else(|| "default".to_string());
+    let summary = body.summary.trim().to_string();
+    if summary.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "tabId": tab_id,
+                "message": "summary is required",
+            })),
+        )
+            .into_response();
+    }
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    let Some(state) = orch.get_state(&tab_id).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "ok": false,
+                "tabId": tab_id,
+                "message": "no active /build run for this tab",
+            })),
+        )
+            .into_response();
+    };
+    let confidence = body
+        .confidence
+        .unwrap_or(crate::build_types::BuildReceiptConfidence::TrustedHost);
+    let receipt = crate::build_types::BuildReceipt {
+        receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
+        run_id: state.run_id,
+        tab_id: tab_id.clone(),
+        kind: body.kind,
+        created_at_ms: now_ms() as u64,
+        actor: body.actor.unwrap_or_else(|| "debug-api".to_string()),
+        summary,
+        confidence,
+        data: body.data,
+    };
+    match orch.append_receipt(receipt.clone()).await {
+        Ok(()) => Json(serde_json::json!({
+            "ok": true,
+            "tabId": tab_id,
+            "receipt": receipt,
+        }))
+        .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+async fn build_state_http(State(s): State<ApiState>, Query(q): Query<GoalStateQuery>) -> Response {
+    let tab_id = q.tab_id.unwrap_or_else(|| "default".to_string());
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    let state = orch.get_state(&tab_id).await;
+    Json(serde_json::json!({
+        "tabId": tab_id,
+        "state": state,
+    }))
+    .into_response()
+}
+
+async fn build_receipts_http(
+    State(s): State<ApiState>,
+    Query(q): Query<GoalStateQuery>,
+) -> Response {
+    let tab_id = q.tab_id.unwrap_or_else(|| "default".to_string());
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    match orch.get_receipts(&tab_id).await {
+        Ok(receipts) => Json(serde_json::json!({
+            "ok": true,
+            "tabId": tab_id,
+            "receipts": receipts,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "ok": false,
+                "tabId": tab_id,
+                "message": e,
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
 struct PermissionBody {
     /// "allow" | "deny" — anything else maps to deny for safety.
     outcome: String,
@@ -5687,5 +6259,13 @@ mod snippet_tests {
         let jsonl = make_jsonl();
         let hits = compute_session_snippets(jsonl.as_bytes(), "no-such-needle-xyz", 5);
         assert_eq!(hits.len(), 0);
+    }
+
+    #[test]
+    fn secret_get_http_path_validation_rejects_absolute_and_traversal() {
+        assert!(validate_secret_get_path("team/api-token").is_ok());
+        assert!(validate_secret_get_path("../team/api-token").is_err());
+        assert!(validate_secret_get_path("/team/api-token").is_err());
+        assert!(validate_secret_get_path("team//api-token").is_err());
     }
 }

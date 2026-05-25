@@ -506,6 +506,7 @@ function actionsFromToolOutput({
   const seen = new Set<string>();
   for (const text of texts) {
     for (const kind of ["image", "video"] as const) {
+      if (!shouldScanGeneratedMediaOutput(title, kind)) continue;
       const path = extractGeneratedMediaPath(text, kind);
       if (!path) continue;
       const key = `${kind}:${normalizePath(path)}`;
@@ -522,6 +523,14 @@ function actionsFromToolOutput({
     }
   }
   return out;
+}
+
+function shouldScanGeneratedMediaOutput(title: string, kind: "image" | "video"): boolean {
+  const normalized = title.toLowerCase();
+  if (kind === "image") {
+    return /\b(image|image_gen|image_edit|screenshot)\b/.test(normalized);
+  }
+  return /\b(video|video_gen|movie|clip)\b/.test(normalized);
 }
 
 function textFragmentsFromToolUpdate(update: { rawOutput?: unknown; content?: unknown } | undefined): string[] {
