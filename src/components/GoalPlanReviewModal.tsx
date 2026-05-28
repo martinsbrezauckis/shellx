@@ -1,5 +1,5 @@
 /**
- * Focused review surface for /goal plans.
+ * Focused review surface for long-horizon build plans.
  *
  * The right rail stays useful as a persistent scratchboard/status view, but
  * plan approval is a decision point. This modal opens when the orchestrator
@@ -76,7 +76,7 @@ function planTextsAreEquivalent(a: string, b: string): boolean {
 function extractPlanTitle(text: string, objective: string): string {
   const heading = text.match(/^\s*#\s+(.+?)\s*$/m)?.[1];
   const cleaned = heading ? cleanPlanTitle(heading) : "";
-  return cleaned || objective.trim() || "Goal plan";
+  return cleaned || objective.trim() || "Build plan";
 }
 
 function stripLeadingPlanTitle(text: string): string {
@@ -220,7 +220,7 @@ export function GoalPlanReviewModal({
   const waitingReason =
     goal.approvalStatus?.reason ??
     (goal.planTurnCompleted
-      ? "Waiting for a complete phased plan in goal.md."
+      ? "Waiting for a complete phased build plan."
       : "Waiting for Grok to finish the plan turn.");
 
   const dismissToRail = (): void => {
@@ -269,7 +269,7 @@ export function GoalPlanReviewModal({
 
   const reject = (): void => {
     if (rejecting || !inTauri()) return;
-    if (!window.confirm("Reject the proposed plan and clear goal mode?")) return;
+    if (!window.confirm("Reject the proposed plan and clear Build Mode?")) return;
     setRejecting(true);
     void invoke("reject_goal_plan", { tabId: activeTabId })
       .then(() => {
@@ -301,7 +301,7 @@ export function GoalPlanReviewModal({
             <h2 title={planTitle}>{planTitle}</h2>
             <div className="plan-review-meta">
               <span className="plan-review-chip">{planStatus}</span>
-              <span>{fileDisplayName(scratchboardPath) || "goal.md"}</span>
+              <span>{fileDisplayName(scratchboardPath) || "build.md"}</span>
               {phaseCount > 0 && <span>{phaseCount} phases</span>}
               {lineCount > 0 && <span>{lineCount} lines</span>}
             </div>

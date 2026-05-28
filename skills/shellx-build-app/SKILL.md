@@ -17,8 +17,15 @@ Turn the request into a working result without overbuilding.
 3. Make a short task list: scaffold, core behavior, UI/IO, verification.
 4. Implement in small slices. Prefer existing project patterns and dependencies.
 5. For UI work, ship the actual usable screen first; avoid marketing pages unless asked.
-6. Run the app or focused tests. For visual UI, inspect a screenshot when possible.
-7. Report changed files, commands run, and any remaining risk.
+6. For web/app UI, start shellX Work Preview with
+   `grok-shell-host__preview_start`, then diagnose it with
+   `grok-shell-host__preview_diagnose`. Static HTML can preview directly.
+   Node apps need dependencies installed first; Expo web also needs
+   `react-dom` and `react-native-web` installed through
+   `npx expo install react-dom react-native-web`.
+7. Run the app or focused tests. For visual UI, use Preview Doctor and inspect
+   a screenshot when possible.
+8. Report changed files, commands run, and any remaining risk.
 
 Avoid: large framework swaps, decorative UI, fake TODO buttons, and claiming done
 without verification output.

@@ -15,13 +15,13 @@
  * 3. CI uploads to GitHub Releases (.exe, .msi, .AppImage, .dmg + latest.json)
  * 4. App polls the manifest URL; sees new version; this banner appears
  *
- * Until the GitHub repo + Actions workflow are set up, `check` will
- * 404 against the placeholder URL — the catch silently no-ops so the
- * UI stays clean.
+ * If a development build has no published update manifest yet, `check`
+ * can return a quiet 404; the catch path no-ops so the UI stays clean.
  */
 import { useEffect, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
+import { updateErrorIsQuiet } from "../lib/update-diagnostics";
 import { cleanUpdateNotes, firstUpdateNotesUrl } from "../lib/update-notes";
 
 interface UpdateState {
@@ -81,11 +81,7 @@ export function UpdateBanner(): JSX.Element | null {
  // strings (`signature`, `verification`, `corrupt`) don't match
  // the swallow regex so they reach the error banner.
         const msg = err instanceof Error ? err.message : String(err);
-        const isNoReleaseYet =
-          /404|not\s*found|no\s*update|could not fetch a valid release|valid release json|fetch.*failed|network|enotfound|getaddrinfo|connect.*refused/i.test(
-            msg
-          );
-        if (!isNoReleaseYet) {
+        if (!updateErrorIsQuiet(msg)) {
           setState((prev) => ({ ...prev, error: msg }));
         }
       }

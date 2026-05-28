@@ -17,12 +17,13 @@
  * the group, not 5 separate rows.
  * • `available_commands_update` → single "system" pill (latest wins).
  * • `session_summary_generated` → "system" pill with the summary text.
- * • `_x.ai/*` vendor events → "vendor" pill (one per event).
+ * • Named `_x.ai/*` lifecycle events get dedicated groups; unhandled
+ * vendor/ACP envelopes stay out of the chat surface.
  * • Stderr / lifecycle / permission / ui channel events → "system"
  * pill (one per event).
  *
- * Nothing is dropped. Filter behavior is purely visual coalescing — to
- * see the raw stream, the right pane is always available unfiltered.
+ * Low-signal raw envelopes are dropped from the conversation view only.
+ * The raw event ring/log panes keep the unfiltered stream for audit.
  *
  * Accumulation key is `promptId` from `_meta`, NOT a 15-second window.
  * The prior code's window heuristic was wrong (chunks can take longer
@@ -818,8 +819,8 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
  // ─── host_mcp_unreachable ───
  // shellX emits this synthetic `_x.ai/session_notification` when
  // a host-MCP tool fails with `Transport closed`. Surface it as a
- // dedicated chip because it usually means /goal has been halted
- // and the user must reconnect/restart the tab.
+ // dedicated chip because it usually means an orchestrated build
+ // lost its host bridge and the user must reconnect/restart the tab.
     if (
       method === "_x.ai/session_notification" &&
       sessionUpdate === "host_mcp_unreachable"
@@ -1071,11 +1072,19 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
  * `text` field is empty for thumb-only frames so the chip row
  * stands alone above any subsequent prompt echo. */
       const p: any = ev.payload;
+      if (p && typeof p === "object" && p?._meta?.kind === "connection-metadata") {
+        return;
+      }
       const text = (p && typeof p === "object" && typeof p.text === "string")
         ? p.text
         : (p && typeof p === "object" && p?._meta?.kind === "attach-thumbs")
           ? ""
-          : String(p);
+          : (p && typeof p === "object")
+            ? ""
+            : String(p);
+      if (text.length === 0 && !(p && typeof p === "object" && Array.isArray(p.thumbs))) {
+        return;
+      }
       const thumbs: string[] | undefined =
         (p && typeof p === "object" && Array.isArray(p.thumbs))
           ? (p.thumbs.filter((x: unknown): x is string => typeof x === "string"))
@@ -1110,10 +1119,19 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
       "session-summary-generated",
       "agent-capabilities",
       "plan-event",
+      "build-event",
       "tool-call",
       "grok-extension",
     ]);
     if (NON_CHAT_TYPED_KINDS.has(ev.kind)) {
+      return;
+    }
+
+ // Generic ACP envelopes are useful for trace/debug panes, but they
+ // should not fall through into the chat as raw JSON `?` pills. Every
+ // value-add ACP shape has an explicit branch above; anything left here
+ // is intentionally hidden from the conversation surface.
+    if (ev.kind === "grok-acp-event" || ev.kind === "session-update") {
       return;
     }
 

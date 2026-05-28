@@ -13,7 +13,7 @@
  * --space-1..7 : 4px scale (4/8/12/16/24/32/48)
  * * The mockup's @font-face for universalSans is intentionally NOT copied
  * here — that's a paid NewGlyph foundry font and can't be redistributed.
- * Onest (free, GPL) is the agreed substitute and is bundled via
+ * Onest (free, SIL OFL) is the agreed substitute and is bundled via
  * @fontsource-variable/onest, imported in main.tsx.
  */
 

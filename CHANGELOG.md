@@ -7,6 +7,31 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
+## [Unreleased]
+
+## [0.1.33] - 2026-05-28
+
+### Added
+
+- Grok environment diagnostics in the Tools panel with MCP health,
+  `grok inspect` counts, trace export, and Preview setup checks.
+- Header connector inbox for Telegram and Discord bot messages, with
+  allowlists, search, date filters, unread badges, and simulation tests.
+- Telegram Session Chat replies for allowlisted direct chats, including
+  text replies and referenced image outputs from the active/fixed tab.
+- Work Preview for generated static HTML, web apps, and Expo web apps,
+  with logs, Preview Doctor, screenshots, and Ask Fix.
+
+### Changed
+
+- `/build` is now the single public long-horizon command. Legacy `/goal`
+  input is treated as a compatibility alias and new UI/docs teach
+  `/build` only.
+- `/build` can keep long-running Agent work alive after a wait budget
+  expires instead of killing active work.
+- xAI API-key guidance now prefers `XAI_API_KEY` and labels
+  `GROK_CODE_XAI_API_KEY` as legacy.
+
 ## [0.1.32] - 2026-05-25
 
 ### Added
@@ -76,8 +101,8 @@ explain a visible behavior change.
   videos, and unsupported-file messaging.
 - Sandboxed HTML output preview. HTML files still open as code by
   default; the rendered preview is an explicit user choice.
-- Outside Connector settings for Telegram bot and local relay
-  credentials, allowed senders, routing targets, and credential tests.
+- Outside Connector settings for Telegram bot credentials, allowed
+  senders, routing targets, and credential tests.
 - In-app changelog access from Settings -> About.
 
 ### Changed

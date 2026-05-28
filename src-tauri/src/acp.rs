@@ -50,6 +50,15 @@ fn tag_with_tab_id(mut payload: serde_json::Value, tab_id: Option<&str>) -> serd
     payload
 }
 
+/// Prepare an event payload for both the WebView event channel and the
+/// DebugHub ring. One centralized scrub prevents ACP permission/tool-call
+/// arguments from leaking credentials through either sink.
+fn prepare_event_payload(payload: serde_json::Value, tab_id: Option<&str>) -> serde_json::Value {
+    let mut payload = tag_with_tab_id(payload, tab_id);
+    crate::mcp_http::scrub_credentials(&mut payload);
+    payload
+}
+
 /// Emit a Tauri event (always) and, only when the debug-api feature is enabled,
 /// also record it into the DebugHub for the internal calibration surface.
 ///
@@ -63,7 +72,7 @@ fn emit_and_debug(
     payload: serde_json::Value,
     tab_id: Option<&str>,
 ) {
-    let tagged = tag_with_tab_id(payload, tab_id);
+    let tagged = prepare_event_payload(payload, tab_id);
     let _ = app.emit(kind, tagged.clone());
     if let Some(hub) = app.try_state::<Arc<crate::debug_api::DebugHub>>() {
         hub.record_raw_event(kind, tagged);
@@ -79,7 +88,7 @@ fn emit_and_debug(
     payload: serde_json::Value,
     tab_id: Option<&str>,
 ) {
-    let _ = app.emit(kind, tag_with_tab_id(payload, tab_id));
+    let _ = app.emit(kind, prepare_event_payload(payload, tab_id));
 }
 
 /// Per-tab session registry. Each tab gets its own
@@ -1451,11 +1460,7 @@ impl GrokAcpSession {
                 ));
             }
 
-            match ensure_local_project_mcp_http_config(
-                &agent_cwd,
-                self.tab_id.as_deref(),
-                &marketplace_config_blocks,
-            ) {
+            match ensure_local_project_mcp_http_config(&agent_cwd, self.tab_id.as_deref(), "") {
                 Ok(true) => info!("Local project .grok/config.toml installed at {}", agent_cwd),
                 Ok(false) => info!("Local project .grok/config.toml already up-to-date"),
                 Err(e) => warn!(
@@ -1981,7 +1986,12 @@ impl GrokAcpSession {
                     "ACP sent session/prompt request id={} (parts={})",
                     id, parts_count
                 );
-                debug!("ACP prompt payload: {}", json);
+                debug!(
+                    "ACP prompt payload sent id={} bytes={} parts={} (body omitted)",
+                    id,
+                    json.len(),
+                    parts_count
+                );
                 // Arm the local wall-clock timer so prompt_complete can
                 // compute elapsedMs fallback.
                 record_prompt_start(self.tab_id.as_deref().unwrap_or("default"));
@@ -3328,6 +3338,95 @@ async fn maybe_mark_build_transport_failure(
     }
 }
 
+pub(crate) async fn maybe_inject_build_continuation_for_tab(
+    handle: &tauri::AppHandle,
+    tab: &str,
+    stop: &str,
+) -> bool {
+    use tauri::Manager as _;
+
+    let Some(build_state) = handle.try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
+    else {
+        return false;
+    };
+    let build_orch = build_state.inner().clone();
+    let Some(prompt_text) = build_orch.consider_continue(tab, stop).await else {
+        return false;
+    };
+    let reg = match handle.try_state::<Arc<SessionRegistry>>() {
+        Some(s) => s,
+        None => {
+            warn!("build_orchestrator: SessionRegistry missing — cannot inject");
+            return true;
+        }
+    };
+    let sess_arc = match reg.get_existing(tab).await {
+        Some(s) => s,
+        None => {
+            warn!(
+                "build_orchestrator: tab='{}' has no live session — skipping inject",
+                tab
+            );
+            return true;
+        }
+    };
+    use std::time::Duration;
+    const INJECT_SEND_TIMEOUT: Duration = Duration::from_secs(120);
+    let inject_attempt = async {
+        let mut sess = sess_arc.lock().await;
+        sess.initiate_and_send_prompt(&prompt_text).await
+    };
+    let inject_result = match tokio::time::timeout(INJECT_SEND_TIMEOUT, inject_attempt).await {
+        Ok(r) => r,
+        Err(_) => {
+            warn!(
+                "build_orchestrator: tab='{}' inject TIMEOUT after {:?} — leaving build active",
+                tab, INJECT_SEND_TIMEOUT
+            );
+            let payload = serde_json::json!({
+                "kind": "inject_timeout",
+                "tabId": tab,
+                "timeoutMs": INJECT_SEND_TIMEOUT.as_millis() as u64,
+                "buildStillActive": true,
+            });
+            emit_and_debug(handle, "build-event", payload, Some(tab));
+            return true;
+        }
+    };
+    match inject_result {
+        Ok(_rx) => {
+            let payload = serde_json::json!({
+                "kind": "injected",
+                "tabId": tab,
+                "continuationsTotal": build_orch
+                    .get_state(tab)
+                    .await
+                    .map(|s| s.continuations_total)
+                    .unwrap_or(0),
+                "stopReason": stop,
+            });
+            emit_and_debug(handle, "build-event", payload, Some(tab));
+            info!(
+                "build_orchestrator: tab='{}' injected continuation (stop_reason={})",
+                tab, stop
+            );
+        }
+        Err(e) => {
+            warn!(
+                "build_orchestrator: tab='{}' inject failed: {} — leaving state as-is",
+                tab, e
+            );
+            let payload = serde_json::json!({
+                "kind": "inject_failed",
+                "tabId": tab,
+                "error": e,
+            });
+            emit_and_debug(handle, "build-event", payload, Some(tab));
+        }
+    }
+    true
+}
+
 /// Goal orchestrator hook. Called from both the real
 /// `_x.ai/session/prompt_complete` site and the synthetic-fallback site
 /// inside `read_loop`.
@@ -3361,86 +3460,8 @@ async fn maybe_inject_goal_continuation(
     let stop = stop_reason.unwrap_or("");
     let tab = tab_id.unwrap_or("default");
 
-    if let Some(build_state) =
-        handle.try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
-    {
-        let build_orch = build_state.inner().clone();
-        if let Some(prompt_text) = build_orch.consider_continue(tab, stop).await {
-            let reg = match handle.try_state::<Arc<SessionRegistry>>() {
-                Some(s) => s,
-                None => {
-                    warn!("build_orchestrator: SessionRegistry missing — cannot inject");
-                    return;
-                }
-            };
-            let sess_arc = match reg.get_existing(tab).await {
-                Some(s) => s,
-                None => {
-                    warn!(
-                        "build_orchestrator: tab='{}' has no live session — skipping inject",
-                        tab
-                    );
-                    return;
-                }
-            };
-            use std::time::Duration;
-            const INJECT_SEND_TIMEOUT: Duration = Duration::from_secs(120);
-            let inject_attempt = async {
-                let mut sess = sess_arc.lock().await;
-                sess.initiate_and_send_prompt(&prompt_text).await
-            };
-            let inject_result = match tokio::time::timeout(INJECT_SEND_TIMEOUT, inject_attempt)
-                .await
-            {
-                Ok(r) => r,
-                Err(_) => {
-                    warn!(
-                        "build_orchestrator: tab='{}' inject TIMEOUT after {:?} — leaving build active",
-                        tab, INJECT_SEND_TIMEOUT
-                    );
-                    let payload = serde_json::json!({
-                        "kind": "inject_timeout",
-                        "tabId": tab,
-                        "timeoutMs": INJECT_SEND_TIMEOUT.as_millis() as u64,
-                        "buildStillActive": true,
-                    });
-                    emit_and_debug(handle, "build-event", payload, Some(tab));
-                    return;
-                }
-            };
-            match inject_result {
-                Ok(_rx) => {
-                    let payload = serde_json::json!({
-                        "kind": "injected",
-                        "tabId": tab,
-                        "continuationsTotal": build_orch
-                            .get_state(tab)
-                            .await
-                            .map(|s| s.continuations_total)
-                            .unwrap_or(0),
-                        "stopReason": stop,
-                    });
-                    emit_and_debug(handle, "build-event", payload, Some(tab));
-                    info!(
-                        "build_orchestrator: tab='{}' injected continuation (stop_reason={})",
-                        tab, stop
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "build_orchestrator: tab='{}' inject failed: {} — leaving state as-is",
-                        tab, e
-                    );
-                    let payload = serde_json::json!({
-                        "kind": "inject_failed",
-                        "tabId": tab,
-                        "error": e,
-                    });
-                    emit_and_debug(handle, "build-event", payload, Some(tab));
-                }
-            }
-            return;
-        }
+    if maybe_inject_build_continuation_for_tab(handle, tab, stop).await {
+        return;
     }
 
     let orch_state = match handle.try_state::<Arc<crate::goal_orchestrator::GoalOrchestrator>>() {
@@ -4080,42 +4101,6 @@ async fn current_permission_mode(
     reg.get_tab_autonomy(&key).await
 }
 
-/// Map grok's `--permission-mode` literal to one of our four autonomy
-/// gates. Defaults to `Confirm` (the "default" mode) when unset.
-#[allow(dead_code)]
-enum AutonomyGate {
-    Observe,
-    Propose,
-    Confirm,
-    Auto,
-}
-
-#[allow(dead_code)]
-fn classify_mode(mode: Option<&str>) -> AutonomyGate {
-    match mode.unwrap_or("default") {
-        "plan" => AutonomyGate::Observe,
-        "acceptEdits" => AutonomyGate::Propose,
-        "bypassPermissions" => AutonomyGate::Auto,
-        _ => AutonomyGate::Confirm,
-    }
-}
-
-/// Parse the `env` array from grok's terminal/create params. ACP spec:
-/// "env": [ { "name": "FOO", "value": "bar" } ]
-#[allow(dead_code)]
-fn parse_env(v: Option<&serde_json::Value>) -> Vec<(String, String)> {
-    let Some(arr) = v.and_then(|x| x.as_array()) else {
-        return vec![];
-    };
-    arr.iter()
-        .filter_map(|e| {
-            let name = e.get("name")?.as_str()?;
-            let value = e.get("value")?.as_str()?;
-            Some((name.to_string(), value.to_string()))
-        })
-        .collect()
-}
-
 /// `terminal/create` handler. Returns `{terminalId}` on success, or a JSON-RPC error:
 /// -32602: missing/invalid params (e.g. no `command`)
 /// -32001: permission denied (current autonomy mode forbids shell exec)
@@ -4404,137 +4389,6 @@ async fn handle_terminal_release(
     match crate::terminal::acp_release(registry, tab, terminal_id).await {
         Ok(()) => send_response(id, serde_json::json!({}), stdin).await,
         Err(e) => send_error_response(id, -32000, e, stdin).await,
-    }
-}
-
-/// Determine whether an env
-/// var key likely holds a secret. Used to mask the VALUE in the
-/// permission-request payload sent to the frontend modal (and persisted
-/// to the events jsonl + debug-api WS).
-///
-/// Pattern: case-insensitive substring match against a closed list of
-/// common-secret tokens. False positives (e.g. `NODE_KEY` for a
-/// non-secret config field) are acceptable — we'd rather mask a non-
-/// secret than leak a real one. False negatives (e.g. a key named
-/// `MAGIC_NUMBER` that happens to hold a credential) are the user's
-/// responsibility to flag.
-///
-/// Reviewed against the OWASP "Sensitive Data Exposure" cheat-sheet and
-/// the standard env-var names used by major cloud + auth providers.
-#[allow(dead_code)]
-fn env_key_is_secret(name: &str) -> bool {
-    let up = name.to_ascii_uppercase();
-    // High-confidence cloud / auth / provider prefixes.
-    const PREFIXES: &[&str] = &[
-        "AWS_",
-        "AZURE_",
-        "GCP_",
-        "GOOGLE_",
-        "DIGITALOCEAN_",
-        "DO_",
-        "OPENAI_",
-        "ANTHROPIC_",
-        "XAI_",
-        "GROK_",
-        "GITHUB_",
-        "GH_",
-        "GITLAB_",
-        "BITBUCKET_",
-        "STRIPE_",
-        "PAYPAL_",
-        "BRAINTREE_",
-        "TWILIO_",
-        "RESEND_",
-        "SENDGRID_",
-        "MAILGUN_",
-        "CF_",
-        "CLOUDFLARE_",
-        "VERCEL_",
-        "NETLIFY_",
-        "FLY_",
-        "SUPABASE_",
-        "FIREBASE_",
-        "AUTH0_",
-        "CLERK_",
-        "SENTRY_",
-        "DATADOG_",
-        "POSTHOG_",
-        "HF_",
-        "HUGGINGFACE_",
-    ];
-    if PREFIXES.iter().any(|p| up.starts_with(p)) {
-        return true;
-    }
-    // High-confidence suffixes — captures `*_SECRET`, `*_TOKEN`, etc.
-    // regardless of provider prefix.
-    const SUFFIXES: &[&str] = &[
-        "SECRET",
-        "TOKEN",
-        "PASSWORD",
-        "PASSWD",
-        "PASS",
-        "API_KEY",
-        "APIKEY",
-        "ACCESS_KEY",
-        "PRIVATE_KEY",
-        "PRIVATEKEY",
-        "AUTH",
-        "CREDENTIAL",
-        "CREDENTIALS",
-        "SESSION_KEY",
-    ];
-    if SUFFIXES
-        .iter()
-        .any(|s| up.ends_with(s) || up.contains(&format!("_{}", s)))
-    {
-        return true;
-    }
-    // Standalone substring patterns the suffix list might miss.
-    const SUBSTRINGS: &[&str] = &["PRIVATE", "SECRET", "TOKEN", "BEARER"];
-    SUBSTRINGS.iter().any(|s| up.contains(s))
-}
-
-#[cfg(test)]
-mod env_secret_tests {
-    use super::env_key_is_secret;
-
-    #[test]
-    fn flags_known_secrets() {
-        for k in [
-            "AWS_SECRET_ACCESS_KEY",
-            "GITHUB_TOKEN",
-            "OPENAI_API_KEY",
-            "XAI_API_KEY",
-            "DB_PASSWORD",
-            "MY_PRIVATE_KEY",
-            "SESSION_KEY",
-            "BEARER_TOKEN",
-            "SENTRY_AUTH_TOKEN",
-            "stripe_secret_key", // case-insensitive
-        ] {
-            assert!(env_key_is_secret(k), "should flag {}", k);
-        }
-    }
-
-    #[test]
-    fn ignores_non_secrets() {
-        for k in [
-            "PATH",
-            "HOME",
-            "USER",
-            "NODE_ENV",
-            "RUST_LOG",
-            "TERM",
-            "COLORTERM",
-            "EDITOR",
-            "SHELL",
-            "LANG",
-            "PWD",
-            "OLDPWD",
-            "DEBUG",
-        ] {
-            assert!(!env_key_is_secret(k), "should NOT flag {}", k);
-        }
     }
 }
 
@@ -5239,6 +5093,56 @@ mod tests {
         // by value but the cloned input here proves no in-place mutation
         // leak across callsites).
         assert!(p.pointer("/_meta/tabId").is_none());
+    }
+
+    /// AUDIT_OPUS_2026-05-26 H3: every payload headed for app.emit and
+    /// DebugHub must be credential-scrubbed. This helper is the only pure
+    /// part of that path we can exercise without spinning a Tauri app.
+    #[test]
+    fn event_payload_preparation_redacts_credentials_and_preserves_ids() {
+        let payload = serde_json::json!({
+            "reqId": "12345",
+            "params": {
+                "sessionId": "019e63c3-1a17-7f13-883a-8e9b630f3339",
+                "toolCall": {
+                    "toolCallId": "019e63c3-1a17-7f13-883a-8e9b630f3339",
+                    "rawInput": {
+                        "headers": {
+                            "Authorization": "Bearer xai-secret-token-123456789"
+                        },
+                        "command": "echo ok"
+                    }
+                }
+            }
+        });
+
+        let prepared = prepare_event_payload(payload, Some("tab-sec"));
+        assert_eq!(
+            prepared.pointer("/_meta/tabId").and_then(|v| v.as_str()),
+            Some("tab-sec")
+        );
+        assert_eq!(
+            prepared.pointer("/reqId").and_then(|v| v.as_str()),
+            Some("12345")
+        );
+        assert_eq!(
+            prepared
+                .pointer("/params/sessionId")
+                .and_then(|v| v.as_str()),
+            Some("019e63c3-1a17-7f13-883a-8e9b630f3339")
+        );
+        assert_eq!(
+            prepared
+                .pointer("/params/toolCall/toolCallId")
+                .and_then(|v| v.as_str()),
+            Some("019e63c3-1a17-7f13-883a-8e9b630f3339")
+        );
+        assert_eq!(
+            prepared
+                .pointer("/params/toolCall/rawInput/headers/Authorization")
+                .and_then(|v| v.as_str()),
+            Some("***REDACTED***")
+        );
     }
 
     #[test]
@@ -6076,19 +5980,19 @@ mod transport_tests {
     #[test]
     fn transport_ssh_roundtrip() {
         let t = Transport::Ssh {
-            host: "user@megaclub".to_string(),
+            host: "user@example-host".to_string(),
             port: Some(2222),
-            key_vault_ref: Some("connections.megaclub.ssh_key_path".to_string()),
+            key_vault_ref: Some("connections.prod.ssh_key_path".to_string()),
             remote_grok_path: "/home/user/.grok/bin/grok".to_string(),
         };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["kind"], "ssh");
-        assert_eq!(v["host"], "user@megaclub");
+        assert_eq!(v["host"], "user@example-host");
         assert_eq!(v["port"], 2222);
         let back: Transport = serde_json::from_value(v).unwrap();
         match back {
             Transport::Ssh { host, port, .. } => {
-                assert_eq!(host, "user@megaclub");
+                assert_eq!(host, "user@example-host");
                 assert_eq!(port, Some(2222));
             }
             _ => panic!("wrong variant"),

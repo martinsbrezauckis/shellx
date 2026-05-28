@@ -30,9 +30,13 @@ debug bearer token from `~/.shellx/shellxagent.token` or
 
 | Method | Path |
 | --- | --- |
-| GET | `/health`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/marketplace_health`, `/state/session_tooling`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/vault/status`, `/vault/keys`, `/connections`, `/outside-connectors` |
-| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/state/session_git/checkpoint`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/diagnostics`, `/github/pr/create`, `/vault/get`, `/vault/set`, `/vault/delete`, `/connections`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test` |
+| GET | `/health`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/marketplace_health`, `/state/session_tooling`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/preview/work/state`, `/preview/work/logs`, `/preview/work/diagnose`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/build/state`, `/build/receipts`, `/vault/status`, `/vault/keys`, `/connections`, `/outside-connectors`, `/outside-connectors/capabilities`, `/outside-connectors/events` |
+| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/preview/work/start`, `/preview/work/stop`, `/preview/work/restart`, `/preview/work/diagnose`, `/state/session_git/checkpoint`, `/state/session_git/worktree`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/diagnostics`, `/github/pr/create`, `/vault/get`, `/vault/set`, `/vault/delete`, `/connections`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test`, `/outside-connectors/:id/simulate` |
 | DELETE | `/connections/:id`, `/outside-connectors/:id` |
+
+Legacy `/goal/*` endpoints remain wired for old automation, but new
+long-horizon automation should use `/build/*` and public UI should present
+`/build` as the single command.
 
 Not currently wired despite older roadmap text below: `GET /`, `GET /version`,
 `GET /state/projects`, `GET /state/files`, `GET /state/preview`,
@@ -48,8 +52,8 @@ endpoint accepts, what it returns, and what gets logged.
 
 ## Experimental Build Mode
 
-`/build <objective>` is an experimental shellX-owned workflow that runs
-beside `/goal`. It keeps host-local state under
+`/build <objective>` is the shellX-owned multi-turn workflow. It keeps
+host-local state under
 `~/.shellx/build-runs/<tab>/<run>/`, asks Grok to write a tab/run-scoped
 scratchboard in the connected cwd (`build.<tab>.<run>.md`), and records
 typed receipts for file mutations, checkpoints, Agent work, review,
@@ -70,12 +74,24 @@ Debug API endpoints:
 | POST | `/build/receipt` | `{ tabId, kind, summary, actor?, confidence?, data? }` |
 | POST | `/build/stop` | `{ tabId }` |
 | POST | `/state/session_git/checkpoint` | `{ tabId, cwd?, label? }` |
+| POST | `/state/session_git/worktree` | `{ tabId, cwd?, sourceBranch?, newBranch? }` |
 
-The host MCP surface adds `build_receipt`, `build_checkpoint`, and
-`build_complete`. ShellX-owned receipts from `fs_write`, `fs_append`,
-`fs_copy`, `fs_delete`, git checkpoints, and `Agent` are trusted;
+The host MCP surface adds `build_receipt`, `build_checkpoint`,
+`preview_start`, `preview_diagnose`, and `build_complete`. ShellX-owned receipts from
+`fs_write`, `fs_append`, `fs_copy`, `fs_delete`, git checkpoints, and `Agent` are trusted;
 model-declared receipts are visible in the UI but cannot satisfy hard
 destructive-change gates by themselves.
+
+Build Mode Agent calls split wait budgets from kill policy. Use
+`wait_budget_ms` to return control when a subagent is still running; this
+does not terminate the subagent. Use `max_runtime_ms` only when an
+explicit hard wall-clock process cap is desired. Legacy `timeout_ms`
+remains accepted as a wait-budget alias for `wait=true`.
+
+For long-running Agent work, shellX also keeps a Build Mode completion
+watcher. When an in-flight Agent reaches a terminal state, the watcher
+records the normal completion receipts and asks the Build Mode manager to
+continue if the run is still active.
 
 ---
 
@@ -416,7 +432,91 @@ for live debug-api sessions.
 }
 ```
 
-### 3.9 `GET /state/session_activity?tabId=<tab>`
+### 3.9 `GET /state/grok_environment?tabId=<tab>&force=0|1&cwd=<path>`
+
+Runs Grok-native diagnostics for the active tab environment and returns
+the same model rendered by the right-rail Tools pane. This uses
+`grok mcp doctor --json` and `grok inspect --json`; it does not require
+model credits and does not publish anything.
+
+When a tab is not connected yet, callers may pass `cwd` so the passive
+Preview setup checks can still inspect the selected project folder.
+
+```ts
+{
+  tabId: string;
+  status: "idle" | "pass" | "warn" | "fail";
+  checkedAtMs: number;
+  transport: "local" | "wsl" | "ssh" | "none" | string;
+  cwd?: string | null;
+  sessionId?: string | null;
+  doctor?: {
+    summary: {
+      status: "pass" | "warn" | "fail";
+      healthyCount: number;
+      failingCount: number;
+      totalCount: number;
+    };
+    servers: Array<{
+      name: string;
+      transport: string;
+      target: string;
+      source: string;
+      healthy: boolean;
+      category: "healthy" | "authRequired" | "connectionFailed" |
+        "commandMissing" | "handshakeFailed" | "failed";
+      detail?: string | null;
+      hint?: string | null;
+    }>;
+  } | null;
+  inspect?: {
+    grokVersion?: string | null;
+    projectTrusted: boolean;
+    instructionCount: number;
+    skillCount: number;
+    pluginCount: number;
+    mcpServerCount: number;
+    lspServerCount: number;
+  } | null;
+  setup: {
+    summary: {
+      status: "idle" | "pass" | "warn" | "fail";
+      readyCount: number;
+      attentionCount: number;
+      totalCount: number;
+    };
+    checks: Array<{
+      id: string;
+      label: string;
+      status: "idle" | "pass" | "warn" | "fail";
+      detail: string;
+      command?: string | null;
+      docs?: string | null;
+    }>;
+  };
+  apiKeyHint: {
+    preferredEnv: "XAI_API_KEY";
+    legacyEnv: "GROK_CODE_XAI_API_KEY";
+    preferredPresent: boolean;
+    legacyPresent: boolean;
+    detail: string;
+  };
+  trace: { available: boolean; sessionId?: string | null; detail: string };
+  error?: string | null;
+}
+```
+
+`setup` is a passive project-folder check used by the Environment
+Board. It detects static HTML previewability, package-manager install
+commands, common web preview scripts, and Expo web dependencies such as
+`react-dom` and `react-native-web`. It reports setup commands; it does
+not run them.
+
+`POST /state/grok_environment/trace_export` accepts `{tabId}` and runs
+`grok trace --local --json <sessionId>` for the active tab. It is a
+local-only audit export; it does not upload a trace.
+
+### 3.10 `GET /state/session_activity?tabId=<tab>`
 
 Read-only source payload for the Activity Browser. The response exposes
 the local evidence ShellX can currently inspect: Grok's
@@ -700,6 +800,85 @@ escapes cwd; `not_found` if path missing.
 
 Returns the current preview target (see §3.9).
 
+### 8.3 Work Preview
+
+Host-owned preview runner for generated web work. It binds previews to
+loopback only and records the process/server state for auditability.
+
+```ts
+POST /preview/work/start?tabId=<tab>
+{
+  tabId?: string;
+  cwd: string;
+  kind?: "auto" | "static" | "web" | "expo";
+  entry?: string;       // optional static HTML entry relative to cwd
+}
+
+POST /preview/work/stop?tabId=<tab>
+{ tabId?: string }
+
+GET /preview/work/state?tabId=<tab>
+GET /preview/work/logs?tabId=<tab>
+
+GET /preview/work/diagnose?tabId=<tab>
+POST /preview/work/diagnose?tabId=<tab>
+{
+  tabId?: string;
+  browserEvents?: Array<{ level: string; message: string; source?: string; url?: string }>;
+  screenshotPath?: string;
+}
+```
+
+`auto` detects Expo, package `scripts.dev`, or `index.html`. Static
+previews may pass `entry` to open a specific generated `.html` file.
+Web app
+previews launch the detected dev script with loopback `PORT`/`HOST`
+environment variables; arbitrary shell commands are intentionally not
+accepted by this API.
+
+Preview Doctor (`/preview/work/diagnose`) inspects the active preview
+URL, HTTP status/body, preview process logs, optional shellX-captured
+browser events, and visual evidence. If `screenshotPath` is omitted,
+the host tries to capture the rendered preview URL with Edge, Chrome,
+or Chromium and returns a PNG path that agents can pass to
+`vision_describe`. `/build` reviewers and verifiers should use it for
+UI/web/app work before `build_complete`.
+
+Agents should use the host MCP `preview_start` tool to activate Work
+Preview for `/build` UI gates, then call `preview_diagnose`. Starting
+`npm`, Vite, Next, or Expo servers through a generic shell subagent does
+not populate shellX Work Preview state and is not enough for the visual
+audit gate.
+
+Diagnostic responses also include:
+
+```ts
+{
+  screenshotPath: string | null;
+  screenshotWidth: number | null;
+  screenshotHeight: number | null;
+  screenshotBrowser: string | null;
+  screenshotError: string | null;
+}
+```
+
+State shape:
+
+```ts
+{
+  tabId: string;
+  cwd: string | null;
+  kind: "staticHtml" | "webApp" | "expoWeb" | null;
+  status: "idle" | "starting" | "running" | "failed" | "stopped";
+  url: string | null;
+  command: string | null;
+  taskId: string | null;
+  pid: number | null;
+  error: string | null;
+  logs: Array<{ t: number; stream: string; line: string }>;
+}
+```
+
 ---
 
 ## 9. Skills / connectors
@@ -754,9 +933,9 @@ progress streams as WS events with `kind: "skill-install"` and
 
 ### 9.4 Outside connectors
 
-Outside connectors are user-facing channels such as Telegram bots and
-local relay bridges for WhatsApp/Discord. Secrets are never posted to
-these routes; connector bodies contain Vault key references only.
+Outside connectors are user-facing channels such as Telegram and
+Discord bots. Secrets are never posted to these routes; connector
+bodies contain Vault key references only.
 
 ```ts
 type OutsideConnector = {
@@ -765,7 +944,7 @@ type OutsideConnector = {
   enabled: boolean;
   provider:
     | { kind: "telegram"; botTokenVaultKey: string; allowedChatIds: string[] }
-    | { kind: "generic_relay"; sharedSecretVaultKey: string; allowedSenderIds: string[] };
+    | { kind: "discord"; botTokenVaultKey: string; allowedTargetIds: string[] };
   target:
     | { mode: "activeTab" }
     | { mode: "fixedTab"; tabId: string };
@@ -781,13 +960,36 @@ type OutsideConnector = {
 Routes:
 
 - `GET /outside-connectors` → `{ connectors: OutsideConnector[] }`
+- `GET /outside-connectors/capabilities` → `{ capabilities: OutsideConnectorCapabilities[] }`
+- `GET /outside-connectors/events?limit=50` → `{ events: OutsideConnectorEvent[] }`
 - `POST /outside-connectors` with `OutsideConnector` → saved connector
 - `DELETE /outside-connectors/:id`
 - `POST /outside-connectors/:id/test` → `{ reachable, provider, latencyMs, identity, error }`
+- `POST /outside-connectors/:id/simulate` with `{ senderId, conversationId?, guildId?, text }` → recorded inbound event
 
 Telegram test calls Bot API `getMe` using the token stored at
-`botTokenVaultKey`. Generic relay test verifies the shared-secret
-vault key exists and is non-empty.
+`botTokenVaultKey`. Discord test calls `GET /users/@me` using the bot
+token stored at `botTokenVaultKey`.
+
+Telegram `autoPrompt` is the first live session-chat connector. It
+requires an enabled connector, an allowlisted chat id, and either a fixed
+tab or the renderer-published active tab. shellX records the inbound
+event, sends the message to the target Grok session, returns Grok's text
+reply back with Telegram `sendMessage`, and sends a referenced local
+image path with `sendPhoto` when the reply includes one. Discord remains
+DM intake/inbox only in this release.
+
+Connector events are bounded to the latest 200 events in
+`~/.shellx/outside-connector-events.jsonl`. Simulation routes exercise
+allowlist, enabled-state, and target decisions without calling Grok.
+
+When shellX is running, enabled Telegram connectors poll Bot API
+`getUpdates` and persist per-connector offsets in
+`~/.shellx/outside-connector-runtime.json`. Enabled Discord connectors
+connect to Discord Gateway API v10 with the direct-message intent and
+record DM `MESSAGE_CREATE` dispatches. Both live paths reuse the same
+allowlist, enabled-state, and target decisions as the simulation route;
+they record inbox/rejected events and do not call Grok directly.
 
 ---
 
@@ -947,8 +1149,9 @@ Audit trail: every successful call writes a single entry to
 `~/.shellx/audit.log` with `{ tMs, path, callerOrigin }` — never
 the value. Failures log `{ tMs, path, reason }`.
 
-**Future auth gate:** §11 shared-secret will gate this endpoint first
-when introduced.
+**Auth gate:** this endpoint is loopback-only and bearer-token protected
+like every non-health debug API route. Agents should call it through the
+host MCP `secret_get` tool rather than constructing raw HTTP requests.
 
 ---
 
@@ -1037,8 +1240,8 @@ allowed: `"backlog-truncated"`, `"filter-rejected"`, `"closing"`.
 
 The wired plan surface today is `POST /plan`, used to save or update a
 plan document from a driver. The accept/reject/edit routes below are
-roadmap notes, not shipped endpoints. `/goal/*` is the shipped long-horizon
-approval surface.
+roadmap notes, not shipped endpoints. `/build/*` is the shipped
+long-horizon approval and receipt surface.
 
 ### 15.1 `GET /plan?sessionId=<id>` *(roadmap, not wired)*
 

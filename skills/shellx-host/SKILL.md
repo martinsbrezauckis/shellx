@@ -3,10 +3,10 @@ name: shellx-host
 description: >
   shellX host manifest. Read this at session start when running inside shellX.
   Defines host surfaces beyond a plain grok CLI: optional PTY terminals, vault, host
-  MCP tools, debug API, per-tab sessions, `/goal` orchestration, and the UI
+  MCP tools, debug API, per-tab sessions, `/build` orchestration, and the UI
   surfaces that render plan files, media, diffs, and live terminals.
 metadata:
-  short-description: "shellX host capabilities — vault, MCP, debug API, /goal, optional PTY"
+  short-description: "shellX host capabilities — vault, MCP, debug API, /build, optional PTY"
 ---
 
 # You are running inside shellX
@@ -130,6 +130,9 @@ Current high-use endpoints:
 - `GET /screenshot` — PNG capture of the shellX window.
 - `POST /diagnostics` — run the structural diagnostics suite.
 - `GET|POST /settings`, `GET|POST /panels`, `GET|POST /preview`.
+- `GET /preview/work/state`, `POST /preview/work/start`,
+  `POST /preview/work/stop`, `POST /preview/work/restart`,
+  `GET|POST /preview/work/diagnose`.
 - `GET|POST /connections`, `DELETE /connections/:id`,
   `POST /connections/:id/test`.
 - `GET /vault/status`, `GET /vault/keys`, `POST /vault/get`,
@@ -141,38 +144,99 @@ Current high-use endpoints:
 The user may drive YOU through this API from outside (curl, scripts,
 other agents). Do not assume the preferred port is the bound port.
 
-## 5.5. Long-horizon `/goal` execution discipline
+## 5.1. Work Preview and Environment Board
 
-The goal orchestrator wakes you back up after every turn until you
-call `grok-shell-host__goal_complete`. While in a `/goal` run:
+shellX stays passive until the user or you ask it to act. Use the
+right-rail Tools board and Work Preview as your source of truth before
+guessing how to run a generated app.
+
+- Tools -> Grok environment includes MCP health, Grok inspect data,
+  trace availability, and passive Preview setup checks for the active
+  cwd.
+- Static `.html` files can open in Work Preview directly. Scripts run
+  in the sandboxed preview; no Node dependency install is required.
+- Node web apps need project dependencies installed first. Respect the
+  package manager lockfile: `pnpm-lock.yaml` -> `pnpm install`,
+  `yarn.lock` -> `yarn install`, `bun.lock` / `bun.lockb` ->
+  `bun install`, otherwise `npm install`.
+- Expo web apps need `react-dom` and `react-native-web` present in
+  `package.json`. When missing, use
+  `npx expo install react-dom react-native-web` so versions match the
+  installed Expo SDK.
+- Work Preview binds generated app servers to loopback and owns the
+  port. Use a separate public server only when the user explicitly asks
+  for one.
+- Start or restart Work Preview with `grok-shell-host__preview_start`.
+  Do not ask an Agent shell subtask to run `npm run dev`, `npx expo
+  start`, Vite, or Next just to satisfy the Work Preview gate; that
+  bypasses shellX-owned preview state and Preview Doctor will still
+  see `idle`.
+- If a preview is blank, errors, or exits early, call
+  `grok-shell-host__preview_diagnose`, read the HTTP result, process
+  status, and log tail, then inspect the returned `screenshotPath`
+  with `grok-shell-host__vision_describe` when present. Fix the app
+  before reporting success.
+
+When presenting generated files in chat, use normal Markdown file links
+inside the active cwd. shellX routes previewable HTML/app targets through
+Work Preview and other document types through the file preview.
+
+## 5.2. Outside connectors
+
+Outside connectors are configured by the user in Settings -> Connectors.
+They are not general-purpose MCP tools; treat them as shellX-owned intake
+and reply channels.
+
+- Telegram is the first shipped live session-chat connector. In Inbox mode,
+  allowlisted messages appear in shellX for user review. In Session chat mode,
+  allowlisted direct messages are sent to the selected shellX tab and Grok's
+  text reply is sent back to Telegram. If a reply references a local image
+  path, shellX can send it as a Telegram photo.
+- Discord is DM intake/inbox only in this release. Do not promise Discord
+  session-chat replies until the app reports that mode as available.
+- Do not ask users to paste bot tokens into chat. Tokens live in the shellX
+  vault under connector-specific keys configured in Settings.
+- When connector behavior is unclear, use the UI/debug API connector state
+  and event log as source of truth. Do not invent delivery guarantees.
+
+## 5.5. Long-horizon `/build` execution discipline
+
+Build Mode wakes you back up after every turn until you call
+`grok-shell-host__build_complete`. While in a `/build` run:
 
 - Do NOT emit `stopReason="end_turn"` until verification gates have
-  ALL replayed in chat with evidence. Phase completion is NOT goal
+  ALL replayed in chat with evidence. Phase completion is NOT build
   completion.
 - After every tool call, ask: "Are gates PASSED with output pasted?"
   If not, continue. Don't summarize. Don't end the turn.
 - Checklist boundaries are NOT natural stop points. When one section is
   done, continue immediately to the next unchecked section.
 - Hard blocker (4 self-fix attempts failed): write the blocker, ask
-  ONE focused question with options, end the turn cleanly. That is
-  the only valid mid-goal end-of-turn.
+  ONE focused question with options, end the turn cleanly. That is the
+  only valid mid-build end-of-turn.
 - When fully complete (every phase `Status: DONE`, every `- [ ]`
   rewritten to `- [x]`), you MUST call
-  `grok-shell-host__goal_complete`. Saying "all steps done" in chat
+  `grok-shell-host__build_complete`. Saying "all steps done" in chat
   is NOT a completion signal — shellX re-injects continuations until
   the tool fires.
+- For UI/web/app work, call `grok-shell-host__preview_start`, then
+  `grok-shell-host__preview_diagnose`; use its `screenshotPath` with
+  `grok-shell-host__vision_describe` when present, and fix every
+  reported issue before calling `build_complete`.
 
-The scratchboard lives at `<cwd>/goal.md`. Update phase checkboxes
-in-place so the user can watch progress in the Plan tab.
+The scratchboard path is the exact `build.<tab>.<run>.md` path shellX
+provides in the `/build` kickoff prompt. Update that file in-place so
+the user can watch progress in the Plan tab.
 
 ## 6. UI surfaces — where your output renders
 
 You don't control the UI directly, but tool outputs land in specific
 places:
 
-- `/goal` scratchboard at `<cwd>/goal.md` → approval modal and right-rail
-  Plan tab. Keep top-level `Status: AWAITING_APPROVAL` until the user
-  approves, then `IN_PROGRESS` until the `goal_complete` tool succeeds.
+- `/build` scratchboard at the provided `build.<tab>.<run>.md` path →
+  approval modal and right-rail Plan tab. Keep top-level
+  `Status: AWAITING_APPROVAL` until the user approves, then
+  `IN_PROGRESS` until the `build_complete` tool succeeds.
 - Markdown file paths in chat can open in the preview modal for review.
 - Images written to `~/.grok/sessions/<sid>/images/N.{jpg,png}` →
   inline image in the chat tool card. Path extraction works on Linux
@@ -209,12 +273,14 @@ bundled `task`-tool skills themselves. Tell the user once that the
 `task`-tool-based skills are unavailable in this ACP context and move
 on. Do not retry those bundled skills.
 
-For `/goal`, act as the manager for the approved `goal.md` plan:
+For `/build`, act as the manager for the approved Build Mode scratchboard:
 use `Agent` with `subagent_type: implementer` for scoped code work,
 `subagent_type: reviewer` for code review, and
 `subagent_type: security-auditor` only for security-sensitive changes.
-For tests or plan-alignment checks, use `subagent_type: general-purpose`
-with a focused task and record the result in `goal.md`.
+For changed behavior, use `subagent_type: test-writer` when coverage is
+uncertain and `subagent_type: verifier` for evidence checks. For other
+plan-alignment checks, use `subagent_type: general-purpose` with a focused
+task and record the result in the provided Build Mode scratchboard.
 
 ## 8. When this applies
 

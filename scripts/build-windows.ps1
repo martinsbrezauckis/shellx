@@ -93,6 +93,10 @@ if ($signingKeyText) {
   } elseif (!$env:TAURI_SIGNING_PRIVATE_KEY) {
     $env:TAURI_SIGNING_PRIVATE_KEY = $signingKeyText
   }
+} else {
+  # Local unsigned builds still embed the updater pubkey, so Tauri would
+  # fail after bundling unless updater artifacts are disabled explicitly.
+  $deferUpdaterSigning = $true
 }
 
 Write-Host "repo=$repo"
@@ -178,11 +182,7 @@ if (!(Test-Path $sigPath)) {
       if ($encryptedSigningKey) {
         if ([string]::IsNullOrEmpty($SigningPassword)) {
           $signCommand += ' -p ""'
-        } else {
-          $signCommand += " -p $(Quote-CmdArg $SigningPassword)"
         }
-      } elseif ($SigningPassword -ne $null) {
-        $signCommand += " -p $(Quote-CmdArg $SigningPassword)"
       }
       $signCommand += " $(Quote-CmdArg $($installer.FullName))"
 

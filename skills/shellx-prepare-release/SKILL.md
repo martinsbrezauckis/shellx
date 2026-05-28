@@ -16,9 +16,11 @@ Standardize the release without publishing by accident.
 2. Confirm version consistency across app manifests.
 3. Check changelog/release notes for the target version.
 4. Run required verification commands for the repo.
-5. Build packages for requested platforms and record artifact paths.
-6. Inspect updater/release metadata if the app uses auto-update.
-7. Present a readiness checklist: pass, warning, blocked, and exact next command.
+5. Run the Semgrep source scan with the no-telemetry `p/default` config and
+   review every finding before marking the release ready.
+6. Build packages for requested platforms and record artifact paths.
+7. Inspect updater/release metadata if the app uses auto-update.
+8. Present a readiness checklist: pass, warning, blocked, and exact next command.
 
 Avoid: changing version numbers silently, mixing unrelated fixes, or treating a
 local build as permission to publish.

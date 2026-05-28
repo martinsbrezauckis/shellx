@@ -15,6 +15,9 @@
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|a| a.as_str()) == Some("--stdio-proxy") {
+        std::process::exit(app_lib::run_stdio_proxy(&args[2..]));
+    }
     if args.iter().any(|a| a == "--mcp-server") {
         if let Err(e) = app_lib::run_host_mcp_stdio() {
             eprintln!("host_mcp stdio server failed: {}", e);

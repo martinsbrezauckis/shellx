@@ -28,8 +28,9 @@
  * ⌘,           open settings
  * ⇧Tab         cycle autonomy mode
  * j/k/y/n/e    per-hunk diff nav (handled inside ChatOutput)
- * * File attach: via @tauri-apps/plugin-dialog. Text files ≤64 KB inline as
- * embedded_context; images are recorded as thumbnail intent (the wire form
+ * * File attach: picker, OS drag/drop, pasted clipboard images/files, and
+ * screenshots all route through the same classifier. Text files ≤64 KB inline
+ * as embedded_context; images are recorded as thumbnail intent (the wire form
  * stays `[attached: <path>]` until grok advertises promptCapabilities.image).
  * * Sessions persist to ~/.shellx/sessions/<id>.jsonl one line per event;
  * Tauri command for the writer, debug-api for the read side.
@@ -48,6 +49,7 @@ import { LeftRail } from "./components/LeftRail";
 import { ChatOutput } from "./components/ChatOutput";
 import { BottomPanel, readPersistedBottomTab, type BottomTab } from "./components/BottomPanel";
 import { RightRail, type PreviewTarget, type RightTab } from "./components/RightRail";
+import { WorkPreviewModal } from "./components/WorkPreviewPanel";
 import { SessionTabs, type SessionTab } from "./components/SessionTabs";
 import { HelpModal } from "./components/HelpModal";
 import { CommandPalette, type PaletteAction } from "./components/CommandPalette";
@@ -59,6 +61,7 @@ import { PermissionModal } from "./components/PermissionModal";
 import { VaultPanel } from "./components/VaultPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { PluginsModal } from "./components/PluginsModal";
+import { ConnectorInboxModal } from "./components/ConnectorInboxModal";
 import { TAB_KEY as SETTINGS_TAB_KEY } from "./components/Settings";
 import { hydrateUserData, persistUserData } from "./lib/userStore";
 import { FilePreviewModal } from "./components/FilePreviewModal";
@@ -82,7 +85,26 @@ import { inTauri } from "./lib/tauri-bridge";
 import { groupEvents } from "./lib/grouping";
 import { PendingLocalEventQueue, localEventTabId } from "./lib/pending-local-events";
 import { extractAssistantTurnAfterIndex, getVoiceTurnToSpeak } from "./lib/voice-chat";
-import { parseBuildCommand, startBuildMode } from "./lib/build-run";
+import { getBuildState, isBuildTerminalStatus, parseBuildCommand, startBuildMode } from "./lib/build-run";
+import {
+  diagnoseWorkPreview,
+  emptyWorkPreviewState,
+  getWorkPreviewBrowserEvents,
+  getWorkPreviewState,
+  isStaticHtmlPreviewPath,
+  startWorkPreview,
+  workPreviewEntryForFilePath,
+  workPreviewKindLabel,
+  workPreviewRootForFilePath,
+  type WorkPreviewDiagnostic,
+  type WorkPreviewState,
+} from "./lib/work-preview";
+import {
+  summarizeOutsideConnectorInbox,
+  type OutsideConnector,
+  type OutsideConnectorEvent,
+  type OutsideConnectorInboxSummary,
+} from "./lib/outside-connectors";
 import type { AcpCommand, RawEventFrame } from "./types/acp";
 
 type Status = "Idle" | "Starting" | "Connected" | "Aborting" | "Error";
@@ -125,6 +147,83 @@ const SESSIONS_KEY = "grok-shell.session-tabs.v2";
 const SKILLS_CACHE_KEY = "shellX.skills.v1";
 const VOICE_OWNER_KEY = "shellx.voiceChatMode.activeTab";
 const VOICE_KEY_PREFIX = "shellx.voiceChatMode.";
+const CONNECTOR_INBOX_SEEN_KEY = "shellx.connectorInbox.lastSeenMs.v1";
+const DROPPED_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("file read failed"));
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      const comma = value.indexOf(",");
+      resolve(comma >= 0 ? value.slice(comma + 1) : value);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1) return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+function previewRepairPrompt(diagnostic: WorkPreviewDiagnostic): string {
+  const issueLines = diagnostic.issues.length > 0
+    ? diagnostic.issues
+        .slice(0, 20)
+        .map((issue, index) => `${index + 1}. [${issue.severity}/${issue.source}] ${issue.message}`)
+        .join("\n")
+    : "No explicit Preview Doctor issues were recorded, but the user asked for a preview repair pass.";
+  const browserLines = diagnostic.browserEvents.length > 0
+    ? diagnostic.browserEvents
+        .slice(-12)
+        .map((event, index) => `${index + 1}. [${event.level}] ${event.message}${event.source ? ` (${event.source})` : ""}`)
+        .join("\n")
+    : "No browser console/runtime events were captured by shellX.";
+  const logLines = diagnostic.logs.length > 0
+    ? diagnostic.logs
+        .slice(-40)
+        .map((line) => `[${line.stream}] ${line.line}`)
+        .join("\n")
+    : "No preview process logs were captured.";
+
+  return [
+    "Preview Doctor found a problem or the user requested a preview repair pass.",
+    "",
+    "Please fix the app/page so it renders correctly in shellX Work Preview. If a screenshot path is present, inspect it with vision_describe before deciding the UI is visually correct. After changing files, restart or refresh the preview and verify it visually before saying it is fixed.",
+    "",
+    "Preview context:",
+    `- status: ${diagnostic.status}`,
+    `- url: ${diagnostic.url ?? "(none)"}`,
+    `- cwd: ${diagnostic.cwd ?? "(unknown)"}`,
+    `- command: ${diagnostic.command ?? "(none)"}`,
+    `- kind: ${workPreviewKindLabel(diagnostic.state.kind)}`,
+    `- HTTP status: ${diagnostic.httpStatus ?? "(not fetched)"}`,
+    `- response bytes: ${diagnostic.responseBytes ?? "(unknown)"}`,
+    `- page title: ${diagnostic.title ?? "(none)"}`,
+    `- screenshot: ${diagnostic.screenshotPath ?? "(not captured)"}`,
+    `- screenshot viewport: ${
+      diagnostic.screenshotWidth && diagnostic.screenshotHeight
+        ? `${diagnostic.screenshotWidth}x${diagnostic.screenshotHeight}`
+        : "(unknown)"
+    }`,
+    `- screenshot browser: ${diagnostic.screenshotBrowser ?? "(unknown)"}`,
+    `- screenshot error: ${diagnostic.screenshotError ?? "(none)"}`,
+    "",
+    "Issues:",
+    issueLines,
+    "",
+    "Browser/runtime events:",
+    browserLines,
+    "",
+    "Preview logs:",
+    logLines,
+  ].join("\n");
+}
 
 interface TabEntry {
   /** Local tab id (uuid-ish). Distinct from grok's sessionId — the tab
@@ -371,6 +470,10 @@ export default function App(): JSX.Element {
     () => new Map(),
   );
   const [rightRailRequest, setRightRailRequest] = useState<{ tab: RightTab; seq: number } | null>(null);
+  const [workPreviewByTab, setWorkPreviewByTab] = useState<Map<string, WorkPreviewState>>(
+    () => new Map(),
+  );
+  const [workPreviewModalOpen, setWorkPreviewModalOpen] = useState(false);
   const [goalReviewRequestSeq, setGoalReviewRequestSeq] = useState(0);
 
   // ─── UI state ─────────────────────────────────────────────────────────
@@ -444,6 +547,64 @@ export default function App(): JSX.Element {
     return () => window.removeEventListener("shellx:synthetic-event", handler);
   }, []);
   const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [connectorInboxOpen, setConnectorInboxOpen] = useState(false);
+  const [outsideConnectorHeaderConnectors, setOutsideConnectorHeaderConnectors] = useState<OutsideConnector[]>([]);
+  const [outsideConnectorHeaderEvents, setOutsideConnectorHeaderEvents] = useState<OutsideConnectorEvent[]>([]);
+  const [connectorInboxLastSeenMs, setConnectorInboxLastSeenMs] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(CONNECTOR_INBOX_SEEN_KEY);
+      const parsed = raw ? Number(raw) : 0;
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    } catch {
+      return 0;
+    }
+  });
+  const outsideConnectorInboxSummary = useMemo<OutsideConnectorInboxSummary>(
+    () => summarizeOutsideConnectorInbox(
+      outsideConnectorHeaderConnectors,
+      outsideConnectorHeaderEvents,
+      connectorInboxLastSeenMs,
+    ),
+    [outsideConnectorHeaderConnectors, outsideConnectorHeaderEvents, connectorInboxLastSeenMs],
+  );
+  const markConnectorInboxSeen = useCallback((seenMs: number) => {
+    if (!Number.isFinite(seenMs) || seenMs <= 0) return;
+    setConnectorInboxLastSeenMs((prev) => {
+      const next = Math.max(prev, seenMs);
+      if (next !== prev) {
+        try { localStorage.setItem(CONNECTOR_INBOX_SEEN_KEY, String(next)); } catch { /* no-op */ }
+      }
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    if (!inTauri()) return;
+    let cancelled = false;
+    let consecutiveErrors = 0;
+    const tick = async (): Promise<void> => {
+      try {
+        const [connectors, recentEvents] = await Promise.all([
+          invoke<OutsideConnector[]>("outside_connectors_list"),
+          invoke<OutsideConnectorEvent[]>("outside_connectors_events", { limit: 99 }).catch(() => []),
+        ]);
+        if (cancelled) return;
+        setOutsideConnectorHeaderConnectors(connectors);
+        setOutsideConnectorHeaderEvents(recentEvents);
+        consecutiveErrors = 0;
+      } catch {
+        consecutiveErrors += 1;
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => {
+      if (consecutiveErrors > 3) return;
+      void tick();
+    }, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
   /* Header brand click → Settings → About is the single canonical
    * About surface. Write the tab key before opening; Settings re-reads
    * it on every open (see Settings.tsx). */
@@ -606,6 +767,9 @@ export default function App(): JSX.Element {
       if (activeTabId) localStorage.setItem(ACTIVE_TAB_KEY, activeTabId);
       else localStorage.removeItem(ACTIVE_TAB_KEY);
     } catch { /* no-op */ }
+    if (activeTabId) {
+      void apiPost("/state/ui", { activeTabId }).catch(() => { /* debug API may be off */ });
+    }
   }, [activeTabId]);
 
   // Lazy-load PR/issue list from debug-api once on mount + every 60s.
@@ -937,6 +1101,71 @@ export default function App(): JSX.Element {
     () => tabs.find((t) => t.tabId === activeTabId) ?? null,
     [tabs, activeTabId],
   );
+  const activeWorkPreviewState = useMemo(
+    () => activeTabId
+      ? workPreviewByTab.get(activeTabId) ?? emptyWorkPreviewState(activeTabId)
+      : emptyWorkPreviewState("default"),
+    [activeTabId, workPreviewByTab],
+  );
+  const workPreviewTabIds = useMemo(() => tabs.map((t) => t.tabId), [tabs]);
+  const workPreviewTabIdsKey = workPreviewTabIds.join("\u0000");
+
+  useEffect(() => {
+    if (!inTauri() || workPreviewTabIds.length === 0) return;
+    let cancelled = false;
+
+    const refreshWorkPreview = async () => {
+      const states = await Promise.all(
+        workPreviewTabIds.map((tabId) =>
+          getWorkPreviewState(tabId).catch(() => null),
+        ),
+      );
+      if (cancelled) return;
+      try {
+        setWorkPreviewByTab((prev) => {
+          const next = new Map(prev);
+          let changed = false;
+          const liveTabIds = new Set(workPreviewTabIds);
+          for (const tabId of Array.from(next.keys())) {
+            if (!liveTabIds.has(tabId)) {
+              next.delete(tabId);
+              changed = true;
+            }
+          }
+          for (const state of states) {
+            if (!state) continue;
+            const current = next.get(state.tabId);
+            if (
+              current?.status !== state.status ||
+              current?.url !== state.url ||
+              current?.kind !== state.kind ||
+              current?.updatedAtMs !== state.updatedAtMs
+            ) {
+              next.set(state.tabId, state);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      } catch {
+        /* Work preview is optional; the right rail surfaces manual errors. */
+      }
+    };
+
+    void refreshWorkPreview();
+    const anyRunningPreview = workPreviewTabIds.some((tabId) => {
+      const state = workPreviewByTab.get(tabId);
+      return state?.status === "running" || state?.status === "starting";
+    });
+    const pollMs = anyRunningPreview
+      ? 2000
+      : 5000;
+    const id = window.setInterval(() => void refreshWorkPreview(), pollMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [workPreviewTabIdsKey, workPreviewByTab]);
 
   /** Active tab's lifecycle status (Idle if no tab). Header, footer and
    * composer all read this derived value rather than a singleton. */
@@ -1023,6 +1252,20 @@ export default function App(): JSX.Element {
     } catch { /* ignore */ }
     return [];
   }, [events]);
+  const visibleSlashCommands = useMemo<AcpCommand[]>(() => {
+    const normalize = (name: string): string => name.replace(/^\/+/, "");
+    const filtered = skills.filter((s) => normalize(s.name) !== "goal");
+    if (filtered.some((s) => normalize(s.name) === "build")) return filtered;
+    return [
+      {
+        name: "build",
+        description: "shellX Build Mode: plan, implement, review, verify, and complete with receipts.",
+        input: { hint: "<objective>" },
+        _meta: { scope: "shellx" },
+      },
+      ...filtered,
+    ];
+  }, [skills]);
 
   // Session title from session_summary_generated events. For each tab,
   // pick the newest summary in the current events snapshot and apply it
@@ -1598,12 +1841,27 @@ export default function App(): JSX.Element {
         return;
       }
       try {
-        if (stripped === "/pause") {
+        const activeBuild = await getBuildState(myTabId).catch(() => null);
+        if (activeBuild && !isBuildTerminalStatus(activeBuild.status)) {
+          if (stripped === "/pause") {
+            await invoke("pause_build", { tabId: myTabId });
+            pushUiEvent("◎ build paused");
+          } else if (stripped === "/resume") {
+            await invoke("resume_build", { tabId: myTabId });
+            pushUiEvent("◎ build resumed");
+          } else {
+            await invoke("halt_build", {
+              tabId: myTabId,
+              summary: "Stopped manually from shellX composer",
+            });
+            pushUiEvent("◎ build stopped");
+          }
+        } else if (stripped === "/pause") {
           await invoke("pause_goal", { tabId: myTabId });
-          pushUiEvent("◎ goal paused");
+          pushUiEvent("◎ build paused");
         } else if (stripped === "/resume") {
           await invoke("resume_goal", { tabId: myTabId });
-          pushUiEvent("◎ goal resumed");
+          pushUiEvent("◎ build resumed");
         } else {
           await invoke("set_goal_mode", {
             tabId: myTabId,
@@ -1611,7 +1869,7 @@ export default function App(): JSX.Element {
             objective: null,
             cwd: activeTab?.cwd ?? cwd,
           });
-          pushUiEvent("◎ goal stopped");
+          pushUiEvent("◎ build stopped");
         }
         setPrompt("");
       } catch (err: any) {
@@ -1621,6 +1879,7 @@ export default function App(): JSX.Element {
     }
     const buildObjective = parseBuildCommand(currentPrompt);
     if (buildObjective !== null) {
+      const usedLegacyGoalCommand = stripped === "/goal" || stripped.startsWith("/goal ");
       if (!buildObjective) {
         pushUiEvent("✗ /build requires an objective: /build <what to accomplish>");
         return;
@@ -1641,6 +1900,9 @@ export default function App(): JSX.Element {
       const activeCwd = activeTab?.cwd ?? cwd;
       try {
         const started = await startBuildMode(myTabId, buildObjective, activeCwd);
+        if (usedLegacyGoalCommand) {
+          pushUiEvent("→ starting /build");
+        }
         pushUiEvent(`◎ build mode: ${buildObjective}`);
         setRightRailRequest({ tab: "Plan", seq: Date.now() });
         setPrompt("");
@@ -1648,96 +1910,6 @@ export default function App(): JSX.Element {
       } catch (err: any) {
         setError(`start_build_mode failed: ${err}`);
       }
-      return;
-    }
-    // `/goal <objective>` — activate the goal orchestrator on this tab
-    // and send the objective as the first prompt. Without this intercept
-    // the literal "/goal foo" string was being shipped to grok, which
-    // happily wrote a markdown plan into chat while the orchestrator
-    // (set_goal_mode + GoalStatusBar + plan-rail) sat dormant.
-    if (stripped === "/goal" || stripped.startsWith("/goal ")) {
-      const objective = stripped === "/goal" ? "" : stripped.slice(6).trim();
-      if (!objective) {
-        pushUiEvent("✗ /goal requires an objective: /goal <what to accomplish>");
-        return;
-      }
-      const myTabId = activeTab?.tabId ?? null;
-      if (!myTabId) {
-        pushUiEvent("✗ /goal needs an active tab — connect first");
-        return;
-      }
-      // Auto-connect if the tab isn't live yet (same pattern as the
-      // normal send path).
-      if (activeTab && activeTab.status !== "Connected") {
-        pushUiEvent(`→ auto-connect (goal-mode start)`);
-        const connected = await connect();
-        if (!connected) {
-          setError("Auto-connect failed");
-          return;
-        }
-      }
-      const cwd = activeTab?.cwd ?? "";
-      try {
-        await invoke("set_goal_mode", {
-          tabId: myTabId,
-          on: true,
-          objective,
-          cwd,
-        });
-        pushUiEvent(`◎ goal mode: ${objective}`);
-      } catch (err: any) {
-        setError(`set_goal_mode failed: ${err}`);
-        return;
-      }
-      // Plan-first kickoff. Send a prompt that WRITES THE
-      // PLAN ONLY, then stops. The orchestrator's `awaiting_approval`
-      // gate blocks auto-continuations until the user clicks ✓ Approve
-      // in the PlanPane. User may also revise via regular prompts
-      // before approving; those don't go through the orchestrator.
-      setPrompt("");
-      const planKickoff = [
-        `OBJECTIVE: ${objective}`,
-        ``,
-        `STEP 1 — propose a plan. Write a phased checklist plan to`,
-        `\`goal.md\` (in the current working directory) using this format:`,
-        ``,
-        `\`\`\`md`,
-        `# Goal: <one-line restatement of objective>`,
-        ``,
-        `Status: AWAITING_APPROVAL`,
-        ``,
-        `## Phase 1 — <short name>`,
-        `- [ ] <step>`,
-        `- [ ] <step>`,
-        ``,
-        `## Phase 2 — <short name>`,
-        `- [ ] <step>`,
-        ``,
-        `## Phase N-1 — Review / verification`,
-        `- [ ] If this goal changes code, act as manager: dispatch at least one \`reviewer\` Agent after implementation; use \`security-auditor\` only for security-sensitive changes; if no Agent/subagent tool is available or this is not a code goal, record why and perform a direct self-review`,
-        `- [ ] Record reviewer findings, implementer/fix responses, and verification evidence in \`goal.md\``,
-        ``,
-        `## Phase N — Complete`,
-        `- [ ] Verify all earlier phases finished`,
-        `- [ ] Call \`goal_complete\` MCP tool with summary`,
-        `\`\`\``,
-        ``,
-        `Plan as a manager, not as a single worker. For non-trivial code phases, the plan may call for dispatching an \`implementer\` Agent. For code-changing goals, the plan MUST include the Review / verification phase before Complete. Use shellX \`Agent\` / \`Agent_status\` / \`Agent_output\` when available: \`implementer\` for scoped code work, \`reviewer\` for general code review, and \`security-auditor\` only for security-sensitive changes. For test coverage or plan-alignment checks, use \`general-purpose\` with a focused task. Do not invoke Grok Build's bundled \`/implement\`, \`/review\`, or \`/check\` commands from ACP mode; use the Agent tool directly. The review task should ask for bugs, missing tests, security issues when relevant, and mismatches with the approved objective. Record reviewer results, implementer/fix responses, and evidence in \`goal.md\`. If a required Agent/subagent tool is available but dispatch fails, HALT and ask the user instead of substituting self-review. Only skip the Agent pass if the goal is not a code change or no Agent/subagent tool is available, and write that reason in \`goal.md\`.`,
-        ``,
-        `EVERY plan MUST end with a \`## Phase N — Complete\` phase whose last step says: Call goal_complete MCP tool with summary. Without that call, shellX keeps pinging you for the next step even after you've finished the actual work. The goal_complete tool re-validates the scratchboard and is the only signal that ends the goal cycle. Do not write top-level \`Status: DONE\` or \`Status: GOAL_COMPLETE\` yourself; shellX writes the final status only after the tool succeeds.`,
-        ``,
-        `Final verification must cite real evidence from this session: command stdout/stderr, test output, running-app behavior, or a screenshot/tool result. Phrases like "tested via code paths", "verified by inspection", or "reviewed logically" do not count as final evidence.`,
-        ``,
-        `Use the shellx-host MCP tool \`fs_write\` to write the file.`,
-        ``,
-        `STEP 2 — STOP after writing the plan. DO NOT begin executing`,
-        `any phase. Reply in chat with a short summary ("plan written`,
-        `to goal.md — 4 phases, awaiting approval") and then wait. The`,
-        `user will click ✓ Approve in the Plan tab, or send revisions`,
-        `as follow-up messages. Only after approval will the`,
-        `orchestrator inject phase-execution continuations.`,
-      ].join("\n");
-      void sendPromptText(planKickoff, myTabId);
       return;
     }
     setError(null);
@@ -2120,6 +2292,46 @@ export default function App(): JSX.Element {
     pushUiEvent(`→ attached ${detailBits.join(", ")}`);
   }
 
+  async function processDroppedAttachmentFiles(files: File[]): Promise<void> {
+    if (files.length === 0) return;
+    if (!inTauri()) {
+      pushUiEvent("✗ drop/paste attach requires the shellX desktop app");
+      return;
+    }
+    const scopeDir = (activeTab?.cwd ?? cwd).replace(/[/\\]+$/, "");
+    const savedPaths: string[] = [];
+    let skipped = 0;
+    for (const file of files) {
+      const label = file.name?.trim() || "clipboard image";
+      if (file.size > DROPPED_ATTACHMENT_MAX_BYTES) {
+        skipped += 1;
+        pushUiEvent(
+          `✗ skipped ${label}: ${formatBytes(file.size)} exceeds paste/drop cap ${formatBytes(DROPPED_ATTACHMENT_MAX_BYTES)}`,
+        );
+        continue;
+      }
+      try {
+        const dataBase64 = await readFileAsBase64(file);
+        const saved = await invoke<string>("save_dropped_attachment_to_scope", {
+          filename: label,
+          mimeType: file.type || null,
+          dataBase64,
+          destDir: scopeDir,
+        });
+        savedPaths.push(saved);
+      } catch (err) {
+        skipped += 1;
+        pushUiEvent(`✗ attach failed for ${label}: ${err}`);
+      }
+    }
+    if (savedPaths.length > 0) {
+      await processAttachedPaths(savedPaths, { copyIntoScope: false });
+    }
+    if (skipped > 0 && savedPaths.length === 0) {
+      pushUiEvent(`✗ no pasted/dropped files attached (${skipped} skipped)`);
+    }
+  }
+
   function handlePreviewFile(path: string): void {
     // Open the FilePreviewModal on chat-side file-link clicks. The
     // right-rail Preview tab was dropped; the per-tab `preview` field
@@ -2140,9 +2352,86 @@ export default function App(): JSX.Element {
         abs = `${tabCwd.replace(/[\\/]$/, "")}${sep}${stripped}`;
       }
     }
+    if (isStaticHtmlPreviewPath(abs) && inTauri()) {
+      const previewRoot = workPreviewRootForFilePath(abs);
+      const previewEntry = workPreviewEntryForFilePath(abs);
+      const tabId = activeTabId ?? "default";
+      if (previewRoot && previewEntry) {
+        setPreviewPath(null);
+        const optimistic: WorkPreviewState = {
+          ...emptyWorkPreviewState(tabId),
+          cwd: previewRoot,
+          kind: "staticHtml",
+          status: "starting",
+          updatedAtMs: Date.now(),
+        };
+        setWorkPreviewByTab((prev) => {
+          const next = new Map(prev);
+          next.set(tabId, optimistic);
+          return next;
+        });
+        setWorkPreviewModalOpen(true);
+        updateActiveTab({ preview: { kind: "url", path: abs } });
+        void apiPost("/preview", { kind: "url", path: abs }).catch(() => { /* debug api may be off */ });
+        void startWorkPreview({
+          tabId,
+          cwd: previewRoot,
+          kind: "static",
+          entry: previewEntry,
+        })
+          .then((state) => {
+            setWorkPreviewByTab((prev) => {
+              const next = new Map(prev);
+              next.set(state.tabId, state);
+              return next;
+            });
+            setWorkPreviewModalOpen(true);
+          })
+          .catch((err) => {
+            pushUiEvent(`✗ preview failed for ${abs}: ${err instanceof Error ? err.message : String(err)}`);
+            setWorkPreviewModalOpen(false);
+            setPreviewPath(abs);
+          });
+        return;
+      }
+    }
+    setWorkPreviewModalOpen(false);
     setPreviewPath(abs);
     updateActiveTab({ preview: { kind: "file", path: abs } });
     void apiPost("/preview", { kind: "file", path: abs }).catch(() => { /* debug api may be off */ });
+  }
+
+  async function handleAskGrokToFixPreview(state: WorkPreviewState): Promise<void> {
+    const tabId = state.tabId || activeTabId || "default";
+    setWorkPreviewModalOpen(true);
+    try {
+      const diagnostic = await diagnoseWorkPreview({
+        tabId,
+        browserEvents: getWorkPreviewBrowserEvents(tabId),
+      });
+      await sendPromptText(previewRepairPrompt(diagnostic), tabId);
+      pushUiEvent(
+        diagnostic.ok
+          ? "◎ Preview Doctor report sent to Grok"
+          : `◎ Preview Doctor found ${diagnostic.issues.length} issue(s); report sent to Grok`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      pushUiEvent(`✗ Preview Doctor failed: ${message}`);
+      await sendPromptText(
+        [
+          "shellX Preview Doctor could not complete, but the user asked to repair the current preview.",
+          "",
+          `Preview URL: ${state.url ?? "(none)"}`,
+          `Project: ${state.cwd ?? activeTab?.cwd ?? cwd}`,
+          `Command: ${state.command ?? "(none)"}`,
+          `Error from Preview Doctor: ${message}`,
+          "",
+          "Inspect the app, run the preview checks you can access, fix the issue, and verify the preview before reporting success.",
+        ].join("\n"),
+        tabId,
+      );
+    }
   }
 
   /** ⌘T: spawn a new tab. */
@@ -2469,6 +2758,10 @@ export default function App(): JSX.Element {
         ? "run"
         : (tabStatus === "Connected" ? "done" : "idle"),
       transport: t.connectionTransport,
+      preview: Boolean(workPreviewByTab.get(t.tabId)?.url),
+      previewLabel: workPreviewByTab.get(t.tabId)?.kind
+        ? `${workPreviewKindLabel(workPreviewByTab.get(t.tabId)?.kind ?? null)} preview`
+        : "Open preview",
     };
   });
   const voiceSessionTabs = useMemo(
@@ -2546,6 +2839,8 @@ export default function App(): JSX.Element {
         onWorkspaceClick={() => void handleWorkspaceClick()}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenPlugins={() => setPluginsOpen(true)}
+        onOpenConnectorInbox={() => setConnectorInboxOpen(true)}
+        outsideConnectorInbox={outsideConnectorInboxSummary}
         onOpenAbout={openAboutInSettings}
         hideAutonomyDial={true}
         /* tabId routes the per-tab set_permission_mode invoke. */
@@ -2903,6 +3198,10 @@ export default function App(): JSX.Element {
                 onActivate={handleActivateTab}
                 onNew={handleNewTab}
                 onClose={handleCloseTab}
+                onOpenPreview={(tabId) => {
+                  setActiveTabId(tabId);
+                  setWorkPreviewModalOpen(true);
+                }}
                 /* Inline rename from the tab strip — mirrors the
                  * LeftRail double-click-to-rename UX. */
                 onRename={handleRenameChat}
@@ -2924,49 +3223,49 @@ export default function App(): JSX.Element {
                         onLayout={handleVerticalLayout}
                       >
                 <Panel defaultSize={62} minSize={30}>
-                  <div className="mid-pane-body">
-                    <div className="mid-head">
-                      <h2 title={sessionTitle}>
-                        {titleMain}
-                        {titleTrail && <span className="trail">{titleTrail}</span>}
-                      </h2>
-                      {/* Per-session token gauge — placed beside the
-                       * chat title so every tab shows its own usage.
-                       * totalTokens (active tab's latest
-                       * _meta.totalTokens) and maxTokens (detected
-                       * context-window cap) are tab-scoped. */}
-                      <div
-                        className="tok mid-head-tok"
-                        title={`Context window: ${totalTokens.toLocaleString()} of ${maxTokens.toLocaleString()} (${maxTokens > 0 ? ((totalTokens / maxTokens) * 100).toFixed(1) : "0"}%)`}
-                      >
-                        <strong>{formatTokens(totalTokens)}</strong>
-                        {" / "}
-                        {formatTokens(maxTokens, true)}
-                        <span className="tok-bar">
-                          <span
-                            className="tok-bar-fill"
-                            style={{
-                              width: `${Math.min(100, (totalTokens / Math.max(maxTokens, 1)) * 100)}%`,
-                            }}
+                    <div className="mid-pane-body">
+                        <div className="mid-head">
+                          <h2 title={sessionTitle}>
+                            {titleMain}
+                            {titleTrail && <span className="trail">{titleTrail}</span>}
+                          </h2>
+                          {/* Per-session token gauge — placed beside the
+                           * chat title so every tab shows its own usage.
+                           * totalTokens (active tab's latest
+                           * _meta.totalTokens) and maxTokens (detected
+                           * context-window cap) are tab-scoped. */}
+                          <div
+                            className="tok mid-head-tok"
+                            title={`Context window: ${totalTokens.toLocaleString()} of ${maxTokens.toLocaleString()} (${maxTokens > 0 ? ((totalTokens / maxTokens) * 100).toFixed(1) : "0"}%)`}
+                          >
+                            <strong>{formatTokens(totalTokens)}</strong>
+                            {" / "}
+                            {formatTokens(maxTokens, true)}
+                            <span className="tok-bar">
+                              <span
+                                className="tok-bar-fill"
+                                style={{
+                                  width: `${Math.min(100, (totalTokens / Math.max(maxTokens, 1)) * 100)}%`,
+                                }}
+                              />
+                            </span>
+                          </div>
+                          {/* Per-session download button: archives the
+                           * ACTIVE tab's cwd + grok scratch. Disabled
+                           * when no session is active. */}
+                          <SessionArtifactDownload
+                            activeTabId={activeTabId}
+                            cwd={activeTab?.cwd ?? ""}
                           />
-                        </span>
-                      </div>
-                      {/* Per-session download button: archives the
-                       * ACTIVE tab's cwd + grok scratch. Disabled
-                       * when no session is active. */}
-                      <SessionArtifactDownload
-                        activeTabId={activeTabId}
-                        cwd={activeTab?.cwd ?? ""}
-                      />
-                    </div>
-                    <ChatOutput
-                      groups={groups}
-                      onPreviewFile={handlePreviewFile}
-                      // tabId forward so inline
-                      // <TerminalView attachOnly/> binds to the right
-                      // ACP-origin PTY in the registry.
-                      tabId={activeTabId ?? undefined}
-                    />
+                        </div>
+                        <ChatOutput
+                          groups={groups}
+                          onPreviewFile={handlePreviewFile}
+                          // tabId forward so inline
+                          // <TerminalView attachOnly/> binds to the right
+                          // ACP-origin PTY in the registry.
+                          tabId={activeTabId ?? undefined}
+                        />
                   </div>
                 </Panel>
                 <PanelResizeHandle />
@@ -2994,10 +3293,11 @@ export default function App(): JSX.Element {
                     /* Drag-and-drop attach from the right-rail Files
                      * tab — same pipeline as the dialog branch. */
                     onAttachPaths={(paths) => void processAttachedPaths(paths)}
+                    onAttachFiles={(files) => void processDroppedAttachmentFiles(files)}
                     onPreviewFile={handlePreviewFile}
                     onOpenActivity={() => setActivityOpen(true)}
                     hashItems={hashItems}
-                    skills={skills.map((s: any) => ({ name: s.name, description: s.description }))}
+                    skills={visibleSlashCommands.map((s: any) => ({ name: s.name, description: s.description }))}
                     autonomy={autonomy}
                     onAutonomyChange={handleAutonomyChange}
                     /* Scope pills: connection/branch/cwd are per-tab
@@ -3085,6 +3385,22 @@ export default function App(): JSX.Element {
                       connectionTransport={activeTab?.connectionTransport ?? "local"}
                       sessionStatus={activeTab?.status ?? "Idle"}
                       onSendPromptToActiveTab={(text) => void sendPromptText(text, activeTabId)}
+                      onWorkPreviewStateChange={(state) => {
+                        setWorkPreviewByTab((prev) => {
+                          const next = new Map(prev);
+                          next.set(state.tabId, state);
+                          return next;
+                        });
+                      }}
+                      onOpenWorkPreview={(state) => {
+                        setWorkPreviewByTab((prev) => {
+                          const next = new Map(prev);
+                          next.set(state.tabId, state);
+                          return next;
+                        });
+                        setWorkPreviewModalOpen(true);
+                      }}
+                      onAskGrokToFixPreview={(state) => void handleAskGrokToFixPreview(state)}
                     />
                   </Panel>
                 </PanelGroup>
@@ -3112,7 +3428,7 @@ export default function App(): JSX.Element {
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         actions={paletteActions}
-        skills={skills}
+        skills={visibleSlashCommands}
         insertSlash={insertSlashIntoPrompt}
       />
       <Settings
@@ -3126,6 +3442,11 @@ export default function App(): JSX.Element {
         onClose={() => setPluginsOpen(false)}
         activeTabId={activeTabId}
       />
+      <ConnectorInboxModal
+        open={connectorInboxOpen}
+        onClose={() => setConnectorInboxOpen(false)}
+        onSeen={markConnectorInboxSeen}
+      />
       <BuiltinDocModal
         docId={builtinDocId}
         onClose={() => setBuiltinDocId(null)}
@@ -3137,6 +3458,12 @@ export default function App(): JSX.Element {
         sessionCwd={activeTab?.cwd ?? cwd}
         onClose={() => setPreviewPath(null)}
         onPreviewFile={handlePreviewFile}
+      />
+      <WorkPreviewModal
+        open={workPreviewModalOpen}
+        state={activeWorkPreviewState}
+        onClose={() => setWorkPreviewModalOpen(false)}
+        onAskGrokToFix={(state) => void handleAskGrokToFixPreview(state)}
       />
       <ActivityBrowserModal
         open={activityOpen}

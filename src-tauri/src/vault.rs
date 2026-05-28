@@ -8,10 +8,10 @@
 // The vault blob is AEAD-encrypted; without the master key in the
 // OS keyring the ciphertext is opaque.
 // - In-process attacker: a tool inside the running app could call
-// Vault::get and walk away with plaintext. The API limits the
-// blast radius (no batch dump; one key at a time; values never
-// listed) but does not pretend to defend against this — it's the
-// same trust boundary the app already lives behind.
+// Vault::get and walk away with a requested plaintext value. The API
+// limits the blast radius (no batch dump; one key at a time; values
+// never listed) and avoids long-lived plaintext caching, but it does
+// not pretend to defend against arbitrary code execution inside the app.
 // - Path-traversal attacker (from grok agent): the security-review
 // pass-2 H-NEW-4 warned that `secret_get` keys must be constrained.
 // We enforce a strict ASCII pattern on every key entering the
@@ -28,9 +28,9 @@
 // "ciphertext": "<base64 url-no-pad>"
 // }
 //
-// Plaintext under the AEAD is a JSON object: { key: value, ... }
+// Transient plaintext under the AEAD is a JSON object: { key: value, ... }
 // with namespaced keys, e.g.
-// "connections.megaclub.ssh_key_path"
+// "connections.prod.ssh_key_path"
 // "user.openai_api_key"
 //
 // Master-key lifecycle
@@ -43,10 +43,11 @@
 // add "v2" without colliding.
 //
 // Concurrency
-// The Vault holds a tokio Mutex over the in-memory KV map. set /
-// delete take the lock, mutate, re-encrypt, and atomically write
-// the file (write-temp-then-rename). get / list_keys take the
-// lock briefly and clone out only what the caller asked for.
+// The Vault holds a tokio Mutex as an operation lock only. Plaintext is
+// not cached in the Vault handle: each operation decrypts vault.enc,
+// performs the requested read or mutation, then zeroizes transient map
+// values before returning. set/delete re-encrypt and atomically write
+// the file (write-temp-then-rename).
 //
 // LOGGING POLICY
 // This module NEVER logs vault values. It logs (a) the file path on
@@ -55,7 +56,7 @@
 // conditions. Anything else is a bug — audit any new tracing call.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine as _};
 use chacha20poly1305::{
@@ -66,6 +67,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+use zeroize::{Zeroize, Zeroizing};
 
 /// OS keyring service identifier — distinguishes our master key from any
 /// other grok-shell secret the OS user might store.
@@ -118,57 +120,46 @@ pub struct VaultKeyMeta {
     pub last_modified_ms: i64,
 }
 
-/// Vault handle. Cheap to clone: the inner state is an Arc-Mutex.
+/// Vault handle. Callers wrap it in `Arc`; the handle itself stores no
+/// long-lived plaintext map.
 pub struct Vault {
     /// AEAD cipher pre-initialized with the master key. Decrypt/encrypt
     /// operations don't have to re-derive on every call.
     cipher: ChaCha20Poly1305,
-    /// In-memory cache of the plaintext map. Written through to disk
-    /// on every set/delete.
-    state: Mutex<Plaintext>,
+    /// Serializes read-modify-write operations. It is deliberately not
+    /// a plaintext cache; decrypted maps are operation-local only.
+    io_lock: Mutex<()>,
     /// Path to the on-disk envelope. Lives under ~/.shellx/vault.enc.
     path: PathBuf,
 }
 
 impl Vault {
     /// Open (or initialize) the user's vault. Fetches the master key
-    /// from the OS keyring, generating it on first run. Decrypts the
-    /// existing blob if present; otherwise leaves an empty map and a
-    /// zero-length plaintext that will be encrypted on first write.
+    /// from the OS keyring, generating it on first run. Existing blobs
+    /// are decrypted transiently for validation and key-count logging,
+    /// then plaintext values are zeroized before the handle is returned.
     pub fn open() -> Result<Self, String> {
         let path = vault_path()?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("vault: mkdir {} failed: {}", parent.display(), e))?;
+            ensure_private_dir(parent, "vault")?;
         }
 
         // Master key: keyring entry or generated + stored.
-        let key_bytes = fetch_or_create_master_key()?;
-        let key = ChaChaKey::from_slice(&key_bytes);
+        let key_bytes = Zeroizing::new(fetch_or_create_master_key()?);
+        let key = ChaChaKey::from_slice(key_bytes.as_slice());
         let cipher = ChaCha20Poly1305::new(key);
 
-        // Existing envelope?
-        let state: Plaintext = if path.exists() {
-            let raw = std::fs::read_to_string(&path)
-                .map_err(|e| format!("vault: read {} failed: {}", path.display(), e))?;
-            if raw.trim().is_empty() {
-                Plaintext::new()
-            } else {
-                let env: Envelope = serde_json::from_str(&raw)
-                    .map_err(|e| format!("vault: envelope parse failed: {}", e))?;
-                decrypt_envelope(&cipher, &env)?
-            }
-        } else {
-            Plaintext::new()
-        };
-
-        let count = state.len();
+        let count = read_plaintext_from_path(&path, &cipher).map(|mut state| {
+            let count = state.len();
+            zeroize_plaintext_values(&mut state);
+            count
+        })?;
         // SAFE: count, not values; values are never logged.
         info!("vault: opened at {} ({} keys)", path.display(), count);
 
         Ok(Self {
             cipher,
-            state: Mutex::new(state),
+            io_lock: Mutex::new(()),
             path,
         })
     }
@@ -178,8 +169,11 @@ impl Vault {
     /// without leaking the value).
     pub async fn get(&self, key: &str) -> Result<Option<String>, String> {
         validate_key(key)?;
-        let guard = self.state.lock().await;
-        Ok(guard.get(key).cloned())
+        let _guard = self.io_lock.lock().await;
+        let mut state = self.read_plaintext()?;
+        let value = state.get(key).cloned();
+        zeroize_plaintext_values(&mut state);
+        Ok(value)
     }
 
     /// Insert or overwrite. Re-encrypts the full envelope and writes
@@ -189,25 +183,27 @@ impl Vault {
         if value.len() > 64 * 1024 {
             return Err("vault: value exceeds 64KB cap".to_string());
         }
-        let mut guard = self.state.lock().await;
-        guard.insert(key.to_string(), value.to_string());
-        self.persist(&guard)?;
+        let _guard = self.io_lock.lock().await;
+        let mut state = self.read_plaintext()?;
+        state.insert(key.to_string(), value.to_string());
+        let total = state.len();
+        persist_plaintext_then_zeroize(&mut state, |state| self.persist(state))?;
         // SAFE: key + count, not value.
-        info!("vault: set key={} (total {} keys)", key, guard.len());
+        info!("vault: set key={} (total {} keys)", key, total);
         Ok(())
     }
 
     /// Remove a key. Returns Ok regardless of prior presence (idempotent).
     pub async fn delete(&self, key: &str) -> Result<(), String> {
         validate_key(key)?;
-        let mut guard = self.state.lock().await;
-        let had = guard.remove(key).is_some();
-        self.persist(&guard)?;
+        let _guard = self.io_lock.lock().await;
+        let mut state = self.read_plaintext()?;
+        let had = state.remove(key).is_some();
+        let total = state.len();
+        persist_plaintext_then_zeroize(&mut state, |state| self.persist(state))?;
         info!(
             "vault: delete key={} (existed={}; total {} keys)",
-            key,
-            had,
-            guard.len()
+            key, had, total
         );
         Ok(())
     }
@@ -217,7 +213,8 @@ impl Vault {
     /// is the on-disk vault.enc mtime — see VaultKeyMeta doc for why all
     /// entries share the same timestamp.
     pub async fn list_keys_with_meta(&self) -> Result<Vec<VaultKeyMeta>, String> {
-        let guard = self.state.lock().await;
+        let _guard = self.io_lock.lock().await;
+        let mut state = self.read_plaintext()?;
         let mtime_ms: i64 = match std::fs::metadata(&self.path) {
             Ok(md) => md
                 .modified()
@@ -227,7 +224,7 @@ impl Vault {
                 .unwrap_or(0),
             Err(_) => 0,
         };
-        let mut out: Vec<VaultKeyMeta> = guard
+        let mut out: Vec<VaultKeyMeta> = state
             .keys()
             .map(|k| VaultKeyMeta {
                 key: k.clone(),
@@ -235,18 +232,21 @@ impl Vault {
             })
             .collect();
         out.sort_by(|a, b| a.key.cmp(&b.key));
+        zeroize_plaintext_values(&mut state);
         Ok(out)
     }
 
     /// Enumerate keys, optionally filtered by a prefix. VALUES ARE
     /// NEVER RETURNED — this is the safe enumeration path.
     pub async fn list_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, String> {
-        let guard = self.state.lock().await;
+        let _guard = self.io_lock.lock().await;
+        let mut state = self.read_plaintext()?;
         let mut out: Vec<String> = match prefix {
-            Some(p) => guard.keys().filter(|k| k.starts_with(p)).cloned().collect(),
-            None => guard.keys().cloned().collect(),
+            Some(p) => state.keys().filter(|k| k.starts_with(p)).cloned().collect(),
+            None => state.keys().cloned().collect(),
         };
         out.sort();
+        zeroize_plaintext_values(&mut state);
         Ok(out)
     }
 
@@ -254,7 +254,15 @@ impl Vault {
     /// we're running on the fallback keyfile, and how many keys are
     /// stored. Never reveals key names, never values.
     pub async fn status(&self) -> VaultStatus {
-        let guard = self.state.lock().await;
+        let _guard = self.io_lock.lock().await;
+        let key_count = self
+            .read_plaintext()
+            .map(|mut state| {
+                let count = state.len();
+                zeroize_plaintext_values(&mut state);
+                count
+            })
+            .unwrap_or(0);
         let keyring = keyring_probe().is_ok();
         // The fallback keyfile is the canonical signal that we're NOT
         // on the keyring path — exists iff we committed to it.
@@ -263,11 +271,15 @@ impl Vault {
             initialized: self.path.exists(),
             keyring_available: keyring,
             using_fallback_keyfile: on_fallback,
-            key_count: guard.len(),
+            key_count,
         }
     }
 
-    /// Encrypt + write the current map. Caller holds the state lock.
+    fn read_plaintext(&self) -> Result<Plaintext, String> {
+        read_plaintext_from_path(&self.path, &self.cipher)
+    }
+
+    /// Encrypt + write the current map. Caller holds the operation lock.
     fn persist(&self, state: &Plaintext) -> Result<(), String> {
         let env = encrypt_envelope(&self.cipher, state)?;
         let json = serde_json::to_string_pretty(&env)
@@ -331,16 +343,46 @@ pub struct VaultStatus {
     pub key_count: usize,
 }
 
+fn read_plaintext_from_path(path: &Path, cipher: &ChaCha20Poly1305) -> Result<Plaintext, String> {
+    if !path.exists() {
+        return Ok(Plaintext::new());
+    }
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("vault: read {} failed: {}", path.display(), e))?;
+    if raw.trim().is_empty() {
+        return Ok(Plaintext::new());
+    }
+    let env: Envelope =
+        serde_json::from_str(&raw).map_err(|e| format!("vault: envelope parse failed: {}", e))?;
+    decrypt_envelope(cipher, &env)
+}
+
+fn zeroize_plaintext_values(state: &mut Plaintext) {
+    for value in state.values_mut() {
+        value.zeroize();
+    }
+}
+
+fn persist_plaintext_then_zeroize<T, F>(state: &mut Plaintext, persist: F) -> Result<T, String>
+where
+    F: FnOnce(&Plaintext) -> Result<T, String>,
+{
+    let result = persist(state);
+    zeroize_plaintext_values(state);
+    result
+}
+
 /// Encrypt a plaintext map under the given AEAD cipher. Generates a
 /// fresh 96-bit nonce via OsRng on every call.
 fn encrypt_envelope(cipher: &ChaCha20Poly1305, state: &Plaintext) -> Result<Envelope, String> {
-    let plaintext =
-        serde_json::to_vec(state).map_err(|e| format!("vault: plaintext serialize: {}", e))?;
+    let plaintext = Zeroizing::new(
+        serde_json::to_vec(state).map_err(|e| format!("vault: plaintext serialize: {}", e))?,
+    );
     let mut nonce_bytes = [0u8; 12];
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
-        .encrypt(nonce, plaintext.as_ref())
+        .encrypt(nonce, plaintext.as_slice())
         .map_err(|e| format!("vault: encrypt failed: {}", e))?;
     Ok(Envelope {
         version: VAULT_VERSION,
@@ -377,14 +419,16 @@ fn decrypt_envelope(cipher: &ChaCha20Poly1305, env: &Envelope) -> Result<Plainte
         .decode(env.ciphertext.as_bytes())
         .map_err(|e| format!("vault: ciphertext base64 invalid: {}", e))?;
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let pt = cipher
-        .decrypt(nonce, ct.as_ref())
-        .map_err(|_| "vault: decrypt failed (wrong key or tampered envelope)".to_string())?;
+    let pt = Zeroizing::new(
+        cipher
+            .decrypt(nonce, ct.as_ref())
+            .map_err(|_| "vault: decrypt failed (wrong key or tampered envelope)".to_string())?,
+    );
     if pt.is_empty() {
         return Ok(Plaintext::new());
     }
-    let map: Plaintext =
-        serde_json::from_slice(&pt).map_err(|e| format!("vault: plaintext parse failed: {}", e))?;
+    let map: Plaintext = serde_json::from_slice(pt.as_slice())
+        .map_err(|e| format!("vault: plaintext parse failed: {}", e))?;
     Ok(map)
 }
 
@@ -477,18 +521,20 @@ fn try_keyring_fetch_or_create() -> Result<[u8; 32], String> {
         .map_err(|e| format!("keyring::Entry::new failed: {}", e))?;
     match entry.get_password() {
         Ok(b64) => {
-            let bytes = B64
-                .decode(b64.as_bytes())
-                .map_err(|e| format!("keyring entry not base64: {}", e))?;
+            let b64 = Zeroizing::new(b64);
+            let bytes = Zeroizing::new(
+                B64.decode(b64.as_bytes())
+                    .map_err(|e| format!("keyring entry not base64: {}", e))?,
+            );
             if bytes.len() != 32 {
                 return Err(format!(
                     "keyring entry wrong length ({}, expected 32)",
                     bytes.len()
                 ));
             }
-            let mut out = [0u8; 32];
-            out.copy_from_slice(&bytes);
-            Ok(out)
+            let mut out = Zeroizing::new([0u8; 32]);
+            out.copy_from_slice(bytes.as_slice());
+            Ok(*out)
         }
         Err(keyring::Error::NoEntry) => {
             // Don't auto-create in the keyring if a fallback keyfile
@@ -501,9 +547,9 @@ fn try_keyring_fetch_or_create() -> Result<[u8; 32], String> {
                         .to_string(),
                 );
             }
-            let mut bytes = [0u8; 32];
-            rand::rngs::OsRng.fill_bytes(&mut bytes);
-            let encoded = B64.encode(bytes);
+            let mut bytes = Zeroizing::new([0u8; 32]);
+            rand::rngs::OsRng.fill_bytes(bytes.as_mut_slice());
+            let encoded = Zeroizing::new(B64.encode(bytes.as_slice()));
             entry
                 .set_password(&encoded)
                 .map_err(|e| format!("keyring set_password failed: {}", e))?;
@@ -511,7 +557,7 @@ fn try_keyring_fetch_or_create() -> Result<[u8; 32], String> {
                 "vault: generated new master key in OS keyring ({}::{})",
                 KEYRING_SERVICE, KEYRING_ACCOUNT
             );
-            Ok(bytes)
+            Ok(*bytes)
         }
         Err(e) => Err(format!("keyring fetch: {}", e)),
     }
@@ -521,28 +567,30 @@ fn try_keyring_fetch_or_create() -> Result<[u8; 32], String> {
 fn fetch_or_create_keyfile_master() -> Result<[u8; 32], String> {
     let path = keyfile_path()?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("vault keyfile: mkdir {} failed: {}", parent.display(), e))?;
+        ensure_private_dir(parent, "vault keyfile")?;
     }
     if path.exists() {
-        let raw = std::fs::read_to_string(&path)
-            .map_err(|e| format!("vault keyfile read {} failed: {}", path.display(), e))?;
-        let bytes = B64
-            .decode(raw.trim().as_bytes())
-            .map_err(|e| format!("vault keyfile not base64: {}", e))?;
+        let raw = Zeroizing::new(
+            std::fs::read_to_string(&path)
+                .map_err(|e| format!("vault keyfile read {} failed: {}", path.display(), e))?,
+        );
+        let bytes = Zeroizing::new(
+            B64.decode(raw.trim().as_bytes())
+                .map_err(|e| format!("vault keyfile not base64: {}", e))?,
+        );
         if bytes.len() != 32 {
             return Err(format!(
                 "vault keyfile wrong length ({}, expected 32)",
                 bytes.len()
             ));
         }
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&bytes);
-        return Ok(out);
+        let mut out = Zeroizing::new([0u8; 32]);
+        out.copy_from_slice(bytes.as_slice());
+        return Ok(*out);
     }
-    let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    let encoded = B64.encode(bytes);
+    let mut bytes = Zeroizing::new([0u8; 32]);
+    rand::rngs::OsRng.fill_bytes(bytes.as_mut_slice());
+    let encoded = Zeroizing::new(B64.encode(bytes.as_slice()));
     // Audit fix: atomic mode(0o600) open. The prior code did
     // std::fs::write (umask-derived perms, typically 0644) then
     // set_permissions(0o600) AFTER. Between those two syscalls another
@@ -575,7 +623,19 @@ fn fetch_or_create_keyfile_master() -> Result<[u8; 32], String> {
         "vault: generated new master key in fallback keyfile {} (keyring unavailable)",
         path.display()
     );
-    Ok(bytes)
+    Ok(*bytes)
+}
+
+fn ensure_private_dir(dir: &Path, label: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("{}: mkdir {} failed: {}", label, dir.display(), e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("{}: chmod 0700 {} failed: {}", label, dir.display(), e))?;
+    }
+    Ok(())
 }
 
 fn keyfile_path() -> Result<PathBuf, String> {
@@ -591,10 +651,80 @@ fn keyfile_path() -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    fn temp_vault_path(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!("shellx-vault-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path.join("vault.enc")
+    }
+
+    fn test_cipher() -> ChaCha20Poly1305 {
+        let mut key = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut key);
+        ChaCha20Poly1305::new(ChaChaKey::from_slice(&key))
+    }
+
+    fn write_test_envelope(
+        path: &Path,
+        cipher: &ChaCha20Poly1305,
+        state: &Plaintext,
+    ) -> Result<(), String> {
+        let env = encrypt_envelope(cipher, state)?;
+        let body = serde_json::to_string_pretty(&env)
+            .map_err(|e| format!("test envelope serialize failed: {}", e))?;
+        std::fs::write(path, body)
+            .map_err(|e| format!("test envelope write {} failed: {}", path.display(), e))
+    }
+
+    fn vault_for_test(path: PathBuf, cipher: ChaCha20Poly1305, _state: Plaintext) -> Vault {
+        Vault {
+            cipher,
+            io_lock: Mutex::new(()),
+            path,
+        }
+    }
+
+    #[tokio::test]
+    async fn get_reads_latest_envelope_instead_of_cached_plaintext() {
+        let path = temp_vault_path("latest-envelope");
+        let cipher = test_cipher();
+        let mut initial = Plaintext::new();
+        initial.insert("service/token".to_string(), "old".to_string());
+        write_test_envelope(&path, &cipher, &initial).unwrap();
+        let vault = vault_for_test(path.clone(), cipher, initial);
+
+        let mut updated = Plaintext::new();
+        updated.insert("service/token".to_string(), "new".to_string());
+        write_test_envelope(&path, &vault.cipher, &updated).unwrap();
+
+        let value = vault.get("service/token").await.unwrap();
+        assert_eq!(value.as_deref(), Some("new"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn persist_helper_zeroizes_plaintext_after_error() {
+        let mut state = Plaintext::new();
+        state.insert("service/token".to_string(), "secret-value".to_string());
+
+        let err = persist_plaintext_then_zeroize(&mut state, |_| -> Result<(), String> {
+            Err("persist failed".to_string())
+        })
+        .expect_err("persist error should propagate");
+
+        assert_eq!(err, "persist failed");
+        assert!(
+            state.values().all(|value| value.is_empty()),
+            "plaintext values must be zeroized even when persist fails"
+        );
+    }
+
     #[test]
     fn validate_key_accepts_namespaced() {
         assert!(validate_key("user.openai_api_key").is_ok());
-        assert!(validate_key("connections.megaclub.ssh_key_path").is_ok());
+        assert!(validate_key("connections.prod.ssh_key_path").is_ok());
         assert!(validate_key("a/b/c-d_e.f").is_ok());
     }
 

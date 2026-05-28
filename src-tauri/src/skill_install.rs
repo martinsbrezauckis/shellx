@@ -156,6 +156,15 @@ fn ensure_installed_at(path: &Path, body: &str) -> Result<bool, String> {
         }
     }
 
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "refusing skill install: target {} is a symbolic link",
+                path.display()
+            ));
+        }
+    }
+
     // Step 2: short-circuit when the existing body matches. Reading the
     // file is cheap (a few KB); a direct byte-equal sidesteps any hex
     // allocation noise in the happy path. We compare against `body`'s
@@ -309,6 +318,7 @@ pub fn ensure_grok_mcp_config_installed(exe_path: &Path) -> Result<bool, String>
     // Strip any prior managed block, regardless of position. Re-attach
     // ours at the end of the file.
     let stripped = strip_managed_block(&existing, BEGIN, END);
+    let stripped = strip_orphan_managed_sentinel_lines(&stripped, MCP_BEGIN_NEEDLE, MCP_END_NEEDLE);
     // Also strip ANY pre-existing `[mcp_servers.grok-shell-host]`
     // section even if it wasn't sentinel-wrapped. This handles the
     // "user (or me debugging) hand-edited config.toml first, then
@@ -382,10 +392,15 @@ fn strip_unmanaged_section_once(source: &str, header: &str) -> String {
     // Find the next section header AFTER ours.
     let after_section_start = idx + needle.len();
     let after = &source[after_section_start..];
-    let cut_end = match after.find("\n[") {
-        Some(rel) => after_section_start + rel + 1, // include the leading newline
-        None => source.len(),
-    };
+    let next_header = after.find("\n[").map(|rel| after_section_start + rel + 1);
+    let next_shellx_marker = after
+        .find("\n# shellX:")
+        .map(|rel| after_section_start + rel + 1);
+    let cut_end = [next_header, next_shellx_marker]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(source.len());
     let mut out = String::with_capacity(source.len());
     out.push_str(&source[..cut_start]);
     if cut_end < source.len() {
@@ -407,6 +422,22 @@ fn strip_managed_block(source: &str, begin: &str, end: &str) -> String {
         }
         out = next;
     }
+}
+
+fn strip_orphan_managed_sentinel_lines(
+    source: &str,
+    begin_needle: &str,
+    end_needle: &str,
+) -> String {
+    let mut out = String::new();
+    for line in source.lines() {
+        if line.contains(begin_needle) || line.contains(end_needle) {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.trim_end_matches('\n').to_string()
 }
 
 fn strip_managed_block_once(source: &str, begin: &str, end: &str) -> String {
@@ -679,8 +710,10 @@ file. User edits outside this managed block are preserved.
 - `run_terminal_command` and `monitor` are unavailable in shellX ACP
   sessions. Use `grok-shell-host__Agent`, then poll with
   `Agent_status`, `Agent_output`, or `Agent_poll_all`.
-- For code-changing `/goal` work, run a reviewer/check subagent before
-  `goal_complete` and record the result in `goal.md`.
+- For code-changing `/build` work, run a reviewer/check subagent before
+  `build_complete`; include an AI slop / wiring audit for unwired UI,
+  placeholders, fake success paths, missing bridges, config drift, and
+  release-debug leaks; record the result in `build.md`.
 - When `_meta.voiceReplyExpected` is true, answer in 1-3 plain spoken
   sentences: no markdown tables, code blocks, long paths, or URLs.
 - If MCP marketplace servers failed to connect, ask once: \"Want me to
@@ -1111,6 +1144,42 @@ pub fn workflow_skill_statuses() -> Vec<WorkflowSkillStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+
+    struct HomeEnvGuard {
+        old_home: Option<OsString>,
+        old_userprofile: Option<OsString>,
+    }
+
+    impl HomeEnvGuard {
+        fn set_home_only(home: &Path) -> Self {
+            let old_home = std::env::var_os("HOME");
+            let old_userprofile = std::env::var_os("USERPROFILE");
+            unsafe {
+                std::env::set_var("HOME", home);
+                std::env::remove_var("USERPROFILE");
+            }
+            Self {
+                old_home,
+                old_userprofile,
+            }
+        }
+    }
+
+    impl Drop for HomeEnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.old_home {
+                    Some(v) => std::env::set_var("HOME", v),
+                    None => std::env::remove_var("HOME"),
+                }
+                match &self.old_userprofile {
+                    Some(v) => std::env::set_var("USERPROFILE", v),
+                    None => std::env::remove_var("USERPROFILE"),
+                }
+            }
+        }
+    }
 
     #[test]
     fn bundled_body_non_empty() {
@@ -1247,6 +1316,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn ensure_installed_at_rejects_symlink_leaf() {
+        use std::os::unix::fs::symlink;
+
+        let unique = format!("shellx-host-test-symlink-{}", uuid_like());
+        let root = std::env::temp_dir().join(unique);
+        let target = root.join("skills").join("shellx-host").join("SKILL.md");
+        let outside = root.join("outside.md");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&outside, "outside").unwrap();
+        symlink(&outside, &target).unwrap();
+
+        let err = ensure_installed_at(&target, "# shellx-host\nfresh\n")
+            .expect_err("installer must not follow a symlink leaf");
+        assert!(err.contains("symlink"), "unexpected error: {err}");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "outside");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn strip_shellx_managed_blocks_removes_legacy_and_current_blocks() {
         let source = concat!(
@@ -1307,25 +1397,10 @@ mod tests {
         )
         .unwrap();
 
-        let old_home = std::env::var_os("HOME");
-        let old_userprofile = std::env::var_os("USERPROFILE");
-        unsafe {
-            std::env::set_var("HOME", &root);
-            std::env::remove_var("USERPROFILE");
-        }
+        let _env_lock = crate::test_env_lock();
+        let _home_guard = HomeEnvGuard::set_home_only(&root);
 
         let changed = ensure_grok_mcp_config_installed(Path::new("/new/shellx")).expect("rewrite");
-
-        unsafe {
-            match old_home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match old_userprofile {
-                Some(v) => std::env::set_var("USERPROFILE", v),
-                None => std::env::remove_var("USERPROFILE"),
-            }
-        }
 
         assert!(changed, "new exe path should rewrite the managed block");
         let rewritten = std::fs::read_to_string(&config).unwrap();
@@ -1340,6 +1415,40 @@ mod tests {
         assert!(rewritten.contains("[mcp_servers.keep]"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn strip_unmanaged_section_preserves_following_shellx_sentinel() {
+        let source = concat!(
+            "[mcp_servers.grok-shell-host]\n",
+            "command = \"/old/shellx\"\n",
+            "# shellX:managed-mcp-marketplace:context7 BEGIN - do not edit by hand\n",
+            "[mcp_servers.shellx-mp-context7]\n",
+            "command = \"cmd.exe\"\n",
+        );
+        let stripped = strip_unmanaged_section(source, "mcp_servers.grok-shell-host");
+
+        assert!(!stripped.contains("/old/shellx"));
+        assert!(stripped.contains("# shellX:managed-mcp-marketplace:context7 BEGIN"));
+        assert!(stripped.contains("[mcp_servers.shellx-mp-context7]"));
+    }
+
+    #[test]
+    fn orphan_host_mcp_sentinel_lines_are_removed() {
+        let source = concat!(
+            "[ui]\n",
+            "permission_mode = \"always-approve\"\n",
+            "# shellX:managed-mcp:grok-shell-host END\n",
+            "# shellX:managed-mcp-marketplace:context7 BEGIN - do not edit by hand\n",
+            "[mcp_servers.shellx-mp-context7]\n",
+            "command = \"cmd.exe\"\n",
+        );
+        let stripped =
+            strip_orphan_managed_sentinel_lines(source, MCP_BEGIN_NEEDLE, MCP_END_NEEDLE);
+
+        assert!(!stripped.contains("grok-shell-host END"));
+        assert!(stripped.contains("# shellX:managed-mcp-marketplace:context7 BEGIN"));
+        assert!(stripped.contains("[mcp_servers.shellx-mp-context7]"));
     }
 
     #[test]

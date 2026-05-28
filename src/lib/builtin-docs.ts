@@ -30,101 +30,106 @@ export interface BuiltinDoc {
   body: string;
 }
 
-const FEATURES = `# shellX — what it does
+const FEATURES = `# shellX features
 
-**shellX** is a desktop client that hosts xAI's
-[Grok Build CLI](https://x.ai/grok) (or any agent that speaks
-the Agent Client Protocol). Tabs, vault, voice, file preview, MCP
-marketplace, session tool health, autonomous goal mode — wrapped
-around a real agent.
+shellX is a desktop client for Grok Build and other ACP-compatible
+agents. It combines chat, projects, tools, previews, Git, and local
+automation in one app.
 
 ---
 
-## Multi-tab chat
+## Chat and sessions
 
-- **One tab = one agent process.** Each tab gets its own working
-  directory, transport, autonomy mode, and event history.
-- **Voice input.** Hold the 🎤 button to dictate; transcribed via xAI's
-  Grok STT and inserted at the composer cursor.
-- **Voice chat round-trip.** Toggle 🎧 to have grok reply in speech;
-  click ✕ next to the mic to switch it off.
-- **Smart file links.** Markdown links to local files open in the
-  built-in preview; external links open in your default browser.
-- **Generated media tabs.** Images and videos generated during a
-  session are collected into dedicated preview grids.
-- **Inline tool output.** File reads, fetches, terminal commands render
-  inside the chat card instead of getting buried in args.
-- **Grok Imagine media.** Image and video generations from grok-build
-  render inline when your Grok account exposes Imagine features.
-- **Copy on selection.** Select text → release → it's on the clipboard.
+- Multi-tab agent chat with one working folder and connection per tab.
+- Persistent chat history with search and archived past sessions.
+- Markdown file links open in shellX; external links open in the browser.
+- Tool output, diffs, terminals, generated images, and generated videos
+  render inside the conversation.
+- Select text and release the mouse to copy it.
 
-## Three transports, one UI
+## Connections
 
-- **Local Windows** — grok runs as a child process. Default, no setup.
-- **WSL** — grok runs inside your WSL distro. Files on the Linux side
-  are read through UNC paths automatically.
-- **SSH** — grok runs on a remote host you choose. shellX tunnels its
-  host-MCP toolset to the remote so the agent has the same toolbox it
-  has locally. cwd is auto-created if it doesn't exist.
+- Local Windows sessions.
+- WSL sessions with Linux path handling.
+- SSH sessions with the shellX host toolset tunneled to the remote
+  environment.
 
-Switch transports per tab via the connection pill in the composer
-footer.
+Switch connection per tab from the composer footer.
 
-## /goal — autonomous mode
+## Build Mode
 
-\`/goal "build a sieve of Eratosthenes in Python with tests"\` puts the
-tab into autonomous mode. shellX:
+\`/build "make this project production-ready"\` starts a long-running
+build workflow. shellX keeps the scratchboard, receipts, checkpoints,
+review/verifier gates, and completion state visible in the Plan tab.
 
-1. Writes a scratchboard (\`goal.md\`) in the working directory.
-2. Lets grok plan, work, and verify across multiple turns.
-3. Requires a reviewer/check subagent gate for code changes when available.
-4. Auto-continues each turn until grok calls \`goal_complete\`.
+Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
 
-Use \`/pause\`, \`/resume\`, \`/stop\` to control it. The right rail's
-**Plan** tab shows the live scratchboard and a checklist of phases.
+## Work Preview
 
-## MCP marketplace
+- Run generated static HTML, Node web apps, and Expo web apps from the
+  Preview tab.
+- Preview servers bind to loopback only.
+- Preview logs stay in the right rail.
+- Preview Doctor checks HTTP status, process logs, browser errors, and
+  screenshots.
+- Agents should start preview gates with host MCP \`preview_start\`, then
+  run \`preview_diagnose\`; shell subagent dev servers are not accepted as
+  Work Preview evidence.
+- Ask Fix sends the preview failure context back to the active agent.
 
-The Plugins button lists curated MCP servers (Fetch, Git, Memory,
-Playwright, Context7, Stripe, Sentry, Cloudflare, Supabase, Vercel,
-GitHub, ...). Use it for global connector settings and API keys.
-After a tab connects, the right rail's **Tools** tab shows what is
-actually ready in that environment and where a missing tool needs to
-be installed.
+## Tools and environment health
 
-## Search capabilities
+- The Tools tab shows MCP health for the active environment.
+- Grok environment diagnostics show MCP doctor results, \`grok inspect\`
+  counts, trace availability, and Preview setup checks.
+- Search capability status shows when Grok Web Search, Web Fetch, or
+  shellX X Search are available.
+- The Plugins button manages curated MCP connectors and required keys.
 
-When the connected Grok build exposes them, **Tools** shows Web
-Search, Web Fetch, and shellX X Search capability status. Ask grok to
-use those tools from chat; shellX keeps the result links clickable.
+## Files, Git, and Trace
 
-## File preview + workspace
+- Files tab browses the active project folder.
+- File preview supports markdown, code/config files, images, video, and
+  PDF.
+- Git tab shows status, diffs, local checkpoints, and worktree creation.
+- GitHub picker can surface PRs and issues from connected repositories.
+- Trace opens file/search/write/delete activity and generated media
+  references when the session exposes enough detail.
+- Download all creates a workspace zip for hand-off or backup.
 
-- Click any file link in chat -> preview opens (markdown,
-  syntax-highlighted code/config, image, video, PDF).
-- HTML opens as code first. Use the preview toggle only when you want
-  a sandboxed static render.
-- Unsupported binary files show a clear unsupported-preview message.
-- The right rail's **Files** tab shows the active tab's cwd with
-  drag-and-drop attach.
-- **Download all** zips the workspace for backup or hand-off.
+## Vault and host tools
 
-## Outside connectors
+- Encrypted local vault for API keys and tokens.
+- Agent access to approved host tools: filesystem, process management,
+  screenshots, vision, network fetch, memory, and subagents.
+- Secrets retrieved from the vault are not echoed in chat.
 
-Settings -> Connectors stores Telegram bot or local relay credentials,
-allowed sender lists, and target-session rules. Use credential tests
-before enabling a connector; keep dispatch review-first until you
-trust the channel.
+## Voice and media
 
-## Encrypted vault
+- Voice input through Grok STT.
+- Optional voice replies when your account supports the needed audio
+  path.
+- Grok Imagine images and videos render inline when available on your
+  Grok account.
 
-Settings → Vault stores API keys, tokens, and shared secrets locally:
+## Connectors
 
-- chacha20poly1305 cipher; master key kept in your OS keyring.
-- Values are write-only from the UI — the agent reads them via
-  \`secret_get\` but they never echo to chat or logs.
-- xAI OAuth (from \`grok login\`) is the default credential for STT and
-  vision; you don't need a separate API key for those.
+- Telegram direct messages can route to the connector inbox or a target
+  shellX session when allowlisted.
+- Telegram Session Chat can send Grok text replies and referenced image
+  outputs back to the chat.
+- Discord bot messages can be received into the connector inbox.
+- Connector setup includes credential tests, allowlists, target session
+  rules, and inbound simulation.
+
+## Tasks and API
+
+- Background tasks show CPU, memory, latest output, and stop controls.
+- The shellXagent API exposes app state, prompts, screenshots, previews,
+  settings, vault actions, build state, and diagnostics over loopback.
+- API access uses the local bearer token stored under \`~/.shellx\`.
+- The updater checks signed release manifests and offers in-app updates
+  when a published release is available.
 
 ## Skills / slash commands
 
@@ -133,19 +138,6 @@ Custom skills under \`~/.grok/skills/\` are loaded on session start.
 shellX also installs five compact workflow skills for common coding
 loops: build an app, fix a bug, polish UI, review a repo, and prepare
 a release.
-
-## Tasks rail
-
-Background subagents launched via \`Agent\` show up in the right
-rail's **Tasks** tab: live CPU/RAM, last output, and a kill button.
-Scoped to the active tab.
-
-## shellXagent HTTP API
-
-Every UI surface is also reachable over \`127.0.0.1\` as a typed JSON
-API. Useful for local scripting and AI-driven UI tests on the same
-machine. Loopback only — other machines on the network cannot reach
-it. Token in **Settings → shellXagent**.
 
 ---
 
@@ -180,44 +172,57 @@ const README = `# shellX — quick start
 ## Install
 
 1. Download the latest installer from
-   [github.com/MartinsBrezauckis/shellx/releases](https://github.com/MartinsBrezauckis/shellx/releases).
-2. Run the installer and launch shellX. Updates are delivered from
-   GitHub Releases.
+   [github.com/martinsbrezauckis/shellx/releases](https://github.com/martinsbrezauckis/shellx/releases).
+2. Run the installer.
 3. Launch shellX from the Start Menu.
 
-## First connection
+## Sign in to Grok
 
 shellX talks to xAI's Grok Build CLI. You need either:
 
 - **\`grok login\`** in a terminal once — stores an OAuth token at
   \`~/.grok/auth.json\` that shellX picks up automatically. *(Recommended.)*
-- **Or** an xAI API key pasted into **Settings → Vault**.
+- **Or** an xAI API key stored in **Settings -> Vault**.
 
 Voice (STT) and vision use the OAuth token by default, so most users
 never touch the API-key path.
 
-## Your first prompt
+## First session
 
 1. The first tab opens to your home folder. Click the 📁 pill in the
    composer to pick a project folder.
-2. Type a prompt and press **Enter**.
-3. grok streams its response into the chat. File writes show as diffs,
-   image / video outputs render inline, terminal commands appear as
-   live PTY blocks.
+2. Choose Local, WSL, or SSH from the connection pill.
+3. Press **Connect**.
+4. Type a prompt and press **Enter**.
 
-## Autonomous mode (/goal)
+grok streams its response into the chat. File writes show as diffs,
+image / video outputs render inline, terminal commands appear as live
+PTY blocks.
+
+## Build Mode (/build)
 
 For multi-turn tasks where you want grok to keep going without being
 re-prompted, type:
 
 \`\`\`
-/goal "build a TODO CLI in Rust with tests"
+/build "build a TODO CLI in Rust with tests"
 \`\`\`
 
-shellX writes a scratchboard, lets grok plan + work + verify, requires
-a reviewer/check subagent gate for code changes when available, and
-auto-continues each turn until grok calls \`goal_complete\`. You can
-\`/pause\` and \`/resume\` at any time.
+shellX writes a scoped scratchboard, lets grok plan + work + verify,
+requires checkpoint/reviewer/verification receipts for code changes,
+and auto-continues each turn until grok calls \`build_complete\`. For
+UI/web/app work, Preview Doctor can feed render/log errors back to grok.
+You can \`/pause\` and \`/resume\` at any time.
+
+## Preview generated apps
+
+Open the right rail's **Preview** tab:
+
+- Static HTML runs directly.
+- Node apps need dependencies installed first.
+- Expo web apps need \`react-dom\` and \`react-native-web\`.
+- **Tools -> Grok environment** shows missing preview setup and the
+  suggested command.
 
 ## Connecting to WSL or SSH
 
@@ -232,22 +237,25 @@ Open **Settings → Connections** and add a connection preset:
 The connection pill in the composer footer lets you switch a tab
 between presets. Each tab can have a different transport.
 
-## Adding MCPs
+## Adding tools
 
 Open **Plugins** from the header to enable global connectors and add
 any required API keys. After a session connects, open the right rail's
 **Tools** tab for environment-specific status and install hints.
 
-## Tips
+## Telegram and Discord
 
-- The right rail's **Plan** tab shows whether a \`/goal\` is active and
-  what the scratchboard says.
-- The right rail's **Tools** tab shows what the active environment can
-  actually use.
-- Select text in chat — it auto-copies on mouse release.
-- The 🎤 button lights up red while recording. Pressing **Send** while
-  hot stops recording, transcribes, and submits in one click.
-- Tabs persist across restarts. Past sessions live in the left rail.
+Open **Settings -> Connectors** to add bot tokens and allowlisted sender
+ids. Telegram can reply back to an allowlisted direct chat. Discord
+messages currently land in the connector inbox.
+
+## Useful panels
+
+- **Plan**: active \`/build\` scratchboard and receipts.
+- **Tools**: MCP health, Grok environment health, and Preview setup.
+- **Git**: status, diffs, checkpoints, and worktrees.
+- **Preview**: generated web/app preview and logs.
+- **Files**: active project browser.
 
 ---
 
@@ -259,8 +267,9 @@ Run \`grok --version\` in a terminal. If it's missing, install via
 
 **Voice button is grey.**
 You need either an OAuth token (\`grok login\` once) or an xAI API key
-in the vault. **Settings → Vault** shows which credential source is
-active.
+in the vault. For shell-launched developer sessions, current Grok docs
+prefer \`XAI_API_KEY\`; \`GROK_CODE_XAI_API_KEY\` is legacy. **Settings
+→ Vault** shows which credential source is active.
 
 **File preview says "outside allowed scope".**
 The file must be under (a) the active session's cwd, (b) your
@@ -271,11 +280,21 @@ file or change the tab's cwd via the 📁 pill.
 Click the row for the install hint — usually a small \`npm install -g\`
 or platform package for the launcher binary.
 
+**Work Preview exits immediately.**
+Open **Tools → Grok environment** and check Preview setup. If an Expo
+app says web dependencies are missing, run:
+
+\`\`\`
+npx expo install react-dom react-native-web
+\`\`\`
+
+Then reopen **Preview** and press **Retry**.
+
 ---
 
 ## Help
 
-- 🐛 Bugs: [github.com/MartinsBrezauckis/shellx/issues](https://github.com/MartinsBrezauckis/shellx/issues)
+- 🐛 Bugs: [github.com/martinsbrezauckis/shellx/issues](https://github.com/martinsbrezauckis/shellx/issues)
 - 📧 Author: martins.brezauckis@gmail.com
 `;
 

@@ -55,7 +55,7 @@ let pendingBaseUrlFetch: Promise<string> | null = null;
 let cachedPort: number | null = null;
 
 /** exposes the resolved debug-api port for callers that
- * want to display it (e.g. footer ws:// URL). Returns the cached
+ * want to display it (e.g. footer debug endpoint). Returns the cached
  * value if `getBaseUrl` has run; otherwise DEFAULT_PORT. */
 export function getDebugPortSync(): number {
   return cachedPort ?? DEFAULT_PORT;

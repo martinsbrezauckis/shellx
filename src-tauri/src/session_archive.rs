@@ -197,6 +197,28 @@ fn validate_archive_save_path(save_path: &str, is_ssh: bool) -> Result<String, S
     Ok(trimmed.to_string())
 }
 
+fn archive_entry_is_sensitive(rel: &Path) -> bool {
+    let normalized = rel
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    let file_name = rel
+        .file_name()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    normalized == ".git/config"
+        || normalized.ends_with("/.git/config")
+        || normalized == ".netrc"
+        || normalized.ends_with("/.netrc")
+        || normalized.starts_with(".ssh/")
+        || normalized.contains("/.ssh/")
+        || file_name.starts_with(".env")
+        || file_name.starts_with("id_rsa")
+        || file_name.starts_with("id_ed25519")
+        || file_name.ends_with(".pem")
+        || file_name.ends_with(".token")
+}
+
 /// Orchestration-API entry point. Same
 /// body as the Tauri command but takes `Arc<SessionRegistry>` directly
 /// so the shellXagent HTTP route at `POST /sessions/:tabId/archive`
@@ -387,6 +409,11 @@ pub async fn archive_session_artifacts_inner(
                     }
                 }
                 let rel_str = rel.to_string_lossy().replace('\\', "/");
+                if archive_entry_is_sensitive(rel) {
+                    warn!("archive: skip sensitive entry {}", rel_str);
+                    skipped += 1;
+                    continue;
+                }
                 let zip_path = format!("{}/{}", prefix, rel_str);
 
                 let mut f = match File::open(abs) {
@@ -567,13 +594,21 @@ async fn archive_ssh_session(
     // Quote single-quote in cwd for the shell `case` test.
     let cwd_for_test = cwd.replace('\'', "'\\''");
     let cwd_quoted = crate::acp::shell_quote_for_remote(cwd);
+    const REMOTE_TAR_SECRET_EXCLUDES: &str = "\
+        --exclude='.env' --exclude='.env*' \
+        --exclude='.git/config' --exclude='*/.git/config' \
+        --exclude='.ssh/*' --exclude='*/.ssh/*' \
+        --exclude='.netrc' --exclude='*/.netrc' \
+        --exclude='id_rsa*' --exclude='id_ed25519*' \
+        --exclude='*.pem' --exclude='*.token'";
     let remote_cmd = format!(
         "if [ \"$HOME\" = '{cwd_t}' ] || [ \"$(realpath -- '{cwd_t}' 2>/dev/null)\" = \"$HOME\" ]; then \
-            tar --ignore-failed-read -czf - -C \"$HOME\" {scratch} 2>/dev/null; \
+            tar --ignore-failed-read {excludes} -czf - -C \"$HOME\" {scratch} 2>/dev/null; \
          else \
-            tar --ignore-failed-read -czf - -C \"$HOME\" {scratch} {cwd} 2>/dev/null; \
+            tar --ignore-failed-read {excludes} -czf - -C \"$HOME\" {scratch} {cwd} 2>/dev/null; \
          fi",
         cwd_t = cwd_for_test,
+        excludes = REMOTE_TAR_SECRET_EXCLUDES,
         scratch = scratch_quoted,
         cwd = cwd_quoted,
     );
@@ -731,5 +766,26 @@ mod tests {
             "error should explain archive extension policy, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn archive_entry_secret_denylist_covers_common_credentials() {
+        for rel in [
+            ".env",
+            ".env.local",
+            ".git/config",
+            ".ssh/id_ed25519",
+            "nested/.ssh/id_rsa",
+            "deploy.pem",
+            "api.token",
+            ".netrc",
+        ] {
+            assert!(
+                archive_entry_is_sensitive(Path::new(rel)),
+                "archive should skip sensitive entry: {rel}"
+            );
+        }
+        assert!(!archive_entry_is_sensitive(Path::new("src/main.rs")));
+        assert!(!archive_entry_is_sensitive(Path::new("docs/env-notes.md")));
     }
 }

@@ -24,7 +24,11 @@ export function classifyUpdateError(message: string | null | undefined): UpdateE
   if (/signature|verification|verify|corrupt/.test(text)) return "signature";
   if (/network|enotfound|getaddrinfo|dns|timeout|timed\s*out|connect.*refused|fetch.*failed/.test(text)) return "network";
   if (/download|asset|install/.test(text)) return "download";
-  if (/404|\bnot\s+found\b|no\s*update|release.*missing/.test(text)) return "no-release";
+  if (
+    /404|\bnot\s+found\b|no\s*update|release.*missing|fallback platforms|platforms.*object|none.*platforms.*found|darwin-aarch64/.test(
+      text,
+    )
+  ) return "no-release";
   if (/valid release json|latest\.json|manifest|json|parse/.test(text)) return "manifest";
   return "unknown";
 }

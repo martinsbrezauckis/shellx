@@ -28,6 +28,12 @@ evidence/
 # under skills/ and other shipped docs live under docs/.
 .project/
 
+# Internal multi-agent planning notes and lab-only utilities stay out of
+# the public release tree.
+docs/superpowers/
+docs/health-agent.md
+scripts/health-agent.ts
+
 # Dev-history artifacts were moved out of the release tree during
 # public-push cleanup. Preserved on disk, never re-added.
 # If anyone tries to commit these paths again, .gitignore wins.

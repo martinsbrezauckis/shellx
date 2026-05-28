@@ -205,8 +205,11 @@ pub fn approval_kickoff_prompt(active: Option<&GoalState>) -> String {
          goal.md. For non-trivial code changes, prefer an `implementer` \
          Agent for the work. For code-changing goals, complete the \
          Review / verification phase before Complete: dispatch at least \
-         one `reviewer` Agent after implementation, use `security-auditor` \
-         only for security-sensitive changes, record findings in goal.md, \
+         one `reviewer` Agent after implementation, include an AI slop / \
+         wiring audit for unwired controls, placeholders, fake success paths, \
+         missing frontend/backend bridges, config/schema drift, and \
+         release-debug leaks, use `security-auditor` only for \
+         security-sensitive changes, record findings in goal.md, \
          and fix or explicitly document each finding. If a required Agent \
          cannot be dispatched, HALT and ask the user instead of substituting \
          self-review. Only skip the Agent pass when the goal is not a code \
@@ -304,6 +307,7 @@ impl GoalOrchestrator {
             - [ ] <step>\n\n\
  ## Phase N-1 — Review / verification\n\
             - [ ] If this goal changes code, act as manager: dispatch at least one `reviewer` Agent after implementation; use `security-auditor` only for security-sensitive changes; if no Agent/subagent tool is available or this is not a code goal, record why and perform a direct self-review\n\
+            - [ ] Reviewer must run an AI slop / wiring audit: unwired UI controls, placeholder/mock code, fake success paths, missing frontend/backend bridges, config/schema drift, and release-debug leaks\n\
             - [ ] Record reviewer findings, implementer/fix responses, and verification evidence in `goal.md`\n\n\
  ## Phase N — Complete\n\
             - [ ] Verify all earlier phases finished\n\
@@ -320,7 +324,10 @@ impl GoalOrchestrator {
             with a focused task. Do not invoke Grok Build's bundled `/implement`, `/review`, \
             or `/check` commands from ACP mode; use the Agent tool directly. \
             The review task should ask for bugs, missing tests, security \
-            issues when relevant, and mismatches with the approved objective. \
+            issues when relevant, mismatches with the approved objective, \
+            and AI slop/wiring failures: unwired controls, placeholders, \
+            fake success paths, missing frontend/backend bridges, \
+            config/schema drift, and release-debug leaks. \
             Record reviewer results, implementer/fix responses, and evidence \
             in `goal.md`. If a required Agent/subagent tool is available but \
             dispatch fails, HALT and ask the user instead of substituting \
@@ -1860,7 +1867,7 @@ Completion audit:\n\
 Before deciding the goal is achieved, treat completion as unproven and verify it against the actual current state:\n\
 - For every Phase in the scratchboard, every \"- [ ]\" sub-stage must be flipped to \"- [x]\" with concrete evidence (a real file created, a real test passing, real output captured).\n\
 - For non-trivial code work, prefer dispatching an `implementer` Agent with a scoped task and record its result in the scratchboard.\n\
-- For code-changing goals, the scratchboard must include a completed Review / verification phase before Complete: dispatch at least one `reviewer` Agent when `Agent` is available, use `security-auditor` only for security-sensitive changes, record findings, and fix or explicitly document each finding. For test coverage or plan-alignment checks, use `general-purpose` with a focused task. If a required Agent/subagent tool exists but dispatch fails, halt and ask the user instead of substituting self-review. If no Agent/subagent tool exists or the goal is not a code change, record that reason and perform a direct self-review.\n\
+- For code-changing goals, the scratchboard must include a completed Review / verification phase before Complete: dispatch at least one `reviewer` Agent when `Agent` is available, include an AI slop / wiring audit for unwired controls, placeholders, fake success paths, missing frontend/backend bridges, config/schema drift, and release-debug leaks, use `security-auditor` only for security-sensitive changes, record findings, and fix or explicitly document each finding. For test coverage or plan-alignment checks, use `general-purpose` with a focused task. If a required Agent/subagent tool exists but dispatch fails, halt and ask the user instead of substituting self-review. If no Agent/subagent tool exists or the goal is not a code change, record that reason and perform a direct self-review.\n\
 - Final verification must cite real evidence from this session: command stdout/stderr, test output, running-app behavior, or a screenshot/tool result. Phrases like \"tested via code paths\", \"verified by inspection\", or \"reviewed logically\" do not count as final evidence.\n\
 - Treat uncertain or indirect evidence as not achieved.\n\
 - The audit must prove completion, not merely fail to find obvious remaining work.\n\
@@ -1879,7 +1886,7 @@ Current scratchboard slice:\n\
 {board_slice}\n\
 ```\n\
 \n\
-Action now: inspect the next unchecked sub-stage and manage it to completion. Decide whether to do a tiny step directly or dispatch an `implementer` Agent for scoped code work; when review is due, dispatch a `reviewer` Agent and record findings/fixes/evidence in `goal.md`. If implementation appears finished but a code-changing goal lacks the reviewer Agent evidence above, add or reopen a Review / verification phase and complete it before the Complete phase. Update the scratchboard (mark sub-stages with `- [x]`, advance phase status). When ALL phases show `status: DONE` and every `- [ ]` is flipped — INCLUDING after the actual work and required review gate — you MUST call the `goal_complete` MCP tool with a one-paragraph summary as your final action of that turn. The tool re-reads the scratchboard and accepts only if it actually proves complete, then shellX updates the top-level completion status. Saying \"all steps completed successfully\" in chat is NOT a completion signal — shellX will keep injecting continuation prompts asking you what's next until you call `goal_complete`. You cannot pause this goal — only the user can.\n\
+Action now: inspect the next unchecked sub-stage and manage it to completion. Decide whether to do a tiny step directly or dispatch an `implementer` Agent for scoped code work; when review is due, dispatch a `reviewer` Agent for code review plus AI slop/wiring audit and record findings/fixes/evidence in `goal.md`. If implementation appears finished but a code-changing goal lacks the reviewer Agent evidence above, add or reopen a Review / verification phase and complete it before the Complete phase. Update the scratchboard (mark sub-stages with `- [x]`, advance phase status). When ALL phases show `status: DONE` and every `- [ ]` is flipped — INCLUDING after the actual work and required review gate — you MUST call the `goal_complete` MCP tool with a one-paragraph summary as your final action of that turn. The tool re-reads the scratchboard and accepts only if it actually proves complete, then shellX updates the top-level completion status. Saying \"all steps completed successfully\" in chat is NOT a completion signal — shellX will keep injecting continuation prompts asking you what's next until you call `goal_complete`. You cannot pause this goal — only the user can.\n\
 </goal_context>",
         objective = objective,
         board_path = scratchboard_path.display(),
@@ -1961,6 +1968,8 @@ status: DONE
         assert!(text.contains("Do not invoke Grok Build's bundled"));
         assert!(text.contains("HALT and ask the user"));
         assert!(text.contains("Final verification must cite real evidence"));
+        assert!(text.contains("AI slop / wiring audit"));
+        assert!(text.contains("fake success paths"));
         assert!(text.contains("Only skip the Agent pass"));
         assert!(text.contains("goal_complete"));
     }
@@ -2015,6 +2024,7 @@ Status: AWAITING_APPROVAL
     fn approval_kickoff_does_not_ask_agent_to_rewrite_top_status() {
         let prompt = approval_kickoff_prompt(None);
         assert!(prompt.contains("shellX has already changed"));
+        assert!(prompt.contains("AI slop /"));
         assert!(!prompt.contains("First change the top-level"));
     }
 

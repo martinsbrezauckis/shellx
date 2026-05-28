@@ -223,8 +223,7 @@ export function FindPopover({
  * vertically, dangerouslySetInnerHTML on a sanitized subset (only
  * <mark> tags allowed via a simple escape-then-restore pass) so the
  * highlights survive without exposing the preview to general HTML
- * injection (the snippet content is operator-trusted but defense in
- * depth is cheap). */
+ * injection. */
   interface SnippetHit { tMs: number; around: string }
   const [previewBody, setPreviewBody] = useState<string>("");
   const [previewHits, setPreviewHits] = useState<SnippetHit[]>([]);
@@ -255,7 +254,7 @@ export function FindPopover({
         `Status:    ${h.status}\n` +
         `Age:       ${h.ageLabel}\n` +
         `Transport: ${h.transport}\n\n` +
-        `(Inline event preview not wired yet — click "Open in new tab" to view full history.)`,
+        `Open the chat to view full history.`,
       );
       return;
     }

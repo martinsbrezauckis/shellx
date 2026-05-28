@@ -23,9 +23,8 @@
  * - tabId for grouping rows by tab in the UI
  *
  * Controls per row
- * - Pause → invoke task_pause (SIGSTOP on Unix; Windows surfaces
- * an error popup — SuspendThread is not wired yet).
- * - Resume → invoke task_resume (SIGCONT on Unix; same Windows note).
+ * - Pause → invoke task_pause (SIGSTOP on Unix; NtSuspendProcess on Windows).
+ * - Resume → invoke task_resume (SIGCONT on Unix; NtResumeProcess on Windows).
  * - Kill → invoke task_kill (SIGTERM, then SIGKILL after 3s server-
  * side). Returns immediately; the renderer doesn't have
  * to wait the 3s.

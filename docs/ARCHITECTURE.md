@@ -167,9 +167,11 @@ and each one enforces its own contract:
   so grok can self-introspect (#302). Reqwest client; redirects
   follow default policy (sensitive headers stripped on cross-
   host).
-- **`vision_describe`:** xAI Grok-2-Vision, key from env →
-  vault → pass-store, 20 MiB image cap. POSIX paths auto-translate
-  to `\\wsl$\<distro>\…` on Windows.
+- **`vision_describe`:** xAI Grok multimodal vision. Uses Grok OAuth
+  from `~/.grok/auth.json` by default, then falls back to
+  `GROK_VISION_API_KEY` / `XAI_API_KEY`, vault `xai/api-key`, and
+  pass-store keys. 20 MiB image cap. POSIX paths auto-translate to
+  `\\wsl$\<distro>\…` on Windows.
 - **`Agent` (subagent fan-out):** `subagent::spawn_subagent` with
   ledger_dir path validation, 60-min timeout clamp, 6-concurrent
   cap (`SHELLX_MAX_SUBAGENTS` override), credential-shaped task
@@ -196,21 +198,21 @@ with `.and_then`/`.unwrap_or`).
   upstream in grok-build 0.1.211). No host PTY is ever spawned
   in response to a grok request. This is the load-bearing
   safety property; a regression here would let grok run arbitrary
-  shell. See `acp.rs:2604-2632`.
+  shell. See `acp.rs::handle_terminal_create`.
 - **Cwd/paths.** Every path arriving over ACP goes through
   `validate_fs_path` on the way to `fs_*` tools.
 
 **Trust we DO give the operator:** SSH host/port/key_vault_ref/
 remote_grok_path come from `connections.json`, written by the user
-via the UI. We don't quote `remote_grok_path` on the SSH command
-line because it IS operator input — documented at `acp.rs:3846-3850`.
+via the UI. SSH destinations are validated with
+`acp.rs::validate_ssh_destination_arg`; command fragments use
+`acp.rs::shell_quote_for_remote`, with operator-owned connection fields
+kept inside that connection preset boundary.
 
 ## Where to read next
 
 - [`docs/API.md`](API.md) — the shellXagent JSON-RPC over HTTP+WS
   endpoint inventory + curl recipes.
-- [`docs/KASPERSKY.md`](KASPERSKY.md) — AV exclusions needed on
-  Windows so Kaspersky doesn't silently delete `grok.exe`.
 - [`docs/THREAT_MODEL.md`](THREAT_MODEL.md) — single-user posture +
   trust surface enumeration.
 

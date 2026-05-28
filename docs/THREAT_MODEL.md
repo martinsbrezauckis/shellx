@@ -51,7 +51,7 @@ transport. Local Windows redirects to `grok-shell-host__Agent`
 (supervised subagent). WSL/SSH return a user-facing error. **No host
 PTY is ever spawned in response to a grok request.** This is
 load-bearing — a regression here would let grok run arbitrary shell.
-See `acp.rs:2604-2632`.
+See `acp.rs::handle_terminal_create`.
 
 ### T3. Agent exfiltrates host credentials
 grok could read `~/.aws/credentials`, `~/.ssh/id_*`, `~/.password-store/`,
@@ -85,8 +85,8 @@ written when nothing changed.
   `~/.shellx/sessions/<sid>.jsonl`. The session log is the source of
   truth for what grok actually did, separate from what grok claimed
   in chat.
-- The Goal-orchestrator (`goal_complete()` MCP gate) validates the
-  scratchboard before accepting "GOAL_COMPLETE" — refuses if any
+- Build Mode (`build_complete()` MCP gate) validates the
+  scratchboard before accepting completion — refuses if any
   phase still has unchecked sub-stages.
 - Tasks rail (right panel) shows real subagent state from the
   `host_subagents` registry, not from grok's narrative.
@@ -166,8 +166,9 @@ or burn xAI tokens unnoticed.
 - Token-counter per session displayed in the chip rail.
 - Idle session timeout — grok session lives as long as the tab is
   open; closing the tab fires `drop_tab_session`.
-- Goal-orchestrator adds wallclock cap (6h default) for
-  `/goal` mode.
+- Build Mode does not kill active work when a wait budget expires;
+  long-running subagents must still be observable through receipts,
+  status polling, and user-visible task state.
 
 ## Out-of-scope threats
 

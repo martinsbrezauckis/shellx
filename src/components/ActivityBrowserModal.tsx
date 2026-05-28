@@ -777,7 +777,7 @@ function BuildReceiptLedger({ receipts }: { receipts: BuildReceipt[] }): JSX.Ele
     <div className="build-receipts activity-build-receipts">
       {receipts.slice().reverse().map((receipt) => (
         <div key={receipt.receiptId} className={`build-receipt build-receipt-${receipt.confidence}`} title={receipt.summary}>
-          <ShellIcon name="activity" size={12} />
+          <ShellIcon name="trace" size={12} />
           <span className="build-receipt-kind">{buildReceiptKindLabel(receipt.kind)}</span>
           <span className="build-receipt-summary">{receipt.summary}</span>
           <span className="build-receipt-time">{formatTime(receipt.createdAtMs)}</span>

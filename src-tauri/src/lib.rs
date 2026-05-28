@@ -19,13 +19,17 @@ pub mod build_orchestrator;
 pub mod build_store;
 pub mod build_types;
 mod connections;
+mod env_security;
+pub mod grok_env;
 mod host_mcp;
+mod outside_connector_runtime;
 mod outside_connectors;
 // SQLite-backed cross-tab durable key-value store. Backs
 // the `mem_set` / `mem_get` / `mem_list` / `mem_delete` host MCP tools
 // (registered in host_mcp.rs). One db file at `~/.shellx/memory.db`,
 // shared across every tab and every subagent that grok spawns.
 mod host_mem;
+mod loopback_security;
 // Cross-process subagent state mirror. Sibling
 // to host_mem.rs — same SQLite-WAL pattern, separate `subagents.db`.
 // Needed because host_mcp's `--mcp-server` child writes the in-memory
@@ -56,6 +60,8 @@ mod winproc;
 
 #[cfg(feature = "debug-api")]
 mod debug_api;
+#[cfg(feature = "debug-api")]
+mod work_preview;
 
 // HTTP MCP server on its own published loopback port. Separate
 // loopback port from debug-api — different audiences, different
@@ -84,7 +90,10 @@ use tokio::time::{timeout, Duration};
 use tracing::{info, warn};
 
 use crate::acp::{tab_id_or_default, PendingPermissionRegistry, SessionRegistry};
-use crate::outside_connectors::{OutsideConnector, OutsideConnectorStore};
+use crate::outside_connectors::{
+    connector_capabilities, OutsideConnector, OutsideConnectorEvent, OutsideConnectorInboundInput,
+    OutsideConnectorStore,
+};
 use crate::process_registry::{ProcessRegistry, ProcessSource, ProcessStatus};
 use crate::terminal::TerminalRegistry;
 
@@ -95,6 +104,15 @@ static SESSION_LOG_APPEND_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn session_log_append_lock() -> &'static Mutex<()> {
     SESSION_LOG_APPEND_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub(crate) fn split_session_jsonl_records(content: &str) -> Vec<String> {
@@ -136,6 +154,29 @@ pub(crate) async fn run_tab_cwd_command(
     args: Vec<String>,
     command_timeout: Duration,
 ) -> Result<std::process::Output, String> {
+    run_tab_cwd_command_inner(registry, tab_id, cwd, program, args, command_timeout, true).await
+}
+
+pub(crate) async fn run_tab_explicit_cwd_command(
+    registry: Arc<SessionRegistry>,
+    tab_id: Option<String>,
+    cwd: String,
+    program: String,
+    args: Vec<String>,
+    command_timeout: Duration,
+) -> Result<std::process::Output, String> {
+    run_tab_cwd_command_inner(registry, tab_id, cwd, program, args, command_timeout, false).await
+}
+
+async fn run_tab_cwd_command_inner(
+    registry: Arc<SessionRegistry>,
+    tab_id: Option<String>,
+    cwd: String,
+    program: String,
+    args: Vec<String>,
+    command_timeout: Duration,
+    prefer_agent_cwd: bool,
+) -> Result<std::process::Output, String> {
     if cwd.trim().is_empty() {
         return Err("empty cwd".to_string());
     }
@@ -147,13 +188,20 @@ pub(crate) async fn run_tab_cwd_command(
     let arc = registry.get_or_create(&tab_key).await;
     let s = arc.lock().await;
     let session_info = s.get_debug_session_info();
-    let command_cwd = crate::session_git::effective_command_cwd_from_debug(&session_info, &cwd);
+    let mut command_cwd = if prefer_agent_cwd {
+        crate::session_git::effective_command_cwd_from_debug(&session_info, &cwd)
+    } else {
+        cwd.clone()
+    };
     let wsl_distro = session_info
         .get("wslDistro")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let ssh_config = s.ssh_config().cloned();
     drop(s);
+    if wsl_distro.is_none() && ssh_config.is_none() {
+        command_cwd = crate::session_git::normalize_local_windows_cwd(&command_cwd);
+    }
 
     use crate::winproc::NoWindowExt as _;
     let mut cmd = if let Some(ssh) = ssh_config {
@@ -419,19 +467,7 @@ async fn start_grok_session(
     // Auto-register the grok-shell-host MCP server with every session.
     // Shared helper so both this path (UI start_grok_session) AND the
     // debug-api /connect path inject the same server.
-    let mut servers = inject_host_mcp_server(mcp_servers, Some(tab_key.as_str()));
-    // Marketplace compatibility hook. The marketplace now writes
-    // Grok-native config.toml entries instead of injecting duplicate
-    // session/new mcp_servers. The helper remains a no-op so older
-    // call paths keep compiling while shellx-host stays injected here.
-    let transport_kind = s.transport_kind();
-    if let serde_json::Value::Array(arr) =
-        mcp_marketplace::build_session_new_entries_for_transport(transport_kind).await
-    {
-        for e in arr {
-            servers.push(e);
-        }
-    }
+    let servers = inject_host_mcp_server(mcp_servers, Some(tab_key.as_str()));
     if !servers.is_empty() {
         s.set_mcp_servers(servers);
     }
@@ -577,6 +613,7 @@ async fn send_prompt(
     #[allow(non_snake_case)] voice_reply_expected: Option<bool>,
     app: AppHandle,
     registry: State<'_, Arc<SessionRegistry>>,
+    build_orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
 ) -> Result<String, String> {
     if prompt.trim().is_empty() {
         return Err("Empty prompt".to_string());
@@ -677,11 +714,31 @@ async fn send_prompt(
     // Caller must learn when the prompt actually failed. Returning Ok
     // on timeout/channel-close hides agent death from React.
     let outcome = timeout(Duration::from_secs(600), rx).await;
+    let build_prompt_still_running = if outcome.is_err() {
+        build_orch
+            .get_state(&tab_key)
+            .await
+            .map(|state| {
+                matches!(
+                    state.status,
+                    build_types::BuildRunStatus::AwaitingApproval
+                        | build_types::BuildRunStatus::Active
+                        | build_types::BuildRunStatus::Paused
+                        | build_types::BuildRunStatus::Blocked
+                )
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
     {
         let mut s = arc.lock().await;
         match &outcome {
             Ok(Ok(_)) => s.mark_prompt_responded(),
-            Err(_) => s.mark_prompt_timeout(),
+            Err(_) if !build_prompt_still_running => s.mark_prompt_timeout(),
+            Err(_) => {
+                /* active /build prompts may legitimately run for hours; don't wedge/restart */
+            }
             Ok(Err(_)) => { /* channel closed = agent died; don't mark wedged, abort already cleaned */
             }
         }
@@ -696,6 +753,13 @@ async fn send_prompt(
             Err("session/prompt channel closed — agent died or session was aborted".to_string())
         }
         Err(_) => {
+            if build_prompt_still_running {
+                warn!(
+                    "session/prompt still running after 10 minutes for active /build tab '{}'",
+                    tab_key
+                );
+                return Ok("Build prompt is still running. Watch for streaming events.".to_string());
+            }
             warn!("session/prompt request timed out after 10 minutes");
             Err("session/prompt timed out after 10 minutes — agent unresponsive — send another prompt to auto-restart the session".to_string())
         }
@@ -943,20 +1007,9 @@ fn strip_windows_extended_path_prefix(path: &str) -> String {
     path.trim().to_string()
 }
 
-fn preview_path_is_under_user_home_segment(path_lower: &str, prefix: &str, child: &str) -> bool {
-    let Some(after_prefix) = path_lower.strip_prefix(prefix) else {
-        return false;
-    };
-    let Some((user, rest)) = after_prefix.split_once('/') else {
-        return false;
-    };
-    !user.is_empty() && (rest == child || rest.starts_with(&format!("{child}/")))
-}
-
 fn preview_path_is_under_home_grok(path_for_cwd_check: &str) -> bool {
     let p = path_for_cwd_check.replace('\\', "/");
-    let lower = p.to_ascii_lowercase();
-    let home_match = std::env::var("HOME")
+    std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok()
         .map(|h| {
@@ -974,20 +1027,109 @@ fn preview_path_is_under_home_grok(path_for_cwd_check: &str) -> bool {
             cmp_path == format!("{cmp_home}/.grok")
                 || cmp_path.starts_with(&format!("{cmp_home}/.grok/"))
         })
-        .unwrap_or(false);
-    home_match
-        || preview_path_is_under_user_home_segment(&lower, "/home/", ".grok")
-        || preview_path_is_under_user_home_segment(&lower, "/users/", ".grok")
-        || preview_path_is_under_user_home_segment(&lower, "/mnt/c/users/", ".grok")
-        || preview_path_is_under_user_home_segment(&lower, "c:/users/", ".grok")
+        .unwrap_or(false)
 }
 
-fn preview_path_is_under_downloads(path_for_cwd_check: &str) -> bool {
-    let p = path_for_cwd_check.replace('\\', "/").to_ascii_lowercase();
-    preview_path_is_under_user_home_segment(&p, "/home/", "downloads")
-        || preview_path_is_under_user_home_segment(&p, "/users/", "downloads")
-        || preview_path_is_under_user_home_segment(&p, "/mnt/c/users/", "downloads")
-        || preview_path_is_under_user_home_segment(&p, "c:/users/", "downloads")
+fn session_home_root_from_cwd(session_cwd: &str) -> Option<String> {
+    let cwd = strip_wsl_unc_prefix(&session_cwd.replace('\\', "/"));
+    let lower = cwd.to_ascii_lowercase();
+    for prefix in ["/home/", "/users/", "/mnt/c/users/", "c:/users/"] {
+        if let Some(after_prefix) = lower.strip_prefix(prefix) {
+            let Some((user, _rest)) = after_prefix.split_once('/') else {
+                continue;
+            };
+            if user.is_empty() {
+                continue;
+            }
+            let end = prefix.len() + user.len();
+            return Some(cwd[..end].trim_end_matches('/').to_string());
+        }
+    }
+    None
+}
+
+fn preview_path_is_under_session_home_grok(
+    path_for_cwd_check: &str,
+    session_cwd: Option<&str>,
+) -> bool {
+    let Some(session_cwd) = session_cwd else {
+        return false;
+    };
+    let Some(home_root) = session_home_root_from_cwd(session_cwd) else {
+        return false;
+    };
+    let mut path_norm = path_for_cwd_check.replace('\\', "/");
+    let mut home_norm = home_root.replace('\\', "/");
+    if is_windows_like_path(&path_norm) || is_windows_like_path(&home_norm) {
+        path_norm = path_norm.to_ascii_lowercase();
+        home_norm = home_norm.to_ascii_lowercase();
+    }
+    let grok_root = format!("{}/.grok", home_norm.trim_end_matches('/'));
+    path_norm == grok_root || path_norm.starts_with(&format!("{}/", grok_root))
+}
+
+fn preview_path_is_under_current_home(path_for_cwd_check: &str) -> bool {
+    let p = path_for_cwd_check.replace('\\', "/");
+    let home = match std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    let h_norm = home.replace('\\', "/").trim_end_matches('/').to_string();
+    if h_norm.is_empty() {
+        return false;
+    }
+    let mut cmp_path = p;
+    let mut cmp_home = h_norm;
+    if is_windows_like_path(&cmp_path) || is_windows_like_path(&cmp_home) {
+        cmp_path = cmp_path.to_ascii_lowercase();
+        cmp_home = cmp_home.to_ascii_lowercase();
+    }
+    cmp_path == cmp_home || cmp_path.starts_with(&format!("{cmp_home}/"))
+}
+
+fn preview_path_is_under_home_child(
+    path_for_cwd_check: &str,
+    home_root: &str,
+    child: &str,
+) -> bool {
+    let mut path_norm = path_for_cwd_check.replace('\\', "/");
+    let mut home_norm = home_root
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    if home_norm.is_empty() {
+        return false;
+    }
+    let windows_like = is_windows_like_path(&path_norm) || is_windows_like_path(&home_norm);
+    if windows_like {
+        path_norm = path_norm.to_ascii_lowercase();
+        home_norm = home_norm.to_ascii_lowercase();
+    }
+    let child_name = if windows_like {
+        child.to_ascii_lowercase()
+    } else {
+        child.to_string()
+    };
+    let child_root = format!("{}/{}", home_norm, child_name);
+    path_norm == child_root || path_norm.starts_with(&format!("{}/", child_root))
+}
+
+fn preview_path_is_under_downloads(path_for_cwd_check: &str, session_cwd: Option<&str>) -> bool {
+    let current_home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    if current_home
+        .as_deref()
+        .map(|home| preview_path_is_under_home_child(path_for_cwd_check, home, "Downloads"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    session_cwd
+        .and_then(session_home_root_from_cwd)
+        .as_deref()
+        .map(|home| preview_path_is_under_home_child(path_for_cwd_check, home, "Downloads"))
+        .unwrap_or(false)
 }
 
 fn preview_path_is_under_session_cwd(path_for_cwd_check: &str, session_cwd: Option<&str>) -> bool {
@@ -1064,15 +1206,14 @@ async fn read_text_file_for_path(
     // UNC-prefix strip — mirror of read_image_as_data_url so a
     // Windows-side picker result against a WSL cwd still matches.
     let path_for_cwd_check = strip_wsl_unc_prefix(&normalized);
-    let in_grok_scope = preview_path_is_under_home_grok(&path_for_cwd_check);
+    let in_grok_scope = preview_path_is_under_home_grok(&path_for_cwd_check)
+        || preview_path_is_under_session_home_grok(&path_for_cwd_check, session_cwd.as_deref());
     let in_session_cwd =
         preview_path_is_under_session_cwd(&path_for_cwd_check, session_cwd.as_deref());
-    // Downloads-folder allowance. Tighten to the real Downloads
-    // root: must be under /home/<user>/Downloads, /Users/<user>/Downloads,
-    // /mnt/c/Users/<user>/Downloads, or C:/Users/<user>/Downloads. The
-    // earlier `contains("/downloads/")` check matched any path with that
-    // substring (e.g. `/etc/foo/downloads/leak`); regex anchors fix it.
-    let in_downloads = preview_path_is_under_downloads(&path_for_cwd_check);
+    // Downloads-folder allowance. Restrict it to the current user or
+    // the active session user's home; otherwise `/home/other/Downloads`
+    // would become a cross-user preview escape.
+    let in_downloads = preview_path_is_under_downloads(&path_for_cwd_check, session_cwd.as_deref());
 
     if !in_grok_scope && !in_session_cwd && !in_downloads {
         return Err(format!(
@@ -1087,8 +1228,12 @@ async fn read_text_file_for_path(
         let resolved = ssh_realpath_for_preview(ssh, &normalized).await?;
         let resolved_scope_path = strip_wsl_unc_prefix(&resolved.replace('\\', "/"));
         let resolved_allowed = preview_path_is_under_home_grok(&resolved_scope_path)
+            || preview_path_is_under_session_home_grok(
+                &resolved_scope_path,
+                session_cwd.as_deref(),
+            )
             || preview_path_is_under_session_cwd(&resolved_scope_path, session_cwd.as_deref())
-            || preview_path_is_under_downloads(&resolved_scope_path);
+            || preview_path_is_under_downloads(&resolved_scope_path, session_cwd.as_deref());
         if !resolved_allowed {
             return Err(format!(
                 "remote path resolves outside allowed preview scope: {} -> {}",
@@ -1232,7 +1377,8 @@ async fn read_image_as_data_url(
     // Anchor in_grok_scope HERE (after path_for_cwd_check
     // is computed). Accept ~/.grok/, /home/*/.grok/, /Users/*/.grok/,
     // or C:/Users/*/.grok/.
-    let in_grok_scope = preview_path_is_under_home_grok(&path_for_cwd_check);
+    let in_grok_scope = preview_path_is_under_home_grok(&path_for_cwd_check)
+        || preview_path_is_under_session_home_grok(&path_for_cwd_check, session_cwd.as_deref());
     let in_session_cwd =
         preview_path_is_under_session_cwd(&path_for_cwd_check, session_cwd.as_deref());
     if !in_grok_scope && !in_session_cwd {
@@ -1248,6 +1394,10 @@ async fn read_image_as_data_url(
         let resolved = ssh_realpath_for_preview(ssh, &normalized).await?;
         let resolved_scope_path = strip_wsl_unc_prefix(&resolved.replace('\\', "/"));
         let resolved_allowed = preview_path_is_under_home_grok(&resolved_scope_path)
+            || preview_path_is_under_session_home_grok(
+                &resolved_scope_path,
+                session_cwd.as_deref(),
+            )
             || preview_path_is_under_session_cwd(&resolved_scope_path, session_cwd.as_deref());
         if !resolved_allowed {
             return Err(format!(
@@ -1398,8 +1548,8 @@ async fn ssh_read_text_file_for_preview(
 }
 
 /// List local + remote-tracking branches in a working directory via
-/// `git for-each-ref`. #359: replaces the "Phase 7 — branch
-/// picker not wired" stub. Returns `{branches: [{name, isCurrent,
+/// `git for-each-ref`. #359: replaces the old branch picker placeholder.
+/// Returns `{branches: [{name, isCurrent,
 /// isRemote, ahead?, behind?}]}` sorted by recency. Caller passes
 /// the active tab id so Local / WSL / SSH tabs run git on the same
 /// machine as grok instead of always probing the Windows host.
@@ -2235,6 +2385,219 @@ async fn copy_to_scope(src: String, dest_dir: String) -> Result<String, String> 
     Ok(target.to_string_lossy().into_owned())
 }
 
+const DROPPED_ATTACHMENT_MAX_BYTES: usize = 25 * 1024 * 1024;
+
+fn attachment_extension_from_mime(mime_type: Option<&str>) -> &'static str {
+    match mime_type.unwrap_or("").trim().to_ascii_lowercase().as_str() {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/bmp" => "bmp",
+        "image/svg+xml" => "svg",
+        "text/plain" => "txt",
+        "text/markdown" => "md",
+        "application/json" => "json",
+        "text/html" => "html",
+        "text/css" => "css",
+        "text/csv" => "csv",
+        _ => "bin",
+    }
+}
+
+fn sanitize_attachment_filename(filename: &str, mime_type: Option<&str>, ts_ms: u128) -> String {
+    let trimmed = filename.trim();
+    let has_path_separators =
+        trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('\0');
+    let name = if trimmed.is_empty() || trimmed == "." || trimmed == ".." || has_path_separators {
+        format!(
+            "attachment-{}.{}",
+            ts_ms,
+            attachment_extension_from_mime(mime_type)
+        )
+    } else {
+        trimmed.to_string()
+    };
+
+    // Windows rejects these characters. Replacing them is also harmless on
+    // Unix and keeps copied clipboard image names portable.
+    let mut out = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*') || ch.is_control() {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+    let out = out
+        .trim_matches(|c| c == ' ' || c == '.')
+        .trim()
+        .to_string();
+    if out.is_empty() {
+        format!(
+            "attachment-{}.{}",
+            ts_ms,
+            attachment_extension_from_mime(mime_type)
+        )
+    } else {
+        out
+    }
+}
+
+fn decode_attachment_base64(data_base64: &str) -> Result<Vec<u8>, String> {
+    let raw = data_base64.trim();
+    let b64 = if raw.starts_with("data:") {
+        raw.split_once(',')
+            .map(|(_, payload)| payload)
+            .ok_or_else(|| "attachment data URL is missing a comma separator".to_string())?
+    } else {
+        raw
+    };
+    let compact: String = b64.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let max_encoded_len = DROPPED_ATTACHMENT_MAX_BYTES.div_ceil(3) * 4 + 4;
+    if compact.len() > max_encoded_len {
+        return Err(format!(
+            "attachment too large for paste/drop (encoded {} bytes, cap {} decoded bytes)",
+            compact.len(),
+            DROPPED_ATTACHMENT_MAX_BYTES
+        ));
+    }
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(compact)
+        .map_err(|e| format!("attachment base64 decode failed: {}", e))?;
+    if bytes.len() > DROPPED_ATTACHMENT_MAX_BYTES {
+        return Err(format!(
+            "attachment too large for paste/drop ({} bytes, cap {} bytes)",
+            bytes.len(),
+            DROPPED_ATTACHMENT_MAX_BYTES
+        ));
+    }
+    Ok(bytes)
+}
+
+fn validate_declared_image_bytes(mime_type: Option<&str>, bytes: &[u8]) -> Result<(), String> {
+    let Some(mime_type) = mime_type.map(|s| s.trim().to_ascii_lowercase()) else {
+        return Ok(());
+    };
+    if !mime_type.starts_with("image/") || mime_type == "image/svg+xml" {
+        return Ok(());
+    }
+    let valid = match mime_type.as_str() {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" | "image/jpg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "image/webp" => bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
+        "image/bmp" => bytes.starts_with(b"BM"),
+        _ => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "clipboard/drop image bytes do not match declared MIME type {}",
+            mime_type
+        ))
+    }
+}
+
+/// Save an OS-dropped or clipboard-pasted file into the active workspace's
+/// ignored `.shellx/attachments` folder and return the absolute path. The
+/// frontend then routes that path through the normal attach classifier.
+#[tauri::command]
+async fn save_dropped_attachment_to_scope(
+    filename: String,
+    #[allow(non_snake_case)] mime_type: Option<String>,
+    #[allow(non_snake_case)] data_base64: String,
+    #[allow(non_snake_case)] dest_dir: String,
+) -> Result<String, String> {
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+    let bytes = decode_attachment_base64(&data_base64)?;
+    validate_declared_image_bytes(mime_type.as_deref(), &bytes)?;
+
+    let dest_dir = strip_windows_extended_path_prefix(&dest_dir);
+    if dest_dir.is_empty() {
+        return Err("destination directory is empty".to_string());
+    }
+    let dest_path = Path::new(&dest_dir);
+    if !dest_path.is_dir() {
+        return Err(format!("destination is not a directory: {}", dest_dir));
+    }
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE unset".to_string())?;
+    let home_canon =
+        std::fs::canonicalize(&home).map_err(|e| format!("canonicalize home failed: {}", e))?;
+    let dest_canon =
+        std::fs::canonicalize(dest_path).map_err(|e| format!("canonicalize dest failed: {}", e))?;
+    if !dest_canon.starts_with(&home_canon) {
+        return Err(format!(
+            "refusing to save attachment outside home tree: {}",
+            dest_canon.display()
+        ));
+    }
+    validate_no_symlink_components(&dest_canon.to_string_lossy())?;
+
+    let attachments_dir = dest_canon.join(".shellx").join("attachments");
+    std::fs::create_dir_all(&attachments_dir)
+        .map_err(|e| format!("create {} failed: {}", attachments_dir.display(), e))?;
+    validate_no_symlink_components(&attachments_dir.to_string_lossy())?;
+    let attachments_canon = std::fs::canonicalize(&attachments_dir)
+        .map_err(|e| format!("canonicalize attachments dir failed: {}", e))?;
+    if !attachments_canon.starts_with(&dest_canon) {
+        return Err(format!(
+            "attachment directory escapes destination scope: {}",
+            attachments_canon.display()
+        ));
+    }
+
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("clock error: {}", e))?
+        .as_millis();
+    let safe_name = sanitize_attachment_filename(&filename, mime_type.as_deref(), ts_ms);
+    let safe_path = PathBuf::from(&safe_name);
+    let stem = safe_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let ext = safe_path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let mut target = attachments_canon.join(&safe_name);
+    if std::fs::symlink_metadata(&target).is_ok() {
+        let mut found = false;
+        for n in 1..10_000 {
+            let candidate = attachments_canon.join(format!("{}-{}{}", stem, n, ext));
+            if std::fs::symlink_metadata(&candidate).is_err() {
+                target = candidate;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(format!(
+                "too many collisions for {}; clean up .shellx/attachments",
+                safe_name
+            ));
+        }
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|e| format!("create {} failed: {}", target.display(), e))?;
+    file.write_all(&bytes)
+        .map_err(|e| format!("write {} failed: {}", target.display(), e))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
 // ────────── Visible background-task manager ──────────
 //
 // Aggregates three sources into one uniform task list:
@@ -2907,18 +3270,39 @@ fn pid_is_alive(pid: u32) -> bool {
 /// `binary` without reading the full file — caller falls back to
 /// the existing `[attached: <path>]` text tag.
 ///
-/// Security: caller is the renderer's `handleAttach` which only passes
-/// absolute paths chosen via the OS dialog. We do not enforce a HOME
-/// boundary here — the user explicitly picked the file. Path traversal
-/// is irrelevant for read-only classification.
+/// Security: this is still an IPC file-read surface, so enforce the same
+/// server-side invariants as the preview readers before sniffing: absolute
+/// path, no traversal, current-home scope, no known credential filenames,
+/// and no symlink components.
 #[tauri::command]
 async fn read_text_file_if_text(
     path: String,
     max_bytes: Option<usize>,
 ) -> Result<text_sniff::TextSniffResult, String> {
+    let path = strip_windows_extended_path_prefix(&path);
     if path.is_empty() {
         return Err("empty path".to_string());
     }
+    let normalized = path.replace('\\', "/");
+    if normalized.contains("/../")
+        || normalized.starts_with("../")
+        || normalized.ends_with("/..")
+        || normalized == ".."
+    {
+        return Err("path contains traversal segment".to_string());
+    }
+    if !std::path::Path::new(&path).is_absolute() && !is_windows_like_path(&path) {
+        return Err("path must be absolute".to_string());
+    }
+    let path_for_check = strip_wsl_unc_prefix(&normalized);
+    reject_if_sensitive_path(&path_for_check, &path)?;
+    if !preview_path_is_under_current_home(&path_for_check) {
+        return Err(format!(
+            "path outside allowed attach scope (not under current user home): {}",
+            path
+        ));
+    }
+    validate_no_symlink_components(&path)?;
     let cap = max_bytes.unwrap_or(64 * 1024);
     text_sniff::classify_file(std::path::Path::new(&path), cap)
 }
@@ -3140,6 +3524,29 @@ async fn session_tooling_snapshot(
     session_tooling_snapshot_for_tab(tab_id, &registry, true, false).await
 }
 
+/// Run Grok's own local diagnostics for the active tab environment.
+/// Unlike the marketplace launcher probe, this asks Grok what it
+/// discovers and whether MCP handshakes actually succeed.
+#[tauri::command]
+async fn grok_environment_snapshot(
+    #[allow(non_snake_case)] tab_id: String,
+    force: Option<bool>,
+    cwd: Option<String>,
+    registry: State<'_, Arc<acp::SessionRegistry>>,
+) -> Result<grok_env::GrokEnvironmentSnapshot, String> {
+    grok_env::snapshot_for_tab(tab_id, &registry, force.unwrap_or(false), cwd).await
+}
+
+/// Export the active Grok session trace locally. This uses
+/// `grok trace --local --json`; it never uploads a trace.
+#[tauri::command]
+async fn grok_trace_export(
+    #[allow(non_snake_case)] tab_id: String,
+    registry: State<'_, Arc<acp::SessionRegistry>>,
+) -> Result<grok_env::GrokTraceExport, String> {
+    grok_env::export_trace_for_tab(tab_id, &registry).await
+}
+
 pub(crate) async fn session_tooling_snapshot_for_tab(
     tab_id: String,
     registry: &Arc<acp::SessionRegistry>,
@@ -3288,17 +3695,19 @@ async fn mcp_marketplace_set_enabled(id: String, enabled: bool) -> Result<(), St
     Ok(())
 }
 
-// ─── Goal orchestrator — Tauri commands ───────
+// ─── Legacy goal orchestrator — Tauri commands ───────
 //
-// Thin wrappers around the GoalOrchestrator API. Used by the React
-// Goal panel: set_goal_mode flips on/off for the active tab,
+// Thin wrappers around the legacy GoalOrchestrator API. New public
+// long-horizon work goes through Build Mode; these commands remain for
+// saved sessions and old automation. Used by the React compatibility
+// panel: set_goal_mode flips on/off for the active tab,
 // get_goal_state polls the current scratchboard fingerprint +
 // continuation counter for the UI chip, pause_goal/resume_goal are
 // the user-controlled brake. There is intentionally NO frontend
 // command for `goal_complete` — that path goes through the MCP tool
 // so grok itself has to provide the (validated) summary.
 
-/// Turn `/goal` mode on or off for a tab. `on=true` requires `objective`
+/// Turn legacy goal mode on or off for a tab. `on=true` requires `objective`
 /// (the verbatim task) and `cwd` (used to resolve the scratchboard
 /// path — `<cwd>/goal.md`, falling back to `<cwd>/plan.md` if the
 /// former is missing). `on=false` clears the per-tab slot entirely.
@@ -3685,9 +4094,9 @@ fn build_approval_kickoff_prompt(state: Option<&build_types::BuildRunState>) -> 
         .unwrap_or("(no objective recorded)");
     let path = state
         .map(|s| s.scratchboard_path.as_str())
-        .unwrap_or("build.md");
+        .unwrap_or("the Build Mode scratchboard");
     format!(
-        "The Build Mode plan in build.md has been approved.\n\nObjective: {}\n\nScratchboard: {}\n\nBegin executing it now. Work as manager: use shellX Agent personas when useful, record evidence in build.md, and call build_complete only after checkpoint, review, and verification gates are satisfied.",
+        "The Build Mode scratchboard plan has been approved.\n\nObjective: {}\n\nScratchboard: {}\n\nBegin executing it now. Work as manager: use shellX Agent personas when useful, include the AI slop / wiring audit in the reviewer pass, record evidence in the scratchboard, and call build_complete only after checkpoint, review, and verification gates are satisfied. Agent task text must be a direct assignment to that subagent; do not ask subagents to dispatch more Agents, poll Agent output, or follow scratchboard manager checklist lines as their own instructions.",
         objective, path
     )
 }
@@ -3758,21 +4167,6 @@ async fn resume_build(
 }
 
 #[tauri::command]
-async fn mark_build_complete(
-    #[allow(non_snake_case)] tab_id: String,
-    summary: Option<String>,
-    orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
-) -> Result<bool, String> {
-    orch.mark_complete(
-        &tab_id,
-        summary
-            .as_deref()
-            .unwrap_or("Manually marked complete from shellX UI"),
-    )
-    .await
-}
-
-#[tauri::command]
 async fn halt_build(
     #[allow(non_snake_case)] tab_id: String,
     summary: Option<String>,
@@ -3810,11 +4204,98 @@ pub fn run_host_mcp_stdio() -> std::io::Result<()> {
     rt.block_on(host_mcp::run_stdio())
 }
 
+/// Hidden stdio launcher used by Grok-native marketplace MCP entries on
+/// Windows. Grok spawns shellX, shellX spawns the real `npx`/`uvx` server with
+/// CREATE_NO_WINDOW, then blindly bridges stdin/stdout/stderr.
+pub fn run_stdio_proxy(args: &[String]) -> i32 {
+    if args.is_empty() {
+        eprintln!("stdio proxy requires a command");
+        return 2;
+    }
+
+    use std::io::{self, Write as _};
+    use std::process::Stdio;
+
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd.exe");
+        c.arg("/d").arg("/s").arg("/c");
+        for arg in args {
+            c.arg(arg);
+        }
+        c
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let mut cmd = {
+        let mut c = std::process::Command::new(&args[0]);
+        c.args(&args[1..]);
+        c
+    };
+
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use crate::winproc::NoWindowExt as _;
+        cmd.no_window();
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            eprintln!("stdio proxy spawn failed: {}", e);
+            return 127;
+        }
+    };
+
+    let mut child_stdin = child.stdin.take();
+    let mut child_stdout = child.stdout.take();
+    let mut child_stderr = child.stderr.take();
+
+    let _stdin_thread = std::thread::spawn(move || {
+        if let Some(mut child_stdin) = child_stdin.take() {
+            let mut stdin = io::stdin().lock();
+            let _ = io::copy(&mut stdin, &mut child_stdin);
+        }
+    });
+
+    let stdout_thread = std::thread::spawn(move || {
+        if let Some(mut child_stdout) = child_stdout.take() {
+            let mut stdout = io::stdout().lock();
+            let _ = io::copy(&mut child_stdout, &mut stdout);
+            let _ = stdout.flush();
+        }
+    });
+
+    let stderr_thread = std::thread::spawn(move || {
+        if let Some(mut child_stderr) = child_stderr.take() {
+            let mut stderr = io::stderr().lock();
+            let _ = io::copy(&mut child_stderr, &mut stderr);
+            let _ = stderr.flush();
+        }
+    });
+
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(e) => {
+            eprintln!("stdio proxy wait failed: {}", e);
+            return 126;
+        }
+    };
+
+    let _ = stdout_thread.join();
+    let _ = stderr_thread.join();
+    status.code().unwrap_or(1)
+}
+
 // ──────────── Vault Tauri commands ────────────
 //
 // Vault open is lazy — keyring probe doesn't happen on app boot, only
 // when the renderer first asks for a value. The handle lives in a
-// OnceCell + Mutex; subsequent calls reuse the cached Vault.
+// OnceCell, but plaintext values are not cached inside it; each
+// operation decrypts the envelope transiently.
 //
 // SECURITY: command bodies that return secret values (vault_get) MUST
 // NOT log the value. The doc-comment on each command states what gets
@@ -3981,6 +4462,29 @@ async fn outside_connectors_test(id: String) -> Result<serde_json::Value, String
     Ok(serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
 }
 
+#[tauri::command]
+async fn outside_connectors_capabilities(
+) -> Result<Vec<crate::outside_connectors::OutsideConnectorCapabilities>, String> {
+    Ok(connector_capabilities())
+}
+
+#[tauri::command]
+async fn outside_connectors_events(
+    limit: Option<usize>,
+) -> Result<Vec<OutsideConnectorEvent>, String> {
+    let s = get_or_open_outside_connectors()?;
+    Ok(s.events(limit.unwrap_or(50)).await)
+}
+
+#[tauri::command]
+async fn outside_connectors_simulate(
+    id: String,
+    input: OutsideConnectorInboundInput,
+) -> Result<OutsideConnectorEvent, String> {
+    let s = get_or_open_outside_connectors()?;
+    s.simulate_inbound(&id, input).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Data-dir migration from legacy `~/.grok-shell/` to current `~/.shellx/`.
 ///
@@ -4112,6 +4616,7 @@ pub fn run() {
     // handler so chat-embedded views and the bottom-panel see the
     // same bytes.
     let terminal_registry: Arc<TerminalRegistry> = Arc::new(TerminalRegistry::new());
+    let session_registry: Arc<SessionRegistry> = Arc::new(SessionRegistry::new());
 
     let builder = tauri::Builder::default()
         // Single-instance plugin. If a second app.exe launches (user
@@ -4148,7 +4653,7 @@ pub fn run() {
         // Each tab gets its own slot keyed by tab_id; "default" is the
         // back-compat key used by callers (debug_api.rs WS routes) that
         // don't yet pass a tab_id.
-        .manage(Arc::new(SessionRegistry::new()))
+        .manage(session_registry.clone())
         .manage(process_registry.clone())
         .manage(terminal_registry.clone())
         // Pending sync permission requests. Created at boot, looked up
@@ -4167,6 +4672,14 @@ pub fn run() {
         .manage(Arc::new(build_orchestrator::BuildOrchestrator::new(
             build_orchestrator::BuildOrchestrator::default_store_base(),
         )));
+
+    #[cfg(feature = "debug-api")]
+    let builder = builder.manage(Arc::new(
+        work_preview::WorkPreviewManager::with_session_registry(
+            process_registry.clone(),
+            session_registry.clone(),
+        ),
+    ));
 
     #[cfg(feature = "debug-api")]
     let builder = builder.manage(debug_hub.clone());
@@ -4219,6 +4732,7 @@ pub fn run() {
             task_resume,
             task_kill,
             copy_to_scope,
+            save_dropped_attachment_to_scope,
             get_debug_token,
             get_debug_port,
             // Bundled host-skill manifest status (read-only).
@@ -4238,13 +4752,16 @@ pub fn run() {
             connections_save,
             connections_delete,
             connections_test,
-            // Outside connectors: Telegram + generic relay presets.
+            // Outside connectors: Telegram + Discord bot presets.
             // Non-secret config is stored under ~/.shellx; provider
             // secrets are referenced by vault key.
             outside_connectors_list,
             outside_connectors_save,
             outside_connectors_delete,
             outside_connectors_test,
+            outside_connectors_capabilities,
+            outside_connectors_events,
+            outside_connectors_simulate,
             // Real PTY for the bottom-panel Terminal tab. The same
             // registry ALSO services grok's ACP `terminal/*` requests;
             // `pty_attach` is the read-only attach surface for chat-
@@ -4284,6 +4801,8 @@ pub fn run() {
             mcp_marketplace_list,
             mcp_marketplace_health,
             session_tooling_snapshot,
+            grok_environment_snapshot,
+            grok_trace_export,
             mcp_marketplace_install,
             mcp_marketplace_uninstall,
             mcp_marketplace_set_enabled,
@@ -4313,7 +4832,6 @@ pub fn run() {
             reject_build_plan,
             pause_build,
             resume_build,
-            mark_build_complete,
             halt_build,
             // #333 — bound-port surface for the UI footer/About.
             get_bound_ports,
@@ -4546,6 +5064,10 @@ pub fn run() {
                 info!("mcp-events tail scheduled");
             }
 
+            crate::outside_connector_runtime::start_outside_connector_runtime(
+                _app.handle().clone(),
+            );
+
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -4720,6 +5242,17 @@ mod sensitive_path_tests {
         }
     }
 
+    #[tokio::test]
+    async fn attach_text_classifier_rejects_sensitive_paths_before_reading() {
+        let err = read_text_file_if_text("/home/x/.ssh/id_ed25519".to_string(), Some(64))
+            .await
+            .expect_err("sensitive attach path must be rejected");
+        assert!(
+            err.contains("known credential/token file"),
+            "should reject by sensitive-path policy, got: {err}"
+        );
+    }
+
     #[test]
     fn accepts_ordinary_image_under_grok() {
         let p = "/home/x/.grok/sessions/abc/images/1.jpg";
@@ -4747,6 +5280,29 @@ mod sensitive_path_tests {
         assert!(
             reject_if_sensitive_path(p, p).is_err(),
             "case-insensitive match required"
+        );
+    }
+
+    #[test]
+    fn pasted_attachment_filename_is_sanitized() {
+        let name = sanitize_attachment_filename("..\\evil:image?.png", Some("image/png"), 42);
+        assert_eq!(name, "attachment-42.png");
+        let name = sanitize_attachment_filename("screen:shot?.png", Some("image/png"), 42);
+        assert_eq!(name, "screen_shot_.png");
+    }
+
+    #[test]
+    fn pasted_attachment_decodes_data_url_and_checks_image_magic() {
+        use base64::Engine as _;
+        let png = b"\x89PNG\r\n\x1a\nrest";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        let decoded = decode_attachment_base64(&format!("data:image/png;base64,{b64}"))
+            .expect("data URL decodes");
+        assert_eq!(decoded, png);
+        assert!(validate_declared_image_bytes(Some("image/png"), &decoded).is_ok());
+        assert!(
+            validate_declared_image_bytes(Some("image/png"), b"not really png").is_err(),
+            "declared PNG must match PNG magic"
         );
     }
 }
@@ -4800,6 +5356,30 @@ mod preview_scope_tests {
     }
 
     #[test]
+    fn session_home_grok_scope_is_user_specific() {
+        assert!(preview_path_is_under_session_home_grok(
+            "/home/alice/.grok/sessions/abc/images/1.png",
+            Some("/home/alice/project"),
+        ));
+        assert!(!preview_path_is_under_session_home_grok(
+            "/home/bob/.grok/sessions/abc/images/1.png",
+            Some("/home/alice/project"),
+        ));
+    }
+
+    #[test]
+    fn downloads_scope_is_user_specific() {
+        assert!(preview_path_is_under_downloads(
+            "/home/alice/Downloads/build-log.txt",
+            Some("/home/alice/project"),
+        ));
+        assert!(!preview_path_is_under_downloads(
+            "/home/bob/Downloads/build-log.txt",
+            Some("/home/alice/project"),
+        ));
+    }
+
+    #[test]
     fn posix_session_cwd_match_is_case_sensitive() {
         assert!(!preview_path_is_under_session_cwd(
             "/home/user/project/src/main.rs",
@@ -4824,6 +5404,9 @@ mod preview_scope_tests {
             p,
             r"C:\Users\User\.grok\sessions\C%3A%5CUsers%5CUser\sid\images\1.jpg"
         );
-        assert!(preview_path_is_under_home_grok(&p));
+        assert!(preview_path_is_under_session_home_grok(
+            &p,
+            Some(r"C:\Users\User\project")
+        ));
     }
 }

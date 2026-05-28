@@ -15,7 +15,7 @@
 // "presets": [
 // {
 // "id": "conn-<uuid-v4>",
-// "label": "megaclub",
+// "label": "prod-server",
 // "transport": { "kind": "ssh", ... },
 // "createdMs": 1715900000000,
 // "lastUsedMs": 1715905000000
@@ -541,14 +541,28 @@ fn validate_transport(transport: &Transport) -> Result<(), String> {
     } = transport
     {
         validate_ssh_destination_arg(host).map_err(|e| format!("connections.save: {}", e))?;
-        if remote_grok_path.trim().is_empty() {
-            return Err("connections.save: remote_grok_path cannot be empty".to_string());
-        }
-        if remote_grok_path.chars().any(|c| c.is_control()) {
-            return Err(
-                "connections.save: remote_grok_path cannot contain control characters".to_string(),
-            );
-        }
+        validate_remote_grok_path_arg(remote_grok_path)
+            .map_err(|e| format!("connections.save: {}", e))?;
+    }
+    Ok(())
+}
+
+fn validate_remote_grok_path_arg(remote_grok_path: &str) -> Result<(), String> {
+    let trimmed = remote_grok_path.trim();
+    if trimmed.is_empty() {
+        return Err("remote_grok_path cannot be empty".to_string());
+    }
+    if trimmed.starts_with('-') {
+        return Err("remote_grok_path cannot start with '-'".to_string());
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err("remote_grok_path cannot contain control characters".to_string());
+    }
+    if trimmed
+        .chars()
+        .any(|c| matches!(c, ';' | '|' | '&' | '<' | '>' | '`' | '$'))
+    {
+        return Err("remote_grok_path cannot contain shell metacharacters".to_string());
     }
     Ok(())
 }
@@ -625,6 +639,28 @@ mod tests {
         );
         let err = store.save(p).await.expect_err("ssh option host rejected");
         assert!(err.contains("cannot start with '-'"));
+    }
+
+    #[tokio::test]
+    async fn save_rejects_ssh_remote_grok_path_option_injection() {
+        let store = temp_store();
+        let p = ConnectionPreset::new(
+            "ssh".to_string(),
+            Transport::Ssh {
+                host: "user@example.com".to_string(),
+                port: None,
+                key_vault_ref: None,
+                remote_grok_path: "-oProxyCommand=calc".to_string(),
+            },
+        );
+        let err = store
+            .save(p)
+            .await
+            .expect_err("remote grok path option should be rejected");
+        assert!(
+            err.contains("remote_grok_path") && err.contains("cannot start with '-'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]

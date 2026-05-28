@@ -33,7 +33,7 @@ use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        DefaultBodyLimit, Query, State,
     },
     http::{HeaderMap, Request, StatusCode},
     middleware::{self, Next},
@@ -45,8 +45,11 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tokio::sync::broadcast;
 use tokio::time::{timeout, Duration};
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info, warn};
+
+use crate::loopback_security::{loopback_host_allowed, origin_allowed, subtle_eq};
 
 /// Default port for the debug-api server. Override at runtime via the
 /// `GROK_SHELL_DEBUG_PORT` env var when running side-by-side with other
@@ -103,10 +106,11 @@ pub fn preferred_debug_api_port() -> u16 {
 /// auto-created if missing. External drivers read this file.
 /// `/health` is exempt for liveness probes.
 ///
-/// Origin allow-list (HTTP + WS upgrade):
+/// Origin/Host allow-list (HTTP + WS upgrade):
 /// - tauri://localhost (our own Tauri webview)
 /// - http://localhost / 127.0.0.1 with any port (Vite dev, scripts)
 /// - missing Origin header (curl / scripts) — token still required
+/// - Host must still name loopback (`localhost`, `127.0.0.1`, `[::1]`)
 ///
 /// Cross-platform home directory: tries HOME (Unix) then USERPROFILE
 /// (Windows). Returns Err if neither set. An inline
@@ -120,13 +124,22 @@ fn shellx_home() -> Result<std::path::PathBuf, String> {
         .map_err(|_| "HOME/USERPROFILE unset".to_string())
 }
 
+fn ensure_private_dir_best_effort(dir: &std::path::Path) {
+    let _ = std::fs::create_dir_all(dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
 /// Generate a 32-hex-char shellXagent token + write it
 /// to `path` (creating the parent dir as needed; chmod 0600 on unix).
 /// Extracted from the prior inline body so the Settings → Regenerate
 /// button can call it directly.
 pub(crate) fn write_new_shellxagent_token(path: &std::path::Path) -> String {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        ensure_private_dir_best_effort(parent);
     }
     // [H1] Security review fix: token now uses CSPRNG (OsRng) instead of
     // nanos+pid hash. Prior derivation had ~30 effective bits an
@@ -192,7 +205,7 @@ pub(crate) fn resolve_or_create_debug_token() -> String {
             // Migrate: copy legacy contents to canon, leave legacy in
             // place for one release cycle so an orchestrator that
             // hardcoded the legacy path stays working.
-            let _ = std::fs::create_dir_all(&dir);
+            ensure_private_dir_best_effort(&dir);
             let _ = std::fs::write(&canon, &t);
             #[cfg(unix)]
             {
@@ -213,37 +226,6 @@ pub(crate) fn resolve_or_create_debug_token() -> String {
 pub fn shellxagent_token_path() -> std::path::PathBuf {
     let home = shellx_home().unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
     home.join(".shellx").join("shellxagent.token")
-}
-
-fn origin_allowed(headers: &HeaderMap) -> bool {
-    /* Widen Origin allow-list. Tauri 2 schema default on Windows is
-     * `http://tauri.localhost` (NOT https). `useHttpsScheme: true`
-     * would switch to https; both are accepted in case a future config
-     * flips it.
-     * macOS / Linux use `tauri://localhost`. Missing-Origin (e.g. curl,
-     * server-side scripts) is allowed since the bearer token is still
-     * required separately. */
-    match headers.get("origin").and_then(|h| h.to_str().ok()) {
-        None => true,
-        Some(o) => {
-            o == "tauri://localhost"
-                || o == "http://tauri.localhost"
-                || o == "https://tauri.localhost"
-                || o.starts_with("http://localhost:")
-                || o.starts_with("http://127.0.0.1:")
-        }
-    }
-}
-
-fn subtle_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 /// Audit fix — `token=` query-string fallback is now
@@ -289,6 +271,9 @@ async fn require_auth(
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, Response> {
+    if !loopback_host_allowed(req.headers()) {
+        return Err((StatusCode::FORBIDDEN, "host not allowed").into_response());
+    }
     if req.uri().path() == "/health" {
         return Ok(next.run(req).await);
     }
@@ -399,6 +384,10 @@ pub struct UiState {
     /// Right rail active tab (Tasks / Tooling / Plan / Files).
     #[serde(default)]
     pub right_tab: Option<String>,
+    /// Renderer-selected session tab. Used by outside connectors whose
+    /// target is "active tab"; fixed-tab connectors do not depend on it.
+    #[serde(default, rename = "activeTabId")]
+    pub active_tab_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -495,6 +484,9 @@ impl DebugHub {
         if let Some(t) = patch.right_tab {
             s.right_tab = Some(t);
         }
+        if let Some(tab) = patch.active_tab_id {
+            s.active_tab_id = Some(tab);
+        }
     }
 
     /// Called from acp.rs::emit_and_debug whenever a Tauri event is
@@ -515,7 +507,7 @@ impl DebugHub {
         buf.push_back(ev);
     }
 
-    fn recent(&self, limit: usize) -> Vec<RawEvent> {
+    pub(crate) fn recent(&self, limit: usize) -> Vec<RawEvent> {
         let buf = lock_or_recover(&self.buffer, "DebugHub buffer");
         let start = buf.len().saturating_sub(limit);
         buf.iter().skip(start).cloned().collect()
@@ -536,6 +528,8 @@ pub struct UiStatePatch {
     pub left_tab: Option<String>,
     #[serde(rename = "rightTab", default)]
     pub right_tab: Option<String>,
+    #[serde(rename = "activeTabId", default)]
+    pub active_tab_id: Option<String>,
 }
 
 fn now_ms() -> i64 {
@@ -595,6 +589,15 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         // feature.
         .route("/panels", get(get_panels).post(set_panels))
         .route("/preview", get(get_preview).post(set_preview))
+        .route("/preview/work/state", get(work_preview_state_http))
+        .route("/preview/work/start", post(work_preview_start_http))
+        .route("/preview/work/stop", post(work_preview_stop_http))
+        .route("/preview/work/restart", post(work_preview_start_http))
+        .route("/preview/work/logs", get(work_preview_logs_http))
+        .route(
+            "/preview/work/diagnose",
+            get(work_preview_diagnose_get_http).post(work_preview_diagnose_post_http),
+        )
         // // Native MCP §6: host-tool endpoints — the path standalone
         // `--mcp-server` will use to proxy into the running app's
         // ProcessRegistry, plus a direct test path for curl.
@@ -641,12 +644,21 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         .route("/state/sessions", get(state_sessions))
         .route("/state/marketplace_health", get(state_marketplace_health))
         .route("/state/session_tooling", get(state_session_tooling))
+        .route("/state/grok_environment", get(state_grok_environment))
+        .route(
+            "/state/grok_environment/trace_export",
+            post(state_grok_trace_export),
+        )
         .route("/state/session_activity", get(state_session_activity))
         .route("/state/session_git", get(state_session_git))
         .route("/state/session_git/diff", get(state_session_git_diff))
         .route(
             "/state/session_git/checkpoint",
             post(state_session_git_checkpoint),
+        )
+        .route(
+            "/state/session_git/worktree",
+            post(state_session_git_worktree),
         )
         // GET /screenshot returns a PNG of the shellX window. Used by
         // orchestrating agents (and the diagnostics suite) for visual
@@ -713,6 +725,14 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
             get(outside_connectors_list_http).post(outside_connectors_save_http),
         )
         .route(
+            "/outside-connectors/capabilities",
+            get(outside_connectors_capabilities_http),
+        )
+        .route(
+            "/outside-connectors/events",
+            get(outside_connectors_events_http),
+        )
+        .route(
             "/outside-connectors/:id",
             axum::routing::delete(outside_connectors_delete_http),
         )
@@ -720,6 +740,11 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
             "/outside-connectors/:id/test",
             post(outside_connectors_test_http),
         )
+        .route(
+            "/outside-connectors/:id/simulate",
+            post(outside_connectors_simulate_http),
+        )
+        .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(app_state);
 
     // Token + origin gate everything except /health. Token
@@ -747,18 +772,11 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
      * tower-http intercepts OPTIONS before reaching the auth middleware,
      * so preflight passes without a token. The actual GET/POST still
      * goes through require_auth.
-     * * Origin allow-list mirrors origin_allowed — same loopback +
-     * tauri.localhost set. We use a closure-based AllowOrigin predicate
-     * so the dev-port portion of localhost:5173 / 127.0.0.1:5173 matches
-     * regardless of port. */
+     * * Origin allow-list mirrors origin_allowed exactly: Tauri
+     * production origins plus the fixed Vite dev origin. */
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _req| {
-            let o = origin.to_str().unwrap_or("");
-            o == "tauri://localhost"
-                || o == "https://tauri.localhost"
-                || o == "http://tauri.localhost"
-                || o.starts_with("http://localhost:")
-                || o.starts_with("http://127.0.0.1:")
+            crate::loopback_security::origin_header_value_allowed(origin)
         }))
         .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
         .allow_headers([
@@ -767,6 +785,7 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         ])
         .allow_credentials(false);
     let router = router.layer(cors);
+    let router = router.layer(CatchPanicLayer::new());
     let router = router.layer(middleware::from_fn(add_api_version));
 
     // Audit #379 M4 — binder reads PREFERRED, not effective: pre-bind,
@@ -1234,18 +1253,7 @@ async fn connect(
     // sessions never see the host MCP tools (secret_set/get/delete,
     // process_*, fs_watch) and grok dead-ends trying to use them via
     // `use_tool`.
-    let mut servers = crate::inject_host_mcp_server(body.mcp_servers, Some(tab_key.as_str()));
-    // Marketplace compatibility hook on the /connect path too. The
-    // marketplace now writes Grok-native config.toml entries instead of
-    // injecting duplicate session/new mcp_servers.
-    let transport_kind = guard.transport_kind();
-    if let serde_json::Value::Array(arr) =
-        crate::mcp_marketplace::build_session_new_entries_for_transport(transport_kind).await
-    {
-        for e in arr {
-            servers.push(e);
-        }
-    }
+    let servers = crate::inject_host_mcp_server(body.mcp_servers, Some(tab_key.as_str()));
     if !servers.is_empty() {
         guard.set_mcp_servers(servers);
     }
@@ -1424,6 +1432,34 @@ struct PromptBody {
     tab_id: Option<String>,
 }
 
+fn build_status_keeps_prompt_wait_alive(
+    status: Option<crate::build_types::BuildRunStatus>,
+) -> bool {
+    use crate::build_types::BuildRunStatus;
+    matches!(
+        status,
+        Some(
+            BuildRunStatus::Draft
+                | BuildRunStatus::AwaitingApproval
+                | BuildRunStatus::Active
+                | BuildRunStatus::Paused
+                | BuildRunStatus::Blocked
+                | BuildRunStatus::BudgetLimited
+        )
+    )
+}
+
+async fn build_prompt_wait_expiry_keeps_session_alive(app: &AppHandle, tab_id: &str) -> bool {
+    let Some(orch_state) = app.try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
+    else {
+        return false;
+    };
+    let Some(state) = orch_state.inner().get_state(tab_id).await else {
+        return false;
+    };
+    build_status_keeps_prompt_wait_alive(Some(state.status))
+}
+
 async fn prompt(
     State(s): State<ApiState>,
     Query(q): Query<StateTabQuery>,
@@ -1477,21 +1513,15 @@ async fn prompt(
         }
     }
 
-    // Experimental `/build <objective>` intercept. Keep this before
-    // `/goal` so the stronger Build Mode path is fully shellX-owned
-    // and never leaks through to a future Grok-native skill name.
+    // `/build <objective>` intercept. This also accepts legacy `/goal`
+    // input as a compatibility alias so all new long-horizon work uses
+    // the Build Mode state machine.
     let build_obj = crate::build_orchestrator::BuildOrchestrator::parse_build_command(&body.prompt);
 
-    // B2 — server-side `/goal <objective>` intercept. Without
-    // this, external `/prompt` callers (shellXagent test scripts, curl
-    // automation) bypass App.tsx's client-side intercept and the raw
-    // `/goal foo` string is shipped to grok. Grok's own `/goal` SKILL
-    // then races ahead and starts executing without the orchestrator's
-    // approval gate — defeating the entire plan-first workflow.
-    // // The intercept: arm goal mode (which starts in `awaiting_approval=true`)
-    // and rewrite the prompt to the plan-only kickoff text. Both code
-    // paths (HTTP here, Tauri command in lib.rs) produce the same
-    // first turn that App.tsx already produces client-side.
+    // Legacy goal fallback. New callers should not reach this branch
+    // because BuildOrchestrator::parse_build_command maps `/goal` to
+    // `/build`; keep it only for older automation that calls the legacy
+    // parser directly.
     let final_prompt = if let Some(obj) = build_obj {
         if obj.is_empty() {
             return (
@@ -1587,10 +1617,10 @@ async fn prompt(
                 crate::goal_orchestrator::GoalOrchestrator::plan_kickoff_text(&obj)
             }
             Some(_) => {
-                // Bare "/goal" with no objective.
+                // Bare legacy command with no objective.
                 return (
                     StatusCode::BAD_REQUEST,
-                    "/goal requires an objective: /goal <what to accomplish>".to_string(),
+                    "/build requires an objective: /build <what to accomplish>".to_string(),
                 )
                     .into_response();
             }
@@ -1639,6 +1669,7 @@ async fn prompt(
     // timeout keeps the task from leaking if grok hangs.
     let wait_session_arc = session_arc.clone();
     let wait_tab_key = tab_key.clone();
+    let wait_app = s.app.clone();
     tokio::spawn(async move {
         match timeout(Duration::from_secs(3600), rx).await {
             Ok(Ok(_)) => {
@@ -1648,6 +1679,27 @@ async fn prompt(
             }
             Ok(Err(_)) => warn!("debug-api /prompt channel closed"),
             Err(_) => {
+                if build_prompt_wait_expiry_keeps_session_alive(&wait_app, &wait_tab_key).await {
+                    let mut guard = wait_session_arc.lock().await;
+                    guard.mark_prompt_responded();
+                    if let Some(hub) = wait_app.try_state::<Arc<DebugHub>>() {
+                        hub.record_raw_event(
+                            "build-event",
+                            serde_json::json!({
+                                "kind": "prompt_wait_expired",
+                                "tabId": wait_tab_key.clone(),
+                                "timeoutMs": 3_600_000u64,
+                                "buildStillActive": true,
+                                "source": "debug-api",
+                            }),
+                        );
+                    }
+                    warn!(
+                        "debug-api /prompt wait expired for active /build tab '{}'; leaving session alive",
+                        wait_tab_key
+                    );
+                    return;
+                }
                 let mut guard = wait_session_arc.lock().await;
                 guard.mark_prompt_timeout();
                 warn!("debug-api /prompt timed out for tab '{}'", wait_tab_key);
@@ -2048,6 +2100,20 @@ struct MarketplaceHealthQuery {
     tab_id: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+struct GrokEnvironmentQuery {
+    #[serde(rename = "tabId", alias = "tab", alias = "tab_id")]
+    tab_id: Option<String>,
+    force: Option<u8>,
+    cwd: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct GrokTraceExportBody {
+    #[serde(rename = "tabId", alias = "tab", alias = "tab_id")]
+    tab_id: Option<String>,
+}
+
 /// `GET /state/marketplace_health?tabId=X` — #322. Returns the
 /// per-tab snapshot of launcher-health probe results. PluginsModal
 /// polls this every 4s while open to render the live status pills.
@@ -2078,6 +2144,37 @@ async fn state_session_tooling(
     match crate::session_tooling_snapshot_for_tab(tab_id, &registry, false, false).await {
         Ok(snapshot) => Json(snapshot).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+/// `GET /state/grok_environment?tabId=X&force=1` — Grok-native
+/// environment snapshot for the active tab. Runs `grok mcp doctor
+/// --json` and `grok inspect --json` in the tab transport.
+async fn state_grok_environment(
+    Query(q): Query<GrokEnvironmentQuery>,
+    State(s): State<ApiState>,
+) -> impl IntoResponse {
+    let tab_id = q.tab_id.unwrap_or_else(|| "default".to_string());
+    let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
+    match crate::grok_env::snapshot_for_tab(tab_id, &registry, q.force == Some(1), q.cwd).await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+/// `POST /state/grok_environment/trace_export` — local-only trace
+/// export for the active Grok session. Uses `grok trace --local --json`.
+async fn state_grok_trace_export(
+    State(s): State<ApiState>,
+    body: Option<Json<GrokTraceExportBody>>,
+) -> impl IntoResponse {
+    let tab_id = body
+        .map(|Json(body)| body.tab_id.unwrap_or_else(|| "default".to_string()))
+        .unwrap_or_else(|| "default".to_string());
+    let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
+    match crate::grok_env::export_trace_for_tab(tab_id, &registry).await {
+        Ok(result) => Json(result).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }
 }
 
@@ -2136,6 +2233,18 @@ struct SessionGitCheckpointBody {
     label: Option<String>,
 }
 
+#[derive(Deserialize, Default)]
+struct SessionGitWorktreeBody {
+    #[serde(rename = "tabId")]
+    tab_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(rename = "sourceBranch", default)]
+    source_branch: Option<String>,
+    #[serde(rename = "newBranch", default)]
+    new_branch: Option<String>,
+}
+
 /// `GET /state/session_git?tabId=X` — read-only mirror of the Git rail
 /// status model. The route runs git in the active tab environment and
 /// prefers the tab's `agentCwd`, so WSL/SSH reports match what the agent
@@ -2174,6 +2283,32 @@ async fn state_session_git_checkpoint(
         tab_id,
         cwd,
         body.label,
+    )
+    .await
+    {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+/// `POST /state/session_git/worktree` — local worktree creation for
+/// debug-api drivers. This mirrors the desktop Git rail command and only
+/// runs local/WSL/SSH git in the tab environment; it never mutates a remote.
+async fn state_session_git_worktree(
+    Query(q): Query<SessionGitQuery>,
+    State(s): State<ApiState>,
+    body: Option<Json<SessionGitWorktreeBody>>,
+) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let tab_id = body.tab_id.or(q.tab_id);
+    let cwd = body.cwd.or(q.cwd);
+    let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
+    match crate::session_git::git_session_create_worktree_for_tab(
+        registry.inner().clone(),
+        tab_id,
+        cwd,
+        body.source_branch,
+        body.new_branch,
     )
     .await
     {
@@ -2442,6 +2577,150 @@ async fn set_preview(
         ..Default::default()
     });
     Json(serde_json::json!({ "ok": true, "preview": body })).into_response()
+}
+
+async fn work_preview_state_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+) -> Response {
+    let tab_id = crate::acp::tab_id_or_default(q.tab_id.clone());
+    let manager = s
+        .app
+        .state::<Arc<crate::work_preview::WorkPreviewManager>>();
+    Json(manager.state(&tab_id).await).into_response()
+}
+
+async fn work_preview_logs_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+) -> Response {
+    let tab_id = crate::acp::tab_id_or_default(q.tab_id.clone());
+    let manager = s
+        .app
+        .state::<Arc<crate::work_preview::WorkPreviewManager>>();
+    Json(serde_json::json!({
+        "tabId": tab_id,
+        "logs": manager.logs(&tab_id).await,
+    }))
+    .into_response()
+}
+
+async fn work_preview_diagnose_get_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+) -> Response {
+    let tab_id = crate::acp::tab_id_or_default(q.tab_id.clone());
+    let manager = s
+        .app
+        .state::<Arc<crate::work_preview::WorkPreviewManager>>();
+    let diagnostic = manager
+        .diagnose(
+            &tab_id,
+            crate::work_preview::WorkPreviewDiagnoseRequest::default(),
+        )
+        .await;
+    append_preview_diagnose_build_receipt(&s, &tab_id, &diagnostic).await;
+    Json(diagnostic).into_response()
+}
+
+async fn work_preview_diagnose_post_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    Json(mut body): Json<crate::work_preview::WorkPreviewDiagnoseRequest>,
+) -> Response {
+    if q.tab_id.is_some() {
+        body.tab_id = q.tab_id.clone();
+    }
+    let tab_id = crate::acp::tab_id_or_default(body.tab_id.clone());
+    let manager = s
+        .app
+        .state::<Arc<crate::work_preview::WorkPreviewManager>>();
+    let diagnostic = manager.diagnose(&tab_id, body).await;
+    append_preview_diagnose_build_receipt(&s, &tab_id, &diagnostic).await;
+    Json(diagnostic).into_response()
+}
+
+async fn append_preview_diagnose_build_receipt(
+    s: &ApiState,
+    tab_id: &str,
+    diagnostic: &crate::work_preview::WorkPreviewDiagnostic,
+) {
+    let orch = s
+        .app
+        .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
+        .inner()
+        .clone();
+    let Some(state) = orch.get_state(tab_id).await else {
+        return;
+    };
+    if matches!(
+        state.status,
+        crate::build_types::BuildRunStatus::Complete
+            | crate::build_types::BuildRunStatus::Halted
+            | crate::build_types::BuildRunStatus::TransportFailed
+    ) {
+        return;
+    }
+    let data = serde_json::to_value(diagnostic).unwrap_or_else(|_| {
+        serde_json::json!({
+            "ok": diagnostic.ok,
+            "summary": diagnostic.summary.clone(),
+        })
+    });
+    let receipt = crate::build_types::BuildReceipt {
+        receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
+        run_id: state.run_id,
+        tab_id: tab_id.to_string(),
+        kind: crate::build_types::BuildReceiptKind::PreviewDiagnosed,
+        created_at_ms: now_ms() as u64,
+        actor: "shellx-preview-doctor".to_string(),
+        summary: diagnostic.summary.clone(),
+        confidence: crate::build_types::BuildReceiptConfidence::TrustedHost,
+        data,
+    };
+    if let Err(e) = orch.append_receipt(receipt).await {
+        tracing::warn!("preview_diagnose build receipt append failed: {}", e);
+    }
+}
+
+async fn work_preview_start_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    Json(mut body): Json<crate::work_preview::WorkPreviewStartRequest>,
+) -> Response {
+    if q.tab_id.is_some() {
+        body.tab_id = q.tab_id.clone();
+    }
+    let manager = s
+        .app
+        .state::<Arc<crate::work_preview::WorkPreviewManager>>();
+    match manager.start(body).await {
+        Ok(state) => Json(state).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn work_preview_stop_http(
+    State(s): State<ApiState>,
+    Query(q): Query<StateTabQuery>,
+    Json(body): Json<crate::work_preview::WorkPreviewStopRequest>,
+) -> Response {
+    let tab_id = crate::acp::tab_id_or_default(q.tab_id.or(body.tab_id));
+    let manager = s
+        .app
+        .state::<Arc<crate::work_preview::WorkPreviewManager>>();
+    match manager.stop(&tab_id).await {
+        Ok(state) => Json(state).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 // ─────────── Native MCP §6: host-tool endpoints ───────────
@@ -2836,6 +3115,31 @@ fn default_settings_json() -> serde_json::Value {
     })
 }
 
+fn normalize_github_gh_binary_setting(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("gh") {
+        return Ok("gh".to_string());
+    }
+    if trimmed.eq_ignore_ascii_case("gh.exe") {
+        return Ok("gh.exe".to_string());
+    }
+    Err("githubGhBinary must be exactly 'gh' or 'gh.exe'".to_string())
+}
+
+fn resolve_github_gh_binary() -> String {
+    if let Ok(env_bin) = std::env::var("SHELLX_GH_BIN") {
+        if let Ok(bin) = normalize_github_gh_binary_setting(&env_bin) {
+            return bin;
+        }
+        warn!("ignoring invalid SHELLX_GH_BIN value");
+    }
+    read_settings_from_disk()
+        .get("githubGhBinary")
+        .and_then(|v| v.as_str())
+        .and_then(|s| normalize_github_gh_binary_setting(s).ok())
+        .unwrap_or_else(|| "gh".to_string())
+}
+
 fn normalize_settings_json(v: serde_json::Value) -> serde_json::Value {
     let mut out = default_settings_json();
     let Some(src) = v.as_object() else {
@@ -2878,10 +3182,9 @@ fn normalize_settings_json(v: serde_json::Value) -> serde_json::Value {
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        dst.insert(
-            "githubGhBinary".into(),
-            serde_json::Value::String(bin.to_string()),
-        );
+        if let Ok(bin) = normalize_github_gh_binary_setting(bin) {
+            dst.insert("githubGhBinary".into(), serde_json::Value::String(bin));
+        }
     }
     out
 }
@@ -4713,9 +5016,9 @@ async fn build_approve_http(
         let path = active
             .as_ref()
             .map(|st| st.scratchboard_path.as_str())
-            .unwrap_or("build.md");
+            .unwrap_or("the Build Mode scratchboard");
         let prompt = format!(
-            "The Build Mode plan in build.md has been approved.\n\nObjective: {}\n\nScratchboard: {}\n\nBegin executing it now. Use shellX Agent personas when useful, record evidence, and call build_complete only after required gates are satisfied.",
+            "The Build Mode scratchboard plan has been approved.\n\nObjective: {}\n\nScratchboard: {}\n\nBegin executing it now. Use shellX Agent personas when useful, include the AI slop / wiring audit in the reviewer pass, record evidence in the scratchboard, and call build_complete only after required gates are satisfied. Agent task text must be a direct assignment to that subagent; do not ask subagents to dispatch more Agents, poll Agent output, or follow scratchboard manager checklist lines as their own instructions.",
             objective, path
         );
         let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
@@ -4838,9 +5141,7 @@ async fn build_receipt_http(
         )
             .into_response();
     };
-    let confidence = body
-        .confidence
-        .unwrap_or(crate::build_types::BuildReceiptConfidence::TrustedHost);
+    let confidence = build_receipt_http_confidence(body.confidence);
     let receipt = crate::build_types::BuildReceipt {
         receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
         run_id: state.run_id,
@@ -4861,6 +5162,12 @@ async fn build_receipt_http(
         .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
+}
+
+fn build_receipt_http_confidence(
+    _requested: Option<crate::build_types::BuildReceiptConfidence>,
+) -> crate::build_types::BuildReceiptConfidence {
+    crate::build_types::BuildReceiptConfidence::ModelDeclared
 }
 
 async fn build_state_http(State(s): State<ApiState>, Query(q): Query<GoalStateQuery>) -> Response {
@@ -5040,13 +5347,8 @@ async fn diagnostics_run(
             &mut fail,
             "fs",
             exists && writable,
-            format!(
-                "sessions dir at {} — exists={}, writable={}",
-                dir.display(),
-                exists,
-                writable
-            ),
-            Some(serde_json::json!({"path": dir.display().to_string()})),
+            format!("sessions dir exists={}, writable={}", exists, writable),
+            None,
         );
     }
 
@@ -5231,29 +5533,21 @@ async fn diagnostics_run(
         );
     }
 
-    // settings — file present + parseable
+    // settings — parseable when present; first-run installs legitimately
+    // have no settings.json yet and use in-memory defaults.
     if want("settings") {
         let settings_path = shellx_home()
             .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
             .join(".shellx")
             .join("settings.json");
-        let ok = settings_path
-            .exists()
-            .then(|| std::fs::read_to_string(&settings_path).ok())
-            .flatten()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .is_some();
+        let (ok, detail) = diagnostics_settings_status(&settings_path);
         record(
             &mut checks,
             &mut pass,
             &mut fail,
             "settings",
             ok,
-            format!(
-                "settings.json at {} — {}",
-                settings_path.display(),
-                if ok { "ok" } else { "missing or unparseable" }
-            ),
+            detail,
             None,
         );
     }
@@ -5274,8 +5568,7 @@ async fn diagnostics_run(
             "auth",
             ok,
             format!(
-                "shellxagent token at {} — {}",
-                token_path.display(),
+                "shellxagent token {}",
                 if ok { "ok" } else { "missing or invalid" }
             ),
             None,
@@ -5288,6 +5581,19 @@ async fn diagnostics_run(
         "checks": checks,
     }))
     .into_response()
+}
+
+fn diagnostics_settings_status(settings_path: &std::path::Path) -> (bool, String) {
+    if !settings_path.exists() {
+        return (true, "settings.json missing; defaults active".to_string());
+    }
+    match std::fs::read_to_string(settings_path) {
+        Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(_) => (true, "settings.json ok".to_string()),
+            Err(e) => (false, format!("settings.json unparseable: {}", e)),
+        },
+        Err(e) => (false, format!("settings.json unreadable: {}", e)),
+    }
 }
 
 /// Pure helper for `/sessions/<id>/snippet`: walks a JSONL stream,
@@ -5414,17 +5720,7 @@ async fn state_github_items(
 ) -> impl IntoResponse {
     let tab_id = q.tab_id.clone();
     let cwd = debug_tab_cwd(&s, tab_id.clone()).await;
-    let gh_bin = std::env::var("SHELLX_GH_BIN")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| {
-            read_settings_from_disk()
-                .get("githubGhBinary")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "gh".to_string())
-        });
+    let gh_bin = resolve_github_gh_binary();
 
     let pr_raw = debug_tab_command_text(
         &s,
@@ -5583,19 +5879,8 @@ async fn github_pr_create(
     }
 
     // Honor the advanced `githubGhBinary` setting here too, with
-    // env-var override + "gh" fallback. Same resolver pattern as
-    // gh_json above.
-    let gh_bin = std::env::var("SHELLX_GH_BIN")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| {
-            read_settings_from_disk()
-                .get("githubGhBinary")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "gh".to_string())
-        });
+    // env-var override + "gh" fallback through the allow-listed resolver.
+    let gh_bin = resolve_github_gh_binary();
     let out = tokio::task::spawn_blocking(move || {
         // Suppress console flash on Windows.
         use crate::winproc::NoWindowExt as _;
@@ -5658,8 +5943,8 @@ async fn github_pr_create(
 // protection automatically.
 //
 // On-disk state: ~/.shellx/vault.enc (envelope JSON). The Vault
-// struct is shared via a process-level OnceLock so concurrent HTTP +
-// Tauri-invoke callers see the same in-memory map.
+// handle is shared via a process-level OnceLock, but plaintext values
+// are not cached in that handle; each operation decrypts transiently.
 
 use crate::vault::Vault as VaultStore;
 
@@ -5959,13 +6244,43 @@ async fn connections_test_http(
 // Auth inherits the existing bearer-token middleware. Secrets are not
 // accepted here; bodies contain only vault-key references.
 
-use crate::outside_connectors::OutsideConnector;
+use crate::outside_connectors::{
+    connector_capabilities, OutsideConnector, OutsideConnectorInboundInput,
+};
+
+#[derive(Deserialize, Default)]
+struct OutsideConnectorEventsQuery {
+    limit: Option<usize>,
+}
 
 async fn outside_connectors_list_http(State(_s): State<ApiState>) -> impl IntoResponse {
     match crate::get_or_open_outside_connectors() {
         Ok(store) => {
             let connectors = store.list().await;
             Json(serde_json::json!({ "connectors": connectors })).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": { "code": "store_open_failed", "message": e }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn outside_connectors_capabilities_http(State(_s): State<ApiState>) -> impl IntoResponse {
+    Json(serde_json::json!({ "capabilities": connector_capabilities() })).into_response()
+}
+
+async fn outside_connectors_events_http(
+    State(_s): State<ApiState>,
+    Query(q): Query<OutsideConnectorEventsQuery>,
+) -> impl IntoResponse {
+    match crate::get_or_open_outside_connectors() {
+        Ok(store) => {
+            let events = store.events(q.limit.unwrap_or(50)).await;
+            Json(serde_json::json!({ "events": events })).into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -6050,6 +6365,35 @@ async fn outside_connectors_test_http(
     }
 }
 
+async fn outside_connectors_simulate_http(
+    State(_s): State<ApiState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(input): Json<OutsideConnectorInboundInput>,
+) -> impl IntoResponse {
+    let store = match crate::get_or_open_outside_connectors() {
+        Ok(store) => store,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": { "code": "store_open_failed", "message": e }
+                })),
+            )
+                .into_response();
+        }
+    };
+    match store.simulate_inbound(&id, input).await {
+        Ok(event) => (StatusCode::CREATED, Json(event)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": { "code": "bad_request", "message": e }
+            })),
+        )
+            .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod snippet_tests {
     use super::*;
@@ -6094,6 +6438,62 @@ mod snippet_tests {
     }
 
     #[test]
+    fn build_prompt_wait_expiry_does_not_wedge_nonterminal_builds() {
+        use crate::build_types::BuildRunStatus;
+
+        assert!(build_status_keeps_prompt_wait_alive(Some(
+            BuildRunStatus::Active
+        )));
+        assert!(build_status_keeps_prompt_wait_alive(Some(
+            BuildRunStatus::AwaitingApproval
+        )));
+        assert!(build_status_keeps_prompt_wait_alive(Some(
+            BuildRunStatus::Blocked
+        )));
+        assert!(!build_status_keeps_prompt_wait_alive(Some(
+            BuildRunStatus::Complete
+        )));
+        assert!(!build_status_keeps_prompt_wait_alive(Some(
+            BuildRunStatus::TransportFailed
+        )));
+        assert!(!build_status_keeps_prompt_wait_alive(None));
+    }
+
+    #[test]
+    fn diagnostics_settings_missing_uses_defaults() {
+        let dir = std::env::temp_dir().join(format!(
+            "shellx-diagnostics-settings-missing-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let path = dir.join(".shellx").join("settings.json");
+
+        let (ok, detail) = diagnostics_settings_status(&path);
+
+        assert!(ok);
+        assert_eq!(detail, "settings.json missing; defaults active");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn diagnostics_settings_malformed_fails() {
+        let dir = std::env::temp_dir().join(format!(
+            "shellx-diagnostics-settings-malformed-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp settings dir");
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "{not-json").expect("write malformed settings");
+
+        let (ok, detail) = diagnostics_settings_status(&path);
+
+        assert!(!ok);
+        assert!(detail.starts_with("settings.json unparseable:"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn connect_body_accepts_session_id_alias_for_docs_compat() {
         let body: ConnectBody = serde_json::from_value(serde_json::json!({
             "cwd": "/tmp/project",
@@ -6125,6 +6525,39 @@ mod snippet_tests {
         }))
         .expect("approved pr body should parse");
         assert!(approved.confirm_remote_create);
+    }
+
+    #[test]
+    fn github_gh_binary_setting_rejects_exec_sinks() {
+        assert_eq!(normalize_github_gh_binary_setting("gh").unwrap(), "gh");
+        assert_eq!(
+            normalize_github_gh_binary_setting("GH.EXE").unwrap(),
+            "gh.exe"
+        );
+        for bad in ["sh", "/tmp/gh", "gh --help", "gh;calc", "powershell.exe"] {
+            assert!(
+                normalize_github_gh_binary_setting(bad).is_err(),
+                "bad gh binary should be rejected: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_receipt_http_confidence_is_not_host_trusted() {
+        use crate::build_types::BuildReceiptConfidence;
+
+        assert_eq!(
+            build_receipt_http_confidence(None),
+            BuildReceiptConfidence::ModelDeclared
+        );
+        assert_eq!(
+            build_receipt_http_confidence(Some(BuildReceiptConfidence::TrustedHost)),
+            BuildReceiptConfidence::ModelDeclared
+        );
+        assert_eq!(
+            build_receipt_http_confidence(Some(BuildReceiptConfidence::ObservedAcp)),
+            BuildReceiptConfidence::ModelDeclared
+        );
     }
 
     #[test]

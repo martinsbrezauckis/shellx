@@ -17,6 +17,11 @@ assert(classifyUpdateError("Could not fetch a valid release JSON from the remote
 assert(classifyUpdateError("getaddrinfo ENOTFOUND github.com") === "network", "dns failures are network failures");
 assert(classifyUpdateError("download failed while fetching asset") === "download", "download failures stay actionable");
 assert(classifyUpdateError("404 not found") === "no-release", "missing release manifest is not noisy");
+assert(
+  classifyUpdateError("None of the fallback platforms ['darwin-aarch64-app', 'darwin-aarch64'] were found in the response `platforms` object")
+    === "no-release",
+  "missing macOS updater platform is quiet until mac artifacts ship",
+);
 
 const current: UpdateDiagnosticInput = {
   currentVersion: "0.1.31",

@@ -10,7 +10,7 @@
  *
  * Mode B (--mode=app):    connect to the running Tauri app's debug
  *                         WebSocket and drive it the same way an external
- *                         agent would. NOT IMPLEMENTED YET — wired in P3.
+ *                         agent would.
  *
  * Output: every JSON-RPC frame (both directions) plus stderr lines and
  *         driver-level notes append to evidence/session-NNN.jsonl, one
@@ -114,9 +114,15 @@ function parseArgs(argv: string[]): CliArgs {
     }
   }
   if (args.prompt) prompts.push(args.prompt);
-  // Allow multiple --prompt by repeated key: only the last survives via the
-  // simple parser above. For multi-prompt runs, pass --prompts-file.
+  if (args["prompts-file"]) {
+    const promptText = readFileSync(args["prompts-file"], "utf8");
+    prompts.push(promptText.replace(/\s+$/, ""));
+  }
+  // Allow multiple prompts by passing --prompts-file. Repeated --prompt only
+  // keeps the last value because this deliberately simple parser stores a
+  // single value per key.
   return {
+    ...args,
     mode: (args.mode as CliArgs["mode"]) ?? "stdio",
     cwd: args.cwd ?? process.cwd(),
     prompts: prompts.length
@@ -434,7 +440,7 @@ async function runStdioMode(args: CliArgs): Promise<number> {
         dir: "log",
         note: `authenticate failed methodId=${methodId}: ${e.message}`,
       });
-      console.error(`[driver] authenticate failed methodId=${methodId}:`, e.message);
+      console.error("[driver] authenticate failed methodId=%s: %s", methodId, e.message);
       client.kill();
       return 5;
     }
@@ -680,7 +686,11 @@ async function runAppMode(args: CliArgs): Promise<number> {
 
       // Watch for _x.ai/session/prompt_complete to know when we can wrap up.
       const m = parsed?.payload?.method;
-      if (m === "_x.ai/session/prompt_complete") {
+      if (
+        m === "_x.ai/session/prompt_complete" ||
+        parsed?.kind === "prompt-complete" ||
+        parsed?.payload?.kind === "prompt_complete"
+      ) {
         promptCompleteSeen = true;
         process.stdout.write(`  · prompt_complete\n`);
         resolvePromptWaiters();

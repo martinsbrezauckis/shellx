@@ -22,21 +22,39 @@ function stripLineSuffix(path: string): string {
   return path.replace(/(?<!^)(?::\d+){1,2}$/, "");
 }
 
+function stripUrlSuffix(path: string): string {
+  if (/^[A-Za-z]:[\\/]/.test(path)) return path.split(/[?#]/, 1)[0] ?? path;
+  return path.split(/[?#]/, 1)[0] ?? path;
+}
+
+function decodeLocalPath(path: string): string {
+  try {
+    return decodeURI(path);
+  } catch {
+    return path;
+  }
+}
+
+export function localHrefToPreviewPath(href: string): string {
+  const raw = stripUrlSuffix(fileUrlToPath(href) ?? href);
+  return decodeLocalPath(raw).replace(/^\/([A-Za-z]:[\\/])/, "$1");
+}
+
 export function isPreviewableFileHref(href: unknown): href is string {
   if (typeof href !== "string" || href.length === 0 || isHttpUrl(href)) return false;
-  const candidate = stripLineSuffix(fileUrlToPath(href) ?? href);
+  const candidate = stripLineSuffix(localHrefToPreviewPath(href));
   if (/^[a-z][a-z0-9+.-]*:/i.test(candidate) && !/^[A-Za-z]:[\\/]/.test(candidate)) return false;
   return /^(\.{0,2}\/|\/|[A-Za-z]:[\\/]|\\\\)/.test(candidate) ||
     /\.(md|markdown|txt|json|jsonl|toml|yaml|yml|ini|cfg|conf|env|log|csv|tsv|html|css|svg|png|jpg|jpeg|gif|webp|pdf|rs|ts|tsx|js|jsx|mjs|cjs|py|rb|go|java|kt|swift|c|h|hpp|cpp|sh|bash|zsh|fish|ps1|bat|cmd|nix|dockerfile|gitignore|gitattributes|lock)$/i.test(candidate);
 }
 
 export function fileDisplayName(path: string): string {
-  const normalized = stripLineSuffix(fileUrlToPath(path) ?? path);
+  const normalized = stripLineSuffix(localHrefToPreviewPath(path));
   return normalized.split(/[\\/]/).filter(Boolean).pop() ?? normalized;
 }
 
 export function resolveMarkdownPreviewHref(currentPath: string | undefined, href: string): string {
-  const cleanHref = stripLineSuffix(fileUrlToPath(href) ?? href);
+  const cleanHref = stripLineSuffix(localHrefToPreviewPath(href));
   if (!currentPath || /^([A-Za-z]:[\\/]|\/|\\\\)/.test(cleanHref)) return cleanHref;
   const sep = currentPath.includes("\\") ? "\\" : "/";
   const dir = currentPath.split(/[\\/]/).slice(0, -1).join(sep);
@@ -75,6 +93,43 @@ function normalizePreviewPath(path: string, sep: "\\" | "/"): string {
   }
 
   return prefix + parts.join(sep);
+}
+
+const PLAIN_FILE_EXT =
+  "md|markdown|txt|json|jsonl|toml|yaml|yml|ini|cfg|conf|env|log|csv|tsv|html|htm|css|svg|png|jpg|jpeg|gif|webp|pdf|rs|ts|tsx|js|jsx|mjs|cjs|py|rb|go|java|kt|swift|c|h|hpp|cpp|sh|bash|zsh|fish|ps1|bat|cmd|nix|dockerfile|gitignore|gitattributes|lock";
+
+const PLAIN_FILE_REF_RE = new RegExp(
+  [
+    String.raw`(?<![\]\(\w])`,
+    String.raw`(`,
+    String.raw`[A-Za-z]:[\\/][^\r\n\`"<>|]*?\.(${PLAIN_FILE_EXT})`,
+    String.raw`|\\\\[^\r\n\`"<>|]*?\.(${PLAIN_FILE_EXT})`,
+    String.raw`|/(?!/)[^\r\n\`"<>|]*?\.(${PLAIN_FILE_EXT})`,
+    String.raw`|(?:\.{1,2}[\\/])?[A-Za-z0-9_.@()-][A-Za-z0-9_.@()\-\\/]*?\.(${PLAIN_FILE_EXT})`,
+    String.raw`)`,
+    String.raw`(?=$|[\s,.;:!?)}\]])`,
+  ].join(""),
+  "gi",
+);
+
+export function linkifyPreviewableFileRefs(markdown: string): string {
+  const lines = markdown.split(/(\r?\n)/);
+  let inFence = false;
+  return lines
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence || !line.trim() || line.includes("](")) return line;
+      return line.replace(PLAIN_FILE_REF_RE, (match) => {
+        if (!isPreviewableFileHref(match)) return match;
+        const escaped = match.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+        const href = encodeURI(match).replace(/\(/g, "%28").replace(/\)/g, "%29");
+        return `[${escaped}](${href})`;
+      });
+    })
+    .join("");
 }
 
 export function SafeMarkdownLink({

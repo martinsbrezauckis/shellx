@@ -1,6 +1,8 @@
 import {
   fileDisplayName,
   isPreviewableFileHref,
+  linkifyPreviewableFileRefs,
+  localHrefToPreviewPath,
   resolveMarkdownPreviewHref,
 } from "../src/lib/markdown-links";
 
@@ -38,6 +40,40 @@ assert(
 assert(
   isPreviewableFileHref("file:///C:/Users/User/shellX/docs/goal.md"),
   "file:// markdown links are previewable",
+);
+assert(
+  localHrefToPreviewPath("/C:/Users/User/Documents/New%20project%203/shellx-preview-test.html") ===
+    "C:/Users/User/Documents/New project 3/shellx-preview-test.html",
+  "encoded /C:/ markdown links normalize to Windows paths",
+);
+assert(
+  resolveMarkdownPreviewHref(undefined, "/C:/Users/User/Documents/New%20project%203/shellx-preview-test.html") ===
+    "C:/Users/User/Documents/New project 3/shellx-preview-test.html",
+  "encoded Windows HTML links resolve without fake POSIX prefix",
+);
+assert(
+  fileDisplayName("/C:/Users/User/Documents/New%20project%203/shellx-preview-test.html") ===
+    "shellx-preview-test.html",
+  "display name decodes encoded Windows path links",
+);
+assert(
+  isPreviewableFileHref("/C:/Users/User/Documents/New%20project%203/shellx-preview-test.html"),
+  "encoded Windows HTML links are previewable",
+);
+const linkedBareHtml = linkifyPreviewableFileRefs("Open shellx-preview-test.html after the build.");
+assert(
+  linkedBareHtml.includes("[shellx-preview-test.html](shellx-preview-test.html)"),
+  "bare HTML filenames become preview links",
+);
+const linkedWindowsHtml = linkifyPreviewableFileRefs("Open C:\\Users\\User\\Documents\\New project 3\\page.html now.");
+assert(
+  linkedWindowsHtml.includes("](C:%5CUsers%5CUser%5CDocuments%5CNew%20project%203%5Cpage.html)"),
+  "Windows HTML paths with spaces become preview links",
+);
+const fenced = linkifyPreviewableFileRefs("```bash\ncat shellx-preview-test.html\n```\n");
+assert(
+  fenced === "```bash\ncat shellx-preview-test.html\n```\n",
+  "code fences are not linkified",
 );
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} markdown-link tests`);

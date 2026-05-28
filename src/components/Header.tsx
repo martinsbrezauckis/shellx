@@ -13,6 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { apiPostJson } from "../lib/debug-api";
 import { FindPopover, type ChatHit } from "./FindPopover";
 import { ShellIcon } from "./icons";
+import type { OutsideConnectorInboxSummary } from "../lib/outside-connectors";
 
 // brand-shellx.png is a tight crop of the source brand sheet — icon
 // tile + "Shell X" wordmark, no subtitle. The tile/background blends
@@ -44,6 +45,8 @@ export function Header({
   onWorkspaceClick,
   onOpenSettings,
   onOpenPlugins,
+  onOpenConnectorInbox,
+  outsideConnectorInbox,
   onOpenChat,
   hideAutonomyDial,
   findCorpus,
@@ -61,6 +64,9 @@ export function Header({
   onOpenSettings?: () => void;
  /** Plugins icon opens the PluginsModal. */
   onOpenPlugins?: () => void;
+ /** Connector inbox opens recent Telegram/Discord inbound events. */
+  onOpenConnectorInbox?: () => void;
+  outsideConnectorInbox?: OutsideConnectorInboxSummary;
  /** Click on the shellX brand logo opens the About modal
  * with GitHub link + report-bug shortcut. */
   onOpenAbout?: () => void;
@@ -82,6 +88,9 @@ export function Header({
   liveGrokCount?: number;
 }): JSX.Element {
   const tokenPct = Math.min(100, (totalTokens / maxTokens) * 100);
+  const showConnectorInbox = Boolean(
+    onOpenConnectorInbox && outsideConnectorInbox?.shouldShowHeaderInbox,
+  );
 
   const setMode = useCallback(
     async (mode: AutonomyMode) => {
@@ -185,6 +194,20 @@ export function Header({
             <span className="hdr-live-dot grok-dot" />
             {liveGrokCount} working
           </span>
+        )}
+        {showConnectorInbox && outsideConnectorInbox && (
+          <button
+            type="button"
+            className="hdr-icon hdr-inbox-icon"
+            onClick={onOpenConnectorInbox}
+            title={`${outsideConnectorInbox.label} · connector inbox`}
+            aria-label="Open connector inbox"
+          >
+            <ShellIcon name="inbox" size={16} />
+            {outsideConnectorInbox.badgeLabel && (
+              <span className="hdr-icon-badge">{outsideConnectorInbox.badgeLabel}</span>
+            )}
+          </button>
         )}
  {/* Plugins icon — opens PluginsModal */}
         {onOpenPlugins && (

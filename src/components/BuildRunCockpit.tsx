@@ -1,6 +1,8 @@
 import { useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  buildApprovalReadinessFromText,
+  buildActionFailureMessage,
   buildStatusLabel,
   type BuildReceipt,
   type BuildReceiptKind,
@@ -13,6 +15,7 @@ interface BuildRunCockpitProps {
   activeTabId?: string | null;
   state: BuildRunState | null;
   receipts: BuildReceipt[];
+  scratchboardText?: string;
   onChanged?: () => void;
 }
 
@@ -27,7 +30,7 @@ type Gate = {
 function receiptIcon(kind: BuildReceiptKind): ShellIconName {
   if (kind === "fileWrite" || kind === "fileCopy" || kind === "fileDelete") return "file";
   if (kind === "agentStarted" || kind === "agentCompleted") return "activity";
-  if (kind === "reviewCompleted" || kind === "verificationCompleted") return "check";
+  if (kind === "reviewCompleted" || kind === "verificationCompleted" || kind === "previewDiagnosed") return "check";
   if (kind === "checkpointCreated") return "git-branch";
   if (kind === "runHalted") return "square";
   if (kind === "blockerOpened" || kind === "completionRejected" || kind === "transportFailure") return "alert";
@@ -52,6 +55,7 @@ export function BuildRunCockpit({
   activeTabId,
   state,
   receipts,
+  scratchboardText,
   onChanged,
 }: BuildRunCockpitProps): JSX.Element | null {
   const [busy, setBusy] = useState<string | null>(null);
@@ -65,7 +69,10 @@ export function BuildRunCockpit({
     setBusy(name);
     setMessage(null);
     try {
-      await fn();
+      const result = await fn();
+      if (result === false) {
+        setMessage(buildActionFailureMessage(name));
+      }
       onChanged?.();
     } catch (err: any) {
       setMessage(String(err));
@@ -96,22 +103,32 @@ export function BuildRunCockpit({
       satisfied: state.verificationSatisfied,
       title: "Satisfied by a trusted verifier Agent or observed verification receipt.",
     },
+    {
+      key: "preview",
+      label: "Preview",
+      required: Boolean(state.previewRequired),
+      satisfied: Boolean(state.previewSatisfied),
+      title: "Satisfied by a successful shellX Preview Doctor receipt.",
+    },
   ];
 
   const hiddenReceiptCount = Math.max(0, receipts.length - 6);
   const visibleReceipts = (showAllReceipts ? receipts : receipts.slice(-6)).slice().reverse();
-  const canApprove = state.status === "awaitingApproval";
+  const approvalReadiness = buildApprovalReadinessFromText(scratchboardText);
+  const canApprove = state.status === "awaitingApproval" && approvalReadiness.ready;
+  const waitingForPlan = state.status === "awaitingApproval" && !approvalReadiness.ready;
   const canPause = state.status === "active";
   const canResume = state.status === "paused";
   const canCheckpoint = state.status === "active" || state.status === "paused";
   const canStop = state.status !== "complete" && state.status !== "halted";
+  const statusText = waitingForPlan ? "Planning" : buildStatusLabel(state.status);
 
   return (
     <div className="build-cockpit" title={state.objective}>
       <div className="build-cockpit-top">
         <span className={`build-status-pill build-status-${state.status}`}>
           <ShellIcon name={state.status === "paused" ? "pause" : state.status === "awaitingApproval" ? "pencil" : "activity"} size={13} />
-          Build {buildStatusLabel(state.status)}
+          Build {statusText}
         </span>
         <span className="build-meta">
           {state.continuationsTotal} cont · {formatAge(state.createdAtMs)}
@@ -134,6 +151,11 @@ export function BuildRunCockpit({
       </div>
 
       <div className="build-actions">
+        {waitingForPlan && (
+          <span className="goal-status-meta" title={approvalReadiness.reason}>
+            planning…
+          </span>
+        )}
         {canApprove && (
           <>
             <button

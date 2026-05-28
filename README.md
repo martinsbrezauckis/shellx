@@ -3,7 +3,7 @@
 Desktop client that hosts xAI's **Grok Build CLI** — or any agent
 speaking the Agent Client Protocol — with tabs, an encrypted vault,
 voice in / out, session tool health, traceable file activity, Git review
-workflows, an MCP marketplace, file/media preview, autonomous goal mode,
+workflows, an MCP marketplace, file/media preview, Build Mode,
 and a typed HTTP API for local scripting.
 
 **Status:** Beta. Windows installer is the primary signed release.
@@ -13,19 +13,14 @@ are ready.
 
 ## What it does
 
-- **One UI for three runtimes.** Spawn the agent on local Windows,
-  inside a WSL distro, or over SSH to any Linux box — same chat
-  surface, same inline image / video rendering, same vault, same
-  host-MCP toolset.
+- **One UI for three runtimes.** Run the agent on local Windows, WSL,
+  or SSH with the same chat, vault, previews, and host tools.
 - **Grok Imagine-ready media.** Image and video generations from
   grok-build render inline when your Grok account exposes Imagine
   features.
-- **Host MCP tools** the agent can reach: vault (`secret_get`),
-  durable cross-tab key/value (`mem_*`), filesystem
-  (`fs_read` / `fs_write` / `fs_grep` / …), HTTP allow-list
-  (`net_fetch`), vision, screenshot, subagent fan-out
-  (`Agent` / `Agent_kill`), timing and process controls. Tunneled
-  into WSL / SSH so a remote agent gets the same toolbox.
+- **Host MCP tools.** Vault, filesystem, network fetch, screenshots,
+  vision, memory, process controls, and subagent tools are available to
+  the connected agent.
 - **Real terminal.** Embedded PTY (ConPTY on Windows, openpty on
   Linux). Run `vim`, `htop`, anything interactive.
 - **Encrypted vault.** chacha20poly1305 cipher with an OS-keyring
@@ -39,13 +34,22 @@ are ready.
 - **Git workflow surface.** Inspect dirty state and diffs, create local
   checkpoints, and create worktrees from the active session without
   leaving shellX.
+- **Tools health.** See MCP health, Grok environment diagnostics,
+  search capability status, trace availability, and Preview setup for
+  the active tab.
 - **Workflow skills.** shellX installs compact Grok skills for common
   coding loops: build an app, fix a bug, polish UI, review a repo, and
   prepare a release.
-- **Autonomous mode.** `/goal "<objective>"` writes a scratchboard,
-  lets the agent plan + work across multiple turns, requires a
-  reviewer/check subagent gate for code changes when available, and
-  stops when the agent calls `goal_complete`.
+- **Build Mode.** `/build "<objective>"` writes a scoped scratchboard,
+  lets the agent plan + work across multiple turns, records host
+  receipts for checkpoints/review/verification, and uses Preview Doctor
+  evidence for UI/web work.
+- **Work Preview.** Static HTML, web apps, and Expo web apps can run in
+  a loopback preview with logs, diagnostics, and passive setup checks in
+  the Tools panel.
+- **Outside connectors.** Telegram can route allowlisted direct chats to
+  a shellX session and reply back. Discord bot messages can land in the
+  connector inbox.
 - **shellXagent HTTP API.** Every UI surface reachable over loopback
   with a bearer token. Drive shellX from an external agent, Playwright,
   a CI bot, anything.
@@ -57,11 +61,7 @@ are ready.
 ### Windows
 
 Download the latest signed installer from the
-[Releases page](https://github.com/MartinsBrezauckis/shellx/releases).
-
-If your antivirus deletes `grok.exe` on download, see
-[docs/KASPERSKY.md](docs/KASPERSKY.md) for the recommended exclusion
-list.
+[Releases page](https://github.com/martinsbrezauckis/shellx/releases).
 
 ### Linux
 
@@ -70,7 +70,7 @@ or `.AppImage` from the Releases page if one matches your distro. If a
 bundle is not attached for your distro, build from source:
 
 ```bash
-git clone https://github.com/MartinsBrezauckis/shellx
+git clone https://github.com/martinsbrezauckis/shellx
 cd shellx
 pnpm install
 pnpm tauri build
@@ -89,14 +89,15 @@ source for local development/testing, but public distribution waits on
 Developer ID signing and notarization.
 
 ```bash
-git clone https://github.com/MartinsBrezauckis/shellx
+git clone https://github.com/martinsbrezauckis/shellx
 cd shellx
 pnpm install
-pnpm tauri build --bundles app
+./scripts/build-macos.sh
 ```
 
 Requires Node 20+, pnpm, Rust 1.80+, and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/).
+Maintainer signing/notarization notes live in `docs/MACOS_RELEASE.md`.
 
 ## Quick start
 
@@ -107,7 +108,7 @@ Requires Node 20+, pnpm, Rust 1.80+, and the
    in a terminal once so shellX picks up your OAuth token; otherwise
    paste an xAI API key here.
 4. **New tab → 📁 pill** → pick a working folder → **Connect**.
-5. Type a prompt. Use `/goal "<objective>"` for autonomous mode or
+5. Type a prompt. Use `/build "<objective>"` for multi-turn build mode or
    `/pr` to open the PR-create modal. Grok's own slash commands (e.g.
    `/help`) work as usual.
 

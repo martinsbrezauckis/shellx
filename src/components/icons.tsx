@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import {
   Activity,
   AlertTriangle,
+  AppWindow,
   ArrowUp,
   Ban,
   Camera,
@@ -24,10 +25,13 @@ import {
   Globe2,
   Headphones,
   Image,
+  Inbox,
   Link,
   LoaderCircle,
   Lock,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   Mic,
   Monitor,
   Paperclip,
@@ -42,10 +46,14 @@ import {
   Send,
   Settings,
   ShieldAlert,
+  Smartphone,
   Square,
+  SquareTerminal,
+  Tablet,
   Terminal,
   Trash2,
   Video,
+  Workflow,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -54,6 +62,7 @@ import { transportKindForValue, transportLabelForKind, type TransportKind } from
 export type ShellIconName =
   | "activity"
   | "alert"
+  | "app-window"
   | "arrow-up"
   | "ban"
   | "camera"
@@ -75,11 +84,15 @@ export type ShellIconName =
   | "git-branch"
   | "headphones"
   | "image"
+  | "inbox"
   | "link"
   | "loader"
   | "lock"
+  | "maximize"
   | "message"
+  | "minimize"
   | "mic"
+  | "monitor"
   | "paperclip"
   | "pause"
   | "pencil"
@@ -92,14 +105,18 @@ export type ShellIconName =
   | "send"
   | "settings"
   | "shield-alert"
+  | "phone"
   | "square"
+  | "tablet"
   | "terminal"
   | "trash"
+  | "trace"
   | "video";
 
 const ICONS: Record<ShellIconName, LucideIcon> = {
   activity: Activity,
   alert: AlertTriangle,
+  "app-window": AppWindow,
   "arrow-up": ArrowUp,
   ban: Ban,
   camera: Camera,
@@ -121,11 +138,15 @@ const ICONS: Record<ShellIconName, LucideIcon> = {
   "git-branch": GitBranch,
   headphones: Headphones,
   image: Image,
+  inbox: Inbox,
   link: Link,
   loader: LoaderCircle,
   lock: Lock,
+  maximize: Maximize2,
   message: MessageSquare,
+  minimize: Minimize2,
   mic: Mic,
+  monitor: Monitor,
   paperclip: Paperclip,
   pause: Pause,
   pencil: Pencil,
@@ -138,9 +159,12 @@ const ICONS: Record<ShellIconName, LucideIcon> = {
   send: Send,
   settings: Settings,
   "shield-alert": ShieldAlert,
+  phone: Smartphone,
   square: Square,
-  terminal: Terminal,
+  tablet: Tablet,
+  terminal: SquareTerminal,
   trash: Trash2,
+  trace: Workflow,
   video: Video,
 };
 

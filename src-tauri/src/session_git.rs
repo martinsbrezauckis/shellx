@@ -6,14 +6,18 @@
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::State;
 
 use crate::acp::{tab_id_or_default, SessionRegistry};
+use sha2::{Digest, Sha256};
 
 const DIFF_CAP_BYTES: usize = 512 * 1024;
+const UNTRACKED_SNAPSHOT_FILE_CAP_BYTES: u64 = 5 * 1024 * 1024;
+const UNTRACKED_SNAPSHOT_TOTAL_CAP_BYTES: u64 = 50 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +41,21 @@ pub struct GitCheckpointSummary {
     unstaged: u32,
     untracked: u32,
     conflicts: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    worktree_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    untracked_snapshot: Option<UntrackedSnapshotSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UntrackedSnapshotSummary {
+    files: u32,
+    captured: u32,
+    skipped: u32,
+    bytes: u64,
+    truncated: bool,
+    manifest_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +164,31 @@ pub(crate) fn effective_command_cwd_from_debug(
         .unwrap_or_else(|| fallback.to_string())
 }
 
+/// Windows users can hand shellX a WSL-shaped path (for example from
+/// pasted agent output) while the tab is still using local Windows
+/// transport. Native `git.exe` cannot `current_dir("/mnt/c/...")`, so
+/// normalize the common mount form before spawning local host commands.
+pub(crate) fn normalize_local_windows_cwd(cwd: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        let trimmed = cwd.trim();
+        let normalized = trimmed.replace('\\', "/");
+        if let Some(rest) = normalized.strip_prefix("/mnt/") {
+            let mut parts = rest.splitn(2, '/');
+            let drive = parts.next().unwrap_or_default();
+            let tail = parts.next().unwrap_or_default();
+            if drive.len() == 1 && drive.as_bytes()[0].is_ascii_alphabetic() {
+                let drive = drive.to_ascii_uppercase();
+                if tail.is_empty() {
+                    return format!("{}:\\", drive);
+                }
+                return format!("{}:\\{}", drive, tail.replace('/', "\\"));
+            }
+        }
+    }
+    cwd.to_string()
+}
+
 pub(crate) fn sanitize_worktree_slug(input: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = false;
@@ -176,6 +220,44 @@ pub(crate) fn sanitize_worktree_slug(input: &str) -> String {
 pub(crate) fn branch_name_from_source(source: &str, now_ms: i64) -> String {
     let seconds = now_ms / 1000;
     format!("shellx/{}-{}", sanitize_worktree_slug(source), seconds)
+}
+
+fn validate_worktree_ref_arg(label: &str, value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{} cannot be empty", label));
+    }
+    if trimmed.starts_with('-') {
+        return Err(format!("{} cannot start with '-'", label));
+    }
+    if trimmed.chars().any(|c| c.is_control() || c == '\0') {
+        return Err(format!("{} cannot contain control characters", label));
+    }
+    Ok(())
+}
+
+fn worktree_add_args(branch: &str, target: &str, source: &str) -> Vec<String> {
+    vec![
+        "worktree".into(),
+        "add".into(),
+        "-b".into(),
+        branch.to_string(),
+        "--".into(),
+        target.to_string(),
+        source.to_string(),
+    ]
+}
+
+fn worktree_add_orphan_args(branch: &str, target: &str) -> Vec<String> {
+    vec![
+        "worktree".into(),
+        "add".into(),
+        "--orphan".into(),
+        "-b".into(),
+        branch.to_string(),
+        "--".into(),
+        target.to_string(),
+    ]
 }
 
 fn now_ms() -> i64 {
@@ -338,6 +420,9 @@ async fn command_context(
         }
         cwd = effective_command_cwd_from_debug(&debug, &cwd);
     }
+    if transport == "local" {
+        cwd = normalize_local_windows_cwd(&cwd);
+    }
     GitCommandContext {
         tab_id,
         transport,
@@ -398,6 +483,550 @@ fn checkpoint_text_result(step: &str, result: Result<String, String>) -> Result<
     result.map_err(|e| format!("checkpoint {} failed: {}", step, e))
 }
 
+fn git_probe_success(cwd: &Path, args: &[&str]) -> bool {
+    use crate::winproc::NoWindowExt as _;
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(args).current_dir(cwd).no_window();
+    cmd.output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+fn git_output_bytes_for_checkpoint(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    use crate::winproc::NoWindowExt as _;
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(args).current_dir(cwd).no_window();
+    let out = cmd
+        .output()
+        .map_err(|e| format!("git {:?} spawn failed: {}", args, e))?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(format!(
+            "git {:?} exited {:?}: {}",
+            args,
+            out.status.code(),
+            stderr
+        ))
+    }
+}
+
+fn git_output_text_for_checkpoint(cwd: &Path, args: &[&str]) -> Result<String, String> {
+    let bytes = git_output_bytes_for_checkpoint(cwd, args)?;
+    String::from_utf8(bytes).map_err(|e| format!("git {:?} returned non-UTF8 stdout: {}", args, e))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    format!("{:x}", digest)
+}
+
+fn sha256_file_hex(path: &Path) -> Result<(u64, String), String> {
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("open {} failed: {}", path.display(), e))?;
+    let mut hasher = Sha256::new();
+    let mut total = 0u64;
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("read {} failed: {}", path.display(), e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        total = total.saturating_add(n as u64);
+    }
+    Ok((total, format!("{:x}", hasher.finalize())))
+}
+
+fn safe_git_relative_path(rel: &str) -> Option<PathBuf> {
+    let rel = rel.replace('\\', "/");
+    if rel.is_empty() || rel.starts_with('/') {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for component in Path::new(&rel).components() {
+        match component {
+            Component::Normal(part) => out.push(part),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    if out.as_os_str().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn is_checkpoint_internal_rel(rel: &str) -> bool {
+    let normalized = rel.replace('\\', "/");
+    normalized == ".grok" || normalized.starts_with(".grok/")
+}
+
+fn parse_nul_terminated_paths(bytes: &[u8]) -> Vec<String> {
+    let mut paths: Vec<String> = bytes
+        .split(|b| *b == 0)
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| String::from_utf8(part.to_vec()).ok())
+        .filter(|rel| !is_checkpoint_internal_rel(rel))
+        .collect();
+    paths.sort();
+    paths
+}
+
+fn list_untracked_paths_for_checkpoint(repo_root: &Path) -> Result<Vec<String>, String> {
+    let bytes = git_output_bytes_for_checkpoint(
+        repo_root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?;
+    Ok(parse_nul_terminated_paths(&bytes))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UntrackedSnapshotEntry {
+    path: String,
+    kind: String,
+    size_bytes: u64,
+    sha256: Option<String>,
+    captured: bool,
+    reason: Option<String>,
+}
+
+pub(crate) fn local_worktree_fingerprint(cwd: &Path) -> Result<Option<String>, String> {
+    if !cwd.exists() {
+        return Ok(None);
+    }
+    if !git_probe_success(cwd, &["rev-parse", "--is-inside-work-tree"]) {
+        return Ok(None);
+    }
+    let repo_root = git_output_text_for_checkpoint(cwd, &["rev-parse", "--show-toplevel"])?
+        .trim()
+        .to_string();
+    let repo_root = PathBuf::from(repo_root);
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"shellx-worktree-fingerprint-v1\0");
+    if let Ok(head) = git_output_bytes_for_checkpoint(&repo_root, &["rev-parse", "HEAD"]) {
+        hasher.update(b"head\0");
+        hasher.update(&head);
+        hasher.update(b"\0");
+    }
+    for (label, args) in [
+        ("unstaged", &["diff", "--binary", "--"][..]),
+        ("staged", &["diff", "--cached", "--binary", "--"][..]),
+    ] {
+        let output = git_output_bytes_for_checkpoint(&repo_root, args)?;
+        hasher.update(label.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(sha256_hex(&output).as_bytes());
+        hasher.update(b"\0");
+    }
+    for rel in list_untracked_paths_for_checkpoint(&repo_root)? {
+        let Some(safe_rel) = safe_git_relative_path(&rel) else {
+            continue;
+        };
+        let path = repo_root.join(&safe_rel);
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        hasher.update(b"untracked\0");
+        hasher.update(rel.as_bytes());
+        hasher.update(b"\0");
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            hasher.update(b"symlink\0");
+            if let Ok(target) = std::fs::read_link(&path) {
+                hasher.update(target.to_string_lossy().as_bytes());
+            }
+            hasher.update(b"\0");
+        } else if file_type.is_file() {
+            let (size, digest) = sha256_file_hex(&path)?;
+            hasher.update(b"file\0");
+            hasher.update(size.to_string().as_bytes());
+            hasher.update(b"\0");
+            hasher.update(digest.as_bytes());
+            hasher.update(b"\0");
+        } else {
+            hasher.update(b"other\0");
+        }
+    }
+    Ok(Some(format!("{:x}", hasher.finalize())))
+}
+
+fn worktree_fingerprint_from_parts(
+    head: Option<&str>,
+    unstaged: &str,
+    staged: &str,
+    untracked_entries: &[UntrackedSnapshotEntry],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"shellx-worktree-fingerprint-v1\0");
+    if let Some(head) = head.map(str::trim).filter(|head| !head.is_empty()) {
+        hasher.update(b"head\0");
+        hasher.update(head.as_bytes());
+        hasher.update(b"\0");
+    }
+    for (label, diff) in [("unstaged", unstaged), ("staged", staged)] {
+        hasher.update(label.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(sha256_hex(diff.as_bytes()).as_bytes());
+        hasher.update(b"\0");
+    }
+    for entry in untracked_entries {
+        hasher.update(b"untracked\0");
+        hasher.update(entry.path.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(entry.kind.as_bytes());
+        hasher.update(b"\0");
+        if let Some(digest) = &entry.sha256 {
+            hasher.update(digest.as_bytes());
+        }
+        hasher.update(b"\0");
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+async fn transport_untracked_entries(
+    registry: Arc<SessionRegistry>,
+    ctx: &GitCommandContext,
+    repo_root: &str,
+) -> Result<Vec<UntrackedSnapshotEntry>, String> {
+    let output = git_output(
+        registry.clone(),
+        Some(ctx.tab_id.clone()),
+        &ctx.cwd,
+        vec![
+            "-C".into(),
+            repo_root.into(),
+            "ls-files".into(),
+            "--others".into(),
+            "--exclude-standard".into(),
+            "-z".into(),
+        ],
+        8,
+    )
+    .await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "git ls-files exited without output".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    let mut entries = Vec::new();
+    for rel in parse_nul_terminated_paths(&output.stdout) {
+        if safe_git_relative_path(&rel).is_none() {
+            entries.push(UntrackedSnapshotEntry {
+                path: rel,
+                kind: "invalid-path".into(),
+                size_bytes: 0,
+                sha256: None,
+                captured: false,
+                reason: Some("unsafe relative path".into()),
+            });
+            continue;
+        }
+        match git_text(
+            registry.clone(),
+            Some(ctx.tab_id.clone()),
+            &ctx.cwd,
+            vec![
+                "-C".into(),
+                repo_root.into(),
+                "hash-object".into(),
+                "--".into(),
+                rel.clone(),
+            ],
+            8,
+        )
+        .await
+        {
+            Ok(hash) => entries.push(UntrackedSnapshotEntry {
+                path: rel,
+                kind: "file".into(),
+                size_bytes: 0,
+                sha256: Some(hash.trim().to_string()),
+                captured: false,
+                reason: Some("hash-only transport snapshot".into()),
+            }),
+            Err(e) => entries.push(UntrackedSnapshotEntry {
+                path: rel,
+                kind: "unhashed".into(),
+                size_bytes: 0,
+                sha256: None,
+                captured: false,
+                reason: Some(format!("hash-object failed: {}", e)),
+            }),
+        }
+    }
+    Ok(entries)
+}
+
+async fn transport_worktree_fingerprint(
+    registry: Arc<SessionRegistry>,
+    ctx: &GitCommandContext,
+    repo_root: &str,
+    unstaged: &str,
+    staged: &str,
+) -> Result<(Option<String>, Vec<UntrackedSnapshotEntry>), String> {
+    let head = git_text_optional(
+        registry.clone(),
+        Some(ctx.tab_id.clone()),
+        &ctx.cwd,
+        vec![
+            "-C".into(),
+            repo_root.into(),
+            "rev-parse".into(),
+            "HEAD".into(),
+        ],
+        5,
+    )
+    .await;
+    let untracked_entries = transport_untracked_entries(registry, ctx, repo_root).await?;
+    let fingerprint =
+        worktree_fingerprint_from_parts(head.as_deref(), unstaged, staged, &untracked_entries);
+    Ok((Some(fingerprint), untracked_entries))
+}
+
+fn write_transport_untracked_snapshot(
+    repo_root: &str,
+    checkpoint_dir: &Path,
+    entries: &[UntrackedSnapshotEntry],
+) -> Result<UntrackedSnapshotSummary, String> {
+    let manifest_path = checkpoint_dir.join("untracked.json");
+    let manifest = serde_json::json!({
+        "version": 1,
+        "repoRoot": repo_root,
+        "fileCapBytes": UNTRACKED_SNAPSHOT_FILE_CAP_BYTES,
+        "totalCapBytes": UNTRACKED_SNAPSHOT_TOTAL_CAP_BYTES,
+        "transportSnapshot": "hash-only",
+        "entries": entries,
+    });
+    let manifest_body = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| format!("checkpoint untracked manifest serialize failed: {}", e))?;
+    std::fs::write(&manifest_path, manifest_body)
+        .map_err(|e| format!("checkpoint untracked manifest write failed: {}", e))?;
+
+    Ok(UntrackedSnapshotSummary {
+        files: entries.len() as u32,
+        captured: 0,
+        skipped: entries.len() as u32,
+        bytes: 0,
+        truncated: false,
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+    })
+}
+
+pub(crate) async fn git_session_current_worktree_fingerprint_for_tab(
+    registry: Arc<SessionRegistry>,
+    tab_id: Option<String>,
+    cwd: Option<String>,
+) -> Result<Option<String>, String> {
+    let status = git_session_status_for_tab(registry.clone(), tab_id.clone(), cwd.clone()).await?;
+    if !status.ok {
+        return Err(status
+            .last_error
+            .unwrap_or_else(|| "git status failed".to_string()));
+    }
+    let Some(repo_root) = status.repo_root else {
+        return Ok(None);
+    };
+    let ctx = command_context(&registry, tab_id, cwd).await;
+    if ctx.transport == "local" {
+        let root = Path::new(&repo_root);
+        if root.exists() {
+            return local_worktree_fingerprint(root);
+        }
+    }
+    let unstaged = git_text(
+        registry.clone(),
+        Some(ctx.tab_id.clone()),
+        &ctx.cwd,
+        vec!["diff".into(), "--binary".into(), "--".into()],
+        12,
+    )
+    .await?;
+    let staged = git_text(
+        registry.clone(),
+        Some(ctx.tab_id.clone()),
+        &ctx.cwd,
+        vec![
+            "diff".into(),
+            "--cached".into(),
+            "--binary".into(),
+            "--".into(),
+        ],
+        12,
+    )
+    .await?;
+    let (fingerprint, _) =
+        transport_worktree_fingerprint(registry, &ctx, &repo_root, &unstaged, &staged).await?;
+    Ok(fingerprint)
+}
+
+pub(crate) fn write_untracked_snapshot(
+    repo_root: &Path,
+    checkpoint_dir: &Path,
+) -> Result<UntrackedSnapshotSummary, String> {
+    let snapshot_dir = checkpoint_dir.join("untracked");
+    let manifest_path = checkpoint_dir.join("untracked.json");
+    let mut entries = Vec::new();
+    let mut captured = 0u32;
+    let mut skipped = 0u32;
+    let mut captured_bytes = 0u64;
+    let mut truncated = false;
+
+    for rel in list_untracked_paths_for_checkpoint(repo_root)? {
+        let Some(safe_rel) = safe_git_relative_path(&rel) else {
+            skipped = skipped.saturating_add(1);
+            entries.push(UntrackedSnapshotEntry {
+                path: rel,
+                kind: "invalid-path".into(),
+                size_bytes: 0,
+                sha256: None,
+                captured: false,
+                reason: Some("unsafe relative path".into()),
+            });
+            continue;
+        };
+        let src = repo_root.join(&safe_rel);
+        let metadata = match std::fs::symlink_metadata(&src) {
+            Ok(m) => m,
+            Err(e) => {
+                skipped = skipped.saturating_add(1);
+                entries.push(UntrackedSnapshotEntry {
+                    path: rel,
+                    kind: "missing".into(),
+                    size_bytes: 0,
+                    sha256: None,
+                    captured: false,
+                    reason: Some(format!("metadata failed: {}", e)),
+                });
+                continue;
+            }
+        };
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            skipped = skipped.saturating_add(1);
+            let reason = std::fs::read_link(&src)
+                .ok()
+                .map(|target| format!("symlink to {}", target.to_string_lossy()))
+                .unwrap_or_else(|| "symlink".to_string());
+            entries.push(UntrackedSnapshotEntry {
+                path: rel,
+                kind: "symlink".into(),
+                size_bytes: 0,
+                sha256: None,
+                captured: false,
+                reason: Some(reason),
+            });
+            continue;
+        }
+        if !file_type.is_file() {
+            skipped = skipped.saturating_add(1);
+            entries.push(UntrackedSnapshotEntry {
+                path: rel,
+                kind: "other".into(),
+                size_bytes: 0,
+                sha256: None,
+                captured: false,
+                reason: Some("not a regular file".into()),
+            });
+            continue;
+        }
+        let (size, digest) = match sha256_file_hex(&src) {
+            Ok(v) => v,
+            Err(e) => {
+                skipped = skipped.saturating_add(1);
+                entries.push(UntrackedSnapshotEntry {
+                    path: rel,
+                    kind: "file".into(),
+                    size_bytes: metadata.len(),
+                    sha256: None,
+                    captured: false,
+                    reason: Some(e),
+                });
+                continue;
+            }
+        };
+        let can_capture = size <= UNTRACKED_SNAPSHOT_FILE_CAP_BYTES
+            && captured_bytes.saturating_add(size) <= UNTRACKED_SNAPSHOT_TOTAL_CAP_BYTES;
+        if can_capture {
+            std::fs::create_dir_all(&snapshot_dir)
+                .map_err(|e| format!("checkpoint untracked mkdir failed: {}", e))?;
+            let dst = snapshot_dir.join(&safe_rel);
+            if let Some(parent) = dst.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("checkpoint untracked parent mkdir failed: {}", e))?;
+            }
+            match std::fs::copy(&src, &dst) {
+                Ok(_) => {
+                    captured = captured.saturating_add(1);
+                    captured_bytes = captured_bytes.saturating_add(size);
+                    entries.push(UntrackedSnapshotEntry {
+                        path: rel,
+                        kind: "file".into(),
+                        size_bytes: size,
+                        sha256: Some(digest),
+                        captured: true,
+                        reason: None,
+                    });
+                }
+                Err(e) => {
+                    skipped = skipped.saturating_add(1);
+                    entries.push(UntrackedSnapshotEntry {
+                        path: rel,
+                        kind: "file".into(),
+                        size_bytes: size,
+                        sha256: Some(digest),
+                        captured: false,
+                        reason: Some(format!("copy failed: {}", e)),
+                    });
+                }
+            }
+        } else {
+            skipped = skipped.saturating_add(1);
+            truncated = true;
+            entries.push(UntrackedSnapshotEntry {
+                path: rel,
+                kind: "file".into(),
+                size_bytes: size,
+                sha256: Some(digest),
+                captured: false,
+                reason: Some("snapshot size cap exceeded".into()),
+            });
+        }
+    }
+
+    let manifest = serde_json::json!({
+        "version": 1,
+        "repoRoot": repo_root.to_string_lossy(),
+        "fileCapBytes": UNTRACKED_SNAPSHOT_FILE_CAP_BYTES,
+        "totalCapBytes": UNTRACKED_SNAPSHOT_TOTAL_CAP_BYTES,
+        "entries": entries,
+    });
+    let manifest_body = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| format!("checkpoint untracked manifest serialize failed: {}", e))?;
+    std::fs::write(&manifest_path, manifest_body)
+        .map_err(|e| format!("checkpoint untracked manifest write failed: {}", e))?;
+
+    Ok(UntrackedSnapshotSummary {
+        files: captured.saturating_add(skipped),
+        captured,
+        skipped,
+        bytes: captured_bytes,
+        truncated,
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+    })
+}
+
 fn shellx_dir() -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -405,7 +1034,7 @@ fn shellx_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".shellx"))
 }
 
-fn repo_key(repo_root: &str) -> String {
+pub(crate) fn repo_key(repo_root: &str) -> String {
     let mut hasher = DefaultHasher::new();
     repo_root.hash(&mut hasher);
     let hash = hasher.finish();
@@ -607,6 +1236,18 @@ pub(crate) async fn git_session_diff_for_tab(
         _ => "head",
     }
     .to_string();
+    if status.head.is_none() && matches!(scope.as_str(), "head" | "lastCommit") {
+        return Ok(GitDiffResponse {
+            ok: true,
+            scope,
+            repo_root: status.repo_root,
+            branch: status.branch,
+            diff: String::new(),
+            truncated: false,
+            bytes: 0,
+            last_error: None,
+        });
+    }
     let args = match scope.as_str() {
         "working" => vec!["diff".into(), "--".into()],
         "staged" => vec!["diff".into(), "--cached".into(), "--".into()],
@@ -769,6 +1410,22 @@ pub async fn git_session_create_checkpoint_for_tab(
     let id = format!("{}-{}", now_ms(), sanitize_worktree_slug(&label));
     let base = checkpoint_dir_for(&repo_root, &ctx.tab_id)?.join(&id);
     std::fs::create_dir_all(&base).map_err(|e| format!("checkpoint mkdir failed: {}", e))?;
+    let (worktree_fingerprint, untracked_snapshot) = if ctx.transport == "local"
+        && Path::new(&repo_root).exists()
+    {
+        (
+            local_worktree_fingerprint(Path::new(&repo_root))?,
+            write_untracked_snapshot(Path::new(&repo_root), &base)?,
+        )
+    } else {
+        let (fingerprint, entries) =
+            transport_worktree_fingerprint(registry.clone(), &ctx, &repo_root, &unstaged, &staged)
+                .await?;
+        (
+            fingerprint,
+            write_transport_untracked_snapshot(&repo_root, &base, &entries)?,
+        )
+    };
     std::fs::write(base.join("unstaged.patch"), unstaged)
         .map_err(|e| format!("checkpoint write unstaged.patch failed: {}", e))?;
     std::fs::write(base.join("staged.patch"), staged)
@@ -787,6 +1444,8 @@ pub async fn git_session_create_checkpoint_for_tab(
         unstaged: status.unstaged,
         untracked: status.untracked,
         conflicts: status.conflicts,
+        worktree_fingerprint,
+        untracked_snapshot: Some(untracked_snapshot),
     };
     let meta = serde_json::to_string_pretty(&checkpoint)
         .map_err(|e| format!("checkpoint serialize failed: {}", e))?;
@@ -812,6 +1471,8 @@ pub async fn git_session_create_checkpoint_for_tab(
                     "staged": checkpoint.staged,
                     "unstaged": checkpoint.unstaged,
                     "untracked": checkpoint.untracked,
+                    "worktreeFingerprint": checkpoint.worktree_fingerprint.clone(),
+                    "untrackedSnapshot": checkpoint.untracked_snapshot.clone(),
                 }),
             })
             .await;
@@ -841,16 +1502,14 @@ pub async fn git_session_create_checkpoint(
     .await
 }
 
-#[tauri::command]
-pub async fn git_session_create_worktree(
+pub async fn git_session_create_worktree_for_tab(
+    registry: Arc<SessionRegistry>,
+    tab_id: Option<String>,
     cwd: Option<String>,
-    #[allow(non_snake_case)] tab_id: Option<String>,
-    #[allow(non_snake_case)] source_branch: Option<String>,
-    #[allow(non_snake_case)] new_branch: Option<String>,
-    registry: State<'_, Arc<SessionRegistry>>,
+    source_branch: Option<String>,
+    new_branch: Option<String>,
 ) -> Result<GitWorktreeCreateResponse, String> {
-    let status =
-        git_session_status_for_tab(registry.inner().clone(), tab_id.clone(), cwd.clone()).await?;
+    let status = git_session_status_for_tab(registry.clone(), tab_id.clone(), cwd.clone()).await?;
     if !status.ok {
         return Ok(GitWorktreeCreateResponse {
             ok: false,
@@ -880,23 +1539,37 @@ pub async fn git_session_create_worktree(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| branch_name_from_source(&source, now_ms()));
+    let unborn_branch = status.head.is_none();
+    if !unborn_branch {
+        if let Err(e) = validate_worktree_ref_arg("source_branch", &source) {
+            return Ok(GitWorktreeCreateResponse {
+                ok: false,
+                source_branch: source,
+                new_branch: branch,
+                worktree_path: String::new(),
+                output: String::new(),
+                last_error: Some(e),
+            });
+        }
+    }
+    if let Err(e) = validate_worktree_ref_arg("new_branch", &branch) {
+        return Ok(GitWorktreeCreateResponse {
+            ok: false,
+            source_branch: source,
+            new_branch: branch,
+            worktree_path: String::new(),
+            output: String::new(),
+            last_error: Some(e),
+        });
+    }
     let target = target_worktree_path(&repo_root, &branch);
-    let ctx = command_context(registry.inner(), tab_id, cwd).await;
-    let out = git_output(
-        registry.inner().clone(),
-        Some(ctx.tab_id),
-        &ctx.cwd,
-        vec![
-            "worktree".into(),
-            "add".into(),
-            "-b".into(),
-            branch.clone(),
-            target.clone(),
-            source.clone(),
-        ],
-        30,
-    )
-    .await?;
+    let ctx = command_context(&registry, tab_id, cwd).await;
+    let args = if unborn_branch {
+        worktree_add_orphan_args(&branch, &target)
+    } else {
+        worktree_add_args(&branch, &target, &source)
+    };
+    let out = git_output(registry, Some(ctx.tab_id), &ctx.cwd, args, 30).await?;
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
     if !out.status.success() {
@@ -923,9 +1596,55 @@ pub async fn git_session_create_worktree(
     })
 }
 
+#[tauri::command]
+pub async fn git_session_create_worktree(
+    cwd: Option<String>,
+    #[allow(non_snake_case)] tab_id: Option<String>,
+    #[allow(non_snake_case)] source_branch: Option<String>,
+    #[allow(non_snake_case)] new_branch: Option<String>,
+    registry: State<'_, Arc<SessionRegistry>>,
+) -> Result<GitWorktreeCreateResponse, String> {
+    git_session_create_worktree_for_tab(
+        registry.inner().clone(),
+        tab_id,
+        cwd,
+        source_branch,
+        new_branch,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_base(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "shellx-session-git-{}-{}",
+            name,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn run_git(cwd: &Path, args: &[&str]) {
+        use crate::winproc::NoWindowExt as _;
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(args).current_dir(cwd).no_window();
+        let output = cmd
+            .output()
+            .unwrap_or_else(|e| panic!("git {:?} spawn failed: {}", args, e));
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout={}\nstderr={}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     #[test]
     fn parse_porcelain_counts_dirty_states() {
@@ -966,6 +1685,88 @@ mod tests {
     }
 
     #[test]
+    fn worktree_args_reject_option_like_refs_and_insert_separator() {
+        assert!(validate_worktree_ref_arg("new_branch", "-bad").is_err());
+        assert!(validate_worktree_ref_arg("source_branch", "--upload-pack=sh").is_err());
+        assert!(validate_worktree_ref_arg("source_branch", "origin/main").is_ok());
+
+        let args = worktree_add_args("feature/demo", "/tmp/app-feature", "origin/main");
+        assert_eq!(
+            args,
+            vec![
+                "worktree",
+                "add",
+                "-b",
+                "feature/demo",
+                "--",
+                "/tmp/app-feature",
+                "origin/main"
+            ]
+        );
+
+        let orphan_args = worktree_add_orphan_args("shellx/master-1", "/tmp/app-master");
+        assert_eq!(
+            orphan_args,
+            vec![
+                "worktree",
+                "add",
+                "--orphan",
+                "-b",
+                "shellx/master-1",
+                "--",
+                "/tmp/app-master"
+            ]
+        );
+    }
+
+    #[test]
+    fn safe_git_relative_path_rejects_traversal() {
+        assert!(safe_git_relative_path("src/main.rs").is_some());
+        assert!(safe_git_relative_path("../secret").is_none());
+        assert!(safe_git_relative_path("/tmp/secret").is_none());
+    }
+
+    #[test]
+    fn untracked_snapshot_captures_file_contents_and_manifest() {
+        let repo = temp_base("untracked-snapshot");
+        run_git(&repo, &["init"]);
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/new.txt"), "hello checkpoint\n").unwrap();
+        let checkpoint_dir = repo.join(".checkpoint");
+
+        let summary = write_untracked_snapshot(&repo, &checkpoint_dir).unwrap();
+        assert_eq!(summary.files, 1);
+        assert_eq!(summary.captured, 1);
+        assert!(checkpoint_dir.join("untracked/src/new.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(checkpoint_dir.join("untracked/src/new.txt")).unwrap(),
+            "hello checkpoint\n"
+        );
+        let manifest = std::fs::read_to_string(checkpoint_dir.join("untracked.json")).unwrap();
+        assert!(manifest.contains("src/new.txt"));
+        assert!(manifest.contains("\"captured\": true"));
+
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn worktree_fingerprint_tracks_untracked_content_changes() {
+        let repo = temp_base("fingerprint-untracked");
+        run_git(&repo, &["init"]);
+        std::fs::write(repo.join("note.txt"), "one\n").unwrap();
+        let first = local_worktree_fingerprint(&repo)
+            .unwrap()
+            .expect("fingerprint");
+        std::fs::write(repo.join("note.txt"), "two\n").unwrap();
+        let second = local_worktree_fingerprint(&repo)
+            .unwrap()
+            .expect("fingerprint");
+        assert_ne!(first, second);
+
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
     fn command_cwd_prefers_agent_cwd_when_present() {
         let debug = serde_json::json!({
             "cwd": "C:\\Users\\User\\project",
@@ -980,6 +1781,16 @@ mod tests {
             effective_command_cwd_from_debug(&missing, "/tmp/fallback"),
             "/tmp/fallback",
         );
+    }
+
+    #[test]
+    fn local_windows_cwd_accepts_wsl_mount_paths() {
+        let normalized = normalize_local_windows_cwd("/mnt/c/Users/User/project");
+        if cfg!(target_os = "windows") {
+            assert_eq!(normalized, "C:\\Users\\User\\project");
+        } else {
+            assert_eq!(normalized, "/mnt/c/Users/User/project");
+        }
     }
 
     #[test]

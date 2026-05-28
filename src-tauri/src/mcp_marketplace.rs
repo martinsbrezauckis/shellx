@@ -20,7 +20,6 @@
 //! can't authenticate until the key lands. UI shows "key needed" in that state.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -360,12 +359,12 @@ pub const CATALOG: &[McpCatalogEntry] = &[
         name: "Telegram",
         tier: McpTier::B,
         kind: McpKind::Stdio,
-        description: "Send/receive messages, manage chats via Bot API",
+        description: "Telegram account MCP via MTProto; requires login",
         category: "comms",
-        stdio_command: "uvx mcp-telegram",
+        stdio_command: "uvx mcp-telegram start",
         http_url: "",
         http_auth: "",
-        vault_keys: &["telegram/bot-token"],
+        vault_keys: &["telegram/api-id", "telegram/api-hash"],
     },
     McpCatalogEntry {
         id: "gitlab",
@@ -580,7 +579,10 @@ fn stdio_env_for_entry(entry: &McpCatalogEntry) -> Vec<(&'static str, String)> {
         "firecrawl" => vec![("FIRECRAWL_API_KEY", "$VAULT:firecrawl/api-key".to_string())],
         "brave-search" => vec![("BRAVE_API_KEY", "$VAULT:brave/api-key".to_string())],
         "slack" => vec![("SLACK_BOT_TOKEN", "$VAULT:slack/bot-token".to_string())],
-        "telegram" => vec![("TELEGRAM_BOT_TOKEN", "$VAULT:telegram/bot-token".to_string())],
+        "telegram" => vec![
+            ("API_ID", "$VAULT:telegram/api-id".to_string()),
+            ("API_HASH", "$VAULT:telegram/api-hash".to_string()),
+        ],
         "gitlab" => vec![(
             "GITLAB_PERSONAL_ACCESS_TOKEN",
             "$VAULT:gitlab/pat".to_string(),
@@ -642,6 +644,15 @@ fn strip_managed_block_for_entry(source: &str, id: &str) -> String {
     out
 }
 
+fn managed_block_for_entry(source: &str, id: &str) -> Option<String> {
+    let (start, end) = managed_block_range(source, id)?;
+    Some(source[start..end].trim().to_string())
+}
+
+fn has_managed_block_for_entry(source: &str, id: &str) -> bool {
+    managed_block_range(source, id).is_some()
+}
+
 fn strip_unmanaged_server_section(source: &str, server_name: &str) -> String {
     let headers = [
         format!("mcp_servers.{}", server_name),
@@ -682,10 +693,15 @@ fn strip_toml_section_once(source: &str, header: &str) -> String {
     };
     let after_section_start = idx + needle.len();
     let after = &source[after_section_start..];
-    let cut_end = match after.find("\n[") {
-        Some(rel) => after_section_start + rel + 1,
-        None => source.len(),
-    };
+    let next_header = after.find("\n[").map(|rel| after_section_start + rel + 1);
+    let next_shellx_marker = after
+        .find("\n# shellX:")
+        .map(|rel| after_section_start + rel + 1);
+    let cut_end = [next_header, next_shellx_marker]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(source.len());
     let mut out = String::with_capacity(source.len());
     out.push_str(&source[..idx]);
     if cut_end < source.len() {
@@ -742,9 +758,13 @@ fn config_section_for_entry_for_platform(
             let parts: Vec<&str> = resolved_cmd.split_whitespace().collect();
             if let Some((cmd, args)) = parts.split_first() {
                 let (cmd, args): (String, Vec<String>) = if windows_stdio {
-                    let mut wrapped = vec!["/c".to_string()];
+                    let proxy = std::env::current_exe()
+                        .ok()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "shellx.exe".to_string());
+                    let mut wrapped = vec!["--stdio-proxy".to_string()];
                     wrapped.extend(parts.iter().map(|s| (*s).to_string()));
-                    ("cmd.exe".to_string(), wrapped)
+                    (proxy, wrapped)
                 } else {
                     (
                         (*cmd).to_string(),
@@ -870,6 +890,20 @@ fn installed_enabled_from_grok_config(id: &str) -> Option<(bool, bool)> {
     let source = fs::read_to_string(path).ok()?;
     let section = server_section(&source, &server_name_for_entry(id))?;
     Some((true, section_enabled(&section)))
+}
+
+fn telegram_section_uses_legacy_bot_token_env(source: &str) -> bool {
+    if let Some((start, end)) = managed_block_range(source, "telegram") {
+        let block = &source[start..end];
+        return block.contains("TELEGRAM_BOT_TOKEN") || block.contains("telegram/bot-token");
+    }
+    let server_name = server_name_for_entry("telegram");
+    let main = server_section(source, &server_name).unwrap_or_default();
+    let env = server_section(source, &format!("{}.env", server_name)).unwrap_or_default();
+    main.contains("TELEGRAM_BOT_TOKEN")
+        || main.contains("telegram/bot-token")
+        || env.contains("TELEGRAM_BOT_TOKEN")
+        || env.contains("telegram/bot-token")
 }
 
 /// Read-and-parse the on-disk state. Missing file = empty state.
@@ -1055,12 +1089,61 @@ fn migrate_legacy_state_to_grok_config() {
 }
 
 fn migrate_legacy_state_to_grok_config_locked() {
-    let file = read_state();
+    let mut file = read_state();
+    let mut state_dirty = false;
     for entry in CATALOG {
+        if let Some((installed, enabled)) = installed_enabled_from_grok_config(entry.id) {
+            if installed {
+                let source = grok_config_path()
+                    .ok()
+                    .and_then(|path| fs::read_to_string(path).ok())
+                    .unwrap_or_default();
+                if entry.id == "telegram" && telegram_section_uses_legacy_bot_token_env(&source) {
+                    // Older shellX builds wired the third-party `mcp-telegram`
+                    // package to the native bot-token vault key. That package is
+                    // account/MTProto based and requires API_ID/API_HASH plus an
+                    // interactive login session, so the legacy block can only
+                    // fail Grok MCP doctor. Keep the row installed for visibility,
+                    // but disable it and rewrite the block with the correct env.
+                    if let Err(e) = upsert_grok_config_entry(entry, false) {
+                        tracing::warn!(
+                            "mcp_marketplace: legacy telegram bot-token migration failed: {}",
+                            e
+                        );
+                    } else {
+                        let st = file.entries.entry(entry.id.to_string()).or_default();
+                        st.installed = true;
+                        st.enabled = false;
+                        state_dirty = true;
+                    }
+                    continue;
+                }
+                if !has_managed_block_for_entry(&source, entry.id) {
+                    if let Err(e) = upsert_grok_config_entry(entry, enabled) {
+                        tracing::warn!(
+                            "mcp_marketplace: managed-block repair for '{}' failed: {}",
+                            entry.id,
+                            e
+                        );
+                    }
+                } else if managed_block_for_entry(&source, entry.id).as_deref()
+                    != Some(config_section_for_entry(entry, enabled).trim())
+                {
+                    if let Err(e) = upsert_grok_config_entry(entry, enabled) {
+                        tracing::warn!(
+                            "mcp_marketplace: stale managed-block repair for '{}' failed: {}",
+                            entry.id,
+                            e
+                        );
+                    }
+                }
+            }
+            continue;
+        }
         let Some(st) = file.entries.get(entry.id) else {
             continue;
         };
-        if !st.installed || installed_enabled_from_grok_config(entry.id).is_some() {
+        if !st.installed {
             continue;
         }
         if let Err(e) = upsert_grok_config_entry(entry, st.enabled) {
@@ -1071,23 +1154,11 @@ fn migrate_legacy_state_to_grok_config_locked() {
             );
         }
     }
-}
-
-/// Build a JSON array of mcp_server entries ready to merge into the
-/// `session/new` request's `mcp_servers` param.
-///
-/// Since Grok 0.1.216/0.1.217, generic MCP belongs in Grok's native
-/// `~/.grok/config.toml` and is visible to `grok mcp list/doctor`.
-/// shellX keeps this function as a compatibility no-op so existing call
-/// sites keep their shape while avoiding duplicate MCP registration.
-#[allow(dead_code)]
-pub async fn build_session_new_entries() -> Value {
-    Value::Array(Vec::new())
-}
-
-/// Compatibility no-op; see `build_session_new_entries`.
-pub async fn build_session_new_entries_for_transport(_transport_kind: &str) -> Value {
-    Value::Array(Vec::new())
+    if state_dirty {
+        if let Err(e) = write_state(&file) {
+            tracing::warn!("mcp_marketplace: state migration write failed: {}", e);
+        }
+    }
 }
 
 /// Enabled marketplace config blocks for project-scoped remote config.
@@ -1192,6 +1263,36 @@ mod tests {
     }
 
     #[test]
+    fn telegram_marketplace_uses_account_credentials_not_bot_token() {
+        let telegram = CATALOG.iter().find(|e| e.id == "telegram").unwrap();
+        assert_eq!(
+            telegram.vault_keys,
+            &["telegram/api-id", "telegram/api-hash"]
+        );
+        let block = config_section_for_entry_for_platform(telegram, false, true);
+        assert!(block.contains("enabled = false"));
+        assert!(block.contains("API_ID"));
+        assert!(block.contains("API_HASH"));
+        assert!(!block.contains("TELEGRAM_BOT_TOKEN"));
+        assert!(!block.contains("telegram/bot-token"));
+    }
+
+    #[test]
+    fn detects_legacy_telegram_bot_token_inside_env_block() {
+        let source = r#"
+# shellX:managed-mcp-marketplace:telegram BEGIN - do not edit by hand
+[mcp_servers.shellx-mp-telegram]
+command = "cmd.exe"
+args = ["/c", "uvx", "mcp-telegram", "start"]
+enabled = true
+[mcp_servers.shellx-mp-telegram.env]
+TELEGRAM_BOT_TOKEN = "${SHELLX_MCP_MARKETPLACE_TELEGRAM_BOT_TOKEN}"
+# shellX:managed-mcp-marketplace:telegram END
+"#;
+        assert!(telegram_section_uses_legacy_bot_token_env(source));
+    }
+
+    #[test]
     fn linear_uses_sse_transport_type() {
         let linear = CATALOG.iter().find(|e| e.id == "linear").unwrap();
         let block = config_section_for_entry(linear, true);
@@ -1205,9 +1306,12 @@ mod tests {
         let block = config_section_for_entry_for_platform(context7, true, false);
         assert!(block.contains("command = \"npx\""));
         assert!(!block.contains("cmd.exe"));
+        assert!(!block.contains("--stdio-proxy"));
 
         let windows_block = config_section_for_entry_for_platform(context7, true, true);
-        assert!(windows_block.contains("command = \"cmd.exe\""));
+        assert!(windows_block.contains("--stdio-proxy"));
+        assert!(windows_block.contains("\"npx\""));
+        assert!(!windows_block.contains("command = \"cmd.exe\""));
     }
 
     #[test]
@@ -1257,6 +1361,22 @@ TOKEN = "still-nope"
         assert!(stripped.contains("[mcp_servers.keep]"));
         assert!(!stripped.contains("shellx-mp-demo"));
         toml::from_str::<toml::Value>(&stripped).expect("stripped config should parse");
+    }
+
+    #[test]
+    fn strip_toml_section_preserves_following_shellx_sentinel() {
+        let source = r#"
+[mcp_servers.shellx-mp-demo.env]
+TOKEN = "x"
+# shellX:managed-mcp:grok-shell-host BEGIN - do not edit by hand
+[mcp_servers.grok-shell-host]
+command = "app"
+"#;
+        let stripped = strip_toml_section(source, "mcp_servers.shellx-mp-demo.env");
+
+        assert!(!stripped.contains("TOKEN = \"x\""));
+        assert!(stripped.contains("# shellX:managed-mcp:grok-shell-host BEGIN"));
+        assert!(stripped.contains("[mcp_servers.grok-shell-host]"));
     }
 
     #[test]

@@ -6,7 +6,7 @@
 # - Rust test suite (cargo test --all-targets --features debug-api)
 # - Rust lints (cargo clippy -D warnings)
 # - Rust formatting (cargo fmt --check)
-# - Dependency audit (cargo audit)
+# - Dependency audit (cargo audit + pnpm audit --prod)
 #
 # Failure on any step blocks merge. The release workflow stays in
 # `.github/workflows/release.yml` and runs only on `v*` tags.
@@ -38,6 +38,8 @@ jobs:
         run: pnpm exec tsc --noEmit
       - name: test scripts
         run: pnpm test
+      - name: pnpm audit --prod
+        run: pnpm audit --prod
 
   rust:
     name: Rust (test + clippy + fmt)

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "rea
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { SafeMarkdownLink } from "../lib/markdown-links";
+import { linkifyPreviewableFileRefs, SafeMarkdownLink } from "../lib/markdown-links";
 import { TerminalView } from "./TerminalView";
 import { SafeImg, SafeVideo } from "./MediaPreview";
 import { ShellIcon, type ShellIconName } from "./icons";
@@ -596,7 +596,7 @@ function AssistantBubble({
             },
           }}
         >
-          {g.text}
+          {linkifyPreviewableFileRefs(g.text)}
         </ReactMarkdown>
       </div>
     </div>

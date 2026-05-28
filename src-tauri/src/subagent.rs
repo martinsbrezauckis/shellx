@@ -18,8 +18,9 @@
 // to the parent grok over MCP.
 //
 // Architecture
-// - 5 personas as embedded `include_str!` markdown — `general-purpose`,
-// `explore`, `implementer`, `reviewer`, `security-auditor`.
+// - Personas as embedded `include_str!` markdown — `general-purpose`,
+// `explore`, `implementer`, `reviewer`, `security-auditor`, `test-writer`,
+// `verifier`, and `release-manager`.
 // - `SubagentRegistry` = `Arc<Mutex<HashMap<Uuid, Arc<SubagentHandle>>>>`,
 // stored in a `OnceLock`. Concurrent spawns are allowed; the registry
 // just holds running/completed children. SuperGrok Heavy has no
@@ -58,7 +59,7 @@ use crate::process_registry::{ProcessRegistry, ProcessSource, ProcessStatus};
 
 // ─────────────────────────── Personas ───────────────────────────
 
-/// The 5 personas baked into the binary. Each markdown file's body is the
+/// The personas baked into the binary. Each markdown file's body is the
 /// system prompt prepended to the user task before `grok -p` is invoked.
 ///
 /// SHAPE (every persona file):
@@ -71,6 +72,7 @@ pub const PERSONA_EXPLORE: &str = include_str!("../personas/explore.md");
 pub const PERSONA_IMPLEMENTER: &str = include_str!("../personas/implementer.md");
 pub const PERSONA_REVIEWER: &str = include_str!("../personas/reviewer.md");
 pub const PERSONA_SECURITY: &str = include_str!("../personas/security-auditor.md");
+pub const PERSONA_TEST_WRITER: &str = include_str!("../personas/test-writer.md");
 pub const PERSONA_VERIFIER: &str = include_str!("../personas/verifier.md");
 pub const PERSONA_RELEASE_MANAGER: &str = include_str!("../personas/release-manager.md");
 
@@ -82,9 +84,21 @@ pub const PERSONA_NAMES: &[&str] = &[
     "implementer",
     "reviewer",
     "security-auditor",
+    "test-writer",
     "verifier",
     "release-manager",
 ];
+
+const SUBAGENT_ALLOWED_MCP: &str = "mcp:shellx-host-http/*";
+const SUBAGENT_RUNTIME_GUARD: &str = "\
+## shellX Agent Runtime
+
+- You are already running inside a shellX Agent subprocess.
+- Do not call `Agent`, `Agent_status`, `Agent_output`, `Agent_poll_all`, or `Agent_kill`.
+- Do not call `search_tool`, `use_tool`, or dynamically discovered MCP tools from a subagent. Use the direct shell/file tools already available to you; if optional browser/MCP evidence is unavailable, report that gap instead of trying to discover or invoke another tool server.
+- If a plan, scratchboard, or checklist says to dispatch an Agent, treat that as an instruction for the parent manager, not for you.
+- Do your assigned task directly, return your own result, and never wait on a subagent id.
+";
 
 /// Resolve a persona name to its full embedded prompt body. Returns None
 /// for unknown names so the caller can produce a structured MCP error
@@ -96,6 +110,7 @@ pub fn persona_prompt(name: &str) -> Option<&'static str> {
         "implementer" => Some(PERSONA_IMPLEMENTER),
         "reviewer" => Some(PERSONA_REVIEWER),
         "security-auditor" => Some(PERSONA_SECURITY),
+        "test-writer" => Some(PERSONA_TEST_WRITER),
         "verifier" => Some(PERSONA_VERIFIER),
         "release-manager" => Some(PERSONA_RELEASE_MANAGER),
         _ => None,
@@ -131,7 +146,7 @@ pub fn persona_one_liner(name: &str) -> String {
 /// between system context and task input.
 pub fn compose_prompt(persona: &str, task: &str) -> String {
     let body = persona_prompt(persona).unwrap_or("");
-    format!("{}\n\n---\n\n{}", body, task)
+    format!("{}\n\n{}\n\n---\n\n{}", body, SUBAGENT_RUNTIME_GUARD, task)
 }
 
 // ─────────────────────────── Registry ───────────────────────────
@@ -171,6 +186,10 @@ pub struct SubagentHandle {
 
 pub struct SubagentState {
     pub status: SubagentStatus,
+    pub started_at_ms: u128,
+    pub last_activity_ms: u128,
+    pub stdout_bytes_seen: usize,
+    pub stderr_bytes_seen: usize,
     /// Final stdout captured from the child. Populated on
     /// completion/failure. While running this is empty.
     pub stdout: String,
@@ -202,8 +221,13 @@ pub struct SubagentState {
 
 impl SubagentState {
     fn new_running() -> Self {
+        let now_ms = unix_now_ms();
         Self {
             status: SubagentStatus::Running,
+            started_at_ms: now_ms,
+            last_activity_ms: now_ms,
+            stdout_bytes_seen: 0,
+            stderr_bytes_seen: 0,
             stdout: String::new(),
             stderr_tail: String::new(),
             exit_code: None,
@@ -214,6 +238,13 @@ impl SubagentState {
             killed: false,
         }
     }
+}
+
+fn unix_now_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
 
 /// Global subagent registry. Lazy-initialised on first spawn so we don't
@@ -310,6 +341,60 @@ fn mirror_to_db(handle: &SubagentHandle, state: &SubagentState) {
     }
 }
 
+fn real_user_home() -> Result<PathBuf, String> {
+    if cfg!(target_os = "windows") {
+        std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .map(PathBuf::from)
+            .map_err(|_| "USERPROFILE/HOME unset".to_string())
+    } else {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .map(PathBuf::from)
+            .map_err(|_| "HOME/USERPROFILE unset".to_string())
+    }
+}
+
+fn prepare_isolated_grok_subagent_home() -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let real_home = real_user_home()?;
+    prepare_isolated_grok_subagent_home_for(&real_home)
+}
+
+fn prepare_isolated_grok_subagent_home_for(
+    real_home: &Path,
+) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let isolated_home = real_home.join(".shellx").join("grok-subagent-home");
+    let isolated_grok_home = isolated_home.join(".grok");
+    std::fs::create_dir_all(&isolated_grok_home)
+        .map_err(|e| format!("create isolated Grok home failed: {}", e))?;
+
+    let config = "\
+[cli]
+installer = \"internal\"
+auto_update = false
+channel = \"alpha\"
+
+[ui]
+permission_mode = \"always-approve\"
+";
+    std::fs::write(isolated_grok_home.join("config.toml"), config)
+        .map_err(|e| format!("write isolated Grok config failed: {}", e))?;
+
+    let auth_src = real_home.join(".grok").join("auth.json");
+    if auth_src.exists() {
+        let auth_dst = isolated_grok_home.join("auth.json");
+        std::fs::copy(&auth_src, &auth_dst)
+            .map_err(|e| format!("copy Grok auth into isolated home failed: {}", e))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&auth_dst, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+
+    Ok((isolated_home, isolated_grok_home, real_home.to_path_buf()))
+}
+
 /// JSON-friendly summary of every subagent
 /// the host MCP `Agent` tool has dispatched in this process's lifetime.
 ///
@@ -403,7 +488,7 @@ fn process_registry() -> Option<&'static Arc<ProcessRegistry>> {
 /// `ledger_dir`: when Some, after the child grok
 /// has been spawned successfully we atomically write a per-id dispatch
 /// record at `<ledger_dir>/<subagent_id>.md` using the temp+rename
-/// pattern from `host_mcp::tool_fs_write`. The parent `/goal` skill no
+/// pattern from `host_mcp::tool_fs_write`. The parent build manager no
 /// longer needs to call `write_text_file` from its own session — which
 /// on Windows could hold an exclusive lock for 30–60 s. The write only
 /// happens AFTER spawn succeeds, so failed spawns do NOT produce a
@@ -427,6 +512,63 @@ pub const DEFAULT_SUBAGENT_TIMEOUT_MS: u64 = 5 * 60 * 1000;
 /// the same `timeout_ms` arg as the wait-true path; env override
 /// via `SHELLX_AGENT_DETACHED_TIMEOUT_MS`.
 pub const DEFAULT_DETACHED_WATCHDOG_MS: u64 = 10 * 60 * 1000;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SubagentWatchdogPolicy {
+    Disabled,
+    Hard { max_runtime_ms: u64 },
+    Idle { idle_ms: u64 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentTimingOptions {
+    pub wait_budget_ms: Option<u64>,
+    pub watchdog: SubagentWatchdogPolicy,
+}
+
+impl AgentTimingOptions {
+    pub fn legacy(wait: bool, timeout_ms: Option<u64>) -> Self {
+        if wait {
+            let max_runtime_ms = timeout_ms.unwrap_or(DEFAULT_SUBAGENT_TIMEOUT_MS);
+            Self {
+                wait_budget_ms: Some(max_runtime_ms),
+                watchdog: SubagentWatchdogPolicy::Hard { max_runtime_ms },
+            }
+        } else {
+            Self::detached_default(timeout_ms)
+        }
+    }
+
+    pub fn build_wait(wait_budget_ms: Option<u64>) -> Self {
+        Self {
+            wait_budget_ms,
+            watchdog: SubagentWatchdogPolicy::Disabled,
+        }
+    }
+
+    pub fn detached_default(timeout_ms: Option<u64>) -> Self {
+        Self {
+            wait_budget_ms: None,
+            watchdog: SubagentWatchdogPolicy::Hard {
+                max_runtime_ms: detached_watchdog_ms(timeout_ms),
+            },
+        }
+    }
+
+    pub fn with_hard_runtime(mut self, max_runtime_ms: u64) -> Self {
+        self.watchdog = SubagentWatchdogPolicy::Hard { max_runtime_ms };
+        self
+    }
+}
+
+fn detached_watchdog_ms(timeout_ms: Option<u64>) -> u64 {
+    timeout_ms.unwrap_or_else(|| {
+        std::env::var("SHELLX_AGENT_DETACHED_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_DETACHED_WATCHDOG_MS)
+    })
+}
 
 /// Audit finding #380 M5 — default bounded-output cap (256 KiB).
 /// `wait_with_output` used to buffer the full child stdout in RAM —
@@ -467,6 +609,7 @@ fn agent_output_cap() -> usize {
 /// buffer matches typical pipe chunk sizes; smaller reads would
 /// inflate context-switch overhead, larger would inflate worst-case
 /// momentary memory by up to one read.
+#[cfg(test)]
 pub(crate) async fn read_stream_capped<R: tokio::io::AsyncRead + Unpin>(
     mut reader: R,
     cap: usize,
@@ -505,10 +648,65 @@ pub(crate) async fn read_stream_capped<R: tokio::io::AsyncRead + Unpin>(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SubagentStream {
+    Stdout,
+    Stderr,
+}
+
+pub(crate) async fn read_stream_capped_with_activity<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    cap: usize,
+    handle: Arc<SubagentHandle>,
+    stream: SubagentStream,
+) -> (Vec<u8>, usize) {
+    let mut buf: Vec<u8> = Vec::with_capacity(cap.min(8 * 1024));
+    let mut total: usize = 0;
+    let mut tmp = [0u8; 4096];
+    loop {
+        match reader.read(&mut tmp).await {
+            Ok(0) => break,
+            Ok(n) => {
+                total = total.saturating_add(n);
+                buf.extend_from_slice(&tmp[..n]);
+                if buf.len() > cap {
+                    let extra = buf.len() - cap;
+                    buf.drain(0..extra);
+                }
+                {
+                    let mut st = handle.state.lock().await;
+                    st.last_activity_ms = unix_now_ms();
+                    match stream {
+                        SubagentStream::Stdout => {
+                            st.stdout_bytes_seen = st.stdout_bytes_seen.saturating_add(n)
+                        }
+                        SubagentStream::Stderr => {
+                            st.stderr_bytes_seen = st.stderr_bytes_seen.saturating_add(n)
+                        }
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    if total > cap {
+        let sentinel = format!(
+            "[OUTPUT TRUNCATED — {} bytes total, last {} kept]\n",
+            total, cap
+        );
+        let mut out = Vec::with_capacity(sentinel.len() + buf.len());
+        out.extend_from_slice(sentinel.as_bytes());
+        out.extend_from_slice(&buf);
+        (out, total)
+    } else {
+        (buf, total)
+    }
+}
+
 /// Hard ceiling on concurrent
 /// RUNNING subagents per host-MCP process. Each subagent spawns a
 /// fresh grok-cli child (~150 MB RSS, holds an xAI auth slot). Without
-/// a cap, a runaway /goal fan-out could hit 50+ children and OOM the
+/// a cap, a runaway build fan-out could hit 50+ children and OOM the
 /// box. 6 covers parallel exec for any sane scenario; raise via the
 /// SHELLX_MAX_SUBAGENTS env var when needed.
 pub const DEFAULT_MAX_RUNNING_SUBAGENTS: usize = 6;
@@ -590,6 +788,32 @@ pub async fn spawn_subagent_with_transport(
     timeout_ms: Option<u64>,
     transport: SubagentTransport,
 ) -> Result<Value, String> {
+    spawn_subagent_with_transport_options(
+        persona,
+        task,
+        cwd,
+        wait,
+        ledger_dir,
+        AgentTimingOptions::legacy(wait, timeout_ms),
+        transport,
+    )
+    .await
+}
+
+pub async fn spawn_subagent_with_transport_options(
+    persona: &str,
+    task: &str,
+    cwd: Option<String>,
+    wait: bool,
+    ledger_dir: Option<PathBuf>,
+    timing: AgentTimingOptions,
+    transport: SubagentTransport,
+) -> Result<Value, String> {
+    if matches!(timing.watchdog, SubagentWatchdogPolicy::Idle { .. }) {
+        return Err(
+            "Agent: idle watchdog is not available until activity tracking is enabled".to_string(),
+        );
+    }
     if persona_prompt(persona).is_none() {
         return Err(format!(
             "Agent: unknown persona '{}'. Valid: {}.",
@@ -600,7 +824,7 @@ pub async fn spawn_subagent_with_transport(
     if task.trim().is_empty() {
         return Err("Agent: empty task — persona prompts on their own are not a task.".to_string());
     }
-    // Hard concurrency cap. Without this a recursive /goal fan-out
+    // Hard concurrency cap. Without this a recursive build fan-out
     // could explode the box. Bypass via env var for power users
     // running on a fat workstation.
     let max_running: usize = std::env::var("SHELLX_MAX_SUBAGENTS")
@@ -629,9 +853,10 @@ pub async fn spawn_subagent_with_transport(
     // 3. fall back to `grok` / `grok.exe` on PATH (covers WSL bridge)
     //
     // grok-build REJECTS `--permission-mode bypassPermissions`; it
-    // only accepts `--always-approve` (see acp.rs). Add `--allow
-    // mcp:grok-shell-host/*` so the first-use MCP consent gate doesn't
-    // fire inside the subagent either.
+    // only accepts `--always-approve` (see acp.rs). Allow the
+    // shellX-managed HTTP MCP, not the standalone stdio host. The HTTP
+    // transport carries the tab id and can enforce write-class gates for
+    // build_checkpoint/build_receipt/build_complete.
     //
     // `--no-subagents` prevents the child from trying to recursively
     // spawn its own subagents — depth limit = 1 enforced here.
@@ -741,13 +966,13 @@ pub async fn spawn_subagent_with_transport(
             let snippet_b64 = B64.encode(snippet.as_bytes());
             let mcp_setup = crate::acp::remote_project_mcp_config_setup_chain(&cwd_q, &snippet_b64);
             let remote_full = format!(
-                "{mcp_setup}cd {cwd} && IFS= read -r {env_name} && export {env_name} && exec {grok} -p {prompt} --no-subagents --always-approve --allow {allow} --output-format plain",
+                "{mcp_setup}cd {cwd} && IFS= read -r {env_name} && export {env_name} && export SHELLX_SUBAGENT_DEPTH=1 && exec {grok} -p {prompt} --no-subagents --always-approve --allow {allow} --output-format plain",
                 mcp_setup = mcp_setup,
                 cwd = cwd_q,
                 env_name = crate::mcp_http::MCP_TOKEN_ENV_VAR,
                 grok = crate::acp::shell_quote_for_remote(remote_grok_path),
                 prompt = crate::acp::shell_quote_for_remote(&prompt),
-                allow = crate::acp::shell_quote_for_remote("mcp:grok-shell-host/*"),
+                allow = crate::acp::shell_quote_for_remote(SUBAGENT_ALLOWED_MCP),
             );
             c.arg("--").arg(host).arg(remote_full);
             (c, true, true)
@@ -757,7 +982,7 @@ pub async fn spawn_subagent_with_transport(
         cmd.arg("-p").arg(&prompt);
         cmd.arg("--no-subagents");
         cmd.arg("--always-approve");
-        cmd.arg("--allow").arg("mcp:grok-shell-host/*");
+        cmd.arg("--allow").arg(SUBAGENT_ALLOWED_MCP);
         cmd.arg("--output-format").arg("plain");
     }
     // Local-only: --cwd flag + current_dir. WSL handles --cd above
@@ -786,12 +1011,30 @@ pub async fn spawn_subagent_with_transport(
     // 401 on every host-MCP call.
     if matches!(&transport, SubagentTransport::Wsl { .. }) {
         let existing_wslenv = std::env::var("WSLENV").unwrap_or_default();
+        let wslenv = append_wslenv_var(&existing_wslenv, crate::mcp_http::MCP_TOKEN_ENV_VAR);
         cmd.env(
             "WSLENV",
-            append_wslenv_var(&existing_wslenv, crate::mcp_http::MCP_TOKEN_ENV_VAR),
+            append_wslenv_var(&wslenv, "SHELLX_SUBAGENT_DEPTH"),
         );
     }
     cmd.env(crate::mcp_http::MCP_TOKEN_ENV_VAR, &mcp_token);
+    cmd.env("SHELLX_SUBAGENT_DEPTH", "1");
+    if matches!(&transport, SubagentTransport::Local) {
+        match prepare_isolated_grok_subagent_home() {
+            Ok((isolated_home, isolated_grok_home, real_home)) => {
+                cmd.env("HOME", &isolated_home);
+                cmd.env("USERPROFILE", &isolated_home);
+                cmd.env("GROK_HOME", &isolated_grok_home);
+                cmd.env("SHELLX_REAL_HOME", &real_home);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Agent: failed to prepare isolated Grok subagent home; using inherited home: {}",
+                    e
+                );
+            }
+        }
+    }
     // Suppress the Windows CMD-window flash that fires per subagent
     // spawn. Without this every parallel Agent dispatch pops a black
     // console window on the user's desktop for the lifetime of the
@@ -921,7 +1164,7 @@ pub async fn spawn_subagent_with_transport(
 
     // If the caller supplied a ledger_dir, atomically write the
     // initial dispatch record. This runs ONLY when spawn returned Ok
-    // — a failed spawn does not produce a ledger entry (the parent /goal
+    // — a failed spawn does not produce a ledger entry (the parent build
     // skill can rely on "row present ⇒ child actually started").
     //
     // We do not fail the whole dispatch on a ledger write error — the
@@ -943,14 +1186,12 @@ pub async fn spawn_subagent_with_transport(
     });
 
     if wait {
-        // Bounded wait. Default 5 min via DEFAULT_SUBAGENT_TIMEOUT_MS,
-        // override via timeout_ms arg.
-        // On timeout we SIGTERM via kill (mirrors Agent_kill graceful
-        // path) — the child gets a chance to flush stdout/stderr, then
-        // the run_to_completion task drains via the AsyncRead pipe and
-        // emits a final status:"timeout". The join future eventually
-        // returns when the reaper observes EOF.
-        let timeout = Duration::from_millis(timeout_ms.unwrap_or(DEFAULT_SUBAGENT_TIMEOUT_MS));
+        // Bounded wait. The wait budget controls how long THIS tool call
+        // waits for final output. Whether expiry kills the child is now a
+        // separate watchdog policy so Build Mode can keep active agents
+        // alive for multi-hour work.
+        let wait_budget_ms = timing.wait_budget_ms.unwrap_or(DEFAULT_SUBAGENT_TIMEOUT_MS);
+        let timeout = Duration::from_millis(wait_budget_ms);
         let timed_out = match tokio::time::timeout(
             timeout,
             &mut Box::pin(async {
@@ -961,33 +1202,33 @@ pub async fn spawn_subagent_with_transport(
         {
             Ok(()) => false,
             Err(_) => {
-                // SIGTERM, then escalate to SIGKILL if the child is
-                // still alive after a 1.5s grace window. SIGTERM alone
-                // can leave a child running 15s past the timeout,
-                // leaking work + tokens. The escalation path
-                // mirrors `kill` (taskkill /T then /T /F on Windows;
-                // SIGTERM then SIGKILL on Unix). We DON'T await the
-                // reaper task — caller's outer wait would block on it.
-                let pid_opt = {
-                    let st = handle.state.lock().await;
-                    st.pid
-                };
-                if let Some(pid) = pid_opt {
-                    let _ = send_term(pid);
-                    // Spawn the escalation in the background so this
-                    // path returns control to the caller within ~10ms.
-                    // The escalation task is short-lived (≤1.5s) and
-                    // doesn't hold any locks across awaits.
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(1500)).await;
-                        if pid_is_alive(pid) {
-                            tracing::warn!(
-                                "Agent timeout: pid={} survived SIGTERM after 1500ms — escalating to SIGKILL",
-                                pid
-                            );
-                            let _ = send_kill9(pid);
-                        }
-                    });
+                if matches!(
+                    timing.watchdog,
+                    SubagentWatchdogPolicy::Hard { .. } | SubagentWatchdogPolicy::Idle { .. }
+                ) {
+                    // SIGTERM, then escalate to SIGKILL if the child is
+                    // still alive after a 1.5s grace window. SIGTERM alone
+                    // can leave a child running 15s past the timeout,
+                    // leaking work + tokens. The escalation path mirrors
+                    // `kill` (taskkill /T then /T /F on Windows; SIGTERM
+                    // then SIGKILL on Unix). We DON'T await the reaper task.
+                    let pid_opt = {
+                        let st = handle.state.lock().await;
+                        st.pid
+                    };
+                    if let Some(pid) = pid_opt {
+                        let _ = send_term(pid);
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(1500)).await;
+                            if pid_is_alive(pid) {
+                                tracing::warn!(
+                                    "Agent timeout: pid={} survived SIGTERM after 1500ms — escalating to SIGKILL",
+                                    pid
+                                );
+                                let _ = send_kill9(pid);
+                            }
+                        });
+                    }
                 }
                 true
             }
@@ -999,8 +1240,13 @@ pub async fn spawn_subagent_with_transport(
                 m.insert("timed_out".to_string(), Value::Bool(true));
                 m.insert(
                     "timeout_ms".to_string(),
-                    Value::Number(serde_json::Number::from(timeout.as_millis() as u64)),
+                    Value::Number(serde_json::Number::from(wait_budget_ms)),
                 );
+                if matches!(timing.watchdog, SubagentWatchdogPolicy::Disabled) {
+                    m.insert("status".to_string(), Value::String("running".to_string()));
+                    m.insert("wait_budget_expired".to_string(), Value::Bool(true));
+                    m.insert("timed_out".to_string(), Value::Bool(false));
+                }
             }
             if let Some(err) = ledger_write_error {
                 m.insert("ledger_write_error".to_string(), Value::String(err));
@@ -1028,12 +1274,6 @@ pub async fn spawn_subagent_with_transport(
         // here — the watchdog is fire-and-forget. The reaper inside
         // run_to_completion still drives the final state transition
         // when the kill takes effect.
-        let watchdog_ms: u64 = timeout_ms.unwrap_or_else(|| {
-            std::env::var("SHELLX_AGENT_DETACHED_TIMEOUT_MS")
-                .ok()
-                .and_then(|s| s.trim().parse::<u64>().ok())
-                .unwrap_or(DEFAULT_DETACHED_WATCHDOG_MS)
-        });
         // The run_to_completion task owns the child's stdio readers;
         // dropping the JoinHandle detaches but the task continues to
         // completion regardless. We explicitly drop here (rather than
@@ -1041,13 +1281,21 @@ pub async fn spawn_subagent_with_transport(
         // "non-binding let on a future") because we intentionally do
         // not want to await this JoinHandle on the detached path.
         std::mem::drop(join);
-        arm_detached_watchdog(handle.clone(), watchdog_ms);
+        let (watchdog_policy, watchdog_ms) = match timing.watchdog {
+            SubagentWatchdogPolicy::Disabled => ("disabled", None),
+            SubagentWatchdogPolicy::Hard { max_runtime_ms } => {
+                arm_detached_watchdog(handle.clone(), max_runtime_ms);
+                ("hard", Some(max_runtime_ms))
+            }
+            SubagentWatchdogPolicy::Idle { .. } => unreachable!("idle watchdog prechecked"),
+        };
 
         let mut v = json!({
             "subagent_id": id.to_string(),
             "persona": persona,
             "status": SubagentStatus::Running.as_str(),
             "wait": false,
+            "watchdog_policy": watchdog_policy,
             "watchdog_ms": watchdog_ms,
             "note": "Use Agent_status to poll, Agent_output to fetch when done."
         });
@@ -1132,8 +1380,8 @@ async fn write_ledger_record(
     ledger_dir: &Path,
     handle: &Arc<SubagentHandle>,
 ) -> Result<(), String> {
-    // mkdir -p the parent if needed — the parent /goal skill places
-    // ledgers at `<goal-dir>/subagents/`, which may not exist on first
+    // mkdir -p the parent if needed — Build Mode places ledgers under
+    // the run scratch directory's `subagents/`, which may not exist on first
     // dispatch. tokio::fs::create_dir_all is idempotent.
     if tokio::fs::metadata(ledger_dir).await.is_err() {
         tokio::fs::create_dir_all(ledger_dir)
@@ -1145,7 +1393,7 @@ async fn write_ledger_record(
     let tmp_path = ledger_atomic_tmp_path(&final_path);
 
     // ISO 8601 UTC, second precision — matches the timestamp shape used
-    // throughout the /goal skill (progress.md lines, etc.).
+    // throughout build scratchboard and ledger files.
     let dispatched_at = format_iso_utc_now();
 
     // Escape the task_preview onto an indented YAML block so newlines /
@@ -1319,15 +1567,33 @@ async fn run_to_completion(
     // pipe. tokio's pipes are bounded; failing to drain blocks the
     // child's next write — a classic stdout-pipe-full hang. Streaming
     // reader drains continuously.
+    let stdout_state_handle = handle.clone();
     let stdout_task = tokio::spawn(async move {
         match stdout_handle {
-            Some(h) => read_stream_capped(h, cap).await,
+            Some(h) => {
+                read_stream_capped_with_activity(
+                    h,
+                    cap,
+                    stdout_state_handle,
+                    SubagentStream::Stdout,
+                )
+                .await
+            }
             None => (Vec::new(), 0usize),
         }
     });
+    let stderr_state_handle = handle.clone();
     let stderr_task = tokio::spawn(async move {
         match stderr_handle {
-            Some(h) => read_stream_capped(h, cap).await,
+            Some(h) => {
+                read_stream_capped_with_activity(
+                    h,
+                    cap,
+                    stderr_state_handle,
+                    SubagentStream::Stderr,
+                )
+                .await
+            }
             None => (Vec::new(), 0usize),
         }
     });
@@ -1595,6 +1861,10 @@ fn build_result_json(h: &SubagentHandle, st: &SubagentState) -> Value {
         "status": st.status.as_str(),
         "exit_code": st.exit_code,
         "elapsed_ms": st.elapsed_ms,
+        "started_at_ms": st.started_at_ms,
+        "last_activity_ms": st.last_activity_ms,
+        "stdout_bytes_seen": st.stdout_bytes_seen,
+        "stderr_bytes_seen": st.stderr_bytes_seen,
         "total_tokens": st.total_tokens,
         "stdout": st.stdout,
         "stderr_tail": st.stderr_tail,
@@ -1619,6 +1889,10 @@ pub async fn status(subagent_id: &str) -> Result<Value, String> {
         "persona": h.persona,
         "status": st.status.as_str(),
         "elapsed_ms": elapsed_ms,
+        "started_at_ms": st.started_at_ms,
+        "last_activity_ms": st.last_activity_ms,
+        "stdout_bytes_seen": st.stdout_bytes_seen,
+        "stderr_bytes_seen": st.stderr_bytes_seen,
         "total_tokens": st.total_tokens,
         "exit_code": st.exit_code,
     }))
@@ -2035,8 +2309,55 @@ mod tests {
     }
 
     #[test]
+    fn subagents_allow_managed_http_mcp_for_write_class_tools() {
+        assert_eq!(SUBAGENT_ALLOWED_MCP, "mcp:shellx-host-http/*");
+        assert!(
+            !SUBAGENT_ALLOWED_MCP.contains("grok-shell-host"),
+            "subagents must not prefer standalone stdio host MCP for Build Mode writes"
+        );
+    }
+
+    #[test]
+    fn isolated_grok_home_copies_auth_and_uses_minimal_config() {
+        let real_home = std::env::temp_dir().join(format!(
+            "shellx-isolated-grok-home-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&real_home);
+        std::fs::create_dir_all(real_home.join(".grok")).expect("create real .grok");
+        std::fs::write(
+            real_home.join(".grok").join("auth.json"),
+            "{\"token\":\"test\"}\n",
+        )
+        .expect("write fake auth");
+
+        let (isolated_home, isolated_grok_home, returned_real_home) =
+            prepare_isolated_grok_subagent_home_for(&real_home).expect("prepare isolated home");
+
+        assert_eq!(returned_real_home, real_home);
+        assert_eq!(
+            isolated_home,
+            returned_real_home.join(".shellx/grok-subagent-home")
+        );
+        let config =
+            std::fs::read_to_string(isolated_grok_home.join("config.toml")).expect("read config");
+        assert!(config.contains("auto_update = false"));
+        assert!(!config.contains("mcp_servers."));
+        assert_eq!(
+            std::fs::read_to_string(isolated_grok_home.join("auth.json")).expect("read auth"),
+            "{\"token\":\"test\"}\n"
+        );
+
+        let _ = std::fs::remove_dir_all(returned_real_home);
+    }
+
+    #[test]
     fn personas_embed_with_expected_header_shape() {
         // Every persona's line 1 must start with `# <name> — <description>`.
+        assert!(
+            PERSONA_NAMES.contains(&"test-writer"),
+            "Agent persona enum should expose a dedicated test-writer"
+        );
         for name in PERSONA_NAMES {
             let body = persona_prompt(name).expect("known persona");
             let first = body.lines().next().expect("non-empty persona");
@@ -2067,6 +2388,8 @@ mod tests {
     fn compose_prompt_separates_persona_and_task() {
         let composed = compose_prompt("general-purpose", "Find the bug in foo.rs");
         assert!(composed.contains(PERSONA_GENERAL));
+        assert!(composed.contains("You are already running inside a shellX Agent subprocess."));
+        assert!(composed.contains("Do not call `search_tool`, `use_tool`"));
         assert!(composed.contains("\n\n---\n\n"));
         assert!(composed.ends_with("Find the bug in foo.rs"));
     }
@@ -2087,6 +2410,118 @@ mod tests {
             ),
             format!("PATH/l:{}/u", crate::mcp_http::MCP_TOKEN_ENV_VAR)
         );
+    }
+
+    #[test]
+    fn build_wait_timing_uses_wait_budget_without_watchdog() {
+        let timing = AgentTimingOptions::build_wait(Some(1234));
+
+        assert_eq!(timing.wait_budget_ms, Some(1234));
+        assert_eq!(timing.watchdog, SubagentWatchdogPolicy::Disabled);
+    }
+
+    #[test]
+    fn legacy_timing_preserves_detached_watchdog_behavior() {
+        let timing = AgentTimingOptions::legacy(false, Some(4321));
+
+        assert_eq!(timing.wait_budget_ms, None);
+        assert_eq!(
+            timing.watchdog,
+            SubagentWatchdogPolicy::Hard {
+                max_runtime_ms: 4321
+            }
+        );
+    }
+
+    #[test]
+    fn legacy_wait_timing_preserves_hard_timeout_behavior() {
+        let timing = AgentTimingOptions::legacy(true, Some(9876));
+
+        assert_eq!(timing.wait_budget_ms, Some(9876));
+        assert_eq!(
+            timing.watchdog,
+            SubagentWatchdogPolicy::Hard {
+                max_runtime_ms: 9876
+            }
+        );
+    }
+
+    #[test]
+    fn running_state_initializes_activity_counters() {
+        let st = SubagentState::new_running();
+
+        assert!(st.started_at_ms > 0);
+        assert!(st.last_activity_ms >= st.started_at_ms);
+        assert_eq!(st.stdout_bytes_seen, 0);
+        assert_eq!(st.stderr_bytes_seen, 0);
+    }
+
+    #[tokio::test]
+    async fn activity_reader_updates_stdout_counters() {
+        let handle = Arc::new(SubagentHandle {
+            id: Uuid::new_v4(),
+            persona: "general-purpose".to_string(),
+            task_preview: "activity stdout test".to_string(),
+            started_at: Instant::now(),
+            state: Mutex::new(SubagentState::new_running()),
+        });
+        let started_at_ms = handle.state.lock().await.started_at_ms;
+        let reader = std::io::Cursor::new(b"hello stdout".to_vec());
+
+        let (_captured, total) =
+            read_stream_capped_with_activity(reader, 4096, handle.clone(), SubagentStream::Stdout)
+                .await;
+
+        assert_eq!(total, 12);
+        let st = handle.state.lock().await;
+        assert_eq!(st.stdout_bytes_seen, 12);
+        assert_eq!(st.stderr_bytes_seen, 0);
+        assert!(st.last_activity_ms >= started_at_ms);
+    }
+
+    #[tokio::test]
+    async fn activity_reader_updates_stderr_counters() {
+        let handle = Arc::new(SubagentHandle {
+            id: Uuid::new_v4(),
+            persona: "general-purpose".to_string(),
+            task_preview: "activity stderr test".to_string(),
+            started_at: Instant::now(),
+            state: Mutex::new(SubagentState::new_running()),
+        });
+        let reader = std::io::Cursor::new(b"oops stderr".to_vec());
+
+        let (_captured, total) =
+            read_stream_capped_with_activity(reader, 4096, handle.clone(), SubagentStream::Stderr)
+                .await;
+
+        assert_eq!(total, 11);
+        let st = handle.state.lock().await;
+        assert_eq!(st.stdout_bytes_seen, 0);
+        assert_eq!(st.stderr_bytes_seen, 11);
+    }
+
+    #[tokio::test]
+    async fn status_exposes_activity_fields() {
+        let id = Uuid::new_v4();
+        let mut state = SubagentState::new_running();
+        state.stdout_bytes_seen = 7;
+        state.stderr_bytes_seen = 3;
+        let last_activity_ms = state.last_activity_ms;
+        let handle = Arc::new(SubagentHandle {
+            id,
+            persona: "general-purpose".to_string(),
+            task_preview: "status activity test".to_string(),
+            started_at: Instant::now(),
+            state: Mutex::new(state),
+        });
+        registry().lock().await.insert(id, handle);
+
+        let value = status(&id.to_string()).await.expect("status ok");
+
+        registry().lock().await.remove(&id);
+        assert_eq!(value["last_activity_ms"], json!(last_activity_ms));
+        assert_eq!(value["stdout_bytes_seen"], json!(7));
+        assert_eq!(value["stderr_bytes_seen"], json!(3));
     }
 
     #[test]
@@ -2440,14 +2875,14 @@ mod tests {
     /// test uses a fake executable and asserts on file presence + content
     /// shape regardless of the eventual exit status of the child.
     ///
-    /// Load-bearing invariant: the parent /goal skill no longer touches
+    /// Load-bearing invariant: the parent build manager no longer touches
     /// the file from its own write path, so Windows file-lock contention
     /// is eliminated.
     #[tokio::test]
     async fn spawn_with_ledger_dir_writes_atomic_record() {
         use_fake_grok_bin();
         // Fresh tempdir under /tmp/ so we don't collide with any other
-        // test or with a real session's `~/.grok/goals/.../subagents/`.
+        // test or with a real session's subagent ledger.
         let unique = format!(
             "subagent-ledger-test-{}-{}",
             std::process::id(),
@@ -2455,7 +2890,7 @@ mod tests {
         );
         let ledger = std::env::temp_dir().join(unique);
         // Intentionally DO NOT pre-create the directory — the spawn
-        // must mkdir -p it itself (the /goal skill's `subagents/`
+        // must mkdir -p it itself (the build run's `subagents/`
         // directory often doesn't exist on first dispatch).
         assert!(!ledger.exists(), "tempdir should not pre-exist");
 

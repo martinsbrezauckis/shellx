@@ -48,7 +48,8 @@
 // All paths are validated: fs_watch refuses to watch outside the session
 // cwd or /tmp/** unless an explicit allow_outside flag is set.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -59,6 +60,73 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
 use crate::process_registry::ProcessRegistry;
+
+static BUILD_AGENT_START_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static BUILD_AGENT_WATCHERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static BUILD_AGENT_COMPLETIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static BUILD_AGENT_RECEIPT_META: OnceLock<Mutex<HashMap<String, BuildAgentReceiptMeta>>> =
+    OnceLock::new();
+
+fn build_agent_start_lock() -> &'static Mutex<()> {
+    BUILD_AGENT_START_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn build_agent_watcher_registry() -> &'static Mutex<HashSet<String>> {
+    BUILD_AGENT_WATCHERS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn build_agent_completion_registry() -> &'static Mutex<HashSet<String>> {
+    BUILD_AGENT_COMPLETIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn build_agent_receipt_meta_registry() -> &'static Mutex<HashMap<String, BuildAgentReceiptMeta>> {
+    BUILD_AGENT_RECEIPT_META.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn build_agent_watcher_key(run_id: &str, subagent_id: &str) -> String {
+    format!("{}:{}", run_id, subagent_id)
+}
+
+async fn try_register_build_agent_watcher(key: String) -> bool {
+    build_agent_watcher_registry().lock().await.insert(key)
+}
+
+async fn unregister_build_agent_watcher(key: &str) {
+    build_agent_watcher_registry().lock().await.remove(key);
+}
+
+async fn try_register_build_agent_completion(key: String) -> bool {
+    build_agent_completion_registry().lock().await.insert(key)
+}
+
+async fn remember_build_agent_receipt_meta(key: String, meta: BuildAgentReceiptMeta) {
+    build_agent_receipt_meta_registry()
+        .lock()
+        .await
+        .insert(key, meta);
+}
+
+async fn remembered_build_agent_receipt_meta(key: &str) -> Option<BuildAgentReceiptMeta> {
+    build_agent_receipt_meta_registry()
+        .lock()
+        .await
+        .get(key)
+        .copied()
+}
+
+async fn forget_build_agent_receipt_meta(key: &str) {
+    build_agent_receipt_meta_registry().lock().await.remove(key);
+}
+
+const MAX_AGENT_WAIT_BUDGET_MS: u64 = 24 * 60 * 60 * 1000;
+const MAX_AGENT_HARD_RUNTIME_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+const BUILD_TERMINAL_AGENT_SUPPRESSION_MS: u64 = 10 * 60 * 1000;
+
+fn parse_agent_duration_ms(args: &Value, key: &str, max_ms: u64) -> Option<u64> {
+    args.get(key)
+        .and_then(|v| v.as_u64())
+        .map(|n| n.min(max_ms))
+}
 
 /// MCP protocol version we negotiate (2025-06-18 is current per spec at
 /// time of writing — grok's plugin-bound MCP servers use the same).
@@ -86,6 +154,43 @@ pub struct JsonRpcReq {
 // `dispatch_to_value` constructs `serde_json::Value` objects directly
 // so both the stdio and HTTP transports can share the same dispatcher
 // without juggling a borrowed-lifetime wire type.
+
+pub(crate) const WRITE_CLASS_TOOLS: &[&str] = &[
+    "fs_write",
+    "fs_append",
+    "fs_copy",
+    "fs_delete",
+    "fs_ensure_dir",
+    "process_signal",
+    "secret_set",
+    "secret_delete",
+    "net_fetch",
+    "security_scan",
+    // These read local bytes and upload them to xAI. Treat as write-class
+    // for autonomy purposes so plan/observe mode cannot exfiltrate media.
+    "vision_describe",
+    "voice_tts",
+    "x_search",
+    "voice_stt_v2",
+    "vision_describe_v2",
+    "Agent",
+    "Agent_kill",
+    "mem_set",
+    "mem_delete",
+    "fs_watch",
+    // goal_complete mutates per-tab goal state.
+    "goal_complete",
+    // Build receipts mutate the active build-run audit state.
+    "build_receipt",
+    "build_checkpoint",
+    // Work Preview mutates per-tab preview state and may spawn a dev server.
+    "preview_start",
+    "build_complete",
+];
+
+pub(crate) fn is_write_class_tool(name: &str) -> bool {
+    WRITE_CLASS_TOOLS.contains(&name)
+}
 
 // ───── Server context ─────
 
@@ -357,7 +462,24 @@ pub async fn dispatch_to_value_with_tab_id(
         "notifications/cancelled" => Ok(json!({})),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(handle_tools_list()),
-        "tools/call" => handle_tools_call(&params, ctx, tab_id).await,
+        "tools/call" => {
+            if let Some(tool_name) = params.get("name").and_then(|v| v.as_str()) {
+                if is_write_class_tool(tool_name) && ctx.app_handle.is_none() {
+                    Err((
+                        -32603,
+                        format!(
+                            "host-MCP: '{}' rejected — stdio standalone cannot enforce shellX per-tab permission gates for write-class tools. Use the shellX-managed HTTP MCP transport for this tab.",
+                            tool_name
+                        ),
+                        None,
+                    ))
+                } else {
+                    handle_tools_call(&params, ctx, tab_id).await
+                }
+            } else {
+                handle_tools_call(&params, ctx, tab_id).await
+            }
+        }
         other => Err((-32601, format!("method not found: {}", other), None)),
     };
 
@@ -449,18 +571,25 @@ for shell work.
 4. The native `task` tool is broken in ACP mode. Use grok-shell-host__Agent \
 for subagent fan-out (Agent + Agent_status + Agent_output + Agent_poll_all).
 
-5. Other host-MCP tools: mem_* for cross-tab durable state, vision_describe \
-for image understanding, secret_get for vault keys, clock_now/sleep_ms \
-for timing, net_fetch for typed HTTP, x_search for X post search, fs_grep for content search. \
+5. For long-horizon work started by `/build`, use build_receipt, \
+build_checkpoint, preview_start, preview_diagnose, and build_complete. For UI/web/app \
+work, call preview_start to activate shellX Work Preview, then call preview_diagnose \
+before build_complete; do not start preview servers through Agent shell commands; \
+when preview_diagnose returns screenshotPath, inspect it with vision_describe. \
+The older goal_complete tool is legacy compatibility only.
+
+6. Other host-MCP tools: mem_* for cross-tab durable state, OAuth-first \
+vision_describe for image understanding, secret_get for vault keys, \
+clock_now/sleep_ms for timing, net_fetch for typed HTTP, x_search for X post search, fs_grep for content search. \
 **get_session_info** returns the tab's cwd + transport + linuxHome in \
 ONE call — use it instead of spawning a subagent or probing fs_list_dir \
 when you need to know where you're running. Subagents inherit the same \
 tab_id so they see the same answer.
 
-6. After media gen, don't re-embed the file path in your reply — shellX \
+7. After media gen, don't re-embed the file path in your reply — shellX \
 already renders the image/video inline in the tool card.
 
-7. When the host reports MCP servers failed to connect (e.g. \
+8. When the host reports MCP servers failed to connect (e.g. \
 \"shellx-mp__context7 (connection failed)\", \"shellx-mp__fetch\", etc): \
 just ask the user once, briefly — \"Want me to install the missing tools?\" \
 Don't list commands, paths, or timing estimates. If they say yes, run \
@@ -534,7 +663,7 @@ fn tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "process_list",
-            "description": "List every child process grok-shell has spawned on the agent's behalf (terminal/run_command calls + future host tools). Returns taskId, pid, cmd, started_at_ms, status, cpu_pct, rss_kb.",
+            "description": "List child processes tracked by this host MCP process registry, including Agent subprocesses and host-managed preview/tool tasks available to this MCP instance. Returns taskId, pid, cmd, started_at_ms, status, cpu_pct, rss_kb.",
             "inputSchema": { "type": "object", "properties": {} }
         }),
         json!({
@@ -605,12 +734,49 @@ fn tool_specs() -> Vec<Value> {
                 "required": ["key"]
             }
         }),
+        json!({
+            "name": "security_scan",
+            "description": "Inventory dependency manifests/lockfiles under the session cwd and optionally run fixed local advisory-backed package audits. This is a bounded environment health check, not a full code scan: it looks for package security surfaces and uses locally installed tools such as pnpm/npm audit, cargo audit, govulncheck, or osv-scanner when requested. It never pushes or mutates remotes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute directory to scan. Defaults to the host MCP cwd. Must be inside cwd unless allow_outside_cwd=true."
+                    },
+                    "run_audits": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "When true, run local audit tools where matching lockfiles and commands are available. Default false performs inventory only."
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "default": 4,
+                        "description": "Directory recursion cap for manifest inventory. Clamped to 1..12."
+                    },
+                    "max_manifests": {
+                        "type": "integer",
+                        "default": 80,
+                        "description": "Maximum manifest/lockfile records returned. Clamped to 1..500."
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "default": 60000,
+                        "description": "Per-audit command timeout. Clamped to 1s..180s."
+                    },
+                    "allow_outside_cwd": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Permit scanning an absolute directory outside the MCP cwd. Use only when the user explicitly points to that path."
+                    }
+                }
+            }
+        }),
         // ─── `Agent` family ───
-        // // Bridges the grok-build 0.1.211 ACP-mode `task` tool gap (see
-        // `~/.grok/AGENTS.md`). Spawns a fresh `grok -p` subprocess with
-        // a persona system prompt prepended to the user task. Concurrent
-        // by design — SuperGrok Heavy has no rate-limit reason to
-        // serialise, so N subagents can run in parallel.
+        // Spawns a fresh `grok -p` subprocess with a persona system
+        // prompt prepended to the user task. Concurrent by design: /build
+        // uses this for reviewer/verifier fan-out and explicit long-running
+        // work where Grok's native command set is not enough.
         json!({
             "name": "Agent",
             "description": agent_tool_description(),
@@ -628,7 +794,7 @@ fn tool_specs() -> Vec<Value> {
                     },
                     "cwd": {
                         "type": "string",
-                        "description": "Optional working directory the spawned grok will operate in. Defaults to the host MCP server's cwd (typically the parent grok session's cwd)."
+                        "description": "Optional working directory the spawned grok will operate in. Defaults to the active /build cwd when Build Mode is running, then the parent tab session cwd, then the host MCP server process cwd."
                     },
                     "wait": {
                         "type": "boolean",
@@ -637,7 +803,21 @@ fn tool_specs() -> Vec<Value> {
                     },
                     "ledger_dir": {
                         "type": "string",
-                        "description": "Optional absolute directory path. When set, shellX atomically writes `<ledger_dir>/<subagent_id>.md` containing persona + task preview + ISO dispatch timestamp + status=running. Use this from the `/goal` skill (set to `<goal-dir>/subagents/`) so the parent grok never has to write the initial ledger row from its own write_text_file path — avoids Windows file-lock contention on parallel fan-out. Rejected if relative, contains '..', or is empty."
+                        "description": "Optional absolute directory path. When set, shellX atomically writes `<ledger_dir>/<subagent_id>.md` containing persona + task preview + ISO dispatch timestamp + status=running. Use this from `/build` (set to the run scratch directory's subagents folder) so the parent grok never has to write the initial ledger row from its own write_text_file path — avoids Windows file-lock contention on parallel fan-out. Rejected if relative, contains '..', or is empty."
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "default": crate::subagent::DEFAULT_SUBAGENT_TIMEOUT_MS,
+                        "description": "Legacy alias. For wait=true, maximum time the parent waits before returning a still-running Agent handle; shellX does not kill an active subagent when this budget expires. For wait=false outside Build Mode, legacy detached watchdog budget. Prefer wait_budget_ms plus explicit max_runtime_ms."
+                    },
+                    "wait_budget_ms": {
+                        "type": "integer",
+                        "default": crate::subagent::DEFAULT_SUBAGENT_TIMEOUT_MS,
+                        "description": "How long the Agent tool call should wait for final output before returning a still-running subagent handle. This is not a kill timeout. Clamped to 24 hours."
+                    },
+                    "max_runtime_ms": {
+                        "type": "integer",
+                        "description": "Optional explicit hard wall-clock runtime cap for the subagent process. When omitted in Build Mode or wait=true, shellX does not kill the subagent just because the wait budget expires. Clamped to 7 days."
                     }
                 },
                 "required": ["subagent_type", "task"]
@@ -659,7 +839,7 @@ fn tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "Agent_output",
-            "description": "Fetch the final stdout from a subagent. When wait_for_complete=true (default), blocks until the subagent finishes (up to 30 minutes). When false, returns whatever has been captured so far plus a `still_running` flag — partial stdout is empty while the child is alive (we don't stream incrementally in v1.0).",
+            "description": "Fetch stdout/stderr captured from a subagent. Outside Build Mode, wait_for_complete=true (default) blocks until the child finishes, capped at 30 minutes. During an active /build run, shellX never blocks on a still-running child here; it returns a running snapshot with wait_for_complete_deferred=true so the parent can keep polling with Agent_status/Agent_output. When wait_for_complete=false, returns the current captured snapshot plus a still_running flag.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -678,7 +858,7 @@ fn tool_specs() -> Vec<Value> {
         }),
         // Batch poll: replaces a manual loop of N Agent_status calls
         // with one call that returns the full snapshot. Saves 15+
-        // sequential polls per /goal fan-out cycle.
+        // sequential polls per build fan-out cycle.
         json!({
             "name": "Agent_poll_all",
             "description": "Batch poll: given a list of subagent_ids, return a status snapshot for each in one call. Does NOT block — if nothing has changed, returns the snapshot immediately. Per-id shape matches Agent_status. Use after parallel Agent fan-out to avoid issuing one Agent_status per child.",
@@ -886,19 +1066,24 @@ fn tool_specs() -> Vec<Value> {
                     "headers": {"type": "object", "description": "Extra request headers. Values must be strings.", "additionalProperties": {"type": "string"}},
                     "body": {"type": "string", "description": "Request body. Required for POST/PUT/PATCH/DELETE."},
                     "timeout_ms": {"type": "number", "default": 30000, "description": "Per-request timeout in milliseconds."},
-                    "max_bytes": {"type": "number", "default": 5000000, "description": "Cap on response body bytes read. Excess is dropped and `truncated=true`."}
+                    "max_bytes": {
+                        "type": "number",
+                        "default": NET_FETCH_DEFAULT_MAX_BYTES,
+                        "maximum": NET_FETCH_HARD_MAX_BYTES,
+                        "description": "Cap on response body bytes read. Excess is dropped and `truncated=true`."
+                    }
                 },
                 "required": ["url"]
             }
         }),
         // ─── search_tool ───
         // // Discovery aid for grok. The default tools/list response now
-        // ships ~17 specs which is more than grok's planning prompt
-        // comfortably scans. `search_tool` lets grok query by substring
+        // ships enough specs that Grok's planning prompt should not scan
+        // them all by default. `search_tool` lets Grok query by substring
         // OR pull the full inventory in one shot via `full_inventory=true`.
-        // The legacy 3-5-result pagination remains the default so
-        // existing grok prompts don't drift; the `full_inventory` mode is
-        // the explicit opt-in.
+        // The small default result set remains intentional so ordinary
+        // searches do not dump the full tool catalog into every prompt.
+        // `full_inventory` is the explicit opt-in for planning passes.
         json!({
             "name": "search_tool",
             "description": "Search the host MCP tool inventory. Default: returns up to `limit` (5) matching specs ranked by query substring + a `total_hidden_tools` count so the agent can decide whether to drill in. Pass `full_inventory=true` to dump ALL tool specs in one call (use when planning a multi-step task — better than fishing for names).",
@@ -940,7 +1125,7 @@ fn tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "sleep_ms",
-            "description": "Bounded async sleep on the host. Replaces `sleep N` shell invocations during /goal flows that need to pace polling. Maximum 60_000 ms (60 s) — larger values are rejected so a misconfigured agent can't stall the MCP loop indefinitely. Returns {slept_ms: number} once the wait elapses.",
+            "description": "Bounded async sleep on the host. Replaces `sleep N` shell invocations during /build flows that need to pace polling. Maximum 60_000 ms (60 s) — larger values are rejected so a misconfigured agent can't stall the MCP loop indefinitely. Returns {slept_ms: number} once the wait elapses.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1045,14 +1230,17 @@ fn tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "vision_describe",
-            "description": "Send an image to a vision model and get back a text description. Useful for: inspecting images attached by the user, verifying shellX UI screenshots (paired with shellXagent GET /screenshot), reading text from images. Provider: xAI (default model: grok-4.3, multimodal). Uses the API key stored at pass:xai/api-key, vault:xai/api-key, or env GROK_VISION_API_KEY. Provide either `path` (local image file) or `imageBase64` (data URL or raw base64). Optional `prompt` for a specific question; defaults to 'Describe this image in detail.'. Optional `model` to override (e.g. 'grok-4.20-0309-non-reasoning'). Path must end in .png/.jpg/.jpeg/.webp/.gif/.bmp (extension whitelist blocks reading arbitrary non-image files).",
+            "description": "Send an image to xAI Grok multimodal vision and get back a text description. Useful for inspecting attached images, verifying shellX UI screenshots (paired with shellXagent GET /screenshot), and reading text from images. Uses the existing Grok OAuth token from ~/.grok/auth.json by default (run `grok login` first), then falls back to env GROK_VISION_API_KEY/XAI_API_KEY, vault:xai/api-key, or pass:xai/api-key. Provide either `path` / `image_path` (local image file) or `imageBase64` (data URL or raw base64). Optional `prompt` / `question`; defaults to a detailed description. Optional `model` override. Path must end in .png/.jpg/.jpeg/.webp/.gif/.bmp.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Absolute path to a local image file. Extension must be png/jpg/jpeg/webp/gif/bmp. One of `path` or `imageBase64` is required."},
+                    "path": {"type": "string", "description": "Absolute path to a local image file. Extension must be png/jpg/jpeg/webp/gif/bmp. One of `path`, `image_path`, or `imageBase64` is required."},
+                    "image_path": {"type": "string", "description": "Alias for `path`, accepted for compatibility."},
                     "imageBase64": {"type": "string", "description": "Either a full data: URL (`data:image/png;base64,...`) or raw base64 with no prefix."},
                     "prompt": {"type": "string", "description": "Question or instruction about the image. Defaults to 'Describe this image in detail.'"},
+                    "question": {"type": "string", "description": "Alias for `prompt`, accepted for compatibility."},
                     "maxTokens": {"type": "number", "description": "Cap on response tokens. Default 800."},
+                    "max_tokens": {"type": "number", "description": "Alias for `maxTokens`, accepted for compatibility."},
                     "model": {"type": "string", "description": "Override the vision model. Default 'grok-4.3'. Other options on the account: 'grok-4.20-0309-non-reasoning', 'grok-4.20-0309-reasoning'. Probe `/v1/models` to see what's available."}
                 }
             }
@@ -1112,21 +1300,8 @@ fn tool_specs() -> Vec<Value> {
                 "required": ["audio_path"]
             }
         }),
-        json!({
-            "name": "vision_describe_v2",
-            "description": "Describe an image via grok-4.3 multimodal using the OAuth bearer from ~/.grok/auth.json (run `grok login` first). Identical surface to vision_describe but no api-key/vault dance. Returns {text, ms_total, model}. Image cap 20 MB; png/jpg/jpeg/gif/webp.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "image_path": { "type": "string", "description": "Absolute path to image file. Must be inside HOME." },
-                    "question": { "type": "string", "description": "Question or instruction. Default 'Describe what you see in this image in detail.'" },
-                    "max_tokens": { "type": "number", "description": "Response token cap. Default 800." }
-                },
-                "required": ["image_path"]
-            }
-        }),
-        // goal_complete. The lie-impossible completion tool. Only
-        // valid when `/goal` is active for the current tab. Re-reads the
+        // goal_complete. Legacy compatibility completion tool. Only
+        // valid when legacy `/goal` is active for the current tab. Re-reads the
         // scratchboard (goal.md or plan.md) and rejects unless every Phase
         // is marked DONE and every `- [ ]` sub-stage is flipped to `- [x]`.
         // On reject, returns MCP error with a specific list of unchecked
@@ -1134,7 +1309,7 @@ fn tool_specs() -> Vec<Value> {
         // the per-tab goal state inactive (no further auto-continues).
         json!({
             "name": "goal_complete",
-            "description": "Mark the active /goal complete. REQUIRES that every Phase in the scratchboard (goal.md or plan.md in the session cwd) shows `status: DONE` AND every `- [ ]` sub-stage is flipped to `- [x]`. The tool re-reads the file and REJECTS the call with an error listing every unchecked item if anything is still pending — you cannot self-mark complete by writing to the file alone. After acceptance, the goal becomes inactive (no further auto-continuations). Only callable when `/goal` mode is on for the tab.",
+            "description": "Legacy compatibility only. Prefer build_complete for new shellX long-horizon work. Mark the active legacy /goal complete. REQUIRES that every Phase in the scratchboard (goal.md or plan.md in the session cwd) shows `status: DONE` AND every `- [ ]` sub-stage is flipped to `- [x]`. The tool re-reads the file and REJECTS the call with an error listing every unchecked item if anything is still pending — you cannot self-mark complete by writing to the file alone. Only callable when legacy `/goal` mode is on for the tab.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1148,7 +1323,7 @@ fn tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "build_receipt",
-            "description": "Record an experimental /build receipt for the active Build Mode run. Use only for review, verification, blocker-opened, or blocker-resolved evidence when shellX cannot observe a stronger host signal.",
+            "description": "Record a /build audit receipt for the active Build Mode run. Use for reviewer evidence, verifier evidence, blocker-opened, or blocker-resolved events when shellX cannot observe a stronger host signal.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1187,8 +1362,56 @@ fn tool_specs() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "preview_start",
+            "description": "Start or restart shellX Work Preview for the active tab. Use this tool, not Agent shell commands, for /build UI, web, HTML, Vite, Next, or Expo preview gates. It starts shellX-owned loopback static/web/Expo preview state and returns the preview state. After this succeeds, call preview_diagnose; if the state is failed or logs report missing Expo web dependencies such as react-dom/react-native-web, fix the project dependencies and retry preview_start.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": {
+                        "type": "string",
+                        "description": "Optional tab id override. Omit to use the active MCP tab."
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional project directory. Omit to use shellX's active session cwd."
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["auto", "static", "web", "expo"],
+                        "description": "Preview kind. Use auto unless the project type is known."
+                    },
+                    "entry": {
+                        "type": "string",
+                        "description": "Optional static HTML entry path relative to cwd, for example index.html or shellx-preview-test.html."
+                    }
+                }
+            }
+        }),
+        json!({
+            "name": "preview_diagnose",
+            "description": "Run shellX Preview Doctor for the active tab. Use after preview_start for UI, web, HTML, Vite, Next, or Expo work. Returns preview URL, command, HTTP status, page title, server logs, browser/runtime events captured by shellX, pass/fail issues, and when possible a rendered preview screenshotPath that can be passed directly to vision_describe. For /build UI work, run this before build_complete and fix every reported error.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": {
+                        "type": "string",
+                        "description": "Optional tab id override. Omit to use the active MCP tab."
+                    },
+                    "browserEvents": {
+                        "type": "array",
+                        "description": "Optional browser events captured by shellX UI. Usually omitted by agents.",
+                        "items": { "type": "object" }
+                    },
+                    "screenshotPath": {
+                        "type": "string",
+                        "description": "Optional screenshot override path. Usually omit this so Preview Doctor captures the rendered preview URL itself."
+                    }
+                }
+            }
+        }),
+        json!({
             "name": "build_complete",
-            "description": "Mark the active experimental /build run complete. shellX validates build.md and the host receipt gates before accepting. REJECTS if checklist items remain, a blocker is open, or required checkpoint/reviewer/verifier receipts are missing.",
+            "description": "Mark the active /build run complete. shellX validates build.md and the host receipt gates before accepting. REJECTS if checklist items remain, a blocker is open, or required checkpoint/reviewer/verifier receipts are missing. For UI/web/app work, run preview_start, then preview_diagnose, and fix reported errors before calling this.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1221,7 +1444,7 @@ fn agent_tool_description() -> String {
         lines.push_str(&format!("  - {}: {}\n", name, one));
     }
     lines.push_str(
-        "\nConcurrent: each call spawns its own grok process. Default `wait=true` blocks for the result; set `wait=false` to fan out and poll with Agent_status / Agent_output.",
+        "\nConcurrent: each call spawns its own grok process. Default `wait=true` blocks for the result; set `wait=false` to fan out and poll with Agent_status / Agent_output. Do not call Agent from inside an Agent subagent; subagents must return their own findings directly.",
     );
     lines
 }
@@ -1269,6 +1492,7 @@ async fn handle_tools_call(
         "secret_get" => tool_secret_get(arguments).await,
         "secret_set" => tool_secret_set(arguments).await,
         "secret_delete" => tool_secret_delete(arguments).await,
+        "security_scan" => crate::env_security::scan_from_mcp(arguments, &ctx.cwd).await,
         // Agent family (see crate::subagent).
         "Agent" => tool_agent_spawn(arguments, ctx, tab_id).await,
         "Agent_status" => tool_agent_status(arguments, ctx, tab_id).await,
@@ -1304,16 +1528,18 @@ async fn handle_tools_call(
         // Kill + metrics.
         "Agent_kill" => tool_agent_kill(arguments).await,
         "Agent_metrics" => tool_agent_metrics(arguments).await,
-        // Vision describe via xAI Grok-2-Vision. Provider selector
-        // deferred to v2.
+        // Vision describe via xAI Grok multimodal. OAuth-first; the v2
+        // arm is a hidden compatibility alias for resumed older sessions.
         "vision_describe" => tool_vision_describe(arguments).await,
-        // OAuth-token-backed xAI tools (TTS/STT/Vision).
+        // OAuth-token-backed xAI tools (TTS/STT/search).
         // Use the bearer JWT from ~/.grok/auth.json — no api-key.
         "voice_tts" => tool_voice_tts(arguments).await,
         "x_search" => tool_x_search(arguments).await,
         "voice_stt_v2" => tool_voice_stt_v2(arguments).await,
         "vision_describe_v2" => tool_vision_describe_v2(arguments).await,
-        // goal_complete: claim the active /goal is finished.
+        "preview_start" => tool_preview_start(arguments, ctx, tab_id).await,
+        "preview_diagnose" => tool_preview_diagnose(arguments, ctx, tab_id).await,
+        // goal_complete: claim the active legacy /goal is finished.
         // Lie-impossible — the handler validates the scratchboard
         // (every Phase status:DONE + every - [ ] flipped) and rejects
         // with a specific failure list if anything is unchecked.
@@ -1370,6 +1596,48 @@ async fn handle_tools_call(
 /// `write_mcp_event_line` (event-log scrub) AND `subagent::spawn`
 /// (taskPreview redaction) so cred-shaped substrings never surface
 /// in `/state/subagents` rows or the rail-pane.
+fn shannon_entropy_bits_per_char(s: &str) -> f64 {
+    let mut counts = [0usize; 256];
+    let mut len = 0usize;
+    for b in s.bytes() {
+        counts[b as usize] += 1;
+        len += 1;
+    }
+    if len == 0 {
+        return 0.0;
+    }
+    counts
+        .iter()
+        .filter(|count| **count > 0)
+        .map(|count| {
+            let p = *count as f64 / len as f64;
+            -p * p.log2()
+        })
+        .sum()
+}
+
+fn looks_like_camel_identifier(s: &str) -> bool {
+    s.chars().all(|c| c.is_ascii_alphabetic())
+        && s.chars().any(|c| c.is_ascii_lowercase())
+        && s.chars().any(|c| c.is_ascii_uppercase())
+}
+
+fn looks_like_high_entropy_token(raw: &str) -> bool {
+    let t = raw.trim_matches(|c: char| {
+        matches!(
+            c,
+            '"' | '\'' | ',' | ';' | ':' | '=' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+        )
+    });
+    t.len() >= 20
+        && !t.contains(char::is_whitespace)
+        && !t.contains('-')
+        && t.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '+' | '=' | '.' | '-'))
+        && !looks_like_camel_identifier(t)
+        && shannon_entropy_bits_per_char(t) >= 3.8
+}
+
 pub fn redact_if_credential_pattern(s: &str) -> bool {
     if s.len() < 16 {
         return false;
@@ -1396,6 +1664,12 @@ pub fn redact_if_credential_pattern(s: &str) -> bool {
         ("sk-", 32),      // OpenAI / Anthropic style
         ("sk_live_", 24), // Stripe live key
         ("sk_test_", 24), // Stripe test key
+        ("xoxb-", 12),    // Slack bot token
+        ("glpat-", 12),   // GitLab PAT
+        ("shpat_", 12),   // Shopify app token
+        ("sg.", 16),      // SendGrid token
+        ("akia", 12),     // AWS access key id
+        ("aiza", 16),     // Google API key
         ("ya29.", 32),    // Google OAuth
     ];
     for (needle, tail_min) in NEEDLES {
@@ -1408,6 +1682,13 @@ pub fn redact_if_credential_pattern(s: &str) -> bool {
             if first_token >= *tail_min {
                 return true;
             }
+        }
+    }
+    for token in s.split(|c: char| {
+        c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | '(' | ')' | '<' | '>')
+    }) {
+        if looks_like_high_entropy_token(token) {
+            return true;
         }
     }
     false
@@ -2042,6 +2323,13 @@ async fn tool_agent_spawn(
     ctx: &Arc<HostMcpContext>,
     tab_id: Option<&str>,
 ) -> Result<Value, String> {
+    if nested_agent_spawn_blocked_by_env() {
+        return Err(
+            "Agent: nested Agent dispatch is disabled inside shellX subagents. Return your own findings instead of spawning another Agent."
+                .to_string(),
+        );
+    }
+
     let persona = args
         .get("subagent_type")
         .and_then(|v| v.as_str())
@@ -2076,10 +2364,9 @@ async fn tool_agent_spawn(
     // only when we can discover the distro. Without a distro, return
     // a helpful error instead of letting Windows fail spawn with an
     // opaque OS error.
-    let raw_cwd = args
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let raw_cwd = crate::acp::sanitize_cwd_param(args.get("cwd").and_then(|v| v.as_str()))
+        .map_err(|e| format!("Agent: invalid cwd: {}", e))?;
+    let default_cwd = resolve_default_agent_cwd(ctx, tab_id).await;
     let cwd = match raw_cwd {
         Some(p) if p.starts_with('/') && !p.starts_with("/mnt/") => {
             // WSL subagents are spawned through `wsl.exe --cd`, which
@@ -2109,12 +2396,13 @@ async fn tool_agent_spawn(
             }
         }
         Some(p) => Some(p),
-        None => ctx.cwd.to_str().map(|s| s.to_string()),
+        None => default_cwd,
     };
     let wait = args.get("wait").and_then(|v| v.as_bool()).unwrap_or(true);
+    let effective_cwd = cwd.clone();
     // Optional ledger_dir — when set, spawn_subagent writes
     // `<ledger_dir>/<subagent_id>.md` atomically after the child is
-    // running, so the parent /goal skill never has to. Validate the
+    // running, so the parent build manager never has to. Validate the
     // path against the same rules as fs_write (absolute, no '..', no
     // null byte) — otherwise a misconfigured caller could try to write
     // under `/etc/` or smuggle a traversal.
@@ -2141,46 +2429,314 @@ async fn tool_agent_spawn(
         },
         None => None,
     };
-    // Optional timeout_ms. Default applied inside spawn_subagent if
-    // None. Clamp to a sane ceiling (60 min) so a typo in the agent's
-    // prompt can't pin a subagent forever.
-    let timeout_ms = args
-        .get("timeout_ms")
-        .and_then(|v| v.as_u64())
-        .map(|n| n.min(60 * 60 * 1000));
-    let result = crate::subagent::spawn_subagent_with_transport(
-        &persona,
-        &task,
-        cwd,
-        wait,
-        ledger_dir,
-        timeout_ms,
-        parent_transport,
-    )
-    .await;
+    // Timing policy is intentionally split:
+    // - wait_budget_ms controls this MCP call's wait.
+    // - max_runtime_ms is the only hard kill budget.
+    // - timeout_ms remains as a legacy alias.
+    let timeout_ms = parse_agent_duration_ms(&args, "timeout_ms", MAX_AGENT_HARD_RUNTIME_MS);
+    let wait_budget_ms = parse_agent_duration_ms(&args, "wait_budget_ms", MAX_AGENT_WAIT_BUDGET_MS)
+        .or(timeout_ms)
+        .unwrap_or(crate::subagent::DEFAULT_SUBAGENT_TIMEOUT_MS);
+    let max_runtime_ms =
+        parse_agent_duration_ms(&args, "max_runtime_ms", MAX_AGENT_HARD_RUNTIME_MS);
+    let active_build = active_build_run_for_mcp(ctx, tab_id, "Agent")
+        .await
+        .map(|(_, _, state)| state.status == crate::build_types::BuildRunStatus::Active)
+        .unwrap_or(false);
+    if wait {
+        let receipt_meta = BuildAgentReceiptMeta {
+            wait: Some(wait),
+            wait_budget_ms: Some(wait_budget_ms),
+            max_runtime_ms,
+        };
+        let running = {
+            let _guard = build_agent_start_lock().lock().await;
+            if let Some(message) =
+                build_agent_spawn_rejected_by_build_gate(ctx, tab_id, &persona, wait).await
+            {
+                return Ok(agent_tool_error_response(message));
+            }
+            let timing = match max_runtime_ms {
+                Some(ms) => crate::subagent::AgentTimingOptions::build_wait(Some(wait_budget_ms))
+                    .with_hard_runtime(ms),
+                None => crate::subagent::AgentTimingOptions::build_wait(Some(wait_budget_ms)),
+            };
+            let running = crate::subagent::spawn_subagent_with_transport_options(
+                &persona,
+                &task,
+                cwd,
+                false,
+                ledger_dir,
+                timing,
+                parent_transport,
+            )
+            .await?;
+            record_build_agent_receipt(
+                BuildAgentReceiptEvent::Started(Some(&running)),
+                &persona,
+                &task,
+                receipt_meta,
+                effective_cwd.as_deref(),
+                ctx,
+                tab_id,
+            )
+            .await;
+            running
+        };
 
-    if let Ok(value) = &result {
-        record_build_agent_receipt(
-            BuildAgentReceiptEvent::Started,
-            &persona,
-            &task,
-            Some(wait),
-            ctx,
-            tab_id,
+        let Some(subagent_id) = running.get("subagent_id").and_then(|v| v.as_str()) else {
+            return Ok(running);
+        };
+        let result = match tokio::time::timeout(
+            Duration::from_millis(wait_budget_ms),
+            crate::subagent::output(subagent_id, true),
         )
-        .await;
-        record_build_agent_receipt(
-            BuildAgentReceiptEvent::Completed(value),
-            &persona,
-            &task,
-            Some(wait),
-            ctx,
-            tab_id,
-        )
-        .await;
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                let partial = crate::subagent::output(subagent_id, false).await.ok();
+                Ok(build_agent_wait_budget_result(
+                    subagent_id,
+                    &persona,
+                    partial,
+                    wait_budget_ms,
+                ))
+            }
+        };
+        if let Ok(value) = &result {
+            record_build_agent_receipt(
+                BuildAgentReceiptEvent::Completed(value),
+                &persona,
+                &task,
+                receipt_meta,
+                effective_cwd.as_deref(),
+                ctx,
+                tab_id,
+            )
+            .await;
+        }
+        return result;
     }
 
-    result
+    {
+        let _guard = build_agent_start_lock().lock().await;
+        if let Some(message) =
+            build_agent_spawn_rejected_by_build_gate(ctx, tab_id, &persona, wait).await
+        {
+            return Ok(agent_tool_error_response(message));
+        }
+        let receipt_meta = BuildAgentReceiptMeta {
+            wait: Some(wait),
+            wait_budget_ms: None,
+            max_runtime_ms,
+        };
+        let timing = if let Some(ms) = max_runtime_ms {
+            crate::subagent::AgentTimingOptions {
+                wait_budget_ms: None,
+                watchdog: crate::subagent::SubagentWatchdogPolicy::Hard { max_runtime_ms: ms },
+            }
+        } else if active_build {
+            crate::subagent::AgentTimingOptions::build_wait(None)
+        } else {
+            crate::subagent::AgentTimingOptions::detached_default(timeout_ms)
+        };
+        let result = crate::subagent::spawn_subagent_with_transport_options(
+            &persona,
+            &task,
+            cwd,
+            false,
+            ledger_dir,
+            timing,
+            parent_transport,
+        )
+        .await;
+
+        if let Ok(value) = &result {
+            record_build_agent_receipt(
+                BuildAgentReceiptEvent::Started(Some(value)),
+                &persona,
+                &task,
+                receipt_meta,
+                effective_cwd.as_deref(),
+                ctx,
+                tab_id,
+            )
+            .await;
+            record_build_agent_receipt(
+                BuildAgentReceiptEvent::Completed(value),
+                &persona,
+                &task,
+                receipt_meta,
+                effective_cwd.as_deref(),
+                ctx,
+                tab_id,
+            )
+            .await;
+        }
+
+        result
+    }
+}
+
+fn build_agent_wait_budget_result(
+    subagent_id: &str,
+    persona: &str,
+    partial: Option<Value>,
+    wait_budget_ms: u64,
+) -> Value {
+    let stdout = partial
+        .as_ref()
+        .and_then(|v| v.get("stdout"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let stderr_tail = partial
+        .as_ref()
+        .and_then(|v| v.get("stderr_tail"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let task_preview = partial
+        .as_ref()
+        .and_then(|v| v.get("task_preview"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let elapsed_ms = partial
+        .as_ref()
+        .and_then(|v| v.get("elapsed_ms"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(wait_budget_ms);
+    let total_tokens = partial
+        .as_ref()
+        .and_then(|v| v.get("total_tokens"))
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    json!({
+        "subagent_id": subagent_id,
+        "persona": persona,
+        "status": "running",
+        "exit_code": Value::Null,
+        "elapsed_ms": elapsed_ms,
+        "total_tokens": total_tokens,
+        "stdout": stdout,
+        "stderr_tail": if stderr_tail.is_empty() {
+            format!("Agent wait budget expired after {} ms; the subagent is still running. Poll Agent_status or Agent_output.", wait_budget_ms)
+        } else {
+            format!("{}\n\nAgent wait budget expired after {} ms; the subagent is still running. Poll Agent_status or Agent_output.", stderr_tail, wait_budget_ms)
+        },
+        "task_preview": task_preview,
+        "timed_out": false,
+        "wait_budget_expired": true,
+        "wait_budget_ms": wait_budget_ms,
+        "timeout_ms": wait_budget_ms,
+    })
+}
+
+fn nested_agent_spawn_blocked_by_env() -> bool {
+    if env_flag_enabled("SHELLX_ALLOW_NESTED_AGENTS") {
+        return false;
+    }
+    std::env::var("SHELLX_SUBAGENT_DEPTH")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+        > 0
+}
+
+fn env_flag_enabled(key: &str) -> bool {
+    std::env::var(key)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn choose_agent_cwd(
+    explicit_cwd: Option<String>,
+    active_build_cwd: Option<String>,
+    tab_session_cwd: Option<String>,
+    process_cwd: Option<String>,
+) -> Option<String> {
+    explicit_cwd
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| active_build_cwd.filter(|s| !s.trim().is_empty()))
+        .or_else(|| tab_session_cwd.filter(|s| !s.trim().is_empty()))
+        .or_else(|| process_cwd.filter(|s| !s.trim().is_empty()))
+}
+
+fn build_state_supplies_agent_cwd(state: &crate::build_types::BuildRunState) -> bool {
+    !build_status_is_terminal(&state.status)
+}
+
+fn build_status_is_terminal(status: &crate::build_types::BuildRunStatus) -> bool {
+    use crate::build_types::BuildRunStatus;
+    matches!(
+        status,
+        BuildRunStatus::Complete | BuildRunStatus::Halted | BuildRunStatus::TransportFailed
+    )
+}
+
+fn build_terminal_state_suppresses_agent(
+    state: &crate::build_types::BuildRunState,
+    now_ms: u64,
+) -> bool {
+    build_status_is_terminal(&state.status)
+        && now_ms.saturating_sub(state.updated_at_ms) <= BUILD_TERMINAL_AGENT_SUPPRESSION_MS
+}
+
+async fn resolve_default_agent_cwd(
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Option<String> {
+    let tab_id = tab_id
+        .map(str::to_string)
+        .or_else(|| std::env::var("SHELLX_HOST_MCP_TAB_ID").ok())
+        .filter(|s| !s.trim().is_empty());
+    let process_cwd = ctx.cwd.to_str().map(|s| s.to_string());
+    let Some(app) = ctx.app_handle.as_ref() else {
+        return choose_agent_cwd(None, None, None, process_cwd);
+    };
+    let Some(tab) = tab_id.as_deref() else {
+        return choose_agent_cwd(None, None, None, process_cwd);
+    };
+
+    use tauri::Manager as _;
+
+    let active_build_cwd = if let Some(orch_state) =
+        app.try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
+    {
+        orch_state
+            .inner()
+            .clone()
+            .get_state(tab)
+            .await
+            .filter(build_state_supplies_agent_cwd)
+            .map(|state| state.cwd)
+    } else {
+        None
+    };
+
+    let tab_session_cwd =
+        if let Some(registry) = app.try_state::<Arc<crate::acp::SessionRegistry>>() {
+            if let Some(arc) = registry.get_existing(tab).await {
+                let guard = arc.lock().await;
+                let info = guard.get_debug_session_info();
+                drop(guard);
+                info.get("cwd").and_then(|v| v.as_str()).map(str::to_string)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+    choose_agent_cwd(None, active_build_cwd, tab_session_cwd, process_cwd)
 }
 
 /// AGENT-B3 helper: pull the parent tab's transport from the
@@ -2271,9 +2827,30 @@ async fn tool_agent_output(
         .get("wait_for_complete")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let value = crate::subagent::output(&id, wait_for_complete).await?;
+    let active_build = active_build_run_for_mcp(ctx, tab_id, "Agent_output")
+        .await
+        .map(|(_, _, state)| state.status == crate::build_types::BuildRunStatus::Active)
+        .unwrap_or(false);
+    let effective_wait = effective_agent_output_wait_for_complete(wait_for_complete, active_build);
+    let mut value = crate::subagent::output(&id, effective_wait).await?;
+    if wait_for_complete && !effective_wait {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("wait_for_complete_deferred".into(), Value::Bool(true));
+            obj.insert(
+                "note".into(),
+                Value::String(
+                    "Build Mode does not block Agent_output while a subagent is still running; poll Agent_status or Agent_output again."
+                        .into(),
+                ),
+            );
+        }
+    }
     record_build_agent_completion_from_poll(&value, ctx, tab_id, "Agent_output").await;
     Ok(value)
+}
+
+fn effective_agent_output_wait_for_complete(requested: bool, active_build: bool) -> bool {
+    requested && !active_build
 }
 
 /// `Agent_poll_all` — non-blocking batch status. Returns
@@ -2708,6 +3285,7 @@ pub(crate) fn enforce_home_containment(
     // chase outbound symlinks into HOME).
     let path_str_lower;
     let home_str_lower;
+    let home_raw_str_lower;
     #[cfg(target_os = "windows")]
     {
         // #354 fix: std::fs::canonicalize on Windows returns the UNC
@@ -2725,24 +3303,29 @@ pub(crate) fn enforce_home_containment(
         };
         path_str_lower = normalize(path.to_string_lossy().to_ascii_lowercase());
         home_str_lower = normalize(home_canon.to_string_lossy().to_ascii_lowercase());
+        home_raw_str_lower = normalize(home_raw.to_ascii_lowercase());
     }
     #[cfg(not(target_os = "windows"))]
     {
         path_str_lower = path.to_string_lossy().to_string();
         home_str_lower = home_canon.to_string_lossy().to_string();
+        home_raw_str_lower = home_raw;
     }
     // fix — naive `starts_with(home)` matches sibling
     // homes whose name shares a prefix with ours (HOME=/home/<user>,
     // path=/home/<user>X/secret → false positive). Append a trailing
     // separator before comparing OR require exact equality. Also
     // accept the exact home dir itself (no trailing component).
-    let home_with_sep = if home_str_lower.ends_with('/') {
-        home_str_lower.clone()
-    } else {
-        format!("{}/", home_str_lower)
+    let is_under_home_prefix = |home: &str| {
+        let home_with_sep = if home.ends_with('/') {
+            home.to_string()
+        } else {
+            format!("{}/", home)
+        };
+        path_str_lower == home || path_str_lower.starts_with(&home_with_sep)
     };
     let lex_under_home =
-        path_str_lower == home_str_lower || path_str_lower.starts_with(&home_with_sep);
+        is_under_home_prefix(&home_str_lower) || is_under_home_prefix(&home_raw_str_lower);
 
     if !lex_under_home {
         return Err(format!(
@@ -2892,19 +3475,11 @@ async fn tool_fs_read(args: Value) -> Result<Value, String> {
     let max_bytes = args
         .get("max_bytes")
         .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(FS_READ_DEFAULT_MAX);
+        .unwrap_or(FS_READ_DEFAULT_MAX as u64);
 
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|e| format!("fs_read: {}", e))?;
-    let total = bytes.len();
-    let (slice, truncated) = if total > max_bytes {
-        (&bytes[..max_bytes], true)
-    } else {
-        (&bytes[..], false)
-    };
-    let content = String::from_utf8_lossy(slice).into_owned();
+    let (bytes, total, truncated) =
+        read_file_prefix_with_cap_async("fs_read", &path, max_bytes).await?;
+    let content = String::from_utf8_lossy(&bytes).into_owned();
     Ok(json!({
         "content": content,
         "size_bytes": total,
@@ -3114,6 +3689,34 @@ async fn read_file_with_cap_async(
         .map_err(|e| format!("{}: read {}: {}", tool, path.display(), e))
 }
 
+async fn read_file_prefix_with_cap_async(
+    tool: &str,
+    path: &std::path::Path,
+    cap_bytes: u64,
+) -> Result<(Vec<u8>, u64, bool), String> {
+    let meta = tokio::fs::metadata(path)
+        .await
+        .map_err(|e| format!("{}: stat {}: {}", tool, path.display(), e))?;
+    if !meta.is_file() {
+        return Err(format!("{}: not a regular file: {}", tool, path.display()));
+    }
+    let total = meta.len();
+    let capped = total.min(cap_bytes);
+    let to_read: usize = capped
+        .try_into()
+        .map_err(|_| format!("{}: cap too large for this platform", tool))?;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| format!("{}: open {}: {}", tool, path.display(), e))?;
+    let mut bytes = vec![0u8; to_read];
+    if to_read > 0 {
+        file.read_exact(&mut bytes)
+            .await
+            .map_err(|e| format!("{}: read {}: {}", tool, path.display(), e))?;
+    }
+    Ok((bytes, total, total > cap_bytes))
+}
+
 fn read_file_with_cap_sync(
     tool: &str,
     path: &std::path::Path,
@@ -3217,17 +3820,9 @@ async fn tool_fs_read_binary(args: Value) -> Result<Value, String> {
     let max_bytes = args
         .get("max_bytes")
         .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(FS_READ_BINARY_DEFAULT_MAX);
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|e| format!("fs_read_binary: {}", e))?;
-    let total = bytes.len();
-    let (slice, truncated) = if total > max_bytes {
-        (&bytes[..max_bytes], true)
-    } else {
-        (&bytes[..], false)
-    };
+        .unwrap_or(FS_READ_BINARY_DEFAULT_MAX as u64);
+    let (bytes, total, truncated) =
+        read_file_prefix_with_cap_async("fs_read_binary", &path, max_bytes).await?;
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -3250,7 +3845,7 @@ async fn tool_fs_read_binary(args: Value) -> Result<Value, String> {
         "tar" => "application/x-tar",
         _ => "application/octet-stream",
     };
-    let b64 = base64::engine::general_purpose::STANDARD.encode(slice);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(json!({
         "content_base64": b64,
         "size_bytes": total,
@@ -3533,6 +4128,14 @@ async fn tool_fs_append(args: Value) -> Result<Value, String> {
             content.len(),
             MAX_FS_WRITE_BYTES
         ));
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "fs_append: refusing to append through symlink leaf: {}",
+                path.display()
+            ));
+        }
     }
     let bytes = content.as_bytes();
 
@@ -3935,7 +4538,7 @@ async fn tool_clock_now(args: Value) -> Result<Value, String> {
 }
 
 /// `sleep_ms` — bounded async sleep. Replaces `sleep N` shell calls in
-/// /goal polling patterns. The ceiling is a safety boundary, not a
+/// build polling patterns. The ceiling is a safety boundary, not a
 /// policy hint — agents that need longer real timers should architect
 /// around poll-and-yield instead of one giant block.
 async fn tool_sleep_ms(args: Value) -> Result<Value, String> {
@@ -3993,20 +4596,24 @@ async fn tool_agent_metrics(_args: Value) -> Result<Value, String> {
     crate::subagent::metrics().await
 }
 
-// ───── vision_describe (xAI Grok-2-Vision) ─────
+// ───── vision_describe (xAI Grok multimodal) ─────
 //
 // Calls xAI's OpenAI-compatible chat/completions endpoint with the
-// `grok-2-vision-latest` model. API key resolution chain (first match
-// wins):
-// 1. env GROK_VISION_API_KEY (escape hatch for CI)
-// 2. vault key "xai/api-key" (preferred — managed via Settings → Vault)
-// 3. `pass show xai/api-key` (fallback for users who keep keys in pass)
+// current multimodal Grok model. Credential resolution is OAuth-first:
+// 1. `~/.grok/auth.json` bearer written by `grok login`
+// 2. env GROK_VISION_API_KEY / XAI_API_KEY (developer overrides)
+// 3. vault key "xai/api-key"
+// 4. `pass show xai/api-key` / `pass show grok/api-key`
 //
-// Returns `{description, model, usage}` on success. Usage fields are
-// passed through from xAI's response so callers can track spend.
+// Returns both legacy `{description, usage}` fields and the newer
+// `{text, ms_total}` shape so old callers and Grok's current tool habits
+// both work.
 async fn tool_vision_describe(args: Value) -> Result<Value, String> {
     // Resolve image bytes + MIME.
-    let path = args.get("path").and_then(|v| v.as_str());
+    let path = args
+        .get("path")
+        .or_else(|| args.get("image_path"))
+        .and_then(|v| v.as_str());
     let image_b64 = args.get("imageBase64").and_then(|v| v.as_str());
     let (data_url, src_label) = match (path, image_b64) {
         (Some(p), _) => {
@@ -4045,69 +4652,32 @@ async fn tool_vision_describe(args: Value) -> Result<Value, String> {
             }
         }
         (None, None) => {
-            return Err("vision_describe: provide either 'path' or 'imageBase64'".to_string());
+            return Err(
+                "vision_describe: provide 'path', 'image_path', or 'imageBase64'".to_string(),
+            );
         }
     };
 
     let prompt = args
         .get("prompt")
+        .or_else(|| args.get("question"))
         .and_then(|v| v.as_str())
         .unwrap_or("Describe this image in detail. Be specific about what you see.")
         .to_string();
     let max_tokens = args
         .get("maxTokens")
+        .or_else(|| args.get("max_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(800)
         .min(4096);
 
-    // Resolve API key.
-    let api_key = if let Ok(k) = std::env::var("GROK_VISION_API_KEY") {
-        if !k.trim().is_empty() {
-            Some(k.trim().to_string())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    let api_key = if let Some(k) = api_key {
-        k
-    } else {
-        // Try vault.
-        match crate::vault::Vault::open() {
-            Ok(v) => match v.get("xai/api-key").await {
-                Ok(Some(s)) if !s.trim().is_empty() => s.trim().to_string(),
-                _ => {
-                    // Last resort: pass show
-                    let out = tokio::process::Command::new("pass")
-                        .arg("show")
-                        .arg("xai/api-key")
-                        .output()
-                        .await
-                        .map_err(|e| format!("vision_describe: pass not available + vault has no xai/api-key: {}", e))?;
-                    if !out.status.success() {
-                        return Err(format!(
-                            "vision_describe: no xAI API key found. Tried env GROK_VISION_API_KEY, vault 'xai/api-key', `pass show xai/api-key`. Last error: {}",
-                            String::from_utf8_lossy(&out.stderr)
-                        ));
-                    }
-                    String::from_utf8_lossy(&out.stdout).trim().to_string()
-                }
-            },
-            Err(_) => {
-                return Err("vision_describe: vault open failed and no env override".to_string())
-            }
-        }
-    };
-    if api_key.len() < 8 {
-        return Err("vision_describe: resolved API key is suspiciously short".to_string());
+    let (bearer, auth_source) = resolve_xai_vision_bearer().await?;
+    if bearer.len() < 8 {
+        return Err("vision_describe: resolved xAI credential is suspiciously short".to_string());
     }
 
-    // xAI account's /v1/models — `grok-2-vision-*` is NOT in the
-    // model list; only `grok-4.20-*` and `grok-4.3` (both multimodal)
-    // + `grok-imagine-*` resolve. The `grok-2-vision-1212` +
-    // `grok-2-vision-latest` aliases BOTH return "Model not found".
-    // Default to grok-4.3 (newest multimodal). Allow override via:
+    // Default to grok-4.3, the current multimodal model available to
+    // grok-build OAuth sessions. Allow override via:
     // - `model` argument in the tool call (per-request)
     // - env GROK_VISION_MODEL (global)
     let model = args
@@ -4132,13 +4702,14 @@ async fn tool_vision_describe(args: Value) -> Result<Value, String> {
         "max_tokens": max_tokens
     });
 
+    let start = std::time::Instant::now();
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(90))
         .build()
         .map_err(|e| format!("vision_describe: http client init: {}", e))?;
     let resp = client
         .post("https://api.x.ai/v1/chat/completions")
-        .bearer_auth(&api_key)
+        .bearer_auth(&bearer)
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -4169,14 +4740,70 @@ async fn tool_vision_describe(args: Value) -> Result<Value, String> {
     let model = resp_body
         .get("model")
         .and_then(|v| v.as_str())
-        .unwrap_or("grok-2-vision")
+        .unwrap_or("grok-4.3")
         .to_string();
     Ok(json!({
+        "text": description.clone(),
         "description": description,
         "model": model,
         "usage": usage,
         "source": src_label,
+        "auth_source": auth_source,
+        "ms_total": start.elapsed().as_millis() as u64,
     }))
+}
+
+async fn resolve_xai_vision_bearer() -> Result<(String, &'static str), String> {
+    if let Ok(token) = read_grok_oauth_token() {
+        let trimmed = token.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok((trimmed, "oauth"));
+        }
+    }
+
+    for env_name in ["GROK_VISION_API_KEY", "XAI_API_KEY"] {
+        if let Ok(k) = std::env::var(env_name) {
+            let trimmed = k.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok((trimmed, env_name));
+            }
+        }
+    }
+
+    if let Ok(vault) = crate::vault::Vault::open() {
+        if let Ok(Some(k)) = vault.get("xai/api-key").await {
+            let trimmed = k.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok((trimmed, "vault:xai/api-key"));
+            }
+        }
+    }
+
+    for path in ["xai/api-key", "grok/api-key"] {
+        match tokio::process::Command::new("pass")
+            .arg("show")
+            .arg(path)
+            .output()
+            .await
+        {
+            Ok(out) if out.status.success() => {
+                let trimmed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !trimmed.is_empty() {
+                    return Ok((
+                        trimmed,
+                        if path == "xai/api-key" {
+                            "pass:xai/api-key"
+                        } else {
+                            "pass:grok/api-key"
+                        },
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Err("vision_describe: no xAI credential found. Run `grok login` so ~/.grok/auth.json is available, or add Settings -> Vault key `xai/api-key`, or set XAI_API_KEY/GROK_VISION_API_KEY.".to_string())
 }
 
 // ───── OAuth-token-backed xAI tools ─────
@@ -4567,78 +5194,11 @@ async fn tool_voice_stt_v2(args: Value) -> Result<Value, String> {
     Ok(v)
 }
 
-/// `vision_describe_v2` — describe an image via grok-4.3 multimodal
-/// using the OAuth bearer. Mirrors `vision_describe` but without the
-/// api-key/vault dance. Returns `{ text, ms_total, model }`.
+/// Hidden compatibility alias for older sessions that learned
+/// `vision_describe_v2`. The advertised tool is now `vision_describe`;
+/// keep this dispatcher arm so resumed sessions do not fail mid-task.
 async fn tool_vision_describe_v2(args: Value) -> Result<Value, String> {
-    let image_path = args
-        .get("image_path")
-        .and_then(|v| v.as_str())
-        .ok_or("vision_describe_v2: missing 'image_path'")?;
-    let question = args
-        .get("question")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Describe what you see in this image in detail.");
-    let max_tokens = args
-        .get("max_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(800);
-    let path = validate_fs_path("vision_describe_v2", image_path)?;
-    enforce_home_containment("vision_describe_v2", &path, FsAccessKind::Read)?;
-    let mime = image_mime_for_path("vision_describe_v2", &path, false)?;
-    let bytes = read_file_with_cap_sync("vision_describe_v2", &path, 20 * 1024 * 1024)?;
-    validate_image_magic("vision_describe_v2", mime, &bytes)?;
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine as _;
-    let b64 = B64.encode(&bytes);
-    let bearer = read_grok_oauth_token()?;
-    let body = serde_json::json!({
-        "model": "grok-4.3",
-        "messages": [{
-            "role": "user",
-            "content": [
-                { "type": "image_url", "image_url": { "url": format!("data:{};base64,{}", mime, b64) }},
-                { "type": "text", "text": question },
-            ]
-        }],
-        "max_tokens": max_tokens,
-    });
-    let start = std::time::Instant::now();
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("client: {}", e))?;
-    let res = client
-        .post("https://api.x.ai/v1/chat/completions")
-        .bearer_auth(&bearer)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("POST chat/completions: {}", e))?;
-    let status = res.status().as_u16();
-    let body = res.text().await.map_err(|e| format!("read body: {}", e))?;
-    if status != 200 {
-        return Err(format!(
-            "xAI vision HTTP {}: {}",
-            status,
-            body.chars().take(500).collect::<String>()
-        ));
-    }
-    let v: Value = serde_json::from_str(&body).map_err(|e| format!("parse json: {}", e))?;
-    let text = v
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("")
-        .to_string();
-    Ok(serde_json::json!({
-        "text": text,
-        "ms_total": start.elapsed().as_millis() as u64,
-        "model": "grok-4.3",
-    }))
+    tool_vision_describe(args).await
 }
 
 // ───── shared helpers ─────
@@ -4676,6 +5236,8 @@ fn now_ms() -> i64 {
 // (i.e. `*foo` is treated as a literal). Exact host match
 // (no port handling — URL parser strips the port for host) takes
 // precedence.
+const NET_FETCH_DEFAULT_MAX_BYTES: usize = 5_000_000;
+const NET_FETCH_HARD_MAX_BYTES: usize = 10 * 1024 * 1024;
 
 /// Filesystem path for the allow-list. Lives under `~/.shellx`
 /// alongside `vault.enc` — same parent dir, same lifecycle. Tests
@@ -4780,6 +5342,129 @@ fn host_matches_pattern(host: &str, pat: &str) -> bool {
     host == pat
 }
 
+fn parse_obscure_ipv4_piece(piece: &str) -> Option<u32> {
+    if piece.is_empty() {
+        return None;
+    }
+    let (digits, radix) = if let Some(rest) = piece
+        .strip_prefix("0x")
+        .or_else(|| piece.strip_prefix("0X"))
+    {
+        (rest, 16)
+    } else if piece.len() > 1 && piece.starts_with('0') {
+        (&piece[1..], 8)
+    } else {
+        (piece, 10)
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    u32::from_str_radix(digits, radix).ok()
+}
+
+fn parse_obscure_ipv4(host: &str) -> Option<Ipv4Addr> {
+    if !host.bytes().all(|b| {
+        b.is_ascii_digit()
+            || b == b'.'
+            || b == b'x'
+            || b == b'X'
+            || (b'a'..=b'f').contains(&b)
+            || (b'A'..=b'F').contains(&b)
+    }) {
+        return None;
+    }
+    let parts: Vec<u32> = host
+        .split('.')
+        .map(parse_obscure_ipv4_piece)
+        .collect::<Option<Vec<_>>>()?;
+    let value = match parts.as_slice() {
+        [a] => *a,
+        [a, b] if *a <= 0xff && *b <= 0x00ff_ffff => (*a << 24) | *b,
+        [a, b, c] if *a <= 0xff && *b <= 0xff && *c <= 0xffff => (*a << 24) | (*b << 16) | *c,
+        [a, b, c, d] if *a <= 0xff && *b <= 0xff && *c <= 0xff && *d <= 0xff => {
+            (*a << 24) | (*b << 16) | (*c << 8) | *d
+        }
+        _ => return None,
+    };
+    Some(Ipv4Addr::from(value))
+}
+
+fn parse_host_ip_literal(host: &str) -> Option<IpAddr> {
+    let host = host.trim_matches(['[', ']']).trim_end_matches('.');
+    host.parse::<IpAddr>()
+        .ok()
+        .or_else(|| parse_obscure_ipv4(host).map(IpAddr::V4))
+}
+
+fn restricted_ip_reason(ip: IpAddr) -> Option<&'static str> {
+    match ip {
+        IpAddr::V4(v4) => {
+            if v4.is_loopback() {
+                Some("loopback")
+            } else if v4.is_link_local() || v4 == Ipv4Addr::new(169, 254, 169, 254) {
+                Some("link-local")
+            } else if v4.is_private() {
+                Some("private")
+            } else if v4.is_unspecified() {
+                Some("unspecified")
+            } else {
+                None
+            }
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() {
+                Some("loopback")
+            } else if (v6.segments()[0] & 0xffc0) == 0xfe80 {
+                Some("link-local")
+            } else if (v6.segments()[0] & 0xfe00) == 0xfc00 {
+                Some("unique-local")
+            } else if v6.is_unspecified() {
+                Some("unspecified")
+            } else if matches!(v6.to_ipv4_mapped(), Some(v4) if restricted_ip_reason(IpAddr::V4(v4)).is_some())
+            {
+                Some("ipv4-mapped")
+            } else {
+                None
+            }
+        }
+    }
+}
+
+async fn resolve_public_dns_targets(
+    parsed_url: &reqwest::Url,
+) -> Result<Option<Vec<SocketAddr>>, String> {
+    let host = parsed_url
+        .host_str()
+        .ok_or_else(|| "net_fetch: no host in url".to_string())?;
+    let host_lc = host.to_ascii_lowercase();
+    if host_lc == "localhost" || parse_host_ip_literal(&host_lc).is_some() {
+        return Ok(None);
+    }
+    let port = parsed_url
+        .port_or_known_default()
+        .ok_or_else(|| "net_fetch: url without resolvable port".to_string())?;
+    let addrs = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| format!("net_fetch: DNS lookup for {} failed: {}", host, e))?;
+    let addrs: Vec<SocketAddr> = addrs.collect();
+    if addrs.is_empty() {
+        return Err(format!(
+            "net_fetch: DNS lookup for {} returned no addresses",
+            host
+        ));
+    }
+    for addr in &addrs {
+        let ip = addr.ip();
+        if let Some(reason) = restricted_ip_reason(ip) {
+            return Err(format!(
+                "net_fetch: host {} resolved to restricted IP {} ({})",
+                host, ip, reason
+            ));
+        }
+    }
+    Ok(Some(addrs))
+}
+
 /// Return Ok() if the URL's host (and port, for loopback) is on the
 /// allow-list; Err(structured message) otherwise.
 ///
@@ -4806,7 +5491,15 @@ fn host_is_allowed(parsed_url: &reqwest::Url, allow: &NetAllow) -> Result<(), St
         .ok_or_else(|| "no host in url".to_string())?;
     // Lowercase host once for all comparisons below.
     let host_lc = host.to_ascii_lowercase();
-    let is_loopback = matches!(host_lc.as_str(), "127.0.0.1" | "localhost" | "::1");
+    let host_ip = parse_host_ip_literal(&host_lc);
+    let is_loopback = host_ip
+        .map(|ip| {
+            matches!(
+                restricted_ip_reason(ip),
+                Some("loopback") | Some("ipv4-mapped")
+            )
+        })
+        .unwrap_or_else(|| matches!(host_lc.as_str(), "localhost"));
 
     if is_loopback {
         // Default loopback port per scheme (80/443) when the URL omits one.
@@ -4837,6 +5530,15 @@ fn host_is_allowed(parsed_url: &reqwest::Url, allow: &NetAllow) -> Result<(), St
             host,
             port
         ));
+    }
+
+    if let Some(ip) = host_ip {
+        if let Some(reason) = restricted_ip_reason(ip) {
+            return Err(format!(
+                "net_fetch: restricted IP literal {} ({}) is not allowed",
+                host, reason
+            ));
+        }
     }
 
     // Non-loopback: host-only pattern matching against allow-list.
@@ -4873,7 +5575,14 @@ async fn tool_net_fetch(args: Value) -> Result<Value, String> {
     let max_bytes = args
         .get("max_bytes")
         .and_then(|v| v.as_u64())
-        .unwrap_or(5_000_000) as usize;
+        .unwrap_or(NET_FETCH_DEFAULT_MAX_BYTES as u64);
+    if max_bytes > NET_FETCH_HARD_MAX_BYTES as u64 {
+        return Err(format!(
+            "net_fetch: max_bytes {} exceeds hard cap {}",
+            max_bytes, NET_FETCH_HARD_MAX_BYTES
+        ));
+    }
+    let max_bytes = max_bytes as usize;
     let body_arg = args
         .get("body")
         .and_then(|v| v.as_str())
@@ -4898,6 +5607,17 @@ async fn tool_net_fetch(args: Value) -> Result<Value, String> {
             "made_request": false,
         }));
     }
+    let resolved_addrs = match resolve_public_dns_targets(&parsed_url).await {
+        Ok(addrs) => addrs,
+        Err(msg) => {
+            return Ok(json!({
+                "error": msg,
+                "host": host,
+                "url": url,
+                "made_request": false,
+            }));
+        }
+    };
 
     // ── method + body validation ──
     let method = Method::from_bytes(method_str.as_bytes())
@@ -4921,9 +5641,13 @@ async fn tool_net_fetch(args: Value) -> Result<Value, String> {
     // allow-list check (initial URL only). Reject all 3xx — caller
     // gets the redirect target in the body/Location header and can
     // re-validate via a fresh net_fetch call.
-    let client = reqwest::Client::builder()
+    let mut client_builder = reqwest::Client::builder()
         .timeout(Duration::from_millis(timeout_ms))
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some(addrs) = resolved_addrs.as_deref() {
+        client_builder = client_builder.resolve_to_addrs(&host, addrs);
+    }
+    let client = client_builder
         .build()
         .map_err(|e| format!("net_fetch: client build failed: {}", e))?;
     let mut req = client.request(method.clone(), parsed_url);
@@ -5126,8 +5850,73 @@ pub(crate) fn patch_goal_complete_status(text: &str) -> String {
 }
 
 enum BuildAgentReceiptEvent<'a> {
-    Started,
+    Started(Option<&'a Value>),
     Completed(&'a Value),
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct BuildAgentReceiptMeta {
+    wait: Option<bool>,
+    wait_budget_ms: Option<u64>,
+    max_runtime_ms: Option<u64>,
+}
+
+fn insert_build_agent_receipt_timing(
+    map: &mut serde_json::Map<String, Value>,
+    meta: BuildAgentReceiptMeta,
+    value: Option<&Value>,
+) {
+    if let Some(wait) = meta.wait {
+        map.insert("wait".into(), Value::Bool(wait));
+    } else {
+        map.insert("wait".into(), Value::Null);
+    }
+    if let Some(ms) = meta.wait_budget_ms {
+        map.insert(
+            "waitBudgetMs".into(),
+            Value::Number(serde_json::Number::from(ms)),
+        );
+    }
+    if let Some(ms) = meta.max_runtime_ms {
+        map.insert(
+            "maxRuntimeMs".into(),
+            Value::Number(serde_json::Number::from(ms)),
+        );
+    }
+
+    let value_watchdog_policy = value
+        .and_then(|v| v.get("watchdog_policy"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let watchdog_policy = value_watchdog_policy.or_else(|| {
+        if meta.max_runtime_ms.is_some() {
+            Some("hard".to_string())
+        } else if meta.wait_budget_ms.is_some() {
+            Some("disabled".to_string())
+        } else {
+            None
+        }
+    });
+    if let Some(policy) = watchdog_policy {
+        map.insert("watchdogPolicy".into(), Value::String(policy));
+    }
+
+    let value_watchdog_ms = value
+        .and_then(|v| v.get("watchdog_ms"))
+        .and_then(|v| v.as_u64());
+    let watchdog_ms = value_watchdog_ms.or(meta.max_runtime_ms);
+    if let Some(ms) = watchdog_ms {
+        map.insert(
+            "watchdogMs".into(),
+            Value::Number(serde_json::Number::from(ms)),
+        );
+    } else if watchdog_policy_is_disabled(map) {
+        map.insert("watchdogMs".into(), Value::Null);
+    }
+}
+
+fn watchdog_policy_is_disabled(map: &serde_json::Map<String, Value>) -> bool {
+    map.get("watchdogPolicy").and_then(|v| v.as_str()) == Some("disabled")
 }
 
 struct BuildHostReceipt<'a> {
@@ -5155,6 +5944,62 @@ async fn active_build_run_for_mcp(
     let orch = orch_state.inner().clone();
     let state = orch.get_state(&tab).await?;
     Some((orch, tab, state))
+}
+
+async fn build_agent_receipt_key_for_current_run(
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+    tool_name: &str,
+    subagent_id: &str,
+) -> Option<String> {
+    if subagent_id.is_empty() {
+        return None;
+    }
+    active_build_run_for_mcp(ctx, tab_id, tool_name)
+        .await
+        .map(|(_, _, state)| build_agent_watcher_key(&state.run_id, subagent_id))
+}
+
+async fn build_agent_spawn_rejected_by_build_gate(
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+    persona: &str,
+    wait: bool,
+) -> Option<String> {
+    let (orch, tab, state) = active_build_run_for_mcp(ctx, tab_id, "Agent").await?;
+    if build_terminal_state_suppresses_agent(&state, now_millis_for_build_receipt()) {
+        return Some(format!(
+            "Agent: /build tab {} is already {:?}; do not start more subagents after build_complete. Stop and report the accepted build summary instead.",
+            tab, state.status
+        ));
+    }
+    if !wait {
+        return None;
+    }
+    if state.status != crate::build_types::BuildRunStatus::Active {
+        return None;
+    }
+    let in_flight = orch.in_flight_agent_summaries(&tab).await.ok()?;
+    if in_flight.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Agent: /build tab {} already has in-flight Agent(s): {}. Do not start another wait=true `{}` Agent until the running Agent completes; use Agent_status/Agent_output if you need to poll it.",
+            tab,
+            in_flight.join(", "),
+            persona
+        ))
+    }
+}
+
+fn agent_tool_error_response(message: String) -> Value {
+    json!({
+        "content": [{
+            "type": "text",
+            "text": message,
+        }],
+        "isError": true,
+    })
 }
 
 async fn append_build_host_receipt(
@@ -5485,22 +6330,288 @@ async fn record_build_agent_completion_from_poll(
         .get("task_preview")
         .and_then(|v| v.as_str())
         .unwrap_or(tool_name);
+    let subagent_id = value
+        .get("subagent_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let meta =
+        match build_agent_receipt_key_for_current_run(ctx, tab_id, tool_name, subagent_id).await {
+            Some(key) => remembered_build_agent_receipt_meta(&key)
+                .await
+                .unwrap_or_default(),
+            None => BuildAgentReceiptMeta::default(),
+        };
     record_build_agent_receipt(
         BuildAgentReceiptEvent::Completed(value),
         persona,
         task,
-        None,
+        meta,
+        value.get("cwd").and_then(|v| v.as_str()),
         ctx,
         tab_id,
     )
     .await;
 }
 
+async fn maybe_start_build_agent_completion_watcher(
+    value: Option<&Value>,
+    persona: &str,
+    task: &str,
+    meta: BuildAgentReceiptMeta,
+    cwd: Option<&str>,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) {
+    let Some(subagent_id) = value
+        .and_then(|v| v.get("subagent_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+    let Some((_orch, tab, state)) = active_build_run_for_mcp(ctx, tab_id, "Agent").await else {
+        return;
+    };
+    if !build_agent_completion_watcher_should_track(state.status) {
+        return;
+    }
+
+    let key = build_agent_watcher_key(&state.run_id, subagent_id);
+    if !try_register_build_agent_watcher(key.clone()).await {
+        return;
+    }
+
+    let ctx = Arc::clone(ctx);
+    let tab = tab.to_string();
+    let subagent_id = subagent_id.to_string();
+    let persona = persona.to_string();
+    let task = task.to_string();
+    let cwd = cwd.map(str::to_string);
+    tokio::spawn(async move {
+        run_build_agent_completion_watcher(BuildAgentCompletionWatcher {
+            key,
+            ctx,
+            tab,
+            subagent_id,
+            persona,
+            task,
+            meta,
+            cwd,
+        })
+        .await;
+    });
+}
+
+struct BuildAgentCompletionWatcher {
+    key: String,
+    ctx: Arc<HostMcpContext>,
+    tab: String,
+    subagent_id: String,
+    persona: String,
+    task: String,
+    meta: BuildAgentReceiptMeta,
+    cwd: Option<String>,
+}
+
+async fn run_build_agent_completion_watcher(args: BuildAgentCompletionWatcher) {
+    let BuildAgentCompletionWatcher {
+        key,
+        ctx,
+        tab,
+        subagent_id,
+        persona,
+        task,
+        meta,
+        cwd,
+    } = args;
+    let mut interval = tokio::time::interval(Duration::from_secs(15));
+    loop {
+        interval.tick().await;
+        let Some((_orch, _tab, state)) = active_build_run_for_mcp(&ctx, Some(&tab), "Agent").await
+        else {
+            break;
+        };
+        if !build_agent_completion_watcher_should_track(state.status) {
+            break;
+        }
+
+        let status_value = match crate::subagent::status(&subagent_id).await {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::debug!(
+                    "host_mcp: build agent watcher stopping; status unavailable subagent={} err={}",
+                    subagent_id,
+                    e
+                );
+                break;
+            }
+        };
+        if status_value
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            == "running"
+        {
+            continue;
+        }
+
+        let output_value = crate::subagent::output(&subagent_id, false)
+            .await
+            .unwrap_or(status_value);
+        record_build_agent_completed_receipt(
+            &output_value,
+            &persona,
+            &task,
+            meta,
+            cwd.as_deref(),
+            &ctx,
+            Some(&tab),
+        )
+        .await;
+        if let Some(app_handle) = ctx.app_handle.as_ref() {
+            crate::acp::maybe_inject_build_continuation_for_tab(app_handle, &tab, "end_turn").await;
+        }
+        break;
+    }
+    unregister_build_agent_watcher(&key).await;
+}
+
+async fn record_build_agent_completed_receipt(
+    value: &Value,
+    persona: &str,
+    task: &str,
+    meta: BuildAgentReceiptMeta,
+    cwd: Option<&str>,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) {
+    use crate::build_types::{BuildReceiptConfidence, BuildReceiptKind};
+
+    let status = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    if status == "running" {
+        return;
+    }
+    let preview: String = task.chars().take(180).collect();
+    let subagent_id = value
+        .get("subagent_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !register_build_agent_completion(ctx, tab_id, subagent_id).await {
+        return;
+    }
+    let receipt_key =
+        build_agent_receipt_key_for_current_run(ctx, tab_id, "Agent", subagent_id).await;
+    let receipt_meta = match receipt_key.as_deref() {
+        Some(key) => remembered_build_agent_receipt_meta(key)
+            .await
+            .unwrap_or(meta),
+        None => meta,
+    };
+    let elapsed_ms = value.get("elapsed_ms").and_then(|v| v.as_u64());
+    let mut data_map = serde_json::Map::new();
+    data_map.insert("persona".into(), Value::String(persona.to_string()));
+    data_map.insert("taskPreview".into(), Value::String(preview.clone()));
+    data_map.insert("subagentId".into(), Value::String(subagent_id.to_string()));
+    data_map.insert("status".into(), Value::String(status.to_string()));
+    data_map.insert(
+        "exitCode".into(),
+        value.get("exit_code").cloned().unwrap_or(Value::Null),
+    );
+    data_map.insert(
+        "elapsedMs".into(),
+        elapsed_ms
+            .map(|ms| Value::Number(serde_json::Number::from(ms)))
+            .unwrap_or(Value::Null),
+    );
+    data_map.insert(
+        "stdoutChars".into(),
+        Value::Number(serde_json::Number::from(
+            value
+                .get("stdout")
+                .and_then(|v| v.as_str())
+                .map(|s| s.chars().count())
+                .unwrap_or(0),
+        )),
+    );
+    data_map.insert(
+        "stderrTailChars".into(),
+        Value::Number(serde_json::Number::from(
+            value
+                .get("stderr_tail")
+                .and_then(|v| v.as_str())
+                .map(|s| s.chars().count())
+                .unwrap_or(0),
+        )),
+    );
+    data_map.insert(
+        "cwd".into(),
+        cwd.map(|s| Value::String(s.to_string()))
+            .unwrap_or(Value::Null),
+    );
+    insert_build_agent_receipt_timing(&mut data_map, receipt_meta, Some(value));
+    let data = Value::Object(data_map);
+    append_build_host_receipt(
+        ctx,
+        tab_id,
+        "Agent",
+        BuildHostReceipt {
+            kind: BuildReceiptKind::AgentCompleted,
+            actor: "shellx-host-mcp",
+            summary: format!("{} Agent finished with status {}", persona, status),
+            confidence: BuildReceiptConfidence::TrustedHost,
+            data: data.clone(),
+        },
+    )
+    .await;
+    if let Some(key) = receipt_key {
+        forget_build_agent_receipt_meta(&key).await;
+    }
+    if status != "completed" {
+        return;
+    }
+    checkpoint_build_agent_completion(persona, task, cwd, ctx, tab_id).await;
+    let gate_kind = build_agent_gate_kind_for_persona(persona);
+    if let Some(kind) = gate_kind {
+        append_build_host_receipt(
+            ctx,
+            tab_id,
+            "Agent",
+            BuildHostReceipt {
+                kind,
+                actor: persona,
+                summary: format!("{} Agent completed successfully", persona),
+                confidence: BuildReceiptConfidence::TrustedHost,
+                data,
+            },
+        )
+        .await;
+    }
+}
+
+async fn register_build_agent_completion(
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+    subagent_id: &str,
+) -> bool {
+    if subagent_id.is_empty() {
+        return true;
+    }
+    let Some((_orch, _tab, state)) = active_build_run_for_mcp(ctx, tab_id, "Agent").await else {
+        return true;
+    };
+    let key = build_agent_watcher_key(&state.run_id, subagent_id);
+    try_register_build_agent_completion(key).await
+}
+
 async fn record_build_agent_receipt(
     event: BuildAgentReceiptEvent<'_>,
     persona: &str,
     task: &str,
-    wait: Option<bool>,
+    meta: BuildAgentReceiptMeta,
+    cwd: Option<&str>,
     ctx: &Arc<HostMcpContext>,
     tab_id: Option<&str>,
 ) {
@@ -5508,7 +6619,20 @@ async fn record_build_agent_receipt(
 
     let preview: String = task.chars().take(180).collect();
     match event {
-        BuildAgentReceiptEvent::Started => {
+        BuildAgentReceiptEvent::Started(value) => {
+            let subagent_id = value
+                .and_then(|v| v.get("subagent_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if let Some(key) =
+                build_agent_receipt_key_for_current_run(ctx, tab_id, "Agent", subagent_id).await
+            {
+                remember_build_agent_receipt_meta(key, meta).await;
+            }
+            let status = value
+                .and_then(|v| v.get("status"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("running");
             append_build_host_receipt(
                 ctx,
                 tab_id,
@@ -5518,73 +6642,310 @@ async fn record_build_agent_receipt(
                     actor: "shellx-host-mcp",
                     summary: format!("{} Agent started: {}", persona, preview),
                     confidence: BuildReceiptConfidence::TrustedHost,
+                    data: {
+                        let mut map = serde_json::Map::new();
+                        map.insert("persona".into(), Value::String(persona.to_string()));
+                        map.insert("taskPreview".into(), Value::String(preview));
+                        map.insert("subagentId".into(), Value::String(subagent_id.to_string()));
+                        map.insert("status".into(), Value::String(status.to_string()));
+                        map.insert(
+                            "cwd".into(),
+                            cwd.map(|s| Value::String(s.to_string()))
+                                .unwrap_or(Value::Null),
+                        );
+                        insert_build_agent_receipt_timing(&mut map, meta, value);
+                        Value::Object(map)
+                    },
+                },
+            )
+            .await;
+            maybe_start_build_agent_completion_watcher(
+                value, persona, task, meta, cwd, ctx, tab_id,
+            )
+            .await;
+        }
+        BuildAgentReceiptEvent::Completed(value) => {
+            record_build_agent_completed_receipt(value, persona, task, meta, cwd, ctx, tab_id)
+                .await;
+        }
+    }
+}
+
+async fn checkpoint_build_agent_completion(
+    persona: &str,
+    task: &str,
+    cwd: Option<&str>,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) {
+    let Some(label) = build_agent_checkpoint_label_for_persona(persona) else {
+        return;
+    };
+    let Some(tab) = tab_id else {
+        return;
+    };
+    let Some(cwd) = cwd.or_else(|| ctx.cwd.to_str()) else {
+        return;
+    };
+    match create_direct_build_agent_checkpoint(cwd, tab, label).await {
+        Ok(data) => {
+            append_build_host_receipt(
+                ctx,
+                Some(tab),
+                "Agent",
+                BuildHostReceipt {
+                    kind: crate::build_types::BuildReceiptKind::CheckpointCreated,
+                    actor: "shellx-git",
+                    summary: format!("Git checkpoint created: {}", label),
+                    confidence: crate::build_types::BuildReceiptConfidence::TrustedHost,
+                    data,
+                },
+            )
+            .await;
+        }
+        Err(e) => {
+            tracing::warn!(
+                "host_mcp: build agent checkpoint failed persona={} tab={} err={}",
+                persona,
+                tab,
+                e
+            );
+            let agent_code_change =
+                build_agent_checkpoint_fallback_assume_code_change(persona, task);
+            append_build_host_receipt(
+                ctx,
+                Some(tab),
+                "Agent",
+                BuildHostReceipt {
+                    kind: crate::build_types::BuildReceiptKind::CheckpointCreated,
+                    actor: "shellx-git",
+                    summary: format!(
+                        "Git checkpoint unavailable after {} Agent completion: {}",
+                        persona, e
+                    ),
+                    confidence: crate::build_types::BuildReceiptConfidence::TrustedHost,
                     data: json!({
-                        "persona": persona,
-                        "taskPreview": preview,
-                        "wait": wait,
+                        "checkpointId": format!("{}-checkpoint-unavailable", label),
+                        "checkpointUnavailable": true,
+                        "checkpointUnavailableReason": e,
+                        "agentCodeChange": agent_code_change,
+                        "cwd": cwd,
+                        "label": label,
                     }),
                 },
             )
             .await;
         }
-        BuildAgentReceiptEvent::Completed(value) => {
-            let status = value
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            if status == "running" {
-                return;
-            }
-            let subagent_id = value
-                .get("subagent_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let elapsed_ms = value.get("elapsed_ms").and_then(|v| v.as_u64());
-            let data = json!({
-                "persona": persona,
-                "taskPreview": preview,
-                "subagentId": subagent_id,
-                "status": status,
-                "exitCode": value.get("exit_code").cloned().unwrap_or(Value::Null),
-                "elapsedMs": elapsed_ms,
-                "stdoutChars": value.get("stdout").and_then(|v| v.as_str()).map(|s| s.chars().count()).unwrap_or(0),
-                "stderrTailChars": value.get("stderr_tail").and_then(|v| v.as_str()).map(|s| s.chars().count()).unwrap_or(0),
-                "wait": wait,
-            });
-            append_build_host_receipt(
-                ctx,
-                tab_id,
-                "Agent",
-                BuildHostReceipt {
-                    kind: BuildReceiptKind::AgentCompleted,
-                    actor: "shellx-host-mcp",
-                    summary: format!("{} Agent finished with status {}", persona, status),
-                    confidence: BuildReceiptConfidence::TrustedHost,
-                    data: data.clone(),
-                },
-            )
-            .await;
-            if status != "completed" {
-                return;
-            }
-            let gate_kind = build_agent_gate_kind_for_persona(persona);
-            if let Some(kind) = gate_kind {
-                append_build_host_receipt(
-                    ctx,
-                    tab_id,
-                    "Agent",
-                    BuildHostReceipt {
-                        kind,
-                        actor: persona,
-                        summary: format!("{} Agent completed successfully", persona),
-                        confidence: BuildReceiptConfidence::TrustedHost,
-                        data,
-                    },
-                )
-                .await;
-            }
+    }
+}
+
+fn build_agent_checkpoint_label_for_persona(persona: &str) -> Option<&'static str> {
+    match persona {
+        "implementer" => Some("agent-implementer-complete"),
+        "test-writer" => Some("agent-test-writer-complete"),
+        "release-manager" => Some("agent-release-manager-complete"),
+        _ => None,
+    }
+}
+
+fn build_agent_checkpoint_fallback_assume_code_change(persona: &str, task: &str) -> bool {
+    if matches!(persona, "implementer" | "release-manager") {
+        return true;
+    }
+    if persona != "test-writer" {
+        return false;
+    }
+    let lower = task.to_ascii_lowercase();
+    if [
+        "analysis only",
+        "without changing files",
+        "without modifying files",
+        "do not change files",
+        "do not modify files",
+        "do not write files",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+    {
+        return false;
+    }
+
+    let write_intent = [
+        "create ",
+        "add ",
+        "modify ",
+        "edit ",
+        "update ",
+        "implement ",
+        "generate ",
+        "save ",
+        "patch ",
+        "write ",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    let explicit_test_file_target = [
+        ".test.",
+        ".spec.",
+        "__tests__",
+        "/tests/",
+        "\\tests\\",
+        "test file",
+        "spec file",
+        "test suite",
+        "test script",
+        "coverage file",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+
+    write_intent && explicit_test_file_target
+}
+
+fn build_agent_completion_watcher_should_track(status: crate::build_types::BuildRunStatus) -> bool {
+    !build_status_is_terminal(&status)
+}
+
+async fn create_direct_build_agent_checkpoint(
+    cwd: &str,
+    tab_id: &str,
+    label: &str,
+) -> Result<Value, String> {
+    let repo_root = git_text_direct(cwd, &["rev-parse", "--show-toplevel"], 8)
+        .await?
+        .trim()
+        .to_string();
+    let branch = git_text_direct(cwd, &["branch", "--show-current"], 8)
+        .await
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "HEAD".to_string());
+    let head = git_text_direct(cwd, &["rev-parse", "--short", "HEAD"], 8)
+        .await
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let unstaged = git_text_direct(cwd, &["diff", "--binary", "--"], 12).await?;
+    let staged = git_text_direct(cwd, &["diff", "--cached", "--binary", "--"], 12).await?;
+    let status_text = git_text_direct(cwd, &["status", "--porcelain=v1", "-b"], 8).await?;
+    let counts = git_status_counts(&status_text);
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE unset".to_string())?;
+    let created_at_ms = now_ms();
+    let id = format!(
+        "{}-{}",
+        created_at_ms,
+        crate::session_git::sanitize_worktree_slug(label)
+    );
+    let base = PathBuf::from(home)
+        .join(".shellx")
+        .join("git-checkpoints")
+        .join(crate::session_git::repo_key(&repo_root))
+        .join(crate::session_git::sanitize_worktree_slug(tab_id))
+        .join(&id);
+    std::fs::create_dir_all(&base).map_err(|e| format!("checkpoint mkdir failed: {}", e))?;
+    let worktree_fingerprint =
+        crate::session_git::local_worktree_fingerprint(Path::new(&repo_root))?;
+    let untracked_snapshot =
+        crate::session_git::write_untracked_snapshot(Path::new(&repo_root), &base)?;
+    std::fs::write(base.join("unstaged.patch"), unstaged)
+        .map_err(|e| format!("checkpoint write unstaged.patch failed: {}", e))?;
+    std::fs::write(base.join("staged.patch"), staged)
+        .map_err(|e| format!("checkpoint write staged.patch failed: {}", e))?;
+    std::fs::write(base.join("status.txt"), &status_text)
+        .map_err(|e| format!("checkpoint write status.txt failed: {}", e))?;
+
+    let data = json!({
+        "checkpointId": id,
+        "path": base.to_string_lossy(),
+        "repoRoot": repo_root,
+        "branch": branch,
+        "head": head,
+        "staged": counts.staged,
+        "unstaged": counts.unstaged,
+        "untracked": counts.untracked,
+        "conflicts": counts.conflicts,
+        "worktreeFingerprint": worktree_fingerprint,
+        "untrackedSnapshot": untracked_snapshot,
+    });
+    let meta = json!({
+        "id": data["checkpointId"],
+        "label": label,
+        "createdAtMs": created_at_ms,
+        "branch": data["branch"],
+        "head": data["head"],
+        "repoRoot": data["repoRoot"],
+        "path": data["path"],
+        "staged": data["staged"],
+        "unstaged": data["unstaged"],
+        "untracked": data["untracked"],
+        "conflicts": data["conflicts"],
+        "worktreeFingerprint": data["worktreeFingerprint"],
+        "untrackedSnapshot": data["untrackedSnapshot"],
+    });
+    let meta = serde_json::to_string_pretty(&meta)
+        .map_err(|e| format!("checkpoint serialize failed: {}", e))?;
+    std::fs::write(base.join("checkpoint.json"), meta)
+        .map_err(|e| format!("checkpoint write metadata failed: {}", e))?;
+    Ok(data)
+}
+
+async fn git_text_direct(cwd: &str, args: &[&str], timeout_secs: u64) -> Result<String, String> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.args(args)
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let output = tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output())
+        .await
+        .map_err(|_| format!("git {:?} timed out after {}s", args, timeout_secs))?
+        .map_err(|e| format!("git {:?} spawn failed: {}", args, e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("git {:?} exited {:?}", args, output.status.code())
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[derive(Default)]
+struct GitStatusCounts {
+    staged: usize,
+    unstaged: usize,
+    untracked: usize,
+    conflicts: usize,
+}
+
+fn git_status_counts(status_text: &str) -> GitStatusCounts {
+    let mut counts = GitStatusCounts::default();
+    for line in status_text.lines() {
+        if line.starts_with("##") {
+            continue;
+        }
+        if line.starts_with("??") {
+            counts.untracked += 1;
+            continue;
+        }
+        let mut chars = line.chars();
+        let x = chars.next().unwrap_or(' ');
+        let y = chars.next().unwrap_or(' ');
+        if x == 'U' || y == 'U' || matches!((x, y), ('A', 'A') | ('D', 'D')) {
+            counts.conflicts += 1;
+        }
+        if x != ' ' {
+            counts.staged += 1;
+        }
+        if y != ' ' {
+            counts.unstaged += 1;
         }
     }
+    counts
 }
 
 fn build_agent_gate_kind_for_persona(
@@ -5653,12 +7014,96 @@ async fn post_build_checkpoint_to_debug_api(
     }
 }
 
+async fn post_preview_diagnose_to_debug_api(tab_id: &str, body: Value) -> Result<Value, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
+    let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
+    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
+        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
+        .unwrap_or_else(|_| "5757".to_string());
+    let url = format!(
+        "http://127.0.0.1:{}/preview/work/diagnose?tabId={}",
+        port.trim(),
+        encode_query_component(tab_id)
+    );
+    let send = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(token.trim())
+        .json(&body)
+        .send();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(20), send)
+        .await
+        .map_err(|_| "debug-api preview_diagnose post timed out".to_string())?
+        .map_err(|e| format!("debug-api preview_diagnose post failed: {}", e))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if status.is_success() {
+        serde_json::from_str(&text).map_err(|e| format!("debug-api preview_diagnose JSON: {}", e))
+    } else {
+        Err(format!(
+            "debug-api preview_diagnose returned {}: {}",
+            status, text
+        ))
+    }
+}
+
+async fn post_preview_start_to_debug_api(tab_id: &str, body: Value) -> Result<Value, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
+    let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
+    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
+        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
+        .unwrap_or_else(|_| "5757".to_string());
+    let url = format!(
+        "http://127.0.0.1:{}/preview/work/start?tabId={}",
+        port.trim(),
+        encode_query_component(tab_id)
+    );
+    let send = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(token.trim())
+        .json(&body)
+        .send();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(45), send)
+        .await
+        .map_err(|_| "debug-api preview_start post timed out".to_string())?
+        .map_err(|e| format!("debug-api preview_start post failed: {}", e))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if status.is_success() {
+        serde_json::from_str(&text).map_err(|e| format!("debug-api preview_start JSON: {}", e))
+    } else {
+        Err(format!(
+            "debug-api preview_start returned {}: {}",
+            status, text
+        ))
+    }
+}
+
+fn encode_query_component(input: &str) -> String {
+    let mut out = String::new();
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push_str(&format!("{:02X}", byte));
+        }
+    }
+    out
+}
+
 fn build_receipt_kind_from_str(raw: &str) -> Option<crate::build_types::BuildReceiptKind> {
     match raw {
         "reviewCompleted" => Some(crate::build_types::BuildReceiptKind::ReviewCompleted),
         "verificationCompleted" => {
             Some(crate::build_types::BuildReceiptKind::VerificationCompleted)
         }
+        "previewDiagnosed" => Some(crate::build_types::BuildReceiptKind::PreviewDiagnosed),
         "blockerOpened" => Some(crate::build_types::BuildReceiptKind::BlockerOpened),
         "blockerResolved" => Some(crate::build_types::BuildReceiptKind::BlockerResolved),
         _ => None,
@@ -5727,6 +7172,177 @@ async fn tool_build_checkpoint(
         }],
         "structuredContent": snapshot,
         "isError": false
+    }))
+}
+
+async fn resolve_preview_cwd(ctx: &Arc<HostMcpContext>, tab: &str) -> Option<String> {
+    use tauri::Manager as _;
+
+    let app_handle = ctx.app_handle.as_ref()?;
+    let registry = app_handle.try_state::<Arc<crate::acp::SessionRegistry>>()?;
+    let session = registry.get_existing(tab).await?;
+    let guard = session.lock().await;
+    let info = guard.get_debug_session_info();
+    info.get("cwd")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+async fn tool_preview_start(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
+    use tauri::Manager as _;
+
+    let tab = args
+        .get("tabId")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or(resolve_mcp_tab_id(tab_id, "preview_start")?);
+    let cwd = args
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+    let cwd = match cwd {
+        Some(cwd) => cwd,
+        None => resolve_preview_cwd(ctx, &tab)
+            .await
+            .unwrap_or_else(|| ctx.cwd.display().to_string()),
+    };
+    let kind = args
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("auto");
+    let entry = args
+        .get("entry")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+
+    let mut body = json!({
+        "tabId": tab,
+        "cwd": cwd,
+        "kind": kind,
+    });
+    if let Some(entry) = entry {
+        body["entry"] = Value::String(entry);
+    }
+
+    let state = if let Some(app_handle) = &ctx.app_handle {
+        let manager = app_handle
+            .try_state::<Arc<crate::work_preview::WorkPreviewManager>>()
+            .ok_or_else(|| "preview_start: WorkPreviewManager is not registered".to_string())?;
+        let request: crate::work_preview::WorkPreviewStartRequest =
+            serde_json::from_value(body.clone())
+                .map_err(|e| format!("preview_start request decode: {}", e))?;
+        serde_json::to_value(
+            manager
+                .start(request)
+                .await
+                .map_err(|e| format!("preview_start: {}", e))?,
+        )
+        .map_err(|e| format!("preview_start response encode: {}", e))?
+    } else {
+        post_preview_start_to_debug_api(
+            body.get("tabId")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            body.clone(),
+        )
+        .await?
+    };
+
+    let status = state
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let text = if let Some(url) = state.get("url").and_then(|v| v.as_str()) {
+        format!("Work Preview {} at {}", status, url)
+    } else if let Some(error) = state.get("error").and_then(|v| v.as_str()) {
+        format!("Work Preview {}: {}", status, error)
+    } else {
+        format!("Work Preview {}", status)
+    };
+    Ok(json!({
+        "content": [{
+            "type": "text",
+            "text": text,
+        }],
+        "structuredContent": state,
+        "isError": status == "failed"
+    }))
+}
+
+async fn tool_preview_diagnose(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
+    use tauri::Manager as _;
+    let tab = args
+        .get("tabId")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or(resolve_mcp_tab_id(tab_id, "preview_diagnose")?);
+    let body = json!({
+        "tabId": tab,
+        "browserEvents": args.get("browserEvents").cloned().unwrap_or_else(|| json!([])),
+        "screenshotPath": args.get("screenshotPath").cloned().unwrap_or(Value::Null),
+    });
+
+    let diagnostic = if let Some(app_handle) = &ctx.app_handle {
+        let manager = app_handle
+            .try_state::<Arc<crate::work_preview::WorkPreviewManager>>()
+            .ok_or_else(|| "preview_diagnose: WorkPreviewManager is not registered".to_string())?;
+        let request: crate::work_preview::WorkPreviewDiagnoseRequest =
+            serde_json::from_value(body.clone())
+                .map_err(|e| format!("preview_diagnose request decode: {}", e))?;
+        serde_json::to_value(manager.diagnose(&tab, request).await)
+            .map_err(|e| format!("preview_diagnose response encode: {}", e))?
+    } else {
+        post_preview_diagnose_to_debug_api(&tab, body).await?
+    };
+
+    let ok = diagnostic
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let summary = diagnostic
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Preview Doctor completed");
+    append_build_host_receipt(
+        ctx,
+        Some(tab.as_str()),
+        "preview_diagnose",
+        BuildHostReceipt {
+            kind: crate::build_types::BuildReceiptKind::PreviewDiagnosed,
+            actor: "shellx-preview-doctor",
+            summary: summary.to_string(),
+            confidence: crate::build_types::BuildReceiptConfidence::TrustedHost,
+            data: diagnostic.clone(),
+        },
+    )
+    .await;
+    Ok(json!({
+        "content": [{
+            "type": "text",
+            "text": summary,
+        }],
+        "structuredContent": diagnostic,
+        "isError": !ok
     }))
 }
 
@@ -5847,7 +7463,24 @@ async fn tool_build_complete(
         .try_state::<Arc<crate::build_orchestrator::BuildOrchestrator>>()
         .ok_or_else(|| "build_complete: BuildOrchestrator is not registered".to_string())?;
     let orch = orch_state.inner().clone();
-    match orch.validate_complete(&tab, &summary).await {
+    let current_worktree_fingerprint = match orch.get_state(&tab).await {
+        Some(state) if state.code_changed && state.transport_kind.trim() != "local" => {
+            let registry = app_handle
+                .try_state::<Arc<crate::acp::SessionRegistry>>()
+                .ok_or_else(|| "build_complete: SessionRegistry is not registered".to_string())?;
+            crate::session_git::git_session_current_worktree_fingerprint_for_tab(
+                registry.inner().clone(),
+                Some(tab.clone()),
+                None,
+            )
+            .await?
+        }
+        _ => None,
+    };
+    match orch
+        .validate_complete_with_current_fingerprint(&tab, &summary, current_worktree_fingerprint)
+        .await
+    {
         Ok(()) => {
             let payload = serde_json::json!({
                 "kind": "build_complete",
@@ -6220,14 +7853,9 @@ async fn tool_goal_complete(
 mod tests {
     use super::*;
 
-    /// Module-level lock serializing every test that touches `HOME`.
-    /// Tokio's multi-threaded test runtime runs tests in parallel; if
-    /// `fs_copy_rejects_symlink_and_outside_home` mutates HOME while
-    /// `fs_write_atomic_roundtrip` / `fs_append_creates_then_grows`
-    /// also read+enforce HOME via `enforce_home_containment`, the
-    /// concurrent HOME values race and the path-containment check
-    /// rejects valid paths. Tests that touch HOME must `.lock` this.
-    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::test_env_lock()
+    }
 
     struct EnvVarGuard {
         key: &'static str,
@@ -6235,6 +7863,22 @@ mod tests {
     }
 
     impl EnvVarGuard {
+        fn set_str(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, previous }
+        }
+
         fn set_path(key: &'static str, value: &std::path::Path) -> Self {
             let previous = std::env::var(key).ok();
             unsafe {
@@ -6255,6 +7899,59 @@ mod tests {
                 },
             }
         }
+    }
+
+    #[test]
+    fn credential_pattern_redacts_vendor_prefixes_and_high_entropy_tokens() {
+        let slack_sample = ["xox", "b-123456789012-ABCDEFGHIJKLMNO"].concat();
+        for sample in [
+            slack_sample.as_str(),
+            "glpat-1234567890abcdef",
+            "AIzaSyB1234567890abcdef",
+            "SG.abcdefghi.1234567890abcdef",
+            "token qwertyuiopasdfghjklzxcvbnm",
+        ] {
+            assert!(
+                redact_if_credential_pattern(sample),
+                "expected credential-shaped sample to redact: {sample}"
+            );
+        }
+        assert!(
+            !redact_if_credential_pattern("ThisIsALongCamelCaseIdentifierName"),
+            "ordinary CamelCase identifiers should stay readable"
+        );
+    }
+
+    #[test]
+    fn non_git_agent_fallback_only_marks_real_code_change_personas_or_test_files() {
+        assert!(build_agent_checkpoint_fallback_assume_code_change(
+            "implementer",
+            "Create index.html"
+        ));
+        assert!(build_agent_checkpoint_fallback_assume_code_change(
+            "release-manager",
+            "Package the release artifacts"
+        ));
+        assert!(!build_agent_checkpoint_fallback_assume_code_change(
+            "reviewer",
+            "Review index.html"
+        ));
+        assert!(!build_agent_checkpoint_fallback_assume_code_change(
+            "test-writer",
+            "For the static index.html with inline JS button behavior, design meaningful verification steps or test cases that can be used to confirm the result."
+        ));
+        assert!(!build_agent_checkpoint_fallback_assume_code_change(
+            "test-writer",
+            "Without modifying files, write manual test cases for the delivered page."
+        ));
+        assert!(build_agent_checkpoint_fallback_assume_code_change(
+            "test-writer",
+            "Write a test file at src/button.test.ts for the click behavior."
+        ));
+        assert!(build_agent_checkpoint_fallback_assume_code_change(
+            "test-writer",
+            "Add tests to tests/button.spec.ts."
+        ));
     }
 
     #[test]
@@ -6280,6 +7977,8 @@ mod tests {
             // Kill + metrics.
             "Agent_kill",
             "Agent_metrics",
+            "preview_start",
+            "preview_diagnose",
         ] {
             assert!(names.contains(&required), "missing tool: {}", required);
         }
@@ -6291,6 +7990,213 @@ mod tests {
                 Value::String("object".to_string())
             );
         }
+    }
+
+    #[test]
+    fn security_scan_tool_is_registered() {
+        let specs = tool_specs();
+        let names: Vec<&str> = specs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        assert!(
+            names.contains(&"security_scan"),
+            "missing security_scan tool"
+        );
+    }
+
+    #[test]
+    fn vision_tool_catalog_advertises_single_oauth_first_tool() {
+        let specs = tool_specs();
+        let names: Vec<&str> = specs
+            .iter()
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+        assert!(names.contains(&"vision_describe"));
+        assert!(
+            !names.contains(&"vision_describe_v2"),
+            "v2 compatibility alias must stay hidden from tools/list"
+        );
+
+        let vision = specs
+            .iter()
+            .find(|s| s.get("name").and_then(|n| n.as_str()) == Some("vision_describe"))
+            .expect("vision_describe tool present");
+        let desc = vision["description"].as_str().unwrap_or_default();
+        assert!(
+            desc.contains("OAuth") && desc.contains("~/.grok/auth.json"),
+            "vision_describe description should steer Grok to OAuth-first auth: {desc}"
+        );
+        assert!(
+            desc.contains("vault:xai/api-key") && desc.contains("XAI_API_KEY"),
+            "vision_describe description should still document fallback auth paths: {desc}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stdio_dispatch_rejects_write_class_tools_without_embedded_permission_gate() {
+        let ctx = Arc::new(HostMcpContext::new_standalone());
+        for (id, name, arguments) in [
+            (
+                1,
+                "fs_ensure_dir",
+                json!({ "path": "/tmp/shellx-stdio-gate-regression" }),
+            ),
+            (2, "build_checkpoint", json!({ "label": "audit gate" })),
+            (3, "build_complete", json!({ "summary": "audit gate" })),
+            (4, "security_scan", json!({ "run_audits": true })),
+            (5, "preview_start", json!({ "cwd": "/tmp" })),
+        ] {
+            let req = JsonRpcReq {
+                id: Some(json!(id)),
+                method: Some("tools/call".to_string()),
+                params: Some(json!({
+                    "name": name,
+                    "arguments": arguments
+                })),
+            };
+
+            let response = dispatch_to_value(req, &ctx)
+                .await
+                .expect("JSON-RPC calls with ids must return responses");
+            assert_eq!(response["error"]["code"], json!(-32603));
+            let message = response["error"]["message"].as_str().unwrap_or_default();
+            assert!(
+                message.contains("stdio standalone") && message.contains("write-class"),
+                "unexpected gate error for {}: {}",
+                name,
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn nested_agent_spawn_is_blocked_inside_subagent_env() {
+        let _guard = env_lock();
+        let _depth = EnvVarGuard::set_str("SHELLX_SUBAGENT_DEPTH", "1");
+        let _allow = EnvVarGuard::unset("SHELLX_ALLOW_NESTED_AGENTS");
+
+        assert!(nested_agent_spawn_blocked_by_env());
+    }
+
+    #[test]
+    fn nested_agent_spawn_allows_operator_override() {
+        let _guard = env_lock();
+        let _depth = EnvVarGuard::set_str("SHELLX_SUBAGENT_DEPTH", "2");
+        let _allow = EnvVarGuard::set_str("SHELLX_ALLOW_NESTED_AGENTS", "true");
+
+        assert!(!nested_agent_spawn_blocked_by_env());
+    }
+
+    #[test]
+    fn agent_cwd_prefers_build_and_tab_before_process_cwd() {
+        assert_eq!(
+            choose_agent_cwd(
+                None,
+                Some("/tmp/build-target".into()),
+                Some("/tmp/tab-session".into()),
+                Some("/tmp/process".into()),
+            )
+            .as_deref(),
+            Some("/tmp/build-target")
+        );
+        assert_eq!(
+            choose_agent_cwd(
+                None,
+                None,
+                Some("/tmp/tab-session".into()),
+                Some("/tmp/process".into()),
+            )
+            .as_deref(),
+            Some("/tmp/tab-session")
+        );
+        assert_eq!(
+            choose_agent_cwd(
+                Some("/tmp/explicit".into()),
+                Some("/tmp/build-target".into()),
+                Some("/tmp/tab-session".into()),
+                Some("/tmp/process".into()),
+            )
+            .as_deref(),
+            Some("/tmp/explicit")
+        );
+    }
+
+    #[test]
+    fn agent_cwd_ignores_terminal_build_state() {
+        let mut state = crate::build_types::BuildRunState {
+            run_id: "build-test".into(),
+            tab_id: "tab".into(),
+            objective: "test".into(),
+            cwd: "/tmp/build-target".into(),
+            transport_kind: "local".into(),
+            scratchboard_path: "/tmp/build-target/build.md".into(),
+            status: crate::build_types::BuildRunStatus::Active,
+            approved_plan_hash: None,
+            current_phase_id: None,
+            continuations_total: 0,
+            no_progress_cycles: 0,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+            approved_at_ms: None,
+            last_continuation_at_ms: None,
+            checkpoint_id: None,
+            code_changed: false,
+            review_required: false,
+            review_satisfied: false,
+            verification_required: false,
+            verification_satisfied: false,
+            preview_required: false,
+            preview_satisfied: false,
+            open_blocker: None,
+            last_receipt_id: None,
+        };
+        assert!(build_state_supplies_agent_cwd(&state));
+        state.status = crate::build_types::BuildRunStatus::Halted;
+        assert!(!build_state_supplies_agent_cwd(&state));
+    }
+
+    #[test]
+    fn recently_terminal_build_suppresses_more_agent_fanout() {
+        let now = 60_000;
+        let mut state = crate::build_types::BuildRunState {
+            run_id: "build-test".into(),
+            tab_id: "tab".into(),
+            objective: "test".into(),
+            cwd: "/tmp/build-target".into(),
+            transport_kind: "local".into(),
+            scratchboard_path: "/tmp/build-target/build.md".into(),
+            status: crate::build_types::BuildRunStatus::Complete,
+            approved_plan_hash: None,
+            current_phase_id: None,
+            continuations_total: 0,
+            no_progress_cycles: 0,
+            created_at_ms: 0,
+            updated_at_ms: now,
+            approved_at_ms: None,
+            last_continuation_at_ms: None,
+            checkpoint_id: None,
+            code_changed: false,
+            review_required: false,
+            review_satisfied: false,
+            verification_required: false,
+            verification_satisfied: false,
+            preview_required: false,
+            preview_satisfied: false,
+            open_blocker: None,
+            last_receipt_id: None,
+        };
+
+        assert!(build_terminal_state_suppresses_agent(&state, now + 1));
+
+        state.status = crate::build_types::BuildRunStatus::Active;
+        assert!(!build_terminal_state_suppresses_agent(&state, now + 1));
+
+        state.status = crate::build_types::BuildRunStatus::Complete;
+        assert!(!build_terminal_state_suppresses_agent(
+            &state,
+            now + BUILD_TERMINAL_AGENT_SUPPRESSION_MS + 1
+        ));
     }
 
     /// The `Agent` tool's `subagent_type` enum must match the canonical
@@ -6309,6 +8215,25 @@ mod tests {
         let got: Vec<&str> = enum_vals.iter().filter_map(|v| v.as_str()).collect();
         let expected: Vec<&str> = crate::subagent::PERSONA_NAMES.to_vec();
         assert_eq!(got, expected, "Agent enum vs PERSONA_NAMES drift");
+        assert!(
+            agent["inputSchema"]["properties"]["timeout_ms"].is_object(),
+            "Agent schema must expose timeout_ms because /build relies on bounded waits"
+        );
+        assert!(
+            agent["inputSchema"]["properties"]["wait_budget_ms"].is_object(),
+            "Agent schema must expose wait_budget_ms so /build wait expiry is not confused with kill policy"
+        );
+        assert!(
+            agent["inputSchema"]["properties"]["max_runtime_ms"].is_object(),
+            "Agent schema must expose explicit hard runtime kill policy"
+        );
+        let timeout_desc = agent["inputSchema"]["properties"]["timeout_ms"]["description"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            timeout_desc.contains("legacy"),
+            "timeout_ms description should mark it as legacy alias: {timeout_desc}"
+        );
     }
 
     #[test]
@@ -6322,6 +8247,189 @@ mod tests {
             Some(crate::build_types::BuildReceiptKind::VerificationCompleted)
         );
         assert_eq!(build_agent_gate_kind_for_persona("implementer"), None);
+    }
+
+    #[test]
+    fn build_agent_checkpoint_label_maps_code_writing_personas() {
+        assert_eq!(
+            build_agent_checkpoint_label_for_persona("implementer"),
+            Some("agent-implementer-complete")
+        );
+        assert_eq!(
+            build_agent_checkpoint_label_for_persona("test-writer"),
+            Some("agent-test-writer-complete")
+        );
+        assert_eq!(
+            build_agent_checkpoint_label_for_persona("release-manager"),
+            Some("agent-release-manager-complete")
+        );
+        assert_eq!(build_agent_checkpoint_label_for_persona("reviewer"), None);
+        assert_eq!(build_agent_checkpoint_label_for_persona("verifier"), None);
+    }
+
+    #[test]
+    fn build_agent_wait_budget_result_keeps_subagent_running() {
+        let partial = json!({
+            "status": "running",
+            "stdout": "partial output",
+            "stderr_tail": "partial stderr",
+            "elapsed_ms": 1234,
+            "task_preview": "verify task"
+        });
+        let value = build_agent_wait_budget_result("subagent-1", "verifier", Some(partial), 5000);
+
+        assert_eq!(value["status"], json!("running"));
+        assert_eq!(value["timed_out"], json!(false));
+        assert_eq!(value["wait_budget_expired"], json!(true));
+        assert_eq!(value["wait_budget_ms"], json!(5000));
+        assert_eq!(value["elapsed_ms"], json!(1234));
+        assert_eq!(value["stdout"], json!("partial output"));
+        assert!(value["stderr_tail"]
+            .as_str()
+            .unwrap()
+            .contains("still running"));
+        assert!(
+            value.get("kill_result").is_none(),
+            "wait budget expiry must not request termination"
+        );
+    }
+
+    #[test]
+    fn build_mode_agent_output_wait_is_nonblocking() {
+        assert!(!effective_agent_output_wait_for_complete(true, true));
+        assert!(effective_agent_output_wait_for_complete(true, false));
+        assert!(!effective_agent_output_wait_for_complete(false, true));
+        assert!(!effective_agent_output_wait_for_complete(false, false));
+    }
+
+    #[tokio::test]
+    async fn build_agent_watcher_registry_deduplicates_by_run_and_subagent() {
+        let key = build_agent_watcher_key(
+            &format!("run-{}", uuid::Uuid::new_v4()),
+            &format!("agent-{}", uuid::Uuid::new_v4()),
+        );
+
+        assert!(try_register_build_agent_watcher(key.clone()).await);
+        assert!(
+            !try_register_build_agent_watcher(key.clone()).await,
+            "same run/subagent watcher must not be registered twice"
+        );
+        unregister_build_agent_watcher(&key).await;
+        assert!(
+            try_register_build_agent_watcher(key.clone()).await,
+            "key should be reusable after watcher exits"
+        );
+        unregister_build_agent_watcher(&key).await;
+    }
+
+    #[test]
+    fn build_agent_completion_watcher_tracks_blocked_runs() {
+        use crate::build_types::BuildRunStatus;
+
+        assert!(build_agent_completion_watcher_should_track(
+            BuildRunStatus::Active
+        ));
+        assert!(build_agent_completion_watcher_should_track(
+            BuildRunStatus::Blocked
+        ));
+        assert!(!build_agent_completion_watcher_should_track(
+            BuildRunStatus::Complete
+        ));
+        assert!(!build_agent_completion_watcher_should_track(
+            BuildRunStatus::Halted
+        ));
+        assert!(!build_agent_completion_watcher_should_track(
+            BuildRunStatus::TransportFailed
+        ));
+    }
+
+    #[tokio::test]
+    async fn build_agent_completion_registry_deduplicates_by_run_and_subagent() {
+        let key = build_agent_watcher_key(
+            &format!("run-{}", uuid::Uuid::new_v4()),
+            &format!("agent-{}", uuid::Uuid::new_v4()),
+        );
+
+        assert!(try_register_build_agent_completion(key.clone()).await);
+        assert!(
+            !try_register_build_agent_completion(key).await,
+            "same run/subagent completion must only be recorded once"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_agent_receipt_meta_registry_preserves_timing_for_poll_completion() {
+        let key = build_agent_watcher_key(
+            &format!("run-{}", uuid::Uuid::new_v4()),
+            &format!("agent-{}", uuid::Uuid::new_v4()),
+        );
+        let meta = BuildAgentReceiptMeta {
+            wait: Some(true),
+            wait_budget_ms: Some(120_000),
+            max_runtime_ms: None,
+        };
+
+        remember_build_agent_receipt_meta(key.clone(), meta).await;
+        let resolved = remembered_build_agent_receipt_meta(&key)
+            .await
+            .expect("stored meta");
+        forget_build_agent_receipt_meta(&key).await;
+
+        assert_eq!(resolved.wait, Some(true));
+        assert_eq!(resolved.wait_budget_ms, Some(120_000));
+        assert_eq!(resolved.max_runtime_ms, None);
+        assert!(
+            remembered_build_agent_receipt_meta(&key).await.is_none(),
+            "completion metadata should be removable after the terminal receipt"
+        );
+    }
+
+    #[test]
+    fn build_agent_receipt_timing_records_wait_budget_and_disabled_watchdog() {
+        let mut map = serde_json::Map::new();
+        insert_build_agent_receipt_timing(
+            &mut map,
+            BuildAgentReceiptMeta {
+                wait: Some(true),
+                wait_budget_ms: Some(180_000),
+                max_runtime_ms: None,
+            },
+            Some(&json!({
+                "watchdog_policy": "disabled",
+                "watchdog_ms": null,
+            })),
+        );
+        let value = Value::Object(map);
+
+        assert_eq!(value["wait"], json!(true));
+        assert_eq!(value["waitBudgetMs"], json!(180_000));
+        assert_eq!(value["watchdogPolicy"], json!("disabled"));
+        assert_eq!(value["watchdogMs"], Value::Null);
+        assert!(
+            value.get("maxRuntimeMs").is_none(),
+            "wait budget alone must not be recorded as a hard kill"
+        );
+    }
+
+    #[test]
+    fn build_agent_receipt_timing_records_explicit_hard_runtime() {
+        let mut map = serde_json::Map::new();
+        insert_build_agent_receipt_timing(
+            &mut map,
+            BuildAgentReceiptMeta {
+                wait: Some(true),
+                wait_budget_ms: Some(180_000),
+                max_runtime_ms: Some(3_600_000),
+            },
+            None,
+        );
+        let value = Value::Object(map);
+
+        assert_eq!(value["wait"], json!(true));
+        assert_eq!(value["waitBudgetMs"], json!(180_000));
+        assert_eq!(value["maxRuntimeMs"], json!(3_600_000));
+        assert_eq!(value["watchdogPolicy"], json!("hard"));
+        assert_eq!(value["watchdogMs"], json!(3_600_000));
     }
 
     #[test]
@@ -6404,7 +8512,7 @@ status: DONE
     /// parent on demand.
     #[tokio::test]
     async fn fs_write_atomic_roundtrip() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = env_lock();
         // Path must be HOME-rooted — H1 enforce_home_containment hardening
         // rejects /tmp/ when running with a real HOME outside /tmp.
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -6460,7 +8568,7 @@ status: DONE
     /// and a second append must accumulate (new_size grows monotonically).
     #[tokio::test]
     async fn fs_append_creates_then_grows() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = env_lock();
         // Path must be HOME-rooted — H1 enforce_home_containment hardening
         // rejects /tmp/ when running with a real HOME outside /tmp.
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -6495,6 +8603,82 @@ status: DONE
         let _ = tokio::fs::remove_file(&tmp).await;
     }
 
+    /// AUDIT_OPUS_2026-05-26 H1: fs_append must reject a symlink at the
+    /// final path component. HOME containment canonicalizes existing
+    /// ancestors for writes, so without this leaf check append follows the
+    /// symlink and writes outside HOME.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fs_append_rejects_symlink_leaf_escape() {
+        let _guard = env_lock();
+        use std::os::unix::fs::symlink;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "shellx-fsappend-link-{}-{}",
+            std::process::id(),
+            now_ms_for_temp()
+        ));
+        let home = tmp.join("home");
+        let outside = tmp.join("outside.txt");
+        std::fs::create_dir_all(&home).expect("mk home");
+        std::fs::write(&outside, b"outside\n").expect("seed outside");
+        let link = home.join("append-link");
+        symlink(&outside, &link).expect("symlink leaf");
+
+        let _home_guard = EnvVarGuard::set_path("HOME", &home);
+        let err = tool_fs_append(json!({
+            "path": link.to_string_lossy(),
+            "content": "leak\n",
+        }))
+        .await
+        .expect_err("fs_append must reject symlink leaf");
+
+        assert!(
+            err.contains("symlink"),
+            "error should explain symlink rejection, got: {}",
+            err
+        );
+        let outside_after = std::fs::read_to_string(&outside).expect("outside readable");
+        assert_eq!(outside_after, "outside\n");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn fs_read_returns_prefix_without_requiring_file_under_cap() {
+        let _guard = env_lock();
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        let tmp = std::path::PathBuf::from(home).join(format!(
+            ".shellx-test-fsread-prefix-{}-{}",
+            std::process::id(),
+            now_ms_for_temp()
+        ));
+        std::fs::create_dir_all(&tmp).expect("mk temp under home");
+        let file = tmp.join("large.txt");
+        std::fs::write(&file, b"abcdef").expect("seed file");
+
+        let text = tool_fs_read(json!({
+            "path": file.to_string_lossy(),
+            "max_bytes": 3,
+        }))
+        .await
+        .expect("fs_read succeeds");
+        assert_eq!(text["content"], "abc");
+        assert_eq!(text["size_bytes"], 6);
+        assert_eq!(text["truncated"], true);
+
+        let binary = tool_fs_read_binary(json!({
+            "path": file.to_string_lossy(),
+            "max_bytes": 4,
+        }))
+        .await
+        .expect("fs_read_binary succeeds");
+        assert_eq!(binary["content_base64"], "YWJjZA==");
+        assert_eq!(binary["size_bytes"], 6);
+        assert_eq!(binary["truncated"], true);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     /// Path validator must reject null bytes, '..' traversal, and
     /// relative paths — all three are pre-IO sanity checks.
     #[test]
@@ -6520,7 +8704,7 @@ status: DONE
     #[cfg(unix)]
     #[tokio::test]
     async fn fs_copy_rejects_symlink_and_outside_home() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = env_lock();
         use std::os::unix::fs::symlink;
         let tmp = std::env::temp_dir().join(format!(
             "shellx-fscopy-{}-{}",
@@ -6560,7 +8744,7 @@ status: DONE
 
     #[tokio::test]
     async fn fs_copy_rejects_sensitive_source_inside_home() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let tmp = tempdir_lite::TempDir::new();
         let home = tmp.path().join("home");
         let grok_dir = home.join(".grok");
@@ -6590,7 +8774,7 @@ status: DONE
 
     #[tokio::test]
     async fn fs_delete_rejects_sensitive_path_inside_home() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = env_lock();
         let tmp = tempdir_lite::TempDir::new();
         let home = tmp.path().join("home");
         let shellx_dir = home.join(".shellx");
@@ -6742,6 +8926,23 @@ status: DONE
     }
 
     #[tokio::test]
+    async fn net_fetch_rejects_caller_max_bytes_above_hard_cap() {
+        let err = tool_net_fetch(json!({
+            "url": "https://example.com/",
+            "method": "GET",
+            "max_bytes": NET_FETCH_HARD_MAX_BYTES + 1,
+        }))
+        .await
+        .expect_err("over-cap max_bytes must be rejected before request construction");
+        assert!(err.contains("max_bytes"), "got: {}", err);
+        assert!(
+            err.contains(&NET_FETCH_HARD_MAX_BYTES.to_string()),
+            "error should name hard cap: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
     async fn search_tool_full_inventory_returns_all_specs() {
         let r = tool_search_tool(json!({"full_inventory": true}))
             .await
@@ -6833,6 +9034,32 @@ status: DONE
         ));
         // Case insensitivity.
         assert!(host_matches_pattern("GitHub.com", "github.com"));
+    }
+
+    #[test]
+    fn net_fetch_rejects_restricted_ip_literals_even_when_allow_listed() {
+        let allow = NetAllow {
+            hosts: vec![
+                "169.254.169.254".to_string(),
+                "10.0.0.1".to_string(),
+                "192.168.1.50".to_string(),
+            ],
+        };
+
+        for url in [
+            "http://169.254.169.254/latest/meta-data",
+            "http://10.0.0.1/admin",
+            "http://192.168.1.50/status",
+        ] {
+            let parsed = reqwest::Url::parse(url).expect("valid test url");
+            let err = host_is_allowed(&parsed, &allow).expect_err("restricted ip must fail");
+            assert!(
+                err.contains("restricted IP"),
+                "unexpected rejection for {}: {}",
+                url,
+                err
+            );
+        }
     }
 
     #[test]

@@ -13,11 +13,11 @@
 
 [package]
 name = "app"
-version = "0.1.32"
+version = "0.1.33"
 description = "shellX — cross-platform desktop host for Grok Build and any ACP-speaking agent"
 authors = ["Martins Brezauckis <martins.brezauckis@gmail.com>"]
 license = "MIT"
-repository = "https://github.com/MartinsBrezauckis/shellx"
+repository = "https://github.com/martinsbrezauckis/shellx"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -62,7 +62,7 @@ axum = { version = "0.7", features = ["ws", "json"], optional = true }
 # = no preflight). tower-http's CorsLayer responds to OPTIONS with the
 # right Access-Control-Allow-* headers for the loopback origins we
 # already allow in origin_allowed().
-tower-http = { version = "0.5", features = ["cors", "catch-panic"], optional = true }
+tower-http = { version = "0.5", features = ["cors", "catch-panic", "fs"], optional = true }
 
 # Native host tools (Phase Native-MCP):
 #   notify       — filesystem watcher backing the fs_watch host tool.
@@ -87,11 +87,13 @@ sysinfo = "0.30"
 #                           on-disk JSON. No raw bytes ever touch disk in
 #                           the JSON envelope.
 #   rand                  — CSPRNG for nonces (OsRng under the hood).
+#   zeroize               — clear transient key/plaintext buffers after use.
 #   uuid                  — stable connection-preset ids (P-Transport-1).
 keyring = "2"
 chacha20poly1305 = "0.10"
 base64 = "0.22"
 rand = "0.8"
+zeroize = "1"
 uuid = { version = "1", features = ["v4"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
@@ -110,6 +112,8 @@ tauri-plugin-single-instance = "2"
 # dependency that breaks Windows builds). gzip stays off — STT
 # responses are small JSON.
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"], default-features = false }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
 
 # P-Terminal-A (2026-05-18): wezterm's cross-platform PTY library. Single
 # `native_pty_system()` API returns a Unix-PTY implementation on Linux/macOS

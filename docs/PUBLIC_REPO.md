@@ -48,11 +48,16 @@ with `VITE_SHELLX_INTERNAL_TOOLS=1`.
 When a real release risk is found, add it to this checklist and cover it
 in `scripts/test-release-readiness.ts`. Examples include the CI fake
 `grok` shim (`GROK_BIN`) for tests that spawn Grok, Rust fmt/clippy with
-warnings denied, dependency audit, and Windows installer signature/hash
-presence.
+warnings denied, dependency audit, Semgrep source scan, Windows installer
+signature/hash presence, and macOS app smoke plus signing/notarization gates.
 
 The checklist is still partly manual. Keep improving it toward automatic
 evidence collection instead of replacing it with private notes.
+
+For macOS release work, use `scripts/build-macos.sh` on the Mac builder.
+Unsigned app smoke is a release-staging gate; Developer ID signing,
+notarization, and the public DMG/artifact are warnings until the macOS
+download channel is intentionally opened.
 
 ## Pre-Push Check
 

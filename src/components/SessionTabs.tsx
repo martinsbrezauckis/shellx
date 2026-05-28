@@ -18,6 +18,8 @@ export interface SessionTab {
   title: string;
   status: "run" | "done" | "input" | "idle";
   transport?: string;
+  preview?: boolean;
+  previewLabel?: string;
 }
 
 /** Mid-ellipsis truncation. "very long session title" → "very lo…title". */
@@ -43,6 +45,7 @@ export function SessionTabs({
   onNew,
   onClose,
   onRename,
+  onOpenPreview,
 }: {
   sessions: SessionTab[];
   activeId: string | null;
@@ -54,6 +57,7 @@ export function SessionTabs({
  * override in chatTitleOverrides so grok's session_summary event
  * doesn't clobber the user's choice on its next emit. */
   onRename?: (id: string, newTitle: string) => void;
+  onOpenPreview?: (id: string) => void;
 }): JSX.Element {
  /* inline rename state. `renamingId` is the tab currently
  * being renamed (null = none active). `draft` mirrors the input value.
@@ -229,6 +233,17 @@ export function SessionTabs({
             ) : (
               <span className="stab-title">{truncTitle(s.title || "(untitled)")}</span>
             )}
+            {s.preview && !isRenaming && (
+              <button
+                type="button"
+                className="stab-preview"
+                onClick={(e) => { e.stopPropagation(); onOpenPreview?.(s.id); }}
+                title={s.previewLabel ?? "Open preview"}
+                aria-label={s.previewLabel ?? "Open preview"}
+              >
+                <ShellIcon name="app-window" size={12} />
+              </button>
+            )}
  {/* edit + delete revealed on
  * hover. Edit triggers inline rename; delete closes the tab.
  * CSS-only show/hide via .stab:hover .stab-actions so the
@@ -316,6 +331,21 @@ export function SessionTabs({
                   </span>
                 )}
                 <span className="stab-dropdown-title">{s.title || "(untitled)"}</span>
+                {s.preview && (
+                  <button
+                    type="button"
+                    className="stab-dropdown-preview"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenPreview?.(s.id);
+                      setDropdownOpen(false);
+                    }}
+                    title={s.previewLabel ?? "Open preview"}
+                    aria-label={s.previewLabel ?? "Open preview"}
+                  >
+                    <ShellIcon name="app-window" size={12} />
+                  </button>
+                )}
                 <span
                   className="sx"
                   role="button"

@@ -239,7 +239,7 @@ export function ConnectionEditor({
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="megaclub"
+            placeholder="prod-server"
             style={inputStyle}
           />
         </Labeled>
@@ -340,7 +340,7 @@ export function ConnectionEditor({
                 type="text"
                 value={sshHost}
                 onChange={(e) => setSshHost(e.target.value)}
-                placeholder="user@megaclub"
+                placeholder="user@example-host"
                 style={inputStyle}
               />
             </Labeled>

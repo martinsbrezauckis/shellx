@@ -32,14 +32,11 @@ else
   signing_key_win=""
 fi
 
-password_assignment=""
 if [[ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]]; then
-  password_b64="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | base64 -w0)"
-  password_assignment="\$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$password_b64')); "
+  export WSLENV="${WSLENV:+$WSLENV:}TAURI_SIGNING_PRIVATE_KEY_PASSWORD/p"
 fi
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "\
   Set-Location '$stage_win'; \
   \$env:TAURI_SIGNING_PRIVATE_KEY_PATH = '$signing_key_win'; \
-  $password_assignment\
   ./scripts/build-windows.ps1"

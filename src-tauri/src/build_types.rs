@@ -28,6 +28,7 @@ pub enum BuildPersonaRole {
     Implementer,
     Reviewer,
     SecurityAuditor,
+    TestWriter,
     Verifier,
     ReleaseManager,
 }
@@ -50,6 +51,7 @@ pub enum BuildReceiptKind {
     AgentCompleted,
     ReviewCompleted,
     VerificationCompleted,
+    PreviewDiagnosed,
     BlockerOpened,
     BlockerResolved,
     CompletionRequested,
@@ -90,6 +92,10 @@ pub struct BuildRunState {
     pub review_satisfied: bool,
     pub verification_required: bool,
     pub verification_satisfied: bool,
+    #[serde(default)]
+    pub preview_required: bool,
+    #[serde(default)]
+    pub preview_satisfied: bool,
     pub open_blocker: Option<String>,
     pub last_receipt_id: Option<String>,
 }
@@ -148,6 +154,8 @@ mod tests {
             review_satisfied: false,
             verification_required: false,
             verification_satisfied: false,
+            preview_required: false,
+            preview_satisfied: false,
             open_blocker: None,
             last_receipt_id: None,
         };

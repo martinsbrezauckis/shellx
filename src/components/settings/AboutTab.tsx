@@ -31,6 +31,7 @@ import pkg from "../../../package.json";
 import cargoToml from "../../../src-tauri/Cargo.toml?raw";
 import tauriConfRaw from "../../../src-tauri/tauri.conf.json?raw";
 import { SafeMarkdownLink } from "../../lib/markdown-links";
+import { updateErrorIsQuiet } from "../../lib/update-diagnostics";
 import { cleanUpdateNotes } from "../../lib/update-notes";
 import { ShellIcon } from "../icons";
 
@@ -117,9 +118,17 @@ export function AboutTab(): JSX.Element {
         });
       }
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (updateErrorIsQuiet(message)) {
+        setUpdateState({
+          kind: "current",
+          message: "No update is available for this platform yet.",
+        });
+        return;
+      }
       setUpdateState({
         kind: "error",
-        message: `Update check failed: ${e instanceof Error ? e.message : String(e)}`,
+        message: `Update check failed: ${message}`,
       });
     }
   }
@@ -321,7 +330,7 @@ export function AboutTab(): JSX.Element {
         </button>
         <a
           href="#"
-          onClick={(e) => { e.preventDefault(); openExternal("https://github.com/MartinsBrezauckis/shellx"); }}
+          onClick={(e) => { e.preventDefault(); openExternal("https://github.com/martinsbrezauckis/shellx"); }}
           className="settings-pill"
         >
           <span>GitHub</span>
@@ -329,7 +338,7 @@ export function AboutTab(): JSX.Element {
         </a>
         <a
           href="#"
-          onClick={(e) => { e.preventDefault(); openExternal("https://github.com/MartinsBrezauckis/shellx/issues"); }}
+          onClick={(e) => { e.preventDefault(); openExternal("https://github.com/martinsbrezauckis/shellx/issues"); }}
           className="settings-pill"
         >
           <span>Issues</span>

@@ -743,26 +743,22 @@ mod tests {
     fn builds_wsl_scratch_unc_path() {
         let path = wsl_scratch_dir(
             "Ubuntu-24.04",
-            "/home/martin-003",
-            "/home/martin-003/project",
+            "/home/alice",
+            "/home/alice/project",
             "sid-1",
         )
         .expect("valid WSL scratch path");
         assert_eq!(
             path.to_string_lossy(),
-            "\\\\wsl$\\Ubuntu-24.04\\home\\martin-003\\.grok\\sessions\\%2Fhome%2Fmartin-003%2Fproject\\sid-1"
+            "\\\\wsl$\\Ubuntu-24.04\\home\\alice\\.grok\\sessions\\%2Fhome%2Falice%2Fproject\\sid-1"
         );
     }
 
     #[test]
     fn builds_ssh_remote_scratch_path() {
         assert_eq!(
-            remote_scratch_dir(
-                "/home/personigaisagentsv1",
-                "/home/personigaisagentsv1/project",
-                "sid-2",
-            ),
-            "/home/personigaisagentsv1/.grok/sessions/%2Fhome%2Fpersonigaisagentsv1%2Fproject/sid-2"
+            remote_scratch_dir("/home/bob", "/home/bob/project", "sid-2",),
+            "/home/bob/.grok/sessions/%2Fhome%2Fbob%2Fproject/sid-2"
         );
     }
 

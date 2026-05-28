@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "shellX",
   "mainBinaryName": "shellx",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "identifier": "lv.shellx.app",
   "build": {
     "frontendDist": "../dist",
@@ -12,16 +12,13 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: blob: data: https://asset.localhost; media-src 'self' asset: blob: data: https://asset.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' asset: https://asset.localhost ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:* http://localhost:5173; frame-src 'self' asset: blob:; worker-src 'self' blob:;",
+      "csp": "default-src 'self'; img-src 'self' asset: blob: data: https://asset.localhost; media-src 'self' asset: blob: data: https://asset.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' asset: https://asset.localhost ipc: http://ipc.localhost http://127.0.0.1:5757 http://127.0.0.1:5758 http://127.0.0.1:5759 http://127.0.0.1:5761 http://127.0.0.1:5762 http://127.0.0.1:5763 http://127.0.0.1:5764 http://127.0.0.1:5765 http://127.0.0.1:5766 http://127.0.0.1:5768 ws://127.0.0.1:5757 ws://127.0.0.1:5759 ws://127.0.0.1:5761 ws://127.0.0.1:5763 ws://127.0.0.1:5765; frame-src 'self' asset: blob: http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:;",
       "assetProtocol": {
         "enable": true,
         "scope": [
           "$HOME/.grok/**",
           "$APPDATA/grok-shell/**",
           "$APPLOCALDATA/grok-shell/**",
-          "/home/**/.grok/**",
-          "//wsl$/*/home/**/.grok/**",
-          "//wsl.localhost/*/home/**/.grok/**",
           "/tmp/shellx-*/**"
         ]
       }
@@ -63,7 +60,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/MartinsBrezauckis/shellx/releases/latest/download/latest.json"
+        "https://github.com/martinsbrezauckis/shellx/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIwNTE4MzIwQzc1OTlCMkQKUldRdG0xbkhJSU5Sc0FROTNvVnlsMXNDTG1kMnFZWDdnSUE2UGxQMitNTlNxV2JiWG5aQ3NncEYK",
       "dialog": false

@@ -26,11 +26,14 @@ const ready: ReleaseReadinessInput = {
   rustCheckVerified: true,
   rustLintVerified: true,
   dependencyAuditVerified: true,
+  semgrepScanVerified: true,
   jsTestsVerified: true,
   typecheckVerified: true,
   windowsArtifact: true,
   windowsSignature: true,
   linuxArtifact: true,
+  macAppSmoke: true,
+  macSignedNotarized: false,
   macArtifact: false,
   ciGrokShimVerified: true,
   githubCiGreen: true,
@@ -42,8 +45,14 @@ assert(checks.every((c) => c.command || c.status === "pass"), "non-passing gates
 assert(checks.find((c) => c.id === "version-sync")?.status === "pass", "matching versions pass");
 assert(checks.find((c) => c.id === "rust-lint")?.status === "pass", "rust clippy/fmt gate exists");
 assert(checks.find((c) => c.id === "dependency-audit")?.status === "pass", "dependency audit gate exists");
+assert(checks.find((c) => c.id === "semgrep-scan")?.status === "pass", "Semgrep source scan gate exists");
 assert(checks.find((c) => c.id === "ci-grok-shim")?.status === "pass", "fake grok shim gate exists and passes when verified");
+assert(checks.find((c) => c.id === "mac-app-smoke")?.status === "pass", "macOS app smoke gate exists and passes when verified");
 assert(checks.find((c) => c.id === "mac-artifact")?.status === "warn", "missing mac artifact is a warning until signing is ready");
+assert(
+  checks.find((c) => c.id === "mac-signed-notarized")?.status === "warn",
+  "missing macOS signing/notarization is a warning until public macOS launch",
+);
 assert(summarizeReleaseReadiness(checks).statusLabel === "ready with warnings", "warnings keep release in review state");
 
 const broken = buildReleaseReadinessChecks({
@@ -52,10 +61,14 @@ const broken = buildReleaseReadinessChecks({
   workRepoClean: false,
   rustTestsVerified: false,
   rustLintVerified: false,
+  semgrepScanVerified: false,
+  macAppSmoke: false,
   ciGrokShimVerified: false,
 });
 assert(broken.find((c) => c.id === "version-sync")?.status === "fail", "version mismatch fails");
 assert(broken.find((c) => c.id === "rust-lint")?.status === "fail", "missing rust clippy/fmt blocks release");
+assert(broken.find((c) => c.id === "semgrep-scan")?.status === "fail", "missing Semgrep scan blocks release");
+assert(broken.find((c) => c.id === "mac-app-smoke")?.status === "fail", "missing macOS app smoke blocks release staging");
 assert(broken.find((c) => c.id === "ci-grok-shim")?.status === "fail", "missing fake grok shim blocks release");
 assert(summarizeReleaseReadiness(broken).statusLabel === "blocked", "failed gates block release");
 

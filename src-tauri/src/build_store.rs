@@ -180,6 +180,8 @@ mod tests {
             review_satisfied: false,
             verification_required: false,
             verification_satisfied: false,
+            preview_required: false,
+            preview_satisfied: false,
             open_blocker: None,
             last_receipt_id: None,
         }

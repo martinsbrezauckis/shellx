@@ -2,16 +2,17 @@
  * Settings -> Connectors.
  *
  * Outside connectors are user-facing channels such as Telegram bots
- * and local bridge relays. This first slice manages config and tests
- * credentials; runtime ingestion is intentionally review-first work
- * that follows once users can see routing rules clearly.
+ * and Discord bots. Config, tests, and simulated
+ * inbound events share the same backend contract so channel behavior is
+ * auditable before it reaches the connector inbox.
  */
 import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { apiGet } from "../../lib/debug-api";
+import { connectorLabelForSave } from "../../lib/outside-connectors";
 import { inTauri } from "../../lib/tauri-bridge";
 
-type ProviderKind = "telegram" | "generic_relay";
+type ProviderKind = "telegram" | "discord";
 type DispatchMode = "inbox" | "autoPrompt";
 
 interface TelegramProvider {
@@ -20,13 +21,13 @@ interface TelegramProvider {
   allowedChatIds: string[];
 }
 
-interface GenericRelayProvider {
-  kind: "generic_relay";
-  sharedSecretVaultKey: string;
-  allowedSenderIds: string[];
+interface DiscordProvider {
+  kind: "discord";
+  botTokenVaultKey: string;
+  allowedTargetIds: string[];
 }
 
-type ConnectorProvider = TelegramProvider | GenericRelayProvider;
+type ConnectorProvider = TelegramProvider | DiscordProvider;
 
 type ConnectorTarget =
   | { mode: "activeTab" }
@@ -52,6 +53,27 @@ interface ConnectorTestResult {
   latencyMs?: number | null;
   identity?: string | null;
   error?: string | null;
+}
+
+type ConnectorEventStatus = "inbox" | "autoPrompt" | "rejected" | "error";
+
+interface OutsideConnectorEvent {
+  id: string;
+  connectorId: string;
+  connectorLabel: string;
+  provider: ProviderKind;
+  direction: "inbound" | "outbound" | "system";
+  status: ConnectorEventStatus;
+  senderId: string;
+  conversationId?: string | null;
+  guildId?: string | null;
+  target: string;
+  dispatchMode: DispatchMode;
+  requireApproval: boolean;
+  textPreview: string;
+  externalPreview: string;
+  reason?: string | null;
+  createdMs: number;
 }
 
 interface LiveSession {
@@ -93,17 +115,34 @@ interface FormState {
   updatedMs: number;
 }
 
+interface SimFormState {
+  connectorId: string;
+  senderId: string;
+  conversationId: string;
+  guildId: string;
+  text: string;
+}
+
 const DEFAULT_TELEGRAM_KEY = "telegram/bot-token";
-const DEFAULT_RELAY_KEY = "connectors/relay-secret";
+const DEFAULT_DISCORD_KEY = "discord/bot-token";
+const PROVIDER_TABS: ProviderKind[] = ["telegram", "discord"];
 
 export function ConnectorsTab(): JSX.Element {
   const [connectors, setConnectors] = useState<OutsideConnector[]>([]);
   const [vaultKeys, setVaultKeys] = useState<string[]>([]);
   const [sessions, setSessions] = useState<LiveSession[]>([]);
   const [form, setForm] = useState<FormState>(() => emptyForm("telegram"));
+  const [simForm, setSimForm] = useState<SimFormState>({
+    connectorId: "",
+    senderId: "",
+    conversationId: "",
+    guildId: "",
+    text: "",
+  });
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [simulating, setSimulating] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
 
   const refresh = useCallback(async () => {
@@ -133,6 +172,16 @@ export function ConnectorsTab(): JSX.Element {
   useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
+    const t = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(t);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (simForm.connectorId || connectors.length === 0) return;
+    setSimForm((f) => ({ ...f, connectorId: connectors[0]?.id ?? "" }));
+  }, [connectors, simForm.connectorId]);
+
+  useEffect(() => {
     if (!toast) return;
     const t = window.setTimeout(() => setToast(null), 3500);
     return () => window.clearTimeout(t);
@@ -143,15 +192,24 @@ export function ConnectorsTab(): JSX.Element {
     () => sessions.find((session) => session.tabId === form.fixedTabId) ?? null,
     [sessions, form.fixedTabId],
   );
-  const canSave = form.label.trim().length > 0
-    && form.vaultKey.trim().length > 0
+  const selectedSimConnector = useMemo(
+    () => connectors.find((connector) => connector.id === simForm.connectorId) ?? null,
+    [connectors, simForm.connectorId],
+  );
+  const canSave = form.vaultKey.trim().length > 0
     && (form.targetMode !== "fixedTab" || form.fixedTabId.trim().length > 0)
     && !saving;
+  const canSimulate = Boolean(selectedSimConnector)
+    && simForm.senderId.trim().length > 0
+    && simForm.text.trim().length > 0
+    && !simulating;
   const providerHelp = useMemo(() => {
-    if (form.providerKind === "telegram") {
-      return "Telegram uses BotFather token + allowed chat IDs. Runtime will show numbered /sessions results, then /use 2 or /use <tabId> binds a chat.";
+    switch (form.providerKind) {
+      case "telegram":
+        return "Telegram uses a BotFather token plus explicit allowed chat IDs. Inbox records messages; Session chat sends allowlisted messages to the selected shellX tab and returns Grok's text reply.";
+      case "discord":
+        return "Discord uses a bot token plus explicit allowed user IDs. Discord intake is DM-only in this release.";
     }
-    return "Generic relay is the bridge path for WhatsApp, Discord, LAN tools, or a custom daemon. The bridge signs requests with the shared secret.";
   }, [form.providerKind]);
 
   async function handleSave(): Promise<void> {
@@ -164,19 +222,9 @@ export function ConnectorsTab(): JSX.Element {
       }
       const connector: OutsideConnector = {
         id: form.id,
-        label: form.label.trim(),
+        label: connectorLabelForSave(form.providerKind, form.label),
         enabled: form.enabled,
-        provider: form.providerKind === "telegram"
-          ? {
-              kind: "telegram",
-              botTokenVaultKey: vaultKey,
-              allowedChatIds: splitIds(form.allowedIdsText),
-            }
-          : {
-              kind: "generic_relay",
-              sharedSecretVaultKey: vaultKey,
-              allowedSenderIds: splitIds(form.allowedIdsText),
-            },
+        provider: buildProvider(form.providerKind, vaultKey, splitIds(form.allowedIdsText)),
         target: form.targetMode === "activeTab"
           ? { mode: "activeTab" }
           : { mode: "fixedTab", tabId: form.fixedTabId.trim() },
@@ -230,11 +278,50 @@ export function ConnectorsTab(): JSX.Element {
     }
   }
 
+  async function handleSimulate(): Promise<void> {
+    if (!canSimulate || !selectedSimConnector) return;
+    setSimulating(true);
+    try {
+      const event = await invoke<OutsideConnectorEvent>("outside_connectors_simulate", {
+        id: selectedSimConnector.id,
+        input: {
+          senderId: simForm.senderId.trim(),
+          conversationId: optionalText(simForm.conversationId),
+          guildId: optionalText(simForm.guildId),
+          text: simForm.text.trim(),
+        },
+      });
+      setToast({
+        kind: event.status === "rejected" || event.status === "error" ? "err" : "ok",
+        text: `${selectedSimConnector.label}: ${statusLabel(event.status)}`,
+      });
+      setSimForm((f) => ({ ...f, text: "" }));
+      await refresh();
+    } catch (e) {
+      setToast({ kind: "err", text: formatErr(e) });
+    } finally {
+      setSimulating(false);
+    }
+  }
+
+  function handleProviderChange(providerKind: ProviderKind): void {
+    setForm((f) => ({
+      ...f,
+      providerKind,
+      label: defaultLabel(providerKind),
+      vaultKey: defaultVaultKey(providerKind),
+      allowedIdsText: "",
+      secretValue: "",
+      dispatchMode: "inbox",
+      requireApproval: true,
+    }));
+  }
+
   return (
     <div className="settings-tab-body connectors-tab">
       <div className="connectors-header">
         <p className="settings-tab-hint">
-          Outside channels connect people and relays to shellX. Keep new
+          Outside channels connect people to shellX. Keep new
           connectors in Inbox mode until you trust the source and routing.
         </p>
         <button type="button" className="settings-pill" onClick={() => void refresh()} disabled={busy}>
@@ -255,51 +342,71 @@ export function ConnectorsTab(): JSX.Element {
         </div>
 
         <div className="settings-row">
-          <label className="settings-label" htmlFor="connector-label">Label</label>
-          <input
-            id="connector-label"
-            className="settings-input"
-            value={form.label}
-            onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-            placeholder="Personal Telegram"
-          />
-          <label className="settings-check">
-            <input
-              type="checkbox"
-              checked={form.enabled}
-              onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))}
-            />
-            Enabled
-          </label>
+          <label className="settings-label" id="connector-provider-label">Provider</label>
+          <div className="connector-provider-tabs" role="tablist" aria-labelledby="connector-provider-label">
+            {PROVIDER_TABS.map((providerKind) => (
+              <button
+                key={providerKind}
+                type="button"
+                role="tab"
+                aria-selected={form.providerKind === providerKind}
+                className={`connector-provider-tab ${form.providerKind === providerKind ? "active" : ""}`}
+                onClick={() => handleProviderChange(providerKind)}
+              >
+                <span>{providerLabel(providerKind)}</span>
+                <span className="connector-provider-mode">{providerModeLabel(providerKind)}</span>
+              </button>
+            ))}
+          </div>
+          <span className="settings-suffix">{providerModeLabel(form.providerKind)}</span>
         </div>
 
         <div className="settings-row">
-          <label className="settings-label" htmlFor="connector-provider">Provider</label>
-          <select
-            id="connector-provider"
-            className="settings-select"
-            value={form.providerKind}
-            onChange={(e) => {
-              const providerKind = e.target.value as ProviderKind;
-              setForm((f) => ({
-                ...f,
-                providerKind,
-                vaultKey: providerKind === "telegram" ? DEFAULT_TELEGRAM_KEY : DEFAULT_RELAY_KEY,
-                allowedIdsText: "",
-                secretValue: "",
-              }));
-            }}
-          >
-            <option value="telegram">Telegram bot</option>
-            <option value="generic_relay">Generic relay</option>
-          </select>
-          <span className="settings-suffix">{form.providerKind === "telegram" ? "native" : "bridge"}</span>
+          <span className="settings-label">Receiver</span>
+          <div className="connector-provider-tabs connector-state-tabs" role="group" aria-label="Connector receiver state">
+            <button
+              type="button"
+              className={`connector-provider-tab ${!form.enabled ? "active" : ""}`}
+              onClick={() => setForm((f) => ({ ...f, enabled: false }))}
+            >
+              Paused
+            </button>
+            <button
+              type="button"
+              className={`connector-provider-tab ${form.enabled ? "active" : ""}`}
+              onClick={() => setForm((f) => ({ ...f, enabled: true }))}
+            >
+              Live
+            </button>
+          </div>
+          <span className="settings-suffix">message intake</span>
         </div>
 
         <div className="settings-row">
-          <label className="settings-label" htmlFor="connector-vault-key">
-            {form.providerKind === "telegram" ? "Bot token key" : "Shared secret key"}
-          </label>
+          <span className="settings-label">Delivery</span>
+          <div className="connector-provider-tabs connector-state-tabs" role="group" aria-label="Connector delivery mode">
+            <button
+              type="button"
+              className={`connector-provider-tab ${form.dispatchMode === "inbox" ? "active" : ""}`}
+              onClick={() => setForm((f) => ({ ...f, dispatchMode: "inbox", requireApproval: true }))}
+            >
+              Inbox
+            </button>
+            <button
+              type="button"
+              className={`connector-provider-tab ${form.dispatchMode === "autoPrompt" ? "active" : ""}`}
+              onClick={() => setForm((f) => ({ ...f, dispatchMode: "autoPrompt", requireApproval: false }))}
+              disabled={form.providerKind !== "telegram"}
+              title={form.providerKind === "telegram" ? "Send allowlisted Telegram messages to Grok" : "Session chat is wired for Telegram first"}
+            >
+              Session chat
+            </button>
+          </div>
+          <span className="settings-suffix">{form.dispatchMode === "autoPrompt" ? "send to Grok" : "review first"}</span>
+        </div>
+
+        <div className="settings-row">
+          <label className="settings-label" htmlFor="connector-vault-key">Bot token key</label>
           <VaultKeyInput
             id="connector-vault-key"
             value={form.vaultKey}
@@ -310,9 +417,7 @@ export function ConnectorsTab(): JSX.Element {
         </div>
 
         <div className="settings-row">
-          <label className="settings-label" htmlFor="connector-secret">
-            {form.providerKind === "telegram" ? "Bot token" : "Shared secret"}
-          </label>
+          <label className="settings-label" htmlFor="connector-secret">Bot token</label>
           <input
             id="connector-secret"
             className="settings-input"
@@ -327,14 +432,14 @@ export function ConnectorsTab(): JSX.Element {
 
         <div className="settings-row">
           <label className="settings-label" htmlFor="connector-allowed">
-            {form.providerKind === "telegram" ? "Allowed chats" : "Allowed senders"}
+            {allowedLabel(form.providerKind)}
           </label>
           <input
             id="connector-allowed"
             className="settings-input"
             value={form.allowedIdsText}
             onChange={(e) => setForm((f) => ({ ...f, allowedIdsText: e.target.value }))}
-            placeholder={form.providerKind === "telegram" ? "123456789, -1001234567890" : "discord:me, whatsapp:family"}
+            placeholder={allowedPlaceholder(form.providerKind)}
             spellCheck={false}
           />
           <span className="settings-suffix">comma list</span>
@@ -382,27 +487,6 @@ export function ConnectorsTab(): JSX.Element {
           <span className="settings-suffix">routing</span>
         </div>
 
-        <div className="settings-row">
-          <label className="settings-label" htmlFor="connector-dispatch">Dispatch</label>
-          <select
-            id="connector-dispatch"
-            className="settings-select"
-            value={form.dispatchMode}
-            onChange={(e) => setForm((f) => ({ ...f, dispatchMode: e.target.value as DispatchMode }))}
-          >
-            <option value="inbox">Inbox only</option>
-            <option value="autoPrompt">Auto prompt</option>
-          </select>
-          <label className="settings-check">
-            <input
-              type="checkbox"
-              checked={form.requireApproval}
-              onChange={(e) => setForm((f) => ({ ...f, requireApproval: e.target.checked }))}
-            />
-            Require review
-          </label>
-        </div>
-
         <p className="connector-help">{providerHelp}</p>
 
         <div className="connector-editor-actions">
@@ -414,8 +498,7 @@ export function ConnectorsTab(): JSX.Element {
 
       {connectors.length === 0 ? (
         <div className="vault-empty">
-          No outside connectors yet. Create a Telegram bot connector or
-          a generic relay for WhatsApp/Discord bridges.
+          No outside connectors yet. Create a Telegram or Discord bot connector.
         </div>
       ) : (
         <div className="connectors-list" role="list">
@@ -432,6 +515,68 @@ export function ConnectorsTab(): JSX.Element {
           ))}
         </div>
       )}
+
+      <section className="connector-editor connector-test-panel" aria-label="Connector test inbound">
+        <div className="connector-editor-head">
+          <h3>Test inbound</h3>
+        </div>
+
+        <div className="connector-sim-grid">
+          <label className="settings-label" htmlFor="connector-sim-connector">Connector</label>
+          <select
+            id="connector-sim-connector"
+            className="settings-select"
+            value={simForm.connectorId}
+            onChange={(e) => setSimForm((f) => ({ ...f, connectorId: e.target.value }))}
+          >
+            <option value="">{connectors.length ? "Choose connector" : "No connectors"}</option>
+            {connectors.map((connector) => (
+              <option key={connector.id} value={connector.id}>
+                {connector.label} · {providerLabel(connector.provider.kind)}
+              </option>
+            ))}
+          </select>
+
+          <label className="settings-label" htmlFor="connector-sim-sender">
+            {selectedSimConnector?.provider.kind === "discord" ? "User" : "Sender"}
+          </label>
+          <input
+            id="connector-sim-sender"
+            className="settings-input"
+            value={simForm.senderId}
+            onChange={(e) => setSimForm((f) => ({ ...f, senderId: e.target.value }))}
+            placeholder={selectedSimConnector?.provider.kind === "discord" ? "123456789 or user:123456789" : "123456789"}
+            spellCheck={false}
+          />
+
+          <label className="settings-label" htmlFor="connector-sim-conversation">
+            {selectedSimConnector?.provider.kind === "discord" ? "DM channel" : "Chat"}
+          </label>
+          <input
+            id="connector-sim-conversation"
+            className="settings-input"
+            value={simForm.conversationId}
+            onChange={(e) => setSimForm((f) => ({ ...f, conversationId: e.target.value }))}
+            placeholder={selectedSimConnector?.provider.kind === "discord" ? "optional DM channel id" : "same as sender if DM"}
+            spellCheck={false}
+          />
+
+          <label className="settings-label" htmlFor="connector-sim-text">Message</label>
+          <input
+            id="connector-sim-text"
+            className="settings-input connector-sim-message"
+            value={simForm.text}
+            onChange={(e) => setSimForm((f) => ({ ...f, text: e.target.value }))}
+            placeholder="Message as the outside user would send it"
+          />
+
+          <div className="connector-sim-actions">
+            <button type="button" className="settings-pill" onClick={() => void handleSimulate()} disabled={!canSimulate}>
+              {simulating ? "…" : "Simulate inbound"}
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -451,27 +596,27 @@ function ConnectorRow({
   onTest: () => void;
   onDelete: () => void;
 }): JSX.Element {
-  const provider = connector.provider.kind === "telegram" ? "Telegram" : "Relay";
-  const allowed = connector.provider.kind === "telegram"
-    ? connector.provider.allowedChatIds
-    : connector.provider.allowedSenderIds;
+  const provider = providerLabel(connector.provider.kind);
+  const allowed = allowedIds(connector);
   const target = formatTarget(connector.target, sessions);
   const lastTest = connector.lastTestMs ? new Date(connector.lastTestMs).toLocaleString() : "not tested";
+  const stateKind = connector.enabled ? (connector.lastError ? "failing" : "on") : "off";
+  const stateLabel = connector.enabled ? (connector.lastError ? "failing" : "enabled") : "disabled";
 
   return (
     <div className="connector-row" role="listitem">
       <div className="connector-row-main">
         <div className="connector-row-title">
           <span className="connection-label">{connector.label}</span>
-          <span className={`connector-state ${connector.enabled ? "on" : "off"}`}>
-            {connector.enabled ? "enabled" : "disabled"}
+          <span className={`connector-state ${stateKind}`}>
+            {stateLabel}
           </span>
         </div>
         <span className="connection-target">
-          {provider} · {connector.dispatchMode === "inbox" ? "inbox" : "auto prompt"} · {target}
+          {provider} · {connector.dispatchMode === "autoPrompt" ? "session chat" : "inbox"} · {target}
         </span>
         <span className="connector-route">
-          {allowed.length ? `Allowed: ${allowed.join(", ")}` : "Allowed: any sender until runtime gating is tightened"}
+          {allowed.length ? `Allowed: ${allowed.join(", ")}` : "Allowed: none configured"}
         </span>
         {connector.lastError && <span className="connector-error">{connector.lastError}</span>}
       </div>
@@ -523,14 +668,14 @@ function VaultKeyInput({
 function emptyForm(providerKind: ProviderKind): FormState {
   return {
     id: "",
-    label: providerKind === "telegram" ? "Telegram" : "Local relay",
+    label: defaultLabel(providerKind),
     providerKind,
     enabled: false,
     targetMode: "activeTab",
     fixedTabId: "",
     dispatchMode: "inbox",
     requireApproval: true,
-    vaultKey: providerKind === "telegram" ? DEFAULT_TELEGRAM_KEY : DEFAULT_RELAY_KEY,
+    vaultKey: defaultVaultKey(providerKind),
     secretValue: "",
     allowedIdsText: "",
     createdMs: 0,
@@ -540,12 +685,8 @@ function emptyForm(providerKind: ProviderKind): FormState {
 
 function formFromConnector(connector: OutsideConnector): FormState {
   const providerKind = connector.provider.kind;
-  const allowed = providerKind === "telegram"
-    ? connector.provider.allowedChatIds
-    : connector.provider.allowedSenderIds;
-  const vaultKey = providerKind === "telegram"
-    ? connector.provider.botTokenVaultKey
-    : connector.provider.sharedSecretVaultKey;
+  const allowed = allowedIds(connector);
+  const vaultKey = connector.provider.botTokenVaultKey;
   return {
     id: connector.id,
     label: connector.label,
@@ -561,6 +702,88 @@ function formFromConnector(connector: OutsideConnector): FormState {
     createdMs: connector.createdMs,
     updatedMs: connector.updatedMs,
   };
+}
+
+function buildProvider(providerKind: ProviderKind, vaultKey: string, allowed: string[]): ConnectorProvider {
+  switch (providerKind) {
+    case "telegram":
+      return {
+        kind: "telegram",
+        botTokenVaultKey: vaultKey,
+        allowedChatIds: allowed,
+      };
+    case "discord":
+      return {
+        kind: "discord",
+        botTokenVaultKey: vaultKey,
+        allowedTargetIds: allowed,
+      };
+  }
+}
+
+function allowedIds(connector: OutsideConnector): string[] {
+  switch (connector.provider.kind) {
+    case "telegram":
+      return connector.provider.allowedChatIds;
+    case "discord":
+      return connector.provider.allowedTargetIds;
+  }
+}
+
+function defaultLabel(providerKind: ProviderKind): string {
+  switch (providerKind) {
+    case "telegram": return "Telegram";
+    case "discord": return "Discord";
+  }
+}
+
+function defaultVaultKey(providerKind: ProviderKind): string {
+  switch (providerKind) {
+    case "telegram": return DEFAULT_TELEGRAM_KEY;
+    case "discord": return DEFAULT_DISCORD_KEY;
+  }
+}
+
+function providerLabel(providerKind: ProviderKind): string {
+  switch (providerKind) {
+    case "telegram": return "Telegram";
+    case "discord": return "Discord";
+  }
+}
+
+function providerModeLabel(providerKind: ProviderKind): string {
+  switch (providerKind) {
+    case "telegram": return "native";
+    case "discord": return "native";
+  }
+}
+
+function allowedLabel(providerKind: ProviderKind): string {
+  switch (providerKind) {
+    case "telegram": return "Allowed chats";
+    case "discord": return "Allowed users";
+  }
+}
+
+function allowedPlaceholder(providerKind: ProviderKind): string {
+  switch (providerKind) {
+    case "telegram": return "123456789, -1001234567890";
+    case "discord": return "111222333444555666, user:123456789012345678";
+  }
+}
+
+function statusLabel(status: ConnectorEventStatus): string {
+  switch (status) {
+    case "inbox": return "inbox";
+    case "autoPrompt": return "inbox";
+    case "rejected": return "rejected";
+    case "error": return "error";
+  }
+}
+
+function optionalText(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function splitIds(text: string): string[] {

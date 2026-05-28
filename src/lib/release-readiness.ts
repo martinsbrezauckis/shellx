@@ -12,11 +12,14 @@ export interface ReleaseReadinessInput {
   rustCheckVerified: boolean;
   rustLintVerified: boolean;
   dependencyAuditVerified: boolean;
+  semgrepScanVerified: boolean;
   jsTestsVerified: boolean;
   typecheckVerified: boolean;
   windowsArtifact: boolean;
   windowsSignature: boolean;
   linuxArtifact: boolean;
+  macAppSmoke: boolean;
+  macSignedNotarized: boolean;
   macArtifact: boolean;
   ciGrokShimVerified: boolean;
   githubCiGreen: boolean;
@@ -142,6 +145,14 @@ export function buildReleaseReadinessChecks(input: ReleaseReadinessInput): Relea
       "cd src-tauri && cargo audit",
     ),
     check(
+      "semgrep-scan",
+      "Semgrep source scan",
+      input.semgrepScanVerified,
+      "Semgrep p/default scan passed.",
+      "Run Semgrep and review any findings before release.",
+      "semgrep scan --config p/default --metrics=off --exclude node_modules --exclude dist --exclude src-tauri/target --exclude target --exclude tmp --exclude evidence",
+    ),
+    check(
       "js-tests",
       "JS tests",
       input.jsTestsVerified,
@@ -183,11 +194,28 @@ export function buildReleaseReadinessChecks(input: ReleaseReadinessInput): Relea
     ),
     check(
       "mac-artifact",
-      "macOS artifact",
+      "macOS public artifact",
       input.macArtifact,
-      "macOS package is present.",
-      "Build on the macOS signing host when signing/notarization is ready.",
-      "ssh <macos-builder> 'cd <repo> && pnpm tauri build'",
+      "macOS public package is present.",
+      "Build and inspect the macOS public package on the signing host.",
+      `ls "$HOME/shellx-builds/v${input.packageVersion}/macos"`,
+      "warn",
+    ),
+    check(
+      "mac-app-smoke",
+      "macOS app smoke",
+      input.macAppSmoke,
+      "macOS app build, launch, debug API, diagnostics, and screenshot smoke passed.",
+      "Run the macOS app smoke on the Mac builder before release staging.",
+      "ssh <mac-builder> 'cd <shellx-release-checkout> && ./scripts/build-macos.sh'",
+    ),
+    check(
+      "mac-signed-notarized",
+      "macOS signing/notarization",
+      input.macSignedNotarized,
+      "Developer ID signing and notarization passed.",
+      "Developer ID signing/notarization is not complete yet; keep macOS public downloads withheld until this passes.",
+      "SHELLX_MAC_SIGNED=1 SHELLX_MAC_DMG=1 ./scripts/build-macos.sh",
       "warn",
     ),
     check(

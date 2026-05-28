@@ -36,11 +36,11 @@
 // 127.0.0.1, so an attacker would need code execution on the local
 // Windows box already to reach it.
 //
-// Origin header
-// DNS-rebind defense per MCP spec security note: any request carrying
-// an `Origin` header that isn't on our allow-list is 403'd. Missing
-// `Origin` (curl, scripts, grok's MCP client itself) is allowed — the
-// bearer token does the real auth in that case.
+// Origin + Host headers
+// DNS-rebind defense per MCP spec security note: Host must name loopback,
+// and any request carrying an `Origin` header that isn't on our
+// allow-list is 403'd. Missing `Origin` (curl, scripts, grok's MCP client
+// itself) is allowed — the bearer token does the real auth in that case.
 //
 // Why a separate port from debug-api
 // * Different surfaces, different audiences. Debug-api is shellX's
@@ -53,6 +53,7 @@
 // them on the same port would tangle their CORS + Origin policies.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 // SystemTime/UNIX_EPOCH no longer needed after switching to OsRng for
 // token entropy. Left as a comment so a future "why no time imports?"
@@ -73,13 +74,15 @@ use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{info, warn};
 
-use crate::host_mcp::{HostMcpContext, JsonRpcReq};
+use crate::host_mcp::{is_write_class_tool, HostMcpContext, JsonRpcReq};
+use crate::loopback_security::{loopback_host_allowed, origin_allowed, subtle_eq};
 
 /// Default port for the HTTP MCP server. Override via `SHELLX_MCP_PORT`
 /// env var when running side-by-side with another shellX-like app that
 /// bound 5758. The Rust server reads the env var on every call so a
 /// process restart picks up changes immediately.
 const DEFAULT_MCP_PORT: u16 = 5758;
+static HOST_MCP_PERMISSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Resolve the effective HTTP MCP port — the ACTUALLY-bound port when
 /// the binder has set it, falling back to the preferred port
@@ -130,6 +133,15 @@ fn shellx_home() -> Result<std::path::PathBuf, String> {
         .or_else(|_| std::env::var("USERPROFILE"))
         .map(std::path::PathBuf::from)
         .map_err(|_| "HOME/USERPROFILE unset".to_string())
+}
+
+fn ensure_private_dir_best_effort(dir: &std::path::Path) {
+    let _ = std::fs::create_dir_all(dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
 }
 
 /// Resolve or auto-create the bearer token for the HTTP MCP endpoint.
@@ -189,12 +201,7 @@ pub fn resolve_or_create_mcp_token() -> String {
             t.chars().take_while(|c| *c == '0').count(),
         );
     }
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        warn!(
-            "mcp_http: create_dir_all {} failed: {} — token will not persist; next launch generates a new one and any cached config.toml will 401",
-            dir.display(), e
-        );
-    }
+    ensure_private_dir_best_effort(&dir);
     // OsRng 128-bit token. Replaces a prior nanos+pid-derived ~30-bit
     // derivation that was grindable by another local process that knew
     // shellX's launch second + pid (visible via /proc/PID/stat).
@@ -239,29 +246,6 @@ pub fn resolve_or_create_mcp_token() -> String {
 #[derive(Clone)]
 struct AuthConfig {
     token: String,
-}
-
-/// Validate the `Authorization: Bearer <token>` header on every request
-/// except /health. Loopback bind + bearer token together close the gap
-/// where a local browser tab / VS Code extension / postinstall script
-/// could otherwise drive our MCP server without consent.
-/// Server-side Origin allow-list.
-/// CORS layer alone is a browser-only defense; a non-browser client
-/// (curl, postman, a malicious VS Code extension) can ignore CORS and
-/// hit /mcp directly. Mirrors `origin_allowed` in debug_api.rs.
-/// Missing Origin is allowed (server-side scripts + curl), bearer
-/// token then becomes the only line of defense.
-fn mcp_origin_allowed(headers: &HeaderMap) -> bool {
-    match headers.get("origin").and_then(|h| h.to_str().ok()) {
-        None => true,
-        Some(o) => {
-            o == "tauri://localhost"
-                || o == "http://tauri.localhost"
-                || o == "https://tauri.localhost"
-                || o.starts_with("http://localhost:")
-                || o.starts_with("http://127.0.0.1:")
-        }
-    }
 }
 
 /// Audit finding #376 H1 — recursive credential scrubber.
@@ -311,6 +295,47 @@ pub(crate) fn scrub_credentials(value: &mut serde_json::Value) {
         let lower = key.to_ascii_lowercase();
         MARKERS.iter().any(|m| lower.contains(m))
     }
+    fn is_identifier_key(key: &str) -> bool {
+        let lower = key.to_ascii_lowercase();
+        lower == "id"
+            || lower.ends_with("_id")
+            || lower.ends_with("-id")
+            || key.ends_with("Id")
+            || key.ends_with("ID")
+    }
+    fn looks_like_safe_identifier(s: &str) -> bool {
+        let t = s.trim();
+        !t.is_empty()
+            && t.len() <= 96
+            && !t.starts_with("Bearer ")
+            && !t.starts_with("Basic ")
+            && t.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    }
+    fn shannon_entropy_bits_per_char(s: &str) -> f64 {
+        let mut counts = [0usize; 256];
+        let mut len = 0usize;
+        for b in s.bytes() {
+            counts[b as usize] += 1;
+            len += 1;
+        }
+        if len == 0 {
+            return 0.0;
+        }
+        counts
+            .iter()
+            .filter(|count| **count > 0)
+            .map(|count| {
+                let p = *count as f64 / len as f64;
+                -p * p.log2()
+            })
+            .sum()
+    }
+    fn looks_like_camel_identifier(s: &str) -> bool {
+        s.chars().all(|c| c.is_ascii_alphabetic())
+            && s.chars().any(|c| c.is_ascii_lowercase())
+            && s.chars().any(|c| c.is_ascii_uppercase())
+    }
 
     /// Audit-2 H2: credential-shape heuristic so short tokens
     /// under arbitrary key names get caught too. Conservative enough
@@ -327,6 +352,26 @@ pub(crate) fn scrub_credentials(value: &mut serde_json::Value) {
             return false;
         }
         if t.starts_with("Bearer ") || t.starts_with("Basic ") {
+            return true;
+        }
+        const PREFIXES: &[&str] = &[
+            "xai-",
+            "sk-",
+            "ghp_",
+            "github_pat_",
+            "xoxb-",
+            "glpat-",
+            "akia",
+            "aiza",
+            "shpat_",
+            "sg.",
+            "ya29.",
+        ];
+        let lower = t.to_ascii_lowercase();
+        if PREFIXES
+            .iter()
+            .any(|prefix| lower.starts_with(prefix) && t.len() >= prefix.len() + 8)
+        {
             return true;
         }
         // JWT: 3 dot-separated base64url-ish segments, first starts with
@@ -364,6 +409,16 @@ pub(crate) fn scrub_credentials(value: &mut serde_json::Value) {
                 return true;
             }
         }
+        if t.len() >= 20
+            && !t.contains(char::is_whitespace)
+            && t.chars().all(|c| {
+                c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '+' | '=' | '.' | '-')
+            })
+            && !looks_like_camel_identifier(t)
+            && shannon_entropy_bits_per_char(t) >= 3.8
+        {
+            return true;
+        }
         false
     }
 
@@ -386,6 +441,14 @@ pub(crate) fn scrub_credentials(value: &mut serde_json::Value) {
                         }
                         other => scrub_credentials(other),
                     }
+                } else if is_identifier_key(k)
+                    && matches!(v, serde_json::Value::String(s) if looks_like_safe_identifier(s))
+                {
+                    // Preserve routing/correlation ids such as sessionId,
+                    // reqId, and toolCallId. The opaque-string heuristic
+                    // would otherwise mask UUID-shaped ids and break event
+                    // routing. Credential-bearing names still hit the
+                    // sensitive-key branch above.
                 } else {
                     scrub_credentials(v);
                 }
@@ -426,6 +489,29 @@ mod scrub_tests {
     }
 
     #[test]
+    fn redacts_common_vendor_prefixes_in_free_field() {
+        let slack_sample = ["xox", "b-123456789012-ABCDEFGHIJKLMNO"].concat();
+        let mut v = json!({
+            "slack": slack_sample,
+            "gitlab": "glpat-1234567890abcdef",
+            "google": "AIzaSyB1234567890abcdef",
+            "sendgrid": "SG.abcdefghi.1234567890abcdef",
+        });
+        scrub_credentials(&mut v);
+        assert_eq!(v["slack"], "***REDACTED***");
+        assert_eq!(v["gitlab"], "***REDACTED***");
+        assert_eq!(v["google"], "***REDACTED***");
+        assert_eq!(v["sendgrid"], "***REDACTED***");
+    }
+
+    #[test]
+    fn redacts_high_entropy_all_letter_token() {
+        let mut v = json!({"note": "qwertyuiopasdfghjklzxcvbnm"});
+        scrub_credentials(&mut v);
+        assert_eq!(v["note"], "***REDACTED***");
+    }
+
+    #[test]
     fn leaves_short_strings_alone() {
         let mut v = json!({"note": "hello world"});
         scrub_credentials(&mut v);
@@ -441,8 +527,14 @@ mod scrub_tests {
 
     #[test]
     fn redacts_jwt_in_free_field() {
+        let jwt_like = [
+            "eyJhbGciOiJIUzI1NiJ9",
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+            "signaturepart",
+        ]
+        .join(".");
         let mut v = json!({
-            "payload": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturepart"
+            "payload": jwt_like
         });
         scrub_credentials(&mut v);
         assert_eq!(v["payload"], "***REDACTED***");
@@ -456,31 +548,21 @@ mod scrub_tests {
     }
 }
 
-/// Constant-time equality for token comparison. Prevents naive
-/// `==`-based timing leaks. Mirrors debug_api::subtle_eq.
-fn mcp_subtle_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 async fn require_auth(
     State(cfg): State<AuthConfig>,
     headers: HeaderMap,
     req: Request<Body>,
     next: Next,
 ) -> Response {
+    if !loopback_host_allowed(&headers) {
+        return (StatusCode::FORBIDDEN, "host not allowed").into_response();
+    }
     // Always allow /health for liveness probes — no sensitive data.
     if req.uri().path() == "/health" {
         return next.run(req).await;
     }
     // Server-side Origin check BEFORE token.
-    if !mcp_origin_allowed(&headers) {
+    if !origin_allowed(&headers) {
         return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
     }
     let header_token = headers
@@ -491,7 +573,7 @@ async fn require_auth(
     // Constant-time compare avoids the timing-leak class even though
     // the token is high-entropy.
     let ok = match &header_token {
-        Some(t) => mcp_subtle_eq(t.as_bytes(), cfg.token.as_bytes()),
+        Some(t) => subtle_eq(t.as_bytes(), cfg.token.as_bytes()),
         None => false,
     };
     if ok {
@@ -561,36 +643,112 @@ async fn health(State(_s): State<McpState>) -> impl IntoResponse {
 /// process_list, process_stats, process_attach_stdout, mem_get, mem_list,
 /// clock_now, sleep_ms, search_tool, Agent_status, Agent_output,
 /// Agent_poll_all, Agent_metrics — all read-class).
-const WRITE_CLASS_TOOLS: &[&str] = &[
-    "fs_write",
-    "fs_append",
-    "fs_copy",
-    "fs_delete",
-    "fs_ensure_dir",
-    "process_signal",
-    "secret_set",
-    "secret_delete",
-    "net_fetch",
-    // These read local bytes and upload them to xAI. Treat as write-class
-    // for autonomy purposes so plan/observe mode cannot exfiltrate media.
-    "vision_describe",
-    "voice_stt_v2",
-    "vision_describe_v2",
-    "Agent",
-    "Agent_kill",
-    "mem_set",
-    "mem_delete",
-    "fs_watch",
-    // goal_complete mutates per-tab goal state (flips
-    // active=false on success). Gate it under the same plan-mode lock
-    // so an observer-only tab can't bypass the scratchboard validator
-    // by accident. Plan mode prevents the call entirely; non-plan modes
-    // proceed to the validator.
-    "goal_complete",
-];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WriteClassGateAction {
+    Allow,
+    Prompt,
+    RejectMissingTab,
+    RejectObserve,
+}
 
-fn is_write_class_tool(name: &str) -> bool {
-    WRITE_CLASS_TOOLS.contains(&name)
+fn write_class_gate_action(
+    tool_name: &str,
+    request_tab_id: Option<&str>,
+    mode: Option<&str>,
+) -> WriteClassGateAction {
+    if !is_write_class_tool(tool_name) {
+        return WriteClassGateAction::Allow;
+    }
+    if request_tab_id.is_none() {
+        return WriteClassGateAction::RejectMissingTab;
+    }
+    match mode.unwrap_or("default") {
+        "plan" => WriteClassGateAction::RejectObserve,
+        "bypassPermissions" | "auto" | "alwaysApprove" => WriteClassGateAction::Allow,
+        _ => WriteClassGateAction::Prompt,
+    }
+}
+
+fn json_rpc_error_response(id: Option<serde_json::Value>, code: i32, message: String) -> Response {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": code,
+                "message": message,
+            },
+        })),
+    )
+        .into_response()
+}
+
+fn emit_host_mcp_permission_request(
+    app: &AppHandle,
+    req_id: &str,
+    tab_id: &str,
+    tool_name: &str,
+    params: Option<&serde_json::Value>,
+    mode: &str,
+) {
+    let raw_input = params
+        .and_then(|p| p.get("arguments"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let mut payload = serde_json::json!({
+        "reqId": req_id,
+        "params": {
+            "toolCall": {
+                "title": format!("host-MCP {}", tool_name),
+                "kind": "host-mcp",
+                "toolCallId": req_id,
+                "rawInput": raw_input,
+            },
+            "options": [
+                { "id": "allow_once", "label": "Allow" },
+                { "id": "deny", "label": "Deny" },
+            ],
+        },
+        "permissionMode": mode,
+        "source": "host-mcp-http",
+        "_meta": { "tabId": tab_id },
+    });
+    scrub_credentials(&mut payload);
+    let _ = tauri::Emitter::emit(app, "permission-request", payload.clone());
+    if let Some(hub) = app.try_state::<std::sync::Arc<crate::debug_api::DebugHub>>() {
+        hub.record_raw_event("permission-request", payload);
+    }
+}
+
+async fn await_host_mcp_permission(
+    state: &McpState,
+    tab_id: &str,
+    tool_name: &str,
+    params: Option<&serde_json::Value>,
+    mode: &str,
+) -> Result<bool, String> {
+    let Some(registry_state) = state
+        .app
+        .try_state::<std::sync::Arc<crate::acp::PendingPermissionRegistry>>()
+    else {
+        return Err("host-MCP: permission registry unavailable; failing closed".to_string());
+    };
+    let registry = registry_state.inner().clone();
+    let req_id = format!(
+        "host-mcp-{}",
+        HOST_MCP_PERMISSION_COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    let rx = registry.insert(req_id.clone()).await;
+    emit_host_mcp_permission_request(&state.app, &req_id, tab_id, tool_name, params, mode);
+    let wait = tokio::time::timeout(std::time::Duration::from_secs(60), rx).await;
+    match wait {
+        Ok(Ok(allow)) => Ok(allow),
+        _ => {
+            registry.forget(&req_id).await;
+            Ok(false)
+        }
+    }
 }
 
 async fn mcp_post(
@@ -616,16 +774,10 @@ async fn mcp_post(
         }
     };
 
-    // Host-MCP-layer permission gate for WRITE-CLASS tools.
-    // grok 0.1.21x bypasses its native session/request_permission flow
-    // for fs_write / fs_append / fs_copy / fs_ensure_dir /
-    // process_signal / secret_set / secret_delete / net_fetch.
-    // Mitigation: gate at the HTTP MCP edge before dispatching the tool.
-    // Mode lookup uses the "default" tab
-    // autonomy slot — best-effort since HTTP MCP doesn't know which
-    // shellX tab is calling. `plan` rejects; everything else proceeds
-    // (full block + UI prompt is v1.1 since it requires resolving the
-    // calling tab id from the bearer/request context).
+    // Host-MCP-layer permission gate for WRITE-CLASS tools. Grok 0.1.21x
+    // bypasses its native session/request_permission flow for host-MCP
+    // tools, so the HTTP edge enforces shellX's autonomy contract:
+    // Observe denies, Confirm/Propose prompts, Auto allows.
     let gate_tool_name = if req.method.as_deref() == Some("tools/call") {
         req.params
             .as_ref()
@@ -663,25 +815,18 @@ async fn mcp_post(
             let tab_id = match &request_tab_id {
                 Some(t) => t.clone(),
                 None => {
-                    return (
-                        StatusCode::OK,
-                        Json(serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": req.id,
-                            "error": {
-                                "code": -32603,
-                                "message": format!(
-                                    "host-MCP: '{}' rejected — missing MCP-Tab-Id header. \
-                                     Write-class tools require an explicit tab id so per-tab \
-                                     autonomy gates can be enforced. shellX adds this header \
-                                     automatically; if you see this error, your grok was not \
-                                     spawned via a shellX tab.",
-                                    tname
-                                ),
-                            },
-                        })),
-                    )
-                        .into_response();
+                    return json_rpc_error_response(
+                        req.id,
+                        -32603,
+                        format!(
+                            "host-MCP: '{}' rejected — missing MCP-Tab-Id header. \
+                             Write-class tools require an explicit tab id so per-tab \
+                             autonomy gates can be enforced. shellX adds this header \
+                             automatically; if you see this error, your grok was not \
+                             spawned via a shellX tab.",
+                            tname
+                        ),
+                    );
                 }
             };
             let mode = if let Some(reg_state) = state
@@ -693,24 +838,48 @@ async fn mcp_post(
             } else {
                 None
             };
-            if matches!(mode.as_deref(), Some("plan")) {
-                return (
-                    StatusCode::OK,
-                    Json(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": req.id,
-                        "error": {
-                            "code": -32603,
-                            "message": format!(
-                                "host-MCP: '{}' rejected — tab '{}' autonomy is Observe (plan). \
-                                 Switch to Confirm/Propose/Auto to allow write-class tools, \
-                                 or use read-only ones (fs_read/fs_list_dir/fs_grep/fs_stat).",
-                                tname, tab_id
-                            ),
-                        },
-                    })),
-                )
-                    .into_response();
+            let effective_mode = mode.as_deref().unwrap_or("default");
+            match write_class_gate_action(tname, Some(&tab_id), mode.as_deref()) {
+                WriteClassGateAction::Allow => {}
+                WriteClassGateAction::RejectMissingTab => unreachable!("missing tab handled above"),
+                WriteClassGateAction::RejectObserve => {
+                    return json_rpc_error_response(
+                        req.id,
+                        -32603,
+                        format!(
+                            "host-MCP: '{}' rejected — tab '{}' autonomy is Observe (plan). \
+                             Switch to Confirm/Auto to allow write-class tools, \
+                             or use read-only ones (fs_read/fs_list_dir/fs_grep/fs_stat).",
+                            tname, tab_id
+                        ),
+                    );
+                }
+                WriteClassGateAction::Prompt => {
+                    match await_host_mcp_permission(
+                        &state,
+                        &tab_id,
+                        tname,
+                        req.params.as_ref(),
+                        effective_mode,
+                    )
+                    .await
+                    {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            return json_rpc_error_response(
+                                req.id,
+                                -32001,
+                                format!(
+                                    "host-MCP: '{}' denied by tab '{}' permission gate",
+                                    tname, tab_id
+                                ),
+                            );
+                        }
+                        Err(e) => {
+                            return json_rpc_error_response(req.id, -32603, e);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1092,17 +1261,12 @@ pub async fn start_mcp_server(app: AppHandle) -> Result<(), String> {
 
     // CORS: grok's MCP client is a Rust HTTP client that doesn't enforce
     // browser CORS. We still mount a permissive layer for the case where
-    // a developer hits /mcp from a browser-based MCP inspector — same
-    // loopback + tauri allow-list as debug-api. Cross-origin attacks
+    // a developer hits /mcp from the Tauri/Vite webview — same exact
+    // origin allow-list as debug-api. Cross-origin attacks
     // without the Bearer token still fail at the auth layer.
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin: &HeaderValue, _req| {
-            let o = origin.to_str().unwrap_or("");
-            o == "tauri://localhost"
-                || o == "https://tauri.localhost"
-                || o == "http://tauri.localhost"
-                || o.starts_with("http://localhost:")
-                || o.starts_with("http://127.0.0.1:")
+            crate::loopback_security::origin_header_value_allowed(origin)
         }))
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([
@@ -1390,7 +1554,10 @@ mod tests {
             "secret_set",
             "secret_delete",
             "net_fetch",
+            "security_scan",
             "vision_describe",
+            "voice_tts",
+            "x_search",
             "voice_stt_v2",
             "vision_describe_v2",
             "Agent",
@@ -1399,10 +1566,14 @@ mod tests {
             "mem_delete",
             "fs_watch",
             "goal_complete",
+            "build_receipt",
+            "build_checkpoint",
+            "preview_start",
+            "build_complete",
         ]
         .into_iter()
         .collect();
-        let actual: BTreeSet<&str> = WRITE_CLASS_TOOLS.iter().copied().collect();
+        let actual: BTreeSet<&str> = crate::host_mcp::WRITE_CLASS_TOOLS.iter().copied().collect();
         assert_eq!(actual, expected, "write-class table drifted");
 
         for w in expected {
@@ -1425,6 +1596,38 @@ mod tests {
                 "read-class wrongly flagged write: {r}"
             );
         }
+    }
+
+    #[test]
+    fn write_class_gate_action_prompts_confirm_and_allows_auto() {
+        assert_eq!(
+            write_class_gate_action("fs_write", Some("tab-a"), Some("default")),
+            WriteClassGateAction::Prompt
+        );
+        assert_eq!(
+            write_class_gate_action("fs_write", Some("tab-a"), Some("acceptEdits")),
+            WriteClassGateAction::Prompt
+        );
+        assert_eq!(
+            write_class_gate_action("fs_write", Some("tab-a"), Some("bypassPermissions")),
+            WriteClassGateAction::Allow
+        );
+        assert_eq!(
+            write_class_gate_action("fs_write", Some("tab-a"), Some("auto")),
+            WriteClassGateAction::Allow
+        );
+        assert_eq!(
+            write_class_gate_action("fs_write", Some("tab-a"), Some("plan")),
+            WriteClassGateAction::RejectObserve
+        );
+        assert_eq!(
+            write_class_gate_action("fs_write", None, Some("bypassPermissions")),
+            WriteClassGateAction::RejectMissingTab
+        );
+        assert_eq!(
+            write_class_gate_action("fs_read", Some("tab-a"), Some("plan")),
+            WriteClassGateAction::Allow
+        );
     }
 
     /// H2 migrator no-op on files without our managed block: a

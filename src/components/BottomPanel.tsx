@@ -204,6 +204,7 @@ export function BottomPanel({
  // tab. App routes to the same processAttachedPaths pipeline the
  // dialog uses.
   onAttachPaths,
+  onAttachFiles,
   onPreviewFile,
   onOpenActivity,
  // PR/issue list for `#N` autocomplete.
@@ -252,6 +253,9 @@ export function BottomPanel({
  /** same as onAttach but with explicit paths
  * (no dialog). Wired from App.processAttachedPaths. */
   onAttachPaths?: (paths: string[]) => void;
+ /** OS file drops / clipboard file paste. App persists the blobs into
+ * the workspace and then reuses the normal path-based attach pipeline. */
+  onAttachFiles?: (files: File[]) => void;
  /** Open a generated media item in the App-level FilePreviewModal. */
   onPreviewFile?: (path: string) => void;
  /** Open the session Activity Browser in the App-level preview surface. */
@@ -349,7 +353,7 @@ export function BottomPanel({
           title="Trace - open session activity browser"
           aria-label="Trace - open session activity browser"
         >
-          <ShellIcon name="activity" size={14} />
+          <ShellIcon name="trace" size={14} />
           <span className="btab-label">Trace</span>
         </button>
         <button
@@ -396,7 +400,7 @@ export function BottomPanel({
           title={`Stderr - ${stderrCount} event${stderrCount === 1 ? "" : "s"}`}
           aria-label={`Stderr - ${stderrCount} event${stderrCount === 1 ? "" : "s"}`}
         >
-          <ShellIcon name="terminal" size={14} />
+          <ShellIcon name="alert" size={14} />
           <span className="btab-label">Stderr</span>
           <span
             className="bcnt"
@@ -422,6 +426,7 @@ export function BottomPanel({
             onAttach={onAttach}
             onAttachScreenshot={onAttachScreenshot}
             onAttachPaths={onAttachPaths}
+            onAttachFiles={onAttachFiles}
             hashItems={hashItems}
             skills={skills}
             activeCwd={activeCwd}
@@ -601,6 +606,7 @@ function PromptComposer({
   onAttach,
   onAttachScreenshot,
   onAttachPaths,
+  onAttachFiles,
   hashItems = [],
   skills = [],
   activeCwd,
@@ -631,6 +637,8 @@ function PromptComposer({
   onAttachScreenshot?: () => void;
  /** drag-and-drop attach from Files tab. */
   onAttachPaths?: (paths: string[]) => void;
+ /** OS file drops / clipboard file paste. */
+  onAttachFiles?: (files: File[]) => void;
   hashItems?: HashItem[];
  /** grok's slash commands from `available_commands_update`
  * events. Each `{name, description?}` becomes an autocomplete entry
@@ -1009,12 +1017,10 @@ function PromptComposer({
     else console.info("[Composer] worktree create (no handler), from:", sourceBranch);
   };
 
- /* drag-and-drop attach. The Files tab puts
- * the file's absolute path under the shellX MIME type
- * `application/x-shellx-file` on dragstart. The composer accepts
- * drops of that type and routes via App's processAttachedPaths so
- * the file goes through the same in-scope-copy + classify + state
- * pipeline as the dialog path. */
+ /* drag-and-drop attach. The Files tab puts the file's absolute path
+ * under the shellX MIME type `application/x-shellx-file`. OS-level
+ * drops arrive as File blobs in HTML5 DnD; App persists those into the
+ * workspace before reusing the path pipeline. */
   const ATTACH_MIME = "application/x-shellx-file";
   const [composerDragOver, setComposerDragOver] = useState(false);
   const isShellxFileDrag = (dt: DataTransfer): boolean => {
@@ -1023,13 +1029,56 @@ function PromptComposer({
  // list to gate the visual highlight without exposing path bytes.
     return Array.from(dt.types).includes(ATTACH_MIME);
   };
+  const hasOsFiles = (dt: DataTransfer): boolean => {
+    return Array.from(dt.types).includes("Files") || dt.files.length > 0;
+  };
+  const isAttachDrag = (dt: DataTransfer): boolean => isShellxFileDrag(dt) || hasOsFiles(dt);
+  const fileUrlToPath = (uri: string): string | null => {
+    try {
+      const url = new URL(uri.trim());
+      if (url.protocol !== "file:") return null;
+      let path = decodeURIComponent(url.pathname);
+      if (/^\/[a-zA-Z]:\//.test(path)) path = path.slice(1);
+      if (url.hostname) return `//${url.hostname}${path}`;
+      return path;
+    } catch {
+      return null;
+    }
+  };
+  const fileUriListToPaths = (dt: DataTransfer): string[] => {
+    const text = dt.getData("text/uri-list");
+    if (!text) return [];
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"))
+      .map(fileUrlToPath)
+      .filter((path): path is string => Boolean(path));
+  };
+  const filesFromClipboard = (dt: DataTransfer | null): File[] => {
+    if (!dt) return [];
+    const byName = new Set<string>();
+    const files: File[] = [];
+    const add = (file: File | null) => {
+      if (!file) return;
+      const key = `${file.name}|${file.type}|${file.size}|${file.lastModified}`;
+      if (byName.has(key)) return;
+      byName.add(key);
+      files.push(file);
+    };
+    Array.from(dt.files).forEach(add);
+    Array.from(dt.items)
+      .filter((item) => item.kind === "file")
+      .forEach((item) => add(item.getAsFile()));
+    return files;
+  };
 
   return (
     <div className="prompt">
       <div
         className={`composer${composerDragOver ? " drag-over" : ""}`}
         onDragOver={(e) => {
-          if (!isShellxFileDrag(e.dataTransfer)) return;
+          if (!isAttachDrag(e.dataTransfer)) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = "copy";
           if (!composerDragOver) setComposerDragOver(true);
@@ -1041,13 +1090,26 @@ function PromptComposer({
           }
         }}
         onDrop={(e) => {
-          if (!isShellxFileDrag(e.dataTransfer)) return;
+          if (!isAttachDrag(e.dataTransfer)) return;
           e.preventDefault();
           setComposerDragOver(false);
           const path = e.dataTransfer.getData(ATTACH_MIME);
-          if (!path) return;
-          if (onAttachPaths) onAttachPaths([path]);
-          else console.info("[Composer] file dropped (no handler):", path);
+          if (path) {
+            if (onAttachPaths) onAttachPaths([path]);
+            else console.info("[Composer] file dropped (no handler):", path);
+            return;
+          }
+          const files = Array.from(e.dataTransfer.files);
+          if (files.length > 0) {
+            if (onAttachFiles) onAttachFiles(files);
+            else console.info("[Composer] OS file dropped (no handler):", files.map((f) => f.name));
+            return;
+          }
+          const paths = fileUriListToPaths(e.dataTransfer);
+          if (paths.length > 0) {
+            if (onAttachPaths) onAttachPaths(paths);
+            else console.info("[Composer] file URI dropped (no handler):", paths);
+          }
         }}>
  {/* textarea + mirror overlay for slash-command syntax
  * highlighting. The mirror is a read-only div behind the
@@ -1073,6 +1135,13 @@ function PromptComposer({
             value={prompt}
             onChange={onChange}
             onScroll={syncMirrorScroll}
+            onPaste={(e) => {
+              const files = filesFromClipboard(e.clipboardData);
+              if (files.length === 0) return;
+              e.preventDefault();
+              if (onAttachFiles) onAttachFiles(files);
+              else console.info("[Composer] pasted file(s) (no handler):", files.map((f) => f.name));
+            }}
             onKeyDown={(e) => {
  // slash autocomplete handles its own keys.
             if (slashOpen && filteredSkills.length > 0) {
@@ -1207,8 +1276,8 @@ function PromptComposer({
             onRecordingChange={(rec) => {
               setVoiceChatRecording(rec);
  // Pressing the voice-chat mic flips the session-wide
- // mode on. (User can turn it off via /goal/abort or by
- // restarting the tab; a future build adds an explicit
+ // mode on. (User can turn it off by restarting the tab
+ // or stopping the current orchestrated run; a future build adds an explicit
  // toggle.) The mode persists across prompts so a
  // conversation feels continuous.
               if (rec) writeVoiceChatMode(true);

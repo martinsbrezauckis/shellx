@@ -1,14 +1,14 @@
 /**
  * src/components/RightRail.tsx — right-rail tab container.
- * * Tab order: Tasks (default) | Tools | Plan | Files. Persisted to localStorage
- * via TAB_KEY.
+ * * Tab order: Tasks (default) | Tools | Git | Preview | Plan | Files.
+ * Persisted to localStorage via TAB_KEY.
  * * - Tasks: TasksPanel — running background subprocesses scoped to the
  * active tab. Polling is mount-gated.
  * - Plan: PlanPane — reads grok's plan.md / goal.md scratchboard from disk
  * and re-fetches on each new event. Approval actions live in the modal.
  * - Files: FilesPane — git-aware tree rooted at the active tab's cwd.
- * * PreviewTarget is still exported for legacy callers; the right-rail
- * Preview tab has been replaced by the App-level FilePreviewModal.
+ * * PreviewTarget is still exported for legacy file/URL preview callers;
+ * WorkPreviewPanel is the right-rail live app preview surface.
  */
 import { useEffect, useMemo, useState, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
@@ -46,12 +46,14 @@ import {
 import { cleanUpdateNotes, firstUpdateNotesUrl } from "../lib/update-notes";
 import { TasksPanel } from "./TasksPanel";
 import { BuildRunCockpit } from "./BuildRunCockpit";
+import { WorkPreviewPanel } from "./WorkPreviewPanel";
 import { apiPost } from "../lib/debug-api";
+import type { WorkPreviewState } from "../lib/work-preview";
 import type { RawEventFrame } from "../types/acp";
 import { ShellIcon, TransportIcon, type ShellIconName } from "./icons";
 
-export type RightTab = "Tasks" | "Tooling" | "Git" | "Plan" | "Files";
-const TAB_KEY = "grok-shell.rightTab";
+export type RightTab = "Tasks" | "Tooling" | "Git" | "Preview" | "Plan" | "Files";
+export const RIGHT_RAIL_TAB_KEY = "grok-shell.rightTab";
 const VERSION = (pkg as { version?: string }).version ?? "0.0.0";
 
 const RIGHT_TAB_META: Record<RightTab, { label: string; icon: ShellIconName; title: string }> = {
@@ -70,10 +72,15 @@ const RIGHT_TAB_META: Record<RightTab, { label: string; icon: ShellIconName; tit
     icon: "git-branch",
     title: "Git - status, diffs, checkpoints, and worktrees",
   },
+  Preview: {
+    label: "Preview",
+    icon: "app-window",
+    title: "Preview - run and inspect generated web work",
+  },
   Plan: {
     label: "Plan",
     icon: "file",
-    title: "Plan - active goal scratchboard and review",
+    title: "Plan - active build scratchboard and review",
   },
   Files: {
     label: "Files",
@@ -122,6 +129,88 @@ interface SessionToolingSnapshot {
   health: MarketplaceHealthEntry[];
 }
 
+type GrokEnvironmentStatus = "idle" | "pass" | "warn" | "fail";
+type GrokMcpFailureCategory =
+  | "healthy"
+  | "authRequired"
+  | "connectionFailed"
+  | "commandMissing"
+  | "handshakeFailed"
+  | "failed";
+
+interface GrokEnvironmentSnapshot {
+  tabId: string;
+  status: GrokEnvironmentStatus;
+  checkedAtMs: number;
+  transport: string;
+  cwd?: string | null;
+  sessionId?: string | null;
+  doctor?: {
+    summary: {
+      status: GrokEnvironmentStatus;
+      healthyCount: number;
+      failingCount: number;
+      totalCount: number;
+    };
+    servers: Array<{
+      name: string;
+      transport: string;
+      target: string;
+      source: string;
+      healthy: boolean;
+      category: GrokMcpFailureCategory;
+      detail?: string | null;
+      hint?: string | null;
+    }>;
+  } | null;
+  inspect?: {
+    grokVersion?: string | null;
+    projectTrusted: boolean;
+    instructionCount: number;
+    skillCount: number;
+    pluginCount: number;
+    mcpServerCount: number;
+    lspServerCount: number;
+  } | null;
+  setup: {
+    summary: {
+      status: GrokEnvironmentStatus;
+      readyCount: number;
+      attentionCount: number;
+      totalCount: number;
+    };
+    checks: Array<{
+      id: string;
+      label: string;
+      status: GrokEnvironmentStatus;
+      detail: string;
+      command?: string | null;
+      docs?: string | null;
+    }>;
+  };
+  apiKeyHint: {
+    preferredEnv: string;
+    legacyEnv: string;
+    preferredPresent: boolean;
+    legacyPresent: boolean;
+    detail: string;
+  };
+  trace: {
+    available: boolean;
+    sessionId?: string | null;
+    detail: string;
+  };
+  error?: string | null;
+}
+
+interface GrokTraceExportResult {
+  status: GrokEnvironmentStatus;
+  sessionId: string;
+  outputPath?: string | null;
+  stdoutTail?: string | null;
+  stderrTail?: string | null;
+}
+
 export interface PreviewTarget {
   kind: "file" | "url" | "image" | "markdown" | "diff";
   path: string;
@@ -143,6 +232,10 @@ export function RightRail({
   connectionTransport = "local",
   sessionStatus = "Idle",
   onSendPromptToActiveTab,
+  onTabChange,
+  onWorkPreviewStateChange,
+  onOpenWorkPreview,
+  onAskGrokToFixPreview,
 }: {
   preview: PreviewTarget | null;
   onPreviewClear: () => void;
@@ -170,21 +263,24 @@ export function RightRail({
   connectionTransport?: string;
   sessionStatus?: string;
   onSendPromptToActiveTab?: (text: string) => void;
+  onTabChange?: (tab: RightTab) => void;
+  onWorkPreviewStateChange?: (state: WorkPreviewState) => void;
+  onOpenWorkPreview?: (state: WorkPreviewState) => void;
+  onAskGrokToFixPreview?: (state: WorkPreviewState) => void;
 }): JSX.Element {
   const [tab, setTab] = useState<RightTab>(() => {
     try {
-      const v = localStorage.getItem(TAB_KEY);
- // Legacy "Preview" stored from older installs falls through
- // to the new default "Tasks".
-      if (v === "Tasks" || v === "Tooling" || v === "Git" || v === "Plan" || v === "Files") return v;
+      const v = localStorage.getItem(RIGHT_RAIL_TAB_KEY);
+      if (v === "Tasks" || v === "Tooling" || v === "Git" || v === "Preview" || v === "Plan" || v === "Files") return v;
     } catch { /* no-op */ }
     return "Tasks";
   });
 
   useEffect(() => {
-    try { localStorage.setItem(TAB_KEY, tab); } catch { /* no-op */ }
+    try { localStorage.setItem(RIGHT_RAIL_TAB_KEY, tab); } catch { /* no-op */ }
+    onTabChange?.(tab);
     void apiPost("/state/ui", { rightTab: tab }).catch(() => { /* no-op */ });
-  }, [tab]);
+  }, [tab, onTabChange]);
   useEffect(() => {
     if (!requestedTab) return;
     setTab(requestedTab);
@@ -192,7 +288,7 @@ export function RightRail({
 
   return (
     <aside className="right">
- {/* Tab order: Tasks (default) | Tools | Git | Plan | Files. Preview dropped. */}
+ {/* Tab order: Tasks (default) | Tools | Git | Preview | Plan | Files. */}
       <div className="right-tabs tabs">
         {(Object.keys(RIGHT_TAB_META) as RightTab[]).map((rightTab) => {
           const meta = RIGHT_TAB_META[rightTab];
@@ -220,6 +316,7 @@ export function RightRail({
       {tab === "Tooling" && (
         <ToolingPane
           activeTabId={activeTabId ?? null}
+          cwd={cwd}
           connectionLabel={connectionLabel}
           connectionTransport={connectionTransport}
           sessionStatus={sessionStatus}
@@ -228,6 +325,15 @@ export function RightRail({
         />
       )}
       {tab === "Git" && <GitPane activeTabId={activeTabId ?? null} cwd={cwd} />}
+      {tab === "Preview" && (
+        <WorkPreviewPanel
+          activeTabId={activeTabId ?? null}
+          cwd={cwd}
+          onStateChange={onWorkPreviewStateChange}
+          onOpenPreview={onOpenWorkPreview}
+          onAskGrokToFix={onAskGrokToFixPreview}
+        />
+      )}
       {tab === "Plan"  && <PlanPane autonomy={autonomy} events={events} activeTabId={activeTabId} prefetchedPlanText={prefetchedPlanText} onPreviewFile={onPreviewFile ?? (() => {})} onOpenGoalReview={onOpenGoalReview} />}
       {tab === "Files" && <FilesPane cwd={cwd} onPreviewFile={onPreviewFile ?? (() => {})} />}
     </aside>
@@ -238,6 +344,7 @@ export function RightRail({
 
 function ToolingPane({
   activeTabId,
+  cwd,
   connectionLabel,
   connectionTransport,
   sessionStatus,
@@ -245,6 +352,7 @@ function ToolingPane({
   events,
 }: {
   activeTabId: string | null;
+  cwd: string;
   connectionLabel: string;
   connectionTransport: string;
   sessionStatus: string;
@@ -341,6 +449,8 @@ function ToolingPane({
       </div>
 
       <UpdateDiagnosticsCard />
+
+      <GrokEnvironmentCard activeTabId={activeTabId} cwd={cwd} sessionInfo={sessionInfo} />
 
       {error && (
         <div className="rail-empty tooling-error">
@@ -526,6 +636,205 @@ function UpdateDiagnosticsCard(): JSX.Element {
       </div>
     </div>
   );
+}
+
+function GrokEnvironmentCard({
+  activeTabId,
+  cwd,
+  sessionInfo,
+}: {
+  activeTabId: string | null;
+  cwd: string;
+  sessionInfo: SessionToolingSnapshot["session"] | null;
+}): JSX.Element {
+  const [snapshot, setSnapshot] = useState<GrokEnvironmentSnapshot | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [traceBusy, setTraceBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const refresh = async (force = false): Promise<void> => {
+    if (!activeTabId || !inTauri()) return;
+    setLoading(true);
+    setMessage(null);
+    try {
+      const next = await invoke<GrokEnvironmentSnapshot>("grok_environment_snapshot", {
+        tabId: activeTabId,
+        force,
+        cwd: cwd || null,
+      });
+      setSnapshot(next);
+    } catch (e) {
+      setMessage(typeof e === "string" ? e : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setSnapshot(null);
+    setMessage(null);
+    if (!activeTabId) return;
+    void refresh(true);
+  }, [activeTabId, cwd, sessionInfo?.hasActiveChild, sessionInfo?.sessionId]);
+
+  const status = grokEnvironmentStatus(snapshot?.status ?? "idle");
+  const failingServers = snapshot?.doctor?.servers.filter((server) => !server.healthy) ?? [];
+  const setupSummary = snapshot?.setup?.summary;
+  const setupChecks = snapshot?.setup?.checks.filter((check) => check.status !== "pass") ?? [];
+  const inspect = snapshot?.inspect;
+  const doctorSummary = snapshot?.doctor?.summary;
+
+  async function exportTrace(): Promise<void> {
+    if (!activeTabId || !snapshot?.trace.available) return;
+    setTraceBusy(true);
+    setMessage(null);
+    try {
+      const result = await invoke<GrokTraceExportResult>("grok_trace_export", { tabId: activeTabId });
+      setMessage(
+        result.outputPath
+          ? `Trace saved: ${result.outputPath}`
+          : result.stderrTail || result.stdoutTail || "Trace export finished.",
+      );
+    } catch (e) {
+      setMessage(typeof e === "string" ? e : String(e));
+    } finally {
+      setTraceBusy(false);
+    }
+  }
+
+  return (
+    <div className={`tooling-row update-diagnostic update-diagnostic-${status.accent}`}>
+      <div className="tooling-row-top">
+        <span className="tooling-name">Grok environment</span>
+        <span className={`tooling-status ${status.className}`}>{status.label}</span>
+      </div>
+      <div className="tooling-detail">
+        {!activeTabId && <div>No active tab.</div>}
+        {activeTabId && !sessionInfo?.hasActiveChild && <div>Connect this tab to run Grok diagnostics.</div>}
+        {snapshot && (
+          <>
+            <div>
+              {inspect?.grokVersion ? <code>v{inspect.grokVersion}</code> : "Grok"}
+              {doctorSummary
+                ? ` · ${doctorSummary.healthyCount} healthy · ${doctorSummary.failingCount} failing · ${doctorSummary.totalCount} MCPs`
+                : " · doctor unavailable"}
+            </div>
+            {inspect && (
+              <div>
+                {inspect.skillCount} skills · {inspect.pluginCount} plugins · {inspect.instructionCount} instructions · project{" "}
+                {inspect.projectTrusted ? "trusted" : "not trusted"}
+              </div>
+            )}
+            {setupSummary && (
+              <div>
+                Preview setup: {setupSummary.readyCount} ready · {setupSummary.attentionCount} needs setup · {setupSummary.totalCount} checks
+              </div>
+            )}
+            <div>{snapshot.apiKeyHint.detail}</div>
+            {snapshot.error && <div className="tooling-issue">{snapshot.error}</div>}
+            {setupChecks.slice(0, 3).map((check) => (
+              <div className="tooling-issue" key={`setup-${check.id}`}>
+                {check.label}: {grokSetupStatusLabel(check.status)}
+                {" · "}
+                {check.detail}
+                {check.command && (
+                  <>
+                    {" "}
+                    Command: <code>{check.command}</code>
+                  </>
+                )}
+              </div>
+            ))}
+            {failingServers.slice(0, 4).map((server) => (
+              <div className="tooling-issue" key={`${server.name}-${server.category}`}>
+                {server.name}: {grokMcpCategoryLabel(server.category)}
+                {server.detail ? ` · ${server.detail}` : ""}
+              </div>
+            ))}
+            {failingServers.length > 4 && (
+              <div className="tooling-issue">+{failingServers.length - 4} more failing MCP server{failingServers.length - 4 === 1 ? "" : "s"}.</div>
+            )}
+            <div>
+              {snapshot.checkedAtMs ? `Checked ${new Date(snapshot.checkedAtMs).toLocaleTimeString()}` : ""}
+              {snapshot.trace.available ? " · trace available" : ""}
+            </div>
+          </>
+        )}
+        {message && <div className="tooling-issue">{message}</div>}
+      </div>
+      <div className="tooling-actions">
+        <button
+          type="button"
+          className="mp-action-btn mp-action-btn-secondary"
+          onClick={() => void exportTrace()}
+          disabled={!snapshot?.trace.available || traceBusy}
+          title={snapshot?.trace.detail ?? "No Grok session id is available yet."}
+        >
+          <ShellIcon name="file" size={12} />
+          Trace
+        </button>
+        <button
+          type="button"
+          className="mp-action-btn mp-action-btn-secondary"
+          onClick={() => void refresh(true)}
+          disabled={!activeTabId || loading}
+        >
+          <ShellIcon name="refresh" size={12} />
+          {loading ? "Checking" : "Refresh"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function grokEnvironmentStatus(status: GrokEnvironmentStatus): {
+  label: string;
+  className: string;
+  accent: "ok" | "warn" | "bad";
+} {
+  switch (status) {
+    case "pass":
+      return { label: "healthy", className: "ok", accent: "ok" };
+    case "warn":
+      return { label: "attention", className: "warn", accent: "warn" };
+    case "fail":
+      return { label: "needs attention", className: "bad", accent: "bad" };
+    case "idle":
+    default:
+      return { label: "idle", className: "muted", accent: "warn" };
+  }
+}
+
+function grokSetupStatusLabel(status: GrokEnvironmentStatus): string {
+  switch (status) {
+    case "fail":
+      return "required";
+    case "warn":
+      return "recommended";
+    case "idle":
+      return "waiting";
+    case "pass":
+    default:
+      return "ready";
+  }
+}
+
+function grokMcpCategoryLabel(category: GrokMcpFailureCategory): string {
+  switch (category) {
+    case "authRequired":
+      return "auth required";
+    case "connectionFailed":
+      return "connection failed";
+    case "commandMissing":
+      return "command missing";
+    case "handshakeFailed":
+      return "handshake failed";
+    case "healthy":
+      return "healthy";
+    case "failed":
+    default:
+      return "failed";
+  }
 }
 
 function CapabilityRow({ entry }: { entry: SearchCapability }): JSX.Element {
@@ -1123,7 +1432,7 @@ function PlanPane({
  // pane renders immediately on tab switch.
   const [planText, setPlanText] = useState<string>(prefetchedPlanText ?? "");
 
- /* #395: Goal-orchestrator scratchboard. When /goal is active
+ /* #395: Legacy goal-orchestrator scratchboard. When legacy /goal is active
  * the orchestrator opens a scratchboard at <cwd>/goal.md (fallback
  * <cwd>/plan.md). Grok inconsistently emits ACP `sessionUpdate:"plan"`
  * — sometimes it just writes markdown to the scratchboard and we
@@ -1285,9 +1594,9 @@ function PlanPane({
 
   const planActive = modeId === "plan";
  // entries from the ACP `plan` sessionUpdate take precedence
- // over the empty/markdown branch. grok-build's /goal long-horizon
+ // over the empty/markdown branch. The legacy /goal long-horizon
  // flow ships its plan via this protocol path, NOT via a plan.md
- // file. Without this, /goal runs show "Plan view is empty" even
+ // file. Without this, legacy /goal runs show "Plan view is empty" even
  // though the orchestrator has a structured plan in hand.
   const hasEntries = planEntries.length > 0;
   const hasBuildScratchboard = buildState !== null && buildScratchboardText.trim().length > 0;
@@ -1297,17 +1606,17 @@ function PlanPane({
     ? "plan.md"
     : hasBuildScratchboard
       ? (buildState?.scratchboardPath.split(/[\\\/]/).pop() ?? "build.md")
-      : hasScratchboard
-      ? (goalScratchboardPath?.split(/[\\\/]/).pop() ?? "goal.md")
+    : hasScratchboard
+      ? (goalScratchboardPath?.split(/[\\\/]/).pop() ?? "build.md")
       : hasEntries
-        ? "goal steps"
+        ? "build steps"
         : "—";
   const planHeaderStatus = planActive
     ? "· active"
     : buildState
       ? `· build-mode · ${isBuildTerminalStatus(buildState.status) ? buildState.status : `${buildState.continuationsTotal} pushes`}`
       : goalActive
-      ? `· goal-mode · ${goalContinuationsTotal} pushes`
+      ? `· build-mode · ${goalContinuationsTotal} pushes`
       : hasEntries
         ? `· ${planEntries.length} steps`
         : (planFilePath || hasScratchboard ? "· last" : "· empty");
@@ -1322,16 +1631,21 @@ function PlanPane({
           PLAN {planHeaderStatus}
         </span>
       </div>
- {/* Goal-orchestrator status bar. Renders only when goal_mode
+ {/* Legacy goal-orchestrator status bar. Renders only when goal_mode
  * is on for the active tab. Polls the Rust orchestrator via
  * get_goal_state. */}
       <BuildRunCockpit
         activeTabId={activeTabId}
         state={buildState}
         receipts={buildReceipts}
+        scratchboardText={buildScratchboardText}
         onChanged={() => setBuildRefreshSeq((n) => n + 1)}
       />
-      <GoalStatusBar activeTabId={activeTabId} eventsLen={events.length} onOpenGoalReview={onOpenGoalReview} />
+      <GoalStatusBar
+        activeTabId={activeTabId}
+        eventsLen={events.length}
+        onOpenGoalReview={onOpenGoalReview}
+      />
       <div className="plan">
         {planEmpty ? (
           <div className="plan-empty">
@@ -1339,12 +1653,12 @@ function PlanPane({
               <>Build Mode is active. Waiting for the scratchboard to
               populate or for the next receipt from this run.</>
             ) : goalActive ? (
-              <>Goal mode is active. grok hasn't emitted a structured plan yet
+              <>Build Mode is active. grok hasn't emitted a structured plan yet
               (and hasn't written to the scratchboard at{" "}
-              <code>{goalScratchboardPath?.split(/[\\\/]/).pop() ?? "goal.md"}</code>).
+              <code>{goalScratchboardPath?.split(/[\\\/]/).pop() ?? "build.md"}</code>).
               The orchestrator has injected {goalContinuationsTotal} continuation
               {goalContinuationsTotal === 1 ? "" : "s"} so far — it'll keep
-              pushing grok until either the goal completes or the per-turn
+              pushing grok until either the build completes or the per-turn
               timeout fires.</>
             ) : planActive ? (
               <>Plan mode is active — waiting for grok to write steps to{" "}
@@ -1352,8 +1666,8 @@ function PlanPane({
               the prompt, then describe the work; steps land here as
               grok writes them.</>
             ) : (
-              <>Plan view is empty. Use <code>/goal &lt;objective&gt;</code> to
-              start a long-horizon plan, or call <code>enter_plan_mode</code>{" "}
+              <>Plan view is empty. Use <code>/build &lt;objective&gt;</code> to
+              start a long-horizon Build Mode run, or call <code>enter_plan_mode</code>{" "}
               in a prompt for a single-turn plan.</>
             )}
           </div>
@@ -1406,7 +1720,7 @@ function PlanPane({
           </div>
         ) : hasScratchboard ? (
  /* #395: Goal scratchboard (goal.md / plan.md under
- * cwd) rendered as markdown. Active /goal sessions write
+ * cwd) rendered as markdown. Active legacy /goal sessions write
  * progress here even when grok doesn't emit ACP plan
  * entries. */
           <div className="plan-md" onMouseUp={onMouseUpAutoCopy}>
@@ -1415,7 +1729,7 @@ function PlanPane({
                 fontSize: "var(--fs-ui-xs)", color: "var(--ink-3)",
                 padding: "0 0 8px 0", letterSpacing: 0.04,
               }}>
-                goal · {goalContinuationsTotal} continuation{goalContinuationsTotal === 1 ? "" : "s"} · scratchboard
+                build · {goalContinuationsTotal} continuation{goalContinuationsTotal === 1 ? "" : "s"} · scratchboard
               </div>
             )}
             <ReactMarkdown
@@ -1539,7 +1853,7 @@ function GoalStatusBar({
   const approvalWaitingReason =
     state.approvalStatus?.reason ??
     (state.planTurnCompleted
-      ? "Waiting for a complete phased plan in goal.md."
+      ? "Waiting for a complete phased build plan."
       : "Waiting for Grok to finish the plan turn.");
  // manual completion fallback. When grok says "all done" in
  // chat but never calls goal_complete, the orchestrator stays armed
@@ -1548,16 +1862,16 @@ function GoalStatusBar({
  // scratchboard, so the user can close the cycle manually.
   const onMarkComplete = (): void => {
     if (!activeTabId || !inTauri()) return;
-    if (!window.confirm("Mark this goal as complete? The auto-continuation loop will stop. Use this when grok finished the work but didn't call the goal_complete tool itself.")) return;
+    if (!window.confirm("Mark this build as complete? The auto-continuation loop will stop. Use this when grok finished the work but did not call the completion tool itself.")) return;
     void invoke("mark_goal_complete", { tabId: activeTabId }).catch(() => {});
   };
 
   return (
     <>
-      <div className="goal-status" title={`Goal: ${state.objective.slice(0, 200)}`}>
+      <div className="goal-status" title={`Build: ${state.objective.slice(0, 200)}`}>
         <span className={`goal-status-pill goal-status-${statusLabel.toLowerCase().replace(/[^a-z]/g, "")}`}>
           <ShellIcon name="activity" size={13} />
-          Goal {statusLabel}
+          Build {statusLabel}
         </span>
         <span className="goal-status-meta">
           {state.continuationsTotal} cont · {elapsedStr}
@@ -1595,7 +1909,7 @@ function GoalStatusBar({
               type="button"
               className="goal-status-btn goal-status-btn-complete"
               onClick={onMarkComplete}
-              title="Mark goal as complete — stops the auto-continuation loop. Use when grok finished but didn't call the goal_complete tool itself."
+              title="Mark build as complete — stops the auto-continuation loop. Use when grok finished but did not call the completion tool itself."
             >
               <ShellIcon name="check" size={12} />
               <span>Mark Complete</span>
