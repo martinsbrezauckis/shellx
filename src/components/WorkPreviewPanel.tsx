@@ -384,10 +384,20 @@ export function WorkPreviewModal({
   const isRunning = effective.status === "running" || effective.status === "starting";
   const defaultViewport = effective.kind === "expoWeb" ? "phone" : "desktop";
   const [viewport, setViewport] = useState<"phone" | "tablet" | "desktop">(defaultViewport);
+  const [frameReloadSeq, setFrameReloadSeq] = useState(0);
+  const frameRevision = effective.startedAtMs ?? effective.updatedAtMs;
+  const frameSrc = useMemo(
+    () => effective.url ? cacheBustPreviewUrl(effective.url, frameRevision, frameReloadSeq) : null,
+    [effective.url, frameRevision, frameReloadSeq],
+  );
 
   useEffect(() => {
     setViewport(effective.kind === "expoWeb" ? "phone" : "desktop");
   }, [effective.kind]);
+
+  useEffect(() => {
+    setFrameReloadSeq(0);
+  }, [effective.url, frameRevision]);
 
   useEffect(() => {
     if (!open) return;
@@ -492,6 +502,9 @@ export function WorkPreviewModal({
                       <ShellIcon name="alert" size={12} />
                     </button>
                   )}
+                  <button type="button" className="settings-pill" onClick={() => setFrameReloadSeq((seq) => seq + 1)} title="Reload preview frame">
+                    <ShellIcon name="refresh" size={12} />
+                  </button>
                   <button type="button" className="settings-pill" onClick={() => void copyUrl()} title="Copy URL">
                     <ShellIcon name="copy" size={12} />
                   </button>
@@ -510,10 +523,10 @@ export function WorkPreviewModal({
             <div className={`work-preview-stage-canvas work-preview-stage-canvas-${viewport}`}>
               <div className={`work-preview-device work-preview-device-${viewport}`}>
                 <iframe
-                  key={effective.url}
+                  key={frameSrc}
                   className="work-preview-stage-frame"
                   title="Work preview"
-                  src={effective.url ?? undefined}
+                  src={frameSrc ?? undefined}
                   sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
                 />
               </div>
@@ -549,4 +562,15 @@ function normalizePreviewBrowserEvent(data: Record<string, unknown>): WorkPrevie
     column: typeof data.column === "number" ? data.column : null,
     stack: typeof data.stack === "string" ? data.stack : null,
   };
+}
+
+function cacheBustPreviewUrl(url: string, updatedAtMs: number, reloadSeq: number): string {
+  try {
+    const next = new URL(url);
+    next.searchParams.set("__shellx_preview", `${updatedAtMs}-${reloadSeq}`);
+    return next.toString();
+  } catch {
+    const joiner = url.includes("?") ? "&" : "?";
+    return `${url}${joiner}__shellx_preview=${encodeURIComponent(`${updatedAtMs}-${reloadSeq}`)}`;
+  }
 }

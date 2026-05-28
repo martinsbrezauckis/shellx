@@ -2382,7 +2382,7 @@ fn command_for_project(root: &Path, kind: &WorkPreviewKind, port: u16) -> Result
             ))
         }
         WorkPreviewKind::ExpoWeb => Ok(format!(
-            "{} --web --host localhost --port {}",
+            "{} --clear --web --host localhost --port {}",
             expo_command(root),
             port
         )),
@@ -2414,7 +2414,7 @@ fn remote_command_for_kind(kind: &WorkPreviewKind, port: u16) -> String {
             port, port, port
         ),
         WorkPreviewKind::ExpoWeb => format!(
-            "if [ -f pnpm-lock.yaml ]; then pnpm exec expo start --web --host localhost --port {}; elif [ -f yarn.lock ]; then yarn expo start --web --host localhost --port {}; else npx expo start --web --host localhost --port {}; fi",
+            "if [ -f pnpm-lock.yaml ]; then pnpm exec expo start --clear --web --host localhost --port {}; elif [ -f yarn.lock ]; then yarn expo start --clear --web --host localhost --port {}; else npx expo start --clear --web --host localhost --port {}; fi",
             port, port, port
         ),
     }
@@ -3113,6 +3113,25 @@ mod tests {
         assert!(command.contains("data-shellx-preview-doctor"));
         assert!(command.contains("inject_preview_doctor"));
         assert!(!command.contains("-m http.server"));
+    }
+
+    #[test]
+    fn expo_preview_commands_clear_metro_cache() {
+        let root = temp_dir("expo-command");
+        fs::write(
+            root.join("package.json"),
+            r#"{"dependencies":{"expo":"latest"}}"#,
+        )
+        .expect("package");
+
+        let local =
+            command_for_project(&root, &WorkPreviewKind::ExpoWeb, 4321).expect("local command");
+        assert!(local.contains("expo start --clear --web"));
+        assert!(local.contains("--port 4321"));
+
+        let remote = remote_command_for_kind(&WorkPreviewKind::ExpoWeb, 4321);
+        assert!(remote.contains("expo start --clear --web"));
+        assert!(!remote.contains("expo start --web --host"));
     }
 
     #[test]
