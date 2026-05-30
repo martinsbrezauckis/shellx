@@ -45,6 +45,12 @@ automation in one app.
 - Markdown file links open in shellX; external links open in the browser.
 - Tool output, diffs, terminals, generated images, and generated videos
   render inside the conversation.
+- File picker, paste, drag/drop, screenshots, and Send to shellX create
+  attachment chips instead of raw paths in the composer.
+- The **Assets** button opens pending attachments plus session images and
+  videos in one board.
+- On Windows, **Settings -> Desktop** can install **Send to shellX** as
+  a right-click menu item and SendTo shortcut for selected files.
 - Select text and release the mouse to copy it.
 
 ## Connections
@@ -67,11 +73,16 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
 ## Work Preview
 
 - Run generated static HTML, Node web apps, and Expo web apps from the
-  Preview tab.
+  Preview tab. The visual result opens in Preview Center.
+- Clickable HTML file links open Preview Center and start a static Work
+  Preview when the desktop host is available.
 - Preview servers bind to loopback only.
 - Preview logs stay in the right rail.
-- Preview Doctor checks HTTP status, process logs, browser errors, and
-  screenshots.
+- Preview Doctor checks HTTP status, process logs, and first-page
+  screenshots. Static previews can also surface browser errors.
+- For interactive web or Expo apps, agents must also exercise important
+  in-app tabs/buttons and inspect screenshots; a first-page Preview
+  Doctor pass is not a full app-flow pass.
 - Agents should start preview gates with host MCP \`preview_start\`, then
   run \`preview_diagnose\`; shell subagent dev servers are not accepted as
   Work Preview evidence.
@@ -102,6 +113,14 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
 - Encrypted local vault for API keys and tokens.
 - Agent access to approved host tools: filesystem, process management,
   screenshots, vision, network fetch, memory, and subagents.
+- Agents can call \`capabilities_summary\` for a compact current tool map.
+  For mutating/tab-aware host tools, the \`shellx-host-http__\` prefix is
+  preferred when advertised; \`grok-shell-host__\` remains the read-only or
+  local fallback.
+- Native Grok file tools are preferred for routine project edits. Host
+  \`fs_*\` remains for atomic or binary file operations, Windows parent-host
+  paths from remote sessions, file watching, copy/delete helpers, and
+  permission/audit-sensitive host mutations.
 - Secrets retrieved from the vault are not echoed in chat.
 
 ## Voice and media
@@ -111,6 +130,8 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
   path.
 - Grok Imagine images and videos render inline when available on your
   Grok account.
+- Attachment & Media Board lets you inspect, summarize, find in, or
+  preview attached files and generated media from the current session.
 
 ## Connectors
 
@@ -124,7 +145,8 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
 
 ## Tasks and API
 
-- Background tasks show CPU, memory, latest output, and stop controls.
+- Background tasks show CPU, memory, latest output, health counters,
+  report copy, ask-Grok diagnostics, and stop controls.
 - The shellXagent API exposes app state, prompts, screenshots, previews,
   settings, vault actions, build state, and diagnostics over loopback.
 - API access uses the local bearer token stored under \`~/.shellx\`.
@@ -138,6 +160,9 @@ Custom skills under \`~/.grok/skills/\` are loaded on session start.
 shellX also installs five compact workflow skills for common coding
 loops: build an app, fix a bug, polish UI, review a repo, and prepare
 a release.
+When Grok advertises upstream skills such as \`/check-work\`,
+\`/best-of-n\`, or \`/execute-plan\`, treat them as manual commands; shellX
+\`/build\` uses its own Agent receipts for release-grade gates.
 
 ---
 
@@ -199,6 +224,16 @@ grok streams its response into the chat. File writes show as diffs,
 image / video outputs render inline, terminal commands appear as live
 PTY blocks.
 
+## Send files to a session
+
+- Use **Attach** or paste/drop files into the composer for normal
+  attachments.
+- On Windows, open **Settings -> Desktop** and install **Send files to shellX**
+  to add **Send to shellX** in Explorer. Multi-selected files arrive as
+  composer chips in the active tab.
+- Open **Assets** from the bottom toolbar to inspect pending attachments,
+  generated images, and generated videos for the current session.
+
 ## Build Mode (/build)
 
 For multi-turn tasks where you want grok to keep going without being
@@ -223,6 +258,9 @@ Open the right rail's **Preview** tab:
 - Expo web apps need \`react-dom\` and \`react-native-web\`.
 - **Tools -> Grok environment** shows missing preview setup and the
   suggested command.
+- HTML links in chat open Preview Center directly. Other file links use
+  the same Preview Center surface for markdown, code, images, video, and
+  PDF.
 
 ## Connecting to WSL or SSH
 
@@ -254,8 +292,9 @@ messages currently land in the connector inbox.
 - **Plan**: active \`/build\` scratchboard and receipts.
 - **Tools**: MCP health, Grok environment health, and Preview setup.
 - **Git**: status, diffs, checkpoints, and worktrees.
-- **Preview**: generated web/app preview and logs.
+- **Preview**: generated web/app preview controls and logs.
 - **Files**: active project browser.
+- **Assets**: bottom-toolbar attachment and generated media board.
 
 ---
 

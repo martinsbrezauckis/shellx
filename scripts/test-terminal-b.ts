@@ -40,6 +40,7 @@ interface ToolCallContentBlock {
 function toolCallWithContent(
   toolCallId: string,
   content: ToolCallContentBlock[],
+  title: string = "Bash",
 ): RawEventFrame {
   return {
     t: Date.now(),
@@ -52,7 +53,7 @@ function toolCallWithContent(
         update: {
           sessionUpdate: "tool_call",
           toolCallId,
-          title: "Bash",
+          title,
           kind: "Other",
           status: "InProgress",
           content,
@@ -66,6 +67,7 @@ function toolCallUpdateWithContent(
   toolCallId: string,
   content: ToolCallContentBlock[],
   status: string = "Completed",
+  title: string = "Bash",
 ): RawEventFrame {
   return {
     t: Date.now(),
@@ -78,7 +80,7 @@ function toolCallUpdateWithContent(
         update: {
           sessionUpdate: "tool_call_update",
           toolCallId,
-          title: "Bash",
+          title,
           kind: "Other",
           status,
           content,
@@ -136,7 +138,7 @@ function runGroupingChecks(): void {
 
   // 1c. Existing imagePath/videoPath behavior still works alongside.
   {
-    const open = toolCallWithContent("tc-3", []);
+    const open = toolCallWithContent("tc-3", [], "image_gen");
     const upd: RawEventFrame = {
       t: Date.now(),
       kind: "grok-acp-event",
@@ -148,7 +150,7 @@ function runGroupingChecks(): void {
           update: {
             sessionUpdate: "tool_call_update",
             toolCallId: "tc-3",
-            title: "Bash",
+            title: "image_gen",
             kind: "Other",
             status: "Completed",
             rawOutput: { type: "Text", text: "Generated /tmp/out.jpg" },

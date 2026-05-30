@@ -28,6 +28,7 @@ import type {
   ThoughtGroup,
   ToolGroup,
   UiGroup,
+  UiAttachment,
   UiTextGroup,
   VendorGroup,
 } from "../lib/grouping";
@@ -337,7 +338,7 @@ function Row({
     case "vendor":
       return <VendorPill g={group} />;
     case "ui":
-      return <UserBubble g={group} tabId={tabId} />;
+      return <UserBubble g={group} tabId={tabId} onPreviewFile={onPreviewFile} />;
     case "marker":
       return <TurnCompletePill g={group} />;
     case "mcp-init":
@@ -425,7 +426,15 @@ function formatElapsed(ms: number): string {
 
 /* ─────────────── Bubbles ─────────────── */
 
-function UserBubble({ g, tabId }: { g: UiTextGroup; tabId?: string }): JSX.Element {
+function UserBubble({
+  g,
+  tabId,
+  onPreviewFile,
+}: {
+  g: UiTextGroup;
+  tabId?: string;
+  onPreviewFile: (path: string) => void;
+}): JSX.Element {
  // The "ui" channel carries user-typed prompts (from pushUiEvent).
  // We strip leading "→ prompt:" / "→ connect" prefixes for display.
   const text = g.text.replace(/^→ prompt:\s*/i, "");
@@ -443,14 +452,12 @@ function UserBubble({ g, tabId }: { g: UiTextGroup; tabId?: string }): JSX.Eleme
       </div>
     );
   }
- /* Image-attachment thumbnails. handleAttach stashes picked image
- * paths in pendingImageThumbs; send emits a synthetic ui event
- * `{ _meta:{kind:"attach-thumbs"}, thumbs:[path,...] }`, grouping.ts
- * forwards `thumbs` onto the UiTextGroup, and we render a strip of
- * 80x80 chips above the message body. Wire payload to grok stays
- * `[attached: <path>]` (promptCapabilities.image=false); the chip
- * is UX-only. */
+ /* Attachment chips are renderer-only echo metadata. The grok wire
+ * still receives hidden `[attached: <path>]` markers until the ACP
+ * image/file prompt capabilities are available. */
   const thumbs = g.thumbs ?? [];
+  const fileAttachments = (g.attachments ?? [])
+    .filter((attachment) => attachment.kind !== "image");
   return (
     <div className="turn turn-user">
       <div className="role user">
@@ -473,8 +480,66 @@ function UserBubble({ g, tabId }: { g: UiTextGroup; tabId?: string }): JSX.Eleme
           ))}
         </div>
       )}
+      {fileAttachments.length > 0 && (
+        <div
+          className="attach-files"
+          style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            marginBottom: text ? 6 : 0,
+          }}
+        >
+          {fileAttachments.map((attachment) => (
+            <AttachmentFileChip
+              key={`${attachment.kind ?? "file"}:${attachment.path}`}
+              attachment={attachment}
+              onPreviewFile={onPreviewFile}
+            />
+          ))}
+        </div>
+      )}
       {text && <div className="msg user">{text}</div>}
     </div>
+  );
+}
+
+function AttachmentFileChip({
+  attachment,
+  onPreviewFile,
+}: {
+  attachment: UiAttachment;
+  onPreviewFile: (path: string) => void;
+}): JSX.Element {
+  const label = attachment.label || baseName(attachment.path);
+  const icon: ShellIconName = attachment.kind === "text" ? "file" : "paperclip";
+  return (
+    <button
+      type="button"
+      className="attach-file-chip"
+      title={attachment.path}
+      onClick={() => onPreviewFile(attachment.path)}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        maxWidth: 260,
+        height: 28,
+        padding: "0 9px",
+        border: "1px solid var(--border, #2a2a2a)",
+        borderRadius: 999,
+        background: "var(--bg-elev, #111)",
+        color: "var(--fg, #ddd)",
+        cursor: "pointer",
+        fontFamily: "var(--sans)",
+        fontSize: "var(--fs-ui-xs)",
+      }}
+    >
+      <ShellIcon name={icon} size={13} />
+      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {label}
+      </span>
+    </button>
   );
 }
 

@@ -611,7 +611,7 @@ pub fn ensure_user_agents_md_shellx_section() -> Result<bool, String> {
         String::new()
     };
 
-    let cleaned = strip_shellx_managed_blocks(&existing);
+    let cleaned = clean_legacy_shellx_agents_guidance(&strip_shellx_managed_blocks(&existing));
     let new_content = append_managed(&cleaned, &block);
 
     if new_content == existing {
@@ -652,7 +652,7 @@ fn managed_agents_block(section_body: &str) -> String {
 
 fn refresh_shellx_agents_managed_block(existing: &str) -> String {
     let block = managed_agents_block(MANAGED_AGENTS_MD_SECTION);
-    let cleaned = strip_shellx_managed_blocks(existing);
+    let cleaned = clean_legacy_shellx_agents_guidance(&strip_shellx_managed_blocks(existing));
     append_managed(&cleaned, &block)
 }
 
@@ -690,26 +690,64 @@ fn strip_shellx_managed_blocks(existing: &str) -> String {
     out
 }
 
+const LEGACY_SEARCH_TOOL_GUIDANCE: &str = "When you need the full schema for a host-MCP tool you don't remember,\ncall `grok-shell-host__search_tool({full_inventory: true})` for a\none-shot dump of every spec.";
+
+const UPDATED_SEARCH_TOOL_GUIDANCE: &str = "When you need shellX host orientation, call `shellx-host-http__capabilities_summary`\nwhen advertised, otherwise `grok-shell-host__capabilities_summary`. For exact schemas,\nuse targeted `search_tool` queries. Use `full_inventory: true` only for debugging\nschema drift.";
+
+fn clean_legacy_shellx_agents_guidance(existing: &str) -> String {
+    existing.replace(LEGACY_SEARCH_TOOL_GUIDANCE, UPDATED_SEARCH_TOOL_GUIDANCE)
+}
+
 const MANAGED_AGENTS_MD_SECTION: &str = "\
 ## shellX host MCP - current runtime rules
 
 These rules override older shellX transport notes elsewhere in this
 file. User edits outside this managed block are preserved.
 
-- Call `grok-shell-host__get_session_info` once when you need cwd,
-  transport, WSL distro, SSH host, Linux home, or tab id.
+- If `shellx-host-http__capabilities_summary` or
+  `grok-shell-host__capabilities_summary` is advertised, call it
+  directly before broad tool discovery when you need the current
+  shellX capability map. Use `get_session_info` for cwd, transport,
+  WSL distro, SSH host, Linux home, or tab id. Use targeted
+  `search_tool` queries only for exact schemas; do not dump
+  full_inventory as routine discovery.
+- For ordinary project files, use native Grok file tools first:
+  `write`, `read_file`, `list_dir`, `grep`, and `search_replace`.
+  On Local Windows, host-MCP `fs_*` reaches the same Windows
+  filesystem, but keep it for atomic large/hot writes, binary/base64
+  reads or writes, explicit shellX host permission/audit, `fs_watch`,
+  copy/delete helpers, or Windows parent-host paths from remote
+  sessions.
 - For WSL and SSH files under `/home/...`, use native Grok file tools:
   `write`, `read_file`, `list_dir`, `grep`, and `search_replace`.
   shellX routes those ACP fs calls to the target Linux filesystem.
 - Use host-MCP `fs_*` only for Windows-form paths such as
   `C:\\Users\\...` on the parent Windows host. Do not use host-MCP
   `fs_*` for POSIX `/home/...` paths.
-- On Local Windows, native file tools and host-MCP `fs_*` both target
-  the Windows filesystem; prefer `grok-shell-host__fs_write` for large
-  or hot writes because it is atomic.
+- For mutating or tab-aware host tools, prefer the
+  `shellx-host-http__...` qualified name when it is advertised. Use
+  `grok-shell-host__...` for read-only discovery or as the local
+  fallback.
+- For status, health, logs, and audit evidence, do not guess from chat
+  text only. Use direct shellX tools: `shellx_health`,
+  `session_tooling`, `grok_environment`, `event_log`,
+  `process_list`/`process_stats`, `build_state`, `build_receipts`,
+  `preview_state`, `preview_logs`, and `preview_diagnose`.
+- For attached image files, do not call `read_file`; use
+  `shellx-host-http__vision_describe` when advertised, otherwise
+  `grok-shell-host__vision_describe`.
+- For generated HTML, web, Vite, Next, or Expo UI work, use shellX Work
+  Preview instead of starting preview servers only through shell
+  commands. Call `preview_start`, then `preview_diagnose`; inspect any
+  returned `screenshotPath` with `vision_describe` and fix reported
+  errors before claiming visual success.
 - `run_terminal_command` and `monitor` are unavailable in shellX ACP
-  sessions. Use `grok-shell-host__Agent`, then poll with
-  `Agent_status`, `Agent_output`, or `Agent_poll_all`.
+  sessions. Use shellX `Agent`, then poll with `Agent_status`,
+  `Agent_output`, or `Agent_poll_all`.
+- Grok 0.2.x may advertise `/check-work`, `/best-of-n`, and
+  `/execute-plan`. Do not use those upstream task-tool skills as hard
+  `/build` gates in shellX ACP mode. For `/build`, use shellX `Agent`
+  reviewer/verifier runs and record receipts instead.
 - For code-changing `/build` work, run a reviewer/check subagent before
   `build_complete`; include an AI slop / wiring audit for unwired UI,
   placeholders, fake success paths, missing bridges, config drift, and
@@ -717,8 +755,8 @@ file. User edits outside this managed block are preserved.
 - When `_meta.voiceReplyExpected` is true, answer in 1-3 plain spoken
   sentences: no markdown tables, code blocks, long paths, or URLs.
 - If MCP marketplace servers failed to connect, ask once: \"Want me to
-  install the missing tools?\" If yes, use `grok-shell-host__Agent` to
-  install Node.js for npx servers or uv for uvx servers.
+  install the missing tools?\" If yes, use shellX `Agent` to install
+  Node.js for npx servers or uv for uvx servers.
 ";
 
 /// WSL grok reads `~/.grok/AGENTS.md` at session start for
@@ -1374,6 +1412,28 @@ mod tests {
         assert_eq!(out.matches(MANAGED_AGENTS_END).count(), 1);
         assert!(out.contains("prefix"));
         assert!(!out.contains("stale"));
+    }
+
+    #[test]
+    fn refresh_agents_block_replaces_legacy_full_inventory_hint() {
+        let source = format!(
+            "# Behavior rules\n\n{}\n\n{}",
+            LEGACY_SEARCH_TOOL_GUIDANCE,
+            concat!(
+                "<!-- BEGIN shellX-managed (old marker) -->\n",
+                "stale managed body\n",
+                "<!-- END shellX-managed -->\n",
+            )
+        );
+
+        let out = refresh_shellx_agents_managed_block(&source);
+
+        assert!(!out.contains(LEGACY_SEARCH_TOOL_GUIDANCE));
+        assert!(!out.contains("stale managed body"));
+        assert!(out.contains(UPDATED_SEARCH_TOOL_GUIDANCE));
+        assert!(out.contains("call it\n  directly before broad tool discovery"));
+        assert_eq!(out.matches(MANAGED_AGENTS_BEGIN_PREFIX).count(), 1);
+        assert_eq!(out.matches(MANAGED_AGENTS_END).count(), 1);
     }
 
     #[test]

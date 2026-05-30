@@ -64,7 +64,19 @@ OS-keyring-backed encrypted vault at `~/.shellx/vault.enc`
 (ChaCha20-Poly1305 AEAD; master key in Linux secret-service / macOS
 Keychain / Windows Credential Manager).
 
-Access via the host MCP server `grok-shell-host`:
+Access via the host MCP server. In many shellX sessions the same host
+tools are advertised with both `grok-shell-host__` and
+`shellx-host-http__` qualified names. Prefer `shellx-host-http__...`
+for mutating or tab-aware tools when it is advertised because that
+transport carries the active tab and permission gate. Use
+`grok-shell-host__...` for read-only discovery or as the local fallback.
+
+If `shellx-host-http__capabilities_summary` or
+`grok-shell-host__capabilities_summary` is advertised, call it directly
+for a compact current tool map before broad tool discovery. Use targeted
+`search_tool` queries only for exact schemas; avoid `full_inventory`
+unless debugging tool-schema drift, because the result is large and Grok
+may store it as a session artifact instead of showing it clearly in chat.
 
 - `secret_get { path: "vault:<key>" }` → returns the value. The
   `vault:` prefix is REQUIRED; absent prefix = lookup error.
@@ -96,6 +108,25 @@ The same `grok-shell-host` server exposes:
 
 Use these for orchestration across turns (spawn → watch → signal).
 Native bash tools cannot manage processes across calls.
+
+For ordinary project files, prefer native Grok file tools:
+`write`, `read_file`, `list_dir`, `grep`, and `search_replace`. On Local
+Windows those native tools and host-MCP `fs_*` reach the same project
+filesystem, so host `fs_*` is mainly for cases where shellX adds value:
+atomic large or hot writes, binary/base64 reads or writes, Windows
+parent-host paths from WSL/SSH sessions, explicit host permission/audit,
+`fs_watch`, and copy/delete helpers. For WSL/SSH `/home/...` paths, use
+native Grok file tools; host `fs_*` rejects POSIX paths by design.
+
+Direct status/evidence tool map:
+- `shellx_health` — debug API liveness.
+- `session_tooling` — Tools/Grok-environment health rows for the tab.
+- `grok_environment` — Grok version, MCP health, skills, trust, trace.
+- `event_log` — recent shellX event frames for audit evidence.
+- `process_list` / `process_stats` — host-tracked task state.
+- `build_state` / `build_receipts` — `/build` status and gate evidence.
+- `preview_state` / `preview_logs` / `preview_diagnose` — Work Preview
+  status, server logs, browser/runtime diagnosis, and screenshot path.
 
 ## 4. Multi-tab session model
 
@@ -166,20 +197,46 @@ guessing how to run a generated app.
 - Work Preview binds generated app servers to loopback and owns the
   port. Use a separate public server only when the user explicitly asks
   for one.
-- Start or restart Work Preview with `grok-shell-host__preview_start`.
+- Start or restart Work Preview with `shellx-host-http__preview_start`
+  when that prefix is advertised, otherwise `grok-shell-host__preview_start`.
   Do not ask an Agent shell subtask to run `npm run dev`, `npx expo
   start`, Vite, or Next just to satisfy the Work Preview gate; that
   bypasses shellX-owned preview state and Preview Doctor will still
   see `idle`.
 - If a preview is blank, errors, or exits early, call
-  `grok-shell-host__preview_diagnose`, read the HTTP result, process
-  status, and log tail, then inspect the returned `screenshotPath`
-  with `grok-shell-host__vision_describe` when present. Fix the app
-  before reporting success.
+  `shellx-host-http__preview_diagnose` when available, otherwise
+  `grok-shell-host__preview_diagnose`; read the HTTP result, process
+  status, and log tail, then inspect the host-captured returned
+  `screenshotPath` with `shellx-host-http__vision_describe` when
+  available, otherwise `grok-shell-host__vision_describe`. Do not
+  provide your own screenshot path for this gate. Fix the app before
+  reporting success.
 
 When presenting generated files in chat, use normal Markdown file links
 inside the active cwd. shellX routes previewable HTML/app targets through
 Work Preview and other document types through the file preview.
+
+## 5.1.1. Attachments and session media
+
+User attachments arrive as normal prompt context plus `[attached: <path>]`
+markers. Text attachments may also arrive as embedded context. Treat both as
+user-provided files and inspect them before making claims.
+
+- The composer shows attachment chips for file picker, paste, drag/drop,
+  screenshots, and Send to shellX; do not ask the user to retype paths that are
+  already attached.
+- On Windows, Send files to shellX is an opt-in Settings -> Desktop integration.
+  Files delivered that way are still normal user attachments; inspect them
+  through their provided paths.
+- The bottom **Assets** button opens the Attachment & Media Board with pending
+  attachments plus generated images/videos from the current session.
+- For attached image files, do not call `read_file`; it reads UTF-8 text and
+  will fail on PNG/JPEG bytes. Use `shellx-host-http__vision_describe` when
+  available, otherwise `grok-shell-host__vision_describe`.
+- If asked to compare or find content in attached files, use the paths and
+  embedded context already provided instead of asking the user to upload again.
+- Generated media paths under `~/.grok/sessions/.../images` and
+  `~/.grok/sessions/.../videos` render in chat and in the Assets board.
 
 ## 5.2. Outside connectors
 
@@ -202,6 +259,7 @@ and reply channels.
 ## 5.5. Long-horizon `/build` execution discipline
 
 Build Mode wakes you back up after every turn until you call
+`shellx-host-http__build_complete` when available, otherwise
 `grok-shell-host__build_complete`. While in a `/build` run:
 
 - Do NOT emit `stopReason="end_turn"` until verification gates have
@@ -216,12 +274,12 @@ Build Mode wakes you back up after every turn until you call
   only valid mid-build end-of-turn.
 - When fully complete (every phase `Status: DONE`, every `- [ ]`
   rewritten to `- [x]`), you MUST call
-  `grok-shell-host__build_complete`. Saying "all steps done" in chat
-  is NOT a completion signal — shellX re-injects continuations until
-  the tool fires.
-- For UI/web/app work, call `grok-shell-host__preview_start`, then
-  `grok-shell-host__preview_diagnose`; use its `screenshotPath` with
-  `grok-shell-host__vision_describe` when present, and fix every
+  `build_complete` through the preferred shellX host prefix. Saying
+  "all steps done" in chat is NOT a completion signal — shellX
+  re-injects continuations until the tool fires.
+- For UI/web/app work, call `preview_start`, then `preview_diagnose`;
+  prefer the `shellx-host-http__` qualified name when advertised. Use
+  the returned `screenshotPath` with `vision_describe` and fix every
   reported issue before calling `build_complete`.
 
 The scratchboard path is the exact `build.<tab>.<run>.md` path shellX
@@ -258,20 +316,23 @@ places:
   state PASS or FAIL. Build success ≠ behavior proof.
 - Use file:line evidence for factual claims.
 
-## 7.5. Bundled grok skills that DON'T work in ACP mode
+## 7.5. Bundled grok skills that DON'T work as shellX gates in ACP mode
 
-`implement`, `review`, `design`, `pr-babysit`, `best-of-n` all
-dispatch subagents via the upstream `task` tool. That tool is
-documented but NOT present in your `_meta.tools` when grok is invoked
-over ACP stdio in shellX. Invoking these skills
-hangs on "launching subagent…" indefinitely.
+`implement`, `review`, `design`, `pr-babysit`, `best-of-n`,
+`execute-plan`, and the verifier path inside `check-work` all depend on
+upstream task/subagent plumbing. That plumbing is not a reliable shellX
+Build Mode gate when grok is invoked over ACP stdio in shellX.
 
 When the user asks for work those skills normally do, execute the
 steps directly or use shellX's own `Agent` / `Agent_status` /
 `Agent_output` MCP tools when they are available. Do not invoke the
-bundled `task`-tool skills themselves. Tell the user once that the
-`task`-tool-based skills are unavailable in this ACP context and move
-on. Do not retry those bundled skills.
+bundled task-tool skills themselves for `/build` gates. Tell the user
+once that those upstream task-tool skills are unavailable or degraded in
+this ACP context and move on. Do not retry those bundled skills.
+
+Grok 0.2.x may advertise `/check-work`; in shellX it can still be useful
+as a manual self-check, but it is not proof that a reviewer/verifier
+subagent ran. For `/build`, use shellX `Agent` receipts instead.
 
 For `/build`, act as the manager for the approved Build Mode scratchboard:
 use `Agent` with `subagent_type: implementer` for scoped code work,

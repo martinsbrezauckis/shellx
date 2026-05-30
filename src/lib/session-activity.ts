@@ -1,4 +1,4 @@
-import { extractGeneratedMediaPath } from "./media-paths";
+import { extractGeneratedMediaPath, shouldScanGeneratedMediaOutput } from "./media-paths";
 
 export type ActivityKind =
   | "searched"
@@ -523,14 +523,6 @@ function actionsFromToolOutput({
     }
   }
   return out;
-}
-
-function shouldScanGeneratedMediaOutput(title: string, kind: "image" | "video"): boolean {
-  const normalized = title.toLowerCase();
-  if (kind === "image") {
-    return /\b(image|image_gen|image_edit|screenshot)\b/.test(normalized);
-  }
-  return /\b(video|video_gen|movie|clip)\b/.test(normalized);
 }
 
 function textFragmentsFromToolUpdate(update: { rawOutput?: unknown; content?: unknown } | undefined): string[] {

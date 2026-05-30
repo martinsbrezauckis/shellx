@@ -490,9 +490,8 @@ mod scrub_tests {
 
     #[test]
     fn redacts_common_vendor_prefixes_in_free_field() {
-        let slack_sample = ["xox", "b-123456789012-ABCDEFGHIJKLMNO"].concat();
         let mut v = json!({
-            "slack": slack_sample,
+            "slack": concat!("xox", "b-123456789012-ABCDEFGHIJKLMNO"),
             "gitlab": "glpat-1234567890abcdef",
             "google": "AIzaSyB1234567890abcdef",
             "sendgrid": "SG.abcdefghi.1234567890abcdef",

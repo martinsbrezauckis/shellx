@@ -1,6 +1,6 @@
 //! src-tauri/src/mcp_health.rs — #322 MCP marketplace tool-health probe.
 //!
-//! Per-tab background probing of every enabled marketplace entry's launcher
+//! Per-tab background probing of every installed+enabled marketplace entry's launcher
 //! binary. Replaces the static `● ready` pill in PluginsModal with live
 //! status. Spawned post-`session/new` so the prompt path is not blocked.
 //!
@@ -376,6 +376,10 @@ pub fn probe_transport_key(is_wsl: bool, is_ssh: bool, transport: &ProbeTranspor
     "local".to_string()
 }
 
+fn should_probe_entry(entry: &crate::mcp_marketplace::McpEntryStatus) -> bool {
+    matches!(entry.kind, crate::mcp_marketplace::McpKind::Stdio) && entry.installed && entry.enabled
+}
+
 /// Spawn launcher probes for stdio marketplace entries against the current
 /// tab's transport. Bounded concurrent (max 4 in flight). Updates the
 /// shared `MarketplaceHealth` state asynchronously.
@@ -414,10 +418,7 @@ pub fn schedule_probes_for_tab_with_hint(
                 return;
             }
         };
-        let probe_targets: Vec<_> = entries
-            .into_iter()
-            .filter(|e| matches!(e.kind, crate::mcp_marketplace::McpKind::Stdio))
-            .collect();
+        let probe_targets: Vec<_> = entries.into_iter().filter(should_probe_entry).collect();
 
         // WSL/SSH paths: real probes via wsl.exe / ssh.
         if is_wsl || is_ssh {
@@ -598,5 +599,54 @@ mod tests {
         } else {
             assert!(!hint.contains("winget"));
         }
+    }
+
+    fn entry(
+        id: &str,
+        kind: crate::mcp_marketplace::McpKind,
+        installed: bool,
+        enabled: bool,
+    ) -> crate::mcp_marketplace::McpEntryStatus {
+        crate::mcp_marketplace::McpEntryStatus {
+            id: id.to_string(),
+            name: id.to_string(),
+            tier: crate::mcp_marketplace::McpTier::S,
+            kind,
+            description: String::new(),
+            category: String::new(),
+            vault_keys: Vec::new(),
+            installed,
+            enabled,
+            keys_available: Vec::new(),
+            all_keys_present: true,
+        }
+    }
+
+    #[test]
+    fn probes_only_installed_enabled_stdio_entries() {
+        assert!(should_probe_entry(&entry(
+            "playwright",
+            crate::mcp_marketplace::McpKind::Stdio,
+            true,
+            true,
+        )));
+        assert!(!should_probe_entry(&entry(
+            "disabled",
+            crate::mcp_marketplace::McpKind::Stdio,
+            true,
+            false,
+        )));
+        assert!(!should_probe_entry(&entry(
+            "uninstalled",
+            crate::mcp_marketplace::McpKind::Stdio,
+            false,
+            true,
+        )));
+        assert!(!should_probe_entry(&entry(
+            "http",
+            crate::mcp_marketplace::McpKind::Http,
+            true,
+            true,
+        )));
     }
 }

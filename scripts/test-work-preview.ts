@@ -57,11 +57,25 @@ assert(
 );
 clearWorkPreviewBrowserEvents("preview-tab");
 recordWorkPreviewBrowserEvent("preview-tab", {
+  t: 1000,
   level: "error",
   message: "ReferenceError: missingState is not defined",
   source: "index.html",
+  url: "http://127.0.0.1:5000/index.html?__shellx_preview=1",
 });
 assert(getWorkPreviewBrowserEvents("preview-tab").length === 1, "browser events are retained for Preview Doctor");
+assert(
+  getWorkPreviewBrowserEvents("preview-tab", { url: "http://127.0.0.1:5000/index.html", sinceMs: 999 }).length === 1,
+  "browser events are kept for the current preview origin and generation",
+);
+assert(
+  getWorkPreviewBrowserEvents("preview-tab", { url: "http://127.0.0.1:5001/index.html", sinceMs: 999 }).length === 0,
+  "browser events from old preview origins are ignored",
+);
+assert(
+  getWorkPreviewBrowserEvents("preview-tab", { url: "http://127.0.0.1:5000/index.html", sinceMs: 2000 }).length === 0,
+  "browser events from old preview generations are ignored",
+);
 clearWorkPreviewBrowserEvents("preview-tab");
 assert(getWorkPreviewBrowserEvents("preview-tab").length === 0, "browser events can be cleared per tab");
 

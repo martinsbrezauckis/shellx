@@ -1070,11 +1070,12 @@ impl GrokAcpSession {
             }
         }
 
-        // grok DOES NOT accept a `--permission-mode <mode>` flag. That
-        // CLI shape is not grok's. Verified against
-        // `grok --help`: grok only exposes `--always-approve` (a bare
-        // boolean flag — auto-approve every tool execution) plus
-        // `--allow <RULE>` / `--deny <RULE>` for fine-grained rules.
+        // Keep the shellX autonomy surface intentionally two-state.
+        // Grok 0.2.x exposes a top-level `--permission-mode`, but
+        // shellX still uses the narrower, verified `--always-approve`
+        // plus explicit `--allow` rules for Auto because the UI only
+        // promises Confirm vs Auto and older builds accepted that shape.
+        //
         // So the autonomy chip is a 2-state surface:
         // None | Some("confirm") → no flag — grok prompts (default)
         // Some("alwaysApprove") | Some("bypassPermissions") | Some("auto")
@@ -1164,7 +1165,7 @@ impl GrokAcpSession {
             }
         }
 
-        // Muzzle the broken `run_terminal_command`.
+        // Muzzle the broken native shell tools.
         // // Empirical: grok 0.1.211/0.1.212 over ACP stdio on Windows
         // issues `terminal/create`, gets a terminalId back from shellX,
         // and then NEVER follows up with `terminal/output` or
@@ -1175,15 +1176,16 @@ impl GrokAcpSession {
         // run_terminal_command hung at 314s / 312s / 193s.
         // // The host-MCP replacements (grok-shell-host__fs_*, __Agent for
         // subagent-shelled work, __clock_now, __sleep_ms, __net_fetch)
-        // cover every legitimate use of run_terminal_command in shellX.
+        // cover every legitimate use of run_terminal_command / monitor
+        // in shellX.
         // AGENTS.md is updated to redirect grok to them. As belt-and-
-        // braces, also strip `run_terminal_command` from grok's exposed
-        // tool list at spawn so the model literally cannot pick it.
+        // braces, also strip the native shell tools from grok's exposed
+        // tool list at spawn so the model literally cannot pick them.
         // // Per grok-build's --help: "--disallowed-tools <TOOLS> Built-in
         // tools to remove (comma-separated)". The flag is global —
         // affects every prompt in this grok subprocess.
         perm_args.push("--disallowed-tools".to_string());
-        perm_args.push("run_terminal_command".to_string());
+        perm_args.push("run_terminal_command,monitor".to_string());
 
         let marketplace_env = crate::mcp_marketplace::marketplace_env_vars().await;
         let marketplace_env_names: Vec<String> =
@@ -2587,6 +2589,9 @@ fn stderr_line_indicates_auth_failure(line: &str) -> bool {
     // Strip common ANSI escape prefixes for trace-format lines so the
     // pattern matches "[31mERROR[0m ... Authorization required" too.
     let stripped = lower.replace('\u{001b}', " ");
+    if stderr_line_is_mcp_auth_noise(&stripped) {
+        return false;
+    }
     let needles = [
         "401 unauthorized",
         "authorization required",
@@ -2599,25 +2604,26 @@ fn stderr_line_indicates_auth_failure(line: &str) -> bool {
         "auth expired",
         "refresh token expired",
         "could not refresh access token",
-        "cli-chat-proxy.grok.com", // any cli-chat-proxy errror is auth-adjacent
     ];
     for n in &needles {
         if stripped.contains(n) {
-            // cli-chat-proxy line on its own is informational; require
-            // a co-occurring "401" / "error" / "fail" to avoid false
-            // positives like "POST cli-chat-proxy.grok.com/...".
-            if *n == "cli-chat-proxy.grok.com"
-                && !(stripped.contains("401")
-                    || stripped.contains("unauthorized")
-                    || stripped.contains("error")
-                    || stripped.contains("fail"))
-            {
-                continue;
-            }
             return true;
         }
     }
     false
+}
+
+fn stderr_line_is_mcp_auth_noise(stripped: &str) -> bool {
+    let mcp_scoped = stripped.contains("mcp server")
+        || stripped.contains("rmcp::transport")
+        || stripped.contains("workertransport")
+        || stripped.contains("streamablehttpclientworker")
+        || stripped.contains("worker quit with fatal");
+    let auth_scoped = stripped.contains("oauth authorization required")
+        || stripped.contains("authorization required")
+        || stripped.contains("auth(authorizationrequired)")
+        || stripped.contains("auth error:");
+    mcp_scoped && auth_scoped && !stripped.contains("cli-chat-proxy.grok.com")
 }
 
 fn mark_auth_unhealthy(tab_id: &str, hint: &str) {
@@ -4967,6 +4973,41 @@ mod tests {
             "error should explain the missing remote HOME boundary, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn stderr_auth_scanner_keeps_cli_auth_failures() {
+        assert!(stderr_line_indicates_auth_failure(
+            "ERROR request failed: 401 unauthorized from cli-chat-proxy.grok.com"
+        ));
+        assert!(stderr_line_indicates_auth_failure(
+            "could not refresh access token: bearer token expired"
+        ));
+    }
+
+    #[test]
+    fn stderr_auth_scanner_ignores_mcp_oauth_failures() {
+        assert!(!stderr_line_indicates_auth_failure(
+            "WARN MCP server init failed server=cloudflare-bindings error=MCP server \
+             'cloudflare-bindings' handshake failed: Auth error: OAuth authorization required"
+        ));
+        assert!(!stderr_line_indicates_auth_failure(
+            "ERROR worker quit with fatal: Transport channel closed, when Auth(AuthorizationRequired)"
+        ));
+    }
+
+    #[test]
+    fn stderr_auth_scanner_ignores_cli_chat_proxy_trace_payloads() {
+        assert!(!stderr_line_indicates_auth_failure(
+            r#"INFO sampling_request{request_id=abc model="grok-build" \
+               base_url="https://cli-chat-proxy.grok.com/v1" auth_type="bearer"}: \
+               event="sse_chunk" data={"type":"response.completed","error":null}"#
+        ));
+        assert!(!stderr_line_indicates_auth_failure(
+            r#"2026-05-30T19:55:20.294013Z INFO sampling_request{request_id=abc \
+               model="grok-build" base_url="https://cli-chat-proxy.grok.com/v1" \
+               auth_type="bearer"}: event="sse_chunk" data={"sequence_number":10}"#
+        ));
     }
 
     #[test]

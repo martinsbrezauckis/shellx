@@ -322,7 +322,8 @@ impl GoalOrchestrator {
             `security-auditor` only for security-sensitive changes. For \
             test coverage or plan-alignment checks, use `general-purpose` \
             with a focused task. Do not invoke Grok Build's bundled `/implement`, `/review`, \
-            or `/check` commands from ACP mode; use the Agent tool directly. \
+            `/check`, `/check-work`, `/design`, `/best-of-n`, or `/execute-plan` \
+            commands from ACP mode; use the Agent tool directly. \
             The review task should ask for bugs, missing tests, security \
             issues when relevant, mismatches with the approved objective, \
             and AI slop/wiring failures: unwired controls, placeholders, \

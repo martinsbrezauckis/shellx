@@ -14,7 +14,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 
 import { createPortal } from "react-dom";
 import type { RawEventFrame } from "../types/acp";
 import type { UiGroup } from "../lib/grouping";
-import { extractSessionMedia, type SessionMediaItem, type SessionMediaKind } from "../lib/session-media";
+import { extractSessionAttachments, extractSessionMedia, type SessionMediaItem, type SessionMediaKind } from "../lib/session-media";
 import { HashAutocomplete, type HashItem } from "./HashAutocomplete";
 import type { AutonomyMode } from "./Header";
 import { ConnectionPicker, type ConnectionPreset } from "./ConnectionPicker";
@@ -29,7 +29,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 // Push-to-talk dictation via xAI Grok STT.
 import { MicButton, type MicButtonHandle } from "./MicButton";
 import { SafeImg, SafeVideo } from "./MediaPreview";
-import { ShellIcon, TransportIcon } from "./icons";
+import { ShellIcon, TransportIcon, type ShellIconName } from "./icons";
 
 export type BottomTab = "Chat" | "Terminal" | "Images" | "Videos" | "Logs" | "Stderr";
 
@@ -40,6 +40,28 @@ const VOICE_OWNER_KEY = "shellx.voiceChatMode.activeTab";
 interface VoiceSessionTab {
   tabId: string;
   title: string;
+}
+
+export type ComposerAttachmentKind = "image" | "text" | "file";
+
+export interface ComposerAttachmentChip {
+  id: string;
+  path: string;
+  label: string;
+  kind: ComposerAttachmentKind;
+  inlined?: boolean;
+}
+
+function attachmentBaseName(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const last = normalized.split("/").filter(Boolean).pop();
+  return last || path;
+}
+
+function attachmentIcon(kind: ComposerAttachmentKind): ShellIconName {
+  if (kind === "image") return "image";
+  if (kind === "text") return "file";
+  return "paperclip";
 }
 
 function readStoredVoiceMode(voiceKey: string): boolean {
@@ -200,6 +222,8 @@ export function BottomPanel({
  // parent (file picker via tauri-plugin-dialog).
   onAttach,
   onAttachScreenshot,
+  attachments = [],
+  onRemoveAttachment,
  // drag-and-drop from the right-rail Files
  // tab. App routes to the same processAttachedPaths pipeline the
  // dialog uses.
@@ -207,6 +231,7 @@ export function BottomPanel({
   onAttachFiles,
   onPreviewFile,
   onOpenActivity,
+  onOpenAssetBoard,
  // PR/issue list for `#N` autocomplete.
   hashItems = [],
  // grok's available_commands — drives "/" autocomplete in PromptComposer.
@@ -250,6 +275,8 @@ export function BottomPanel({
   onTabChange?: (t: BottomTab) => void;
   onAttach?: () => void;
   onAttachScreenshot?: () => void;
+  attachments?: ComposerAttachmentChip[];
+  onRemoveAttachment?: (id: string) => void;
  /** same as onAttach but with explicit paths
  * (no dialog). Wired from App.processAttachedPaths. */
   onAttachPaths?: (paths: string[]) => void;
@@ -260,6 +287,8 @@ export function BottomPanel({
   onPreviewFile?: (path: string) => void;
  /** Open the session Activity Browser in the App-level preview surface. */
   onOpenActivity?: () => void;
+ /** Open the session attachment/media board. */
+  onOpenAssetBoard?: () => void;
   hashItems?: HashItem[];
  /** grok's slash commands from `available_commands_update`
  * events. Each `{name, description?}` becomes an autocomplete entry
@@ -300,8 +329,10 @@ export function BottomPanel({
     else setLocalTab(next);
   };
   const sessionMedia = useMemo(() => extractSessionMedia(groups), [groups]);
+  const sessionAttachments = useMemo(() => extractSessionAttachments(groups), [groups]);
   const imageCount = sessionMedia.images.length;
   const videoCount = sessionMedia.videos.length;
+  const assetCount = attachments.length + sessionAttachments.length + imageCount + videoCount;
 
   useEffect(() => {
     try { localStorage.setItem(TAB_KEY, tab); } catch { /* no-op */ }
@@ -355,6 +386,19 @@ export function BottomPanel({
         >
           <ShellIcon name="trace" size={14} />
           <span className="btab-label">Trace</span>
+        </button>
+        <button
+          type="button"
+          className="btab btab-action"
+          onClick={onOpenAssetBoard}
+          disabled={!onOpenAssetBoard}
+          aria-disabled={!onOpenAssetBoard}
+          title={assetCount === 0 ? "Assets - attach files and review session media" : `Assets - ${assetCount} attachment/media item${assetCount === 1 ? "" : "s"}`}
+          aria-label={assetCount === 0 ? "Assets - attach files and review session media" : `Assets - ${assetCount} attachment/media items`}
+        >
+          <ShellIcon name="paperclip" size={14} />
+          <span className="btab-label">Assets</span>
+          <span className="bcnt">{assetCount}</span>
         </button>
         <button
           type="button"
@@ -425,6 +469,8 @@ export function BottomPanel({
             connected={connected}
             onAttach={onAttach}
             onAttachScreenshot={onAttachScreenshot}
+            attachments={attachments}
+            onRemoveAttachment={onRemoveAttachment}
             onAttachPaths={onAttachPaths}
             onAttachFiles={onAttachFiles}
             hashItems={hashItems}
@@ -605,6 +651,8 @@ function PromptComposer({
   connected,
   onAttach,
   onAttachScreenshot,
+  attachments = [],
+  onRemoveAttachment,
   onAttachPaths,
   onAttachFiles,
   hashItems = [],
@@ -635,6 +683,8 @@ function PromptComposer({
   connected: boolean;
   onAttach?: () => void;
   onAttachScreenshot?: () => void;
+  attachments?: ComposerAttachmentChip[];
+  onRemoveAttachment?: (id: string) => void;
  /** drag-and-drop attach from Files tab. */
   onAttachPaths?: (paths: string[]) => void;
  /** OS file drops / clipboard file paste. */
@@ -911,6 +961,33 @@ function PromptComposer({
     recomputeSlashState(v, cur);
   }
 
+  function setAttachmentPrompt(next: string): void {
+    onPromptChange(prompt.trim().length > 0 ? `${prompt.trim()}\n\n${next}` : next);
+    setTimeout(() => {
+      taRef.current?.focus();
+      const len = (prompt.trim().length > 0 ? `${prompt.trim()}\n\n${next}` : next).length;
+      taRef.current?.setSelectionRange(len, len);
+    }, 0);
+  }
+
+  function promptInspectAttachments(): void {
+    const fileWord = attachments.length === 1 ? "attached file" : "attached files";
+    setAttachmentPrompt(`Inspect the ${fileWord}. Summarize what each contains and point out anything important I should notice.`);
+  }
+
+  function promptSummarizeAttachments(): void {
+    const fileWord = attachments.length === 1 ? "attached file" : "attached files";
+    setAttachmentPrompt(`Summarize the ${fileWord}. Keep it concise and include filenames when comparing them.`);
+  }
+
+  function promptFindInAttachments(): void {
+    const query = window.prompt("Find what in the attached files?");
+    const trimmed = query?.trim();
+    if (!trimmed) return;
+    const fileWord = attachments.length === 1 ? "attached file" : "attached files";
+    setAttachmentPrompt(`Find "${trimmed}" in the ${fileWord}. Report every relevant match with filename and context.`);
+  }
+
   function selectSlashItem(name: string) {
     if (slashAnchor == null) return;
     const ta = taRef.current;
@@ -1111,6 +1188,49 @@ function PromptComposer({
             else console.info("[Composer] file URI dropped (no handler):", paths);
           }
         }}>
+        {attachments.length > 0 && (
+          <div className="composer-attachments" aria-label="Pending attachments">
+            {attachments.map((attachment) => (
+              <span
+                key={attachment.id}
+                className={`composer-attachment-chip composer-attachment-${attachment.kind}`}
+                title={attachment.path}
+              >
+                <ShellIcon name={attachmentIcon(attachment.kind)} size={13} />
+                <span className="composer-attachment-name">
+                  {attachment.label || attachmentBaseName(attachment.path)}
+                </span>
+                {attachment.inlined && (
+                  <span className="composer-attachment-meta">inline</span>
+                )}
+                <button
+                  type="button"
+                  className="composer-attachment-remove"
+                  onClick={() => onRemoveAttachment?.(attachment.id)}
+                  disabled={!onRemoveAttachment}
+                  aria-label={`Remove ${attachment.label || attachment.path}`}
+                  title="Remove attachment"
+                >
+                  <ShellIcon name="close" size={12} />
+                </button>
+              </span>
+            ))}
+            <span className="composer-attachment-actions" aria-label="Attachment actions">
+              <button type="button" className="composer-attachment-action" onClick={promptInspectAttachments}>
+                <ShellIcon name="search" size={12} />
+                Inspect
+              </button>
+              <button type="button" className="composer-attachment-action" onClick={promptSummarizeAttachments}>
+                <ShellIcon name="file" size={12} />
+                Summarize
+              </button>
+              <button type="button" className="composer-attachment-action" onClick={promptFindInAttachments}>
+                <ShellIcon name="search" size={12} />
+                Find
+              </button>
+            </span>
+          </div>
+        )}
  {/* textarea + mirror overlay for slash-command syntax
  * highlighting. The mirror is a read-only div behind the
  * textarea that re-renders the same text with `/word` tokens
@@ -1354,7 +1474,7 @@ function PromptComposer({
  // enabled even with empty prompt — its job is to stop the
  // recording AND send the transcribed text. Without this,
  // user couldn't tap Send first time before any text exists.
-            disabled={!connected || (!isSending && !anyRecording && prompt.trim() === "")}
+            disabled={!connected || (!isSending && !anyRecording && prompt.trim() === "" && attachments.length === 0)}
             title={
               isSending ? "Abort (Ctrl+C)"
               : anyRecording ? "Stop mic + transcribe + send"

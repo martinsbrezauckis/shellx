@@ -324,7 +324,10 @@ model badge, daily-cost.
 
 Current debug-visible UI snapshot. Older drafts called this
 `/state/sidebar`; the wired route is `/state/ui`. `POST /state/ui`
-accepts a partial patch, mainly for tab control surfaces.
+accepts a partial patch for tab control surfaces. The renderer mirrors
+these patches through the debug event stream, so authenticated test
+drivers can switch right/bottom tabs before taking `/screenshot`
+evidence.
 
 ```ts
 {
@@ -333,14 +336,16 @@ accepts a partial patch, mainly for tab control surfaces.
   autonomy: string | null;
   bottomTab: string | null;
   leftTab: string | null;
-  rightTab: "Tasks" | "Tooling" | "Plan" | "Files" | null;
+  rightTab: "Tasks" | "Tooling" | "Git" | "Preview" | "Plan" | "Files" | null;
+  activeTabId: string | null;
 }
 ```
 
 The wired detail variants are `GET /state/skills`, `GET /state/github`,
 and `GET /state/github/items`. `GET /state/projects` and
 `GET /state/files` remain roadmap routes. RightRail writes
-`rightTab` here when the user selects Tasks, Tooling, Plan, or Files.
+`rightTab` here when the user selects Tasks, Tooling, Git, Preview,
+Plan, or Files.
 
 ### 3.5 `GET /state/footer`
 
@@ -406,7 +411,9 @@ Read-only mirror of the right-rail Tooling tab. It returns the active
 tab transport/session metadata, global MCP desired state, and the
 environment-specific health rows last produced for that tab. It does
 not create missing sessions or start probes; `/connect` schedules probes
-for live debug-api sessions.
+for live debug-api sessions. If `tabId` is omitted, shellX resolves the
+current UI `activeTabId` and falls back to `default` only when no active
+tab is known.
 
 ```ts
 {
@@ -825,7 +832,6 @@ POST /preview/work/diagnose?tabId=<tab>
 {
   tabId?: string;
   browserEvents?: Array<{ level: string; message: string; source?: string; url?: string }>;
-  screenshotPath?: string;
 }
 ```
 
@@ -838,9 +844,9 @@ accepted by this API.
 
 Preview Doctor (`/preview/work/diagnose`) inspects the active preview
 URL, HTTP status/body, preview process logs, optional shellX-captured
-browser events, and visual evidence. If `screenshotPath` is omitted,
-the host tries to capture the rendered preview URL with Edge, Chrome,
-or Chromium and returns a PNG path that agents can pass to
+browser events, and visual evidence. The host captures the rendered
+preview URL itself with Edge, Chrome, or Chromium when available and
+returns a PNG path that agents can pass to
 `vision_describe`. `/build` reviewers and verifiers should use it for
 UI/web/app work before `build_complete`.
 

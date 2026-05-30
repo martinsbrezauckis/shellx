@@ -30,7 +30,7 @@
  * than 15s during reasoning; promptId is authoritative).
  */
 import type { RawEventFrame, SessionUpdatePayload } from "../types/acp";
-import { extractGeneratedMediaPath } from "./media-paths";
+import { extractGeneratedMediaPath, shouldScanGeneratedMediaOutput } from "./media-paths";
 
 export type UiGroupKind =
   | "thought"
@@ -294,6 +294,13 @@ export interface UiTextGroup extends UiGroupBase {
  * / undefined for normal ui events.
  */
   thumbs?: string[];
+  attachments?: UiAttachment[];
+}
+
+export interface UiAttachment {
+  path: string;
+  label?: string;
+  kind?: "image" | "text" | "file";
 }
 
 export type UiGroup =
@@ -628,8 +635,12 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
             }
           }
           for (const t of texts) {
-            if (!g.imagePath) g.imagePath = extractGeneratedMediaPath(t, "image");
-            if (!g.videoPath) g.videoPath = extractGeneratedMediaPath(t, "video");
+            if (!g.imagePath && shouldScanGeneratedMediaOutput(g.title, "image")) {
+              g.imagePath = extractGeneratedMediaPath(t, "image");
+            }
+            if (!g.videoPath && shouldScanGeneratedMediaOutput(g.title, "video")) {
+              g.videoPath = extractGeneratedMediaPath(t, "video");
+            }
           }
  /* also capture the plain-text body so fs_read / bash /
  * web_fetch / fs_list_dir results actually surface in the
@@ -1064,13 +1075,10 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
  * Extract the text field when present, else stringify the whole
  * payload as before.
  *
- * an additional shape is
- * { _meta: { kind: "attach-thumbs" }, thumbs: [path, ...] }
- * emitted by App.send when the user sent a message with image
- * attachments. We surface the paths on the UiTextGroup so the
- * UserBubble renders thumbnail chips alongside the text. The
- * `text` field is empty for thumb-only frames so the chip row
- * stands alone above any subsequent prompt echo. */
+ * Additional attachment echo metadata may include `thumbs` (legacy
+ * image-only shape) or `attachments` (current chip shape). We surface
+ * these on UiTextGroup so UserBubble renders file/image chips without
+ * coupling the UI to hidden `[attached: ...]` wire markers. */
       const p: any = ev.payload;
       if (p && typeof p === "object" && p?._meta?.kind === "connection-metadata") {
         return;
@@ -1082,19 +1090,44 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
           : (p && typeof p === "object")
             ? ""
             : String(p);
-      if (text.length === 0 && !(p && typeof p === "object" && Array.isArray(p.thumbs))) {
+      if (
+        text.length === 0
+        && !(p && typeof p === "object" && Array.isArray(p.thumbs))
+        && !(p && typeof p === "object" && Array.isArray(p.attachments))
+      ) {
         return;
       }
+      const attachments: UiAttachment[] | undefined =
+        (p && typeof p === "object" && Array.isArray(p.attachments))
+          ? p.attachments
+              .filter((x: unknown): x is UiAttachment =>
+                Boolean(x)
+                && typeof x === "object"
+                && typeof (x as UiAttachment).path === "string")
+              .map((x: UiAttachment) => ({
+                path: x.path,
+                label: typeof x.label === "string" ? x.label : undefined,
+                kind: x.kind === "image" || x.kind === "text" || x.kind === "file"
+                  ? x.kind
+                  : "file",
+              }))
+          : undefined;
       const thumbs: string[] | undefined =
         (p && typeof p === "object" && Array.isArray(p.thumbs))
           ? (p.thumbs.filter((x: unknown): x is string => typeof x === "string"))
-          : undefined;
+          : attachments
+            ?.filter((x) => x.kind === "image")
+            .map((x) => x.path);
+      if (text.length === 0 && (!thumbs || thumbs.length === 0) && (!attachments || attachments.length === 0)) {
+        return;
+      }
       groups.push({
         id: nextId(),
         kind: "ui",
         t: ev.t,
         text,
         thumbs,
+        attachments,
         sourceFirstIndex: evIdx,
         sourceLastIndex: evIdx,
       });

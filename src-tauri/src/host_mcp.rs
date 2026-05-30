@@ -395,13 +395,10 @@ pub async fn run_stdio() -> std::io::Result<()> {
                 continue;
             }
         };
-        let ctx2 = ctx.clone();
-        let stdout2 = stdout.clone();
-        // Each request runs concurrently so a long fs_watch attach can
-        // overlap with future tools/list calls.
-        tokio::spawn(async move {
-            dispatch(req, &ctx2, stdout2).await;
-        });
+        // MCP stdio peers expect ordered JSON-RPC replies. Handling one
+        // frame at a time also avoids detached write tasks racing process
+        // shutdown when stdin closes after a short probe.
+        dispatch(req, &ctx, stdout.clone()).await;
     }
     Ok(())
 }
@@ -534,70 +531,19 @@ const SUPPORTED_MCP_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-0
 /// Keep compact (10-15 lines). Per-tool nuance lives in each tool's
 /// `description` field, not here.
 const MCP_USAGE_INSTRUCTIONS: &str = "\
-shellX-host MCP — session usage rules:
-
-1. DO NOT ASSUME — verify with a tool call before acting. If a required \
-tool is missing or returns an error, name the tool and stop; do not \
-fabricate a result or paper over with a workaround.
-
-2. ONE image_gen/video_gen per user request unless the user explicitly \
-asks for variants. shellX renders every generation as a separate inline \
-card; multiple parallel calls look like a UI bug.
-
-3. Filesystem rules per transport (3-transport tested):\n\
-   - **Local Windows**: native write/read_file/list_dir AND host-MCP fs_* \
-both operate on the Windows host filesystem. Prefer host-MCP fs_write for \
-large or hot writes because it is atomic.\n\
-   - **WSL**: USE NATIVE `write` / `read_file` / `list_dir` / \
-`search_replace` for files on the WSL distro (`/home/...`). Grok runs \
-INSIDE the distro and shellX also routes ACP fs calls to the WSL ext4 \
-filesystem. `image_gen` writes to the WSL fs. Avoid host-MCP fs_* for \
-Linux paths; it is reserved for Windows parent-host paths.\n\
-   - **SSH**: USE NATIVE `write` / `read_file` / `list_dir` / \
-`search_replace` for files on the remote Linux machine (`/home/...`). \
-shellX routes Grok's ACP fs calls over SSH to the remote filesystem. \
-Avoid host-MCP fs_* for remote Linux paths; use host-MCP fs_* only with \
-Windows-form paths when intentionally editing files on the parent Windows \
-host. `run_terminal_command` on SSH is intentionally blocked because the \
-PTY bridge spawns on Windows, not on the remote.\n\
-   - **Host-MCP `fs_*` is Windows-host-only**: those tools run on the \
-Windows host and REJECT POSIX-absolute paths (`/home/...`, `/root/...`) \
-with an explanatory error — call them ONLY with Windows-form paths \
-(`C:\\Users\\you\\proj\\file.txt`) for files on the Windows parent host.\n\
-   - **run_terminal_command / monitor** are unavailable in shellX ACP \
-sessions. Use `grok-shell-host__Agent` plus Agent_status / Agent_output \
-for shell work.
-
-4. The native `task` tool is broken in ACP mode. Use grok-shell-host__Agent \
-for subagent fan-out (Agent + Agent_status + Agent_output + Agent_poll_all).
-
-5. For long-horizon work started by `/build`, use build_receipt, \
-build_checkpoint, preview_start, preview_diagnose, and build_complete. For UI/web/app \
-work, call preview_start to activate shellX Work Preview, then call preview_diagnose \
-before build_complete; do not start preview servers through Agent shell commands; \
-when preview_diagnose returns screenshotPath, inspect it with vision_describe. \
-The older goal_complete tool is legacy compatibility only.
-
-6. Other host-MCP tools: mem_* for cross-tab durable state, OAuth-first \
-vision_describe for image understanding, secret_get for vault keys, \
-clock_now/sleep_ms for timing, net_fetch for typed HTTP, x_search for X post search, fs_grep for content search. \
-**get_session_info** returns the tab's cwd + transport + linuxHome in \
-ONE call — use it instead of spawning a subagent or probing fs_list_dir \
-when you need to know where you're running. Subagents inherit the same \
-tab_id so they see the same answer.
-
-7. After media gen, don't re-embed the file path in your reply — shellX \
-already renders the image/video inline in the tool card.
-
-8. When the host reports MCP servers failed to connect (e.g. \
-\"shellx-mp__context7 (connection failed)\", \"shellx-mp__fetch\", etc): \
-just ask the user once, briefly — \"Want me to install the missing tools?\" \
-Don't list commands, paths, or timing estimates. If they say yes, run \
-the appropriate installer for the missing prereq family (npx-based \
-servers need Node.js; uvx-based servers need Python's `uv`). Use \
-`grok-shell-host__Agent` for installer shell work. \
-No shellX restart needed after install — the next /connect re-probes. \
-Emit the offer ONCE per session per missing prereq family.";
+shellX-host MCP quick map:
+- Verify with tools; if a required tool is missing or errors, name it and stop.
+- First call `capabilities_summary`; use `get_session_info` for cwd/transport; use `search_tool` for exact schemas only.
+- Files: use native ACP tools for project files. Use host `fs_*` for Windows-host paths, binary/atomic writes, watch/copy/delete, or parent-host access from WSL/SSH.
+- WSL/SSH: use native ACP tools for `/home/...` or remote paths; host `fs_*` rejects POSIX absolute paths.
+- Shell work: use `Agent`, `Agent_status`, `Agent_output`, `Agent_poll_all`; native `task`, `run_terminal_command`, and `monitor` are not reliable in shellX ACP.
+- Status: `shellx_health`=debug API live; `session_tooling`=tool board; `grok_environment`=Grok/MCP/skill/trust diagnostics; `event_log`=recent frames; `process_list`/`process_stats`=host tasks.
+- Build: `build_state`=run status/gates; `build_receipts`=audit evidence; `build_receipt`=record evidence; `build_checkpoint`=local checkpoint; `build_complete`=finish; `goal_complete`=legacy.
+- Work Preview: `preview_start`=start/restart; `preview_state`=current URL/status; `preview_logs`=stdout/stderr; `preview_diagnose`=browser/runtime/screenshot evidence; inspect screenshotPath with `vision_describe`.
+- Attached images: call HTTP `vision_describe` with the path; do not use `read_file` on PNG/JPEG/WebP/GIF/BMP bytes.
+- Other: `mem_*`=cross-tab memory; `secret_get`/`secret_set`=vault; `net_fetch`=allow-listed HTTP; `x_search`=X posts; `clock_now`/`sleep_ms`=timing.
+- Media generation: one image/video per user request unless variants are requested; shellX renders output cards automatically.
+- Missing MCP prerequisites: ask once, \"Want me to install the missing tools?\"; install only after user agrees.";
 
 fn handle_initialize(params: &Value) -> Value {
     let requested = params.get("protocolVersion").and_then(|v| v.as_str());
@@ -637,6 +583,51 @@ fn handle_tools_list() -> Value {
 /// adding a new tool means editing one place + adding a dispatch arm.
 fn tool_specs() -> Vec<Value> {
     vec![
+        json!({
+            "name": "capabilities_summary",
+            "description": "Return a compact shellX capability map for this tab: preferred MCP prefixes, native tools to use/avoid, host tool categories, Agent personas, Work Preview flow, marketplace discovery, and /build gate rules. Call this directly before broad tool discovery; use search_tool only for exact schemas.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "shellx_health",
+            "description": "Check shellX debug API liveness. Use before debug API-backed evidence reads when shellX state tools look unavailable.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "session_tooling",
+            "description": "Read the active tab's Tools/Grok-environment board snapshot: desired MCP servers, health rows, and session metadata. Use for MCP/tool status checks.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": { "type": "string", "description": "Optional tab id. Omit to use the active MCP tab." }
+                }
+            }
+        }),
+        json!({
+            "name": "grok_environment",
+            "description": "Read Grok diagnostics for the tab: version, MCP health, skills/plugins/instructions, trust, and trace availability. Use when Grok tooling/config looks wrong.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": { "type": "string", "description": "Optional tab id. Omit to use the active MCP tab." },
+                    "force": { "type": "boolean", "description": "Refresh diagnostics instead of using cached state.", "default": false },
+                    "cwd": { "type": "string", "description": "Optional cwd override for diagnostics." }
+                }
+            }
+        }),
+        json!({
+            "name": "event_log",
+            "description": "Read recent shellX event frames for audit/debug evidence. Filter by tabId and sinceMs when checking what just happened.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": { "type": "string", "description": "Optional tab id. Omit for all tabs." },
+                    "allTabs": { "type": "boolean", "description": "When true, ignore the active MCP tab and return all tabs.", "default": false },
+                    "limit": { "type": "number", "description": "Max events to return.", "default": 200 },
+                    "sinceMs": { "type": "number", "description": "Only events newer than this unix-ms timestamp." }
+                }
+            }
+        }),
         json!({
             "name": "fs_watch",
             "description": "Start a filesystem watch under the session cwd or /tmp. Events stream as notifications/message frames with shape {kind, path, t}. Use `process_list` or the debug-api WS to consume events when calling embedded; standalone test uses /tools/fs_watch + WebSocket on the published shellXagent loopback port.",
@@ -1083,16 +1074,17 @@ fn tool_specs() -> Vec<Value> {
         // OR pull the full inventory in one shot via `full_inventory=true`.
         // The small default result set remains intentional so ordinary
         // searches do not dump the full tool catalog into every prompt.
-        // `full_inventory` is the explicit opt-in for planning passes.
+        // `full_inventory` is retained for schema debugging; normal
+        // planning should call capabilities_summary plus targeted queries.
         json!({
             "name": "search_tool",
-            "description": "Search the host MCP tool inventory. Default: returns up to `limit` (5) matching specs ranked by query substring + a `total_hidden_tools` count so the agent can decide whether to drill in. Pass `full_inventory=true` to dump ALL tool specs in one call (use when planning a multi-step task — better than fishing for names).",
+            "description": "Search the host MCP tool inventory for exact schemas. Default: returns up to `limit` (5) matching specs ranked by query substring + a `total_hidden_tools` count. For broad orientation call capabilities_summary first. Pass `full_inventory=true` only for debugging exhaustive schema drift; it is large and may be stored by Grok as a session JSON artifact.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Case-insensitive substring matched against tool name + description. Omit (or empty) to list all in order.", "default": ""},
                     "limit": {"type": "number", "description": "Maximum specs to return when full_inventory=false. Default 5.", "default": 5},
-                    "full_inventory": {"type": "boolean", "description": "When true, return EVERY tool spec — bypasses `limit` and `query` filtering. Use for upfront discovery before planning.", "default": false}
+                    "full_inventory": {"type": "boolean", "description": "When true, return EVERY tool spec. Debug-only; prefer capabilities_summary plus targeted search_tool queries for normal planning.", "default": false}
                 }
             }
         }),
@@ -1345,6 +1337,26 @@ fn tool_specs() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "build_state",
+            "description": "Read the active /build run state for this tab: status, gates, blocker, scratchboard path, and current phase. Use before deciding the next build action.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": { "type": "string", "description": "Optional tab id. Omit to use the active MCP tab." }
+                }
+            }
+        }),
+        json!({
+            "name": "build_receipts",
+            "description": "Read /build audit receipts for this tab. Use to verify checkpoint/review/verification/preview gates before build_complete.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": { "type": "string", "description": "Optional tab id. Omit to use the active MCP tab." }
+                }
+            }
+        }),
+        json!({
             "name": "build_checkpoint",
             "description": "Create a local git checkpoint for the active Build Mode run and record a trusted checkpointCreated receipt. This never pushes or mutates a remote.",
             "inputSchema": {
@@ -1388,8 +1400,28 @@ fn tool_specs() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "preview_state",
+            "description": "Read current Work Preview state for this tab: status, URL, cwd, kind, command, and error. Use before restarting a preview.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": { "type": "string", "description": "Optional tab id. Omit to use the active MCP tab." }
+                }
+            }
+        }),
+        json!({
+            "name": "preview_logs",
+            "description": "Read Work Preview stdout/stderr log tail for this tab. Use after preview_start fails or when the rendered app is stale.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tabId": { "type": "string", "description": "Optional tab id. Omit to use the active MCP tab." }
+                }
+            }
+        }),
+        json!({
             "name": "preview_diagnose",
-            "description": "Run shellX Preview Doctor for the active tab. Use after preview_start for UI, web, HTML, Vite, Next, or Expo work. Returns preview URL, command, HTTP status, page title, server logs, browser/runtime events captured by shellX, pass/fail issues, and when possible a rendered preview screenshotPath that can be passed directly to vision_describe. For /build UI work, run this before build_complete and fix every reported error.",
+            "description": "Run shellX Preview Doctor for the active tab. Use after preview_start for UI, web, HTML, Vite, Next, or Expo work. Returns preview URL, command, HTTP status, page title, server logs, pass/fail issues, and when possible a rendered first-page screenshotPath that can be passed directly to vision_describe. Static previews may also report browser/runtime events captured by shellX. For interactive web or Expo apps, also manually exercise important in-app tabs/buttons or ask for a targeted screenshot; Preview Doctor does not click through app flows by itself. For /build UI work, run this before build_complete and fix every reported error.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1401,10 +1433,6 @@ fn tool_specs() -> Vec<Value> {
                         "type": "array",
                         "description": "Optional browser events captured by shellX UI. Usually omitted by agents.",
                         "items": { "type": "object" }
-                    },
-                    "screenshotPath": {
-                        "type": "string",
-                        "description": "Optional screenshot override path. Usually omit this so Preview Doctor captures the rendered preview URL itself."
                     }
                 }
             }
@@ -1483,6 +1511,11 @@ async fn handle_tools_call(
     let arguments_snapshot = arguments.clone();
 
     let result = match name.as_str() {
+        "capabilities_summary" => tool_capabilities_summary(ctx, tab_id).await,
+        "shellx_health" => tool_shellx_health().await,
+        "session_tooling" => tool_session_tooling(arguments, tab_id).await,
+        "grok_environment" => tool_grok_environment(arguments, tab_id).await,
+        "event_log" => tool_event_log(arguments, tab_id).await,
         "fs_watch" => tool_fs_watch(arguments, ctx).await,
         "fs_unwatch" => tool_fs_unwatch(arguments, ctx).await,
         "process_list" => tool_process_list(ctx).await,
@@ -1545,7 +1578,11 @@ async fn handle_tools_call(
         // with a specific failure list if anything is unchecked.
         "goal_complete" => tool_goal_complete(arguments, ctx, tab_id).await,
         "build_receipt" => tool_build_receipt(arguments, ctx, tab_id).await,
+        "build_state" => tool_build_state(arguments, tab_id).await,
+        "build_receipts" => tool_build_receipts(arguments, tab_id).await,
         "build_checkpoint" => tool_build_checkpoint(arguments, ctx, tab_id).await,
+        "preview_state" => tool_preview_state(arguments, ctx, tab_id).await,
+        "preview_logs" => tool_preview_logs(arguments, ctx, tab_id).await,
         "build_complete" => tool_build_complete(arguments, ctx, tab_id).await,
         other => Err(format!("unknown tool: {}", other)),
     };
@@ -1816,6 +1853,253 @@ fn write_mcp_event_line(tool_name: &str, args: &Value, ok: bool) {
 }
 
 // ───── individual tools ─────
+
+async fn tool_capabilities_summary(
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
+    let session = tool_get_session_info(ctx, tab_id)
+        .await
+        .unwrap_or_else(|e| json!({ "error": e }));
+    Ok(json!({
+        "kind": "shellx_capabilities_summary",
+        "session": session,
+        "firstCallGuidance": [
+            "Use get_session_info for cwd and transport before choosing local/WSL/SSH file paths.",
+            "Use search_tool with a targeted query for exact schemas.",
+            "Avoid full_inventory as routine discovery; it is large and Grok may store it as a session artifact."
+        ],
+        "qualifiedNameRule": {
+            "preferredForMutations": "shellx-host-http__<tool> when advertised",
+            "readOnlyOrFallback": "grok-shell-host__<tool>",
+            "why": "The HTTP MCP transport carries the active tab and permission gate for write-class and tab-aware host tools."
+        },
+        "nativeTools": {
+            "good": ["read_file", "write", "search_replace", "list_dir", "grep", "search_tool", "web_fetch", "web_search", "todo_write"],
+            "preferredForRoutineProjectFiles": ["read_file", "write", "search_replace", "list_dir", "grep"],
+            "useWithCare": ["scheduler_*", "enter_plan_mode", "exit_plan_mode", "image_gen", "video_gen", "image_edit"],
+            "avoidInShellxAcp": ["run_terminal_command", "monitor", "task", "get_or_wait_for_command_subagent_output", "wait_for_commands_or_subagents", "kill_command_or_subagent", "ask_user_question"]
+        },
+        "fileToolGuidance": {
+            "routineProjectFiles": "Use native read_file/write/search_replace/list_dir/grep first.",
+            "useHostFsFor": ["atomic large or hot writes", "binary/base64 reads or writes", "Windows parent-host paths from WSL/SSH sessions", "explicit shellX host permission/audit", "fs_watch notifications", "copy/delete helpers"],
+            "remotePosixPaths": "For WSL/SSH /home/... paths, use native Grok file tools routed by shellX ACP."
+        },
+        "hostToolCategories": [
+            { "category": "orientation", "tools": ["capabilities_summary", "get_session_info", "search_tool"] },
+            { "category": "status", "tools": ["shellx_health", "session_tooling", "grok_environment", "event_log"], "note": "Use these for health, MCP/tool status, trace availability, and UI-visible audit events." },
+            { "category": "filesystem", "tools": ["fs_exists", "fs_stat", "fs_read", "fs_read_binary", "fs_write", "fs_append", "fs_copy", "fs_delete", "fs_list_dir", "fs_grep", "fs_watch", "fs_unwatch"], "note": "Host fs_* is for Windows-host paths and cases needing atomic/binary/watch/copy/delete/audit behavior; native Grok file tools are preferred for routine project file edits." },
+            { "category": "process", "tools": ["process_list", "process_stats", "process_attach_stdout", "process_signal"] },
+            { "category": "secrets", "tools": ["secret_get", "secret_set", "secret_delete"], "note": "Use vault:<key> with secret_get; never echo plaintext." },
+            { "category": "agents", "tools": ["Agent", "Agent_status", "Agent_output", "Agent_poll_all", "Agent_kill", "Agent_metrics"], "personas": crate::subagent::PERSONA_NAMES },
+            { "category": "build", "tools": ["build_state", "build_receipts", "build_receipt", "build_checkpoint", "build_complete"] },
+            { "category": "preview", "tools": ["preview_start", "preview_state", "preview_logs", "preview_diagnose"], "note": "For UI/web/Expo work use shellX Work Preview before build_complete." },
+            { "category": "mediaAndSearch", "tools": ["vision_describe", "voice_stt_v2", "voice_tts", "x_search", "net_fetch"] },
+            { "category": "memoryAndTime", "tools": ["mem_set", "mem_get", "mem_list", "mem_delete", "clock_now", "sleep_ms"] },
+            { "category": "security", "tools": ["security_scan"] }
+        ],
+        "marketplaceDiscovery": {
+            "prefixPattern": "shellx-mp-*",
+            "commonServers": ["shellx-mp-playwright", "shellx-mp-context7", "shellx-mp-fetch", "shellx-mp-git", "shellx-mp-memory"],
+            "rule": "Use native search_tool for exact marketplace tool names and schemas; do not assume an installed connector is healthy until session tooling or Grok environment reports it."
+        },
+        "buildGateRule": "Do not use upstream task-based /check-work, /best-of-n, /execute-plan, /implement, /review, or /design as shellX /build hard gates. Use shellX Agent receipts plus Preview Doctor evidence.",
+    }))
+}
+
+fn mcp_arg_tab_id(args: &Value) -> Option<String> {
+    args.get("tabId")
+        .or_else(|| args.get("tab_id"))
+        .or_else(|| args.get("tab"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn resolve_mcp_tab_id_from_args(
+    args: &Value,
+    tab_id: Option<&str>,
+    tool_name: &str,
+) -> Result<String, String> {
+    match mcp_arg_tab_id(args) {
+        Some(tab) => Ok(tab),
+        None => resolve_mcp_tab_id(tab_id, tool_name),
+    }
+}
+
+fn mcp_arg_bool(args: &Value, key: &str) -> bool {
+    match args.get(key) {
+        Some(Value::Bool(v)) => *v,
+        Some(Value::Number(n)) => n.as_i64() == Some(1),
+        Some(Value::String(s)) => matches!(s.trim(), "1" | "true" | "yes" | "on"),
+        _ => false,
+    }
+}
+
+fn debug_api_base_url() -> Result<String, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
+    let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
+    let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
+        .unwrap_or_else(|_| "5757".to_string());
+    Ok(format!("http://127.0.0.1:{}", port.trim()))
+}
+
+fn debug_api_token() -> Result<String, String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
+    let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
+    std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("read shellxagent.token: {}", e))
+}
+
+async fn debug_api_get_json(path_and_query: &str, timeout_secs: u64) -> Result<Value, String> {
+    let url = format!("{}{}", debug_api_base_url()?, path_and_query);
+    let token = debug_api_token()?;
+    let send = reqwest::Client::new().get(url).bearer_auth(token).send();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), send)
+        .await
+        .map_err(|_| format!("debug-api GET {} timed out", path_and_query))?
+        .map_err(|e| format!("debug-api GET {} failed: {}", path_and_query, e))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if status.is_success() {
+        serde_json::from_str(&text)
+            .map_err(|e| format!("debug-api GET {} JSON: {}", path_and_query, e))
+    } else {
+        Err(format!(
+            "debug-api GET {} returned {}: {}",
+            path_and_query, status, text
+        ))
+    }
+}
+
+async fn debug_api_get_json_optional_not_found(
+    path_and_query: &str,
+    timeout_secs: u64,
+) -> Result<Option<Value>, String> {
+    let url = format!("{}{}", debug_api_base_url()?, path_and_query);
+    let token = debug_api_token()?;
+    let send = reqwest::Client::new().get(url).bearer_auth(token).send();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), send)
+        .await
+        .map_err(|_| format!("debug-api GET {} timed out", path_and_query))?
+        .map_err(|e| format!("debug-api GET {} failed: {}", path_and_query, e))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if status.is_success() {
+        serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|e| format!("debug-api GET {} JSON: {}", path_and_query, e))
+    } else if status == reqwest::StatusCode::NOT_FOUND {
+        Ok(None)
+    } else {
+        Err(format!(
+            "debug-api GET {} returned {}: {}",
+            path_and_query, status, text
+        ))
+    }
+}
+
+async fn tool_shellx_health() -> Result<Value, String> {
+    let url = format!("{}/health", debug_api_base_url()?);
+    let send = reqwest::Client::new().get(url).send();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), send)
+        .await
+        .map_err(|_| "debug-api health timed out".to_string())?
+        .map_err(|e| format!("debug-api health failed: {}", e))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("debug-api health returned {}: {}", status, text));
+    }
+    let health: Value =
+        serde_json::from_str(&text).map_err(|e| format!("debug-api health JSON: {}", e))?;
+    let ok = health.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    Ok(json!({
+        "content": [{ "type": "text", "text": if ok { "shellX debug API healthy" } else { "shellX debug API unhealthy" } }],
+        "structuredContent": health,
+        "isError": !ok
+    }))
+}
+
+async fn tool_session_tooling(args: Value, tab_id: Option<&str>) -> Result<Value, String> {
+    let tab = resolve_mcp_tab_id_from_args(&args, tab_id, "session_tooling")?;
+    let data = debug_api_get_json(
+        &format!(
+            "/state/session_tooling?tabId={}",
+            encode_query_component(&tab)
+        ),
+        10,
+    )
+    .await?;
+    Ok(json!({
+        "content": [{ "type": "text", "text": format!("session_tooling for {}", tab) }],
+        "structuredContent": data,
+        "isError": false
+    }))
+}
+
+async fn tool_grok_environment(args: Value, tab_id: Option<&str>) -> Result<Value, String> {
+    let tab = resolve_mcp_tab_id_from_args(&args, tab_id, "grok_environment")?;
+    let mut path = format!(
+        "/state/grok_environment?tabId={}&force={}",
+        encode_query_component(&tab),
+        if mcp_arg_bool(&args, "force") {
+            "1"
+        } else {
+            "0"
+        }
+    );
+    if let Some(cwd) = args
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        path.push_str("&cwd=");
+        path.push_str(&encode_query_component(cwd));
+    }
+    let data = debug_api_get_json(&path, 60).await?;
+    Ok(json!({
+        "content": [{ "type": "text", "text": format!("grok_environment for {}", tab) }],
+        "structuredContent": data,
+        "isError": false
+    }))
+}
+
+async fn tool_event_log(args: Value, tab_id: Option<&str>) -> Result<Value, String> {
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(200)
+        .clamp(1, 1000);
+    let tab = if mcp_arg_bool(&args, "allTabs") {
+        None
+    } else {
+        mcp_arg_tab_id(&args).or_else(|| tab_id.map(ToOwned::to_owned))
+    };
+    let mut path = format!("/events/recent?limit={}&envelope=1", limit);
+    if let Some(tab) = tab {
+        path.push_str("&tabId=");
+        path.push_str(&encode_query_component(&tab));
+    }
+    if let Some(since) = args.get("sinceMs").and_then(|v| v.as_i64()) {
+        path.push_str("&sinceMs=");
+        path.push_str(&since.to_string());
+    }
+    let data = debug_api_get_json(&path, 10).await?;
+    let count = data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+    Ok(json!({
+        "content": [{ "type": "text", "text": format!("event_log returned {} event(s)", count) }],
+        "structuredContent": data,
+        "isError": false
+    }))
+}
 
 struct FsWatchRegistration {
     handle: tokio::task::JoinHandle<()>,
@@ -5731,7 +6015,8 @@ async fn tool_net_fetch(args: Value) -> Result<Value, String> {
 // ───── search_tool (inventory discovery) ─────
 //
 // Two modes:
-// * full_inventory=true → returns every spec in `tools/list` shape.
+// * full_inventory=true → returns every spec in `tools/list` shape
+//   (debugging only; capabilities_summary is the normal broad map).
 // * (default) → returns at most `limit` (default 5)
 // matching specs ranked by substring, plus
 // a `total_hidden_tools` count so grok
@@ -5739,8 +6024,8 @@ async fn tool_net_fetch(args: Value) -> Result<Value, String> {
 //
 // The default mode is intentionally narrow to match grok's existing
 // "fishing" pattern (it's used to seeing a short list and asking for
-// more); the `full_inventory` flag is the escape hatch for upfront
-// discovery during planning.
+// more); the `full_inventory` flag is the escape hatch for exhaustive
+// schema drift debugging, not routine planning.
 
 /// `search_tool` body. See module-level notes.
 async fn tool_search_tool(args: Value) -> Result<Value, String> {
@@ -5800,7 +6085,7 @@ async fn tool_search_tool(args: Value) -> Result<Value, String> {
         "query": query,
         "limit": limit,
         "hint": if hidden > 0 {
-            format!("{} tools matched but were hidden — pass full_inventory=true to see all, or narrow `query`", hidden)
+            format!("{} tools matched but were hidden - narrow `query` for exact schemas; call capabilities_summary for a compact map; use full_inventory=true only for exhaustive schema debugging", hidden)
         } else {
             String::new()
         },
@@ -6899,6 +7184,11 @@ async fn git_text_direct(cwd: &str, args: &[&str], timeout_secs: u64) -> Result<
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        use crate::winproc::NoWindowExt as _;
+        cmd.no_window();
+    }
     let output = tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output())
         .await
         .map_err(|_| format!("git {:?} timed out after {}s", args, timeout_secs))?
@@ -7033,7 +7323,7 @@ async fn post_preview_diagnose_to_debug_api(tab_id: &str, body: Value) -> Result
         .bearer_auth(token.trim())
         .json(&body)
         .send();
-    let response = tokio::time::timeout(std::time::Duration::from_secs(20), send)
+    let response = tokio::time::timeout(std::time::Duration::from_secs(75), send)
         .await
         .map_err(|_| "debug-api preview_diagnose post timed out".to_string())?
         .map_err(|e| format!("debug-api preview_diagnose post failed: {}", e))?;
@@ -7068,7 +7358,7 @@ async fn post_preview_start_to_debug_api(tab_id: &str, body: Value) -> Result<Va
         .bearer_auth(token.trim())
         .json(&body)
         .send();
-    let response = tokio::time::timeout(std::time::Duration::from_secs(45), send)
+    let response = tokio::time::timeout(std::time::Duration::from_secs(240), send)
         .await
         .map_err(|_| "debug-api preview_start post timed out".to_string())?
         .map_err(|e| format!("debug-api preview_start post failed: {}", e))?;
@@ -7190,6 +7480,116 @@ async fn resolve_preview_cwd(ctx: &Arc<HostMcpContext>, tab: &str) -> Option<Str
         .map(ToOwned::to_owned)
 }
 
+async fn tool_build_state(args: Value, tab_id: Option<&str>) -> Result<Value, String> {
+    let tab = resolve_mcp_tab_id_from_args(&args, tab_id, "build_state")?;
+    let data = debug_api_get_json(
+        &format!("/build/state?tabId={}", encode_query_component(&tab)),
+        10,
+    )
+    .await?;
+    let status = data
+        .get("state")
+        .and_then(|s| s.get("status"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("none");
+    Ok(json!({
+        "content": [{ "type": "text", "text": format!("build_state for {}: {}", tab, status) }],
+        "structuredContent": data,
+        "isError": false
+    }))
+}
+
+async fn tool_build_receipts(args: Value, tab_id: Option<&str>) -> Result<Value, String> {
+    let tab = resolve_mcp_tab_id_from_args(&args, tab_id, "build_receipts")?;
+    let data = debug_api_get_json_optional_not_found(
+        &format!("/build/receipts?tabId={}", encode_query_component(&tab)),
+        10,
+    )
+    .await?
+    .unwrap_or_else(|| {
+        json!({
+            "ok": true,
+            "tabId": tab.clone(),
+            "receipts": []
+        })
+    });
+    let count = data
+        .get("receipts")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    Ok(json!({
+        "content": [{ "type": "text", "text": format!("build_receipts for {}: {}", tab, count) }],
+        "structuredContent": data,
+        "isError": false
+    }))
+}
+
+async fn tool_preview_state(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
+    use tauri::Manager as _;
+    let tab = resolve_mcp_tab_id_from_args(&args, tab_id, "preview_state")?;
+    let state = if let Some(app_handle) = &ctx.app_handle {
+        let manager = app_handle
+            .try_state::<Arc<crate::work_preview::WorkPreviewManager>>()
+            .ok_or_else(|| "preview_state: WorkPreviewManager is not registered".to_string())?;
+        serde_json::to_value(manager.state(&tab).await)
+            .map_err(|e| format!("preview_state response encode: {}", e))?
+    } else {
+        debug_api_get_json(
+            &format!("/preview/work/state?tabId={}", encode_query_component(&tab)),
+            10,
+        )
+        .await?
+    };
+    let status = state
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    Ok(json!({
+        "content": [{ "type": "text", "text": format!("preview_state for {}: {}", tab, status) }],
+        "structuredContent": state,
+        "isError": status == "failed"
+    }))
+}
+
+async fn tool_preview_logs(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
+    use tauri::Manager as _;
+    let tab = resolve_mcp_tab_id_from_args(&args, tab_id, "preview_logs")?;
+    let logs = if let Some(app_handle) = &ctx.app_handle {
+        let manager = app_handle
+            .try_state::<Arc<crate::work_preview::WorkPreviewManager>>()
+            .ok_or_else(|| "preview_logs: WorkPreviewManager is not registered".to_string())?;
+        json!({
+            "tabId": tab.clone(),
+            "logs": manager.logs(&tab).await,
+        })
+    } else {
+        debug_api_get_json(
+            &format!("/preview/work/logs?tabId={}", encode_query_component(&tab)),
+            10,
+        )
+        .await?
+    };
+    let count = logs
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    Ok(json!({
+        "content": [{ "type": "text", "text": format!("preview_logs for {}: {} line(s)", tab, count) }],
+        "structuredContent": logs,
+        "isError": false
+    }))
+}
+
 async fn tool_preview_start(
     args: Value,
     ctx: &Arc<HostMcpContext>,
@@ -7299,7 +7699,6 @@ async fn tool_preview_diagnose(
     let body = json!({
         "tabId": tab,
         "browserEvents": args.get("browserEvents").cloned().unwrap_or_else(|| json!([])),
-        "screenshotPath": args.get("screenshotPath").cloned().unwrap_or(Value::Null),
     });
 
     let diagnostic = if let Some(app_handle) = &ctx.app_handle {
@@ -7903,9 +8302,8 @@ mod tests {
 
     #[test]
     fn credential_pattern_redacts_vendor_prefixes_and_high_entropy_tokens() {
-        let slack_sample = ["xox", "b-123456789012-ABCDEFGHIJKLMNO"].concat();
         for sample in [
-            slack_sample.as_str(),
+            concat!("xox", "b-123456789012-ABCDEFGHIJKLMNO"),
             "glpat-1234567890abcdef",
             "AIzaSyB1234567890abcdef",
             "SG.abcdefghi.1234567890abcdef",
@@ -7962,6 +8360,10 @@ mod tests {
             .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
             .collect();
         for required in [
+            "shellx_health",
+            "session_tooling",
+            "grok_environment",
+            "event_log",
             "fs_watch",
             "fs_unwatch",
             "process_list",
@@ -7974,9 +8376,13 @@ mod tests {
             "Agent_status",
             "Agent_output",
             "build_checkpoint",
+            "build_state",
+            "build_receipts",
             // Kill + metrics.
             "Agent_kill",
             "Agent_metrics",
+            "preview_state",
+            "preview_logs",
             "preview_start",
             "preview_diagnose",
         ] {
@@ -8968,8 +9374,30 @@ status: DONE
             .iter()
             .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
             .collect();
+        assert!(names.contains(&"capabilities_summary"));
         assert!(names.contains(&"search_tool"));
         assert!(names.contains(&"net_fetch"));
+    }
+
+    #[tokio::test]
+    async fn capabilities_summary_is_compact_and_names_http_preference() {
+        let ctx = Arc::new(HostMcpContext::new_standalone());
+        let r = tool_capabilities_summary(&ctx, Some("tab-test"))
+            .await
+            .expect("capabilities_summary");
+        assert_eq!(
+            r.get("kind").and_then(|v| v.as_str()),
+            Some("shellx_capabilities_summary")
+        );
+        let body = serde_json::to_string(&r).expect("summary json");
+        assert!(body.contains("shellx-host-http__"));
+        assert!(body.contains("capabilities_summary"));
+        assert!(body.contains("avoidInShellxAcp"));
+        assert!(
+            body.len() < 12_000,
+            "summary should stay compact enough for chat context, got {} bytes",
+            body.len()
+        );
     }
 
     #[test]

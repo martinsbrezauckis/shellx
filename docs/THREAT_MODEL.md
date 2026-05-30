@@ -47,7 +47,7 @@ A `terminal/create` request from grok over ACP, if honored, would
 spawn a host PTY with whatever command grok wants.
 
 **Defense**: `acp.rs::handle_terminal_create` intercepts on every
-transport. Local Windows redirects to `grok-shell-host__Agent`
+transport. Local Windows redirects to shellX `Agent`
 (supervised subagent). WSL/SSH return a user-facing error. **No host
 PTY is ever spawned in response to a grok request.** This is
 load-bearing — a regression here would let grok run arbitrary shell.

@@ -53,15 +53,21 @@ export interface TaskSnapshot {
 }
 
 const POLL_MS = 500;
+const SHOW_COMPLETED_KEY = "tasks-panel-show-completed";
+const SHOW_ALL_TABS_KEY = "tasks-panel-show-all-tabs";
 
 export function TasksPanel({
   activeTabId,
+  onAskAgent,
 }: {
  /** when set, the panel filters out rows
  * whose tabId does NOT match. Current host_mcp children carry the
  * owning tab when shellX spawned them; legacy/null rows still fold into
  * the active tab for visibility. */
   activeTabId?: string | null;
+ /** Optional bridge back into the active Grok tab. Used for "inspect
+ * this task/output" without forcing the user to copy logs manually. */
+  onAskAgent?: (prompt: string) => void;
 } = {}): JSX.Element {
   const [tasks, setTasks] = useState<TaskSnapshot[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -78,15 +84,29 @@ export function TasksPanel({
  * history don't have to flip it every session. */
   const [showCompleted, setShowCompleted] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("tasks-panel-show-completed") === "1";
+      return localStorage.getItem(SHOW_COMPLETED_KEY) === "1";
     } catch {
       return false;
     }
   });
+  const [showAllTabs, setShowAllTabs] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SHOW_ALL_TABS_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [copiedReport, setCopiedReport] = useState(false);
   const onToggleShowCompleted = useCallback((next: boolean) => {
     setShowCompleted(next);
     try {
-      localStorage.setItem("tasks-panel-show-completed", next ? "1" : "0");
+      localStorage.setItem(SHOW_COMPLETED_KEY, next ? "1" : "0");
+    } catch { /* localStorage disabled — ignore */ }
+  }, []);
+  const onToggleShowAllTabs = useCallback((next: boolean) => {
+    setShowAllTabs(next);
+    try {
+      localStorage.setItem(SHOW_ALL_TABS_KEY, next ? "1" : "0");
     } catch { /* localStorage disabled — ignore */ }
   }, []);
   const cancelledRef = useRef(false);
@@ -219,7 +239,7 @@ export function TasksPanel({
  * hidden so older session data remains visible. */
   const filteredTasks: TaskSnapshot[] = [];
   for (const t of searchFiltered) {
-    if (!activeTabId) {
+    if (showAllTabs || !activeTabId) {
       filteredTasks.push(t);
       continue;
     }
@@ -249,6 +269,22 @@ export function TasksPanel({
         && (t.status === "running" || t.status === "stopped"),
       ).length
     : 0;
+  const health = summarizeTasks(filteredTasks);
+
+  function copyVisibleReport(): void {
+    try {
+      void navigator.clipboard.writeText(buildTasksReport(filteredTasks, { activeTabId, showAllTabs, filter }));
+      setCopiedReport(true);
+      window.setTimeout(() => setCopiedReport(false), 1200);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function askAboutVisibleTasks(): void {
+    if (!onAskAgent || filteredTasks.length === 0) return;
+    onAskAgent(buildTasksInspectionPrompt(filteredTasks, { activeTabId, showAllTabs, filter }));
+  }
 
   return (
     <div
@@ -263,87 +299,138 @@ export function TasksPanel({
       <div
         style={{
           display: "flex",
-          alignItems: "center",
+          flexDirection: "column",
+          alignItems: "stretch",
           gap: 8,
           padding: "8px 10px",
           borderBottom: "1px solid var(--border, #222)",
         }}
         >
-        <strong style={{ fontSize: "var(--right-heading-size, var(--fs-ui-sm))" }}>Background Tasks</strong>
- {/* dropped the "X this session · Y total"
- * sub-label. Redundant noise: the same count is now visible
- * in the header pill ("X working"), and the panel itself
- * lists the rows below, so showing a separate count up here
- * just added clutter. */}
-        <span style={{ flex: 1 }} />
- {/* show-completed toggle. Off by default so the
- * rail only renders live (running) tasks — finished rows hide
- * as soon as the next poll sees them as exited/killed. */}
-        <label
-          style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted, #888)", userSelect: "none" }}
-          title="Include finished (exited/killed) rows in the list"
-        >
-          <input
-            type="checkbox"
-            checked={showCompleted}
-            onChange={(e) => onToggleShowCompleted(e.target.checked)}
-            style={{ margin: 0 }}
-          />
-          show completed
-        </label>
- {/* M filter input . */}
-        <input
-          type="text"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="filter…"
-          aria-label="Filter tasks"
-          style={{
-            padding: "2px 6px",
-            background: "transparent",
-            border: "1px solid var(--border, #333)",
-            color: "inherit",
-            borderRadius: 4,
-            fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
-            width: 120,
-          }}
-        />
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          disabled={busy}
-          style={{
-            padding: "2px 8px",
-            background: "transparent",
-            border: "1px solid var(--border, #333)",
-            color: "inherit",
-            borderRadius: 4,
-            fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
-            cursor: busy ? "wait" : "pointer",
-          }}
-        >
-          <ShellIcon name="refresh" size={13} />
-        </button>
-        {scopedHostMcpCount > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <strong style={{ fontSize: "var(--right-heading-size, var(--fs-ui-sm))", whiteSpace: "nowrap" }}>Background Tasks</strong>
+          <span style={{ flex: 1 }} />
+          {filteredTasks.length > 0 && (
+            <button
+              type="button"
+              onClick={copyVisibleReport}
+              disabled={busy}
+              title="Copy a compact report for visible tasks"
+              style={{
+                padding: "2px 8px",
+                background: "transparent",
+                border: "1px solid var(--border, #333)",
+                color: "inherit",
+                borderRadius: 4,
+                fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
+                cursor: busy ? "wait" : "pointer",
+              }}
+            >
+              <ShellIcon name={copiedReport ? "check" : "copy"} size={13} />
+            </button>
+          )}
+          {onAskAgent && filteredTasks.length > 0 && (
+            <button
+              type="button"
+              onClick={askAboutVisibleTasks}
+              disabled={busy}
+              title="Ask Grok to inspect the visible background tasks"
+              style={{
+                padding: "2px 8px",
+                background: "transparent",
+                border: "1px solid var(--border, #333)",
+                color: "inherit",
+                borderRadius: 4,
+                fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
+                cursor: busy ? "wait" : "pointer",
+              }}
+            >
+              <ShellIcon name="message" size={13} />
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => void handleCleanupMcpChildren()}
+            onClick={() => void refresh()}
             disabled={busy}
-            aria-label="Clean Host MCP children for this tab"
-            title={`Clean ${scopedHostMcpCount} Host MCP child process${scopedHostMcpCount === 1 ? "" : "es"} for this tab`}
             style={{
               padding: "2px 8px",
               background: "transparent",
-              border: "1px solid var(--fg-error, #f55)",
-              color: "var(--fg-error, #f55)",
+              border: "1px solid var(--border, #333)",
+              color: "inherit",
               borderRadius: 4,
               fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
               cursor: busy ? "wait" : "pointer",
             }}
           >
-            <ShellIcon name="trash" size={13} />
+            <ShellIcon name="refresh" size={13} />
           </button>
-        )}
+          {scopedHostMcpCount > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleCleanupMcpChildren()}
+              disabled={busy}
+              aria-label="Clean Host MCP children for this tab"
+              title={`Clean ${scopedHostMcpCount} Host MCP child process${scopedHostMcpCount === 1 ? "" : "es"} for this tab`}
+              style={{
+                padding: "2px 8px",
+                background: "transparent",
+                border: "1px solid var(--fg-error, #f55)",
+                color: "var(--fg-error, #f55)",
+                borderRadius: 4,
+                fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
+                cursor: busy ? "wait" : "pointer",
+              }}
+            >
+              <ShellIcon name="trash" size={13} />
+            </button>
+          )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <label
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted, #888)", userSelect: "none", whiteSpace: "nowrap" }}
+            title="Show tasks from every open session tab"
+          >
+            <input
+              type="checkbox"
+              checked={showAllTabs}
+              onChange={(e) => onToggleShowAllTabs(e.target.checked)}
+              style={{ margin: 0 }}
+            />
+            all tabs
+          </label>
+ {/* show-completed toggle. Off by default so the
+ * rail only renders live (running) tasks — finished rows hide
+ * as soon as the next poll sees them as exited/killed. */}
+          <label
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted, #888)", userSelect: "none", whiteSpace: "nowrap" }}
+            title="Include finished (exited/killed) rows in the list"
+          >
+            <input
+              type="checkbox"
+              checked={showCompleted}
+              onChange={(e) => onToggleShowCompleted(e.target.checked)}
+              style={{ margin: 0 }}
+            />
+            completed
+          </label>
+ {/* M filter input . */}
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="filter…"
+            aria-label="Filter tasks"
+            style={{
+              padding: "2px 6px",
+              background: "transparent",
+              border: "1px solid var(--border, #333)",
+              color: "inherit",
+              borderRadius: 4,
+              fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
+              minWidth: 70,
+              flex: 1,
+            }}
+          />
+        </div>
       </div>
       {error && (
         <div
@@ -359,10 +446,28 @@ export function TasksPanel({
           {error}
         </div>
       )}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 1,
+          borderBottom: "1px solid var(--border, #222)",
+          background: "var(--border, #222)",
+        }}
+      >
+        <TaskMetric label="running" value={health.running} tone={health.running > 0 ? "ok" : "muted"} />
+        <TaskMetric label="paused" value={health.stopped} tone={health.stopped > 0 ? "warn" : "muted"} />
+        <TaskMetric label="issues" value={health.problem} tone={health.problem > 0 ? "err" : "muted"} />
+        <TaskMetric label="quiet" value={health.quiet} tone={health.quiet > 0 ? "warn" : "muted"} />
+      </div>
       <div style={{ flex: 1, overflow: "auto" }}>
         {tasks.length === 0 ? (
           <div style={{ padding: 16, fontSize: "var(--right-body-size, 13px)", color: "var(--fg-muted, #888)" }}>
             No live background tasks. Spawn a grok session or open a terminal to see them here.
+          </div>
+        ) : filteredTasks.length === 0 ? (
+          <div style={{ padding: 16, fontSize: "var(--right-body-size, 13px)", color: "var(--fg-muted, #888)" }}>
+            No tasks match this scope and filter.
           </div>
         ) : (
           <>
@@ -386,6 +491,7 @@ export function TasksPanel({
                     expanded={expanded.has(t.taskId)}
                     busy={busy}
                     onToggle={() => toggleExpanded(t.taskId)}
+                    onAskAgent={onAskAgent ? () => onAskAgent(buildTaskInspectionPrompt(t)) : undefined}
                     onPause={() => void handlePause(t.taskId)}
                     onResume={() => void handleResume(t.taskId)}
                     onKill={() => void handleKill(t)}
@@ -416,6 +522,85 @@ function originLabel(o: string): string {
   }
 }
 
+interface TaskHealthSummary {
+  running: number;
+  stopped: number;
+  exited: number;
+  killed: number;
+  problem: number;
+  quiet: number;
+}
+
+function TaskMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "ok" | "warn" | "err" | "muted";
+}): JSX.Element {
+  const color =
+    tone === "ok" ? "var(--ok)" :
+    tone === "warn" ? "var(--warn)" :
+    tone === "err" ? "var(--err)" :
+    "var(--fg-muted, #888)";
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        display: "grid",
+        gap: 2,
+        padding: "7px 8px",
+        background: "var(--bg, #0a0a0a)",
+      }}
+    >
+      <span style={{ color, fontFamily: "var(--mono, monospace)", fontSize: 13, fontWeight: 700 }}>
+        {value}
+      </span>
+      <span style={{ color: "var(--fg-muted, #888)", fontSize: "var(--right-meta-size, var(--fs-ui-xs))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function summarizeTasks(tasks: TaskSnapshot[]): TaskHealthSummary {
+  const summary: TaskHealthSummary = {
+    running: 0,
+    stopped: 0,
+    exited: 0,
+    killed: 0,
+    problem: 0,
+    quiet: 0,
+  };
+  for (const task of tasks) {
+    if (task.status === "running") summary.running += 1;
+    if (task.status === "stopped") summary.stopped += 1;
+    if (task.status === "exited") summary.exited += 1;
+    if (task.status === "killed") summary.killed += 1;
+    if (taskLooksProblematic(task)) summary.problem += 1;
+    if (taskLooksQuiet(task)) summary.quiet += 1;
+  }
+  return summary;
+}
+
+function taskLooksProblematic(task: TaskSnapshot): boolean {
+  if (task.status === "killed" || task.status === "stopped") return true;
+  if (task.status !== "running" && task.status !== "exited") return true;
+  return outputLooksProblematic(task.recentOutputTail);
+}
+
+function taskLooksQuiet(task: TaskSnapshot): boolean {
+  if (task.status !== "running") return false;
+  if (task.recentOutputTail.trim().length > 0) return false;
+  return Date.now() - task.startedAtMs > 10 * 60_000;
+}
+
+function outputLooksProblematic(output: string): boolean {
+  return /\b(error|failed|fatal|panic|exception|traceback|permission denied|not found|timed out|timeout)\b/i.test(output);
+}
+
 function isTerminalTask(task: TaskSnapshot): boolean {
   return task.origin === "user_term" || task.origin === "acp_term";
 }
@@ -425,6 +610,7 @@ interface TaskRowProps {
   expanded: boolean;
   busy: boolean;
   onToggle: () => void;
+  onAskAgent?: () => void;
   onPause: () => void;
   onResume: () => void;
   onKill: () => void;
@@ -435,6 +621,7 @@ function TaskRow({
   expanded,
   busy,
   onToggle,
+  onAskAgent,
   onPause,
   onResume,
   onKill,
@@ -443,6 +630,18 @@ function TaskRow({
   const isStopped = task.status === "stopped";
   const isDead = task.status === "exited" || task.status === "killed";
   const canKill = !busy && !isDead && (task.pid !== null || isTerminalTask(task));
+  const [copiedOutput, setCopiedOutput] = useState(false);
+
+  function copyOutput(): void {
+    if (!task.recentOutputTail.trim()) return;
+    try {
+      void navigator.clipboard.writeText(task.recentOutputTail);
+      setCopiedOutput(true);
+      window.setTimeout(() => setCopiedOutput(false), 1200);
+    } catch {
+      /* ignore */
+    }
+  }
 
  /* Status color cue. Aligns with the system pill colors used elsewhere
  * (.tool-hdr .run/.done/.fail classes). Stopped uses a muted amber to
@@ -525,6 +724,28 @@ function TaskRow({
         <span>·</span>
         <span>{fmtAge(task.startedAtMs)}</span>
         <span style={{ flex: 1 }} />
+        {onAskAgent && (
+          <button
+            type="button"
+            onClick={onAskAgent}
+            disabled={busy}
+            title="Ask Grok to inspect this background task and its latest output"
+            style={btnStyle}
+          >
+            <ShellIcon name="message" size={12} /> Ask
+          </button>
+        )}
+        {task.recentOutputTail.trim().length > 0 && (
+          <button
+            type="button"
+            onClick={copyOutput}
+            disabled={busy}
+            title="Copy this task's latest output"
+            style={btnStyle}
+          >
+            <ShellIcon name={copiedOutput ? "check" : "copy"} size={12} /> Copy
+          </button>
+        )}
  {/*  Windows now uses NtSuspendProcess /
             NtResumeProcess (dynamically resolved from ntdll), so the
             userAgent guard is gone. Both platforms run native code. */}
@@ -597,6 +818,118 @@ function TaskRow({
       )}
     </div>
   );
+}
+
+function buildTaskInspectionPrompt(task: TaskSnapshot): string {
+  const output = task.recentOutputTail.trim();
+  return [
+    "Inspect this shellX background task and tell me whether it is healthy, stuck, failed, or needs action.",
+    "",
+    "Task:",
+    `- id: ${task.taskId}`,
+    `- origin: ${task.origin}`,
+    `- command: ${task.commandDisplay}`,
+    `- pid: ${task.pid ?? "(none)"}`,
+    `- status: ${task.status}`,
+    `- tab: ${task.tabId ?? "(none)"}`,
+    `- cpu: ${task.cpuPct !== null ? `${task.cpuPct.toFixed(1)}%` : "(unknown)"}`,
+    `- memory: ${task.rssMb !== null ? `${task.rssMb} MB` : "(unknown)"}`,
+    `- age: ${fmtAge(task.startedAtMs)}`,
+    "",
+    "Recent output:",
+    output ? "```text\n" + output.slice(-6000) + "\n```" : "(no output captured)",
+    "",
+    "If this looks actionable, propose the exact next step. Do not kill or restart anything unless I explicitly ask.",
+  ].join("\n");
+}
+
+function buildTasksInspectionPrompt(
+  tasks: TaskSnapshot[],
+  context: { activeTabId?: string | null; showAllTabs: boolean; filter: string },
+): string {
+  const health = summarizeTasks(tasks);
+  const rows = tasks.slice(0, 30).map((task, index) => {
+    const flags = [
+      taskLooksProblematic(task) ? "attention" : null,
+      taskLooksQuiet(task) ? "quiet" : null,
+    ].filter(Boolean).join(", ") || "normal";
+    return [
+      `${index + 1}. ${task.commandDisplay}`,
+      `   id=${task.taskId} origin=${task.origin} status=${task.status} pid=${task.pid ?? "none"} tab=${task.tabId ?? "none"} age=${fmtAge(task.startedAtMs)} cpu=${task.cpuPct !== null ? `${task.cpuPct.toFixed(1)}%` : "unknown"} rss=${task.rssMb !== null ? `${task.rssMb} MB` : "unknown"} flags=${flags}`,
+      task.recentOutputTail.trim()
+        ? `   output_tail=${JSON.stringify(task.recentOutputTail.trim().slice(-900))}`
+        : "   output_tail=(none)",
+    ].join("\n");
+  }).join("\n");
+
+  return [
+    "Inspect the visible shellX background task set and tell me whether the system is healthy, stuck, failed, or needs action.",
+    "",
+    "Scope:",
+    `- active tab: ${context.activeTabId ?? "(none)"}`,
+    `- showing all tabs: ${context.showAllTabs ? "yes" : "no"}`,
+    `- filter: ${context.filter.trim() || "(none)"}`,
+    "",
+    "Summary:",
+    `- visible tasks: ${tasks.length}`,
+    `- running: ${health.running}`,
+    `- paused/stopped: ${health.stopped}`,
+    `- exited: ${health.exited}`,
+    `- killed: ${health.killed}`,
+    `- needing attention: ${health.problem}`,
+    `- quiet >10m: ${health.quiet}`,
+    "",
+    "Tasks:",
+    rows || "(none)",
+    "",
+    "If this looks actionable, propose the exact next step. Do not kill, pause, resume, or restart anything unless I explicitly ask.",
+  ].join("\n");
+}
+
+function buildTasksReport(
+  tasks: TaskSnapshot[],
+  context: { activeTabId?: string | null; showAllTabs: boolean; filter: string },
+): string {
+  const health = summarizeTasks(tasks);
+  const taskLines = tasks.map((task) => {
+    const flags = [
+      taskLooksProblematic(task) ? "attention" : null,
+      taskLooksQuiet(task) ? "quiet" : null,
+    ].filter(Boolean).join(",");
+    return [
+      `- ${task.commandDisplay}`,
+      `  id: ${task.taskId}`,
+      `  origin: ${task.origin}`,
+      `  status: ${task.status}`,
+      `  pid: ${task.pid ?? "(none)"}`,
+      `  tab: ${task.tabId ?? "(none)"}`,
+      `  age: ${fmtAge(task.startedAtMs)}`,
+      `  cpu: ${task.cpuPct !== null ? `${task.cpuPct.toFixed(1)}%` : "(unknown)"}`,
+      `  memory: ${task.rssMb !== null ? `${task.rssMb} MB` : "(unknown)"}`,
+      `  flags: ${flags || "normal"}`,
+      task.recentOutputTail.trim()
+        ? `  recent_output: ${task.recentOutputTail.trim().slice(-1000).replace(/\n/g, "\\n")}`
+        : "  recent_output: (none)",
+    ].join("\n");
+  }).join("\n");
+
+  return [
+    "shellX background task report",
+    "",
+    `active_tab: ${context.activeTabId ?? "(none)"}`,
+    `show_all_tabs: ${context.showAllTabs ? "true" : "false"}`,
+    `filter: ${context.filter.trim() || "(none)"}`,
+    `visible_tasks: ${tasks.length}`,
+    `running: ${health.running}`,
+    `paused: ${health.stopped}`,
+    `exited: ${health.exited}`,
+    `killed: ${health.killed}`,
+    `attention: ${health.problem}`,
+    `quiet_over_10m: ${health.quiet}`,
+    "",
+    "tasks:",
+    taskLines || "(none)",
+  ].join("\n");
 }
 
 const btnStyle: React.CSSProperties = {

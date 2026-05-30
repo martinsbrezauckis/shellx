@@ -517,7 +517,7 @@ impl DebugHub {
 /// Partial UI patch — every field optional so callers can update only
 /// what changed. The renderer POSTs this to /panels, /preview, /autonomy
 /// etc and the debug driver reads /state/* to verify.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct UiStatePatch {
     pub panels: Option<PanelSizes>,
     pub preview: Option<PreviewTarget>,
@@ -2060,8 +2060,17 @@ async fn set_ui_state(
     State(s): State<ApiState>,
     Json(body): Json<UiStatePatch>,
 ) -> impl IntoResponse {
+    let patch = serde_json::to_value(&body).unwrap_or_else(|_| serde_json::json!({}));
     s.hub().ui_apply(body);
-    Json(s.hub().ui_snapshot()).into_response()
+    let state = s.hub().ui_snapshot();
+    s.hub().record_raw_event(
+        "debug-ui-state-patch",
+        serde_json::json!({
+            "patch": patch,
+            "state": state,
+        }),
+    );
+    Json(state).into_response()
 }
 
 /// `GET /state/subagents` — list every subagent spawned via the host
@@ -2115,13 +2124,14 @@ struct GrokTraceExportBody {
 }
 
 /// `GET /state/marketplace_health?tabId=X` — #322. Returns the
-/// per-tab snapshot of launcher-health probe results. PluginsModal
-/// polls this every 4s while open to render the live status pills.
+/// per-tab snapshot of launcher-health probe results. When tabId is
+/// omitted, resolves the UI active tab before falling back to `default`.
+/// PluginsModal polls this every 4s while open to render the live status pills.
 async fn state_marketplace_health(
     Query(q): Query<MarketplaceHealthQuery>,
-    State(_s): State<ApiState>,
+    State(s): State<ApiState>,
 ) -> impl IntoResponse {
-    let tab_id = q.tab_id.unwrap_or_else(|| "default".to_string());
+    let tab_id = resolve_query_tab_or_active(q.tab_id, &s);
     let health = crate::mcp_health::global();
     let entries = health.get_for_tab(&tab_id).await;
     Json(serde_json::json!({
@@ -2134,17 +2144,26 @@ async fn state_marketplace_health(
 /// right-rail Tooling tab model. Unlike the Tauri command used by the
 /// desktop pane, this endpoint does not create ghost sessions or kick
 /// off probes; `/connect` already schedules probes for live debug-api
-/// sessions.
+/// sessions. When tabId is omitted, resolves the UI active tab before
+/// falling back to `default`.
 async fn state_session_tooling(
     Query(q): Query<MarketplaceHealthQuery>,
     State(s): State<ApiState>,
 ) -> impl IntoResponse {
-    let tab_id = q.tab_id.unwrap_or_else(|| "default".to_string());
+    let tab_id = resolve_query_tab_or_active(q.tab_id, &s);
     let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
     match crate::session_tooling_snapshot_for_tab(tab_id, &registry, false, false).await {
         Ok(snapshot) => Json(snapshot).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
+}
+
+fn resolve_query_tab_or_active(tab_id: Option<String>, state: &ApiState) -> String {
+    tab_id
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| state.hub().ui_snapshot().active_tab_id)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "default".to_string())
 }
 
 /// `GET /state/grok_environment?tabId=X&force=1` — Grok-native

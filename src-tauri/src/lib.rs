@@ -19,6 +19,7 @@ pub mod build_orchestrator;
 pub mod build_store;
 pub mod build_types;
 mod connections;
+mod desktop_integration;
 mod env_security;
 pub mod grok_env;
 mod host_mcp;
@@ -535,7 +536,7 @@ async fn start_grok_session(
     info!("start_grok_session ok cwd={}", cwd);
 
     // #322: kick off per-tab launcher-health probes for every
-    // enabled marketplace entry. Non-blocking — the prompt path returns
+    // installed+enabled marketplace entry. Non-blocking — the prompt path returns
     // immediately, probes resolve in the background and the UI polls
     // `/state/marketplace_health?tabId=X` for the live snapshot.
     {
@@ -4627,6 +4628,16 @@ pub fn run() {
         // Pairs with retry-bind in debug_api / mcp_http.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             use tauri::Manager as _;
+            let attached_paths = crate::desktop_integration::parse_external_attachment_args(
+                _argv.iter().map(String::as_str),
+            );
+            if !attached_paths.is_empty() {
+                crate::desktop_integration::emit_external_attachments(
+                    app,
+                    attached_paths,
+                    "single-instance",
+                );
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
@@ -4725,6 +4736,9 @@ pub fn run() {
             // so the renderer can decide between embedded_context
             // inlining and the legacy [attached: <path>] tag.
             read_text_file_if_text,
+            crate::desktop_integration::desktop_integration_status,
+            crate::desktop_integration::desktop_integration_install_windows_context_menu,
+            crate::desktop_integration::desktop_integration_remove_windows_context_menu,
             // Background-task manager.
             list_background_tasks,
             cleanup_mcp_children_for_tab,
@@ -4969,6 +4983,22 @@ pub fn run() {
                 "setup start; exe={:?}",
                 std::env::current_exe().ok()
             ));
+
+            let startup_attached_paths =
+                crate::desktop_integration::parse_external_attachment_args(std::env::args());
+            if !startup_attached_paths.is_empty() {
+                let handle = _app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // Let the WebView mount and register its listener before
+                    // delivering a file handoff from a cold Explorer launch.
+                    tokio::time::sleep(Duration::from_millis(600)).await;
+                    crate::desktop_integration::emit_external_attachments(
+                        &handle,
+                        startup_attached_paths,
+                        "startup",
+                    );
+                });
+            }
 
             // Create the kill-on-close Job Object (Windows) before
             // spawning any child so every grok.exe / wsl.exe / ssh.exe

@@ -7,7 +7,17 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
-## [Unreleased]
+## [0.1.34] - 2026-05-30
+
+### Added
+
+- Work Preview for generated static HTML, web apps, and Expo web apps,
+  with logs, Preview Doctor, screenshots, Ask Fix, Preview Center
+  routing for previewable HTML links, and bottom-docked resizable logs.
+- Attachment & Media Board plus optional Windows **Send to shellX** handoff for
+  sending selected files into the active composer as attachment chips.
+- Background task cockpit health counters, task reports, and Ask Grok
+  diagnostics for visible task sets.
 
 ## [0.1.33] - 2026-05-28
 
@@ -19,8 +29,6 @@ explain a visible behavior change.
   allowlists, search, date filters, unread badges, and simulation tests.
 - Telegram Session Chat replies for allowlisted direct chats, including
   text replies and referenced image outputs from the active/fixed tab.
-- Work Preview for generated static HTML, web apps, and Expo web apps,
-  with logs, Preview Doctor, screenshots, and Ask Fix.
 
 ### Changed
 

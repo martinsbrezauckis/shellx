@@ -154,6 +154,22 @@ const cases = [
     tool: "image_gen",
     id: "img3",
   },
+  {
+    name: "vision_describe docs are not generated media",
+    text: "Path must end in .png/.jpg/.jpeg/.webp/.gif/.bmp.",
+    expectImage: undefined,
+    expectVideo: undefined,
+    tool: "vision_describe",
+    id: "vision1",
+  },
+  {
+    name: "read_file image error is not generated media",
+    text: "Failed to read file: C:\\Users\\User\\Downloads\\expo preview.png, IO Error: stream did not contain valid UTF-8",
+    expectImage: undefined,
+    expectVideo: undefined,
+    tool: "read_file",
+    id: "read1",
+  },
 ];
 
 let pass = 0, fail = 0;

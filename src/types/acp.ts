@@ -19,7 +19,18 @@ export type SessionUpdateKind =
   | "tool_call_update"
   | "tool_call_delta_chunk"
   | "available_commands_update"
+  | "current_mode_update"
+  | "plan"
   | "session_summary_generated"
+  | "verification_started"
+  | "verification_completed"
+  | "best_of_n_started"
+  | "best_of_n_completed"
+  | "model_auto_switched"
+  | "task_backgrounded"
+  | "subagent_spawned"
+  | "subagent_progress"
+  | "subagent_finished"
  // Catch-all for future updates we haven't observed yet.
   | (string & {});
 

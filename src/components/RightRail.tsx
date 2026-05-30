@@ -221,6 +221,7 @@ export function RightRail({
   onPreviewClear,
   autonomy,
   onPreviewFile,
+  onAttachPaths,
   events = [],
   cwd,
   activeTabId,
@@ -243,6 +244,7 @@ export function RightRail({
   autonomy?: string;
  /** Click handler for FilesPane rows + future flink chips. */
   onPreviewFile?: (path: string) => void;
+  onAttachPaths?: (paths: string[]) => void;
  /** ACP event stream — Tools derives advertised capabilities; PlanPane filters plan-events. */
   events?: RawEventFrame[];
  /** Active tab's cwd; FilesPane roots its tree here. */
@@ -312,7 +314,12 @@ export function RightRail({
  * own subprocess rows. host-MCP subagents currently lack a
  * tabId and surface in an "Unattributed" section inside the
  * panel. */}
-      {tab === "Tasks" && <TasksPanel activeTabId={activeTabId ?? null} />}
+      {tab === "Tasks" && (
+        <TasksPanel
+          activeTabId={activeTabId ?? null}
+          onAskAgent={onSendPromptToActiveTab}
+        />
+      )}
       {tab === "Tooling" && (
         <ToolingPane
           activeTabId={activeTabId ?? null}
@@ -335,7 +342,13 @@ export function RightRail({
         />
       )}
       {tab === "Plan"  && <PlanPane autonomy={autonomy} events={events} activeTabId={activeTabId} prefetchedPlanText={prefetchedPlanText} onPreviewFile={onPreviewFile ?? (() => {})} onOpenGoalReview={onOpenGoalReview} />}
-      {tab === "Files" && <FilesPane cwd={cwd} onPreviewFile={onPreviewFile ?? (() => {})} />}
+      {tab === "Files" && (
+        <FilesPane
+          cwd={cwd}
+          onPreviewFile={onPreviewFile ?? (() => {})}
+          onAttachPaths={onAttachPaths}
+        />
+      )}
     </aside>
   );
 }
@@ -450,7 +463,12 @@ function ToolingPane({
 
       <UpdateDiagnosticsCard />
 
-      <GrokEnvironmentCard activeTabId={activeTabId} cwd={cwd} sessionInfo={sessionInfo} />
+      <GrokEnvironmentCard
+        activeTabId={activeTabId}
+        cwd={cwd}
+        sessionInfo={sessionInfo}
+        onSendPromptToActiveTab={onSendPromptToActiveTab}
+      />
 
       {error && (
         <div className="rail-empty tooling-error">
@@ -642,14 +660,17 @@ function GrokEnvironmentCard({
   activeTabId,
   cwd,
   sessionInfo,
+  onSendPromptToActiveTab,
 }: {
   activeTabId: string | null;
   cwd: string;
   sessionInfo: SessionToolingSnapshot["session"] | null;
+  onSendPromptToActiveTab?: (text: string) => void;
 }): JSX.Element {
   const [snapshot, setSnapshot] = useState<GrokEnvironmentSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [traceBusy, setTraceBusy] = useState(false);
+  const [copiedReport, setCopiedReport] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refresh = async (force = false): Promise<void> => {
@@ -683,6 +704,7 @@ function GrokEnvironmentCard({
   const setupChecks = snapshot?.setup?.checks.filter((check) => check.status !== "pass") ?? [];
   const inspect = snapshot?.inspect;
   const doctorSummary = snapshot?.doctor?.summary;
+  const apiKeyDetail = snapshot ? grokApiKeyReportDetail(snapshot) : null;
 
   async function exportTrace(): Promise<void> {
     if (!activeTabId || !snapshot?.trace.available) return;
@@ -699,6 +721,22 @@ function GrokEnvironmentCard({
       setMessage(typeof e === "string" ? e : String(e));
     } finally {
       setTraceBusy(false);
+    }
+  }
+
+  function askGrokAboutEnvironment(): void {
+    if (!snapshot || !onSendPromptToActiveTab) return;
+    onSendPromptToActiveTab(buildGrokEnvironmentInspectionPrompt(snapshot));
+  }
+
+  async function copyGrokEnvironmentReport(): Promise<void> {
+    if (!snapshot) return;
+    try {
+      await navigator.clipboard.writeText(buildGrokEnvironmentReport(snapshot));
+      setCopiedReport(true);
+      window.setTimeout(() => setCopiedReport(false), 1200);
+    } catch {
+      /* ignore */
     }
   }
 
@@ -730,7 +768,7 @@ function GrokEnvironmentCard({
                 Preview setup: {setupSummary.readyCount} ready · {setupSummary.attentionCount} needs setup · {setupSummary.totalCount} checks
               </div>
             )}
-            <div>{snapshot.apiKeyHint.detail}</div>
+            {apiKeyDetail && <div>{apiKeyDetail}</div>}
             {snapshot.error && <div className="tooling-issue">{snapshot.error}</div>}
             {setupChecks.slice(0, 3).map((check) => (
               <div className="tooling-issue" key={`setup-${check.id}`}>
@@ -763,6 +801,28 @@ function GrokEnvironmentCard({
         {message && <div className="tooling-issue">{message}</div>}
       </div>
       <div className="tooling-actions">
+        {snapshot && (
+          <button
+            type="button"
+            className="mp-action-btn mp-action-btn-secondary"
+            onClick={() => void copyGrokEnvironmentReport()}
+            title="Copy Grok environment diagnostic report"
+          >
+            <ShellIcon name={copiedReport ? "check" : "copy"} size={12} />
+            Copy
+          </button>
+        )}
+        {snapshot && onSendPromptToActiveTab && snapshot.status !== "pass" && (
+          <button
+            type="button"
+            className="mp-action-btn mp-action-btn-secondary"
+            onClick={askGrokAboutEnvironment}
+            title="Ask Grok to inspect this diagnostic snapshot"
+          >
+            <ShellIcon name="message" size={12} />
+            Ask
+          </button>
+        )}
         <button
           type="button"
           className="mp-action-btn mp-action-btn-secondary"
@@ -837,6 +897,107 @@ function grokMcpCategoryLabel(category: GrokMcpFailureCategory): string {
   }
 }
 
+function buildGrokEnvironmentInspectionPrompt(snapshot: GrokEnvironmentSnapshot): string {
+  const setupChecks = snapshot.setup.checks.filter((check) => check.status !== "pass");
+  const failingServers = snapshot.doctor?.servers.filter((server) => !server.healthy) ?? [];
+  const apiKeyDetail = grokApiKeyReportDetail(snapshot);
+  const setupBody = setupChecks.length > 0
+    ? setupChecks.slice(0, 12).map((check) => {
+        const command = check.command ? ` command=${check.command}` : "";
+        const docs = check.docs ? ` docs=${check.docs}` : "";
+        return `- ${check.label}: ${grokSetupStatusLabel(check.status)} - ${check.detail}${command}${docs}`;
+      }).join("\n")
+    : "(none)";
+  const failingBody = failingServers.length > 0
+    ? failingServers.slice(0, 12).map((server) => {
+        const detail = server.detail ? ` - ${server.detail}` : "";
+        const hint = server.hint ? ` hint=${server.hint}` : "";
+        return `- ${server.name}: ${grokMcpCategoryLabel(server.category)}${detail}${hint}`;
+      }).join("\n")
+    : "(none)";
+
+  return [
+    "Inspect this shellX Grok environment diagnostic snapshot and tell me the safest next action.",
+    "",
+    "Environment:",
+    `- status: ${snapshot.status}`,
+    `- transport: ${snapshot.transport}`,
+    `- cwd: ${snapshot.cwd ?? "(none)"}`,
+    `- session: ${snapshot.sessionId ?? "(none)"}`,
+    `- Grok version: ${snapshot.inspect?.grokVersion ?? "(unknown)"}`,
+    `- project trusted: ${snapshot.inspect?.projectTrusted ? "yes" : "no"}`,
+    `- skills/plugins/instructions: ${snapshot.inspect?.skillCount ?? "?"}/${snapshot.inspect?.pluginCount ?? "?"}/${snapshot.inspect?.instructionCount ?? "?"}`,
+    ...(apiKeyDetail ? ["", "API-key environment override:", apiKeyDetail] : []),
+    "",
+    "Setup checks needing attention:",
+    setupBody,
+    "",
+    "Failing MCP servers:",
+    failingBody,
+    "",
+    "Do not edit config, install packages, delete files, or rotate credentials unless I explicitly confirm. If a fix is needed, propose the exact command and explain the risk first.",
+  ].join("\n");
+}
+
+function buildGrokEnvironmentReport(snapshot: GrokEnvironmentSnapshot): string {
+  const setupChecks = snapshot.setup.checks.filter((check) => check.status !== "pass");
+  const failingServers = snapshot.doctor?.servers.filter((server) => !server.healthy) ?? [];
+  const apiKeyDetail = grokApiKeyReportDetail(snapshot);
+  const setupBody = setupChecks.length > 0
+    ? setupChecks.map((check) => {
+        const command = check.command ? ` command="${check.command}"` : "";
+        const docs = check.docs ? ` docs="${check.docs}"` : "";
+        return `- ${check.label}: ${check.status} - ${check.detail}${command}${docs}`;
+      }).join("\n")
+    : "- none";
+  const failingBody = failingServers.length > 0
+    ? failingServers.map((server) => {
+        const target = server.target ? ` target="${server.target}"` : "";
+        const detail = server.detail ? ` detail="${server.detail}"` : "";
+        const hint = server.hint ? ` hint="${server.hint}"` : "";
+        return `- ${server.name}: ${server.category} transport=${server.transport}${target}${detail}${hint}`;
+      }).join("\n")
+    : "- none";
+
+  return [
+    "shellX Grok environment report",
+    "",
+    `status: ${snapshot.status}`,
+    `checked_at: ${snapshot.checkedAtMs ? new Date(snapshot.checkedAtMs).toISOString() : "(unknown)"}`,
+    `tab: ${snapshot.tabId}`,
+    `transport: ${snapshot.transport}`,
+    `cwd: ${snapshot.cwd ?? "(none)"}`,
+    `session: ${snapshot.sessionId ?? "(none)"}`,
+    `grok_version: ${snapshot.inspect?.grokVersion ?? "(unknown)"}`,
+    `project_trusted: ${snapshot.inspect?.projectTrusted ? "true" : "false"}`,
+    `skills: ${snapshot.inspect?.skillCount ?? "?"}`,
+    `plugins: ${snapshot.inspect?.pluginCount ?? "?"}`,
+    `instructions: ${snapshot.inspect?.instructionCount ?? "?"}`,
+    `mcp_servers: ${snapshot.inspect?.mcpServerCount ?? "?"}`,
+    `doctor_healthy: ${snapshot.doctor?.summary.healthyCount ?? "?"}`,
+    `doctor_failing: ${snapshot.doctor?.summary.failingCount ?? "?"}`,
+    `setup_ready: ${snapshot.setup.summary.readyCount}`,
+    `setup_attention: ${snapshot.setup.summary.attentionCount}`,
+    ...(apiKeyDetail ? ["", "api_key_env_override:", apiKeyDetail] : []),
+    "",
+    "setup_checks_needing_attention:",
+    setupBody,
+    "",
+    "failing_mcp_servers:",
+    failingBody,
+    "",
+    "trace:",
+    snapshot.trace.detail,
+    snapshot.error ? `\nerror:\n${snapshot.error}` : "",
+  ].join("\n");
+}
+
+function grokApiKeyReportDetail(snapshot: GrokEnvironmentSnapshot): string | null {
+  return snapshot.apiKeyHint.preferredPresent || snapshot.apiKeyHint.legacyPresent
+    ? snapshot.apiKeyHint.detail
+    : null;
+}
+
 function CapabilityRow({ entry }: { entry: SearchCapability }): JSX.Element {
   const status = entry.ready
     ? { label: "ready here", className: "ok" }
@@ -874,16 +1035,8 @@ function ToolingRow({
   const issue = toolingIssue(entry, health);
   const canRepair = health?.status === "missing" || health?.status === "failed";
   const actionLabel = health?.status === "missing" ? "Install" : "Fix";
-  const actionPrompt = health?.status === "missing"
-    ? (
-        `Install the missing launcher for the ${entry.name} MCP connector in this ${connectionLabel} environment. ` +
-        `The session Tools check reported ${health.launcher ? `\`${health.launcher}\`` : "the launcher"} missing. ` +
-        "First inspect the environment and package manager, then ask before running installer commands."
-      )
-    : (
-        `Check and fix the ${entry.name} MCP connector in this ${connectionLabel} environment. ` +
-        "First inspect what is failing, then propose or run the safest config command only after permission."
-      );
+  const canAsk = Boolean(issue && onSendPromptToActiveTab);
+  const actionPrompt = buildMcpToolingPrompt(entry, health, connectionLabel, issue);
 
   return (
     <div className="tooling-row">
@@ -901,7 +1054,7 @@ function ToolingRow({
         {health?.launcher && <div>Launcher: <code>{health.launcher}</code></div>}
         {issue && <div className="tooling-issue">{issue}</div>}
       </div>
-      {canRepair && (
+      {(canRepair || canAsk) && (
         <div className="tooling-actions">
           <button
             type="button"
@@ -910,12 +1063,49 @@ function ToolingRow({
               onSendPromptToActiveTab?.(actionPrompt);
             }}
           >
-            {actionLabel}
+            {canRepair ? actionLabel : "Ask"}
           </button>
         </div>
       )}
     </div>
   );
+}
+
+function buildMcpToolingPrompt(
+  entry: McpEntryStatus,
+  health: MarketplaceHealthEntry | undefined,
+  connectionLabel: string,
+  issue: string | null,
+): string {
+  if (health?.status === "missing") {
+    return (
+      `Install the missing launcher for the ${entry.name} MCP connector in this ${connectionLabel} environment. ` +
+      `The session Tools check reported ${health.launcher ? `\`${health.launcher}\`` : "the launcher"} missing. ` +
+      "First inspect the environment and package manager, then ask before running installer commands."
+    );
+  }
+  if (health?.status === "failed") {
+    return (
+      `Check and fix the ${entry.name} MCP connector in this ${connectionLabel} environment. ` +
+      "First inspect what is failing, then propose or run the safest config command only after permission.\n\n" +
+      `Probe detail: ${issue ?? health.stderrTail ?? "(none)"}`
+    );
+  }
+  return [
+    `Inspect the ${entry.name} MCP connector in this ${connectionLabel} environment and tell me the safest next action.`,
+    "",
+    `Connector: ${entry.name}`,
+    `Kind: ${entry.kind}`,
+    `Category: ${entry.category}`,
+    `Description: ${entry.description}`,
+    `Vault keys: ${entry.vaultKeys.length > 0 ? entry.vaultKeys.join(", ") : "(none)"}`,
+    `Keys present: ${entry.allKeysPresent ? "yes" : "no"}`,
+    `Probe status: ${health?.status ?? "(waiting)"}`,
+    `Launcher: ${health?.launcher ?? "(unknown)"}`,
+    `Issue: ${issue ?? "(none)"}`,
+    "",
+    "Do not edit config, install packages, delete files, or rotate credentials unless I explicitly confirm. If a fix is needed, propose the exact command and explain the risk first.",
+  ].join("\n");
 }
 
 function toolingStatus(
@@ -1282,21 +1472,31 @@ interface FsEntry {
   git_status: string | null;
 }
 
+function joinDisplayPath(base: string, child: string): string {
+  const windowsStyle = /^[A-Za-z]:[\\/]/.test(base) || base.includes("\\");
+  const sep = windowsStyle ? "\\" : "/";
+  const normalizedChild = windowsStyle ? child.replace(/\//g, "\\") : child.replace(/\\/g, "/");
+  return `${base.replace(/[\\/]$/, "")}${sep}${normalizedChild.replace(/^[\\/]/, "")}`;
+}
+
 /* Walks one level under `cwd`, sorts dirs-first then alpha. Dir
  * click drills down via the local subpath stack; file click invokes
  * onPreviewFile with the absolute path. */
 function FilesPane({
   cwd,
   onPreviewFile,
+  onAttachPaths,
 }: {
   cwd: string;
   onPreviewFile: (path: string) => void;
+  onAttachPaths?: (paths: string[]) => void;
 }): JSX.Element {
   const [subpath, setSubpath] = useState<string>("");
   const [entries, setEntries] = useState<FsEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
 
-  const fullPath = subpath ? `${cwd.replace(/\/$/, "")}/${subpath}` : cwd;
+  const fullPath = subpath ? joinDisplayPath(cwd, subpath) : cwd;
 
   useEffect(() => {
     let cancelled = false;
@@ -1314,8 +1514,9 @@ function FilesPane({
     return () => { cancelled = true; };
   }, [fullPath, cwd]);
 
- // Reset drill-down whenever the cwd changes (e.g. folder pill picks a new dir).
+  // Reset drill-down whenever the cwd changes (e.g. folder pill picks a new dir).
   useEffect(() => { setSubpath(""); }, [cwd]);
+  useEffect(() => { setSelectedPaths(new Set()); }, [fullPath]);
 
   const goUp = () => {
     if (!subpath) return;
@@ -1326,13 +1527,52 @@ function FilesPane({
   const enterDir = (name: string) => {
     setSubpath(subpath ? `${subpath}/${name}` : name);
   };
+  const toggleSelected = (path: string): void => {
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+  const attachPaths = (paths: string[]): void => {
+    if (paths.length === 0 || !onAttachPaths) return;
+    onAttachPaths(paths);
+    setSelectedPaths(new Set());
+  };
+  const selectedCount = selectedPaths.size;
+  const canAttach = Boolean(onAttachPaths);
 
   return (
     <div className="fileview">
       <div className="fv-head">
         <span className="fv-path" title={fullPath}>
-          {subpath ? `…/${subpath}` : cwd.split("/").filter(Boolean).pop() ?? "/"}
+          {subpath ? `…/${subpath}` : cwd.split(/[\\/]/).filter(Boolean).pop() ?? "/"}
         </span>
+        {selectedCount > 0 && (
+          <div className="fv-selection" aria-label={`${selectedCount} selected file${selectedCount === 1 ? "" : "s"}`}>
+            <span>{selectedCount} selected</span>
+            <button
+              type="button"
+              className="fv-action"
+              onClick={() => attachPaths(Array.from(selectedPaths))}
+              disabled={!canAttach}
+              title={canAttach ? "Attach selected files to the composer" : "Attach handler unavailable"}
+            >
+              <ShellIcon name="paperclip" size={12} />
+              Attach
+            </button>
+            <button
+              type="button"
+              className="fv-action fv-action-icon"
+              onClick={() => setSelectedPaths(new Set())}
+              title="Clear selected files"
+              aria-label="Clear selected files"
+            >
+              <ShellIcon name="close" size={12} />
+            </button>
+          </div>
+        )}
         {subpath && (
           <button type="button" className="fv-up" onClick={goUp} title="Up one level">
             <ShellIcon name="arrow-up" size={13} />
@@ -1352,11 +1592,13 @@ function FilesPane({
         <div className="rail-empty"><div className="rail-empty-line">Empty folder.</div></div>
       )}
       {!error && entries && entries.map((e) => {
-        const fullChild = `${fullPath.replace(/\/$/, "")}/${e.name}`;
+        const fullChild = joinDisplayPath(fullPath, e.name);
+        const isSelected = selectedPaths.has(fullChild);
         return (
         <div
           key={e.name}
-          className={`fv-row ${e.kind}`}
+          className={`fv-row ${e.kind}${isSelected ? " selected" : ""}`}
+          aria-selected={e.kind === "file" ? isSelected : undefined}
  /* File rows are draggable onto the composer. Custom MIME
  * `application/x-shellx-file` prevents unrelated drag
  * sources (browser address bar, etc.) from attaching.
@@ -1372,13 +1614,45 @@ function FilesPane({
             if (e.kind === "dir") enterDir(e.name);
             else onPreviewFile(fullChild);
           }}
-          title={`${e.kind} · ${e.size} bytes${e.kind === "file" ? " · drag onto composer to attach" : ""}`}
-          style={{ cursor: e.kind === "file" ? "grab" : "pointer" }}
+          title={`${e.kind} · ${e.size} bytes${e.kind === "file" ? " · select, attach, or drag onto composer" : ""}`}
+          style={{ cursor: e.kind === "file" ? "pointer" : "pointer" }}
         >
+          {e.kind === "file" && (
+            <button
+              type="button"
+              className={`fv-select ${isSelected ? "active" : ""}`}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                toggleSelected(fullChild);
+              }}
+              title={isSelected ? "Remove from selection" : "Select file"}
+              aria-label={isSelected ? `Remove ${e.name} from selection` : `Select ${e.name}`}
+            >
+              <ShellIcon name={isSelected ? "check" : "square"} size={12} />
+            </button>
+          )}
+          {e.kind === "dir" && <span className="fv-select-spacer" />}
           <span className="fv-ic">
             <ShellIcon name={e.kind === "dir" ? "folder" : "file"} size={14} />
           </span>
           <span className="fv-name">{e.name}</span>
+          {e.kind === "file" && (
+            <span className="fv-row-actions">
+              <button
+                type="button"
+                className="fv-row-action"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  attachPaths([fullChild]);
+                }}
+                disabled={!canAttach}
+                title={canAttach ? "Attach this file to the composer" : "Attach handler unavailable"}
+                aria-label={`Attach ${e.name}`}
+              >
+                <ShellIcon name="paperclip" size={12} />
+              </button>
+            </span>
+          )}
         </div>
         );
       })}

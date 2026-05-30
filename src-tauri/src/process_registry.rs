@@ -455,6 +455,12 @@ impl ProcessRegistry {
         inner.records.get(task_id).and_then(|r| r.pid)
     }
 
+    /// Look up the lifecycle status for a task.
+    pub async fn status_for(&self, task_id: &str) -> Option<ProcessStatus> {
+        let inner = self.inner.lock().await;
+        inner.records.get(task_id).map(|r| r.status.clone())
+    }
+
     /// Send a signal to the task. Refuses if task_id is unknown.
     /// On Unix uses `nix::sys::signal::kill`. On Windows the only
     /// supported "signal" is hard kill — we map SIGKILL/SIGTERM to
@@ -467,6 +473,25 @@ impl ProcessRegistry {
         send_signal(pid, signal_name)?;
         info!(
             "process_registry: sent {} to task={} pid={}",
+            signal_name, task_id, pid
+        );
+        Ok(())
+    }
+
+    /// Send a signal to the whole process tree/session owned by a task.
+    ///
+    /// Work Preview starts shell commands as their own process group/session
+    /// on Unix-like hosts, and Windows uses taskkill /T under the existing
+    /// signal helper. This keeps preview restarts from leaving a framework
+    /// child server alive after the shell wrapper exits.
+    pub async fn signal_tree(&self, task_id: &str, signal_name: &str) -> Result<(), String> {
+        let pid = self
+            .pid_for(task_id)
+            .await
+            .ok_or_else(|| format!("unknown taskId: {}", task_id))?;
+        send_signal_tree(pid, signal_name)?;
+        info!(
+            "process_registry: sent {} to task tree={} pid={}",
             signal_name, task_id, pid
         );
         Ok(())
@@ -534,29 +559,47 @@ fn open_fds_for_pid(_pid: u32) -> Option<u32> {
 
 #[cfg(unix)]
 fn send_signal(pid: u32, signal_name: &str) -> Result<(), String> {
-    use nix::sys::signal::{kill, Signal};
+    use nix::sys::signal::kill;
     use nix::unistd::Pid;
-    let sig = match signal_name {
-        "SIGTERM" => Signal::SIGTERM,
-        "SIGINT" => Signal::SIGINT,
-        "SIGKILL" => Signal::SIGKILL,
-        "SIGHUP" => Signal::SIGHUP,
-        "SIGUSR1" => Signal::SIGUSR1,
-        other => return Err(format!("unsupported signal: {}", other)),
-    };
+    let sig = parse_unix_signal(signal_name)?;
     kill(Pid::from_raw(pid as i32), sig).map_err(|e| format!("kill failed: {}", e))?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn send_signal_tree(pid: u32, signal_name: &str) -> Result<(), String> {
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+    let sig = parse_unix_signal(signal_name)?;
+    kill(Pid::from_raw(-(pid as i32)), sig).map_err(|e| format!("killpg failed: {}", e))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn parse_unix_signal(signal_name: &str) -> Result<nix::sys::signal::Signal, String> {
+    use nix::sys::signal::Signal;
+    match signal_name {
+        "SIGTERM" => Ok(Signal::SIGTERM),
+        "SIGINT" => Ok(Signal::SIGINT),
+        "SIGKILL" => Ok(Signal::SIGKILL),
+        "SIGHUP" => Ok(Signal::SIGHUP),
+        "SIGUSR1" => Ok(Signal::SIGUSR1),
+        other => Err(format!("unsupported signal: {}", other)),
+    }
 }
 
 #[cfg(not(unix))]
 fn send_signal(pid: u32, signal_name: &str) -> Result<(), String> {
     match signal_name {
         "SIGKILL" | "SIGTERM" => {
-            let force_flag = if signal_name == "SIGKILL" { "/F" } else { "" };
+            let mut args = vec!["/PID".to_string(), pid.to_string(), "/T".to_string()];
+            if signal_name == "SIGKILL" {
+                args.push("/F".to_string());
+            }
             // suppress console flash on Windows.
             use crate::winproc::NoWindowExt as _;
             let status = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", force_flag])
+                .args(args)
                 .no_window()
                 .status()
                 .map_err(|e| format!("taskkill spawn failed: {}", e))?;
@@ -571,6 +614,11 @@ fn send_signal(pid: u32, signal_name: &str) -> Result<(), String> {
             other
         )),
     }
+}
+
+#[cfg(not(unix))]
+fn send_signal_tree(pid: u32, signal_name: &str) -> Result<(), String> {
+    send_signal(pid, signal_name)
 }
 
 #[allow(dead_code)]

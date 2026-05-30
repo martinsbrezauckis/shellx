@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { JSX } from "react";
 import {
+  buildReleaseRunbook,
   buildReleaseReadinessChecks,
   summarizeReleaseReadiness,
   type ReleaseReadinessCheck,
@@ -53,6 +54,38 @@ export default function ReleaseReadinessPanel({
     window.setTimeout(() => setCopiedCommand(null), 1200);
   }
 
+  function copyRemainingChecklist(): void {
+    const remaining = releaseChecks.filter((check) => check.status !== "pass");
+    const body = remaining.length === 0
+      ? [`shellX v${version} release readiness: all gates marked pass.`]
+      : [
+          `shellX v${version} remaining release gates:`,
+          "",
+          ...remaining.flatMap((check) => [
+            `- [ ] ${check.label} (${check.status})`,
+            `  ${check.detail}`,
+            ...(check.command ? [`  Command: ${check.command}`] : []),
+          ]),
+        ];
+    try {
+      void navigator.clipboard.writeText(body.join("\n"));
+    } catch {
+      /* ignore */
+    }
+    setCopiedCommand("__remaining__");
+    window.setTimeout(() => setCopiedCommand(null), 1200);
+  }
+
+  function copyReleaseRunbook(): void {
+    try {
+      void navigator.clipboard.writeText(buildReleaseRunbook({ version, checks: releaseChecks }));
+    } catch {
+      /* ignore */
+    }
+    setCopiedCommand("__runbook__");
+    window.setTimeout(() => setCopiedCommand(null), 1200);
+  }
+
   const releaseChecks = useMemo(
     () =>
       buildReleaseReadinessChecks({
@@ -85,6 +118,7 @@ export default function ReleaseReadinessPanel({
     () => summarizeReleaseReadiness(releaseChecks),
     [releaseChecks],
   );
+  const progressPct = Math.round((releaseSummary.pass / Math.max(releaseChecks.length, 1)) * 100);
 
   return (
     <section className={`release-readiness release-readiness-${releaseSummary.accent}`}>
@@ -96,7 +130,30 @@ export default function ReleaseReadinessPanel({
             {releaseSummary.warn} warn · {releaseSummary.fail} blocked
           </div>
         </div>
-        <span className="release-version-chip">v{version}</span>
+        <div className="release-readiness-head-actions">
+          <button
+            type="button"
+            className="settings-pill"
+            onClick={copyRemainingChecklist}
+            title="Copy remaining release gates and commands"
+          >
+            <ShellIcon name={copiedCommand === "__remaining__" ? "check" : "copy"} size={12} />
+            Remaining
+          </button>
+          <button
+            type="button"
+            className="settings-pill"
+            onClick={copyReleaseRunbook}
+            title="Copy ordered release runbook with approval reminders"
+          >
+            <ShellIcon name={copiedCommand === "__runbook__" ? "check" : "copy"} size={12} />
+            Runbook
+          </button>
+          <span className="release-version-chip">v{version}</span>
+        </div>
+      </div>
+      <div className="release-readiness-progress" aria-label={`Release readiness ${progressPct}%`}>
+        <span style={{ width: `${progressPct}%` }} />
       </div>
       <div className="release-readiness-list">
         {releaseChecks.map((check) => {

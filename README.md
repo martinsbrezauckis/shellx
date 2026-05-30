@@ -18,6 +18,12 @@ are ready.
 - **Grok Imagine-ready media.** Image and video generations from
   grok-build render inline when your Grok account exposes Imagine
   features.
+- **Attachment and media board.** File picker, paste, drag/drop,
+  screenshots, and Send to shellX create composer chips; Assets keeps
+  pending files and generated media in one place.
+- **Send files to shellX.** On Windows, Settings -> Desktop can add a
+  right-click menu item and SendTo shortcut so selected files open in
+  the active shellX composer.
 - **Host MCP tools.** Vault, filesystem, network fetch, screenshots,
   vision, memory, process controls, and subagent tools are available to
   the connected agent.
@@ -37,6 +43,9 @@ are ready.
 - **Tools health.** See MCP health, Grok environment diagnostics,
   search capability status, trace availability, and Preview setup for
   the active tab.
+- **Background task cockpit.** Watch running Grok/subagent/terminal
+  work with health counters, reports, latest output, and explicit
+  pause/resume/kill controls.
 - **Workflow skills.** shellX installs compact Grok skills for common
   coding loops: build an app, fix a bug, polish UI, review a repo, and
   prepare a release.

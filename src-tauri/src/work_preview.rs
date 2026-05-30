@@ -116,8 +116,6 @@ pub struct WorkPreviewDiagnoseRequest {
     pub tab_id: Option<String>,
     #[serde(default)]
     pub browser_events: Vec<WorkPreviewBrowserEvent>,
-    #[serde(default)]
-    pub screenshot_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -263,11 +261,16 @@ impl WorkPreviewManager {
         request: WorkPreviewDiagnoseRequest,
     ) -> WorkPreviewDiagnostic {
         let state = self.state(tab_id).await;
+        let browser_events: Vec<WorkPreviewBrowserEvent> = request
+            .browser_events
+            .into_iter()
+            .filter(|event| browser_event_matches_state(event, &state))
+            .collect();
         let mut issues = Vec::new();
         let mut http_status = None;
         let mut response_bytes = None;
         let mut title = None;
-        let mut screenshot_path = request.screenshot_path.clone();
+        let mut screenshot_path = None;
         let mut screenshot_width = None;
         let mut screenshot_height = None;
         let mut screenshot_browser = None;
@@ -290,7 +293,7 @@ impl WorkPreviewManager {
             }
         }
 
-        for event in &request.browser_events {
+        for event in &browser_events {
             if browser_event_is_problem(event) {
                 issues.push(diagnostic_issue(
                     "error",
@@ -393,7 +396,7 @@ impl WorkPreviewManager {
             screenshot_browser,
             screenshot_error,
             issues,
-            browser_events: request.browser_events,
+            browser_events,
             logs: state
                 .logs
                 .iter()
@@ -477,24 +480,65 @@ impl WorkPreviewManager {
             let Some(runtime) = sessions.get_mut(tab_id) else {
                 return Ok(idle_state(tab_id));
             };
+            let task_id = runtime.state.task_id.clone();
             runtime.state.status = WorkPreviewStatus::Stopped;
             runtime.state.url = None;
+            runtime.state.task_id = None;
+            runtime.state.pid = None;
             runtime.state.error = None;
             runtime.state.updated_at_ms = now_ms();
             runtime.push_log("system", "preview stopped by shellX".to_string());
-            (runtime.shutdown.take(), runtime.state.task_id.clone())
+            (runtime.shutdown.take(), task_id)
         };
 
         if let Some(tx) = shutdown {
             let _ = tx.send(());
         }
         if let Some(task_id) = task_id {
+            let mut stop_error = None;
+            let first_signal = if cfg!(windows) { "SIGKILL" } else { "SIGTERM" };
             if let Err(err) = self
                 .process_registry
-                .signal(&task_id, stop_process_signal())
+                .signal_tree(&task_id, first_signal)
                 .await
             {
-                warn!("work_preview: stop signal failed for {}: {}", task_id, err);
+                stop_error = Some(format!(
+                    "preview stop signal failed for {}: {}",
+                    task_id, err
+                ));
+                warn!(
+                    "work_preview: stop tree signal failed for {}: {}",
+                    task_id, err
+                );
+            } else if self
+                .wait_for_registry_stop(&task_id, Duration::from_secs(2))
+                .await
+                .is_err()
+            {
+                if let Err(err) = self.process_registry.signal_tree(&task_id, "SIGKILL").await {
+                    stop_error = Some(format!(
+                        "preview force-stop signal failed for {}: {}",
+                        task_id, err
+                    ));
+                    warn!(
+                        "work_preview: force-stop tree signal failed for {}: {}",
+                        task_id, err
+                    );
+                } else if let Err(err) = self
+                    .wait_for_registry_stop(&task_id, Duration::from_secs(2))
+                    .await
+                {
+                    stop_error = Some(err);
+                }
+            }
+            if let Some(error) = stop_error {
+                let mut sessions = self.sessions.lock().await;
+                if let Some(runtime) = sessions.get_mut(tab_id) {
+                    runtime.state.status = WorkPreviewStatus::Failed;
+                    runtime.state.error = Some(error.clone());
+                    runtime.state.updated_at_ms = now_ms();
+                    runtime.push_log("system", error);
+                }
             }
         }
 
@@ -515,10 +559,16 @@ impl WorkPreviewManager {
             if let Some(session) = registry.get_existing(tab_id).await {
                 let guard = session.lock().await;
                 let command_cwd = fallback.to_string();
+                let session_cwd = guard.get_cwd_for_restart();
                 if let Some(ssh) = guard.ssh_config().cloned() {
                     drop(guard);
                     let root_text = self
-                        .resolve_remote_cwd(tab_id, &command_cwd, registry.clone())
+                        .resolve_remote_cwd(
+                            tab_id,
+                            &command_cwd,
+                            session_cwd.as_deref(),
+                            registry.clone(),
+                        )
                         .await?;
                     return Ok(PreviewContext {
                         root_text,
@@ -529,7 +579,12 @@ impl WorkPreviewManager {
                 if let Some(distro) = guard.wsl_distro().map(ToOwned::to_owned) {
                     drop(guard);
                     let root_text = self
-                        .resolve_remote_cwd(tab_id, &command_cwd, registry.clone())
+                        .resolve_remote_cwd(
+                            tab_id,
+                            &command_cwd,
+                            session_cwd.as_deref(),
+                            registry.clone(),
+                        )
                         .await?;
                     return Ok(PreviewContext {
                         root_text,
@@ -537,6 +592,25 @@ impl WorkPreviewManager {
                         transport: PreviewTransport::Wsl { distro },
                     });
                 }
+                drop(guard);
+                let normalized = crate::session_git::normalize_local_windows_cwd(fallback);
+                let root = validate_cwd(&normalized)?;
+                if let Some(session_cwd) = session_cwd {
+                    let session_normalized =
+                        crate::session_git::normalize_local_windows_cwd(&session_cwd);
+                    let session_root = validate_cwd(&session_normalized)?;
+                    if !root.starts_with(&session_root) {
+                        return Err(format!(
+                            "preview cwd is outside the active session folder: {}",
+                            session_root.to_string_lossy()
+                        ));
+                    }
+                }
+                return Ok(PreviewContext {
+                    root_text: root.to_string_lossy().to_string(),
+                    local_root: Some(root),
+                    transport: PreviewTransport::Local,
+                });
             }
         }
 
@@ -550,6 +624,28 @@ impl WorkPreviewManager {
     }
 
     async fn resolve_remote_cwd(
+        &self,
+        tab_id: &str,
+        cwd: &str,
+        session_cwd: Option<&str>,
+        registry: Arc<SessionRegistry>,
+    ) -> Result<String, String> {
+        let resolved = self.probe_remote_cwd(tab_id, cwd, registry.clone()).await?;
+        if let Some(session_cwd) = session_cwd.map(str::trim).filter(|value| !value.is_empty()) {
+            let session_root = self
+                .probe_remote_cwd(tab_id, session_cwd, registry.clone())
+                .await?;
+            if !remote_path_within(&session_root, &resolved) {
+                return Err(format!(
+                    "preview cwd is outside the active session folder: {}",
+                    session_root
+                ));
+            }
+        }
+        Ok(resolved)
+    }
+
+    async fn probe_remote_cwd(
         &self,
         tab_id: &str,
         cwd: &str,
@@ -703,10 +799,11 @@ impl WorkPreviewManager {
             .env("HOST", "127.0.0.1")
             .env("BROWSER", "none")
             .env("NO_COLOR", "1")
+            .env_remove("FORCE_COLOR")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        crate::winproc::apply_pdeathsig_preexec(&mut command);
+        apply_preview_process_preexec(&mut command);
 
         let mut child = command
             .spawn()
@@ -851,7 +948,7 @@ impl WorkPreviewManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        crate::winproc::apply_pdeathsig_preexec(&mut command);
+        apply_preview_process_preexec(&mut command);
 
         let mut child = command
             .spawn()
@@ -974,9 +1071,14 @@ impl WorkPreviewManager {
         Ok(self.state(&tab_id).await)
     }
 
-    async fn append_log(&self, tab_id: &str, stream: &str, line: String) {
+    async fn append_log(&self, tab_id: &str, task_id: Option<&str>, stream: &str, line: String) {
         let mut sessions = self.sessions.lock().await;
         if let Some(runtime) = sessions.get_mut(tab_id) {
+            if let Some(expected) = task_id {
+                if runtime.state.task_id.as_deref() != Some(expected) {
+                    return;
+                }
+            }
             runtime.push_log(stream, line);
         }
     }
@@ -1108,6 +1210,24 @@ impl WorkPreviewManager {
             }
         }
     }
+
+    async fn wait_for_registry_stop(
+        &self,
+        task_id: &str,
+        deadline: Duration,
+    ) -> Result<(), String> {
+        let started = tokio::time::Instant::now();
+        while started.elapsed() < deadline {
+            match self.process_registry.status_for(task_id).await {
+                Some(ProcessStatus::Running) => sleep(Duration::from_millis(100)).await,
+                Some(_) | None => return Ok(()),
+            }
+        }
+        Err(format!(
+            "preview process {} did not exit after stop",
+            task_id
+        ))
+    }
 }
 
 fn idle_state(tab_id: &str) -> WorkPreviewState {
@@ -1216,6 +1336,11 @@ async fn capture_preview_screenshot(
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(target_os = "windows")]
+        {
+            use crate::winproc::NoWindowExt as _;
+            cmd.no_window();
+        }
         match timeout(Duration::from_secs(25), cmd.output()).await {
             Ok(Ok(output)) if output.status.success() => {
                 wait_for_screenshot_file(&path).await.map_err(|e| {
@@ -1422,6 +1547,11 @@ fn diagnostic_issue(
 
 fn preview_log_issue(line: &WorkPreviewLogLine) -> Option<String> {
     let lower = line.line.to_ascii_lowercase();
+    let is_stdout_warning =
+        line.stream == "stdout" && (lower.contains(" warn ") || lower.starts_with("warn "));
+    if is_stdout_warning {
+        return None;
+    }
     if line.stream == "stderr"
         && lower.starts_with("channel ")
         && lower.contains("open failed: connect failed: connection refused")
@@ -1453,6 +1583,60 @@ fn preview_log_issue(line: &WorkPreviewLogLine) -> Option<String> {
 fn browser_event_is_problem(event: &WorkPreviewBrowserEvent) -> bool {
     let level = event.level.to_ascii_lowercase();
     level == "error" || level == "exception" || level == "unhandledrejection"
+}
+
+fn browser_event_matches_state(event: &WorkPreviewBrowserEvent, state: &WorkPreviewState) -> bool {
+    if let Some(started_at) = state.started_at_ms {
+        let Some(event_t) = event.t else {
+            return false;
+        };
+        if event_t < started_at.saturating_sub(500) {
+            return false;
+        }
+    }
+    if let Some(preview_url) = state.url.as_deref() {
+        let Some(event_url) = event.url.as_deref() else {
+            return false;
+        };
+        if preview_origin(event_url) != preview_origin(preview_url) {
+            return false;
+        }
+    }
+    true
+}
+
+fn remote_path_within(root: &str, candidate: &str) -> bool {
+    let root = normalize_remote_path(root);
+    let candidate = normalize_remote_path(candidate);
+    if root.is_empty() || candidate.is_empty() {
+        return false;
+    }
+    if root == "/" {
+        return candidate.starts_with('/');
+    }
+    candidate == root
+        || candidate
+            .strip_prefix(root.as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn normalize_remote_path(path: &str) -> String {
+    let normalized = path.trim().replace('\\', "/");
+    if normalized == "/" {
+        return normalized;
+    }
+    normalized.trim_end_matches('/').to_string()
+}
+
+fn preview_origin(raw_url: &str) -> Option<String> {
+    let url = reqwest::Url::parse(raw_url).ok()?;
+    let host = url.host_str()?;
+    let mut out = format!("{}://{}", url.scheme(), host);
+    if let Some(port) = url.port() {
+        out.push(':');
+        out.push_str(&port.to_string());
+    }
+    Some(out)
 }
 
 fn browser_event_summary(event: &WorkPreviewBrowserEvent) -> String {
@@ -1921,7 +2105,7 @@ fn remote_preview_root(cwd: &str, rel: &str) -> Result<String, String> {
 
 fn static_html_entry(root: &Path) -> Option<PathBuf> {
     let index = root.join("index.html");
-    if index.is_file() {
+    if index.is_file() && static_html_candidate_allowed(root, &index) {
         return Some(index);
     }
 
@@ -1933,7 +2117,7 @@ fn static_html_entry(root: &Path) -> Option<PathBuf> {
 
     for name in ["public", "dist", "build", "site"] {
         let nested = root.join(name).join("index.html");
-        if nested.is_file() {
+        if nested.is_file() && static_html_candidate_allowed(root, &nested) {
             return Some(nested);
         }
     }
@@ -1955,12 +2139,13 @@ fn html_files_in_dir(dir: &Path) -> Vec<PathBuf> {
                     .and_then(|ext| ext.to_str())
                     .map(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"))
                     .unwrap_or(false)
+                && static_html_candidate_allowed(dir, path)
         })
         .collect()
 }
 
 fn first_nested_html(root: &Path, max_depth: usize) -> Option<PathBuf> {
-    fn visit(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+    fn visit(root: &Path, dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
         if depth > max_depth {
             return;
         }
@@ -1980,12 +2165,13 @@ fn first_nested_html(root: &Path, max_depth: usize) -> Option<PathBuf> {
                 {
                     continue;
                 }
-                visit(&path, depth + 1, max_depth, out);
+                visit(root, &path, depth + 1, max_depth, out);
             } else if path
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .map(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"))
                 .unwrap_or(false)
+                && static_html_candidate_allowed(root, &path)
             {
                 out.push(path);
             }
@@ -1993,8 +2179,21 @@ fn first_nested_html(root: &Path, max_depth: usize) -> Option<PathBuf> {
     }
 
     let mut found = Vec::new();
-    visit(root, 1, max_depth, &mut found);
+    visit(root, root, 1, max_depth, &mut found);
     found.into_iter().next()
+}
+
+fn static_html_candidate_allowed(root: &Path, entry: &Path) -> bool {
+    let Ok(root_canonical) = root.canonicalize() else {
+        return false;
+    };
+    let Ok(canonical) = entry.canonicalize() else {
+        return false;
+    };
+    let Ok(rel) = canonical.strip_prefix(&root_canonical) else {
+        return false;
+    };
+    static_preview_relative_allowed(rel)
 }
 
 fn static_url_path(root: &Path, entry: &Path) -> Option<String> {
@@ -2367,19 +2566,10 @@ fn command_for_project(root: &Path, kind: &WorkPreviewKind, port: u16) -> Result
         WorkPreviewKind::WebApp => {
             let package_json = root.join("package.json");
             let value = read_package_json(&package_json)?;
-            let has_dev = value
-                .get("scripts")
-                .and_then(|s| s.get("dev"))
-                .and_then(serde_json::Value::as_str)
-                .is_some();
-            if !has_dev {
+            let Some(dev_script) = package_dev_script(&value) else {
                 return Err("package.json has no scripts.dev command".to_string());
-            }
-            Ok(format!(
-                "{} -- --host 127.0.0.1 --port {}",
-                package_run_dev(root),
-                port
-            ))
+            };
+            Ok(web_command_for_project(root, dev_script, port))
         }
         WorkPreviewKind::ExpoWeb => Ok(format!(
             "{} --clear --web --host localhost --port {}",
@@ -2410,8 +2600,8 @@ fn remote_command_for_kind(kind: &WorkPreviewKind, port: u16) -> String {
     match kind {
         WorkPreviewKind::StaticHtml => remote_static_command(port),
         WorkPreviewKind::WebApp => format!(
-            "if [ -f pnpm-lock.yaml ]; then pnpm run dev -- --host 127.0.0.1 --port {}; elif [ -f yarn.lock ]; then yarn dev --host 127.0.0.1 --port {}; else npm run dev -- --host 127.0.0.1 --port {}; fi",
-            port, port, port
+            "dev=$(node -e \"try{{console.log((require('./package.json').scripts||{{}}).dev||'')}}catch(e){{}}\" 2>/dev/null); if [ -f pnpm-lock.yaml ]; then run='pnpm run dev'; elif [ -f yarn.lock ]; then run='yarn dev'; else run='npm run dev'; fi; case \"$dev\" in *next*) exec sh -lc \"$run -- --hostname 127.0.0.1 --port {}\" ;; *vite*|*astro*|*svelte-kit*|*webpack-dev-server*) exec sh -lc \"$run -- --host 127.0.0.1 --port {}\" ;; *) exec sh -lc \"$run\" ;; esac",
+            port, port
         ),
         WorkPreviewKind::ExpoWeb => format!(
             "if [ -f pnpm-lock.yaml ]; then pnpm exec expo start --clear --web --host localhost --port {}; elif [ -f yarn.lock ]; then yarn expo start --clear --web --host localhost --port {}; else npx expo start --clear --web --host localhost --port {}; fi",
@@ -2603,11 +2793,11 @@ http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 fn remote_preview_script(root: &str, port: u16, command_text: &str) -> String {
     let command = crate::acp::shell_quote_for_remote(command_text);
     let bash_bootstrap = format!(
-        "if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; fi; export PORT={} HOST=127.0.0.1 BROWSER=none NO_COLOR=1; exec sh -lc {}",
+        "if [ -s \"$HOME/.nvm/nvm.sh\" ]; then source \"$HOME/.nvm/nvm.sh\"; fi; unset FORCE_COLOR; export PORT={} HOST=127.0.0.1 BROWSER=none NO_COLOR=1; exec sh -lc {}",
         port, command
     );
     let sh_bootstrap = format!(
-        "if [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1 || true; fi; export PORT={} HOST=127.0.0.1 BROWSER=none NO_COLOR=1; exec sh -lc {}",
+        "if [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1 || true; fi; unset FORCE_COLOR; export PORT={} HOST=127.0.0.1 BROWSER=none NO_COLOR=1; exec sh -lc {}",
         port, command
     );
     format!(
@@ -2678,6 +2868,22 @@ fn package_run_dev(root: &Path) -> String {
         "yarn dev".to_string()
     } else {
         "npm run dev".to_string()
+    }
+}
+
+fn web_command_for_project(root: &Path, dev_script: &str, port: u16) -> String {
+    let run = package_run_dev(root);
+    let lower = dev_script.to_ascii_lowercase();
+    if lower.contains("next") {
+        format!("{} -- --hostname 127.0.0.1 --port {}", run, port)
+    } else if lower.contains("vite")
+        || lower.contains("astro")
+        || lower.contains("svelte-kit")
+        || lower.contains("webpack-dev-server")
+    {
+        format!("{} -- --host 127.0.0.1 --port {}", run, port)
+    } else {
+        run
     }
 }
 
@@ -2801,11 +3007,16 @@ fn package_has_expo(value: &serde_json::Value) -> bool {
 }
 
 fn package_has_dev_script(value: &serde_json::Value) -> bool {
+    package_dev_script(value).is_some()
+}
+
+fn package_dev_script(value: &serde_json::Value) -> Option<&str> {
     value
         .get("scripts")
         .and_then(|s| s.get("dev"))
         .and_then(serde_json::Value::as_str)
-        .is_some()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
 }
 
 async fn reserve_loopback_port() -> Result<u16, String> {
@@ -2837,12 +3048,43 @@ fn shell_command(command_text: &str) -> Command {
     }
 }
 
-fn stop_process_signal() -> &'static str {
-    if cfg!(windows) {
-        "SIGKILL"
-    } else {
-        "SIGTERM"
+#[cfg(target_os = "linux")]
+fn apply_preview_process_preexec(cmd: &mut Command) -> &mut Command {
+    use nix::libc;
+    unsafe {
+        cmd.pre_exec(|| {
+            // Keep the preview wrapper and framework children in their own
+            // session so stop/restart can terminate the process group.
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // Also clean up on parent death for Linux hosts.
+            if libc::prctl(1, 15, 0, 0, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
     }
+    cmd
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn apply_preview_process_preexec(cmd: &mut Command) -> &mut Command {
+    use nix::libc;
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd
+}
+
+#[cfg(not(unix))]
+fn apply_preview_process_preexec(cmd: &mut Command) -> &mut Command {
+    cmd
 }
 
 fn spawn_output_reader<R>(
@@ -2861,13 +3103,16 @@ fn spawn_output_reader<R>(
             match lines.next_line().await {
                 Ok(Some(line)) => {
                     registry.push_line(&task_id, stream, line.clone()).await;
-                    manager.append_log(&tab_id, stream, line).await;
+                    manager
+                        .append_log(&tab_id, Some(&task_id), stream, line)
+                        .await;
                 }
                 Ok(None) => break,
                 Err(err) => {
                     manager
                         .append_log(
                             &tab_id,
+                            Some(&task_id),
                             "system",
                             format!("preview {} read failed: {}", stream, err),
                         )
@@ -2921,6 +3166,13 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("temp dir");
         dir
+    }
+
+    fn canonical_string(path: &Path) -> String {
+        path.canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_string()
     }
 
     #[tokio::test]
@@ -3054,6 +3306,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn static_entry_detection_skips_blocked_dotfiles() {
+        let root = temp_dir("static-dotfile");
+        fs::write(root.join(".hidden.html"), "<html>hidden</html>").expect("hidden");
+        fs::write(root.join("visible.html"), "<html>visible</html>").expect("visible");
+        let entry = static_html_entry(&root).expect("visible entry");
+        assert_eq!(
+            entry.file_name().and_then(|s| s.to_str()),
+            Some("visible.html")
+        );
+    }
+
     #[tokio::test]
     async fn static_preview_blocks_sensitive_project_files() {
         let root = temp_dir("static-sensitive");
@@ -3132,6 +3396,80 @@ mod tests {
         let remote = remote_command_for_kind(&WorkPreviewKind::ExpoWeb, 4321);
         assert!(remote.contains("expo start --clear --web"));
         assert!(!remote.contains("expo start --web --host"));
+    }
+
+    #[test]
+    fn web_preview_commands_use_framework_specific_flags() {
+        let root = temp_dir("web-command");
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts":{"dev":"next dev"}}"#,
+        )
+        .expect("next package");
+        let next =
+            command_for_project(&root, &WorkPreviewKind::WebApp, 4321).expect("next command");
+        assert!(next.contains("--hostname 127.0.0.1 --port 4321"));
+        assert!(!next.contains("--host 127.0.0.1 --port"));
+
+        fs::write(root.join("package.json"), r#"{"scripts":{"dev":"vite"}}"#)
+            .expect("vite package");
+        let vite =
+            command_for_project(&root, &WorkPreviewKind::WebApp, 4322).expect("vite command");
+        assert!(vite.contains("--host 127.0.0.1 --port 4322"));
+
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts":{"dev":"node server.js"}}"#,
+        )
+        .expect("generic package");
+        let generic =
+            command_for_project(&root, &WorkPreviewKind::WebApp, 4323).expect("generic command");
+        assert_eq!(generic, "npm run dev");
+    }
+
+    #[tokio::test]
+    async fn append_log_ignores_output_from_replaced_preview() {
+        let manager = Arc::new(WorkPreviewManager::new(Arc::new(ProcessRegistry::new())));
+        let state = WorkPreviewState {
+            tab_id: "stale-log-tab".to_string(),
+            cwd: None,
+            kind: Some(WorkPreviewKind::WebApp),
+            status: WorkPreviewStatus::Running,
+            url: None,
+            command: None,
+            task_id: Some("new-task".to_string()),
+            pid: None,
+            started_at_ms: Some(now_ms()),
+            updated_at_ms: now_ms(),
+            error: None,
+            logs: Vec::new(),
+        };
+        manager
+            .sessions
+            .lock()
+            .await
+            .insert("stale-log-tab".to_string(), RuntimePreview::new(state));
+
+        manager
+            .append_log(
+                "stale-log-tab",
+                Some("old-task"),
+                "stderr",
+                "old failure".to_string(),
+            )
+            .await;
+        manager
+            .append_log(
+                "stale-log-tab",
+                Some("new-task"),
+                "stdout",
+                "new ready".to_string(),
+            )
+            .await;
+
+        let logs = manager.logs("stale-log-tab").await;
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].line, "new ready");
     }
 
     #[test]
@@ -3229,7 +3567,10 @@ http.createServer((req, res) => {
         .expect("failed preview should return before readiness timeout")
         .expect("failed preview returns state");
         assert_eq!(failed.status, WorkPreviewStatus::Failed);
-        assert_eq!(failed.cwd.as_deref(), Some(root.to_string_lossy().as_ref()));
+        assert_eq!(
+            failed.cwd.as_deref(),
+            Some(canonical_string(&root).as_str())
+        );
         assert!(failed.error.as_deref().unwrap_or_default().contains("code"));
         assert!(failed
             .logs
@@ -3286,9 +3627,12 @@ http.createServer((req, res) => res.end('RETRY_PREVIEW_OK'))
             .await
             .expect("static start");
         assert_eq!(state.status, WorkPreviewStatus::Running);
+        let started_at = state.started_at_ms.expect("started");
+        let preview_url = state.url.clone().expect("url");
         manager
             .append_log(
                 "diagnose-tab",
+                None,
                 "stderr",
                 "TypeError: broken render".to_string(),
             )
@@ -3299,12 +3643,13 @@ http.createServer((req, res) => res.end('RETRY_PREVIEW_OK'))
                 WorkPreviewDiagnoseRequest {
                     tab_id: Some("diagnose-tab".to_string()),
                     browser_events: vec![WorkPreviewBrowserEvent {
+                        t: Some(started_at + 1),
                         level: "error".to_string(),
                         message: "ReferenceError: missingState is not defined".to_string(),
                         source: Some("index.html".to_string()),
+                        url: Some(preview_url),
                         ..Default::default()
                     }],
-                    screenshot_path: Some("screenshot.png".to_string()),
                 },
             )
             .await;
@@ -3319,15 +3664,100 @@ http.createServer((req, res) => res.end('RETRY_PREVIEW_OK'))
             .issues
             .iter()
             .any(|issue| issue.source == "content"));
-        assert_eq!(
-            diagnostic.screenshot_path.as_deref(),
-            Some("screenshot.png")
-        );
-        assert_eq!(diagnostic.screenshot_width, None);
-        assert_eq!(diagnostic.screenshot_height, None);
-        assert_eq!(diagnostic.screenshot_browser, None);
-        assert_eq!(diagnostic.screenshot_error, None);
+        if diagnostic.screenshot_path.is_some() {
+            assert!(diagnostic.screenshot_width.is_some());
+            assert!(diagnostic.screenshot_height.is_some());
+            assert!(diagnostic.screenshot_browser.is_some());
+        }
         manager.stop("diagnose-tab").await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn preview_diagnose_filters_stale_browser_events() {
+        let root = temp_dir("diagnose-stale");
+        fs::write(root.join("index.html"), "<html><body>ok</body></html>").expect("index");
+        let manager = Arc::new(WorkPreviewManager::new(Arc::new(ProcessRegistry::new())));
+        let state = manager
+            .start(WorkPreviewStartRequest {
+                tab_id: Some("diagnose-stale-tab".to_string()),
+                cwd: root.to_string_lossy().to_string(),
+                kind: Some("static".to_string()),
+                entry: None,
+            })
+            .await
+            .expect("static start");
+        let started_at = state.started_at_ms.expect("started");
+        let current_url = state.url.clone().expect("url");
+        let stale_origin = "http://127.0.0.1:9/index.html".to_string();
+        let diagnostic = manager
+            .diagnose(
+                "diagnose-stale-tab",
+                WorkPreviewDiagnoseRequest {
+                    tab_id: Some("diagnose-stale-tab".to_string()),
+                    browser_events: vec![
+                        WorkPreviewBrowserEvent {
+                            t: Some(started_at - 10_000),
+                            level: "error".to_string(),
+                            message: "old generation".to_string(),
+                            url: Some(current_url.clone()),
+                            ..Default::default()
+                        },
+                        WorkPreviewBrowserEvent {
+                            t: Some(started_at + 1),
+                            level: "error".to_string(),
+                            message: "old origin".to_string(),
+                            url: Some(stale_origin),
+                            ..Default::default()
+                        },
+                        WorkPreviewBrowserEvent {
+                            level: "error".to_string(),
+                            message: "missing timestamp and URL".to_string(),
+                            ..Default::default()
+                        },
+                        WorkPreviewBrowserEvent {
+                            t: Some(started_at + 1),
+                            level: "error".to_string(),
+                            message: "missing URL".to_string(),
+                            ..Default::default()
+                        },
+                        WorkPreviewBrowserEvent {
+                            level: "error".to_string(),
+                            message: "missing timestamp".to_string(),
+                            url: Some(current_url.clone()),
+                            ..Default::default()
+                        },
+                        WorkPreviewBrowserEvent {
+                            t: Some(started_at + 1),
+                            level: "error".to_string(),
+                            message: "current origin".to_string(),
+                            url: Some(current_url),
+                            ..Default::default()
+                        },
+                    ],
+                },
+            )
+            .await;
+        assert_eq!(diagnostic.browser_events.len(), 1);
+        assert_eq!(diagnostic.browser_events[0].message, "current origin");
+        manager.stop("diagnose-stale-tab").await.expect("stop");
+    }
+
+    #[test]
+    fn remote_path_scope_requires_path_under_session_root() {
+        assert!(remote_path_within(
+            "/home/user/project",
+            "/home/user/project"
+        ));
+        assert!(remote_path_within(
+            "/home/user/project/",
+            "/home/user/project/app"
+        ));
+        assert!(!remote_path_within(
+            "/home/user/project",
+            "/home/user/project-other"
+        ));
+        assert!(!remote_path_within("/home/user/project", "/home/user"));
+        assert!(!remote_path_within("", "/home/user/project"));
     }
 
     #[test]
@@ -3384,10 +3814,16 @@ http.createServer((req, res) => res.end('RETRY_PREVIEW_OK'))
             stream: "stderr".to_string(),
             line: "channel 2: open failed: connect failed: Connection refused".to_string(),
         };
+        let metro_warning = WorkPreviewLogLine {
+            t: now_ms(),
+            stream: "stdout".to_string(),
+            line: "Web  WARN  Launch API unavailable, using offline fallback data. [Error: Launch API upcoming failed: 429]".to_string(),
+        };
 
         assert!(preview_log_issue(&benign).is_none());
         assert!(preview_log_issue(&blocked_probe).is_none());
         assert!(preview_log_issue(&ssh_forward_warmup).is_none());
+        assert!(preview_log_issue(&metro_warning).is_none());
         assert!(preview_log_issue(&real_error).is_some());
     }
 

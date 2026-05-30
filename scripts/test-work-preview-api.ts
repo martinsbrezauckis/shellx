@@ -209,12 +209,13 @@ http.createServer((req, res) => {
     const staticEntryDiagnostic = await diagnosePreview("api-static-entry", {
       browserEvents: [
         {
+          t: Date.now(),
           level: "error",
           message: "ReferenceError: missingState is not defined",
           source: "shellx-preview-test.html",
+          url: staticEntryState.url,
         },
       ],
-      screenshotPath: "preview-smoke.png",
     });
     assert(!staticEntryDiagnostic.ok, "Preview Doctor reports browser errors");
     assert(

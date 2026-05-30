@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type JSX, type PointerEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  clearWorkPreviewBrowserEvents,
   emptyWorkPreviewState,
+  diagnoseWorkPreview,
   getWorkPreviewState,
+  getWorkPreviewBrowserEvents,
   recordWorkPreviewBrowserEvent,
   startWorkPreview,
   stopWorkPreview,
@@ -10,6 +13,7 @@ import {
   workPreviewKindLabel,
   workPreviewStatusLabel,
   type WorkPreviewBrowserEvent,
+  type WorkPreviewDiagnostic,
   type WorkPreviewStartKind,
   type WorkPreviewState,
 } from "../lib/work-preview";
@@ -62,6 +66,9 @@ export function WorkPreviewPanel({
   const [kind, setKind] = useState<WorkPreviewStartKind>("auto");
   const [logHeight, setLogHeight] = useState(initialLogHeight);
   const [busy, setBusy] = useState(false);
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<WorkPreviewDiagnostic | null>(null);
+  const [diagnosticCopied, setDiagnosticCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dragStartRef = useRef<{ y: number; height: number } | null>(null);
   const displayCwd = state.cwd || cwd;
@@ -122,8 +129,10 @@ export function WorkPreviewPanel({
         cwd: displayCwd,
         kind,
       });
+      clearWorkPreviewBrowserEvents(tabId);
       setState(next);
       onStateChange?.(next);
+      setDiagnostic(null);
       if (next.url) onOpenPreview?.(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -141,6 +150,7 @@ export function WorkPreviewPanel({
       const next = await stopWorkPreview(tabId);
       setState(next);
       onStateChange?.(next);
+      setDiagnostic(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -161,6 +171,39 @@ export function WorkPreviewPanel({
     if (!state.url) return;
     try {
       await navigator.clipboard.writeText(state.url);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function runDoctor(): Promise<void> {
+    if (!inTauri() || diagnosing) return;
+    setDiagnosing(true);
+    setError(null);
+    try {
+      const next = await diagnoseWorkPreview({
+        tabId,
+        browserEvents: getWorkPreviewBrowserEvents(tabId, {
+          url: state.url,
+          sinceMs: state.startedAtMs,
+        }),
+      });
+      setDiagnostic(next);
+      setState(next.state);
+      onStateChange?.(next.state);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDiagnosing(false);
+    }
+  }
+
+  async function copyDoctorReport(): Promise<void> {
+    if (!diagnostic) return;
+    try {
+      await navigator.clipboard.writeText(formatPreviewDoctorReport(diagnostic));
+      setDiagnosticCopied(true);
+      window.setTimeout(() => setDiagnosticCopied(false), 1200);
     } catch {
       /* ignore */
     }
@@ -202,6 +245,7 @@ export function WorkPreviewPanel({
     const next = emptyWorkPreviewState(tabId);
     setState(next);
     onStateChange?.(next);
+    setDiagnostic(null);
     setError(null);
     void refresh();
   }, [tabId]);
@@ -276,6 +320,12 @@ export function WorkPreviewPanel({
                 Ask Fix
               </button>
             )}
+            {(hasUrl || state.status === "failed") && (
+              <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void runDoctor()} disabled={busy || diagnosing}>
+                <ShellIcon name={diagnosing ? "loader" : "shield-alert"} size={12} />
+                Doctor
+              </button>
+            )}
           </div>
         </div>
 
@@ -311,6 +361,43 @@ export function WorkPreviewPanel({
           <div className="rail-empty work-preview-hint">
             <div className="rail-empty-line">Preview needs project setup.</div>
             <div className="rail-empty-hint">{actionHint}</div>
+          </div>
+        )}
+
+        {diagnostic && (
+          <div className={`work-preview-doctor-card work-preview-doctor-${diagnostic.status}`}>
+            <div className="work-preview-doctor-head">
+              <div>
+                <div className="work-preview-doctor-title">
+                  <ShellIcon name={diagnostic.ok ? "circle-check" : "alert"} size={13} />
+                  Preview Doctor
+                </div>
+                <div className="work-preview-doctor-summary">{diagnostic.summary}</div>
+              </div>
+              <button type="button" className="settings-pill" onClick={() => void copyDoctorReport()} title="Copy Preview Doctor report">
+                <ShellIcon name={diagnosticCopied ? "check" : "copy"} size={12} />
+                Report
+              </button>
+            </div>
+            <div className="work-preview-doctor-meta">
+              {diagnostic.httpStatus !== null && <span>HTTP {diagnostic.httpStatus}</span>}
+              {diagnostic.title && <span title={diagnostic.title}>{diagnostic.title}</span>}
+              {diagnostic.screenshotPath && <span title={diagnostic.screenshotPath}>screenshot captured</span>}
+              {diagnostic.screenshotError && <span title={diagnostic.screenshotError}>screenshot unavailable</span>}
+            </div>
+            {diagnostic.issues.length > 0 && (
+              <div className="work-preview-doctor-issues">
+                {diagnostic.issues.slice(0, 5).map((issue, index) => (
+                  <div className={`work-preview-doctor-issue work-preview-doctor-issue-${issue.severity}`} key={`${issue.source}-${index}`}>
+                    <span>{issue.severity}</span>
+                    <span>{issue.source}: {issue.message}</span>
+                  </div>
+                ))}
+                {diagnostic.issues.length > 5 && (
+                  <div className="work-preview-doctor-more">+{diagnostic.issues.length - 5} more issue{diagnostic.issues.length - 5 === 1 ? "" : "s"}</div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -368,23 +455,25 @@ export function WorkPreviewPanel({
   );
 }
 
-export function WorkPreviewModal({
-  open,
+export function WorkPreviewStage({
   state,
   onClose,
   onAskGrokToFix,
+  showClose = true,
 }: {
-  open: boolean;
   state: WorkPreviewState | null;
-  onClose: () => void;
+  onClose?: () => void;
   onAskGrokToFix?: (state: WorkPreviewState) => void;
-}): JSX.Element | null {
+  showClose?: boolean;
+}): JSX.Element {
   const effective = state ?? emptyWorkPreviewState("default");
   const hasUrl = Boolean(effective.url);
   const isRunning = effective.status === "running" || effective.status === "starting";
   const defaultViewport = effective.kind === "expoWeb" ? "phone" : "desktop";
   const [viewport, setViewport] = useState<"phone" | "tablet" | "desktop">(defaultViewport);
   const [frameReloadSeq, setFrameReloadSeq] = useState(0);
+  const [browserIssueCount, setBrowserIssueCount] = useState(0);
+  const [lastBrowserIssue, setLastBrowserIssue] = useState<WorkPreviewBrowserEvent | null>(null);
   const frameRevision = effective.startedAtMs ?? effective.updatedAtMs;
   const frameSrc = useMemo(
     () => effective.url ? cacheBustPreviewUrl(effective.url, frameRevision, frameReloadSeq) : null,
@@ -400,7 +489,16 @@ export function WorkPreviewModal({
   }, [effective.url, frameRevision]);
 
   useEffect(() => {
-    if (!open) return;
+    const issues = getWorkPreviewBrowserEvents(effective.tabId, {
+      url: effective.url,
+      sinceMs: effective.startedAtMs,
+    }).filter(isPreviewBrowserIssue);
+    setBrowserIssueCount(issues.length);
+    setLastBrowserIssue(issues[issues.length - 1] ?? null);
+  }, [effective.tabId, effective.url, frameRevision]);
+
+  useEffect(() => {
+    if (!onClose) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -409,10 +507,10 @@ export function WorkPreviewModal({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [onClose]);
 
   useEffect(() => {
-    if (!open || !effective.url) return;
+    if (!effective.url) return;
     let expectedOrigin = "";
     try {
       expectedOrigin = new URL(effective.url).origin;
@@ -423,11 +521,20 @@ export function WorkPreviewModal({
       if (event.origin !== expectedOrigin) return;
       const data = event.data;
       if (!data || typeof data !== "object" || data.kind !== "shellx-preview-doctor") return;
-      recordWorkPreviewBrowserEvent(effective.tabId, normalizePreviewBrowserEvent(data));
+      const normalized = normalizePreviewBrowserEvent(data);
+      recordWorkPreviewBrowserEvent(effective.tabId, normalized);
+      if (isPreviewBrowserIssue(normalized)) {
+        const issues = getWorkPreviewBrowserEvents(effective.tabId, {
+          url: effective.url,
+          sinceMs: effective.startedAtMs,
+        }).filter(isPreviewBrowserIssue);
+        setBrowserIssueCount(issues.length);
+        setLastBrowserIssue(normalized);
+      }
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [open, effective.url, effective.tabId]);
+  }, [effective.url, effective.tabId]);
 
   async function openExternal(): Promise<void> {
     if (!effective.url) return;
@@ -447,11 +554,7 @@ export function WorkPreviewModal({
     }
   }
 
-  if (!open) return null;
-
   return (
-    <div className="work-preview-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Work Preview">
-      <div className={`work-preview-modal work-preview-modal-${viewport}`} onClick={(event) => event.stopPropagation()}>
         <div className="work-preview-stage">
           <div className="work-preview-stage-head">
             <div className="work-preview-stage-title">
@@ -497,6 +600,17 @@ export function WorkPreviewModal({
               )}
               {effective.url && (
                 <>
+                  {browserIssueCount > 0 && onAskGrokToFix && (
+                    <button
+                      type="button"
+                      className="settings-pill work-preview-error-pill"
+                      onClick={() => onAskGrokToFix(effective)}
+                      title={lastBrowserIssue?.message ?? "Preview browser issue captured"}
+                    >
+                      <ShellIcon name="alert" size={12} />
+                      <span>{browserIssueCount}</span>
+                    </button>
+                  )}
                   {onAskGrokToFix && (
                     <button type="button" className="settings-pill" onClick={() => onAskGrokToFix(effective)} title="Run Preview Doctor and ask Grok to fix">
                       <ShellIcon name="alert" size={12} />
@@ -513,9 +627,11 @@ export function WorkPreviewModal({
                   </button>
                 </>
               )}
-              <button type="button" className="settings-pill" onClick={onClose} title="Close">
-                <ShellIcon name="close" size={12} />
-              </button>
+              {showClose && onClose && (
+                <button type="button" className="settings-pill" onClick={onClose} title="Close">
+                  <ShellIcon name="close" size={12} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -546,9 +662,37 @@ export function WorkPreviewModal({
             </div>
           )}
         </div>
+  );
+}
+
+export function WorkPreviewModal({
+  open,
+  state,
+  onClose,
+  onAskGrokToFix,
+}: {
+  open: boolean;
+  state: WorkPreviewState | null;
+  onClose: () => void;
+  onAskGrokToFix?: (state: WorkPreviewState) => void;
+}): JSX.Element | null {
+  if (!open) return null;
+  return (
+    <div className="work-preview-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Work Preview">
+      <div className="work-preview-modal" onClick={(event) => event.stopPropagation()}>
+        <WorkPreviewStage
+          state={state}
+          onClose={onClose}
+          onAskGrokToFix={onAskGrokToFix}
+        />
       </div>
     </div>
   );
+}
+
+function isPreviewBrowserIssue(event: WorkPreviewBrowserEvent): boolean {
+  const level = event.level.toLowerCase();
+  return level.includes("error") || level.includes("warn") || level === "exception";
 }
 
 function normalizePreviewBrowserEvent(data: Record<string, unknown>): WorkPreviewBrowserEvent {
@@ -562,6 +706,45 @@ function normalizePreviewBrowserEvent(data: Record<string, unknown>): WorkPrevie
     column: typeof data.column === "number" ? data.column : null,
     stack: typeof data.stack === "string" ? data.stack : null,
   };
+}
+
+function formatPreviewDoctorReport(diagnostic: WorkPreviewDiagnostic): string {
+  const issues = diagnostic.issues.length > 0
+    ? diagnostic.issues.map((issue) => `- ${issue.severity} ${issue.source}: ${issue.message}`).join("\n")
+    : "- none";
+  const browserEvents = diagnostic.browserEvents.length > 0
+    ? diagnostic.browserEvents.slice(-20).map((event) => {
+        const location = [event.url, event.line, event.column].filter((part) => part !== null && part !== undefined && part !== "").join(":");
+        return `- ${event.level}: ${event.message}${location ? ` (${location})` : ""}`;
+      }).join("\n")
+    : "- none";
+  const logs = diagnostic.logs.length > 0
+    ? diagnostic.logs.slice(-80).map((line) => `[${line.stream}] ${line.line}`).join("\n")
+    : "(no logs)";
+
+  return [
+    "shellX Preview Doctor report",
+    "",
+    `Status: ${diagnostic.status}`,
+    `Summary: ${diagnostic.summary}`,
+    `URL: ${diagnostic.url ?? "(none)"}`,
+    `CWD: ${diagnostic.cwd ?? "(none)"}`,
+    `Command: ${diagnostic.command ?? "(none)"}`,
+    `HTTP: ${diagnostic.httpStatus ?? "(none)"}`,
+    `Title: ${diagnostic.title ?? "(none)"}`,
+    `Screenshot: ${diagnostic.screenshotPath ?? diagnostic.screenshotError ?? "(none)"}`,
+    "",
+    "Issues:",
+    issues,
+    "",
+    "Browser events:",
+    browserEvents,
+    "",
+    "Recent logs:",
+    "```text",
+    logs,
+    "```",
+  ].join("\n");
 }
 
 function cacheBustPreviewUrl(url: string, updatedAtMs: number, reloadSeq: number): string {

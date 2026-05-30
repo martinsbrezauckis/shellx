@@ -1,4 +1,5 @@
 import {
+  buildReleaseRunbook,
   buildReleaseReadinessChecks,
   shouldShowReleaseReadiness,
   summarizeReleaseReadiness,
@@ -71,6 +72,13 @@ assert(broken.find((c) => c.id === "semgrep-scan")?.status === "fail", "missing 
 assert(broken.find((c) => c.id === "mac-app-smoke")?.status === "fail", "missing macOS app smoke blocks release staging");
 assert(broken.find((c) => c.id === "ci-grok-shim")?.status === "fail", "missing fake grok shim blocks release");
 assert(summarizeReleaseReadiness(broken).statusLabel === "blocked", "failed gates block release");
+
+const runbook = buildReleaseRunbook({ version: "0.1.31", checks: broken });
+assert(runbook.includes("shellX v0.1.31 release runbook"), "runbook includes release version");
+assert(runbook.includes("yes, push"), "runbook preserves explicit push approval reminder");
+assert(runbook.includes("yes, tag"), "runbook preserves explicit tag approval reminder");
+assert(runbook.includes("yes, release"), "runbook preserves explicit release approval reminder");
+assert(runbook.includes("Rust fmt/clippy"), "runbook includes failing gate labels");
 
 const ciWorkflow = readFileSync(".github/workflows/ci.yml", "utf8");
 assert(ciWorkflow.includes("GROK_BIN"), "CI workflow exports GROK_BIN for tests that spawn grok");

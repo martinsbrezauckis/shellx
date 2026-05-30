@@ -30,8 +30,9 @@
  * j/k/y/n/e    per-hunk diff nav (handled inside ChatOutput)
  * * File attach: picker, OS drag/drop, pasted clipboard images/files, and
  * screenshots all route through the same classifier. Text files ≤64 KB inline
- * as embedded_context; images are recorded as thumbnail intent (the wire form
- * stays `[attached: <path>]` until grok advertises promptCapabilities.image).
+ * as embedded_context; images are recorded as thumbnail intent. The composer
+ * shows removable chips while the wire prompt still gets `[attached: <path>]`
+ * markers until grok advertises promptCapabilities.image.
  * * Sessions persist to ~/.shellx/sessions/<id>.jsonl one line per event;
  * Tauri command for the writer, debug-api for the read side.
  */
@@ -47,9 +48,16 @@ import { Header, type AutonomyMode } from "./components/Header";
 import type { ChatHit } from "./components/FindPopover";
 import { LeftRail } from "./components/LeftRail";
 import { ChatOutput } from "./components/ChatOutput";
-import { BottomPanel, readPersistedBottomTab, type BottomTab } from "./components/BottomPanel";
+import {
+  BottomPanel,
+  readPersistedBottomTab,
+  type BottomTab,
+  type ComposerAttachmentKind,
+  type ComposerAttachmentChip,
+} from "./components/BottomPanel";
 import { RightRail, type PreviewTarget, type RightTab } from "./components/RightRail";
-import { WorkPreviewModal } from "./components/WorkPreviewPanel";
+import { PreviewCenter } from "./components/PreviewCenter";
+import { AttachmentMediaBoard } from "./components/AttachmentMediaBoard";
 import { SessionTabs, type SessionTab } from "./components/SessionTabs";
 import { HelpModal } from "./components/HelpModal";
 import { CommandPalette, type PaletteAction } from "./components/CommandPalette";
@@ -64,7 +72,6 @@ import { PluginsModal } from "./components/PluginsModal";
 import { ConnectorInboxModal } from "./components/ConnectorInboxModal";
 import { TAB_KEY as SETTINGS_TAB_KEY } from "./components/Settings";
 import { hydrateUserData, persistUserData } from "./lib/userStore";
-import { FilePreviewModal } from "./components/FilePreviewModal";
 import { ActivityBrowserModal } from "./components/ActivityBrowserModal";
 import { BuiltinDocModal } from "./components/BuiltinDocModal";
 import { GoalPlanReviewModal } from "./components/GoalPlanReviewModal";
@@ -80,25 +87,26 @@ import {
   type SettingsValues,
 } from "./components/Settings";
 import { useKeyboardShortcuts } from "./lib/shortcuts";
-import { api, apiPost, apiPostJson } from "./lib/debug-api";
+import { api, apiPost, apiPostJson, debugApiBase, getDebugToken } from "./lib/debug-api";
 import { inTauri } from "./lib/tauri-bridge";
 import { groupEvents } from "./lib/grouping";
+import { extractSessionAttachments, extractSessionMedia } from "./lib/session-media";
 import { PendingLocalEventQueue, localEventTabId } from "./lib/pending-local-events";
 import { extractAssistantTurnAfterIndex, getVoiceTurnToSpeak } from "./lib/voice-chat";
 import { getBuildState, isBuildTerminalStatus, parseBuildCommand, startBuildMode } from "./lib/build-run";
 import {
+  clearWorkPreviewBrowserEvents,
   diagnoseWorkPreview,
   emptyWorkPreviewState,
   getWorkPreviewBrowserEvents,
   getWorkPreviewState,
-  isStaticHtmlPreviewPath,
   startWorkPreview,
-  workPreviewEntryForFilePath,
   workPreviewKindLabel,
-  workPreviewRootForFilePath,
+  workPreviewStatusLabel,
   type WorkPreviewDiagnostic,
   type WorkPreviewState,
 } from "./lib/work-preview";
+import { resolvePreviewRoute, type PreviewCenterView } from "./lib/preview-center";
 import {
   summarizeOutsideConnectorInbox,
   type OutsideConnector,
@@ -150,6 +158,12 @@ const VOICE_KEY_PREFIX = "shellx.voiceChatMode.";
 const CONNECTOR_INBOX_SEEN_KEY = "shellx.connectorInbox.lastSeenMs.v1";
 const DROPPED_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 
+interface PendingTextAttachment {
+  path: string;
+  content: string;
+  mimeType: string;
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -163,12 +177,53 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
+const RIGHT_TAB_IDS: ReadonlySet<string> = new Set(["Tasks", "Tooling", "Git", "Preview", "Plan", "Files"]);
+const BOTTOM_TAB_IDS: ReadonlySet<string> = new Set(["Chat", "Terminal", "Images", "Videos", "Logs", "Stderr"]);
+
+function isRightTab(value: unknown): value is RightTab {
+  return typeof value === "string" && RIGHT_TAB_IDS.has(value);
+}
+
+function isBottomTab(value: unknown): value is BottomTab {
+  return typeof value === "string" && BOTTOM_TAB_IDS.has(value);
+}
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   const mb = bytes / (1024 * 1024);
   if (mb >= 1) return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
   return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+function attachmentLabelFromPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  return normalized.split("/").filter(Boolean).pop() || path;
+}
+
+function attachmentChipId(path: string): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${path}`;
+}
+
+function appendUniqueTextAttachments(
+  existing: PendingTextAttachment[],
+  incoming: PendingTextAttachment[],
+): PendingTextAttachment[] {
+  if (incoming.length === 0) return existing;
+  const seen = new Set(existing.map((item) => item.path));
+  const unique = incoming.filter((item) => {
+    if (seen.has(item.path)) return false;
+    seen.add(item.path);
+    return true;
+  });
+  return unique.length > 0 ? [...existing, ...unique] : existing;
+}
+
+function attachmentWireTag(attachment: ComposerAttachmentChip): string {
+  if (attachment.kind === "image") {
+    return `[attached image: ${attachment.path}; inspect with vision_describe, not read_file]`;
+  }
+  return `[attached: ${attachment.path}]`;
 }
 
 function previewRepairPrompt(diagnostic: WorkPreviewDiagnostic): string {
@@ -432,20 +487,8 @@ export default function App(): JSX.Element {
    * image files don't appear here — they use the `[attached: <path>]`
    * tag-only path.
    */
-  type PendingTextAttachment = {
-    path: string;
-    content: string;
-    mimeType: string;
-  };
   const [pendingAttachments, setPendingAttachments] = useState<PendingTextAttachment[]>([]);
-  /**
-   * Pending image-thumbnail entries. Each entry yields an 80×80 preview
-   * chip on the user bubble for the most-recently-sent prompt. State is
-   * consumed by send() and surfaced as a synthetic "ui-attach-thumbs"
-   * event so ChatOutput can render it without coupling to prompt text.
-   */
-  type PendingImageThumb = { path: string };
-  const [pendingImageThumbs, setPendingImageThumbs] = useState<PendingImageThumb[]>([]);
+  const [pendingAttachmentChips, setPendingAttachmentChips] = useState<ComposerAttachmentChip[]>([]);
   /**
    * Last-seen agentCapabilities dict from grok's initialize response.
    * Shape: { promptCapabilities: { image, embeddedContext, audio, ... } }.
@@ -473,7 +516,9 @@ export default function App(): JSX.Element {
   const [workPreviewByTab, setWorkPreviewByTab] = useState<Map<string, WorkPreviewState>>(
     () => new Map(),
   );
-  const [workPreviewModalOpen, setWorkPreviewModalOpen] = useState(false);
+  const [previewCenterOpen, setPreviewCenterOpen] = useState(false);
+  const [previewCenterView, setPreviewCenterView] = useState<PreviewCenterView>("file");
+  const [assetBoardOpen, setAssetBoardOpen] = useState(false);
   const [goalReviewRequestSeq, setGoalReviewRequestSeq] = useState(0);
 
   // ─── UI state ─────────────────────────────────────────────────────────
@@ -612,14 +657,14 @@ export default function App(): JSX.Element {
     try { localStorage.setItem(SETTINGS_TAB_KEY, "about"); } catch { /* ignore */ }
     setSettingsOpen(true);
   }, []);
-  // File preview modal opened by ChatOutput clicks on file paths.
-  // Read-only.
+  // Preview Center opened by ChatOutput clicks on file paths. Documents
+  // stay read-only; runnable HTML routes through Work Preview.
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
   // in-app docs (Features / Quick start) routed through a
   // global event from AboutTab. Avoids the cross-import dance and
-  // keeps BuiltinDocModal mounted at App scope (same level as the
-  // FilePreviewModal) so it's reachable from anywhere.
+  // keeps BuiltinDocModal mounted at App scope so it's reachable from
+  // anywhere.
   const [builtinDocId, setBuiltinDocId] = useState<string | null>(null);
   useEffect(() => {
     const handler = (e: Event) => {
@@ -685,13 +730,13 @@ export default function App(): JSX.Element {
   useEffect(() => {
     (window as unknown as { shellxOpenFilePreview?: (p: string) => void })
       .shellxOpenFilePreview = (p: string) => {
-        if (typeof p === "string" && p.length > 0) setPreviewPath(p);
+        if (typeof p === "string" && p.length > 0) handlePreviewFile(p);
       };
     return () => {
       delete (window as unknown as { shellxOpenFilePreview?: unknown })
         .shellxOpenFilePreview;
     };
-  }, []);
+  }, [handlePreviewFile]);
   const [prModalOpen, setPrModalOpen] = useState(false);
   /* VaultPanel — openable via the command palette
    * ("Open vault (secrets)"). No dedicated keyboard shortcut yet. */
@@ -1209,6 +1254,8 @@ export default function App(): JSX.Element {
     });
   }, [events, activeTabId, tabs.length, knownTabIds]);
   const groups = useMemo(() => groupEvents(eventsForActiveTab), [eventsForActiveTab]);
+  const sessionMedia = useMemo(() => extractSessionMedia(groups), [groups]);
+  const sessionAttachments = useMemo(() => extractSessionAttachments(groups), [groups]);
 
   // Per-tab token count: scans only the active tab's events so each
   // session's gauge reflects its own usage.
@@ -1359,7 +1406,15 @@ export default function App(): JSX.Element {
         const list = p?.params?.availableModels;
         if (Array.isArray(list)) {
           const names = list.map((m: any) =>
-            typeof m === "string" ? m : (typeof m?.id === "string" ? m.id : null),
+            typeof m === "string"
+              ? m
+              : typeof m?.modelId === "string"
+                ? m.modelId
+                : typeof m?.id === "string"
+                  ? m.id
+                  : typeof m?.name === "string"
+                    ? m.name
+                    : null,
           ).filter((x: string | null): x is string => typeof x === "string");
           if (names.length > 0) setAvailableModels(names);
           return;
@@ -1386,6 +1441,61 @@ export default function App(): JSX.Element {
   // and re-register them, dropping any events emitted in the gap.
   const activeTabIdRef = useRef<string | null>(activeTabId);
   useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
+
+  useEffect(() => {
+    if (!inTauri()) return;
+    let socket: WebSocket | null = null;
+    let closed = false;
+    let retryTimer: number | null = null;
+    const connectedAfterMs = Date.now() - 500;
+
+    const applyPatch = (patch: unknown) => {
+      if (!patch || typeof patch !== "object") return;
+      const p = patch as Record<string, unknown>;
+      if (isRightTab(p.rightTab)) {
+        setRightRailRequest((cur) => ({ tab: p.rightTab as RightTab, seq: (cur?.seq ?? 0) + 1 }));
+      }
+      if (isBottomTab(p.bottomTab)) {
+        setBottomTab(p.bottomTab);
+      }
+      if (typeof p.activeTabId === "string" && tabsRef.current.some((t) => t.tabId === p.activeTabId)) {
+        setActiveTabId(p.activeTabId);
+      }
+    };
+
+    const connect = async () => {
+      try {
+        const [base, token] = await Promise.all([debugApiBase(), getDebugToken()]);
+        if (closed) return;
+        const url = `${base.replace(/^http/, "ws")}/events?token=${encodeURIComponent(token)}`;
+        socket = new WebSocket(url);
+        socket.onmessage = (event) => {
+          try {
+            const frame = JSON.parse(String(event.data)) as RawEventFrame;
+            if (frame.kind !== "debug-ui-state-patch") return;
+            if (typeof frame.t === "number" && frame.t < connectedAfterMs) return;
+            const payload = frame.payload as { patch?: unknown } | null;
+            applyPatch(payload?.patch);
+          } catch {
+            /* ignore malformed debug stream frames */
+          }
+        };
+        socket.onclose = () => {
+          if (closed) return;
+          retryTimer = window.setTimeout(() => void connect(), 2000);
+        };
+      } catch {
+        if (!closed) retryTimer = window.setTimeout(() => void connect(), 4000);
+      }
+    };
+
+    void connect();
+    return () => {
+      closed = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      socket?.close();
+    };
+  }, []);
 
   // #355:  TTS-back dedupe guard. The completion useEffect can
   // fire from EITHER the typed `prompt-complete` event (Path A) OR a
@@ -1825,7 +1935,8 @@ export default function App(): JSX.Element {
     // Read via promptRef so stale-closure callers (e.g. mic-stop
     // transcribe flow) still see the latest composer value.
     const currentPrompt = promptRef.current;
-    if (!currentPrompt.trim()) return;
+    const queuedAttachmentChips = pendingAttachmentChips;
+    if (!currentPrompt.trim() && queuedAttachmentChips.length === 0) return;
     // `/pr` slash opens the PR-create modal instead of sending to
     // grok. Whole-word `/pr` at the start only.
     const stripped = currentPrompt.trim();
@@ -1928,7 +2039,15 @@ export default function App(): JSX.Element {
       // status update from setTabs; we fall through and trust the Rust
       // side. The catch below surfaces failure.
     }
-    const txt = currentPrompt;
+    const attachmentTags = queuedAttachmentChips
+      .map(attachmentWireTag)
+      .join(" ");
+    const visiblePrompt = currentPrompt.trim().length > 0
+      ? currentPrompt
+      : "Attached file(s)";
+    const txt = [currentPrompt.trim().length > 0 ? currentPrompt : "Please inspect the attached file(s).", attachmentTags]
+      .filter((part) => part.trim().length > 0)
+      .join("\n\n");
     const { prompt: effectivePrompt, voiceReplyExpected } =
       buildVoiceAwarePrompt(txt, myTabId);
     if (voiceReplyExpected) {
@@ -1938,18 +2057,10 @@ export default function App(): JSX.Element {
       });
     }
     updateTabById(myTabId, { isSending: true });
-    pushPromptEcho(currentPrompt, myTabId, voiceReplyExpected);
-    // Stamp first-message timestamp so the composer's connection pill
-    // locks on the next render. updateActiveTab is patch-style so this
-    // is a no-op on subsequent sends.
-    if (activeTab && !activeTab.firstMessageMs) {
-      updateActiveTab({ firstMessageMs: Date.now() });
-    }
-    setPrompt("");
     /* Drain pending attachments. Text inlines ship via
-     * `embeddedContext`; image thumbs emit a synthetic ui event so
-     * ChatOutput renders chips on the user bubble (wire payload stays
-     * tag-only while promptCapabilities.image=false). */
+     * `embeddedContext`; all attachments are echoed as renderer-only
+     * chips while the wire payload keeps stable `[attached: ...]`
+     * markers for grok. */
     const ec = pendingAttachments.length > 0
       ? pendingAttachments.map((a) => ({
           content: a.content,
@@ -1957,22 +2068,21 @@ export default function App(): JSX.Element {
           path: a.path,
         }))
       : null;
-    const thumbs = pendingImageThumbs;
-    setPendingAttachments([]);
-    setPendingImageThumbs([]);
-    if (thumbs.length > 0) {
-      /* Synthetic ui event the ChatOutput UserBubble can pick up to
-       * render thumbnail chips next to the user's text. The grok wire
-       * never sees this — it's a renderer-only frame. */
-      pushLocalEvent({
-        t: Date.now(),
-        kind: "ui",
-        payload: {
-          _meta: { tabId: myTabId, kind: "attach-thumbs" },
-          thumbs: thumbs.map((th) => th.path),
-        },
-      });
+    const echoedAttachments = queuedAttachmentChips.map((attachment) => ({
+      path: attachment.path,
+      label: attachment.label,
+      kind: attachment.kind,
+    }));
+    pushPromptEcho(visiblePrompt, myTabId, voiceReplyExpected, echoedAttachments);
+    // Stamp first-message timestamp so the composer's connection pill
+    // locks on the next render. updateActiveTab is patch-style so this
+    // is a no-op on subsequent sends.
+    if (activeTab && !activeTab.firstMessageMs) {
+      updateActiveTab({ firstMessageMs: Date.now() });
     }
+    setPrompt("");
+    setPendingAttachments([]);
+    setPendingAttachmentChips([]);
     // Keep the primary composer send path and the internal helper path
     // on the same voice-mode contract. The helper already prepended the
     // "[voice mode]" instruction and attached `voiceReplyExpected`; the
@@ -2094,13 +2204,18 @@ export default function App(): JSX.Element {
     });
   }
 
-  function pushPromptEcho(text: string, tabId: string | null, voiceReplyExpected: boolean): void {
+  function pushPromptEcho(
+    text: string,
+    tabId: string | null,
+    voiceReplyExpected: boolean,
+    attachments: Array<{ path: string; label: string; kind: ComposerAttachmentKind }> = [],
+  ): void {
     pushLocalEvent({
       t: Date.now(),
       kind: "ui",
       payload: tabId
-        ? { _meta: { tabId, voiceReplyExpected }, text: `→ prompt: ${text}` }
-        : { _meta: { voiceReplyExpected }, text: `→ prompt: ${text}` },
+        ? { _meta: { tabId, voiceReplyExpected }, text: `→ prompt: ${text}`, attachments }
+        : { _meta: { voiceReplyExpected }, text: `→ prompt: ${text}`, attachments },
     });
   }
 
@@ -2137,15 +2252,14 @@ export default function App(): JSX.Element {
    * right path. The classifier lives Rust-side (`read_text_file_if_text`):
    * - Text + ≤64 KB → inline as `embedded_context` (queued in
    * `pendingAttachments`; `send()` ships them as `embeddedContext`).
-   * - Image extension → record thumbnail intent in
-   * `pendingImageThumbs` so ChatOutput renders a chip. Wire form
+   * - Image extension → render as image attachment chips. Wire form
    * stays `[attached: <path>]` while grok advertises
-   * promptCapabilities.image=false; the cap-watcher will flip the
-   * path once grok ships binary support.
+   * promptCapabilities.image=false; the cap-watcher will flip the path
+   * once grok ships binary support.
    * - Binary or oversize → tag-only.
-   * * The composer text always carries `[attached: <path>]` markers so
-   * grok has a stable file reference even when inlined content lands
-   * out-of-band via embedded_context.
+   * * The composer displays removable chips; send() adds hidden
+   * `[attached: <path>]` markers to the wire prompt so grok has a
+   * stable file reference.
    */
   async function handleAttach(): Promise<void> {
     let selected: string | string[] | null;
@@ -2227,21 +2341,26 @@ export default function App(): JSX.Element {
     /* Classify each finalPath into one of three buckets:
      * - text + ≤64KB → pendingAttachments (becomes embedded_context
      * on next send())
-     * - image extension → pendingImageThumbs (UX thumbnail; wire
-     * form remains [attached: ...] tag)
+     * - image extension → attachment chip with image thumbnail metadata
      * - everything else → tag-only.
      */
     const imageExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
     const newTextAttachments: PendingTextAttachment[] = [];
-    const newImageThumbs: PendingImageThumb[] = [];
+    const classificationByPath = new Map<string, ComposerAttachmentKind>();
     let inlinedCount = 0;
     let imageCount = 0;
+    for (const p of finalPaths) {
+      const lastDot = p.lastIndexOf(".");
+      const ext = lastDot >= 0 ? p.slice(lastDot + 1).toLowerCase() : "";
+      if (imageExts.has(ext)) {
+        classificationByPath.set(p, "image");
+      }
+    }
     if (inTauri()) {
       for (const p of finalPaths) {
         const lastDot = p.lastIndexOf(".");
         const ext = lastDot >= 0 ? p.slice(lastDot + 1).toLowerCase() : "";
         if (imageExts.has(ext)) {
-          newImageThumbs.push({ path: p });
           imageCount += 1;
           continue;
         }
@@ -2269,6 +2388,7 @@ export default function App(): JSX.Element {
               ext === "xml" ? "application/xml" :
               "text/plain";
             newTextAttachments.push({ path: p, content: r.content, mimeType: mime });
+            classificationByPath.set(p, "text");
             inlinedCount += 1;
           }
         } catch (err) {
@@ -2278,19 +2398,68 @@ export default function App(): JSX.Element {
       }
     }
     if (newTextAttachments.length > 0) {
-      setPendingAttachments((prev) => [...prev, ...newTextAttachments]);
+      setPendingAttachments((prev) => appendUniqueTextAttachments(prev, newTextAttachments));
     }
-    if (newImageThumbs.length > 0) {
-      setPendingImageThumbs((prev) => [...prev, ...newImageThumbs]);
-    }
-    const tag = finalPaths.map((p) => `[attached: ${p}]`).join(" ");
-    setPrompt((prev) => (prev ? `${prev} ${tag}` : tag));
+    const chips: ComposerAttachmentChip[] = finalPaths.map((p) => {
+      const kind = classificationByPath.get(p) ?? "file";
+      return {
+        id: attachmentChipId(p),
+        path: p,
+        label: attachmentLabelFromPath(p),
+        kind,
+        inlined: kind === "text",
+      };
+    });
+    setPendingAttachmentChips((prev) => {
+      const seen = new Set(prev.map((chip) => chip.path));
+      const unique = chips.filter((chip) => {
+        if (seen.has(chip.path)) return false;
+        seen.add(chip.path);
+        return true;
+      });
+      return unique.length > 0 ? [...prev, ...unique] : prev;
+    });
     const detailBits: string[] = [];
     detailBits.push(`${finalPaths.length} file(s)`);
     if (inlinedCount > 0) detailBits.push(`${inlinedCount} inlined`);
     if (imageCount > 0) detailBits.push(`${imageCount} image(s) — UX preview only, wire stays tag-only`);
     pushUiEvent(`→ attached ${detailBits.join(", ")}`);
   }
+
+  function removePendingAttachment(id: string): void {
+    const attachment = pendingAttachmentChips.find((chip) => chip.id === id);
+    if (!attachment) return;
+    setPendingAttachmentChips((prev) => prev.filter((chip) => chip.id !== id));
+    setPendingAttachments((prev) => prev.filter((item) => item.path !== attachment.path));
+  }
+
+  useEffect(() => {
+    if (!inTauri()) return;
+    let unsubscribe: UnlistenFn | null = null;
+    void listen<{ paths?: string[]; source?: string }>("shellx:external-attachments", (event) => {
+      const paths = Array.isArray(event.payload?.paths)
+        ? event.payload.paths.filter((path): path is string => typeof path === "string" && path.trim().length > 0)
+        : [];
+      if (paths.length === 0) return;
+      setBottomTab("Chat");
+      const source = event.payload?.source === "startup" || event.payload?.source === "single-instance"
+        ? "Send to shellX"
+        : "desktop file handoff";
+      void processAttachedPaths(paths).then(() => {
+        pushUiEvent(`→ ${source} delivered ${paths.length} file(s) to the composer`);
+      });
+    }).then((fn) => {
+      unsubscribe = fn;
+    }).catch((err) => {
+      pushUiEvent(`✗ Send to shellX listener failed: ${err}`);
+    });
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+    // Re-register when the active cwd changes so Send to shellX copies
+    // external files into the current tab's scope, not a stale folder.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab?.cwd, cwd]);
 
   async function processDroppedAttachmentFiles(files: File[]): Promise<void> {
     if (files.length === 0) return;
@@ -2333,81 +2502,80 @@ export default function App(): JSX.Element {
   }
 
   function handlePreviewFile(path: string): void {
-    // Open the FilePreviewModal on chat-side file-link clicks. The
-    // right-rail Preview tab was dropped; the per-tab `preview` field
-    // is now informational only, kept so the debug-api /preview
-    // endpoint sees the click for headless drivers.
+    // Route chat/file links into Preview Center. Plain documents stay in
+    // read-only file preview; standalone HTML launches Work Preview so
+    // generated pages run with scripts instead of the safe source viewer.
     if (typeof path !== "string" || path.length === 0) return;
-    // Resolve a bare filename or `./relative` reference against the
-    // active tab's cwd — grok often renders `[notes.md](notes.md)`
-    // rather than an absolute path.
-    let abs = path;
-    const isAbs = /^([A-Za-z]:[\\/]|\/|\\\\)/.test(path);
-    if (!isAbs) {
-      const tabCwd = tabs.find((t) => t.tabId === activeTabId)?.cwd?.trim() ?? "";
-      if (tabCwd) {
-        const winStyle = /[A-Za-z]:[\\/]/.test(tabCwd) || tabCwd.includes("\\");
-        const sep = winStyle ? "\\" : "/";
-        const stripped = path.replace(/^\.\//, "");
-        abs = `${tabCwd.replace(/[\\/]$/, "")}${sep}${stripped}`;
-      }
+    const tabCwd = tabs.find((t) => t.tabId === activeTabId)?.cwd?.trim() ?? "";
+    const route = resolvePreviewRoute({
+      path,
+      cwd: tabCwd,
+      canRunWorkPreview: inTauri(),
+    });
+    if (!route.ok) {
+      pushUiEvent(`✗ ${route.reason}`);
+      return;
     }
-    if (isStaticHtmlPreviewPath(abs) && inTauri()) {
-      const previewRoot = workPreviewRootForFilePath(abs);
-      const previewEntry = workPreviewEntryForFilePath(abs);
-      const tabId = activeTabId ?? "default";
-      if (previewRoot && previewEntry) {
-        setPreviewPath(null);
-        const optimistic: WorkPreviewState = {
-          ...emptyWorkPreviewState(tabId),
-          cwd: previewRoot,
-          kind: "staticHtml",
-          status: "starting",
-          updatedAtMs: Date.now(),
-        };
-        setWorkPreviewByTab((prev) => {
-          const next = new Map(prev);
-          next.set(tabId, optimistic);
-          return next;
-        });
-        setWorkPreviewModalOpen(true);
-        updateActiveTab({ preview: { kind: "url", path: abs } });
-        void apiPost("/preview", { kind: "url", path: abs }).catch(() => { /* debug api may be off */ });
-        void startWorkPreview({
-          tabId,
-          cwd: previewRoot,
-          kind: "static",
-          entry: previewEntry,
-        })
-          .then((state) => {
-            setWorkPreviewByTab((prev) => {
-              const next = new Map(prev);
-              next.set(state.tabId, state);
-              return next;
-            });
-            setWorkPreviewModalOpen(true);
-          })
-          .catch((err) => {
-            pushUiEvent(`✗ preview failed for ${abs}: ${err instanceof Error ? err.message : String(err)}`);
-            setWorkPreviewModalOpen(false);
-            setPreviewPath(abs);
-          });
-        return;
-      }
-    }
-    setWorkPreviewModalOpen(false);
+    const abs = route.path;
     setPreviewPath(abs);
+    if (route.view === "work" && route.workRoot && route.workEntry) {
+      const tabId = activeTabId ?? "default";
+      const optimistic: WorkPreviewState = {
+        ...emptyWorkPreviewState(tabId),
+        cwd: route.workRoot,
+        kind: "staticHtml",
+        status: "starting",
+        updatedAtMs: Date.now(),
+      };
+      setWorkPreviewByTab((prev) => {
+        const next = new Map(prev);
+        next.set(tabId, optimistic);
+        return next;
+      });
+      setPreviewCenterView("work");
+      setPreviewCenterOpen(true);
+      updateActiveTab({ preview: { kind: "url", path: abs } });
+      void apiPost("/preview", { kind: "url", path: abs }).catch(() => { /* debug api may be off */ });
+      void startWorkPreview({
+        tabId,
+        cwd: route.workRoot,
+        kind: "static",
+        entry: route.workEntry,
+      })
+        .then((state) => {
+          clearWorkPreviewBrowserEvents(state.tabId);
+          setWorkPreviewByTab((prev) => {
+            const next = new Map(prev);
+            next.set(state.tabId, state);
+            return next;
+          });
+          setPreviewCenterView("work");
+          setPreviewCenterOpen(true);
+        })
+        .catch((err) => {
+          pushUiEvent(`✗ preview failed for ${abs}: ${err instanceof Error ? err.message : String(err)}`);
+          setPreviewCenterView("file");
+          setPreviewCenterOpen(true);
+        });
+      return;
+    }
+    setPreviewCenterView("file");
+    setPreviewCenterOpen(true);
     updateActiveTab({ preview: { kind: "file", path: abs } });
     void apiPost("/preview", { kind: "file", path: abs }).catch(() => { /* debug api may be off */ });
   }
 
   async function handleAskGrokToFixPreview(state: WorkPreviewState): Promise<void> {
     const tabId = state.tabId || activeTabId || "default";
-    setWorkPreviewModalOpen(true);
+    setPreviewCenterView("work");
+    setPreviewCenterOpen(true);
     try {
       const diagnostic = await diagnoseWorkPreview({
         tabId,
-        browserEvents: getWorkPreviewBrowserEvents(tabId),
+        browserEvents: getWorkPreviewBrowserEvents(tabId, {
+          url: state.url,
+          sinceMs: state.startedAtMs,
+        }),
       });
       await sendPromptText(previewRepairPrompt(diagnostic), tabId);
       pushUiEvent(
@@ -2677,6 +2845,7 @@ export default function App(): JSX.Element {
     setPluginsOpen(false);
     setPrModalOpen(false);
     setVaultOpen(false);
+    setAssetBoardOpen(false);
   }
 
   // ─── Keyboard shortcuts via the central registry ──────────────────────
@@ -2705,8 +2874,45 @@ export default function App(): JSX.Element {
       { id: "act-new",      label: "New session tab (⌘T)", group: "Action", run: handleNewTab },
       { id: "act-close",    label: "Close current tab (⌘W)", group: "Action", run: () => handleCloseTab() },
       { id: "act-settings", label: "Open settings (⌘,)", group: "Action", run: () => setSettingsOpen(true) },
+      {
+        id: "act-desktop-integrations",
+        label: "Desktop integrations",
+        hint: "Send files to shellX",
+        group: "Action",
+        run: () => {
+          try { localStorage.setItem(SETTINGS_TAB_KEY, "desktop"); } catch { /* ignore */ }
+          setSettingsOpen(true);
+        },
+      },
       { id: "act-attach",   label: "Attach file (⌘U)", group: "Action", run: () => void handleAttach() },
       { id: "act-attach-screenshot", label: "Attach app screenshot", group: "Action", run: () => void handleAttachScreenshot() },
+      {
+        id: "act-asset-board",
+        label: "Attachment and media board",
+        hint: `${pendingAttachmentChips.length + sessionAttachments.length} attached · ${sessionMedia.images.length} images · ${sessionMedia.videos.length} videos`,
+        group: "Action",
+        run: () => setAssetBoardOpen(true),
+      },
+      {
+        id: "act-open-work-preview",
+        label: "Open Work Preview",
+        hint: activeWorkPreviewState.url ?? workPreviewStatusLabel(activeWorkPreviewState.status),
+        group: "Action",
+        run: () => {
+          setRightRailRequest({ tab: "Preview", seq: Date.now() });
+          setPreviewCenterView("work");
+          setPreviewCenterOpen(true);
+        },
+      },
+      ...(activeWorkPreviewState.url || activeWorkPreviewState.status === "failed"
+        ? [{
+            id: "act-preview-doctor",
+            label: "Ask Grok to fix current preview",
+            hint: activeWorkPreviewState.url ?? activeWorkPreviewState.error ?? "Preview Doctor",
+            group: "Action" as const,
+            run: () => void handleAskGrokToFixPreview(activeWorkPreviewState),
+          }]
+        : []),
       { id: "act-toggle-term", label: "Toggle Chat / Terminal (⌘`)", group: "Action", run: toggleTerminalTab },
       { id: "act-pr", label: "Create pull request (/pr)", group: "Action", run: () => setPrModalOpen(true) },
       { id: "act-vault", label: "Open vault (secrets)", group: "Action", run: () => setVaultOpen(true) },
@@ -2719,7 +2925,7 @@ export default function App(): JSX.Element {
       { id: "act-auto-auto",    label: "Autonomy: Auto (bypassPermissions)", group: "Action", run: () => void setAutonomyAndPersist("bypassPermissions") },
     ];
     return acts;
-  }, [cwd, status]);
+  }, [activeWorkPreviewState, cwd, pendingAttachmentChips.length, sessionAttachments.length, sessionMedia.images.length, sessionMedia.videos.length, status]);
 
   async function setAutonomyAndPersist(mode: AutonomyMode): Promise<void> {
     setAutonomy(mode);
@@ -2742,6 +2948,16 @@ export default function App(): JSX.Element {
 
   function insertSlashIntoPrompt(name: string): void {
     setPrompt((p) => (p && !p.endsWith(" ") ? `${p} /${name} ` : `/${name} `));
+    setBottomTab("Chat");
+  }
+
+  function appendTextToPrompt(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setPrompt((p) => {
+      const current = p.trim();
+      return current.length > 0 ? `${current}\n\n${trimmed}` : trimmed;
+    });
     setBottomTab("Chat");
   }
 
@@ -3200,7 +3416,8 @@ export default function App(): JSX.Element {
                 onClose={handleCloseTab}
                 onOpenPreview={(tabId) => {
                   setActiveTabId(tabId);
-                  setWorkPreviewModalOpen(true);
+                  setPreviewCenterView("work");
+                  setPreviewCenterOpen(true);
                 }}
                 /* Inline rename from the tab strip — mirrors the
                  * LeftRail double-click-to-rename UX. */
@@ -3290,12 +3507,15 @@ export default function App(): JSX.Element {
                     onTabChange={setBottomTab}
                     onAttach={() => void handleAttach()}
                     onAttachScreenshot={() => void handleAttachScreenshot()}
+                    attachments={pendingAttachmentChips}
+                    onRemoveAttachment={removePendingAttachment}
                     /* Drag-and-drop attach from the right-rail Files
                      * tab — same pipeline as the dialog branch. */
                     onAttachPaths={(paths) => void processAttachedPaths(paths)}
                     onAttachFiles={(files) => void processDroppedAttachmentFiles(files)}
                     onPreviewFile={handlePreviewFile}
                     onOpenActivity={() => setActivityOpen(true)}
+                    onOpenAssetBoard={() => setAssetBoardOpen(true)}
                     hashItems={hashItems}
                     skills={visibleSlashCommands.map((s: any) => ({ name: s.name, description: s.description }))}
                     autonomy={autonomy}
@@ -3368,6 +3588,10 @@ export default function App(): JSX.Element {
                        * PlanPane parses only this tab's plan_proposed
                        * shapes. */
                       onPreviewFile={handlePreviewFile}
+                      onAttachPaths={(paths) => {
+                        setBottomTab("Chat");
+                        void processAttachedPaths(paths);
+                      }}
                       events={eventsForActiveTab}
                       cwd={activeTab?.cwd ?? cwd}
                       activeTabId={activeTabId}
@@ -3398,7 +3622,8 @@ export default function App(): JSX.Element {
                           next.set(state.tabId, state);
                           return next;
                         });
-                        setWorkPreviewModalOpen(true);
+                        setPreviewCenterView("work");
+                        setPreviewCenterOpen(true);
                       }}
                       onAskGrokToFixPreview={(state) => void handleAskGrokToFixPreview(state)}
                     />
@@ -3447,22 +3672,36 @@ export default function App(): JSX.Element {
         onClose={() => setConnectorInboxOpen(false)}
         onSeen={markConnectorInboxSeen}
       />
+      <AttachmentMediaBoard
+        open={assetBoardOpen}
+        attachments={pendingAttachmentChips}
+        sessionAttachments={sessionAttachments}
+        images={sessionMedia.images}
+        videos={sessionMedia.videos}
+        tabId={activeTabId}
+        sessionCwd={activeTab?.cwd ?? cwd}
+        onClose={() => setAssetBoardOpen(false)}
+        onAttach={() => void handleAttach()}
+        onAttachScreenshot={() => void handleAttachScreenshot()}
+        onRemoveAttachment={removePendingAttachment}
+        onPreviewFile={handlePreviewFile}
+        onInsertPrompt={appendTextToPrompt}
+      />
       <BuiltinDocModal
         docId={builtinDocId}
         onClose={() => setBuiltinDocId(null)}
       />
-      <FilePreviewModal
-        open={previewPath !== null}
-        path={previewPath}
+      <PreviewCenter
+        open={previewCenterOpen}
+        view={previewCenterView}
+        filePath={previewPath}
         tabId={activeTabId}
         sessionCwd={activeTab?.cwd ?? cwd}
-        onClose={() => setPreviewPath(null)}
+        workState={activeWorkPreviewState}
+        onClose={() => setPreviewCenterOpen(false)}
+        onViewChange={setPreviewCenterView}
         onPreviewFile={handlePreviewFile}
-      />
-      <WorkPreviewModal
-        open={workPreviewModalOpen}
-        state={activeWorkPreviewState}
-        onClose={() => setWorkPreviewModalOpen(false)}
+        onRunWorkPreview={handlePreviewFile}
         onAskGrokToFix={(state) => void handleAskGrokToFixPreview(state)}
       />
       <ActivityBrowserModal

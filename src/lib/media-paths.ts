@@ -1,5 +1,13 @@
 export type GeneratedMediaKind = "image" | "video";
 
+export function shouldScanGeneratedMediaOutput(title: string, kind: GeneratedMediaKind): boolean {
+  const normalized = title.toLowerCase();
+  if (kind === "image") {
+    return /\b(image|image_gen|image_edit|screenshot)\b/.test(normalized);
+  }
+  return /\b(video|video_gen|movie|clip)\b/.test(normalized);
+}
+
 export function stripWindowsExtendedPathPrefix(path: string): string {
   let out = path.trim();
   out = out.replace(/^\\\\\?\\UNC\\/i, "\\\\");

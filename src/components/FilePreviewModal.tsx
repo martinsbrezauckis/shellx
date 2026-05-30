@@ -38,15 +38,19 @@ export function FilePreviewModal({
   path,
   tabId,
   sessionCwd,
+  embedded = false,
   onClose,
   onPreviewFile,
+  onRunWorkPreview,
 }: {
   open: boolean;
   path: string | null;
   tabId?: string | null;
   sessionCwd?: string | null;
+  embedded?: boolean;
   onClose: () => void;
   onPreviewFile?: (path: string) => void;
+  onRunWorkPreview?: (path: string) => void;
 }): JSX.Element | null {
   const [text, setText] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
@@ -100,7 +104,15 @@ export function FilePreviewModal({
         .finally(() => { if (!cancelled) setLoading(false); });
     } else {
  // Browser-mode fallback: try asset:// fetch
-      fetch(convertFileSrc(path, "asset"))
+      let assetUrl: string;
+      try {
+        assetUrl = convertFileSrc(path, "asset");
+      } catch {
+        setErr("File preview requires the shellX desktop app.");
+        setLoading(false);
+        return;
+      }
+      fetch(assetUrl)
         .then((r) => r.ok ? r.text() : Promise.reject(`HTTP ${r.status}`))
         .then((t) => { if (!cancelled) setText(t); })
         .catch((e) => { if (!cancelled) setErr(String(e)); })
@@ -133,17 +145,11 @@ export function FilePreviewModal({
  // Filename for the header (basename only).
   const fname = path.split(/[\\/]/).pop() || path;
   const lineCount = text ? text.split("\n").length : 0;
+  const canRunWorkPreview = kind === "html" && typeof onRunWorkPreview === "function";
 
-  return (
-    <div
-      className="preview-backdrop"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Preview ${fname}`}
-    >
+  const frame = (
       <div
-        className="preview-modal"
+        className={`preview-modal${embedded ? " preview-modal-embedded" : ""}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="preview-head">
@@ -166,19 +172,21 @@ export function FilePreviewModal({
                 onClick={() => setHtmlMode("preview")}
                 aria-selected={htmlMode === "preview"}
               >
-                Preview
+                Safe render
               </button>
             </div>
           )}
-          <button
-            type="button"
-            className="preview-close"
-            onClick={onClose}
-            aria-label="Close (Esc)"
-            title="Close (Esc)"
-          >
-            <ShellIcon name="close" size={14} />
-          </button>
+          {!embedded && (
+            <button
+              type="button"
+              className="preview-close"
+              onClick={onClose}
+              aria-label="Close (Esc)"
+              title="Close (Esc)"
+            >
+              <ShellIcon name="close" size={14} />
+            </button>
+          )}
         </div>
 
         <div className={`preview-body preview-body-${kind}`} onMouseUp={onMouseUpAutoCopy}>
@@ -282,6 +290,17 @@ export function FilePreviewModal({
         </div>
 
         <div className="preview-actions">
+          {canRunWorkPreview && (
+            <button
+              type="button"
+              className="pact pact-edit"
+              onClick={() => onRunWorkPreview?.(path)}
+              title="Run this HTML file through shellX Work Preview with scripts enabled"
+            >
+              <ShellIcon name="play" size={14} />
+              <span>Run preview</span>
+            </button>
+          )}
           <button
             type="button"
             className="pact"
@@ -310,6 +329,19 @@ export function FilePreviewModal({
           </button>
         </div>
       </div>
+  );
+
+  if (embedded) return frame;
+
+  return (
+    <div
+      className="preview-backdrop"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Preview ${fname}`}
+    >
+      {frame}
     </div>
   );
 }

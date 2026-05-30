@@ -145,10 +145,19 @@ access. This is by design: stdio is a parent-process relationship.
 
 ### 3. Host MCP stdio + tool surface (`host_mcp.rs`)
 
-The actual tools — `fs_*`, `net_fetch`, `vision_describe`,
+The actual tools include `fs_*`, `net_fetch`, `vision_describe`,
 `secret_*`, `mem_*`, `Agent` (subagent fan-out), `process_*`,
-`screenshot_*`, `clock_now`/`sleep_ms`, `search_tool`. About 30
-tools live, all reachable as `grok-shell-host__<tool>` from grok.
+`screenshot_*`, `clock_now`/`sleep_ms`, `capabilities_summary`, and
+`search_tool`. Dozens of tools are reachable as
+`grok-shell-host__<tool>` or, for the shellX-managed HTTP transport,
+`shellx-host-http__<tool>`. Mutating/tab-aware calls should prefer the
+HTTP-qualified name when advertised.
+
+Native Grok file tools (`write`, `read_file`, `list_dir`, `grep`,
+`search_replace`) are preferred for routine project edits. Host `fs_*`
+stays available for Windows-parent paths from remote sessions, atomic or
+binary operations, watch/copy/delete helpers, and cases where shellX host
+permission/audit behavior matters.
 
 **Trust assumption:** every byte that arrives at a tool came from
 the agent — treat it as adversarial. The tools are not "agent
@@ -193,7 +202,7 @@ with `.and_then`/`.unwrap_or`).
 
 **What we DON'T trust from grok:**
 - **Raw shell strings.** `terminal/create` is intercepted on
-  every transport. Local → redirected to `grok-shell-host__Agent`
+  every transport. Local -> redirected to shellX `Agent`
   subagent. WSL/SSH → user-facing error (PTY round-trip is blocked
   upstream in grok-build 0.1.211). No host PTY is ever spawned
   in response to a grok request. This is the load-bearing

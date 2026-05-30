@@ -46,7 +46,6 @@ export interface WorkPreviewStartInput {
 export interface WorkPreviewDiagnoseInput {
   tabId: string;
   browserEvents?: WorkPreviewBrowserEvent[];
-  screenshotPath?: string | null;
 }
 
 export interface WorkPreviewDiagnosticIssue {
@@ -174,7 +173,6 @@ export async function diagnoseWorkPreview(input: WorkPreviewDiagnoseInput): Prom
     {
       tabId: input.tabId,
       browserEvents: input.browserEvents ?? [],
-      screenshotPath: input.screenshotPath ?? null,
     },
   );
 }
@@ -190,8 +188,22 @@ export function recordWorkPreviewBrowserEvent(tabId: string, event: WorkPreviewB
   browserEventsByTab.set(safeTabId, current.slice(-BROWSER_EVENT_CAP));
 }
 
-export function getWorkPreviewBrowserEvents(tabId: string): WorkPreviewBrowserEvent[] {
-  return [...(browserEventsByTab.get(tabId || "default") ?? [])];
+export function getWorkPreviewBrowserEvents(
+  tabId: string,
+  options?: { url?: string | null; sinceMs?: number | null },
+): WorkPreviewBrowserEvent[] {
+  const events = [...(browserEventsByTab.get(tabId || "default") ?? [])];
+  const sinceMs = typeof options?.sinceMs === "number" ? options.sinceMs : null;
+  const url = options?.url ?? null;
+  return events.filter((event) => {
+    if (sinceMs !== null && typeof event.t === "number" && event.t < sinceMs - 500) {
+      return false;
+    }
+    if (url && event.url && !samePreviewOrigin(event.url, url)) {
+      return false;
+    }
+    return true;
+  });
 }
 
 export function clearWorkPreviewBrowserEvents(tabId: string): void {
@@ -218,4 +230,12 @@ export function workPreviewEntryForFilePath(path: string): string | null {
 
 function stripPathSuffix(path: string): string {
   return path.split(/[?#]/, 1)[0] ?? path;
+}
+
+function samePreviewOrigin(eventUrl: string, previewUrl: string): boolean {
+  try {
+    return new URL(eventUrl).origin === new URL(previewUrl).origin;
+  } catch {
+    return eventUrl === previewUrl;
+  }
 }

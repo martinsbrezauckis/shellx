@@ -13,6 +13,8 @@
  * - Connections — read-only saved transport presets
  * (./settings/ConnectionsTab.tsx). Edit still
  * happens in the workspace-pill popover.
+ * - Desktop — host OS handoff integrations
+ * (./settings/DesktopTab.tsx).
  * - Shellx agent — per-tab agent toggles (./settings/ShellxagentTab.tsx).
  * - About — version + tip commit + links
  * (./settings/AboutTab.tsx).
@@ -27,6 +29,7 @@ import { GeneralTab } from "./settings/GeneralTab";
 import { VaultTab } from "./settings/VaultTab";
 import { ConnectionsTab } from "./settings/ConnectionsTab";
 import { ConnectorsTab } from "./settings/ConnectorsTab";
+import { DesktopTab } from "./settings/DesktopTab";
 import { AboutTab } from "./settings/AboutTab";
 import { ShellxagentTab } from "./settings/ShellxagentTab";
 import { DataTab } from "./settings/DataTab";
@@ -77,8 +80,8 @@ export const DEFAULT_SETTINGS: SettingsValues = {
 const STORAGE_KEY = "grok-shell.settings.v1";
 export const TAB_KEY = "grok-shell.settingsTab.v1";
 
-export type SettingsTab = "general" | "vault" | "connections" | "connectors" | "shellxagent" | "data" | "about";
-const ALL_TABS: SettingsTab[] = ["general", "vault", "connections", "connectors", "shellxagent", "data", "about"];
+export type SettingsTab = "general" | "vault" | "connections" | "connectors" | "desktop" | "shellxagent" | "data" | "about";
+const ALL_TABS: SettingsTab[] = ["general", "vault", "connections", "connectors", "desktop", "shellxagent", "data", "about"];
 
 function readActiveTab(): SettingsTab {
   try {
@@ -264,6 +267,7 @@ export function Settings({
           {tab === "vault" && <VaultTab />}
           {tab === "connections" && <ConnectionsTab />}
           {tab === "connectors" && <ConnectorsTab />}
+          {tab === "desktop" && <DesktopTab />}
           {tab === "shellxagent" && <ShellxagentTab />}
           {tab === "data" && <DataTab />}
           {tab === "about" && <AboutTab />}
@@ -283,6 +287,7 @@ function tabLabel(t: SettingsTab): string {
     case "vault": return "Vault";
     case "connections": return "Connections";
     case "connectors": return "Connectors";
+    case "desktop": return "Desktop";
     case "shellxagent": return "shellXagent";
     case "data": return "Data";
     case "about": return "About";

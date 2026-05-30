@@ -15,8 +15,8 @@ the public repo root, not as ignored files inside it.
 ## Public Sources Of Truth
 
 - `README.md` - GitHub entry point.
-- `CHANGELOG.md` - user-facing release notes, with `Unreleased` updated
-  as changes land and promoted to a dated version before tagging.
+- `CHANGELOG.md` - user-facing release notes, with a short next-version
+  section updated as changes land and dated before tagging.
 - `docs/` - public architecture, API, threat model, and operator docs.
 - `skills/shellx-host/SKILL.md` - bundled `shellx-host` skill source.
 - `src-tauri/personas/*.md` - bundled subagent persona sources.
@@ -67,8 +67,8 @@ Before pushing the public repo:
 2. Review every match as either public history, public source, or a bug.
 3. Use the internal release-readiness checklist as the release gate.
 4. Run the normal verification stack.
-5. Update `CHANGELOG.md` under `Unreleased`; keep entries short and
-   user-visible.
+5. Update `CHANGELOG.md` under the next release version; keep entries
+   short and user-visible.
 6. Re-check README platform status if release artifacts changed.
 7. Get explicit per-operation approval before any tag push, release
    publish, or other remote mutation.

@@ -41,6 +41,11 @@ export interface ReleaseReadinessSummary {
   fail: number;
 }
 
+export interface ReleaseRunbookInput {
+  version: string;
+  checks: ReleaseReadinessCheck[];
+}
+
 export interface ReleaseReadinessVisibilityEnv {
   dev: boolean;
   internalTools?: string | boolean;
@@ -251,4 +256,40 @@ export function summarizeReleaseReadiness(checks: ReleaseReadinessCheck[]): Rele
   if (fail > 0) return { statusLabel: "blocked", accent: "bad", pass, warn, fail };
   if (warn > 0) return { statusLabel: "ready with warnings", accent: "warn", pass, warn, fail };
   return { statusLabel: "ready", accent: "ok", pass, warn, fail };
+}
+
+export function buildReleaseRunbook(input: ReleaseRunbookInput): string {
+  const summary = summarizeReleaseReadiness(input.checks);
+  const failed = input.checks.filter((check) => check.status === "fail");
+  const warned = input.checks.filter((check) => check.status === "warn");
+  const commands = input.checks
+    .filter((check) => check.status !== "pass" && check.command)
+    .map((check, index) => `${index + 1}. ${check.label}\n   ${check.command}`);
+  const commandBody = commands.length > 0
+    ? commands.join("\n")
+    : "All automated/local gates are marked pass.";
+
+  return [
+    `shellX v${input.version} release runbook`,
+    "",
+    `Status: ${summary.statusLabel}`,
+    `Pass: ${summary.pass}`,
+    `Warn: ${summary.warn}`,
+    `Blocked: ${summary.fail}`,
+    "",
+    "Failing gates:",
+    failed.length > 0 ? failed.map((check) => `- ${check.label}: ${check.detail}`).join("\n") : "- none",
+    "",
+    "Warning gates:",
+    warned.length > 0 ? warned.map((check) => `- ${check.label}: ${check.detail}`).join("\n") : "- none",
+    "",
+    "Commands still needed:",
+    commandBody,
+    "",
+    "Remote publish approvals required tomorrow:",
+    "- Before git push: ask for exact approval `yes, push`.",
+    "- Before tag push: ask for exact approval `yes, tag`.",
+    "- Before GitHub release create/upload/edit: ask for exact approval `yes, release`.",
+    "- Approval is per operation; do not reuse approval from another step.",
+  ].join("\n");
 }

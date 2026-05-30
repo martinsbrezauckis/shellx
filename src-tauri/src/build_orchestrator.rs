@@ -96,7 +96,8 @@ Status: TODO\n\
 - [ ] Call `build_complete` MCP tool with summary\n\
 ```\n\n\
             Plan as a manager. Do not execute any phase yet. Do not call Grok \
-            Build bundled `/implement`, `/review`, `/check`, or `/design` from \
+            Build bundled `/implement`, `/review`, `/check`, `/check-work`, \
+            `/design`, `/best-of-n`, or `/execute-plan` from \
             ACP mode; use shellX `Agent`, `Agent_status`, and `Agent_output` \
             directly when execution begins. Prefer `implementer` for scoped \
             code work, `reviewer` for code review plus AI slop/wiring audit, \
@@ -717,7 +718,7 @@ Status: TODO\n\
             )
         } else {
             format!(
-                "<build_context>\nObjective: {}\nStatus: {:?}\nApproved plan hash: {}\nCurrent phase: {}\nContinuations: {}\nRequired gates: checkpoint={}, review={}, verification={}, preview={}\nSatisfied gates: checkpoint={}, review={}, verification={}, preview={}\nLast receipt: {}\nOpen blocker: {}\nScratchboard: {}\n\nAction now: inspect the next unchecked sub-stage in the Build Mode scratchboard and manage it to completion. Prefer an `implementer` Agent for non-trivial code, a `reviewer` Agent for code review plus AI slop/wiring audit, a `test-writer` Agent when behavior changed or coverage is uncertain, and a `verifier` Agent for evidence checks. The reviewer should check unwired controls, placeholders, fake success paths, missing frontend/backend bridges, config/schema drift, and release-debug leaks. For UI/web/app work, call `preview_start` to activate shellX Work Preview, then run `preview_diagnose`; if it returns `screenshotPath`, inspect it with `vision_describe`; treat any Preview Doctor error as unfinished work and feed the evidence back into fixes before verification. Do not ask an Agent to start preview servers through shell commands for the Work Preview gate; shellX must own the preview process so Preview Doctor can inspect the same URL and logs. Agent task text must be a direct assignment to that subagent; never ask a subagent to dispatch another Agent, poll Agent output, or follow scratchboard manager checklist lines as its own instructions. Use `wait=true` for sequential Build Mode phases; reserve `wait=false` for independent fan-out and poll `Agent_status`/`Agent_output` before ending the turn. If `Agent` is denied by shellX permission/autonomy gates, do not fall back to direct edits or shell commands for that phase; record `build_receipt` kind=`blockerOpened` with the denial reason and wait for operator action. Record receipts in the scratchboard. Do not call `build_complete` until every required host gate is satisfied.\n</build_context>",
+                "<build_context>\nObjective: {}\nStatus: {:?}\nApproved plan hash: {}\nCurrent phase: {}\nContinuations: {}\nRequired gates: checkpoint={}, review={}, verification={}, preview={}\nSatisfied gates: checkpoint={}, review={}, verification={}, preview={}\nLast receipt: {}\nOpen blocker: {}\nScratchboard: {}\n\nAction now: inspect the next unchecked sub-stage in the Build Mode scratchboard and manage it to completion. Prefer an `implementer` Agent for non-trivial code, a `reviewer` Agent for code review plus AI slop/wiring audit, a `test-writer` Agent when behavior changed or coverage is uncertain, and a `verifier` Agent for evidence checks. Do not invoke Grok Build bundled `/implement`, `/review`, `/check`, `/check-work`, `/design`, `/best-of-n`, or `/execute-plan` from this shellX ACP session; use shellX `Agent` receipts for hard gates. The reviewer should check unwired controls, placeholders, fake success paths, missing frontend/backend bridges, config/schema drift, and release-debug leaks. For UI/web/app work, call `preview_start` to activate shellX Work Preview, then run `preview_diagnose`; if it returns `screenshotPath`, inspect it with `vision_describe`; treat any Preview Doctor error as unfinished work and feed the evidence back into fixes before verification. Do not ask an Agent to start preview servers through shell commands for the Work Preview gate; shellX must own the preview process so Preview Doctor can inspect the same URL and logs. Agent task text must be a direct assignment to that subagent; never ask a subagent to dispatch another Agent, poll Agent output, or follow scratchboard manager checklist lines as its own instructions. Use `wait=true` for sequential Build Mode phases; reserve `wait=false` for independent fan-out and poll `Agent_status`/`Agent_output` before ending the turn. If `Agent` is denied by shellX permission/autonomy gates, do not fall back to direct edits or shell commands for that phase; record `build_receipt` kind=`blockerOpened` with the denial reason and wait for operator action. Record receipts in the scratchboard. Do not call `build_complete` until every required host gate is satisfied.\n</build_context>",
                 runtime.state.objective,
                 runtime.state.status,
                 runtime
@@ -1160,18 +1161,14 @@ fn local_git_worktree_has_code_changes(cwd: &Path, scratchboard_path: &Path) -> 
 }
 
 fn git_command_success(cwd: &Path, args: &[&str]) -> bool {
-    std::process::Command::new("git")
-        .args(args)
-        .current_dir(cwd)
+    build_git_command(cwd, args)
         .output()
         .map(|out| out.status.success())
         .unwrap_or(false)
 }
 
 fn git_output_lines(cwd: &Path, args: &[&str]) -> Vec<String> {
-    std::process::Command::new("git")
-        .args(args)
-        .current_dir(cwd)
+    build_git_command(cwd, args)
         .output()
         .ok()
         .filter(|out| out.status.success())
@@ -1354,9 +1351,7 @@ fn sha256_file_hex(path: &Path) -> Result<(u64, String), String> {
 }
 
 fn git_output_bytes(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let out = std::process::Command::new("git")
-        .args(args)
-        .current_dir(cwd)
+    let out = build_git_command(cwd, args)
         .output()
         .map_err(|e| format!("git {:?} spawn failed: {}", args, e))?;
     if out.status.success() {
@@ -1370,6 +1365,17 @@ fn git_output_bytes(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
             stderr
         ))
     }
+}
+
+fn build_git_command(cwd: &Path, args: &[&str]) -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(args).current_dir(cwd);
+    #[cfg(target_os = "windows")]
+    {
+        use crate::winproc::NoWindowExt as _;
+        cmd.no_window();
+    }
+    cmd
 }
 
 fn git_output_text(cwd: &Path, args: &[&str]) -> Result<String, String> {

@@ -1,5 +1,5 @@
 import { groupEvents } from "../src/lib/grouping";
-import { extractSessionMedia } from "../src/lib/session-media";
+import { extractSessionAttachments, extractSessionMedia } from "../src/lib/session-media";
 import type { RawEventFrame } from "../src/types/acp";
 
 function toolOpen(id: string, title: string, t: number): RawEventFrame {
@@ -74,6 +74,18 @@ const events: RawEventFrame[] = [
   toolUpdate("vid-b", "video_gen", "Video generated and saved to \\\\?\\C:\\Users\\User\\.grok\\sessions\\C%3A%5CUsers%5CUser\\abc\\videos\\clip-two.mp4.", 113),
   toolOpen("vid-c", "video_gen", 114),
   toolUpdate("vid-c", "video_gen", `SSH generated video saved to ${sshVidPath}`, 115),
+  toolOpen("vision-a", "vision_describe", 116),
+  toolUpdate("vision-a", "vision_describe", "Path must end in .png/.jpg/.jpeg/.webp/.gif/.bmp.", 117),
+  {
+    t: 118,
+    kind: "ui",
+    payload: {
+      text: "→ prompt: Please inspect this",
+      attachments: [
+        { path: "C:\\Users\\User\\Downloads\\expo preview.png", label: "expo preview.png", kind: "image" },
+      ],
+    },
+  },
 ];
 
 const media = extractSessionMedia(groupEvents(events));
@@ -87,6 +99,12 @@ assert(media.videos[0]?.path === vidPath, "extracts Windows video path with spac
 assert(media.videos[0]?.toolTitle === "video_gen", "keeps source tool title");
 assert(media.videos.some((item) => item.path === extendedVidPath), "normalizes Windows extended-length video paths");
 assert(media.videos.some((item) => item.path === sshVidPath), "extracts SSH remote generated video paths");
+assert(!media.images.some((item) => item.path.endsWith(".bmp")), "does not treat vision_describe docs as generated images");
+
+const attachments = extractSessionAttachments(groupEvents(events));
+assert(attachments.length === 1, "extracts sent attachment chips from UI echo");
+assert(attachments[0]?.path === "C:\\Users\\User\\Downloads\\expo preview.png", "keeps sent attachment path");
+assert(attachments[0]?.kind === "image", "keeps sent attachment kind");
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} session media tests`);
 process.exit(failures === 0 ? 0 : 1);
