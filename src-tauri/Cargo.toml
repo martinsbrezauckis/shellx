@@ -13,7 +13,7 @@
 
 [package]
 name = "app"
-version = "0.1.34"
+version = "0.1.35"
 description = "shellX — cross-platform desktop host for Grok Build and any ACP-speaking agent"
 authors = ["Martins Brezauckis <martins.brezauckis@gmail.com>"]
 license = "MIT"

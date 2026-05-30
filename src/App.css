@@ -4177,6 +4177,49 @@ a.settings-pill:hover {
   font-size: 12px;
 }
 
+.slash-pop {
+  position: fixed;
+  transform: translateY(calc(-100% - 6px));
+  max-height: min(320px, 45vh);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 9600;
+}
+.slash-pop-head {
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-3);
+  padding: 6px 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--hairline);
+}
+.slash-pop-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: transparent;
+}
+.slash-pop-row.active {
+  background: var(--hairline);
+}
+.slash-pop-command {
+  font-family: var(--mono);
+  font-size: var(--fs-ui-sm);
+  color: var(--ink);
+}
+.slash-pop-desc {
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ─────────────────────────────────────────────────────────────
  * v9.2 — Branch picker popover — Phase 7
  * ───────────────────────────────────────────────────────────── */

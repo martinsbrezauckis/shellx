@@ -1,8 +1,9 @@
 /**
  * src/lib/userStore.ts — #435 disk-mirror for personal localStorage keys.
  *
- * Five keys survive across reinstalls (projects, chat titles, session-
- * project mappings, saved sessions, closed-tab history). The Rust
+ * Six keys survive across reinstalls (projects, chat titles, session-
+ * project mappings, saved sessions, closed-tab history, project
+ * collapse state). The Rust
  * `read_user_data` / `write_user_data` Tauri commands persist them to
  * `~/.shellx/user-data.json`. localStorage stays as the fast cache.
  *
@@ -31,9 +32,11 @@ export const USER_DATA_KEYS = [
   "shellX.sessionProjects.v1",
   "grok-shell.session-tabs.v2",
   "shellX.closedTabs.v1",
+  "shellX.v92.projects.collapse",
 ] as const;
 
 export type UserDataKey = (typeof USER_DATA_KEYS)[number];
+export const PROJECTS_COLLAPSE_KEY: UserDataKey = "shellX.v92.projects.collapse";
 
 /** In-memory cache of the last-known disk blob. Avoids round-tripping
  * every key change through invoke. Updated on every persistUserData. */
@@ -42,7 +45,7 @@ let cachedBlob: Record<string, unknown> = {};
 /** Read all five keys off disk; for each one missing from localStorage
  * copy the disk value in. Runs ONCE at App boot. After this, the rest
  * of the codebase reads localStorage and is unchanged. */
-export async function hydrateUserData(): Promise<void> {
+export async function hydrateUserData(): Promise<Record<string, unknown>> {
   let blob: Record<string, unknown> = {};
   try {
     blob = (await invoke<Record<string, unknown>>("read_user_data")) || {};
@@ -50,7 +53,7 @@ export async function hydrateUserData(): Promise<void> {
  // Browser-only fallback (no Tauri host) — skip. localStorage stays
  // the only store, matching pre-#435 behavior.
     try { console.warn("userStore: read_user_data unavailable, skipping disk hydrate:", err); } catch { /* noop */ }
-    return;
+    return {};
   }
   cachedBlob = blob;
   for (const key of USER_DATA_KEYS) {
@@ -63,6 +66,7 @@ export async function hydrateUserData(): Promise<void> {
       localStorage.setItem(key, JSON.stringify(onDisk));
     } catch { /* noop */ }
   }
+  return blob;
 }
 
 /** Persist a single key. Writes localStorage (for fast read on the

@@ -106,7 +106,16 @@ import {
   type WorkPreviewDiagnostic,
   type WorkPreviewState,
 } from "./lib/work-preview";
-import { resolvePreviewRoute, type PreviewCenterView } from "./lib/preview-center";
+import {
+  resolvePreviewRoute,
+  resolveSessionMarkdownArtifactPath,
+  type PreviewCenterView,
+} from "./lib/preview-center";
+import {
+  loadSessionIdForReconnect,
+  reconnectContinuityUiText,
+} from "./lib/session-continuity";
+import { titleOverrideForClosingTab } from "./lib/session-titles";
 import {
   summarizeOutsideConnectorInbox,
   type OutsideConnector,
@@ -375,19 +384,12 @@ export default function App(): JSX.Element {
    * don't re-run the probe + setCwd + LS rewrite and race the persist
    * effect. */
   const cwdValidated = useRef(false);
-  // #435 — on app boot, copy on-disk personal-data keys (projects,
-  // chat titles, session→project map, saved tabs, closed-tab history)
-  // into localStorage IF localStorage doesn't already have them. This
-  // is how a clean reinstall preserves user state: the on-disk file
-  // at ~/.shellx/user-data.json survives, localStorage is empty, the
-  // hydrate copies it in, and the UI sees its old session names +
-  // projects. Runs once per page-load.
+  // #435 — personal data hydrates asynchronously from
+  // ~/.shellx/user-data.json. First-render defaults must not write back
+  // until that hydrate completes, otherwise a clean WebView-data reinstall
+  // can overwrite the durable project/session markings with empty state.
   const userDataHydrated = useRef(false);
-  useEffect(() => {
-    if (userDataHydrated.current) return;
-    userDataHydrated.current = true;
-    void hydrateUserData();
-  }, []);
+  const [personalDataReady, setPersonalDataReady] = useState(false);
   useEffect(() => {
     if (cwdValidated.current) return;
     cwdValidated.current = true;
@@ -413,7 +415,11 @@ export default function App(): JSX.Element {
             const cleaned = arr.map((t: any) =>
               t && typeof t === "object" && t.cwd === cwd ? { ...t, cwd: "" } : t,
             );
-            persistUserData(SESSIONS_KEY, cleaned);
+            if (personalDataReady) {
+              persistUserData(SESSIONS_KEY, cleaned);
+            } else {
+              try { localStorage.setItem(SESSIONS_KEY, JSON.stringify(cleaned)); } catch { /* no-op */ }
+            }
           }
         }
       } catch { /* no-op */ }
@@ -426,7 +432,7 @@ export default function App(): JSX.Element {
       } catch { /* leave cwd empty; user picks via 📁 pill */ }
     })();
     return () => { cancelled = true; };
-  }, [cwd]);
+  }, [cwd, personalDataReady]);
   // Persist cwd changes so the next launch starts where we left off.
   useEffect(() => {
     if (cwd) {
@@ -660,6 +666,10 @@ export default function App(): JSX.Element {
   // Preview Center opened by ChatOutput clicks on file paths. Documents
   // stay read-only; runnable HTML routes through Work Preview.
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const handlePreviewFileImpl = useRef<(path: string) => void>(() => {});
+  const handlePreviewFile = useCallback((path: string): void => {
+    handlePreviewFileImpl.current(path);
+  }, []);
   const [activityOpen, setActivityOpen] = useState(false);
   // in-app docs (Features / Quick start) routed through a
   // global event from AboutTab. Avoids the cross-import dance and
@@ -843,8 +853,9 @@ export default function App(): JSX.Element {
   }, [activeTabId]);
 
   useEffect(() => {
+    if (!personalDataReady) return;
     persistUserData(SESSIONS_KEY, tabs);
-  }, [tabs]);
+  }, [tabs, personalDataReady]);
 
   // Reconcile restored tabs with the Rust registry for the current app
   // uptime. Most launches have no live children, so every restored tab
@@ -905,8 +916,9 @@ export default function App(): JSX.Element {
     return [];
   });
   useEffect(() => {
+    if (!personalDataReady) return;
     persistUserData(PROJECTS_KEY, projects);
-  }, [projects]);
+  }, [projects, personalDataReady]);
 
   /** Project is a UI sorting label only, not a folder binding.
    * Adding a project inserts a name-only entry and
@@ -945,8 +957,25 @@ export default function App(): JSX.Element {
     return {};
   });
   useEffect(() => {
+    if (!personalDataReady) return;
     persistUserData(CHAT_TITLES_KEY, chatTitleOverrides);
-  }, [chatTitleOverrides]);
+  }, [chatTitleOverrides, personalDataReady]);
+
+  const persistSessionTitleOverride = useCallback((sessionId: string, title: string): void => {
+    const trimmed = title.trim();
+    if (!sessionId || !trimmed) return;
+    setChatTitleOverrides((prev) =>
+      prev[sessionId] === trimmed ? prev : { ...prev, [sessionId]: trimmed },
+    );
+    if (!inTauri()) return;
+    void invoke("rename_past_session", { sessionId, newTitle: trimmed })
+      .catch((e) => {
+        // The JSONL may not exist yet if the user renamed a tab before
+        // its first persisted frame. The local override remains durable;
+        // close/reconnect paths retry once the session file exists.
+        console.error("rename_past_session failed:", e);
+      });
+  }, []);
 
   const handleRenameChat = useCallback((tabId: string, newTitle: string): void => {
     const trimmed = newTitle.trim();
@@ -968,15 +997,17 @@ export default function App(): JSX.Element {
     );
     if (sessionId) {
       // Persist the sessionId→title override so re-opening this past
-      // chat in a fresh TabEntry still gets the renamed title.
-      setChatTitleOverrides((prev) => ({ ...prev, [sessionId]: trimmed }));
+      // chat in a fresh TabEntry still gets the renamed title. Also
+      // write a JSONL title-override so list_stored_sessions does not
+      // fall back to the raw session id after the tab closes.
+      persistSessionTitleOverride(sessionId, trimmed);
     }
     // The mid-pane masthead reads from `sessionTitle` independently of
     // tab.title; sync it when the renamed tab is active.
     if (renamedActive) {
       setSessionTitle(trimmed);
     }
-  }, [activeTabId, tabs]);
+  }, [activeTabId, persistSessionTitleOverride, tabs]);
 
   /** Assign a tab to a project (or unfile). */
   const handleAssignChatToProject = useCallback((tabId: string, projectId: string | null): void => {
@@ -1000,8 +1031,9 @@ export default function App(): JSX.Element {
     return {};
   });
   useEffect(() => {
+    if (!personalDataReady) return;
     persistUserData(SESSION_PROJECTS_KEY, sessionProjects);
-  }, [sessionProjects]);
+  }, [sessionProjects, personalDataReady]);
   const handleAssignSessionToProject = useCallback((sessionId: string, projectId: string | null): void => {
     setSessionProjects((prev) => {
       const next = { ...prev };
@@ -1101,8 +1133,55 @@ export default function App(): JSX.Element {
     return [];
   });
   useEffect(() => {
+    if (!personalDataReady) return;
     persistUserData(CLOSED_TABS_KEY, closedTabs.slice(-100));
-  }, [closedTabs]);
+  }, [closedTabs, personalDataReady]);
+
+  useEffect(() => {
+    if (userDataHydrated.current) return;
+    userDataHydrated.current = true;
+    let cancelled = false;
+
+    const readArray = <T,>(key: string): T[] | null => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed as T[] : null;
+      } catch {
+        return null;
+      }
+    };
+    const readObject = <T extends Record<string, unknown>>(key: string): T | null => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as T : null;
+      } catch {
+        return null;
+      }
+    };
+
+    void hydrateUserData()
+      .then(() => {
+        if (cancelled) return;
+        const restoredTabs = readArray<TabEntry>(SESSIONS_KEY);
+        if (restoredTabs && restoredTabs.length > 0) {
+          setTabs(restoredTabs.map((t) => restorePersistedTabEntry(t)));
+        }
+        setProjects(readArray<StoredProject>(PROJECTS_KEY) ?? []);
+        setChatTitleOverrides(readObject<Record<string, string>>(CHAT_TITLES_KEY) ?? {});
+        setSessionProjects(readObject<Record<string, string>>(SESSION_PROJECTS_KEY) ?? {});
+        setClosedTabs(readArray<ClosedTab>(CLOSED_TABS_KEY) ?? []);
+        setPersonalDataReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setPersonalDataReady(true);
+      });
+
+    return () => { cancelled = true; };
+  }, []);
   const archiveClosedTab = useCallback((t: TabEntry) => {
     setClosedTabs((prev) => {
       // Drop any prior archive entry for this tab/sessionId so the most
@@ -1121,6 +1200,15 @@ export default function App(): JSX.Element {
       }];
     });
   }, []);
+
+  useEffect(() => {
+    for (const tab of tabs) {
+      const override = titleOverrideForClosingTab(tab, chatTitleOverrides);
+      if (override) {
+        persistSessionTitleOverride(override.sessionId, override.title);
+      }
+    }
+  }, [chatTitleOverrides, persistSessionTitleOverride, tabs]);
 
   /** Patch the currently-active tab's entry (e.g. composer scope-pill
    * selections). No-op when no tab is active (cold start). */
@@ -1859,6 +1947,7 @@ export default function App(): JSX.Element {
     cwd?: string | null;
     connectionId?: string | null;
     autonomy?: AutonomyMode | null;
+    loadSessionId?: string | null;
   };
   async function connect(target: ConnectTarget = {}): Promise<boolean> {
     const targetTab = target.tabId
@@ -1892,7 +1981,13 @@ export default function App(): JSX.Element {
       if (myTabId) spawnInFlight.current.delete(myTabId);
       return false;
     }
-    pushUiEvent(`→ connect ${spawnCwd}`);
+    const loadSessionId = target.loadSessionId !== undefined
+      ? target.loadSessionId
+      : loadSessionIdForReconnect({
+          status: targetTab?.status,
+          sessionId: targetTab?.sessionId ?? null,
+        });
+    pushUiEvent(loadSessionId ? reconnectContinuityUiText(loadSessionId) : `→ connect ${spawnCwd}`);
     try {
       // Push the active autonomy BEFORE spawning grok.
       // set_permission_mode only applies to the NEXT spawn (acp.rs
@@ -1910,6 +2005,7 @@ export default function App(): JSX.Element {
           ? target.connectionId
           : targetTab?.connectionId ?? null,
         tabId: myTabId,
+        loadSessionId,
       });
       pushUiEvent(`✓ ${result}`);
       updateTabById(myTabId, { status: "Connected" });
@@ -2029,7 +2125,11 @@ export default function App(): JSX.Element {
     // (just reopened a past chat, or never connected), spawn one
     // first so the user's prompt isn't lost on a fresh empty session.
     if (activeTab && activeTab.status !== "Connected") {
-      pushUiEvent(`→ auto-connect (resume-then-send)`);
+      const loadSessionId = loadSessionIdForReconnect({
+        status: activeTab.status,
+        sessionId: activeTab.sessionId,
+      });
+      if (!loadSessionId) pushUiEvent(`→ auto-connect (new session)`);
       const connected = await connect();
       if (!connected) {
         setError("Auto-connect failed");
@@ -2501,14 +2601,19 @@ export default function App(): JSX.Element {
     }
   }
 
-  function handlePreviewFile(path: string): void {
+  handlePreviewFileImpl.current = (path: string): void => {
     // Route chat/file links into Preview Center. Plain documents stay in
     // read-only file preview; standalone HTML launches Work Preview so
     // generated pages run with scripts instead of the safe source viewer.
     if (typeof path !== "string" || path.length === 0) return;
-    const tabCwd = tabs.find((t) => t.tabId === activeTabId)?.cwd?.trim() ?? "";
+    const active = tabs.find((t) => t.tabId === activeTabId) ?? null;
+    const tabCwd = active?.cwd?.trim() ?? "";
+    const previewInput = resolveSessionMarkdownArtifactPath(path, {
+      cwd: tabCwd,
+      sessionId: active?.sessionId ?? null,
+    }) ?? path;
     const route = resolvePreviewRoute({
-      path,
+      path: previewInput,
       cwd: tabCwd,
       canRunWorkPreview: inTauri(),
     });
@@ -2563,7 +2668,7 @@ export default function App(): JSX.Element {
     setPreviewCenterOpen(true);
     updateActiveTab({ preview: { kind: "file", path: abs } });
     void apiPost("/preview", { kind: "file", path: abs }).catch(() => { /* debug api may be off */ });
-  }
+  };
 
   async function handleAskGrokToFixPreview(state: WorkPreviewState): Promise<void> {
     const tabId = state.tabId || activeTabId || "default";
@@ -2779,7 +2884,18 @@ export default function App(): JSX.Element {
   function handleCloseTab(idToClose?: string): void {
     const tid = idToClose ?? activeTabId;
     if (!tid) return;
-    const closingSessionId = tabs.find((t) => t.tabId === tid)?.sessionId ?? null;
+    const closingTab = tabs.find((t) => t.tabId === tid);
+    const closingSessionId = closingTab?.sessionId ?? null;
+    const titleOverride = closingTab
+      // Closing is the last cheap chance to write the JSONL
+      // title-override. Retry even when the localStorage override is
+      // already present because the earlier live rename may have run
+      // before the session file existed.
+      ? titleOverrideForClosingTab(closingTab, {})
+      : null;
+    if (titleOverride) {
+      persistSessionTitleOverride(titleOverride.sessionId, titleOverride.title);
+    }
     tabSessionByTab.current.delete(tid);
     if (closingSessionId) rehydratedSessionIds.current.delete(closingSessionId);
     try {
@@ -3158,6 +3274,7 @@ export default function App(): JSX.Element {
               onRenameProject={handleRenameProject}
               onRenameChat={handleRenameChat}
               onAssignChatToProject={handleAssignChatToProject}
+              userDataReady={personalDataReady}
               /* Past chats: disk-backed pastChats merged with the
                * closedTabs archive (failed-connect tabs without a
                * sessionId still surface). Project-filed entries are

@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { api } from "../lib/debug-api";
+import { PROJECTS_COLLAPSE_KEY, persistUserData } from "../lib/userStore";
 import { ShellIcon, TransportIcon, transportTitle } from "./icons";
 import { RowActions } from "./RowActions";
 
@@ -36,8 +37,6 @@ interface ProjectMeta {
 // "Unfiled" is derived from open session tabs without a projectId.
 // "Past chats" lists on-disk sessions surfaced via the
 // list_stored_sessions Tauri command.
-
-const PROJECTS_COLLAPSE_KEY = "shellX.v92.projects.collapse";
 
 /** Minimal entry mirroring App.tsx TabEntry — kept local to avoid a
  * circular import. App passes only the fields used here. */
@@ -91,6 +90,7 @@ export function LeftRail({
   pastChatsByProject = {},
   onAssignSessionToProject,
   onDeleteSession,
+  userDataReady = true,
 }: {
   cwd: string;
   activeTabId?: string | null;
@@ -142,6 +142,9 @@ export function LeftRail({
   onDeleteSession?: (
     target: { kind: "tab"; tabId: string } | { kind: "past"; sessionId: string },
   ) => void;
+  /** False during boot disk-hydration so first-render defaults do not
+   * overwrite reinstall-safe project markings. */
+  userDataReady?: boolean;
 }): JSX.Element {
   const [collapse, setCollapse] = useState<Record<string, boolean>>(() => loadCollapseMap(projects));
   const [unfiledCollapsed, setUnfiledCollapsed] = useState(false);
@@ -165,8 +168,14 @@ export function LeftRail({
 
  // Persist collapse state on every change.
   useEffect(() => {
-    try { localStorage.setItem(PROJECTS_COLLAPSE_KEY, JSON.stringify(collapse)); } catch { /* no-op */ }
-  }, [collapse]);
+    if (!userDataReady) return;
+    persistUserData(PROJECTS_COLLAPSE_KEY, collapse);
+  }, [collapse, userDataReady]);
+
+  useEffect(() => {
+    if (!userDataReady) return;
+    setCollapse(loadCollapseMap(projects));
+  }, [projects, userDataReady]);
 
   const toggleProject = (id: string) =>
     setCollapse((m) => ({ ...m, [id]: !m[id] }));

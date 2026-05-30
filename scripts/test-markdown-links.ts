@@ -51,6 +51,16 @@ assert(
     "C:/Users/User/Documents/New project 3/shellx-preview-test.html",
   "encoded Windows HTML links resolve without fake POSIX prefix",
 );
+const encodedGrokSessionMarkdownPath =
+  "C:\\Users\\User\\.grok\\sessions\\C%3A%5CUsers%5CUser\\019e7aab-e6c4-7cd3-8dbf-be10b70f2737\\plan.md";
+assert(
+  localHrefToPreviewPath(encodedGrokSessionMarkdownPath) === encodedGrokSessionMarkdownPath,
+  "encoded Grok session markdown paths stay byte-identical so plan.md preview can read the real file",
+);
+assert(
+  resolveMarkdownPreviewHref(undefined, encodedGrokSessionMarkdownPath) === encodedGrokSessionMarkdownPath,
+  "encoded Grok session markdown hrefs are not decoded before Preview Center",
+);
 assert(
   fileDisplayName("/C:/Users/User/Documents/New%20project%203/shellx-preview-test.html") ===
     "shellx-preview-test.html",

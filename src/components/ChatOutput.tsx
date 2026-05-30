@@ -10,7 +10,7 @@
  * chips inside assistant messages call onPreviewFile, which opens the
  * FilePreviewModal at App level.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,7 +39,7 @@ import { PermissionPill } from "./PermissionPill";
  * in the TerminalRegistry. Falls back to "default" to match the
  * Rust-side `tab_id.unwrap_or("default")` convention. */
 
-export function ChatOutput({
+function ChatOutputView({
   groups,
   onPreviewFile,
   tabId,
@@ -267,6 +267,9 @@ export function ChatOutput({
     </div>
   );
 }
+
+export const ChatOutput = memo(ChatOutputView);
+ChatOutput.displayName = "ChatOutput";
 
 /**
  * Fenced code/command block wrapper with one-click copy. ReactMarkdown

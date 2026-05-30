@@ -1022,6 +1022,36 @@ function PromptComposer({
   })();
   const [slashActiveIdx, setSlashActiveIdx] = useState(0);
   useEffect(() => { setSlashActiveIdx(0); }, [slashQuery, slashOpen]);
+  const [slashCoords, setSlashCoords] = useState<{ left: number; top: number; width: number } | null>(null);
+  const recomputeSlashCoords = () => {
+    const composer = taRef.current?.closest(".composer") as HTMLElement | null;
+    if (!composer || typeof window === "undefined") return;
+    const rect = composer.getBoundingClientRect();
+    const width = Math.min(480, Math.max(320, rect.width));
+    const left = Math.min(
+      Math.max(8, rect.left),
+      Math.max(8, window.innerWidth - width - 8),
+    );
+    setSlashCoords({
+      left,
+      top: Math.max(8, rect.top),
+      width,
+    });
+  };
+  useLayoutEffect(() => {
+    if (!slashOpen || filteredSkills.length === 0) {
+      setSlashCoords(null);
+      return;
+    }
+    recomputeSlashCoords();
+    const onScroll = () => recomputeSlashCoords();
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", recomputeSlashCoords);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", recomputeSlashCoords);
+    };
+  }, [slashOpen, filteredSkills.length, prompt]);
 
   function selectHashItem(it: HashItem) {
     if (hashAnchor == null) return;
@@ -1621,28 +1651,17 @@ function PromptComposer({
  * above the composer; lists grok's available_commands_update
  * skills filtered by the typed query. Arrow keys + Enter
  * navigate/insert. Esc closes. */}
-        {slashOpen && filteredSkills.length > 0 && (
+        {slashOpen && filteredSkills.length > 0 && slashCoords && typeof document !== "undefined" && createPortal(
           <div
             className="slash-pop"
             role="listbox"
             style={{
-              position: "absolute",
-              bottom: "100%",
-              left: 0,
-              right: "auto",
-              minWidth: 320,
-              maxWidth: 480,
-              maxHeight: 320,
-              overflowY: "auto",
-              background: "var(--surface)",
-              border: "1px solid var(--hairline)",
-              borderRadius: 6,
-              boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-              marginBottom: 6,
-              zIndex: 50,
+              left: slashCoords.left,
+              top: slashCoords.top,
+              width: slashCoords.width,
             }}
           >
-            <div style={{ fontSize: "var(--fs-ui-xs)", color: "var(--ink-3)", padding: "6px 10px", letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid var(--hairline)" }}>
+            <div className="slash-pop-head">
               {filteredSkills.length} command{filteredSkills.length === 1 ? "" : "s"}
             </div>
             {filteredSkills.map((s, i) => (
@@ -1652,24 +1671,18 @@ function PromptComposer({
                 aria-selected={i === slashActiveIdx}
                 onClick={() => selectSlashItem(s.name)}
                 onMouseEnter={() => setSlashActiveIdx(i)}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 2,
-                  padding: "6px 10px",
-                  cursor: "pointer",
-                  background: i === slashActiveIdx ? "var(--hairline)" : "transparent",
-                }}
+                className={`slash-pop-row ${i === slashActiveIdx ? "active" : ""}`}
               >
-                <span style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-ui-sm)", color: "var(--ink)" }}>/{s.name}</span>
+                <span className="slash-pop-command">/{s.name}</span>
                 {s.description && (
-                  <span style={{ fontSize: "var(--fs-ui-xs)", color: "var(--ink-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span className="slash-pop-desc">
                     {s.description}
                   </span>
                 )}
               </div>
             ))}
-          </div>
+          </div>,
+          document.body,
         )}
       </div>
 

@@ -2,6 +2,9 @@ export type GeneratedMediaKind = "image" | "video";
 
 export function shouldScanGeneratedMediaOutput(title: string, kind: GeneratedMediaKind): boolean {
   const normalized = title.toLowerCase();
+  if (/^\s*(search tools?|search_tool|tool_search|grep|read_file|list_dir|web_search|web_fetch)\b/.test(normalized)) {
+    return false;
+  }
   if (kind === "image") {
     return /\b(image|image_gen|image_edit|screenshot)\b/.test(normalized);
   }
@@ -25,9 +28,7 @@ export function normalizeRendererFilePath(path: string): string {
 }
 
 export function extractGeneratedMediaPath(text: string, kind: GeneratedMediaKind): string | undefined {
-  const ext = kind === "image"
-    ? "jpe?g|png|gif|webp|bmp|svg|ico"
-    : "mp4|webm|mov|m4v|mkv";
+  const ext = mediaExtensionPattern(kind);
   const patterns = [
     new RegExp(`(?:src|href)=["']([^"']+\\.(${ext})(?:\\?[^"']*)?)["']`, "i"),
     new RegExp(`\\]\\((.+\\.(${ext})(?:\\?[^)]*)?)\\)`, "i"),
@@ -40,9 +41,27 @@ export function extractGeneratedMediaPath(text: string, kind: GeneratedMediaKind
     const match = text.match(pattern);
     const raw = match?.[1];
     if (!raw) continue;
-    return cleanMediaPath(raw);
+    const clean = cleanMediaPath(raw);
+    if (looksLikeGeneratedMediaPath(clean, kind)) return clean;
   }
   return undefined;
+}
+
+function mediaExtensionPattern(kind: GeneratedMediaKind): string {
+  return kind === "image"
+    ? "jpe?g|png|gif|webp|bmp|svg|ico"
+    : "mp4|webm|mov|m4v|mkv";
+}
+
+function looksLikeGeneratedMediaPath(path: string, kind: GeneratedMediaKind): boolean {
+  const ext = mediaExtensionPattern(kind);
+  if (new RegExp(`\\.(?:${ext})(?:[\\\\/]\\.(?:${ext}))+`, "i").test(path)) {
+    return false;
+  }
+  if (/\bpath must end in\b/i.test(path)) {
+    return false;
+  }
+  return true;
 }
 
 function cleanMediaPath(path: string): string {

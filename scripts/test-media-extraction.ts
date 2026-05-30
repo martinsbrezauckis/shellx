@@ -163,6 +163,14 @@ const cases = [
     id: "vision1",
   },
   {
+    name: "search tool docs with screenshot text are not generated media",
+    text: "description: Useful for inspecting screenshots (paired with shellXagent GET /screenshot), and reading text from images. Path must end in .png/.jpg/.jpeg/.webp/.gif/.bmp.",
+    expectImage: undefined,
+    expectVideo: undefined,
+    tool: 'Search tools: "screenshot capture vision describe shellx"',
+    id: "searchdocs1",
+  },
+  {
     name: "read_file image error is not generated media",
     text: "Failed to read file: C:\\Users\\User\\Downloads\\expo preview.png, IO Error: stream did not contain valid UTF-8",
     expectImage: undefined,

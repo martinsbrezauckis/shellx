@@ -8302,13 +8302,15 @@ mod tests {
 
     #[test]
     fn credential_pattern_redacts_vendor_prefixes_and_high_entropy_tokens() {
-        for sample in [
-            concat!("xox", "b-123456789012-ABCDEFGHIJKLMNO"),
+        let slack_like = ["xox", "b-123456789012-ABCDEFGHIJKLMNO"].concat();
+        let samples = [
+            slack_like.as_str(),
             "glpat-1234567890abcdef",
             "AIzaSyB1234567890abcdef",
             "SG.abcdefghi.1234567890abcdef",
             "token qwertyuiopasdfghjklzxcvbnm",
-        ] {
+        ];
+        for sample in samples {
             assert!(
                 redact_if_credential_pattern(sample),
                 "expected credential-shaped sample to redact: {sample}"

@@ -1,6 +1,6 @@
 {
   "name": "grok-shell",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "description": "Cross-platform desktop shell for grok-build and any ACP-speaking agent",
   "license": "MIT",
   "private": true,
@@ -21,7 +21,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/test-media-extraction.ts && tsx scripts/test-session-media.ts && tsx scripts/test-session-activity.ts && tsx scripts/test-transport-icons.ts && tsx scripts/test-markdown-links.ts && tsx scripts/test-update-notes.ts && tsx scripts/test-update-diagnostics.ts && tsx scripts/test-git-workflows.ts && tsx scripts/test-release-readiness.ts && tsx scripts/test-build-run.ts && tsx scripts/test-outside-connector-inbox.ts && tsx scripts/test-work-preview.ts && tsx scripts/test-preview-center.ts && tsx scripts/test-file-preview-types.ts && tsx scripts/test-session-capabilities.ts && tsx scripts/test-pending-local-events.ts && tsx scripts/test-chat-rendering.tsx && tsx scripts/test-terminal-b.ts && tsx scripts/test-permission-pill.ts && tsx scripts/test-voice-chat.ts",
+    "test": "tsx scripts/test-media-extraction.ts && tsx scripts/test-session-media.ts && tsx scripts/test-session-activity.ts && tsx scripts/test-session-continuity.ts && tsx scripts/test-session-titles.ts && tsx scripts/test-transport-icons.ts && tsx scripts/test-markdown-links.ts && tsx scripts/test-update-notes.ts && tsx scripts/test-update-diagnostics.ts && tsx scripts/test-git-workflows.ts && tsx scripts/test-release-readiness.ts && tsx scripts/test-build-run.ts && tsx scripts/test-outside-connector-inbox.ts && tsx scripts/test-work-preview.ts && tsx scripts/test-preview-center.ts && tsx scripts/test-file-preview-types.ts && tsx scripts/test-session-capabilities.ts && tsx scripts/test-pending-local-events.ts && tsx scripts/test-chat-rendering.tsx && tsx scripts/test-chat-typing-performance.ts && tsx scripts/test-user-store.ts && tsx scripts/test-composer-popovers.ts && tsx scripts/test-terminal-b.ts && tsx scripts/test-permission-pill.ts && tsx scripts/test-voice-chat.ts",
     "test:work-preview-api": "tsx scripts/test-work-preview-api.ts",
     "lint": "tsc --noEmit"
   },

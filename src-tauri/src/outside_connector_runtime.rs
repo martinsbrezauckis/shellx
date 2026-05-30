@@ -394,6 +394,9 @@ async fn dispatch_telegram_prompt(
         let mut session = session_arc.lock().await;
         match &outcome {
             Ok(Ok(_)) => session.mark_prompt_responded(),
+            Err(_) if crate::acp::prompt_is_recently_active(&tab_id) => {
+                session.mark_prompt_responded()
+            }
             Err(_) => session.mark_prompt_timeout(),
             Ok(Err(_)) => {}
         }
@@ -655,11 +658,6 @@ async fn send_telegram_photo(
 }
 
 fn first_existing_shellx_image_path(text: &str) -> Option<PathBuf> {
-    let roots = shellx_external_image_roots();
-    first_existing_shellx_image_path_with_roots(text, &roots)
-}
-
-fn first_existing_shellx_image_path_with_roots(text: &str, roots: &[PathBuf]) -> Option<PathBuf> {
     for raw in text.split_whitespace() {
         let token = raw.trim_matches(|c: char| {
             matches!(c, '"' | '\'' | '`' | ',' | '.' | ')' | '(' | '[' | ']')
@@ -673,34 +671,31 @@ fn first_existing_shellx_image_path_with_roots(text: &str, roots: &[PathBuf]) ->
             continue;
         }
         let path = PathBuf::from(token);
-        if let Some(canonical) = canonical_shellx_external_image_path_with_roots(&path, roots) {
+        if let Some(canonical) = canonical_shellx_external_image_path(&path) {
             return Some(canonical);
         }
     }
     None
 }
 
-fn canonical_shellx_external_image_path_with_roots(
-    path: &Path,
-    roots: &[PathBuf],
-) -> Option<PathBuf> {
+fn canonical_shellx_external_image_path(path: &Path) -> Option<PathBuf> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return None;
     }
     let canonical = path.canonicalize().ok()?;
-    if shellx_external_image_path_allowed_with_roots(&canonical, roots) {
+    if shellx_external_image_path_allowed(&canonical) {
         Some(canonical)
     } else {
         None
     }
 }
 
-fn shellx_external_image_path_allowed_with_roots(path: &Path, roots: &[PathBuf]) -> bool {
+fn shellx_external_image_path_allowed(path: &Path) -> bool {
     let Ok(candidate) = path.canonicalize() else {
         return false;
     };
-    roots
+    shellx_external_image_roots()
         .iter()
         .filter_map(|root| root.canonicalize().ok())
         .any(|root| candidate.starts_with(root))
@@ -1216,8 +1211,16 @@ mod tests {
         let private_image = private_dir.join("secret.png");
         fs::write(&private_image, b"\x89PNG\r\n\x1a\nprivate").expect("private image");
 
-        let allowed_root = root.join(".grok").join("sessions");
-        let generated_session_dir = allowed_root.join("sid");
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .expect("home");
+        let session_dir_name = format!(
+            "shellx-test-photo-relay-{}-{}",
+            std::process::id(),
+            now_ms()
+        );
+        let generated_session_dir = home.join(".grok").join("sessions").join(session_dir_name);
         let generated_dir = generated_session_dir.join("images");
         fs::create_dir_all(&generated_dir).expect("generated dir");
         let generated_image = generated_dir.join("1.png");
@@ -1228,26 +1231,18 @@ mod tests {
         let fake_allowed_image = fake_allowed_dir.join("not-shellx.png");
         fs::write(&fake_allowed_image, b"\x89PNG\r\n\x1a\nfake").expect("fake image");
 
-        let roots = vec![allowed_root];
-        assert!(shellx_external_image_path_allowed_with_roots(
-            &generated_image,
-            &roots
-        ));
-        assert!(!shellx_external_image_path_allowed_with_roots(
-            &private_image,
-            &roots
-        ));
-        assert!(!shellx_external_image_path_allowed_with_roots(
-            &fake_allowed_image,
-            &roots
-        ));
+        assert!(shellx_external_image_path_allowed(&generated_image));
+        assert!(!shellx_external_image_path_allowed(&private_image));
+        assert!(!shellx_external_image_path_allowed(&fake_allowed_image));
         assert_eq!(
-            first_existing_shellx_image_path_with_roots(
-                &format!("{} {}", private_image.display(), generated_image.display()),
-                &roots
-            ),
+            first_existing_shellx_image_path(&format!(
+                "{} {}",
+                private_image.display(),
+                generated_image.display()
+            )),
             Some(canonical_generated_image)
         );
+        let _ = fs::remove_dir_all(generated_session_dir);
     }
 
     #[cfg(unix)]
@@ -1261,25 +1256,27 @@ mod tests {
         let private_image = private_dir.join("secret.png");
         fs::write(&private_image, b"\x89PNG\r\n\x1a\nprivate").expect("private image");
 
-        let allowed_root = root.join(".grok").join("sessions");
-        let generated_session_dir = allowed_root.join("sid");
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .expect("home");
+        let session_dir_name = format!(
+            "shellx-test-photo-relay-symlink-{}-{}",
+            std::process::id(),
+            now_ms()
+        );
+        let generated_session_dir = home.join(".grok").join("sessions").join(session_dir_name);
         let generated_dir = generated_session_dir.join("images");
         fs::create_dir_all(&generated_dir).expect("generated dir");
         let symlinked_image = generated_dir.join("relay.png");
         symlink(&private_image, &symlinked_image).expect("symlink image");
 
-        let roots = vec![allowed_root];
-        assert!(!shellx_external_image_path_allowed_with_roots(
-            &symlinked_image,
-            &roots
-        ));
+        assert!(!shellx_external_image_path_allowed(&symlinked_image));
         assert_eq!(
-            first_existing_shellx_image_path_with_roots(
-                &symlinked_image.display().to_string(),
-                &roots
-            ),
+            first_existing_shellx_image_path(&symlinked_image.display().to_string()),
             None
         );
+        let _ = fs::remove_dir_all(generated_session_dir);
     }
 
     #[test]

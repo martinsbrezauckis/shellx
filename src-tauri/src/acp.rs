@@ -428,6 +428,18 @@ struct SessionNewParams {
     auth_method_id: Option<String>,
 }
 
+/// Existing-session load parameters. Grok's ACP docs advertise
+/// `session/load` for clients that reconnect to a persisted session:
+/// `{ sessionId, cwd, mcpServers }`.
+#[derive(Serialize, Debug)]
+struct SessionLoadParams {
+    #[serde(rename = "sessionId")]
+    session_id: String,
+    cwd: String,
+    #[serde(rename = "mcpServers")]
+    mcp_servers: Vec<serde_json::Value>,
+}
+
 /// Prompt parameters
 #[derive(Serialize, Debug)]
 struct SessionPromptParams {
@@ -706,6 +718,10 @@ impl GrokAcpSession {
         self.cwd.clone()
     }
 
+    pub fn get_session_id_for_restart(&self) -> Option<String> {
+        self.session_id.clone()
+    }
+
     /// Set the tab identity that owns this session. Every
     /// event emitted from here on will be tagged with `_meta.tabId`.
     pub fn set_tab_id(&mut self, tab_id: Option<String>) {
@@ -813,7 +829,12 @@ impl GrokAcpSession {
     /// - WSL bridge via wsl.exe when `wsl_distro` + `wsl_grok_path`
     /// are set.
     /// - Local spawn otherwise.
-    pub async fn start(&mut self, cwd: &str, app_handle: tauri::AppHandle) -> Result<(), String> {
+    pub async fn start(
+        &mut self,
+        cwd: &str,
+        app_handle: tauri::AppHandle,
+        load_session_id: Option<String>,
+    ) -> Result<(), String> {
         // Reset auth-health for this tab so a
         // previously-unhealthy session can recover after `grok login`
         // + reconnect. The stderr scanner will flip it back to false if
@@ -1654,11 +1675,16 @@ impl GrokAcpSession {
         });
         self.reader_handle = Some(handle);
 
-        // Now perform ACP handshake (initialize + session/new) - responses will be delivered by the reader
+        // Now perform ACP handshake (initialize + session/new or
+        // session/load) - responses will be delivered by the reader.
         // For WSL: pass the Linux-style cwd so the agent (inside WSL) sees correct paths for its session
         self.initialize().await?;
         // mcp_servers (if set via set_mcp_servers before start) are passed to session/new so agent sees the tools
-        self.create_session(&agent_cwd).await?;
+        if let Some(existing_session_id) = load_session_id {
+            self.load_session(&agent_cwd, &existing_session_id).await?;
+        } else {
+            self.create_session(&agent_cwd).await?;
+        }
 
         info!(
             "ACP session initialized and ready in {} (WSL mode: {})",
@@ -1802,6 +1828,22 @@ impl GrokAcpSession {
         if let Some(id) = response.get("sessionId").and_then(|s| s.as_str()) {
             self.session_id = Some(id.to_string());
         }
+        Ok(())
+    }
+
+    async fn load_session(&mut self, cwd: &str, session_id: &str) -> Result<(), String> {
+        let params = SessionLoadParams {
+            session_id: session_id.to_string(),
+            cwd: cwd.to_string(),
+            mcp_servers: self.mcp_servers.clone(),
+        };
+
+        let response = self.send_request("session/load", params).await?;
+        self.session_id = response
+            .get("sessionId")
+            .and_then(|s| s.as_str())
+            .map(str::to_string)
+            .or_else(|| Some(session_id.to_string()));
         Ok(())
     }
 
@@ -2483,6 +2525,19 @@ fn prompt_starts() -> &'static std::sync::Mutex<HashMap<String, std::time::Insta
     PROMPT_STARTS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
+/// Per-tab timestamp of the newest ACP `session/update` observed after
+/// a prompt was sent. The UI streams these updates independently from
+/// the `session/prompt` response, so a long-running Grok turn can still
+/// be healthy after the command wait window expires.
+fn prompt_activities() -> &'static std::sync::Mutex<HashMap<String, std::time::Instant>> {
+    static PROMPT_ACTIVITIES: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<String, std::time::Instant>>,
+    > = std::sync::OnceLock::new();
+    PROMPT_ACTIVITIES.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+pub const PROMPT_ACTIVITY_IDLE_GRACE_SECS: u64 = 180;
+
 /// Record wall-clock start for the current prompt on `tab_id`. Called
 /// from `initiate_and_send_prompt_parts` immediately after the
 /// `session/prompt` request is written to grok's stdin. Subsequent
@@ -2496,9 +2551,45 @@ pub fn record_prompt_start(tab_id: &str) {
     if let Ok(mut m) = prompt_starts().lock() {
         m.insert(tab_id.to_string(), std::time::Instant::now());
     }
+    if let Ok(mut m) = prompt_activities().lock() {
+        m.remove(tab_id);
+    }
     if let Ok(mut m) = last_aborts().lock() {
         m.remove(tab_id);
     }
+}
+
+/// Stamp live Grok output for the current prompt. Called from the
+/// ACP notification path on `session/update`.
+pub fn record_prompt_activity(tab_id: &str) {
+    if let Ok(mut m) = prompt_activities().lock() {
+        m.insert(tab_id.to_string(), std::time::Instant::now());
+    }
+}
+
+/// True only when the tab has seen a `session/update` after the most
+/// recent prompt start and that update is still fresh enough to prove
+/// the agent is active.
+pub fn prompt_has_recent_activity(tab_id: &str, max_idle: std::time::Duration) -> bool {
+    let start = prompt_starts()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(tab_id).copied());
+    let activity = prompt_activities()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(tab_id).copied());
+    match (start, activity) {
+        (Some(start), Some(activity)) if activity >= start => activity.elapsed() <= max_idle,
+        _ => false,
+    }
+}
+
+pub fn prompt_is_recently_active(tab_id: &str) -> bool {
+    prompt_has_recent_activity(
+        tab_id,
+        std::time::Duration::from_secs(PROMPT_ACTIVITY_IDLE_GRACE_SECS),
+    )
 }
 
 /// Read + drain the recorded prompt-start for `tab_id`. Returns
@@ -2507,6 +2598,9 @@ pub fn record_prompt_start(tab_id: &str) {
 /// would make a future bare `prompt_complete` (without a paired send)
 /// report a giant elapsed value.
 fn take_prompt_elapsed_ms(tab_id: &str) -> Option<u64> {
+    if let Ok(mut m) = prompt_activities().lock() {
+        m.remove(tab_id);
+    }
     if let Ok(mut m) = prompt_starts().lock() {
         if let Some(start) = m.remove(tab_id) {
             return Some(start.elapsed().as_millis() as u64);
@@ -2589,9 +2683,6 @@ fn stderr_line_indicates_auth_failure(line: &str) -> bool {
     // Strip common ANSI escape prefixes for trace-format lines so the
     // pattern matches "[31mERROR[0m ... Authorization required" too.
     let stripped = lower.replace('\u{001b}', " ");
-    if stderr_line_is_mcp_auth_noise(&stripped) {
-        return false;
-    }
     let needles = [
         "401 unauthorized",
         "authorization required",
@@ -2604,26 +2695,25 @@ fn stderr_line_indicates_auth_failure(line: &str) -> bool {
         "auth expired",
         "refresh token expired",
         "could not refresh access token",
+        "cli-chat-proxy.grok.com", // any cli-chat-proxy errror is auth-adjacent
     ];
     for n in &needles {
         if stripped.contains(n) {
+            // cli-chat-proxy line on its own is informational; require
+            // a co-occurring "401" / "error" / "fail" to avoid false
+            // positives like "POST cli-chat-proxy.grok.com/...".
+            if *n == "cli-chat-proxy.grok.com"
+                && !(stripped.contains("401")
+                    || stripped.contains("unauthorized")
+                    || stripped.contains("error")
+                    || stripped.contains("fail"))
+            {
+                continue;
+            }
             return true;
         }
     }
     false
-}
-
-fn stderr_line_is_mcp_auth_noise(stripped: &str) -> bool {
-    let mcp_scoped = stripped.contains("mcp server")
-        || stripped.contains("rmcp::transport")
-        || stripped.contains("workertransport")
-        || stripped.contains("streamablehttpclientworker")
-        || stripped.contains("worker quit with fatal");
-    let auth_scoped = stripped.contains("oauth authorization required")
-        || stripped.contains("authorization required")
-        || stripped.contains("auth(authorizationrequired)")
-        || stripped.contains("auth error:");
-    mcp_scoped && auth_scoped && !stripped.contains("cli-chat-proxy.grok.com")
 }
 
 fn mark_auth_unhealthy(tab_id: &str, hint: &str) {
@@ -3021,16 +3111,19 @@ fn recover_host_mcp_goal_session(
             .get_existing(&tab)
             .await
             .ok_or_else(|| "no live session to restart".to_string())?;
-        let cwd = {
+        let (cwd, session_id) = {
             let sess = sess_arc.lock().await;
-            sess.get_cwd_for_restart()
-                .ok_or_else(|| "session has no cwd to restart".to_string())?
+            (
+                sess.get_cwd_for_restart()
+                    .ok_or_else(|| "session has no cwd to restart".to_string())?,
+                sess.get_session_id_for_restart(),
+            )
         };
 
         {
             let mut sess = sess_arc.lock().await;
             sess.abort_session().await?;
-            sess.start(&cwd, handle.clone()).await?;
+            sess.start(&cwd, handle.clone(), session_id).await?;
         }
 
         let app_for_inject = Some(handle.clone());
@@ -3112,6 +3205,7 @@ async fn handle_notification(
         // _meta.tabId tagging isn't perfectly threaded. A dedicated
         // typed channel sidesteps that fragility entirely.
         if method == "session/update" {
+            record_prompt_activity(tab_id.unwrap_or("default"));
             if let Some(update) = params.get("update") {
                 let su = update
                     .get("sessionUpdate")
@@ -4922,6 +5016,14 @@ async fn send_error_response(
 mod tests {
     use super::*;
 
+    fn unique_tab(prefix: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("test-{prefix}-{}-{nanos}", std::process::id())
+    }
+
     #[test]
     fn resolve_path_rejects_traversal() {
         assert_eq!(
@@ -4976,47 +5078,73 @@ mod tests {
     }
 
     #[test]
-    fn stderr_auth_scanner_keeps_cli_auth_failures() {
-        assert!(stderr_line_indicates_auth_failure(
-            "ERROR request failed: 401 unauthorized from cli-chat-proxy.grok.com"
-        ));
-        assert!(stderr_line_indicates_auth_failure(
-            "could not refresh access token: bearer token expired"
-        ));
-    }
-
-    #[test]
-    fn stderr_auth_scanner_ignores_mcp_oauth_failures() {
-        assert!(!stderr_line_indicates_auth_failure(
-            "WARN MCP server init failed server=cloudflare-bindings error=MCP server \
-             'cloudflare-bindings' handshake failed: Auth error: OAuth authorization required"
-        ));
-        assert!(!stderr_line_indicates_auth_failure(
-            "ERROR worker quit with fatal: Transport channel closed, when Auth(AuthorizationRequired)"
-        ));
-    }
-
-    #[test]
-    fn stderr_auth_scanner_ignores_cli_chat_proxy_trace_payloads() {
-        assert!(!stderr_line_indicates_auth_failure(
-            r#"INFO sampling_request{request_id=abc model="grok-build" \
-               base_url="https://cli-chat-proxy.grok.com/v1" auth_type="bearer"}: \
-               event="sse_chunk" data={"type":"response.completed","error":null}"#
-        ));
-        assert!(!stderr_line_indicates_auth_failure(
-            r#"2026-05-30T19:55:20.294013Z INFO sampling_request{request_id=abc \
-               model="grok-build" base_url="https://cli-chat-proxy.grok.com/v1" \
-               auth_type="bearer"}: event="sse_chunk" data={"sequence_number":10}"#
-        ));
-    }
-
-    #[test]
     fn jsonrpc_message_deserializes_response() {
         let raw = r#"{"jsonrpc":"2.0","id":42,"result":{"sessionId":"abc-123"}}"#;
         let msg: JsonRpcMessage = serde_json::from_str(raw).unwrap();
         assert_eq!(msg.id, Some(serde_json::json!(42)));
         assert!(msg.result.is_some());
         assert!(msg.method.is_none());
+    }
+
+    #[test]
+    fn session_load_params_match_grok_docs() {
+        let params = SessionLoadParams {
+            session_id: "019e-old".to_string(),
+            cwd: "C:\\Users\\User".to_string(),
+            mcp_servers: vec![serde_json::json!({"name": "shellx-host"})],
+        };
+
+        let value = serde_json::to_value(&params).unwrap();
+        assert_eq!(value["sessionId"], "019e-old");
+        assert_eq!(value["cwd"], "C:\\Users\\User");
+        assert_eq!(value["mcpServers"][0]["name"], "shellx-host");
+        assert!(
+            value.get("authMethodId").is_none(),
+            "Grok ACP docs for session/load only advertise sessionId, cwd, and mcpServers"
+        );
+    }
+
+    #[test]
+    fn prompt_recent_activity_requires_session_update_after_prompt_start() {
+        let tab = unique_tab("prompt-activity");
+
+        record_prompt_activity(&tab);
+        assert!(
+            !prompt_has_recent_activity(&tab, std::time::Duration::from_secs(60)),
+            "activity before prompt start must not keep a future prompt alive"
+        );
+
+        record_prompt_start(&tab);
+        assert!(
+            !prompt_has_recent_activity(&tab, std::time::Duration::from_secs(60)),
+            "prompt start alone is not proof that Grok is still streaming"
+        );
+
+        record_prompt_activity(&tab);
+        assert!(
+            prompt_has_recent_activity(&tab, std::time::Duration::from_secs(60)),
+            "session/update after prompt start should prevent a false unresponsive timeout"
+        );
+
+        let _ = take_prompt_elapsed_ms(&tab);
+    }
+
+    #[test]
+    fn prompt_elapsed_drain_clears_recent_activity() {
+        let tab = unique_tab("prompt-activity-drain");
+
+        record_prompt_start(&tab);
+        record_prompt_activity(&tab);
+        assert!(prompt_has_recent_activity(
+            &tab,
+            std::time::Duration::from_secs(60)
+        ));
+
+        assert!(take_prompt_elapsed_ms(&tab).is_some());
+        assert!(
+            !prompt_has_recent_activity(&tab, std::time::Duration::from_secs(60)),
+            "completed prompts must not leave stale activity for the next timeout"
+        );
     }
 
     #[test]

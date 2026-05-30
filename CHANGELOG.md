@@ -7,6 +7,20 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
+## [0.1.35] - 2026-05-31
+
+### Fixed
+
+- Chat `plan.md` and `goal.md` links now open the active Grok session
+  copies instead of a missing `C:\Users\User\...` file.
+- Generated image, video, and markdown previews keep encoded Grok
+  session paths intact.
+- Reconnected Grok tabs keep prior context, custom chat names, and
+  session grouping after restart or close.
+- Project markings survive reinstall data cleanup, slash-command
+  autocomplete stays visible above the composer, and chat typing does
+  less transcript repainting.
+
 ## [0.1.34] - 2026-05-30
 
 ### Added

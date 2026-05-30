@@ -1103,6 +1103,11 @@ struct ConnectBody {
     /// over the existing child handle.
     #[serde(default)]
     restart: bool,
+    /// Existing Grok session id to load instead of creating a new
+    /// session. This keeps debug-api reconnects aligned with the UI
+    /// reopen path.
+    #[serde(rename = "loadSessionId", default)]
+    load_session_id: Option<String>,
 }
 
 async fn connect(
@@ -1382,7 +1387,10 @@ async fn connect(
         }
     }
 
-    match guard.start(&body.cwd, s.app.clone()).await {
+    match guard
+        .start(&body.cwd, s.app.clone(), body.load_session_id.clone())
+        .await
+    {
         Ok(_) => {
             info!("debug-api /connect ok cwd={}", body.cwd);
             // #352 fix (2026-05-20): mirror the Tauri start_grok_session
@@ -1492,18 +1500,24 @@ async fn prompt(
         guard.is_wedged() && guard.get_cwd_for_restart().is_some()
     };
     if needs_restart {
-        let restart_cwd = {
+        let (restart_cwd, restart_session_id) = {
             let guard = session_arc.lock().await;
-            guard.get_cwd_for_restart().unwrap_or_default()
+            (
+                guard.get_cwd_for_restart().unwrap_or_default(),
+                guard.get_session_id_for_restart(),
+            )
         };
         info!(
-            "debug-api /prompt: session wedged for tab '{}'; auto-restarting with cwd='{}'",
-            tab_key, restart_cwd
+            "debug-api /prompt: session wedged for tab '{}'; auto-restarting with cwd='{}' session_id={:?}",
+            tab_key, restart_cwd, restart_session_id
         );
         let mut guard = session_arc.lock().await;
         let _ = guard.abort_session().await;
         guard.mark_prompt_responded();
-        if let Err(e) = guard.start(&restart_cwd, s.app.clone()).await {
+        if let Err(e) = guard
+            .start(&restart_cwd, s.app.clone(), restart_session_id)
+            .await
+        {
             warn!("debug-api /prompt: wedge auto-restart failed: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1696,6 +1710,27 @@ async fn prompt(
                     }
                     warn!(
                         "debug-api /prompt wait expired for active /build tab '{}'; leaving session alive",
+                        wait_tab_key
+                    );
+                    return;
+                }
+                if crate::acp::prompt_is_recently_active(&wait_tab_key) {
+                    let mut guard = wait_session_arc.lock().await;
+                    guard.mark_prompt_responded();
+                    if let Some(hub) = wait_app.try_state::<Arc<DebugHub>>() {
+                        hub.record_raw_event(
+                            "grok-acp-event",
+                            serde_json::json!({
+                                "kind": "prompt_wait_expired",
+                                "tabId": wait_tab_key.clone(),
+                                "timeoutMs": 3_600_000u64,
+                                "promptRecentlyActive": true,
+                                "source": "debug-api",
+                            }),
+                        );
+                    }
+                    warn!(
+                        "debug-api /prompt wait expired while Grok was still streaming for tab '{}'; leaving session alive",
                         wait_tab_key
                     );
                     return;

@@ -704,7 +704,6 @@ function GrokEnvironmentCard({
   const setupChecks = snapshot?.setup?.checks.filter((check) => check.status !== "pass") ?? [];
   const inspect = snapshot?.inspect;
   const doctorSummary = snapshot?.doctor?.summary;
-  const apiKeyDetail = snapshot ? grokApiKeyReportDetail(snapshot) : null;
 
   async function exportTrace(): Promise<void> {
     if (!activeTabId || !snapshot?.trace.available) return;
@@ -768,7 +767,7 @@ function GrokEnvironmentCard({
                 Preview setup: {setupSummary.readyCount} ready · {setupSummary.attentionCount} needs setup · {setupSummary.totalCount} checks
               </div>
             )}
-            {apiKeyDetail && <div>{apiKeyDetail}</div>}
+            <div>{snapshot.apiKeyHint.detail}</div>
             {snapshot.error && <div className="tooling-issue">{snapshot.error}</div>}
             {setupChecks.slice(0, 3).map((check) => (
               <div className="tooling-issue" key={`setup-${check.id}`}>
@@ -900,7 +899,6 @@ function grokMcpCategoryLabel(category: GrokMcpFailureCategory): string {
 function buildGrokEnvironmentInspectionPrompt(snapshot: GrokEnvironmentSnapshot): string {
   const setupChecks = snapshot.setup.checks.filter((check) => check.status !== "pass");
   const failingServers = snapshot.doctor?.servers.filter((server) => !server.healthy) ?? [];
-  const apiKeyDetail = grokApiKeyReportDetail(snapshot);
   const setupBody = setupChecks.length > 0
     ? setupChecks.slice(0, 12).map((check) => {
         const command = check.command ? ` command=${check.command}` : "";
@@ -927,7 +925,9 @@ function buildGrokEnvironmentInspectionPrompt(snapshot: GrokEnvironmentSnapshot)
     `- Grok version: ${snapshot.inspect?.grokVersion ?? "(unknown)"}`,
     `- project trusted: ${snapshot.inspect?.projectTrusted ? "yes" : "no"}`,
     `- skills/plugins/instructions: ${snapshot.inspect?.skillCount ?? "?"}/${snapshot.inspect?.pluginCount ?? "?"}/${snapshot.inspect?.instructionCount ?? "?"}`,
-    ...(apiKeyDetail ? ["", "API-key environment override:", apiKeyDetail] : []),
+    "",
+    "API key hint:",
+    snapshot.apiKeyHint.detail,
     "",
     "Setup checks needing attention:",
     setupBody,
@@ -942,7 +942,6 @@ function buildGrokEnvironmentInspectionPrompt(snapshot: GrokEnvironmentSnapshot)
 function buildGrokEnvironmentReport(snapshot: GrokEnvironmentSnapshot): string {
   const setupChecks = snapshot.setup.checks.filter((check) => check.status !== "pass");
   const failingServers = snapshot.doctor?.servers.filter((server) => !server.healthy) ?? [];
-  const apiKeyDetail = grokApiKeyReportDetail(snapshot);
   const setupBody = setupChecks.length > 0
     ? setupChecks.map((check) => {
         const command = check.command ? ` command="${check.command}"` : "";
@@ -978,7 +977,9 @@ function buildGrokEnvironmentReport(snapshot: GrokEnvironmentSnapshot): string {
     `doctor_failing: ${snapshot.doctor?.summary.failingCount ?? "?"}`,
     `setup_ready: ${snapshot.setup.summary.readyCount}`,
     `setup_attention: ${snapshot.setup.summary.attentionCount}`,
-    ...(apiKeyDetail ? ["", "api_key_env_override:", apiKeyDetail] : []),
+    "",
+    "api_key:",
+    snapshot.apiKeyHint.detail,
     "",
     "setup_checks_needing_attention:",
     setupBody,
@@ -990,12 +991,6 @@ function buildGrokEnvironmentReport(snapshot: GrokEnvironmentSnapshot): string {
     snapshot.trace.detail,
     snapshot.error ? `\nerror:\n${snapshot.error}` : "",
   ].join("\n");
-}
-
-function grokApiKeyReportDetail(snapshot: GrokEnvironmentSnapshot): string | null {
-  return snapshot.apiKeyHint.preferredPresent || snapshot.apiKeyHint.legacyPresent
-    ? snapshot.apiKeyHint.detail
-    : null;
 }
 
 function CapabilityRow({ entry }: { entry: SearchCapability }): JSX.Element {

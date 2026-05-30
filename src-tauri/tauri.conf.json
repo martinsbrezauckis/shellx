@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "shellX",
   "mainBinaryName": "shellx",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "identifier": "lv.shellx.app",
   "build": {
     "frontendDist": "../dist",

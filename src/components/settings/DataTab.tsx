@@ -1,10 +1,10 @@
 /**
  * src/components/settings/DataTab.tsx — #435 per-section data delete UI.
  *
- * Shows the five user-data sections persisted to
+ * Shows the user-data sections persisted to
  * `~/.shellx/user-data.json` (projects / chat titles / session-project
- * mappings / saved sessions / closed-tab history) plus a per-section
- * count and a delete button. Each delete pops a confirm; on confirm
+ * mappings / saved sessions / closed-tab history / project collapse
+ * state) plus a per-section count and a delete button. Each delete pops a confirm; on confirm
  * both the on-disk section and the localStorage cache are wiped.
  *
  * Vault and Connections live in their own tabs already with their own
@@ -56,6 +56,11 @@ const ROWS: Row[] = [
     key: "shellX.closedTabs.v1",
     label: "Closed-tab history",
     description: "Recently closed tabs (last 100), restorable via Ctrl+Shift+T.",
+  },
+  {
+    key: "shellX.v92.projects.collapse",
+    label: "Project expand/collapse",
+    description: "Which project groups are expanded or collapsed in the LeftRail.",
   },
 ];
 

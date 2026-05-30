@@ -6,11 +6,15 @@ function isHttpUrl(href: unknown): href is string {
   return typeof href === "string" && /^https?:\/\//i.test(href);
 }
 
+function isGrokSessionReference(path: string): boolean {
+  return /(^|[\\/])\.grok[\\/]sessions[\\/]/i.test(path);
+}
+
 function fileUrlToPath(href: string): string | null {
   if (!/^file:\/\//i.test(href)) return null;
   try {
     const url = new URL(href);
-    const decoded = decodeURIComponent(url.pathname);
+    const decoded = decodeLocalPath(url.pathname);
     if (url.hostname) return `\\\\${url.hostname}${decoded.replace(/\//g, "\\")}`;
     return decoded.replace(/^\/([A-Za-z]:[\\/])/, "$1");
   } catch {
@@ -28,6 +32,7 @@ function stripUrlSuffix(path: string): string {
 }
 
 function decodeLocalPath(path: string): string {
+  if (isGrokSessionReference(path)) return path;
   try {
     return decodeURI(path);
   } catch {

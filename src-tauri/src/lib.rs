@@ -378,6 +378,7 @@ async fn start_grok_session(
     // keys the SessionRegistry slot, so each tab gets its own grok
     // subprocess.
     #[allow(non_snake_case)] tab_id: Option<String>,
+    #[allow(non_snake_case)] load_session_id: Option<String>,
     app: AppHandle,
     registry: State<'_, Arc<SessionRegistry>>,
 ) -> Result<String, String> {
@@ -514,7 +515,7 @@ async fn start_grok_session(
                 .await;
         }
     }
-    s.start(&cwd, app).await?;
+    s.start(&cwd, app, load_session_id.clone()).await?;
 
     // touch last_used_ms only on a clean spawn — failed presets stay
     // at the previous timestamp so the UI's recency list isn't biased
@@ -533,7 +534,10 @@ async fn start_grok_session(
         }
     }
 
-    info!("start_grok_session ok cwd={}", cwd);
+    info!(
+        "start_grok_session ok cwd={} load_session_id={:?}",
+        cwd, load_session_id
+    );
 
     // #322: kick off per-tab launcher-health probes for every
     // installed+enabled marketplace entry. Non-blocking — the prompt path returns
@@ -560,7 +564,10 @@ async fn start_grok_session(
         );
     }
 
-    Ok(format!("Grok session started in {}", cwd))
+    Ok(match load_session_id {
+        Some(id) => format!("Grok session loaded ({}) in {}", id, cwd),
+        None => format!("Grok session started in {}", cwd),
+    })
 }
 
 /// One embedded text context part sent alongside a user prompt.
@@ -633,13 +640,16 @@ async fn send_prompt(
         s.is_wedged() && s.get_cwd_for_restart().is_some()
     };
     if needs_restart {
-        let restart_cwd = {
+        let (restart_cwd, restart_session_id) = {
             let s = arc.lock().await;
-            s.get_cwd_for_restart().unwrap_or_default()
+            (
+                s.get_cwd_for_restart().unwrap_or_default(),
+                s.get_session_id_for_restart(),
+            )
         };
         info!(
-            "send_prompt: session wedged for tab '{}'; auto-restarting with cwd='{}'",
-            tab_key, restart_cwd
+            "send_prompt: session wedged for tab '{}'; auto-restarting with cwd='{}' session_id={:?}",
+            tab_key, restart_cwd, restart_session_id
         );
         // Emit a typed event so the UI can show "session restored".
         let _ = tauri::Emitter::emit(
@@ -662,7 +672,7 @@ async fn send_prompt(
         // start needs &mut self + cwd + AppHandle. The cwd we stored
         // is already in the right transport's path-format (Windows for
         // Local, Linux for WSL/SSH) because /connect's spawn put it there.
-        if let Err(e) = s.start(&restart_cwd, app.clone()).await {
+        if let Err(e) = s.start(&restart_cwd, app.clone(), restart_session_id).await {
             warn!("send_prompt: wedge auto-restart failed: {}", e);
             return Err(format!("wedge auto-restart failed: {}", e));
         }
@@ -732,13 +742,17 @@ async fn send_prompt(
     } else {
         false
     };
+    let prompt_recently_active =
+        outcome.is_err() && crate::acp::prompt_is_recently_active(&tab_key);
     {
         let mut s = arc.lock().await;
         match &outcome {
             Ok(Ok(_)) => s.mark_prompt_responded(),
-            Err(_) if !build_prompt_still_running => s.mark_prompt_timeout(),
+            Err(_) if !build_prompt_still_running && !prompt_recently_active => {
+                s.mark_prompt_timeout()
+            }
             Err(_) => {
-                /* active /build prompts may legitimately run for hours; don't wedge/restart */
+                /* active /build or visibly streaming prompts may legitimately outlive the wait */
             }
             Ok(Err(_)) => { /* channel closed = agent died; don't mark wedged, abort already cleaned */
             }
@@ -760,6 +774,15 @@ async fn send_prompt(
                     tab_key
                 );
                 return Ok("Build prompt is still running. Watch for streaming events.".to_string());
+            }
+            if prompt_recently_active {
+                warn!(
+                    "session/prompt still streaming after 10 minutes for tab '{}'",
+                    tab_key
+                );
+                return Ok(
+                    "Prompt is still streaming. Watch for continued Grok output.".to_string(),
+                );
             }
             warn!("session/prompt request timed out after 10 minutes");
             Err("session/prompt timed out after 10 minutes — agent unresponsive — send another prompt to auto-restart the session".to_string())
@@ -3747,14 +3770,14 @@ async fn set_goal_mode(
 
 // ─────────────────────────────────────────────────────────────────────
 // #435 — user-data persistence (projects, chat-titles, session→project
-// mappings, saved-sessions, closed-tabs). Mirrors localStorage to disk
-// so a clean reinstall keeps personal state alive. Path:
+// mappings, saved-sessions, closed-tabs, project collapse state). Mirrors
+// localStorage to disk so a clean reinstall keeps personal state alive. Path:
 // `~/.shellx/user-data.json`. JSON shape:
 // { "<key>": <arbitrary JSON value> }
 // where `<key>` is the same name the React side uses
 // (`shellX.projects.v1`, `shellX.chatTitles.v1`,
 // `shellX.sessionProjects.v1`, `grok-shell.session-tabs.v2`,
-// `shellX.closedTabs.v1`).
+// `shellX.closedTabs.v1`, `shellX.v92.projects.collapse`).
 //
 // localStorage stays as a fast cache; on read the frontend prefers
 // disk and falls back to localStorage. On write it writes to both so
