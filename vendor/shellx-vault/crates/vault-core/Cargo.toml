@@ -1,0 +1,22 @@
+# vault-core (ShellX Vault) — shared library: key derivation, AEAD encryption, FastCDC
+# chunking, manifest model + serialization. Used by both server and cli.
+[package]
+name = "vault-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+argon2 = { workspace = true }
+chacha20poly1305 = { workspace = true }
+x25519-dalek = { workspace = true }
+blake3 = { workspace = true }
+subtle = { workspace = true }
+zeroize = { workspace = true }
+fastcdc = { workspace = true }
+postcard = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+lz4_flex = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }

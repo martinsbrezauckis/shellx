@@ -1,0 +1,109 @@
+# shellX CI — pre-merge checks
+#
+# Runs on every push + pull request against any branch. Gates:
+# - Frontend type-check (tsc)
+# - Frontend lint (TS scripts/test-*.ts unit checks)
+# - Rust test/lint/format suite on macOS
+# - Rust Windows compile check
+# - Dependency audit (cargo audit + pnpm audit --prod)
+#
+# Failure on any step blocks merge. The release workflow stays in
+# `.github/workflows/release.yml` and is dispatched manually.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend (tsc + unit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: pnpm/action-setup@v6.0.8
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: tsc --noEmit
+        run: pnpm exec tsc --noEmit
+      - name: test scripts
+        run: pnpm test
+      - name: pnpm audit --prod
+        run: pnpm audit --prod
+
+  rust:
+    name: Rust (test + clippy + fmt)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install fake grok shim
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-grok"
+          cat > "$RUNNER_TEMP/fake-grok/grok" <<'EOF'
+          #!/usr/bin/env bash
+          if [[ "${1:-}" == "--version" ]]; then
+            echo "grok fake-ci"
+            exit 0
+          fi
+          echo "fake grok shim for CI" >&2
+          exit 0
+          EOF
+          chmod +x "$RUNNER_TEMP/fake-grok/grok"
+          echo "GROK_BIN=$RUNNER_TEMP/fake-grok/grok" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/fake-grok" >> "$GITHUB_PATH"
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: cargo clippy -D warnings
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --features debug-api -- -D warnings
+      - name: cargo test --all-targets --features debug-api
+        working-directory: src-tauri
+        run: cargo test --all-targets --features debug-api
+
+  rust-cross-platform:
+    name: Rust check (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo check --all-targets --features debug-api
+        working-directory: src-tauri
+        run: cargo check --all-targets --features debug-api
+
+  audit:
+    name: Rust dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        env:
+          CARGO_HTTP_MULTIPLEXING: "false"
+        run: |
+          for attempt in 1 2 3; do
+            cargo install cargo-audit --locked --version 0.22.1 && exit 0
+            sleep $((attempt * 10))
+          done
+          exit 1
+      - name: cargo audit
+        working-directory: src-tauri
+        run: cargo audit
