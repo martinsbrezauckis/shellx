@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShellX Everyday App Fixture</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f7fb;
+        color: #1d2533;
+      }
+      body {
+        margin: 0;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 24px;
+        border-bottom: 1px solid #d8dee9;
+        background: rgba(255, 255, 255, 0.94);
+        backdrop-filter: blur(14px);
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+        min-height: calc(100vh - 60px);
+      }
+      nav {
+        border-right: 1px solid #d8dee9;
+        background: #ffffff;
+        padding: 16px;
+      }
+      nav button,
+      header button,
+      form button,
+      .toolbar button,
+      .modal button {
+        min-height: 34px;
+        border: 1px solid #bbc5d6;
+        border-radius: 6px;
+        background: #ffffff;
+        color: #1d2533;
+        font: inherit;
+        cursor: pointer;
+      }
+      nav button {
+        width: 100%;
+        margin: 0 0 8px;
+        text-align: left;
+        padding: 8px 10px;
+      }
+      nav button[aria-current="page"] {
+        border-color: #2265d8;
+        background: #e8f0ff;
+      }
+      section[data-app-shell] {
+        display: none;
+        padding: 20px 24px 80px;
+      }
+      section[data-app-shell][data-active="true"] {
+        display: block;
+      }
+      .surface {
+        max-width: 960px;
+        border: 1px solid #d8dee9;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 18px;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        margin: 0 0 12px;
+        font-weight: 600;
+      }
+      input,
+      textarea,
+      select,
+      [contenteditable="true"] {
+        width: min(100%, 620px);
+        box-sizing: border-box;
+        border: 1px solid #bbc5d6;
+        border-radius: 6px;
+        padding: 9px 10px;
+        font: inherit;
+        background: #ffffff;
+        color: #1d2533;
+      }
+      [contenteditable="true"] {
+        min-height: 160px;
+        line-height: 1.5;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      th,
+      td {
+        border-bottom: 1px solid #e2e7f0;
+        padding: 10px;
+        text-align: left;
+      }
+      output,
+      .status {
+        display: block;
+        min-height: 24px;
+        margin-top: 12px;
+        color: #26436f;
+      }
+      .modal {
+        position: fixed;
+        inset: auto 20px 20px 20px;
+        z-index: 30;
+        border: 1px solid #a8b3c7;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 16px;
+        box-shadow: 0 16px 50px rgba(19, 31, 53, 0.18);
+      }
+      .modal[hidden] {
+        display: none;
+      }
+      .result-list {
+        display: grid;
+        gap: 8px;
+      }
+      .result-list article {
+        border: 1px solid #d8dee9;
+        border-radius: 6px;
+        padding: 10px;
+      }
+      .ad-fixture-rail {
+        display: grid;
+        gap: 8px;
+        margin: 12px 0;
+      }
+      .ad-fixture-box {
+        min-height: 58px;
+        border: 1px dashed #b85b5b;
+        border-radius: 6px;
+        background: #fff2f2;
+        color: #5e1f1f;
+        padding: 10px;
+      }
+      @media (max-width: 760px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+        nav {
+          border-right: 0;
+          border-bottom: 1px solid #d8dee9;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Everyday Apps Fixture</h1>
+      <button type="button" data-testid="notification-request">Enable notifications</button>
+    </header>
+
+    <main>
+      <nav aria-label="Everyday app sections">
+        <button type="button" data-nav-target="mail" aria-current="page">Mail</button>
+        <button type="button" data-nav-target="docs">Docs</button>
+        <button type="button" data-nav-target="calendar">Calendar</button>
+        <button type="button" data-nav-target="sheets">Sheets</button>
+        <button type="button" data-nav-target="drive">Drive</button>
+        <button type="button" data-nav-target="checkout">Checkout</button>
+        <button type="button" data-nav-target="profile-card">Profile card</button>
+        <button type="button" data-nav-target="email-code">Email code</button>
+        <button type="button" data-nav-target="agent-wallet">Agent wallet</button>
+      </nav>
+
+      <section data-app-shell="mail" data-active="true">
+        <div class="surface">
+          <h2>Mail inbox</h2>
+          <form data-testid="mail-search-form">
+            <label>
+              Search mail
+              <input data-testid="mail-search" name="query" value="" autocomplete="off" />
+            </label>
+            <button type="submit">Search mail</button>
+          </form>
+          <div class="result-list" data-testid="mail-results" aria-live="polite">
+            <article data-mail-item>
+              <h3>Weekly agent operations report</h3>
+              <p>Quarterly planning notes and ShellX Browser rollout checklist.</p>
+            </article>
+            <article data-mail-item>
+              <h3>Invoice ready for review</h3>
+              <p>Confirm billing address before the purchase window closes.</p>
+            </article>
+          </div>
+          <output data-testid="mail-status">Mail ready</output>
+          <div class="ad-fixture-rail" data-testid="ad-fixture-rail">
+            <div id="ad-shellx-top" class="ad-fixture-box ad-slot sponsored-banner" data-testid="ad-slot-top" data-ad>
+              Advertisement fixture: this should be hidden in ShellX balanced mode.
+            </div>
+            <div class="monster-overlay top-0 position-fixed w-100" data-testid="ad-interstitial-fixture">
+              <div class="monster-header">
+                <div class="container d-flex">
+                  <div class="d-flex close-ad-button">
+                    <span class="d-none d-md-block">Aizvērt reklāmu</span>
+                  </div>
+                  <div class="d-none d-md-block ad-countdown">Portāls atvērsies pēc 20 sekundēm</div>
+                </div>
+              </div>
+            </div>
+            <iframe
+              data-testid="ad-frame-doubleclick"
+              title="Advertising fixture frame"
+              src="https://doubleclick.net/shellx-fixture-ad"
+              width="320"
+              height="50"
+            ></iframe>
+          </div>
+          <output data-testid="ad-filter-status">Ad filter pending</output>
+        </div>
+      </section>
+
+      <section data-app-shell="docs">
+        <div class="surface">
+          <h2>Docs editor</h2>
+          <div class="toolbar">
+            <button type="button" data-testid="doc-bold">Bold</button>
+            <button type="button" data-testid="doc-save">Save doc</button>
+          </div>
+          <label>
+            Document title
+            <input data-testid="doc-title" value="Release notes draft" />
+          </label>
+          <div
+            data-testid="doc-editor"
+            role="textbox"
+            aria-label="Document body"
+            contenteditable="true"
+          >ShellX Browser can operate everyday web apps on behalf of the user.</div>
+          <output data-testid="doc-status">Doc clean</output>
+        </div>
+      </section>
+
+      <section data-app-shell="calendar">
+        <div class="surface">
+          <h2>Calendar</h2>
+          <form data-testid="calendar-form">
+            <label>
+              Event title
+              <input data-testid="calendar-title" value="" />
+            </label>
+            <label>
+              Time
+              <select data-testid="calendar-time">
+                <option>09:00</option>
+                <option>11:30</option>
+                <option>15:00</option>
+              </select>
+            </label>
+            <button type="submit">Create event</button>
+          </form>
+          <output data-testid="calendar-status">No event created</output>
+        </div>
+      </section>
+
+      <section data-app-shell="sheets">
+        <div class="surface">
+          <h2>Sheets</h2>
+          <table data-testid="sheet-grid">
+            <thead>
+              <tr><th>Account</th><th>Budget</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Research tools</td><td><input data-testid="sheet-budget" value="250" /></td><td>Open</td></tr>
+              <tr><td>Browser testing</td><td>800</td><td>Ready</td></tr>
+            </tbody>
+          </table>
+          <button type="button" data-testid="sheet-save">Save sheet</button>
+          <output data-testid="sheet-status">Sheet waiting</output>
+        </div>
+      </section>
+
+      <section data-app-shell="drive">
+        <div class="surface">
+          <h2>Drive</h2>
+          <label>
+            Filter files
+            <input data-testid="drive-filter" value="" />
+          </label>
+          <ul data-testid="drive-list">
+            <li>Browser release plan.docx</li>
+            <li>Vault import checklist.pdf</li>
+            <li>Agent wallet approval.csv</li>
+          </ul>
+          <output data-testid="drive-status">Drive ready</output>
+        </div>
+      </section>
+
+      <section data-app-shell="checkout">
+        <div class="surface">
+          <h2>Checkout</h2>
+          <form data-testid="checkout-form">
+            <label>
+              Email
+              <input data-testid="checkout-email" type="email" autocomplete="email" value="" required />
+            </label>
+            <label>
+              Shipping note
+              <textarea data-testid="checkout-note">Leave at reception</textarea>
+            </label>
+            <button type="submit" data-testid="checkout-submit">Submit order</button>
+          </form>
+          <output data-testid="checkout-status">Checkout idle</output>
+        </div>
+      </section>
+
+      <section data-app-shell="profile-card">
+        <div class="surface">
+          <h2>Profile card signup</h2>
+          <form data-testid="profile-card-form">
+            <label>
+              Legal name
+              <input data-testid="profile-full-name" name="legal_name" autocomplete="name" value="" />
+            </label>
+            <label>
+              Work email
+              <input data-testid="profile-email" name="work_email" autocomplete="email" value="" />
+            </label>
+            <label>
+              Organization
+              <input data-testid="profile-company" name="company" autocomplete="organization" value="" />
+            </label>
+            <label>
+              City
+              <input data-testid="profile-city" name="city" autocomplete="address-level2" value="" />
+            </label>
+            <button type="submit" data-testid="profile-card-submit">Create profile</button>
+          </form>
+          <output data-testid="profile-card-status">Profile form idle</output>
+        </div>
+      </section>
+
+      <section data-app-shell="email-code">
+        <div class="surface">
+          <h2>Email code verification</h2>
+          <form data-testid="email-code-form">
+            <label>
+              Verification code
+              <input data-testid="email-code-input" inputmode="numeric" autocomplete="one-time-code" value="" />
+            </label>
+            <button type="submit" data-testid="email-code-submit">Verify code</button>
+          </form>
+          <output data-testid="email-code-status">Code waiting</output>
+        </div>
+      </section>
+
+      <section data-app-shell="agent-wallet">
+        <div class="surface">
+          <h2>Subscription checkout</h2>
+          <form data-testid="agent-wallet-form" data-amount-cents="1900" data-merchant-category="computer_software_stores">
+            <label>
+              Billing email
+              <input data-testid="agent-wallet-email" type="email" autocomplete="email" value="" />
+            </label>
+            <label>
+              Plan
+              <select data-testid="agent-wallet-plan">
+                <option value="starter">Starter - 19 EUR</option>
+                <option value="team">Team - 49 EUR</option>
+              </select>
+            </label>
+            <label>
+              <input data-testid="agent-wallet-terms" type="checkbox" />
+              I approve this subscription
+            </label>
+            <button type="submit" data-testid="agent-wallet-submit">Subscribe</button>
+          </form>
+          <output data-testid="agent-wallet-status">Wallet checkout idle</output>
+        </div>
+      </section>
+    </main>
+
+    <div class="modal" data-testid="cookie-modal" role="dialog" aria-modal="true" aria-label="Cookie notice">
+      <strong>Cookie notice</strong>
+      <p>This fixture uses a blocking consent-style overlay to test agent-safe dismissal.</p>
+      <button type="button" data-testid="cookie-accept">Accept all</button>
+    </div>
+
+    <script>
+      let dirty = false;
+      const status = (selector, value) => {
+        const element = document.querySelector(selector);
+        if (element) element.textContent = value;
+      };
+      const markDirty = () => {
+        dirty = true;
+      };
+      const markClean = () => {
+        dirty = false;
+      };
+      const activate = (name) => {
+        document.querySelectorAll("[data-app-shell]").forEach((section) => {
+          section.dataset.active = section.dataset.appShell === name ? "true" : "false";
+        });
+        document.querySelectorAll("[data-nav-target]").forEach((button) => {
+          if (button.dataset.navTarget === name) {
+            button.setAttribute("aria-current", "page");
+          } else {
+            button.removeAttribute("aria-current");
+          }
+        });
+      };
+
+      document.querySelectorAll("[data-nav-target]").forEach((button) => {
+        button.addEventListener("click", () => activate(button.dataset.navTarget));
+      });
+
+      document.querySelector("[data-testid='cookie-accept']").addEventListener("click", () => {
+        document.querySelector("[data-testid='cookie-modal']").hidden = true;
+        status("[data-testid='mail-status']", "Cookie overlay dismissed");
+      });
+
+      document.querySelector("[data-testid='mail-search-form']").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const query = document.querySelector("[data-testid='mail-search']").value.trim().toLowerCase();
+        const items = Array.from(document.querySelectorAll("[data-mail-item]"));
+        let count = 0;
+        items.forEach((item) => {
+          const hit = !query || item.textContent.toLowerCase().includes(query);
+          item.hidden = !hit;
+          if (hit) count += 1;
+        });
+        status("[data-testid='mail-status']", `Mail search complete: ${count} result`);
+      });
+
+      const reportAdFilterStatus = () => {
+        const privacy = window.__shellxPrivacyStats || {};
+        const cleaned = Number(privacy.hiddenElements || 0) + Number(privacy.maskedElements || 0);
+        const blocked = Number(privacy.blockedRequests || 0);
+        status(
+          "[data-testid='ad-filter-status']",
+          cleaned + blocked > 0
+            ? `ShellX ad filter cleaned ${cleaned} elements and blocked ${blocked} requests`
+            : "Ad filter did not clean fixture"
+        );
+      };
+      try {
+        fetch("https://doubleclick.net/pagead/shellx-fixture").finally(reportAdFilterStatus);
+      } catch {
+        reportAdFilterStatus();
+      }
+      try {
+        navigator.sendBeacon?.("https://www.google-analytics.com/collect", "shellx-fixture");
+      } catch {}
+      try {
+        const script = document.createElement("script");
+        script.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js";
+        document.body.appendChild(script);
+      } catch {}
+      window.setTimeout(reportAdFilterStatus, 700);
+      window.setTimeout(reportAdFilterStatus, 1800);
+
+      document.querySelector("[data-testid='doc-editor']").addEventListener("input", () => {
+        markDirty();
+        status("[data-testid='doc-status']", "Doc has unsaved changes");
+      });
+      document.querySelector("[data-testid='doc-save']").addEventListener("click", () => {
+        markClean();
+        status("[data-testid='doc-status']", "Doc saved for Browser smoke");
+      });
+
+      document.querySelector("[data-testid='calendar-form']").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const title = document.querySelector("[data-testid='calendar-title']").value.trim();
+        status("[data-testid='calendar-status']", title ? `Calendar event created: ${title}` : "Calendar title missing");
+      });
+
+      document.querySelector("[data-testid='sheet-save']").addEventListener("click", () => {
+        const budget = document.querySelector("[data-testid='sheet-budget']").value;
+        status("[data-testid='sheet-status']", `Sheet saved with budget ${budget}`);
+      });
+
+      document.querySelector("[data-testid='drive-filter']").addEventListener("input", (event) => {
+        const query = event.target.value.trim().toLowerCase();
+        Array.from(document.querySelectorAll("[data-testid='drive-list'] li")).forEach((item) => {
+          item.hidden = query && !item.textContent.toLowerCase().includes(query);
+        });
+        status("[data-testid='drive-status']", `Drive filter active: ${query || "all"}`);
+      });
+
+      document.querySelector("[data-testid='checkout-form']").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const email = document.querySelector("[data-testid='checkout-email']").value.trim();
+        status("[data-testid='checkout-status']", email ? `Order submitted for ${email}` : "Email missing");
+      });
+
+      document.querySelector("[data-testid='profile-card-form']").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const email = document.querySelector("[data-testid='profile-email']").value.trim();
+        const company = document.querySelector("[data-testid='profile-company']").value.trim();
+        status("[data-testid='profile-card-status']", email && company ? `Profile created for ${email} at ${company}` : "Profile missing fields");
+      });
+
+      document.querySelector("[data-testid='email-code-form']").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const code = document.querySelector("[data-testid='email-code-input']").value.trim();
+        status("[data-testid='email-code-status']", code === "739214" ? "Email code accepted" : `Email code rejected: ${code || "empty"}`);
+      });
+
+      document.querySelector("[data-testid='agent-wallet-form']").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const email = document.querySelector("[data-testid='agent-wallet-email']").value.trim();
+        const terms = document.querySelector("[data-testid='agent-wallet-terms']").checked;
+        status("[data-testid='agent-wallet-status']", email && terms ? `Subscription dry-run prepared for ${email}` : "Subscription needs email and approval");
+      });
+
+      document.querySelector("[data-testid='notification-request']").addEventListener("click", async () => {
+        if (!("Notification" in window)) {
+          status("[data-testid='mail-status']", "Notifications unsupported");
+          return;
+        }
+        try {
+          const result = await Notification.requestPermission();
+          status("[data-testid='mail-status']", `Notification permission: ${result}`);
+        } catch {
+          status("[data-testid='mail-status']", "Notification permission request failed");
+        }
+      });
+
+      window.addEventListener("beforeunload", (event) => {
+        if (!dirty) return;
+        event.preventDefault();
+        event.returnValue = "";
+      });
+    </script>
+  </body>
+</html>

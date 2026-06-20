@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShellX Vault Browser Adversary Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Adversary Fixture</h1>
+      <input id="visible-secret-field" type="password" autocomplete="current-password" />
+      <input id="hidden-secret-field" type="password" hidden />
+      <iframe srcdoc="<input id='framed-secret' type='password'>" title="same origin frame"></iframe>
+      <div id="shadow-host"></div>
+      <a href="javascript:fetch('/capture',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({kind:'javascript-link'})})">Script link</a>
+    </main>
+    <script>
+      const report = (kind, value, note) => {
+        fetch("/capture", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ route: "/adversary", kind, value, note }),
+        }).catch(() => undefined);
+      };
+      const visible = document.getElementById("visible-secret-field");
+      ["input", "change", "keydown"].forEach((type) => visible.addEventListener(type, () => report(type, visible.value, "visible field observation")));
+      new MutationObserver(() => report("mutation", visible.value, "mutation observer")).observe(visible, { attributes: true, childList: true, subtree: true });
+      window.addEventListener("message", (event) => report("postMessage", event.data, "message listener"));
+      document.addEventListener("copy", () => report("clipboard", visible.value, "copy event"));
+      const shadow = document.getElementById("shadow-host").attachShadow({ mode: "open" });
+      shadow.innerHTML = "<input id='shadow-secret' type='password' autocomplete='current-password'>";
+      report("storage-read", [document.cookie, localStorage.length, sessionStorage.length].join(":"), "storage probe");
+      const debugPorts = new Set(["5757"]);
+      const suppliedPort = new URLSearchParams(location.search).get("debugPort");
+      if (/^\d{2,5}$/.test(suppliedPort || "")) debugPorts.add(suppliedPort);
+      for (const port of debugPorts) {
+        fetch(`http://127.0.0.1:${port}/browser/state`)
+          .then((response) => report(response.ok ? "debug-api-fetch" : "debug-api-fetch-blocked", "", `debug api status ${response.status} on ${port}`))
+          .catch(() => report("debug-api-fetch-blocked", "", `debug api access blocked on ${port}`));
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShellX Vault Browser Login Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Login Fixture</h1>
+      <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token - static local fixture, not a Django template. -->
+      <form action="/capture" method="post" data-fixture="login">
+        <label>
+          Username
+          <input name="username" autocomplete="username" value="SXV_E2E_USERNAME" />
+        </label>
+        <label>
+          Password
+          <input name="password" type="password" autocomplete="current-password" data-secret-target />
+        </label>
+        <button type="submit">Sign in</button>
+      </form>
+    </main>
+  </body>
+</html>

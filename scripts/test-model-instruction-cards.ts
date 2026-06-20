@@ -1,0 +1,194 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+import {
+  findModelInstructionCard,
+  isExplicitOnlyCard,
+  modelInstructionCardsPath,
+  requiredPreflightIds,
+  type ModelInstructionCardsState,
+} from "../src/lib/model-instruction-cards";
+
+const sampleState: ModelInstructionCardsState = {
+  version: "test",
+  lastReviewed: "2026-06-03",
+  policy: {
+    shellxMayAutoRoute: false,
+    defaultRouteMode: "explicitOnly",
+    defaultToolExposureMode: "nativeFirst",
+    toolExposureModes: [
+      {
+        id: "nativeFirst",
+        label: "Native First",
+        description: "Prefer provider-native tools.",
+        agentRule: "Use ShellX host tools only for explicit bridge work.",
+      },
+    ],
+    fallbackRule: "Ask before fallback.",
+    operatorRule: "Attach notes while work is running.",
+  },
+  cards: [
+    {
+      id: "grok-imagine-video",
+      displayName: "Grok Imagine Video",
+      providerId: "grok",
+      category: "media-generation",
+      status: "bundled",
+      routeMode: "explicitOnly",
+      shellxMayAutoRoute: false,
+      intentExamples: ["generate video with Grok Imagine"],
+      preflightChecks: [
+        { id: "grokConnected", label: "Active Grok session is connected", required: true },
+        { id: "grokToolsHealthy", label: "Grok tools are visible", required: true },
+        { id: "previewTargetKnown", label: "Preview target is known", required: false },
+      ],
+      capabilities: [
+        {
+          id: "videoGeneration",
+          label: "Video generation",
+          level: "native",
+          notes: "Use Grok's own media surface.",
+        },
+      ],
+      toolExposure: {
+        defaultMode: "hostBridge",
+        nativeToolRule: "Use Grok's native media tools.",
+        shellxToolRule: "Use ShellX only for handoff and receipts.",
+        allowedShellxTools: ["send_prompt_to_session", "session_tooling"],
+      },
+      invocation: {
+        surface: "active-grok-session",
+        debugApiPath: "/state/session_tooling",
+        requiresUserVisibleSelection: true,
+      },
+      agentInstructions: ["Do not silently fall back."],
+      receiptKinds: ["media-requested", "provider-health-checked"],
+      fallbackRule: "Ask the user before using another video provider.",
+      provenance: {
+        source: "bundled-shellx-card",
+        refreshHint: "Refresh from provider lab probes.",
+      },
+    },
+  ],
+};
+
+assert.equal(modelInstructionCardsPath(), "/state/model_instruction_cards");
+
+const card = findModelInstructionCard(sampleState, "grok-imagine-video");
+assert(card, "finds grok image/video card");
+assert.equal(isExplicitOnlyCard(card), true);
+assert.deepEqual(requiredPreflightIds(card), ["grokConnected", "grokToolsHealthy"]);
+
+const debugApiSource = readFileSync(
+  new URL("../src-tauri/src/debug_api.rs", import.meta.url),
+  "utf8",
+);
+assert(
+  debugApiSource.includes("\"/state/model_instruction_cards\""),
+  "debug API must wire /state/model_instruction_cards",
+);
+assert(
+  debugApiSource.includes("state_model_instruction_cards"),
+  "debug API must expose model instruction card handler",
+);
+
+const apiDocs = readFileSync(new URL("../docs/API.md", import.meta.url), "utf8");
+assert(
+  apiDocs.includes("GET /state/model_instruction_cards"),
+  "API docs must document model instruction card route",
+);
+assert(
+  apiDocs.includes("ShellX does not silently route"),
+  "API docs must state no silent provider routing",
+);
+assert(
+  apiDocs.includes("send_prompt_to_provider"),
+  "API docs must document explicit provider handoff tool",
+);
+
+const rightRailSource = readFileSync(
+  new URL("../src/components/RightRail.tsx", import.meta.url),
+  "utf8",
+);
+assert(
+  rightRailSource.includes("getModelInstructionCards"),
+  "Tools pane must fetch model instruction cards",
+);
+assert(
+  rightRailSource.includes("ModelInstructionCardsCard"),
+  "Tools pane must render the model instruction cards card",
+);
+assert(
+  rightRailSource.includes("no silent fallback"),
+  "Tools pane must expose the no silent fallback policy",
+);
+assert(
+  rightRailSource.includes("model-card-status"),
+  "Tools pane must show model card status instead of unexplained requirement counts",
+);
+assert(
+  rightRailSource.includes("model-card-mode") && rightRailSource.includes("formatToolExposureMode"),
+  "Tools pane must show compact provider tool exposure modes",
+);
+assert(
+  !rightRailSource.includes("requiredChecks"),
+  "Tools pane must not show per-card required-check counts in the compact list",
+);
+assert(
+  !rightRailSource.includes("category.count"),
+  "Tools pane category summary must not show unexplained numeric counts",
+);
+
+const cardsSource = readFileSync(
+  new URL("../src-tauri/src/model_instruction_cards.rs", import.meta.url),
+  "utf8",
+);
+assert(
+  cardsSource.includes('MODEL_INSTRUCTION_CARDS_VERSION: &str = "2026-06-06.1"') &&
+    cardsSource.includes('MODEL_INSTRUCTION_CARDS_REVIEWED_ON: &str = "2026-06-06"'),
+  "runtime model instruction card metadata must reflect the current reviewed recipe set",
+);
+assert(
+  cardsSource.includes("default_tool_exposure_mode: \"nativeFirst\"") &&
+    cardsSource.includes("Native First") &&
+    cardsSource.includes("Host Bridge") &&
+    cardsSource.includes("Host Full") &&
+    cardsSource.includes("Off"),
+  "runtime model instruction card policy must expose ShellX tool exposure modes",
+);
+assert(
+  cardsSource.includes("Use the selected coding agent's native terminal, file, patch, and MCP tools") &&
+    cardsSource.includes("Use ShellX only for explicit user-approved handoff"),
+  "cards must distinguish provider-native tools from explicit ShellX host bridge tools",
+);
+assert(
+  cardsSource.includes("send_prompt_to_provider") &&
+    cardsSource.includes("providerId=codex-cli"),
+  "Codex/GPT Image cards must instruct agents to use explicit provider handoff",
+);
+assert(
+  cardsSource.includes("GPT Image recipe") &&
+    cardsSource.includes("Do not run codex exec directly") &&
+    cardsSource.includes("Do not set timeoutMs below"),
+  "Codex/GPT Image card must include an immediate recipe and timeout/raw-cli guardrails",
+);
+assert(
+  cardsSource.includes("Grok Imagine image recipe") &&
+    cardsSource.includes("Grok Imagine video recipe") &&
+    cardsSource.includes("send_prompt_to_session"),
+  "Grok Imagine image/video cards must include explicit ShellX handoff recipes",
+);
+
+const shellxHostSkill = readFileSync(
+  new URL("../skills/shellx-host/SKILL.md", import.meta.url),
+  "utf8",
+);
+assert(
+  shellxHostSkill.includes("Media Handoff Recipes") &&
+    shellxHostSkill.includes("GPT Image via Codex") &&
+    shellxHostSkill.includes("Grok Imagine image") &&
+    shellxHostSkill.includes("Grok Imagine video"),
+  "shellx-host skill must expose direct media handoff recipes at session start",
+);
+
+console.log("test-model-instruction-cards ok");

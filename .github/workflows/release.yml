@@ -1,0 +1,100 @@
+# shellX release workflow
+#
+# Triggers manually. Public releases are assembled from maintainer-built,
+# locally verified artifacts so Windows Authenticode and macOS Developer ID
+# notarization can be checked before upload. The release must include the
+# updater manifest `latest.json`.
+#
+# The running app polls
+# https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+# and surfaces an "Install & restart" banner when a new version lands.
+#
+# REQUIRED SECRETS (set in repo Settings → Secrets):
+# TAURI_SIGNING_PRIVATE_KEY — contents of ~/.shellx-keys/updater.key
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD — empty string if key has no password
+#
+# To cut a release after explicit per-operation approval:
+# git tag v0.3.x
+# git push origin v0.3.x
+# pnpm release:updater-manifest -- --artifact-root "$HOME/shellx-builds/v0.3.x"
+# gh release create v0.3.x <locally verified assets...> "$HOME/shellx-builds/v0.3.x/latest.json"
+
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: ubuntu-22.04
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          workspaces: ./src-tauri -> target
+          # Windows release artifacts are produced before the action's
+          # post-job cache save. A cache archive failure must not mark an
+          # otherwise uploaded release as failed; Linux keeps saving cache.
+          save-if: ${{ runner.os != 'Windows' }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+        with:
+          version: 10.33.0
+
+      - name: Setup node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Dpkg::Use-Pty=0 -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build + sign + bundle (tauri)
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # Manual workflow smoke only. Official public releases are created
+          # from locally signed and notarized maintainer artifacts.
+          tagName: manual-${{ github.run_id }}
+          releaseName: "shellX manual build ${{ github.run_id }}"
+          releaseBody: |
+            See the changelog on GitHub for what's new.
+          releaseDraft: true
+          prerelease: false
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }} --features debug-api

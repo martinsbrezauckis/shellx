@@ -1,0 +1,33 @@
+# vault-server (ShellX Vault) — axum HTTP server: bearer-auth'd encrypted blob store +
+# manifest log. Knows nothing about keys or plaintext. Binds 127.0.0.1.
+[package]
+name = "vault-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+build = "build.rs"
+
+[build-dependencies]
+memory-serve = { workspace = true }
+
+[dependencies]
+memory-serve = { workspace = true }
+vault-core = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+subtle = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tower = { workspace = true }
+http-body-util = { workspace = true }
+tempfile = "3"

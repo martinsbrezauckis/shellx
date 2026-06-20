@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShellX Heavy Agent App Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Heavy Agent App Fixture</h1>
+      <form data-agent-task-form>
+        <label>Task <textarea name="task" data-agent-task-input></textarea></label>
+        <button type="submit">Run task</button>
+      </form>
+      <section data-streaming-output aria-live="polite"></section>
+      <section data-tool-results></section>
+      <button data-route-transition>Open dashboard</button>
+    </main>
+    <script>
+      const output = document.querySelector("[data-streaming-output]");
+      document.querySelector("[data-agent-task-form]").addEventListener("submit", (event) => {
+        event.preventDefault();
+        output.textContent = "";
+        ["queued", "working", "tool result", "complete"].forEach((chunk, index) => {
+          setTimeout(() => {
+            output.textContent += `${chunk}\n`;
+          }, 180 * (index + 1));
+        });
+      });
+      document.querySelector("[data-route-transition]").addEventListener("click", () => {
+        history.pushState({}, "", "/heavy-agent-app#dashboard");
+        document.querySelector("[data-tool-results]").textContent = "Dashboard loaded";
+      });
+    </script>
+  </body>
+</html>

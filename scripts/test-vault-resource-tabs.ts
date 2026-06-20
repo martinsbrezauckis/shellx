@@ -1,0 +1,72 @@
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+
+const source = readFileSync("src/components/settings/VaultTab.tsx", "utf8");
+const css = readFileSync("src/App.css", "utf8");
+
+assert.ok(
+  source.includes('data-debug-id="vault-resource-form-tabs"'),
+  "Vault settings must expose a stable resource form tabs debug id",
+);
+assert.ok(
+  source.includes("VAULT_RESOURCE_FORM_TABS"),
+  "Vault resource forms must be driven by a compact tab model",
+);
+for (const tab of ["secret", "profileCard", "stripeAgentWallet"]) {
+  assert.ok(
+    source.includes(`id: "${tab}"`),
+    `Vault settings must model ${tab} resource form tab`,
+  );
+}
+assert.ok(
+  source.includes('useState<VaultResourceFormTab>("secret")'),
+  "Vault resource form tabs must open on Secrets by default",
+);
+assert.ok(
+  source.includes("generateVaultPassword") &&
+    source.includes("VaultPasswordGenerator") &&
+    source.includes('data-debug-id="vault-generate-password"') &&
+    source.includes('data-debug-id="vault-secret-key-input"') &&
+    source.includes('data-debug-id="vault-secret-value-input"'),
+  "Vault Secrets form must expose a first-class password generator panel and stable fields",
+);
+assert.ok(
+  source.includes("intent === \"generatePassword\"") &&
+    source.includes("setSecretGeneratorOpen(true)"),
+  "Standalone Vault quick actions must be able to open directly into the generated-password panel",
+);
+for (const removed of ["emailInbox\", label", "EmailInboxForm", "vault-email-inbox-form", "Email inboxes"]) {
+  assert.ok(
+    !source.includes(removed),
+    `Vault settings must not expose email passwords as a separate resource tab: ${removed}`,
+  );
+}
+assert.ok(
+  source.includes("vault-resource-form-tab-${tab.id}"),
+  "Vault resource form tab buttons must expose per-tab debug ids",
+);
+assert.ok(
+  /resourceFormTab\s*===\s*"secret"[\s\S]*<SecretForm/.test(source),
+  "Secret form should render only inside the first tab",
+);
+assert.ok(
+  /resourceFormTab\s*===\s*"profileCard"[\s\S]*<ProfileCardForm/.test(source),
+  "Profile card form should render only inside its active tab",
+);
+assert.ok(
+  /resourceFormTab\s*===\s*"stripeAgentWallet"[\s\S]*<AgentWalletForm/.test(source),
+  "Agent wallet form should render only inside its active tab",
+);
+assert.ok(
+  source.includes("stripeApiKeyRef") && source.includes("webhookSecretRef"),
+  "Agent wallet form must reference Stripe/API secrets stored as normal Vault secrets",
+);
+assert.ok(
+  css.includes(".vault-resource-form-tabs") &&
+    css.includes(".vault-resource-form-panel") &&
+    css.includes(".vault-resource-form-tab.active") &&
+    css.includes(".vault-secret-value-control"),
+  "Vault resource form tabs must have compact tab-panel CSS",
+);
+
+console.log("Vault resource tabs contract passed");

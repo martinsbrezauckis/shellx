@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShellX Heavy SPA Fixture</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 24px; }
+      [data-virtualized-list] { height: 240px; overflow: auto; border: 1px solid #9ca3af; }
+      .row { height: 36px; display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid #e5e7eb; }
+      dialog { border: 1px solid #111827; padding: 16px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Heavy SPA Fixture</h1>
+      <button data-open-modal>Open modal</button>
+      <div data-hydration-state>hydrating</div>
+      <div data-virtualized-list tabindex="0"></div>
+      <div id="shadow-widget"></div>
+      <dialog data-focus-trap>
+        <form method="dialog">
+          <label>Non-secret task note <input name="note" data-non-secret-input /></label>
+          <button>Close</button>
+        </form>
+      </dialog>
+    </main>
+    <script>
+      const list = document.querySelector("[data-virtualized-list]");
+      const renderRows = () => {
+        list.innerHTML = "";
+        for (let i = 0; i < 80; i += 1) {
+          const row = document.createElement("div");
+          row.className = "row";
+          row.textContent = `Virtual row ${i + 1}`;
+          list.appendChild(row);
+        }
+      };
+      setTimeout(() => {
+        document.querySelector("[data-hydration-state]").textContent = "hydrated";
+        renderRows();
+      }, 350);
+      document.querySelector("[data-open-modal]").addEventListener("click", () => document.querySelector("[data-focus-trap]").showModal());
+      document.getElementById("shadow-widget").attachShadow({ mode: "open" }).innerHTML = "<button data-shadow-action>Shadow action</button>";
+    </script>
+  </body>
+</html>

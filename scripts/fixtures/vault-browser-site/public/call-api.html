@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShellX Vault Browser API Call Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>API Call Fixture</h1>
+      <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token - static local fixture, not a Django template. -->
+      <form action="/capture" method="post">
+        <label>
+          API key
+          <input name="apiKey" type="password" autocomplete="off" data-api-key-input />
+        </label>
+        <button type="submit">Call API</button>
+      </form>
+    </main>
+  </body>
+</html>

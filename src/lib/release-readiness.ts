@@ -1,0 +1,347 @@
+export type ReleaseGateStatus = "pass" | "warn" | "fail";
+
+export interface ReleaseReadinessInput {
+  packageVersion: string;
+  cargoVersion: string;
+  tauriVersion: string;
+  workRepoClean: boolean;
+  publicExportClean: boolean;
+  changelogUpdated: boolean;
+  publicBoundaryChecked: boolean;
+  rustTestsVerified: boolean;
+  rustCheckVerified: boolean;
+  rustLintVerified: boolean;
+  dependencyAuditVerified: boolean;
+  semgrepScanVerified: boolean;
+  providerCapabilitySnapshotVerified: boolean;
+  debugApiSurfaceSweepVerified: boolean;
+  shellxBrowserDebugApiVerified: boolean;
+  tauriWebdriverVerified: boolean;
+  previewQaStudioVerified: boolean;
+  jsTestsVerified: boolean;
+  typecheckVerified: boolean;
+  windowsArtifact: boolean;
+  windowsSignature: boolean;
+  updaterManifest: boolean;
+  linuxArtifact: boolean;
+  macAppSmoke: boolean;
+  macSignedNotarized: boolean;
+  macArtifact: boolean;
+  ciGrokShimVerified: boolean;
+  githubCiGreen: boolean;
+}
+
+export interface ReleaseReadinessCheck {
+  id: string;
+  label: string;
+  status: ReleaseGateStatus;
+  detail: string;
+  command?: string;
+}
+
+export interface ReleaseReadinessSummary {
+  statusLabel: "ready" | "ready with warnings" | "blocked";
+  accent: "ok" | "warn" | "bad";
+  pass: number;
+  warn: number;
+  fail: number;
+}
+
+export interface ReleaseRunbookInput {
+  version: string;
+  checks: ReleaseReadinessCheck[];
+}
+
+export interface ReleaseReadinessVisibilityEnv {
+  dev: boolean;
+  internalTools?: string | boolean;
+}
+
+export function shouldShowReleaseReadiness(env: ReleaseReadinessVisibilityEnv): boolean {
+  return env.dev || env.internalTools === true || env.internalTools === "1" || env.internalTools === "true";
+}
+
+function check(
+  id: string,
+  label: string,
+  passed: boolean,
+  detailPass: string,
+  detailFail: string,
+  command: string,
+  failStatus: ReleaseGateStatus = "fail",
+): ReleaseReadinessCheck {
+  return {
+    id,
+    label,
+    status: passed ? "pass" : failStatus,
+    detail: passed ? detailPass : detailFail,
+    command: passed ? undefined : command,
+  };
+}
+
+export function buildReleaseReadinessChecks(input: ReleaseReadinessInput): ReleaseReadinessCheck[] {
+  const versions = [input.packageVersion, input.cargoVersion, input.tauriVersion].filter(Boolean);
+  const versionsMatch = versions.length === 3 && new Set(versions).size === 1;
+  return [
+    check(
+      "work-repo-clean",
+      "Work repo clean",
+      input.workRepoClean,
+      "No local worktree changes.",
+      "Commit, stash, or intentionally remove local changes before packaging.",
+      "git -C <work-repo> status --short",
+    ),
+    check(
+      "public-export-clean",
+      "Public export clean",
+      input.publicExportClean,
+      "Public export has no dirty tracked or untracked files.",
+      "Public export needs review before release staging.",
+      "git -C <public-export> status --short",
+    ),
+    check(
+      "version-sync",
+      "Version sync",
+      versionsMatch,
+      `All manifests report v${versions[0] ?? "?"}.`,
+      `Versions differ: package ${input.packageVersion}, Cargo ${input.cargoVersion}, Tauri ${input.tauriVersion}.`,
+      "node -e \"const fs=require('fs'); const p=require('./package.json').version; const c=fs.readFileSync('src-tauri/Cargo.toml','utf8').match(/version = \\\"([^\\\"]+)\\\"/)?.[1]; const t=JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8')).version; if (p!==c||p!==t) process.exit(1)\"",
+    ),
+    check(
+      "changelog",
+      "Changelog",
+      input.changelogUpdated,
+      "CHANGELOG has release notes for the current version.",
+      "Add user-facing release notes before packaging.",
+      "sed -n '1,80p' CHANGELOG.md",
+    ),
+    check(
+      "public-boundary",
+      "Public boundary scan",
+      input.publicBoundaryChecked,
+      "Public/private boundary scan reviewed.",
+      "Run the public-boundary scan and review every match before staging.",
+      'rg -n "AGENTS\\.md|grok-shell|\\.project|private|notebook|night_run|mockups" .',
+    ),
+    check(
+      "rust-tests",
+      "Rust tests",
+      input.rustTestsVerified,
+      "Rust unit tests passed.",
+      "Run the Rust test suite and fix failures.",
+      "cd src-tauri && cargo test --features debug-api --lib",
+    ),
+    check(
+      "rust-check",
+      "Rust check",
+      input.rustCheckVerified,
+      "Rust debug-api build check passed.",
+      "Run cargo check with debug-api enabled.",
+      "cd src-tauri && cargo check --features debug-api",
+    ),
+    check(
+      "rust-lint",
+      "Rust fmt/clippy",
+      input.rustLintVerified,
+      "Rust formatting and clippy passed with warnings denied.",
+      "Run Rust formatting and clippy checks, then fix any warnings.",
+      "cd src-tauri && cargo fmt --check && cargo clippy --all-targets --features debug-api -- -D warnings",
+    ),
+    check(
+      "dependency-audit",
+      "Dependency audit",
+      input.dependencyAuditVerified,
+      "Rust dependency audit passed.",
+      "Run cargo audit and review any advisories before release.",
+      "cd src-tauri && cargo audit",
+    ),
+    check(
+      "semgrep-scan",
+      "Semgrep source scan",
+      input.semgrepScanVerified,
+      "Semgrep p/default scan passed.",
+      "Run Semgrep and review any findings before release.",
+      "semgrep scan --config p/default --metrics=off --exclude node_modules --exclude dist --exclude src-tauri/target --exclude target --exclude tmp --exclude evidence",
+    ),
+    check(
+      "provider-capability-snapshot",
+      "Provider capability snapshot",
+      input.providerCapabilitySnapshotVerified,
+      "Provider CLI capability snapshot was captured and reconciled against bundled cards.",
+      "Run provider capability snapshots on the release surfaces and review every drift finding.",
+      "Use the private release checklist to capture and reconcile provider capability snapshots.",
+    ),
+    check(
+      "debug-api-surface-sweep",
+      "Debug API surface sweep",
+      input.debugApiSurfaceSweepVerified,
+      "Debug API user-facing surface sweep passed with screenshot/UI-route coverage.",
+      "Run the debug API surface sweep against the installed app and fix uncovered surfaces.",
+      "pnpm exec tsx scripts/test-debug-ui-surfaces.ts",
+    ),
+    check(
+      "shellx-browser-debug-api",
+      "ShellX Browser Debug API",
+      input.shellxBrowserDebugApiVerified,
+      "ShellX Browser live Debug API smoke passed for read/extract, session grant, write-only deposit, and hard gates.",
+      "Run the ShellX Browser live Debug API smoke against the installed app.",
+      "pnpm test:shellx-browser-debug-api",
+    ),
+    check(
+      "tauri-webdriver",
+      "Tauri WebDriver smoke",
+      input.tauriWebdriverVerified,
+      "Tauri WebDriver smoke passed for app launch, DOM/source read, JS execution, and screenshot capture.",
+      "Run the Tauri WebDriver smoke on Linux and Windows release surfaces.",
+      "pnpm test:tauri-webdriver -- --linux && pnpm test:tauri-webdriver -- --windows --close-existing",
+    ),
+    check(
+      "preview-qa-studio",
+      "Preview QA Studio",
+      input.previewQaStudioVerified,
+      "Preview QA receipt was recorded for representative Work Preview flows, screenshots, console state, links, and layout checks.",
+      "Run Preview QA Studio against representative preview targets and record its JSON/Markdown receipt.",
+      "pnpm release:preview-qa",
+    ),
+    check(
+      "js-tests",
+      "JS tests",
+      input.jsTestsVerified,
+      "Frontend/script test suite passed.",
+      "Run the JS test suite and fix failures.",
+      "pnpm test",
+    ),
+    check(
+      "typecheck",
+      "TypeScript",
+      input.typecheckVerified,
+      "TypeScript check passed.",
+      "Run frontend typecheck and fix errors.",
+      "pnpm exec tsc --noEmit",
+    ),
+    check(
+      "windows-artifact",
+      "Windows artifact",
+      input.windowsArtifact,
+      "Windows installer/artifact is present.",
+      "Build and inspect the Windows package.",
+      "pnpm tauri build --target x86_64-pc-windows-msvc",
+    ),
+    check(
+      "windows-signature",
+      "Windows signature/hash",
+      input.windowsSignature,
+      "Windows installer signature and SHA256SUMS are present.",
+      "Verify the Windows installer .sig and SHA256SUMS.txt are present in the release artifact folder.",
+      `Get-ChildItem "$env:USERPROFILE\\shellx-builds\\v${input.packageVersion}"`,
+    ),
+    check(
+      "updater-manifest",
+      "Updater manifest",
+      input.updaterManifest,
+      "latest.json was generated from staged updater-compatible artifacts and signatures.",
+      "Generate latest.json after signed Windows/macOS updater artifacts are staged, then upload it with the release assets.",
+      `pnpm release:updater-manifest -- --artifact-root "$HOME/shellx-builds/v${input.packageVersion}"`,
+    ),
+    check(
+      "linux-artifact",
+      "Linux artifact",
+      input.linuxArtifact,
+      "Linux package is present.",
+      "Build and inspect the Linux package.",
+      "pnpm tauri build",
+    ),
+    check(
+      "mac-artifact",
+      "macOS public artifact",
+      input.macArtifact,
+      "macOS public package is present.",
+      "Build and inspect the signed/notarized macOS package on the signing host.",
+      `ls "$HOME/shellx-builds/v${input.packageVersion}/macos"`,
+    ),
+    check(
+      "mac-app-smoke",
+      "macOS app smoke",
+      input.macAppSmoke,
+      "macOS app build, launch, debug API, diagnostics, and screenshot smoke passed.",
+      "Run the macOS app smoke on the Mac builder before release staging.",
+      "Use the private macOS release runbook on the signing host.",
+    ),
+    check(
+      "mac-signed-notarized",
+      "macOS signing/notarization",
+      input.macSignedNotarized,
+      "Developer ID signing and notarization passed.",
+      "Run Developer ID signing, notarization, stapling, and Gatekeeper verification before attaching macOS assets.",
+      "Use the private macOS signing and notarization runbook.",
+    ),
+    check(
+      "ci-grok-shim",
+      "CI fake grok shim",
+      input.ciGrokShimVerified,
+      "CI has a fake grok binary or equivalent shim for tests that spawn grok.",
+      "Add or verify a fake grok binary is placed on PATH before CI tests that need grok.",
+      "command -v grok || printf 'install fake grok shim for CI tests\\n'",
+    ),
+    check(
+      "github-ci",
+      "GitHub CI",
+      input.githubCiGreen,
+      "Latest GitHub Actions checks are green for the release commit.",
+      "Confirm GitHub Actions are green before publishing a GitHub release.",
+      "gh run list --limit 5",
+    ),
+    {
+      id: "publish-approval",
+      label: "Publish approval",
+      status: "warn",
+      detail: "Push, tag, and GitHub release each require explicit per-operation approval.",
+      command: "Ask for: yes, push / yes, tag / yes, release",
+    },
+  ];
+}
+
+export function summarizeReleaseReadiness(checks: ReleaseReadinessCheck[]): ReleaseReadinessSummary {
+  const pass = checks.filter((c) => c.status === "pass").length;
+  const warn = checks.filter((c) => c.status === "warn").length;
+  const fail = checks.filter((c) => c.status === "fail").length;
+  if (fail > 0) return { statusLabel: "blocked", accent: "bad", pass, warn, fail };
+  if (warn > 0) return { statusLabel: "ready with warnings", accent: "warn", pass, warn, fail };
+  return { statusLabel: "ready", accent: "ok", pass, warn, fail };
+}
+
+export function buildReleaseRunbook(input: ReleaseRunbookInput): string {
+  const summary = summarizeReleaseReadiness(input.checks);
+  const failed = input.checks.filter((check) => check.status === "fail");
+  const warned = input.checks.filter((check) => check.status === "warn");
+  const commands = input.checks
+    .filter((check) => check.status !== "pass" && check.command)
+    .map((check, index) => `${index + 1}. ${check.label}\n   ${check.command}`);
+  const commandBody = commands.length > 0
+    ? commands.join("\n")
+    : "All automated/local gates are marked pass.";
+
+  return [
+    `shellX v${input.version} release runbook`,
+    "",
+    `Status: ${summary.statusLabel}`,
+    `Pass: ${summary.pass}`,
+    `Warn: ${summary.warn}`,
+    `Blocked: ${summary.fail}`,
+    "",
+    "Failing gates:",
+    failed.length > 0 ? failed.map((check) => `- ${check.label}: ${check.detail}`).join("\n") : "- none",
+    "",
+    "Warning gates:",
+    warned.length > 0 ? warned.map((check) => `- ${check.label}: ${check.detail}`).join("\n") : "- none",
+    "",
+    "Commands still needed:",
+    commandBody,
+    "",
+    "Remote publish approvals required before publishing:",
+    "- Before git push: ask for exact approval `yes, push`.",
+    "- Before tag push: ask for exact approval `yes, tag`.",
+    "- Before GitHub release create/upload/edit: ask for exact approval `yes, release`.",
+    "- Approval is per operation; do not reuse approval from another step.",
+  ].join("\n");
+}

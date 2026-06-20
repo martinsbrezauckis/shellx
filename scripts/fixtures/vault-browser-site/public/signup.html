@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShellX Vault Browser Signup Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Signup Fixture</h1>
+      <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token - static local fixture, not a Django template. -->
+      <form action="/capture" method="post" data-fixture="signup">
+        <label>
+          Email
+          <input name="email" type="email" value="agent.fixture@example.test" autocomplete="email" />
+        </label>
+        <label>
+          Generated password
+          <input name="new-password" type="password" autocomplete="new-password" data-generated-password-target />
+        </label>
+        <button type="submit">Create account</button>
+      </form>
+    </main>
+  </body>
+</html>
