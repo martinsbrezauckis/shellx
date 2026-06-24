@@ -16,6 +16,16 @@ pub struct RecoveryState {
     pub pending_confirmation_id: Option<String>,
 }
 
+impl Default for RecoveryState {
+    fn default() -> Self {
+        Self {
+            confirmed: true,
+            confirmed_at_ms: None,
+            pending_confirmation_id: None,
+        }
+    }
+}
+
 pub fn generate_recovery_kit() -> RecoveryKit {
     let confirmation_id = hex::encode(vault_core::random_bytes::<16>());
     let raw = hex::encode(vault_core::random_bytes::<32>());

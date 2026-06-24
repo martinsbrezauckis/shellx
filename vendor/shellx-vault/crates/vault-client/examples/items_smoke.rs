@@ -37,6 +37,7 @@ async fn main() -> Result<()> {
         notes: String::new(),
         created_ms: 1,
         updated_ms: 1,
+        extra: Default::default(),
     };
 
     let generation = items::save_item(&api, &master, "items-smoke", &item).await?;

@@ -170,6 +170,7 @@ mod tests {
             notes: String::new(),
             created_ms: 1,
             updated_ms: 1,
+            extra: Default::default(),
         }
     }
 

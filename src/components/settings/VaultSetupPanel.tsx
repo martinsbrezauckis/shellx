@@ -8,6 +8,7 @@ type VaultStatus = {
   unlocked?: boolean;
   recoveryConfirmed?: boolean;
   rememberedDeviceEnabled?: boolean;
+  lastError?: string | null;
 };
 
 type RecoveryKit = {
@@ -218,6 +219,11 @@ export function VaultSetupPanel({
         <strong>Vault setup</strong>
         <span>{status?.mode ?? "unconfigured"}</span>
       </div>
+      {status?.lastError && (
+        <p className="vault-hint vault-profile-collision" data-debug-id="vault-profile-collision">
+          {status.lastError}
+        </p>
+      )}
       {showingConfiguredSummary ? (
         <div className="vault-configured-summary" data-debug-id="shellx-vault-configured-summary">
           <div>

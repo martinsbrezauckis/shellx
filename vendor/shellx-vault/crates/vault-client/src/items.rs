@@ -19,8 +19,11 @@
 //! Callers: ShellX host VaultBridge (fill/capture), R3 desktop vault UI,
 //! `examples/items_smoke.rs` (the e2e gate for this module).
 
+use std::collections::BTreeMap;
+
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use vault_core::{chunk_bytes, chunk_enc_key, chunk_id, ChunkRef, FileEntry, MasterKey, Snapshot};
 
 use crate::client::{Api, CommitResult};
@@ -28,8 +31,8 @@ use crate::engine::VAULT_PREFIX;
 
 /// Mirror of the web `VaultItem` schema (web/src/lib/vaultItems.ts) — the
 /// SAME JSON lives in the manifest, so the two sides must stay in lockstep.
-/// Unknown future fields are tolerated on read (serde default behavior)
-/// and dropped on rewrite, same as the web editor.
+/// Unknown future fields are preserved on read/write so newer clients can
+/// add typed-resource metadata without older clients stripping it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VaultItem {
     pub id: String,
@@ -49,6 +52,8 @@ pub struct VaultItem {
     pub created_ms: i64,
     #[serde(default)]
     pub updated_ms: i64,
+    #[serde(flatten, default)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 fn item_path(id: &str) -> String {
@@ -285,6 +290,8 @@ mod tests {
         let item: VaultItem = serde_json::from_str(json).unwrap();
         assert_eq!(item.kind, "note");
         assert_eq!(item.password, "");
+        let back = serde_json::to_value(&item).unwrap();
+        assert_eq!(back["totp"], "future-field");
     }
 
     #[test]

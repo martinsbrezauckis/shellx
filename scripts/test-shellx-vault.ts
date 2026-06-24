@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -161,6 +161,7 @@ const mustContain: Array<[string, string]> = [
   ["shellx-browser/README.md", "Vault credential"],
   ["src-tauri/Cargo.toml", "../vendor/shellx-vault/crates/vault-client"],
   ["src-tauri/Cargo.toml", "../vendor/shellx-vault/crates/vault-server"],
+  ["src-tauri/Cargo.toml", "../vendor/shellx-vault/crates/vault-broker"],
   ["package.json", "\"test:shellx-vault-adversary\""],
   ["package.json", "\"test:shellx-vault-setup-ui\""],
   ["scripts/test-shellx-vault-setup-ui.ts", "SHELLX_VAULT_E2E=1"],
@@ -328,14 +329,27 @@ if (!/pub enum VaultResourceKind[\s\S]*Secret[\s\S]*ProfileCard[\s\S]*EmailInbox
 if (!/pub struct ShellxVaultKeyMeta[\s\S]*resource_kind[\s\S]*resource_summary[\s\S]*resource_provider[\s\S]*resource_fields/.test(vaultBackend)) {
   throw new Error("Vault metadata listing must include redacted resource fields for agents and UI grouping");
 }
-if (!/compat_notes[\s\S]*resource_kind[\s\S]*resource_fields/.test(vaultBackend)) {
-  throw new Error("Vault compatibility notes must persist resource metadata without exposing values");
+if (
+  !/VaultResource::from_typed_vault_item[\s\S]*compat_meta_from_resource/.test(vaultBackend) ||
+  !/typed_resource_item_from_compat[\s\S]*VAULT_RESOURCE_SCHEMA_VERSION[\s\S]*ResourcePermission::VisibleAsk/.test(vaultBackend)
+) {
+  throw new Error("ShellX Vault must persist resources through the shared typed VaultResource schema, not compat notes");
+}
+if (!/VaultResource::from_shellx_compat_item[\s\S]*compat_meta_from_resource/.test(vaultBackend)) {
+  throw new Error("ShellX Vault must keep a temporary migration reader for legacy shellx-compat-v1 notes");
 }
 if (/unwrap_or_else\(\|_\|[\s\S]*?PathBuf::from\(\"\\.\"\)[\s\S]*?join\(\"\\.config\"\)[\s\S]*?join\(\"shellx-vault\"\)/.test(vaultBackend)) {
   throw new Error("ShellX Vault profile path must not fall back to cwd-relative .config/shellx-vault");
 }
-if (!vaultBackend.includes("join(\".shellx\")") || !vaultBackend.includes("join(\"shellx-vault\")")) {
-  throw new Error("ShellX Vault profile path must live under the stable ShellX user data directory");
+if (
+  !/vault_broker::profile::resolve_current_profile_dirs\(\)[\s\S]*canonical_dir/.test(vaultBackend) ||
+  !/vault_broker::profile::canonical_profile_path/.test(vaultBackend) ||
+  !/shellx_legacy_profile_path[\s\S]*vault_broker::profile::shellx_legacy_profile_path/.test(vaultBackend)
+) {
+  throw new Error("ShellX Vault must use the shared broker profile directory/profile.json and keep shellx-profile.json as a legacy import source");
+}
+if (!/current_profile_collision_warning[\s\S]*ProfileDiscovery::BothConflict/.test(vaultBackend)) {
+  throw new Error("ShellX Vault must surface shared-vs-legacy profile collisions to the UI");
 }
 if (!/profile_path\(&profile_dir\)[\s\S]*?load_persisted_profile_status/.test(vaultBackend)) {
   throw new Error("ShellX Vault startup must load persisted profile status instead of showing unconfigured");
@@ -376,8 +390,8 @@ if (!/pub async fn compat_set_with_metadata[\s\S]*if user_only \{[\s\S]*revoke_g
 if (!/pub async fn compat_update_metadata[\s\S]*if user_only \{[\s\S]*revoke_grants_for_secret\(key\)\.await/.test(vaultBackend)) {
   throw new Error("Marking a Vault secret user-only must revoke existing grants");
 }
-if (!/async fn revoke_grants_for_secret[\s\S]*record\.request\.secret_ref == secret_ref[\s\S]*record\.revoked = true/.test(vaultBackend)) {
-  throw new Error("Vault backend must include a per-secret grant revocation helper");
+if (!/async fn revoke_grants_for_secret[\s\S]*revoke_grants_for_resource\(secret_ref/.test(vaultBackend)) {
+  throw new Error("Vault backend must revoke per-secret grants through the shared broker grant policy");
 }
 if (!/fn canonical_legacy_import_key[\s\S]*"providers\.xai\.api_key"[\s\S]*=>[\s\S]*"xai\/api-key"/.test(vaultBackend)) {
   throw new Error("Vault legacy import must canonicalize the old xAI key into xai/api-key");
@@ -467,6 +481,17 @@ if (!/async fn resolve_xai_vision_bearer[\s\S]*crate::shellx_vault::shared_backe
   throw new Error("Vision xAI credential lookup must read xai/api-key from the ShellX Vault backend");
 }
 
+const vaultSetupPanelContract = readFileSync(join(root, "src/components/settings/VaultSetupPanel.tsx"), "utf8");
+if (!/type VaultStatus[\s\S]*lastError\?: string \| null/.test(vaultSetupPanelContract) || !/status\?\.lastError[\s\S]*vault-profile-collision/.test(vaultSetupPanelContract)) {
+  throw new Error("Vault setup UI must show backend profile collision/status errors");
+}
+
+const standaloneBroker = join(root, "..", "shellx-vault", "crates", "vault-broker");
+const vendoredBroker = join(root, "vendor", "shellx-vault", "crates", "vault-broker");
+if (existsSync(standaloneBroker)) {
+  assertTreesEqual(standaloneBroker, vendoredBroker, "vendored vault-broker");
+}
+
 const vaultPanel = vaultPanelSource;
 if (
   !vaultPanel.includes("<VaultTab") ||
@@ -511,6 +536,31 @@ function readTree(path: string): string {
     body += readTree(join(path, name));
   }
   return body;
+}
+
+function assertTreesEqual(left: string, right: string, label: string): void {
+  const leftEntries = listFiles(left).sort();
+  const rightEntries = listFiles(right).sort();
+  if (leftEntries.join("\n") !== rightEntries.join("\n")) {
+    throw new Error(`${label} file list is out of sync with standalone Vault broker`);
+  }
+  for (const entry of leftEntries) {
+    const leftBody = readFileSync(join(left, entry), "utf8");
+    const rightBody = readFileSync(join(right, entry), "utf8");
+    if (leftBody !== rightBody) {
+      throw new Error(`${label} file ${entry} is out of sync with standalone Vault broker`);
+    }
+  }
+}
+
+function listFiles(path: string, prefix = ""): string[] {
+  return readdirSync(path).flatMap((name) => {
+    if (["target", "node_modules", ".git"].includes(name)) return [];
+    const full = join(path, name);
+    const rel = prefix ? join(prefix, name) : name;
+    const stat = statSync(full);
+    return stat.isFile() ? [rel] : listFiles(full, rel);
+  });
 }
 
 for (const [path, needle] of forbidden) {

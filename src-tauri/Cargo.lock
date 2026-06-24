@@ -211,6 +211,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "vault-broker",
  "vault-client",
  "vault-core",
  "vault-server",
@@ -7453,6 +7454,18 @@ name = "value-bag"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ba6f5989077681266825251a52748b8c1d8a4ad098cc37e440103d0ea717fc0"
+
+[[package]]
+name = "vault-broker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "serde",
+ "serde_json",
+ "vault-client",
+ "vault-core",
+]
 
 [[package]]
 name = "vault-client"

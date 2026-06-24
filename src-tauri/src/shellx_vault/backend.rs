@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use vault_client::client::Api;
 use vault_client::items::{self, VaultItem};
 use vault_core::{Keyfile, MasterKey};
@@ -14,6 +15,17 @@ use crate::shellx_vault::grants::{
 };
 use crate::shellx_vault::legacy_import::LegacyImportReceipt;
 use crate::shellx_vault::recovery::{generate_recovery_kit, now_ms, RecoveryKit, RecoveryState};
+use vault_broker::actors::{ActorKind as BrokerActorKind, VaultActor as BrokerActor};
+use vault_broker::grants::{
+    GrantAction as BrokerGrantAction, GrantDecision as BrokerGrantDecision,
+    GrantDenyReason as BrokerGrantDenyReason, GrantPolicy as BrokerGrantPolicy,
+    GrantPolicySnapshot as BrokerGrantPolicySnapshot, GrantRequest as BrokerGrantRequest,
+    GrantStatus as BrokerGrantStatus, GrantUseRequest as BrokerGrantUseRequest,
+};
+use vault_broker::resources::{
+    ResourcePermission, VaultResource, VaultResourceKind as BrokerVaultResourceKind,
+    VAULT_RESOURCE_SCHEMA_VERSION,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -69,15 +81,21 @@ pub struct UnlockRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultProfile {
+    #[serde(default = "default_profile_mode")]
     pub mode: ShellxVaultMode,
+    #[serde(default)]
     pub server_url: Option<String>,
+    #[serde(default = "default_profile_repo")]
     pub repo: String,
+    #[serde(default)]
     pub token: Option<String>,
+    #[serde(default)]
     pub keyfile_json: Option<String>,
     #[serde(default = "default_remember_device")]
     pub remember_device: bool,
     #[serde(default)]
     pub remembered_keyfile_json: Option<String>,
+    #[serde(default)]
     pub recovery: RecoveryState,
 }
 
@@ -155,6 +173,14 @@ fn default_remember_device() -> bool {
     true
 }
 
+fn default_profile_mode() -> ShellxVaultMode {
+    ShellxVaultMode::External
+}
+
+fn default_profile_repo() -> String {
+    "default".to_string()
+}
+
 fn default_profile_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("SHELLX_VAULT_PROFILE_DIR")
         .filter(|value| !value.is_empty())
@@ -166,6 +192,16 @@ fn default_profile_dir() -> PathBuf {
 }
 
 fn stable_default_profile_dir() -> PathBuf {
+    shared_default_profile_dir().unwrap_or_else(|_| legacy_shellx_profile_dir())
+}
+
+fn shared_default_profile_dir() -> Result<PathBuf, String> {
+    vault_broker::profile::resolve_current_profile_dirs()
+        .map(|dirs| dirs.canonical_dir)
+        .map_err(|err| err.to_string())
+}
+
+fn legacy_shellx_profile_dir() -> PathBuf {
     shellx_home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".shellx")
@@ -202,7 +238,11 @@ fn paths_match_for_guard(left: &Path, right: &Path) -> bool {
 }
 
 fn profile_path(profile_dir: &Path) -> PathBuf {
-    profile_dir.join("shellx-profile.json")
+    vault_broker::profile::canonical_profile_path(profile_dir)
+}
+
+fn shellx_legacy_profile_path(profile_dir: &Path) -> PathBuf {
+    vault_broker::profile::shellx_legacy_profile_path(profile_dir)
 }
 
 fn grants_path(profile_dir: &Path) -> PathBuf {
@@ -230,61 +270,40 @@ fn load_persisted_profile_status(profile_path: &Path) -> ShellxVaultStatus {
 fn read_persisted_profile(profile_path: &Path) -> Result<VaultProfile, String> {
     fs::read_to_string(profile_path)
         .map_err(|err| err.to_string())
-        .and_then(|raw| serde_json::from_str::<VaultProfile>(&raw).map_err(|err| err.to_string()))
+        .and_then(|raw| {
+            let mut value = serde_json::from_str::<Value>(&raw).map_err(|err| err.to_string())?;
+            if let Some(object) = value.as_object_mut() {
+                if !object.contains_key("serverUrl") {
+                    if let Some(server) = object.get("server").cloned() {
+                        object.insert("serverUrl".to_string(), server);
+                    }
+                }
+            }
+            serde_json::from_value::<VaultProfile>(value).map_err(|err| err.to_string())
+        })
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct PersistedGrant {
-    request: GrantRequest,
-    revoked: bool,
-    #[serde(default = "default_persisted_grant_approved")]
-    approved: bool,
-    #[serde(default)]
-    created_at_ms: i64,
-}
-
-fn default_persisted_grant_approved() -> bool {
-    false
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct GrantRecord {
-    request: GrantRequest,
-    revoked: bool,
-    approved: bool,
-    created_at_ms: i64,
-}
-
-fn read_persisted_grants(grants_path: &Path) -> Result<BTreeMap<String, GrantRecord>, String> {
+fn read_persisted_grants(grants_path: &Path) -> Result<BrokerGrantPolicy, String> {
     if !grants_path.exists() {
-        return Ok(BTreeMap::new());
+        return Ok(BrokerGrantPolicy::default());
     }
     let raw = fs::read_to_string(grants_path).map_err(|err| err.to_string())?;
-    let persisted: BTreeMap<String, PersistedGrant> =
-        serde_json::from_str(&raw).map_err(|err| err.to_string())?;
-    Ok(persisted
-        .into_iter()
-        .map(|(grant_id, grant)| {
-            (
-                grant_id,
-                GrantRecord {
-                    request: grant.request,
-                    revoked: grant.revoked,
-                    approved: grant.approved,
-                    created_at_ms: grant.created_at_ms,
-                },
-            )
-        })
-        .collect())
+    if let Ok(snapshot) = serde_json::from_str::<BrokerGrantPolicySnapshot>(&raw) {
+        return Ok(BrokerGrantPolicy::from_snapshot(snapshot));
+    }
+    BrokerGrantPolicy::from_shellx_legacy_grants_json(&raw).map_err(|err| err.to_string())
 }
 
 fn migrate_legacy_profile_dir(profile_dir: &Path) -> Result<(), String> {
     if profile_path(profile_dir).exists() {
         return Ok(());
     }
+    copy_legacy_profile_file_if_needed(profile_dir, profile_dir)?;
+    if profile_path(profile_dir).exists() {
+        return Ok(());
+    }
     for candidate in legacy_profile_dir_candidates(profile_dir) {
-        if !profile_path(&candidate).exists() {
+        if !shellx_legacy_profile_path(&candidate).exists() && !profile_path(&candidate).exists() {
             continue;
         }
         copy_dir_recursive(&candidate, profile_dir).map_err(|err| {
@@ -294,13 +313,47 @@ fn migrate_legacy_profile_dir(profile_dir: &Path) -> Result<(), String> {
                 profile_dir.display()
             )
         })?;
+        copy_legacy_profile_file_if_needed(&candidate, profile_dir)?;
         break;
     }
     Ok(())
 }
 
+fn copy_legacy_profile_file_if_needed(
+    src_profile_dir: &Path,
+    dst_profile_dir: &Path,
+) -> Result<(), String> {
+    let dst = profile_path(dst_profile_dir);
+    if dst.exists() {
+        return Ok(());
+    }
+    let src = shellx_legacy_profile_path(src_profile_dir);
+    if !src.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(dst_profile_dir).map_err(|err| err.to_string())?;
+    fs::copy(&src, &dst)
+        .map(|_| ())
+        .map_err(|err| format!("copy {} to {}: {err}", src.display(), dst.display()))
+}
+
+fn current_profile_collision_warning() -> Option<String> {
+    match vault_broker::profile::discover_current_profile_collision() {
+        Ok(vault_broker::profile::ProfileDiscovery::BothConflict {
+            canonical_dir,
+            shellx_legacy_dir,
+        }) => Some(format!(
+            "Vault profile collision: shared profile {} and legacy ShellX profile {} both exist. ShellX will use the shared profile; merge or remove the legacy profile before continuing setup.",
+            profile_path(&canonical_dir).display(),
+            shellx_legacy_profile_path(&shellx_legacy_dir).display()
+        )),
+        _ => None,
+    }
+}
+
 fn legacy_profile_dir_candidates(profile_dir: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
+    candidates.push(legacy_shellx_profile_dir());
     if let Some(home) = shellx_home_dir() {
         candidates.push(home.join(".config").join("shellx-vault"));
     }
@@ -358,7 +411,7 @@ pub struct ShellxVaultBackend {
     local_server: tokio::sync::Mutex<Option<vault_server::EmbeddedServer>>,
     compat_values: tokio::sync::Mutex<BTreeMap<String, String>>,
     compat_meta: tokio::sync::Mutex<BTreeMap<String, ShellxVaultCompatMeta>>,
-    grants: tokio::sync::Mutex<BTreeMap<String, GrantRecord>>,
+    grants: tokio::sync::Mutex<BrokerGrantPolicy>,
     debug_audit: tokio::sync::Mutex<Vec<VaultDebugAuditRecord>>,
 }
 
@@ -476,6 +529,10 @@ impl Default for ShellxVaultBackend {
             eprintln!("shellx-vault profile migration skipped: {err}");
         }
         let initial_status = load_persisted_profile_status(&profile_path(&profile_dir));
+        let mut initial_status = initial_status;
+        if initial_status.last_error.is_none() {
+            initial_status.last_error = current_profile_collision_warning();
+        }
         Self::with_initial_status_and_store(
             profile_dir,
             initial_status,
@@ -509,7 +566,7 @@ impl ShellxVaultBackend {
             Ok(grants) => grants,
             Err(err) => {
                 initial_status.last_error = Some(format!("Vault grants load failed: {err}"));
-                BTreeMap::new()
+                BrokerGrantPolicy::default()
             }
         };
         Self {
@@ -540,8 +597,10 @@ impl ShellxVaultBackend {
             .grants
             .lock()
             .await
+            .to_snapshot()
+            .grants
             .values()
-            .filter(|record| record.approved && !record.revoked)
+            .filter(|grant| grant.status == BrokerGrantStatus::Approved)
             .count();
         status
     }
@@ -859,9 +918,17 @@ impl ShellxVaultBackend {
 
     fn write_profile(&self, profile: &VaultProfile) -> Result<(), String> {
         std::fs::create_dir_all(&self.profile_dir).map_err(|e| e.to_string())?;
+        let mut persisted = serde_json::to_value(profile).map_err(|e| e.to_string())?;
+        if let Some(object) = persisted.as_object_mut() {
+            if !object.contains_key("server") {
+                if let Some(server_url) = profile.server_url.as_deref() {
+                    object.insert("server".to_string(), Value::String(server_url.to_string()));
+                }
+            }
+        }
         vault_client::config::write_private(
             &self.profile_path(),
-            serde_json::to_string_pretty(profile)
+            serde_json::to_string_pretty(&persisted)
                 .map_err(|e| e.to_string())?
                 .as_bytes(),
         )
@@ -869,21 +936,7 @@ impl ShellxVaultBackend {
     }
 
     async fn write_grants_snapshot(&self) -> Result<(), String> {
-        let grants = self.grants.lock().await.clone();
-        let persisted = grants
-            .into_iter()
-            .map(|(grant_id, record)| {
-                (
-                    grant_id,
-                    PersistedGrant {
-                        request: record.request,
-                        revoked: record.revoked,
-                        approved: record.approved,
-                        created_at_ms: record.created_at_ms,
-                    },
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+        let persisted = self.grants.lock().await.to_snapshot();
         std::fs::create_dir_all(&self.profile_dir).map_err(|e| e.to_string())?;
         vault_client::config::write_private(
             &grants_path(&self.profile_dir),
@@ -1289,7 +1342,7 @@ impl ShellxVaultBackend {
             let id = compat_key_to_item_id(key);
             return items::read_item(&session.api, &session.master, &id)
                 .await
-                .map(|item| item.map(|item| item.password))
+                .map(|item| item.and_then(compat_value_from_item))
                 .map_err(|e| e.to_string());
         }
         Ok(self.compat_values.lock().await.get(key).cloned())
@@ -1539,7 +1592,9 @@ impl ShellxVaultBackend {
                 .await
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("vault key not found: {key}"))?;
-            save_compat_item(&session, key, &item.password, meta.clone()).await?;
+            let value = compat_value_from_item(item)
+                .ok_or_else(|| format!("vault key not found: {key}"))?;
+            save_compat_item(&session, key, &value, meta.clone()).await?;
         } else if !self.compat_values.lock().await.contains_key(key) {
             return Err(format!("vault key not found: {key}"));
         }
@@ -1563,25 +1618,7 @@ impl ShellxVaultBackend {
                 .await
                 .map_err(|e| e.to_string())?
             {
-                return Ok(parse_compat_notes(&item.notes)
-                    .map(|notes| ShellxVaultCompatMeta {
-                        description: normalize_description(notes.description).unwrap_or(None),
-                        user_only: notes.user_only,
-                        resource_kind: notes.resource_kind,
-                        resource_summary: normalize_resource_text(
-                            notes.resource_summary,
-                            "resource summary",
-                        )
-                        .unwrap_or(None),
-                        resource_provider: normalize_resource_text(
-                            notes.resource_provider,
-                            "resource provider",
-                        )
-                        .unwrap_or(None),
-                        resource_fields: normalize_resource_fields(notes.resource_fields)
-                            .unwrap_or_default(),
-                    })
-                    .unwrap_or_default());
+                return Ok(compat_meta_from_item(&item).unwrap_or_default());
             }
         }
         Ok(ShellxVaultCompatMeta::default())
@@ -1594,79 +1631,62 @@ impl ShellxVaultBackend {
         if self.is_user_only_secret(&request.secret_ref).await {
             return Err("grantUserOnlySecret".into());
         }
-        let grant_id = format!("grant-{}", hex::encode(vault_core::random_bytes::<12>()));
-        let created_at_ms = now_ms();
-        self.grants.lock().await.insert(
-            grant_id.clone(),
-            GrantRecord {
-                request: request.clone(),
-                revoked: false,
-                approved: false,
-                created_at_ms,
-            },
-        );
+        let mut policy = self.grants.lock().await;
+        policy.set_resource_permission(&request.secret_ref, ResourcePermission::VisibleAsk);
+        policy.register_actor(broker_actor_from_scope(&request.actor_scope));
+        let grant = policy
+            .create_grant(BrokerGrantRequest {
+                actor_id: broker_actor_id_from_scope(&request.actor_scope),
+                resource_id: request.secret_ref.clone(),
+                action: broker_action_from_shellx_operation(&request.operation)?,
+                constraints: vault_broker::grants::GrantConstraints {
+                    expires_at_ms: request.expires_at_ms,
+                    ..vault_broker::grants::GrantConstraints::default()
+                },
+                created_at_ms: now_ms(),
+            })
+            .map_err(broker_deny_reason_label)?;
+        let summary = grant_summary_from_broker(&grant);
+        drop(policy);
         self.write_grants_snapshot().await?;
-        Ok(grant_summary(
-            &grant_id,
-            &request,
-            false,
-            false,
-            created_at_ms,
-        ))
+        Ok(summary)
     }
 
     pub async fn approve_grant(&self, grant_id: &str) -> Result<GrantSummary, String> {
-        let mut grants = self.grants.lock().await;
-        let record = grants.get_mut(grant_id).ok_or("grant not found")?;
-        record.approved = true;
-        let summary = grant_summary(
-            grant_id,
-            &record.request,
-            record.revoked,
-            record.approved,
-            record.created_at_ms,
-        );
-        drop(grants);
+        let mut policy = self.grants.lock().await;
+        let grant = policy
+            .approve_grant(grant_id, now_ms())
+            .map_err(broker_deny_reason_label)?;
+        let summary = grant_summary_from_broker(&grant);
+        drop(policy);
         self.write_grants_snapshot().await?;
         Ok(summary)
     }
 
     pub async fn list_grants(&self) -> Result<Vec<GrantSummary>, String> {
-        let grants = self.grants.lock().await;
-        Ok(grants
-            .iter()
-            .map(|(grant_id, record)| {
-                grant_summary(
-                    grant_id,
-                    &record.request,
-                    record.revoked,
-                    record.approved,
-                    record.created_at_ms,
-                )
-            })
+        let snapshot = self.grants.lock().await.to_snapshot();
+        Ok(snapshot
+            .grants
+            .values()
+            .map(grant_summary_from_broker)
             .collect())
     }
 
     pub async fn revoke_grant(&self, grant_id: &str) -> Result<(), String> {
-        let mut grants = self.grants.lock().await;
-        let entry = grants.get_mut(grant_id).ok_or("grant not found")?;
-        entry.revoked = true;
-        drop(grants);
+        let mut policy = self.grants.lock().await;
+        policy
+            .revoke_grant(grant_id, now_ms())
+            .map_err(broker_deny_reason_label)?;
+        drop(policy);
         self.write_grants_snapshot().await?;
         Ok(())
     }
 
     async fn revoke_grants_for_secret(&self, secret_ref: &str) -> Result<(), String> {
-        let mut grants = self.grants.lock().await;
-        let mut changed = false;
-        for (_, record) in grants.iter_mut() {
-            if record.request.secret_ref == secret_ref && !record.revoked {
-                record.revoked = true;
-                changed = true;
-            }
-        }
-        drop(grants);
-        if changed {
+        let mut policy = self.grants.lock().await;
+        let changed = policy.revoke_grants_for_resource(secret_ref, now_ms());
+        drop(policy);
+        if changed > 0 {
             self.write_grants_snapshot().await?;
         }
         Ok(())
@@ -1700,58 +1720,42 @@ impl ShellxVaultBackend {
         operation: &GrantOperation,
         actor: Option<&GrantActorContext>,
     ) -> GrantDecision {
-        let grant = {
-            let grants = self.grants.lock().await;
-            let Some(record) = grants.get(grant_id) else {
-                return GrantDecision::Deny {
-                    reason: "grantNotFound".into(),
-                };
-            };
-            if record.revoked {
-                return GrantDecision::Deny {
-                    reason: "grantRevoked".into(),
-                };
-            }
-            if !record.approved {
-                return GrantDecision::Deny {
-                    reason: "grantPending".into(),
-                };
-            }
-            record.request.clone()
-        };
-        if grant.secret_ref != secret_ref {
-            return GrantDecision::Deny {
-                reason: "grantSecretMismatch".into(),
-            };
-        }
         if self.is_user_only_secret(secret_ref).await {
             return GrantDecision::Deny {
                 reason: "grantUserOnlySecret".into(),
             };
         }
-        if let Some(expires) = grant.expires_at_ms {
-            if expires <= now_ms() {
-                return GrantDecision::Deny {
-                    reason: "grantExpired".into(),
-                };
+        let action = match broker_action_from_shellx_operation(operation) {
+            Ok(action) => action,
+            Err(reason) => {
+                return GrantDecision::Deny { reason };
             }
-        }
-        if &grant.operation != operation {
+        };
+        let mut policy = self.grants.lock().await;
+        let snapshot = policy.to_snapshot();
+        let Some(grant) = snapshot.grants.get(grant_id) else {
             return GrantDecision::Deny {
-                reason: "grantOperationMismatch".into(),
+                reason: "grantNotFound".into(),
             };
-        }
-        if let Some(actor) = actor {
-            if !grant_actor_matches(&grant.actor_scope, actor) {
-                return GrantDecision::Deny {
-                    reason: "grantActorMismatch".into(),
-                };
-            }
-        }
-        if matches!(operation, GrantOperation::RawReveal) {
-            GrantDecision::AllowRawReveal
-        } else {
-            GrantDecision::AllowMediated
+        };
+        let actor_id = match actor {
+            Some(actor) => broker_actor_id_for_authorization(grant.actor_id.as_str(), actor),
+            None => grant.actor_id.clone(),
+        };
+        let decision = policy.authorize(BrokerGrantUseRequest {
+            grant_id: grant_id.to_string(),
+            actor_id,
+            resource_id: secret_ref.to_string(),
+            action,
+            origin: actor.and_then(|actor| actor.origin.clone()),
+            path: None,
+            now_ms: now_ms(),
+        });
+        match decision {
+            BrokerGrantDecision::AllowMediated { .. } => GrantDecision::AllowMediated,
+            BrokerGrantDecision::Deny { reason, .. } => GrantDecision::Deny {
+                reason: broker_deny_reason_label(reason),
+            },
         }
     }
 
@@ -1766,7 +1770,7 @@ impl ShellxVaultBackend {
         let mut reset_warning: Option<String> = None;
         self.compat_values.lock().await.clear();
         self.compat_meta.lock().await.clear();
-        self.grants.lock().await.clear();
+        *self.grants.lock().await = BrokerGrantPolicy::default();
         self.write_grants_snapshot().await?;
         *self.pending_profile.lock().await = None;
         *self.pending_keyfile_publish.lock().await = None;
@@ -1877,12 +1881,14 @@ impl ShellxVaultBackend {
         &self,
         grant_id: &str,
     ) -> Result<VaultDebugAuditRecord, String> {
-        let mut grants = self.grants.lock().await;
-        let Some(record) = grants.get_mut(grant_id) else {
+        let mut policy = self.grants.lock().await;
+        let mut snapshot = policy.to_snapshot();
+        let Some(grant) = snapshot.grants.get_mut(grant_id) else {
             return Err("grant not found".to_string());
         };
-        record.request.expires_at_ms = Some(1);
-        drop(grants);
+        grant.constraints.expires_at_ms = Some(1);
+        *policy = BrokerGrantPolicy::from_snapshot(snapshot);
+        drop(policy);
         self.write_grants_snapshot().await?;
         Ok(self
             .push_debug_audit(VaultDebugAuditInput {
@@ -1951,52 +1957,187 @@ impl<'a> VaultDebugAuditInput<'a> {
     }
 }
 
-fn grant_actor_matches(scope: &GrantScope, actor: &GrantActorContext) -> bool {
-    match scope {
-        GrantScope::Agent { agent_id } => actor
-            .agent_id
-            .as_deref()
-            .is_some_and(|candidate| candidate == agent_id),
-        GrantScope::Provider { provider_id } => actor
-            .provider_id
-            .as_deref()
-            .is_some_and(|candidate| candidate == provider_id),
-        GrantScope::Workspace { workspace } => actor
-            .workspace
-            .as_deref()
-            .is_some_and(|candidate| candidate == workspace),
-        GrantScope::BrowserOrigin { origin } => actor
-            .origin
-            .as_deref()
-            .is_some_and(|candidate| candidate == origin),
-        GrantScope::Connector { connector_id } => actor
-            .connector_id
-            .as_deref()
-            .is_some_and(|candidate| candidate == connector_id),
-        GrantScope::AllShellxAgents => actor
-            .agent_id
-            .as_deref()
-            .is_some_and(|candidate| !candidate.trim().is_empty()),
+fn broker_actor_from_scope(scope: &GrantScope) -> BrokerActor {
+    let actor_id = broker_actor_id_from_scope(scope);
+    let (kind, display_name) = match scope {
+        GrantScope::Agent { agent_id } => (BrokerActorKind::McpAgent, agent_id.clone()),
+        GrantScope::Provider { provider_id } => (BrokerActorKind::Shellx, provider_id.clone()),
+        GrantScope::Workspace { workspace } => (BrokerActorKind::Cli, workspace.clone()),
+        GrantScope::BrowserOrigin { origin } => (BrokerActorKind::Browser, origin.clone()),
+        GrantScope::Connector { connector_id } => {
+            (BrokerActorKind::Connector, connector_id.clone())
+        }
+        GrantScope::AllShellxAgents => (BrokerActorKind::McpAgent, "All ShellX agents".to_string()),
+    };
+    BrokerActor {
+        actor_id,
+        kind,
+        display_name,
+        device_id: format!("shellx-{}", std::env::consts::OS),
+        public_key: None,
+        created_at_ms: now_ms(),
+        revoked_at_ms: None,
     }
 }
 
-fn grant_summary(
-    grant_id: &str,
-    request: &GrantRequest,
-    revoked: bool,
-    approved: bool,
-    created_at_ms: i64,
-) -> GrantSummary {
-    GrantSummary {
-        grant_id: grant_id.to_string(),
-        secret_ref: request.secret_ref.clone(),
-        actor_scope: serde_json::to_string(&request.actor_scope).unwrap_or_default(),
-        operation: format!("{:?}", request.operation),
-        created_at_ms,
-        expires_at_ms: request.expires_at_ms,
-        revoked,
-        approved,
+fn broker_actor_id_from_scope(scope: &GrantScope) -> String {
+    match scope {
+        GrantScope::Agent { agent_id } => format!("shellx:agent:{agent_id}"),
+        GrantScope::Provider { provider_id } => format!("shellx:provider:{provider_id}"),
+        GrantScope::Workspace { workspace } => format!("shellx:workspace:{workspace}"),
+        GrantScope::BrowserOrigin { origin } => format!("shellx:browser-origin:{origin}"),
+        GrantScope::Connector { connector_id } => format!("shellx:connector:{connector_id}"),
+        GrantScope::AllShellxAgents => "shellx:all-agents".to_string(),
     }
+}
+
+fn broker_actor_id_from_context(actor: &GrantActorContext) -> Option<String> {
+    if let Some(agent_id) = actor
+        .agent_id
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Some(format!("shellx:agent:{agent_id}"));
+    }
+    if let Some(provider_id) = actor
+        .provider_id
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Some(format!("shellx:provider:{provider_id}"));
+    }
+    if let Some(workspace) = actor
+        .workspace
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Some(format!("shellx:workspace:{workspace}"));
+    }
+    if let Some(origin) = actor
+        .origin
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Some(format!("shellx:browser-origin:{origin}"));
+    }
+    if let Some(connector_id) = actor
+        .connector_id
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Some(format!("shellx:connector:{connector_id}"));
+    }
+    None
+}
+
+fn broker_actor_id_for_authorization(grant_actor_id: &str, actor: &GrantActorContext) -> String {
+    if grant_actor_id == "shellx:all-agents"
+        && actor
+            .agent_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        return grant_actor_id.to_string();
+    }
+    broker_actor_id_from_context(actor).unwrap_or_else(|| "shellx:unknown-actor".to_string())
+}
+
+fn broker_action_from_shellx_operation(
+    operation: &GrantOperation,
+) -> Result<BrokerGrantAction, String> {
+    Ok(match operation {
+        GrantOperation::Fill => BrokerGrantAction::FillLogin,
+        GrantOperation::ProfileFill => BrokerGrantAction::FillProfile,
+        GrantOperation::EmailCodeRead => BrokerGrantAction::ReadEmailCode,
+        GrantOperation::AgentWalletUse => BrokerGrantAction::UseWallet,
+        GrantOperation::InjectEnv => BrokerGrantAction::InjectEnv,
+        GrantOperation::ProviderUse => BrokerGrantAction::UseProvider,
+        GrantOperation::ConnectorUse => BrokerGrantAction::UseConnector,
+        GrantOperation::Deposit => BrokerGrantAction::Deposit,
+        GrantOperation::RawReveal => return Err("rawRevealDenied".to_string()),
+    })
+}
+
+fn shellx_operation_label_from_broker(action: &BrokerGrantAction) -> String {
+    match action {
+        BrokerGrantAction::FillLogin => "Fill",
+        BrokerGrantAction::FillProfile => "ProfileFill",
+        BrokerGrantAction::ReadEmailCode => "EmailCodeRead",
+        BrokerGrantAction::UseWallet => "AgentWalletUse",
+        BrokerGrantAction::InjectEnv => "InjectEnv",
+        BrokerGrantAction::UseProvider => "ProviderUse",
+        BrokerGrantAction::UseConnector => "ConnectorUse",
+        BrokerGrantAction::Deposit => "Deposit",
+        BrokerGrantAction::RawReveal => "RawReveal",
+        BrokerGrantAction::PullSyncSet => "PullSyncSet",
+        BrokerGrantAction::PushSyncSet => "PushSyncSet",
+        BrokerGrantAction::CreateProjectCapsule => "CreateProjectCapsule",
+        BrokerGrantAction::ApplyProjectCapsule => "ApplyProjectCapsule",
+        BrokerGrantAction::ExportFromSafe => "ExportFromSafe",
+        BrokerGrantAction::ReadFile => "ReadFile",
+        BrokerGrantAction::WriteFile => "WriteFile",
+    }
+    .to_string()
+}
+
+fn broker_scope_label(actor_id: &str) -> String {
+    if actor_id == "shellx:all-agents" {
+        return r#"{"kind":"allShellxAgents"}"#.to_string();
+    }
+    if let Some(value) = actor_id.strip_prefix("shellx:agent:") {
+        return serde_json::json!({"kind": "agent", "agentId": value}).to_string();
+    }
+    if let Some(value) = actor_id.strip_prefix("shellx:provider:") {
+        return serde_json::json!({"kind": "provider", "providerId": value}).to_string();
+    }
+    if let Some(value) = actor_id.strip_prefix("shellx:workspace:") {
+        return serde_json::json!({"kind": "workspace", "workspace": value}).to_string();
+    }
+    if let Some(value) = actor_id.strip_prefix("shellx:browser-origin:") {
+        return serde_json::json!({"kind": "browserOrigin", "origin": value}).to_string();
+    }
+    if let Some(value) = actor_id.strip_prefix("shellx:connector:") {
+        return serde_json::json!({"kind": "connector", "connectorId": value}).to_string();
+    }
+    actor_id.to_string()
+}
+
+fn grant_summary_from_broker(grant: &vault_broker::grants::VaultGrant) -> GrantSummary {
+    GrantSummary {
+        grant_id: grant.grant_id.clone(),
+        secret_ref: grant.resource_id.clone(),
+        actor_scope: broker_scope_label(&grant.actor_id),
+        operation: shellx_operation_label_from_broker(&grant.action),
+        created_at_ms: grant.created_at_ms,
+        expires_at_ms: grant.constraints.expires_at_ms,
+        revoked: matches!(
+            grant.status,
+            BrokerGrantStatus::Revoked | BrokerGrantStatus::Expired
+        ),
+        approved: grant.status == BrokerGrantStatus::Approved,
+    }
+}
+
+fn broker_deny_reason_label(reason: BrokerGrantDenyReason) -> String {
+    match reason {
+        BrokerGrantDenyReason::GrantNotFound => "grantNotFound",
+        BrokerGrantDenyReason::GrantPending => "grantPending",
+        BrokerGrantDenyReason::GrantRevoked => "grantRevoked",
+        BrokerGrantDenyReason::GrantExpired => "grantExpired",
+        BrokerGrantDenyReason::GrantActorMismatch => "grantActorMismatch",
+        BrokerGrantDenyReason::GrantResourceMismatch => "grantSecretMismatch",
+        BrokerGrantDenyReason::GrantActionMismatch => "grantOperationMismatch",
+        BrokerGrantDenyReason::ActorNotRegistered => "actorNotRegistered",
+        BrokerGrantDenyReason::ActorRevoked => "actorRevoked",
+        BrokerGrantDenyReason::UserOnlyResource => "grantUserOnlySecret",
+        BrokerGrantDenyReason::RawRevealDenied => "rawRevealDenied",
+        BrokerGrantDenyReason::OriginMismatch => "originMismatch",
+        BrokerGrantDenyReason::PathMismatch => "pathMismatch",
+        BrokerGrantDenyReason::MaxUsesExceeded => "maxUsesExceeded",
+        BrokerGrantDenyReason::ResourceNotFound => "resourceNotFound",
+        BrokerGrantDenyReason::AgentPolicyDenied => "agentPolicyDenied",
+    }
+    .to_string()
 }
 
 pub fn compat_key_to_item_id(key: &str) -> String {
@@ -2116,28 +2257,6 @@ fn normalize_resource_fields(fields: Vec<String>) -> Result<Vec<String>, String>
     Ok(out)
 }
 
-fn compat_notes(meta: ShellxVaultCompatMeta) -> String {
-    if meta.description.is_none()
-        && !meta.user_only
-        && meta.resource_kind == VaultResourceKind::Secret
-        && meta.resource_summary.is_none()
-        && meta.resource_provider.is_none()
-        && meta.resource_fields.is_empty()
-    {
-        return SHELLX_COMPAT_NOTES_MARKER.to_string();
-    }
-    serde_json::to_string(&ShellxCompatItemNotes {
-        shellx_compat: SHELLX_COMPAT_NOTES_MARKER.to_string(),
-        description: meta.description,
-        user_only: meta.user_only,
-        resource_kind: meta.resource_kind,
-        resource_summary: meta.resource_summary,
-        resource_provider: meta.resource_provider,
-        resource_fields: meta.resource_fields,
-    })
-    .unwrap_or_else(|_| SHELLX_COMPAT_NOTES_MARKER.to_string())
-}
-
 fn parse_compat_notes(notes: &str) -> Option<ShellxCompatItemNotes> {
     if notes == SHELLX_COMPAT_NOTES_MARKER {
         return Some(ShellxCompatItemNotes {
@@ -2159,9 +2278,38 @@ fn parse_compat_notes(notes: &str) -> Option<ShellxCompatItemNotes> {
 }
 
 fn compat_item_to_key_meta(item: VaultItem) -> Option<ShellxVaultKeyMeta> {
+    compat_meta_from_item(&item).map(|meta| {
+        sanitize_key_meta_for_listing(ShellxVaultKeyMeta {
+            key: item.title,
+            description: meta.description,
+            user_only: meta.user_only,
+            resource_kind: meta.resource_kind,
+            resource_summary: meta.resource_summary,
+            resource_provider: meta.resource_provider,
+            resource_fields: meta.resource_fields,
+            last_modified_ms: item.updated_ms,
+        })
+    })
+}
+
+fn compat_value_from_item(item: VaultItem) -> Option<String> {
+    if let Some(resource) = VaultResource::from_typed_vault_item(&item) {
+        return resource.secret_fields.get("value").cloned();
+    }
+    VaultResource::from_shellx_compat_item(&item)
+        .and_then(|(resource, _)| resource.secret_fields.get("value").cloned())
+        .or(Some(item.password))
+}
+
+fn compat_meta_from_item(item: &VaultItem) -> Option<ShellxVaultCompatMeta> {
+    if let Some(resource) = VaultResource::from_typed_vault_item(item) {
+        return Some(compat_meta_from_resource(&resource));
+    }
+    if let Some((resource, _)) = VaultResource::from_shellx_compat_item(item) {
+        return Some(compat_meta_from_resource(&resource));
+    }
     let notes = parse_compat_notes(&item.notes)?;
-    Some(sanitize_key_meta_for_listing(ShellxVaultKeyMeta {
-        key: item.title,
+    Some(ShellxVaultCompatMeta {
         description: normalize_description(notes.description).unwrap_or(None),
         user_only: notes.user_only,
         resource_kind: notes.resource_kind,
@@ -2170,8 +2318,56 @@ fn compat_item_to_key_meta(item: VaultItem) -> Option<ShellxVaultKeyMeta> {
         resource_provider: normalize_resource_text(notes.resource_provider, "resource provider")
             .unwrap_or(None),
         resource_fields: normalize_resource_fields(notes.resource_fields).unwrap_or_default(),
-        last_modified_ms: item.updated_ms,
-    }))
+    })
+}
+
+fn compat_meta_from_resource(resource: &VaultResource) -> ShellxVaultCompatMeta {
+    let resource_kind = match &resource.kind {
+        BrokerVaultResourceKind::Secret => VaultResourceKind::Secret,
+        BrokerVaultResourceKind::ProfileCard => VaultResourceKind::ProfileCard,
+        BrokerVaultResourceKind::EmailInbox => VaultResourceKind::EmailInbox,
+        BrokerVaultResourceKind::AgentWallet => VaultResourceKind::StripeAgentWallet,
+        BrokerVaultResourceKind::Login
+        | BrokerVaultResourceKind::PaymentCard
+        | BrokerVaultResourceKind::DeveloperCredential => VaultResourceKind::Secret,
+    };
+    let description = resource
+        .public_fields
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let resource_summary = resource
+        .public_fields
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let resource_provider = resource
+        .public_fields
+        .get("provider")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let resource_fields = resource
+        .public_fields
+        .get("resourceFields")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    ShellxVaultCompatMeta {
+        description: normalize_description(description).unwrap_or(None),
+        user_only: resource.permission == ResourcePermission::UserOnly,
+        resource_kind,
+        resource_summary: normalize_resource_text(resource_summary, "resource summary")
+            .unwrap_or(None),
+        resource_provider: normalize_resource_text(resource_provider, "resource provider")
+            .unwrap_or(None),
+        resource_fields: normalize_resource_fields(resource_fields).unwrap_or_default(),
+    }
 }
 
 fn sanitize_key_meta_for_listing(mut meta: ShellxVaultKeyMeta) -> ShellxVaultKeyMeta {
@@ -2212,21 +2408,76 @@ async fn save_compat_item(
         Ok(None) => now,
         Err(e) => return Err(e.to_string()),
     };
-    let item = VaultItem {
-        id,
-        kind: "note".into(),
-        title: key.to_string(),
-        username: String::new(),
-        password: value.to_string(),
-        url: String::new(),
-        notes: compat_notes(meta),
-        created_ms,
-        updated_ms: now,
-    };
+    let item = typed_resource_item_from_compat(key, value, meta, id, created_ms, now);
     items::save_item(&session.api, &session.master, &session.device, &item)
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+fn typed_resource_item_from_compat(
+    key: &str,
+    value: &str,
+    meta: ShellxVaultCompatMeta,
+    id: String,
+    created_ms: i64,
+    updated_ms: i64,
+) -> VaultItem {
+    let mut public_fields = BTreeMap::new();
+    if let Some(description) = meta.description {
+        public_fields.insert("description".to_string(), Value::String(description));
+    }
+    if let Some(summary) = meta.resource_summary {
+        public_fields.insert("summary".to_string(), Value::String(summary));
+    }
+    if let Some(provider) = meta.resource_provider {
+        public_fields.insert("provider".to_string(), Value::String(provider));
+    }
+    if !meta.resource_fields.is_empty() {
+        public_fields.insert(
+            "resourceFields".to_string(),
+            Value::Array(
+                meta.resource_fields
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    let kind = match meta.resource_kind {
+        VaultResourceKind::Secret => BrokerVaultResourceKind::Secret,
+        VaultResourceKind::ProfileCard => BrokerVaultResourceKind::ProfileCard,
+        VaultResourceKind::EmailInbox => BrokerVaultResourceKind::EmailInbox,
+        VaultResourceKind::StripeAgentWallet => {
+            public_fields
+                .entry("sourceKind".to_string())
+                .or_insert_with(|| Value::String("stripeAgentWallet".to_string()));
+            public_fields
+                .entry("provider".to_string())
+                .or_insert_with(|| Value::String("stripe".to_string()));
+            BrokerVaultResourceKind::AgentWallet
+        }
+    };
+    let mut secret_fields = BTreeMap::new();
+    secret_fields.insert("value".to_string(), value.to_string());
+    VaultResource {
+        id,
+        schema_version: VAULT_RESOURCE_SCHEMA_VERSION.to_string(),
+        kind,
+        label: key.to_string(),
+        permission: if meta.user_only {
+            ResourcePermission::UserOnly
+        } else {
+            ResourcePermission::VisibleAsk
+        },
+        public_fields,
+        secret_fields,
+        custom_fields: Vec::new(),
+        created_ms,
+        updated_ms,
+        extra: BTreeMap::new(),
+    }
+    .to_vault_item()
 }
 
 #[cfg(test)]
@@ -2257,16 +2508,95 @@ mod tests {
     }
 
     #[test]
-    fn profile_dir_prefers_stable_shellx_home() {
+    fn profile_dir_prefers_shared_vault_config_home_and_keeps_shellx_legacy_candidate() {
         let selected = home_dir_from_env(
             Some(OsString::from("/tmp/home")),
             Some(OsString::from("C:\\Users\\User")),
         )
         .expect("home dir");
-        let profile_dir = selected.join(".shellx").join("shellx-vault");
+        let profile_dir =
+            vault_broker::profile::resolve_profile_dirs(vault_broker::profile::ProfileDirInput {
+                platform: vault_broker::profile::ProfilePlatform::Linux,
+                home: Some(selected.clone()),
+                xdg_config_home: None,
+                appdata: None,
+                override_dir: None,
+            })
+            .unwrap()
+            .canonical_dir;
 
-        assert!(profile_dir.ends_with(Path::new(".shellx").join("shellx-vault")));
-        assert!(!profile_dir.ends_with(Path::new(".config").join("shellx-vault")));
+        assert!(profile_dir.ends_with(Path::new(".config").join("shellx-vault")));
+        assert!(legacy_profile_dir_candidates(&profile_dir)
+            .iter()
+            .any(|candidate| candidate.ends_with(Path::new(".shellx").join("shellx-vault"))));
+    }
+
+    #[test]
+    fn profile_file_uses_broker_canonical_name_and_imports_shellx_legacy_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let canonical = profile_path(dir.path());
+        let legacy = shellx_legacy_profile_path(dir.path());
+        fs::write(
+            &legacy,
+            serde_json::json!({
+                "mode": "local",
+                "serverUrl": "http://127.0.0.1:12345",
+                "repo": "default",
+                "token": "redacted-token",
+                "keyfileJson": "{\"redacted\":true}",
+                "recovery": {
+                    "confirmed": true,
+                    "confirmedAtMs": 123,
+                    "pendingConfirmationId": null
+                }
+            })
+            .to_string(),
+        )
+        .expect("write legacy profile");
+
+        assert_eq!(
+            canonical.file_name().and_then(|name| name.to_str()),
+            Some("profile.json")
+        );
+        migrate_legacy_profile_dir(dir.path()).expect("migrate legacy profile");
+
+        assert!(
+            canonical.exists(),
+            "legacy shellx-profile.json should copy to profile.json"
+        );
+        let profile = read_persisted_profile(&canonical).expect("profile");
+        assert_eq!(
+            profile.server_url.as_deref(),
+            Some("http://127.0.0.1:12345")
+        );
+        assert_eq!(profile.mode, ShellxVaultMode::Local);
+    }
+
+    #[test]
+    fn standalone_profile_shape_loads_as_external_shellx_profile() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let canonical = profile_path(dir.path());
+        fs::write(
+            &canonical,
+            serde_json::json!({
+                "server": "https://vault.example.test",
+                "repo": "main",
+                "token": "redacted-token",
+                "keyfileJson": "{\"redacted\":true}"
+            })
+            .to_string(),
+        )
+        .expect("write standalone profile");
+
+        let profile = read_persisted_profile(&canonical).expect("profile");
+        assert_eq!(profile.mode, ShellxVaultMode::External);
+        assert_eq!(
+            profile.server_url.as_deref(),
+            Some("https://vault.example.test")
+        );
+        assert_eq!(profile.repo, "main");
+        assert_eq!(profile.token.as_deref(), Some("redacted-token"));
+        assert!(profile.recovery.confirmed);
     }
 
     #[test]
@@ -2321,7 +2651,7 @@ mod tests {
     #[test]
     fn persisted_profile_loads_configured_locked_status() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("shellx-profile.json");
+        let path = profile_path(dir.path());
         let profile = VaultProfile {
             mode: ShellxVaultMode::Local,
             server_url: Some("http://127.0.0.1:12345".to_string()),
@@ -2354,7 +2684,7 @@ mod tests {
     #[test]
     fn persisted_legacy_profile_defaults_remember_device_on() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("shellx-profile.json");
+        let path = shellx_legacy_profile_path(dir.path());
         fs::write(
             &path,
             serde_json::json!({
@@ -2384,7 +2714,7 @@ mod tests {
     #[tokio::test]
     async fn debug_reset_e2e_clears_persisted_setup_state() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("shellx-profile.json");
+        let path = profile_path(dir.path());
         let local_server_dir = dir.path().join("local-vault-server");
         fs::create_dir_all(&local_server_dir).expect("local server dir");
         fs::write(local_server_dir.join("sentinel.txt"), "old-store").expect("local sentinel");
@@ -2423,7 +2753,7 @@ mod tests {
     #[tokio::test]
     async fn debug_reset_e2e_continues_when_remembered_device_delete_fails() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("shellx-profile.json");
+        let path = profile_path(dir.path());
         let local_server_dir = dir.path().join("local-vault-server");
         fs::create_dir_all(&local_server_dir).expect("local server dir");
         fs::write(local_server_dir.join("sentinel.txt"), "old-store").expect("local sentinel");
@@ -2756,9 +3086,9 @@ mod tests {
         .expect("write legacy grants");
 
         let grants = read_persisted_grants(&path).expect("read legacy grants");
-        let grant = grants.get("grant-legacy").expect("legacy grant loaded");
+        let grant = grants.grant("grant-legacy").expect("legacy grant loaded");
         assert!(
-            !grant.approved,
+            grant.status == BrokerGrantStatus::Pending,
             "legacy grants without an explicit approved field must require fresh operator approval"
         );
         assert_eq!(
