@@ -6,6 +6,7 @@ members = [
     "crates/vault-core",
     "crates/vault-server",
     "crates/vault-client",
+    "crates/vault-broker",
 ]
 
 [workspace.package]
@@ -19,6 +20,7 @@ authors = ["Martins"]
 [workspace.dependencies]
 vault-core = { path = "crates/vault-core" }
 vault-client = { path = "crates/vault-client" }
+vault-broker = { path = "crates/vault-broker" }
 
 # crypto
 argon2 = "0.5.3"

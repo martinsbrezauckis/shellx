@@ -99,6 +99,7 @@ arboard = "3"
 vault-core = { path = "../vendor/shellx-vault/crates/vault-core" }
 vault-client = { path = "../vendor/shellx-vault/crates/vault-client" }
 vault-server = { path = "../vendor/shellx-vault/crates/vault-server" }
+vault-broker = { path = "../vendor/shellx-vault/crates/vault-broker" }
 blake3 = "1"
 hex = "0.4"
 tauri-plugin-updater = "2"
