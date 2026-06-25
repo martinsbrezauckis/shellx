@@ -92,15 +92,15 @@ fn capsules_hydrate_into_normal_workspace_collect_return_and_preview_apply() {
     let hydrated = registry
         .hydrate_capsule(
             "capsule-3",
-            "mac-mini",
-            "/Users/martin/work/release-studio",
+            "mac-workstation",
+            "/workspace/release-studio",
             21,
         )
         .unwrap();
-    assert_eq!(hydrated.target_device.as_deref(), Some("mac-mini"));
+    assert_eq!(hydrated.target_device.as_deref(), Some("mac-workstation"));
     assert_eq!(
         hydrated.workspace_path.as_deref(),
-        Some("/Users/martin/work/release-studio")
+        Some("/workspace/release-studio")
     );
 
     let returned = registry

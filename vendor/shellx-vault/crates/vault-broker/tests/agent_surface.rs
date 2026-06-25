@@ -60,16 +60,16 @@ fn device_registry_registers_revokes_and_lists_active_machines() {
         revoked_at_ms: None,
     });
     devices.register(VaultDevice {
-        device_id: "mac-mini".to_string(),
-        label: "Mac mini".to_string(),
+        device_id: "mac-workstation".to_string(),
+        label: "Mac workstation".to_string(),
         kind: DeviceKind::Macos,
         created_at_ms: 11,
         revoked_at_ms: None,
     });
-    devices.revoke("mac-mini", 12).unwrap();
+    devices.revoke("mac-workstation", 12).unwrap();
 
     assert!(devices.is_active("workstation"));
-    assert!(!devices.is_active("mac-mini"));
+    assert!(!devices.is_active("mac-workstation"));
     assert_eq!(
         devices
             .active_devices()
