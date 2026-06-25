@@ -161,6 +161,13 @@ pub struct SyncSetRegistry {
     receipts: Vec<SyncSetReceipt>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSetRegistrySnapshot {
+    pub sets: BTreeMap<String, SyncSet>,
+    pub receipts: Vec<SyncSetReceipt>,
+}
+
 impl SyncSetRegistry {
     pub fn insert(&mut self, sync_set: SyncSet) {
         self.sets.insert(sync_set.sync_set_id.clone(), sync_set);
@@ -344,6 +351,20 @@ impl SyncSetRegistry {
 
     pub fn receipts(&self) -> &[SyncSetReceipt] {
         &self.receipts
+    }
+
+    pub fn to_snapshot(&self) -> SyncSetRegistrySnapshot {
+        SyncSetRegistrySnapshot {
+            sets: self.sets.clone(),
+            receipts: self.receipts.clone(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: SyncSetRegistrySnapshot) -> Self {
+        Self {
+            sets: snapshot.sets,
+            receipts: snapshot.receipts,
+        }
     }
 
     fn set_mode(

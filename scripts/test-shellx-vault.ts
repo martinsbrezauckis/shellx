@@ -491,6 +491,11 @@ const vendoredBroker = join(root, "vendor", "shellx-vault", "crates", "vault-bro
 if (existsSync(standaloneBroker)) {
   assertTreesEqual(standaloneBroker, vendoredBroker, "vendored vault-broker");
 }
+const standaloneClientExport = join(root, "..", "shellx-vault", "crates", "vault-client", "src", "export.rs");
+const vendoredClientExport = join(root, "vendor", "shellx-vault", "crates", "vault-client", "src", "export.rs");
+if (existsSync(standaloneClientExport)) {
+  assertFileEqual(standaloneClientExport, vendoredClientExport, "vendored vault-client export.rs");
+}
 
 const vaultPanel = vaultPanelSource;
 if (
@@ -550,6 +555,17 @@ function assertTreesEqual(left: string, right: string, label: string): void {
     if (leftBody !== rightBody) {
       throw new Error(`${label} file ${entry} is out of sync with standalone Vault broker`);
     }
+  }
+}
+
+function assertFileEqual(left: string, right: string, label: string): void {
+  if (!existsSync(right)) {
+    throw new Error(`${label} is missing from the ShellX vendored Vault workspace`);
+  }
+  const leftBody = readFileSync(left, "utf8");
+  const rightBody = readFileSync(right, "utf8");
+  if (leftBody !== rightBody) {
+    throw new Error(`${label} is out of sync with standalone Vault`);
   }
 }
 

@@ -14,6 +14,7 @@
 //! Callers: tauri-plugin-vault (desktop UI), future web parity.
 
 use anyhow::{bail, Context, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use vault_core::keys::KdfParams;
 use vault_core::{validate_rel_path, MasterKey};
@@ -24,6 +25,11 @@ use crate::items::{entry_bytes, head_snapshot, VaultItem};
 
 /// AAD for the secrets-export container. Frozen — format identity.
 const EXPORT_AAD: &[u8] = b"sxvault-secrets-export-v1";
+pub const BACKUP_PAYLOAD_SCHEMA_VERSION: &str = "shellx-vault-encrypted-backup-v1";
+
+fn backup_payload_aad(payload_kind: &str) -> Vec<u8> {
+    format!("sxvault-encrypted-backup-v1:{payload_kind}").into_bytes()
+}
 
 /// The portable secrets-backup container (greppable JSON, like keyfiles).
 #[derive(Serialize, Deserialize)]
@@ -38,6 +44,97 @@ pub struct SecretsBackup {
     /// user can identify a backup file. Deliberately no titles here.
     pub item_count: usize,
     pub exported_ms: i64,
+}
+
+/// Generic encrypted backup container for production Vault subsystems.
+///
+/// The envelope is readable enough to identify kind/version, but all
+/// subsystem payload bytes are sealed under the user-chosen backup
+/// passphrase. Callers keep domain schemas outside vault-client to avoid
+/// a client→broker dependency cycle.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupPayloadEnvelope {
+    pub schema_version: String,
+    pub payload_kind: String,
+    pub kdf: KdfParams,
+    pub salt: String,
+    pub sealed: String,
+    pub exported_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupPayloadHeader {
+    pub schema_version: String,
+    pub payload_kind: String,
+    pub exported_ms: i64,
+}
+
+pub fn seal_backup_payload<T: Serialize>(
+    payload_kind: &str,
+    payload: &T,
+    backup_passphrase: &str,
+) -> Result<Vec<u8>> {
+    if payload_kind.trim().is_empty() {
+        bail!("backup payload kind must not be empty");
+    }
+    if backup_passphrase.is_empty() {
+        bail!("backup passphrase must not be empty");
+    }
+    let kdf = KdfParams::default();
+    let salt: [u8; 16] = vault_core::random_bytes();
+    let key = vault_core::keys::derive_passphrase_key(backup_passphrase, &salt, &kdf)
+        .map_err(|e| anyhow::anyhow!("KDF: {e}"))?;
+    let plaintext = serde_json::to_vec(payload)?;
+    let aad = backup_payload_aad(payload_kind);
+    let sealed = vault_core::crypto::seal(&key, &aad, &plaintext);
+    let envelope = BackupPayloadEnvelope {
+        schema_version: BACKUP_PAYLOAD_SCHEMA_VERSION.to_string(),
+        payload_kind: payload_kind.to_string(),
+        kdf,
+        salt: hex::encode(salt),
+        sealed: hex::encode(sealed),
+        exported_ms: now_ms(),
+    };
+    Ok(serde_json::to_vec_pretty(&envelope)?)
+}
+
+pub fn inspect_backup_payload(bytes: &[u8]) -> Result<BackupPayloadHeader> {
+    let envelope: BackupPayloadEnvelope =
+        serde_json::from_slice(bytes).context("not a ShellX Vault encrypted backup file")?;
+    Ok(BackupPayloadHeader {
+        schema_version: envelope.schema_version,
+        payload_kind: envelope.payload_kind,
+        exported_ms: envelope.exported_ms,
+    })
+}
+
+pub fn open_backup_payload<T: DeserializeOwned>(
+    bytes: &[u8],
+    backup_passphrase: &str,
+    expected_payload_kind: &str,
+) -> Result<T> {
+    let envelope: BackupPayloadEnvelope =
+        serde_json::from_slice(bytes).context("not a ShellX Vault encrypted backup file")?;
+    if envelope.schema_version != BACKUP_PAYLOAD_SCHEMA_VERSION {
+        bail!("unsupported backup schema {}", envelope.schema_version);
+    }
+    if envelope.payload_kind != expected_payload_kind {
+        bail!(
+            "backup payload kind mismatch: expected {}, got {}",
+            expected_payload_kind,
+            envelope.payload_kind
+        );
+    }
+    let salt = hex::decode(&envelope.salt).context("corrupted salt")?;
+    let key = vault_core::keys::derive_passphrase_key(backup_passphrase, &salt, &envelope.kdf)
+        .map_err(|e| anyhow::anyhow!("KDF: {e}"))?;
+    let sealed = hex::decode(&envelope.sealed).context("corrupted payload")?;
+    let aad = backup_payload_aad(&envelope.payload_kind);
+    let plain = vault_core::crypto::open(&key, &aad, &sealed)
+        .map_err(|_| anyhow::anyhow!("wrong backup passphrase (or corrupted backup)"))?;
+    Ok(serde_json::from_slice(&plain)?)
 }
 
 /// Seal all items into a portable backup blob (the caller writes it to
@@ -194,5 +291,36 @@ mod tests {
     #[test]
     fn empty_export_passphrase_refused() {
         assert!(seal_secrets_backup(&[item("x")], "").is_err());
+    }
+
+    #[test]
+    fn generic_backup_payload_roundtrip_and_header_inspection() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+        struct Payload {
+            secret: String,
+        }
+
+        let blob = seal_backup_payload(
+            "test-payload",
+            &Payload {
+                secret: "sealed-value".to_string(),
+            },
+            "backup-pass",
+        )
+        .unwrap();
+        let header = inspect_backup_payload(&blob).unwrap();
+        assert_eq!(header.schema_version, BACKUP_PAYLOAD_SCHEMA_VERSION);
+        assert_eq!(header.payload_kind, "test-payload");
+        assert!(String::from_utf8_lossy(&blob).contains("test-payload"));
+        assert!(!String::from_utf8_lossy(&blob).contains("sealed-value"));
+        assert!(open_backup_payload::<Payload>(&blob, "wrong", "test-payload").is_err());
+        assert!(open_backup_payload::<Payload>(&blob, "backup-pass", "other-kind").is_err());
+        let back = open_backup_payload::<Payload>(&blob, "backup-pass", "test-payload").unwrap();
+        assert_eq!(
+            back,
+            Payload {
+                secret: "sealed-value".to_string()
+            }
+        );
     }
 }
