@@ -366,6 +366,19 @@ impl GrantPolicy {
         }
     }
 
+    pub fn from_snapshot_with_receipts(
+        snapshot: GrantPolicySnapshot,
+        receipts: Vec<VaultReceipt>,
+    ) -> Self {
+        Self {
+            actors: snapshot.actors,
+            resource_permissions: snapshot.resource_permissions,
+            grants: snapshot.grants,
+            receipts,
+            next_grant_seq: snapshot.next_grant_seq,
+        }
+    }
+
     pub fn from_shellx_legacy_grants_json(raw: &str) -> Result<Self, serde_json::Error> {
         let legacy: BTreeMap<String, LegacyShellxPersistedGrant> = serde_json::from_str(raw)?;
         let mut policy = GrantPolicy::default();

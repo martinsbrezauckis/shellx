@@ -150,6 +150,25 @@ pub struct SafeFolder {
     receipts: Vec<SafeFolderReceipt>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SafeFolderSnapshot {
+    pub entries: Vec<SafeFolderBackupEntry>,
+    pub receipts: Vec<SafeFolderReceipt>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SafeFolderBackupEntry {
+    pub safe_id: String,
+    pub manifest_path: String,
+    pub media_type: String,
+    pub byte_len: u64,
+    pub content_hash: String,
+    pub imported_at_ms: i64,
+    pub sealed_hex: String,
+}
+
 impl SafeFolder {
     pub fn import_plaintext(
         &mut self,
@@ -350,6 +369,49 @@ impl SafeFolder {
             receipt_count: self.receipts.len(),
             secret_exposed: false,
         }
+    }
+
+    pub fn to_snapshot(&self) -> SafeFolderSnapshot {
+        SafeFolderSnapshot {
+            entries: self
+                .entries
+                .values()
+                .map(|entry| SafeFolderBackupEntry {
+                    safe_id: entry.safe_id.clone(),
+                    manifest_path: entry.manifest_path.clone(),
+                    media_type: entry.media_type.clone(),
+                    byte_len: entry.byte_len,
+                    content_hash: entry.content_hash.clone(),
+                    imported_at_ms: entry.imported_at_ms,
+                    sealed_hex: hex::encode(&entry.sealed_bytes),
+                })
+                .collect(),
+            receipts: self.receipts.clone(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: SafeFolderSnapshot) -> Result<Self> {
+        let mut entries = BTreeMap::new();
+        for entry in snapshot.entries {
+            let sealed_bytes = hex::decode(&entry.sealed_hex)
+                .with_context(|| format!("corrupted safe folder object {}", entry.safe_id))?;
+            entries.insert(
+                entry.safe_id.clone(),
+                SafeFolderEntry {
+                    safe_id: entry.safe_id,
+                    manifest_path: entry.manifest_path,
+                    media_type: entry.media_type,
+                    byte_len: entry.byte_len,
+                    content_hash: entry.content_hash,
+                    imported_at_ms: entry.imported_at_ms,
+                    sealed_bytes,
+                },
+            );
+        }
+        Ok(Self {
+            entries,
+            receipts: snapshot.receipts,
+        })
     }
 
     fn seal_entry(

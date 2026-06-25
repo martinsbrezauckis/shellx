@@ -189,6 +189,13 @@ pub struct CapsuleRegistry {
     receipts: Vec<CapsuleReceipt>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CapsuleRegistrySnapshot {
+    pub capsules: BTreeMap<String, ProjectCapsule>,
+    pub receipts: Vec<CapsuleReceipt>,
+}
+
 impl CapsuleRegistry {
     #[allow(clippy::too_many_arguments)]
     pub fn create_capsule(
@@ -368,6 +375,21 @@ impl CapsuleRegistry {
 
     pub fn receipts(&self) -> &[CapsuleReceipt] {
         &self.receipts
+    }
+
+    pub fn to_snapshot(&self) -> CapsuleRegistrySnapshot {
+        CapsuleRegistrySnapshot {
+            capsules: self.capsules.clone(),
+            receipts: self.receipts.clone(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: CapsuleRegistrySnapshot) -> Self {
+        Self {
+            capsules: snapshot.capsules,
+            previews: BTreeMap::new(),
+            receipts: snapshot.receipts,
+        }
     }
 
     fn push_receipt(
