@@ -2481,7 +2481,7 @@ struct HealthResponse {
     debug_api_port_camel: u16,
 }
 
-async fn health(State(_s): State<ApiState>) -> impl IntoResponse {
+async fn health() -> impl IntoResponse {
     let port = debug_api_port();
     Json(HealthResponse {
         ok: true,
