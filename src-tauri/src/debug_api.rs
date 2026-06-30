@@ -6,7 +6,7 @@
 // development loop without a human paste-the-console step.
 //
 // Core endpoints
-// GET /health — { ok: true, debugApiPort }
+// GET /health — { ok: true, debug_api_port, debugApiPort, appVersion, debugApiVersion }
 // GET /events/recent?limit=N — JSON array of the last N raw events
 // GET /events — WebSocket. Sends recent backlog then streams
 // every subsequent raw event as a JSON frame.
@@ -2472,13 +2472,23 @@ impl ApiState {
 #[derive(Serialize)]
 struct HealthResponse {
     ok: bool,
+    #[serde(rename = "appVersion")]
+    app_version: &'static str,
+    #[serde(rename = "debugApiVersion")]
+    debug_api_version: &'static str,
     debug_api_port: u16,
+    #[serde(rename = "debugApiPort")]
+    debug_api_port_camel: u16,
 }
 
 async fn health(State(_s): State<ApiState>) -> impl IntoResponse {
+    let port = debug_api_port();
     Json(HealthResponse {
         ok: true,
-        debug_api_port: debug_api_port(),
+        app_version: env!("CARGO_PKG_VERSION"),
+        debug_api_version: DEBUG_API_VERSION,
+        debug_api_port: port,
+        debug_api_port_camel: port,
     })
 }
 
