@@ -145,14 +145,18 @@ async function screenshot(base: string, token: string, outDir: string, name: str
 }
 
 async function waitForFreshActiveTab(base: string, token: string, previousActiveTabId: string | null): Promise<string> {
-  const deadline = Date.now() + 8_000;
+  const deadline = Date.now() + 20_000;
+  let lastActiveTabId: string | null = null;
   while (Date.now() < deadline) {
     const ui = await getJson<{ activeTabId?: string | null }>(base, token, "/state/ui");
     const activeTabId = ui.activeTabId ?? null;
+    lastActiveTabId = activeTabId;
     if (activeTabId && activeTabId !== previousActiveTabId) return activeTabId;
     await sleep(150);
   }
-  throw new Error("fresh debug UI session tab did not become active");
+  throw new Error(
+    `fresh debug UI session tab did not become active; previous=${previousActiveTabId ?? "(none)"} last=${lastActiveTabId ?? "(none)"}`,
+  );
 }
 
 async function openFreshComposerTab(base: string, token: string): Promise<string> {
@@ -178,7 +182,15 @@ async function main(): Promise<void> {
   console.log(`debugApi=${base}`);
   console.log(`shellxHome=${shellxHome}`);
 
-  await postUi(base, token, { openModal: "close", composerMenu: "close", bottomTab: "Chat" });
+  await postUi(base, token, {
+    openModal: "close",
+    composerMenu: "close",
+    bottomTab: "Chat",
+    cwdPicker: { open: false },
+    vaultRequestCenterOpen: false,
+    debugActionResults: [],
+    debugHighlights: [],
+  });
   const freshTabId = await openFreshComposerTab(base, token);
 
   const steps: Step[] = [

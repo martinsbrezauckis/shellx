@@ -198,7 +198,7 @@ assert(
     files.debugSurfaceTest.includes('{ name: "cwd-picker", body: { openModal: "close", cwdPicker: { path: "/", label: "Debug cwd" }') &&
     files.debugSurfaceTest.includes('name: "palette-filtered"') &&
     files.debugSurfaceTest.includes('name: "composer-typed"') &&
-    files.debugSurfaceTest.includes('{ openModal: "close", composerMenu: "close", bottomTab: "Chat" }') &&
+    files.debugSurfaceTest.includes('vaultRequestCenterOpen: false') &&
     files.debugSurfaceTest.includes('name: "composer-connection"') &&
     files.debugSurfaceTest.includes('{ name: "debug-click-preview-close", body: { debugClick: "button.preview-center-close" } }') &&
     files.debugSurfaceTest.includes('name: "click-selector-alias"') &&
