@@ -16,6 +16,7 @@ import { FindPopover, type ChatHit } from "./FindPopover";
 import { ShellIcon } from "./icons";
 import { VaultPasswordGenerator } from "./VaultPasswordGenerator";
 import { inTauri } from "../lib/tauri-bridge";
+import type { ThemeMode } from "./Settings";
 import type { OutsideConnectorInboxSummary } from "../lib/outside-connectors";
 import type { VaultRequestCenterAction, VaultRequestCenterItem } from "../lib/vault-request-center";
 import type { VaultPanelIntent } from "../lib/vault-ui";
@@ -54,11 +55,14 @@ export function Header({
   onAutonomyChange,
   onWorkspaceClick,
   onOpenSettings,
+  theme,
+  onThemeToggle,
   onOpenPlugins,
   onOpenConnectorInbox,
   outsideConnectorInbox,
   vaultRequestCenter,
   vaultRequestCenterOpenSeq = 0,
+  vaultRequestCenterCloseSeq = 0,
   onOpenVault,
   onOpenBrowser,
   onOpenChat,
@@ -76,6 +80,10 @@ export function Header({
   onAutonomyChange: (mode: AutonomyMode) => void;
   onWorkspaceClick: () => void;
   onOpenSettings?: () => void;
+ /** Current ShellX chrome theme; used by the compact header toggle. */
+  theme?: ThemeMode;
+ /** Toggles between the default dark theme and the bright theme. */
+  onThemeToggle?: () => void;
  /** Plugins icon opens the PluginsModal. */
   onOpenPlugins?: () => void;
  /** Connector inbox opens recent Telegram/Discord inbound events. */
@@ -92,6 +100,7 @@ export function Header({
     ) => void;
   };
   vaultRequestCenterOpenSeq?: number;
+  vaultRequestCenterCloseSeq?: number;
  /** Opens the standalone ShellX Vault workspace. */
   onOpenVault?: (intent?: VaultPanelIntent) => void;
  /** Opens the ShellX-owned browser/runtime window. */
@@ -145,6 +154,13 @@ export function Header({
       setVaultRequestsOpen(true);
     }
   }, [vaultRequestCenterOpenSeq]);
+
+  useEffect(() => {
+    if (vaultRequestCenterCloseSeq > 0) {
+      setVaultRequestsOpen(false);
+      setVaultPasswordGeneratorOpen(false);
+    }
+  }, [vaultRequestCenterCloseSeq]);
 
   useEffect(() => {
     void refreshVaultStatus();
@@ -489,6 +505,19 @@ export function Header({
             aria-label="Open plugins"
           >
             <ShellIcon name="plug" size={16} />
+          </button>
+        )}
+        {onThemeToggle && (
+          <button
+            type="button"
+            className={`hdr-icon hdr-theme-toggle ${theme === "bright" ? "active" : ""}`}
+            onClick={onThemeToggle}
+            title={theme === "bright" ? "Bright theme - click for dark" : "Dark theme - click for bright"}
+            aria-label={theme === "bright" ? "Switch to dark theme" : "Switch to bright theme"}
+            aria-pressed={theme === "bright"}
+            data-debug-id="header-theme-toggle"
+          >
+            <ShellIcon name={theme === "bright" ? "sun" : "moon"} size={16} />
           </button>
         )}
         {onOpenSettings && (

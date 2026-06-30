@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { shellxHomeCandidates } from "./shellx-debug-paths";
 
@@ -14,6 +14,11 @@ type Step = {
   body: Json;
   expectedSelectors?: string[];
 };
+type DebugConnection = {
+  shellxHome: string;
+  base: string;
+  token: string;
+};
 
 function readTrim(path: string): string | null {
   try {
@@ -23,14 +28,28 @@ function readTrim(path: string): string | null {
   }
 }
 
-function findShellxHome(): string {
-  const candidates = shellxHomeCandidates();
-  for (const dir of candidates) {
-    if (existsSync(join(dir, "debug-api.port")) || existsSync(join(dir, "shellxagent.token"))) {
-      return dir;
+async function resolveDebugConnection(): Promise<DebugConnection> {
+  const baseOverride = process.env.SHELLX_DEBUG_BASE?.trim();
+  const portOverride = process.env.SHELLX_DEBUG_PORT?.trim();
+  const tokenOverride = process.env.SHELLX_DEBUG_TOKEN?.trim();
+  const errors: string[] = [];
+  for (const dir of shellxHomeCandidates()) {
+    const port = portOverride || readTrim(join(dir, "debug-api.port"));
+    const token = tokenOverride || readTrim(join(dir, "shellxagent.token"));
+    if (!port || !token) {
+      errors.push(`${dir}: missing ${!port ? "debug-api.port" : "shellxagent.token"}`);
+      continue;
+    }
+    const base = baseOverride || `http://127.0.0.1:${port}`;
+    try {
+      const res = await request(base, token, "/health");
+      if (res.ok) return { shellxHome: dir, base, token };
+      errors.push(`${dir}: /health ${res.status}`);
+    } catch (error) {
+      errors.push(`${dir}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return candidates[0] ?? ".shellx";
+  throw new Error(`ShellX debug API is not reachable from candidate homes: ${errors.join("; ")}`);
 }
 
 async function request(
@@ -89,7 +108,7 @@ async function waitForDebugSelectors(
   selectors: string[],
 ): Promise<void> {
   const expectedIds = selectors.map((_, index) => `${name}-${index}`);
-  const deadline = Date.now() + 8_000;
+  const deadline = Date.now() + 20_000;
   let lastResults: DebugHighlightResult[] = [];
   while (Date.now() < deadline) {
     const ui = await getJson<{ debugHighlightResults?: DebugHighlightResult[] }>(base, token, "/state/ui");
@@ -149,14 +168,11 @@ async function openFreshComposerTab(base: string, token: string): Promise<string
 }
 
 async function main(): Promise<void> {
-  const shellxHome = findShellxHome();
-  const port = process.env.SHELLX_DEBUG_PORT ?? readTrim(join(shellxHome, "debug-api.port"));
-  const token = process.env.SHELLX_DEBUG_TOKEN ?? readTrim(join(shellxHome, "shellxagent.token"));
-  if (!port) throw new Error(`debug-api.port not found under ${shellxHome}`);
-  if (!token) throw new Error(`shellxagent.token not found under ${shellxHome}`);
-  const base = process.env.SHELLX_DEBUG_BASE ?? `http://127.0.0.1:${port}`;
+  const { shellxHome, base, token } = await resolveDebugConnection();
   const outDir = process.env.SHELLX_DEBUG_SURFACE_OUT ?? join(process.cwd(), "tmp", "debug-ui-surfaces");
   mkdirSync(outDir, { recursive: true });
+  console.log(`debugApi=${base}`);
+  console.log(`shellxHome=${shellxHome}`);
 
   await postUi(base, token, { openModal: "close", composerMenu: "close", bottomTab: "Chat" });
   const freshTabId = await openFreshComposerTab(base, token);

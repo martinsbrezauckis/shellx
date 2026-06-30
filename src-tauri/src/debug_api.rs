@@ -29,7 +29,7 @@ use std::sync::{Arc, OnceLock};
 use std::sync::{Mutex as StdMutex, MutexGuard as StdMutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::http::{HeaderValue, Method};
+use axum::http::{header::CONTENT_TYPE, HeaderValue, Method};
 use axum::{
     body::Body,
     extract::{
@@ -494,6 +494,56 @@ pub struct UiState {
     /// keeping separate buckets prevents one surface from masking the other.
     #[serde(default, rename = "debugHighlightResultsBySurface")]
     pub debug_highlight_results_by_surface: HashMap<String, Vec<DebugHighlightResult>>,
+    /// Renderer-reported receipts for debug-driver actions such as synthetic
+    /// clicks. Tests use this to distinguish "command not consumed" from
+    /// "command consumed but target/action failed".
+    #[serde(default, rename = "debugActionResults")]
+    pub debug_action_results: Vec<serde_json::Value>,
+    /// One-revision renderer command fallback for debug-driver app tests.
+    /// These are also emitted in `debug-ui-state-patch`; keeping them in the
+    /// snapshot lets the renderer recover if the live event frame is missed.
+    #[serde(
+        default,
+        rename = "composerMenu",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub composer_menu: Option<String>,
+    #[serde(default, rename = "openModal", skip_serializing_if = "Option::is_none")]
+    pub open_modal: Option<String>,
+    #[serde(
+        default,
+        rename = "vaultRequestCenterOpen",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub vault_request_center_open: Option<bool>,
+    #[serde(
+        default,
+        rename = "debugClick",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub debug_click: Option<serde_json::Value>,
+    #[serde(
+        default,
+        rename = "debugInput",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub debug_input: Option<serde_json::Value>,
+    #[serde(default, rename = "debugDrag", skip_serializing_if = "Option::is_none")]
+    pub debug_drag: Option<serde_json::Value>,
+    #[serde(
+        default,
+        rename = "debugSurface",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub debug_surface: Option<String>,
+    #[serde(
+        default,
+        rename = "clickSelector",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub click_selector: Option<serde_json::Value>,
+    #[serde(default, rename = "cwdPicker", skip_serializing_if = "Option::is_none")]
+    pub cwd_picker: Option<serde_json::Value>,
     /// Monotonic mutation counter for screenshot/debug drivers. A driver can
     /// read this before an action and verify it only changed as expected.
     #[serde(default, rename = "uiRevision")]
@@ -677,6 +727,15 @@ impl DebugHub {
     /// are independent.
     pub fn ui_apply(&self, patch: UiStatePatch) {
         let mut s = lock_or_recover(&self.ui_state, "DebugHub ui_state");
+        let composer_menu = patch.composer_menu.clone();
+        let open_modal = patch.open_modal.clone();
+        let vault_request_center_open = patch.vault_request_center_open;
+        let debug_click = patch.debug_click.clone();
+        let debug_input = patch.debug_input.clone();
+        let debug_drag = patch.debug_drag.clone();
+        let debug_surface_value = patch.debug_surface.clone();
+        let click_selector = patch.click_selector.clone();
+        let cwd_picker = patch.cwd_picker.clone();
         let source = patch
             .source
             .as_deref()
@@ -761,6 +820,18 @@ impl DebugHub {
             }
             s.debug_highlight_results = cleaned;
         }
+        if let Some(results) = patch.debug_action_results {
+            s.debug_action_results = results.into_iter().take(24).collect();
+        }
+        s.composer_menu = composer_menu;
+        s.open_modal = open_modal;
+        s.vault_request_center_open = vault_request_center_open;
+        s.debug_click = debug_click;
+        s.debug_input = debug_input;
+        s.debug_drag = debug_drag;
+        s.debug_surface = debug_surface_value;
+        s.click_selector = click_selector;
+        s.cwd_picker = cwd_picker;
         s.ui_revision = s.ui_revision.saturating_add(1);
         s.last_ui_patch_ms = Some(now_ms());
         s.last_ui_patch_source = Some(source);
@@ -819,6 +890,9 @@ pub struct UiStatePatch {
     /// Renderer-reported resolution state for the current callouts.
     #[serde(rename = "debugHighlightResults", default)]
     pub debug_highlight_results: Option<Vec<DebugHighlightResult>>,
+    /// Renderer-reported receipts for debug-driver actions.
+    #[serde(rename = "debugActionResults", default)]
+    pub debug_action_results: Option<Vec<serde_json::Value>>,
     /// Debug-driver renderer command for composer popovers such as
     /// connection/agent/branch. Relayed only; not persisted in UiState.
     #[serde(rename = "composerMenu", default)]
@@ -1816,6 +1890,21 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
 
     let router: Router = Router::new()
         .route("/health", get(health))
+        .route("/shellxagent.json", get(shellxagent_descriptor_http))
+        .route(
+            "/.well-known/shellxagent.json",
+            get(shellxagent_descriptor_http),
+        )
+        .route("/agent-doc", get(agent_doc_manifest_http))
+        .route("/agent-doc/manifest", get(agent_doc_manifest_http))
+        .route(
+            "/agent-doc/skills/shellx-host/SKILL.md",
+            get(shellx_host_skill_doc_http),
+        )
+        .route(
+            "/agent-doc/shellx-host/SKILL.md",
+            get(shellx_host_skill_doc_http),
+        )
         .route("/events/recent", get(events_recent))
         .route("/events", get(events_ws))
         .route("/connect", post(connect))
@@ -2264,6 +2353,56 @@ fn shellxagent_descriptor_value(port: u16, token: Option<&str>) -> serde_json::V
         "rawCdpExposed": false,
         "permissionModel": "ShellX Debug API actions enforce Browser, Vault, lock, receipt, and redaction gates; raw CDP is not exposed.",
     })
+}
+
+fn agent_doc_manifest_value(port: u16) -> serde_json::Value {
+    let base = format!("http://127.0.0.1:{}", port);
+    serde_json::json!({
+        "name": "shellxagent-docs",
+        "version": DEBUG_API_VERSION,
+        "product": "ShellX",
+        "description": "Agent-readable ShellX host documentation bundled into the installed desktop app.",
+        "debugApi": {
+            "descriptor": format!("{}/shellxagent.json", base),
+            "descriptorFile": "~/.shellx/shellxagent.json",
+            "tokenFile": "~/.shellx/shellxagent.token",
+            "portFile": "~/.shellx/debug-api.port",
+            "auth": "bearer"
+        },
+        "docs": [
+            {
+                "id": "shellx-host-skill",
+                "kind": "skill",
+                "url": format!("{}/agent-doc/skills/shellx-host/SKILL.md", base),
+                "installedPaths": [
+                    "~/.grok/skills/shellx-host/SKILL.md",
+                    "~/.codex/skills/shellx-host/SKILL.md",
+                    "~/.claude/skills/shellx-host/SKILL.md",
+                    "~/.shellx/agent-docs/shellx-host/SKILL.md"
+                ]
+            }
+        ],
+        "mcp": {
+            "preferredServer": "shellx-host-http",
+            "toolPrefix": "shellx-host-http__",
+            "fallbackToolPrefix": "grok-shell-host__"
+        }
+    })
+}
+
+async fn shellxagent_descriptor_http() -> impl IntoResponse {
+    Json(shellxagent_descriptor_value(debug_api_port(), None))
+}
+
+async fn agent_doc_manifest_http() -> impl IntoResponse {
+    Json(agent_doc_manifest_value(debug_api_port()))
+}
+
+async fn shellx_host_skill_doc_http() -> impl IntoResponse {
+    (
+        [(CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        crate::skill_install::BUNDLED_SKILL_BODY,
+    )
 }
 
 /// Write `~/.shellx/shellxagent.json` so local tools can discover the
@@ -4521,7 +4660,7 @@ pub(crate) fn sync_browser_active_tab_to_engine(
     crate::shellx_browser::sync_engine_to_tab_preserving_page(app, registry, &tab).map(|_| ())
 }
 
-fn sync_browser_action_navigation_to_engine(
+pub(crate) fn sync_browser_action_navigation_to_engine(
     app: &AppHandle,
     registry: &Arc<crate::shellx_browser::ShellxBrowserRegistry>,
     requested_action: &str,
@@ -6977,7 +7116,7 @@ fn normalize_settings_json(v: serde_json::Value) -> serde_json::Value {
     }
     if matches!(
         src.get("theme").and_then(|v| v.as_str()),
-        Some("black" | "black_warm")
+        Some("black" | "black_warm" | "bright")
     ) {
         dst.insert("theme".into(), src["theme"].clone());
     }
@@ -11574,6 +11713,29 @@ mod snippet_tests {
         );
     }
 
+    #[test]
+    fn agent_doc_manifest_exposes_installer_bundled_skill_and_debug_descriptor() {
+        let manifest = agent_doc_manifest_value(5759);
+        let raw = serde_json::to_string(&manifest).expect("manifest json");
+
+        assert_eq!(
+            manifest.get("name").and_then(|value| value.as_str()),
+            Some("shellxagent-docs")
+        );
+        assert!(
+            raw.contains("/shellxagent.json"),
+            "manifest should point agents at the live Debug API descriptor"
+        );
+        assert!(
+            raw.contains("/agent-doc/skills/shellx-host/SKILL.md"),
+            "manifest should expose the bundled shellx-host skill over the installed app API"
+        );
+        assert!(
+            raw.contains("~/.shellx/agent-docs/shellx-host/SKILL.md"),
+            "manifest should document the product-owned on-disk docs fallback"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn private_text_writer_uses_user_only_permissions() {
@@ -13171,6 +13333,21 @@ mod snippet_tests {
     }
 
     #[test]
+    fn settings_normalization_accepts_bright_theme() {
+        let normalized = normalize_settings_json(serde_json::json!({
+            "density": "default",
+            "theme": "bright",
+            "chatFontPx": 19,
+            "permissionUx": "pill"
+        }));
+
+        assert_eq!(
+            normalized.get("theme").and_then(|value| value.as_str()),
+            Some("bright")
+        );
+    }
+
+    #[test]
     fn diagnostics_settings_missing_uses_defaults() {
         let dir = std::env::temp_dir().join(format!(
             "shellx-diagnostics-settings-missing-{}-{}",
@@ -13293,11 +13470,13 @@ mod snippet_tests {
             .as_deref(),
             Some("Ubuntu-24.04")
         );
+        let alternate_wsl_unc = format!(
+            r"\\{}\Ubuntu\home\user\.grok\sessions\%2Fhome%2Fuser%2Fproject\sid",
+            crate::session_activity::WSL_DOT_LOCALHOST_HOST
+        );
         assert_eq!(
-            crate::session_activity::wsl_distro_from_scratch_dir(Some(
-                r"\\wsl.localhost\Ubuntu\home\user\.grok\sessions\%2Fhome%2Fuser%2Fproject\sid"
-            ))
-            .as_deref(),
+            crate::session_activity::wsl_distro_from_scratch_dir(Some(&alternate_wsl_unc))
+                .as_deref(),
             Some("Ubuntu")
         );
         assert!(crate::session_activity::wsl_distro_from_scratch_dir(Some(

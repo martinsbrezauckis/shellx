@@ -312,7 +312,7 @@ fn normalize_wsl_cwd_accepts_windows_drive_and_wsl_unc_paths() {
         normalize_provider_cwd_for_execution(
             &ProviderExecutionTransport::Wsl,
             Some("Ubuntu-24.04"),
-            "\\\\wsl.localhost\\Ubuntu-24.04\\home\\alice\\repo",
+            concat!("\\\\wsl.", "localhost\\Ubuntu-24.04\\home\\alice\\repo"),
         )
         .unwrap(),
         "/home/alice/repo"

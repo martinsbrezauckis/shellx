@@ -24,6 +24,27 @@ use crate::shellx_browser_shields::apply_privacy_stats_to_tab;
 use crate::shellx_browser_tabs::resolve_action_tab_index;
 use crate::shellx_browser_tasks::{browser_agent_step_summary_for_task, find_task_index};
 
+fn replayable_engine_control_value(action: &str, request: &BrowserActionRequest) -> Option<String> {
+    if !matches!(action, "waitFor" | "scroll" | "verify") {
+        return None;
+    }
+    request
+        .value
+        .as_deref()
+        .map(clean_string)
+        .filter(|value| !value.is_empty())
+        .filter(|value| !crate::host_mcp::redact_if_credential_pattern(value))
+}
+
+fn replayable_engine_control_key(request: &BrowserActionRequest) -> Option<String> {
+    request
+        .key
+        .as_deref()
+        .map(clean_string)
+        .filter(|value| !value.is_empty())
+        .filter(|value| !crate::host_mcp::redact_if_credential_pattern(value))
+}
+
 impl ShellxBrowserRegistry {
     pub fn record_engine_observation(
         &self,
@@ -382,6 +403,12 @@ impl ShellxBrowserRegistry {
                 "status": status,
                 "refId": request.ref_id.clone(),
                 "selector": request.selector.clone(),
+                "value": replayable_engine_control_value(&action, &request),
+                "key": replayable_engine_control_key(&request),
+                "x": request.x,
+                "y": request.y,
+                "force": request.force,
+                "timeoutMs": request.timeout_ms,
                 "message": result.message,
                 "url": response_current_url.clone(),
                 "source": "native-webview",
@@ -1118,6 +1145,12 @@ fn record_taskless_engine_control_result_locked(
             "status": status,
             "refId": request.ref_id.clone(),
             "selector": request.selector.clone(),
+            "value": replayable_engine_control_value(&action, &request),
+            "key": replayable_engine_control_key(&request),
+            "x": request.x,
+            "y": request.y,
+            "force": request.force,
+            "timeoutMs": request.timeout_ms,
             "message": result.message.clone(),
             "url": tab.url.clone(),
             "source": "native-webview",

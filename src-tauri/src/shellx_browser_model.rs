@@ -1181,6 +1181,15 @@ pub struct BrowserRecipeReplayRequest {
     pub reason: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserRecipeReplaySkippedStep {
+    pub index: usize,
+    #[serde(default)]
+    pub action: Option<String>,
+    pub reason: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserRecipeReplayResponse {
@@ -1194,6 +1203,10 @@ pub struct BrowserRecipeReplayResponse {
     pub steps_planned: usize,
     #[serde(rename = "stepsApplied")]
     pub steps_applied: usize,
+    #[serde(rename = "stepsSkipped")]
+    pub steps_skipped: usize,
+    #[serde(rename = "skippedSteps", default)]
+    pub skipped_steps: Vec<BrowserRecipeReplaySkippedStep>,
     #[serde(rename = "dryRun")]
     pub dry_run: bool,
     pub receipt: BrowserReceipt,
@@ -2294,6 +2307,81 @@ pub enum BrowserBookmarkKind {
     Folder,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserBookmarkAgentWorkflow {
+    #[serde(rename = "siteKey", default)]
+    pub site_key: Option<String>,
+    #[serde(rename = "taskType", default)]
+    pub task_type: Option<String>,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub surface: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    #[serde(rename = "contractProfile", default)]
+    pub contract_profile: Option<String>,
+    #[serde(rename = "contractId", default)]
+    pub contract_id: Option<String>,
+    #[serde(rename = "contractVersion", default)]
+    pub contract_version: Option<u64>,
+    #[serde(rename = "contractHash", default)]
+    pub contract_hash: Option<String>,
+    #[serde(rename = "contractOverlayId", default)]
+    pub contract_overlay_id: Option<String>,
+    #[serde(rename = "contractAuditStatus", default)]
+    pub contract_audit_status: Option<String>,
+    #[serde(rename = "contractAuditReason", default)]
+    pub contract_audit_reason: Option<String>,
+    #[serde(rename = "lastContractAuditAtMs", default)]
+    pub last_contract_audit_at_ms: Option<i64>,
+    #[serde(
+        rename = "permissionsNeeded",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub permissions_needed: Vec<String>,
+    #[serde(rename = "secretKinds", default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_kinds: Vec<String>,
+    #[serde(rename = "recipeId", default)]
+    pub recipe_id: Option<String>,
+    #[serde(rename = "recipePath", default)]
+    pub recipe_path: Option<String>,
+    #[serde(default)]
+    pub goal: Option<String>,
+    #[serde(default)]
+    pub steps: Option<u32>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(rename = "createdAtMs", default)]
+    pub created_at_ms: Option<i64>,
+    #[serde(default)]
+    pub health: Option<String>,
+    #[serde(rename = "lastRunAtMs", default)]
+    pub last_run_at_ms: Option<i64>,
+    #[serde(rename = "lastEvaluationReportPath", default)]
+    pub last_evaluation_report_path: Option<String>,
+    #[serde(rename = "lastImprovementScore", default)]
+    pub last_improvement_score: Option<i32>,
+    #[serde(rename = "lastImprovementRating", default)]
+    pub last_improvement_rating: Option<String>,
+    #[serde(rename = "lastAttemptId", default)]
+    pub last_attempt_id: Option<String>,
+    #[serde(rename = "lastAttemptPath", default)]
+    pub last_attempt_path: Option<String>,
+    #[serde(rename = "lastReplayStatus", default)]
+    pub last_replay_status: Option<String>,
+    #[serde(rename = "lastReplayAtMs", default)]
+    pub last_replay_at_ms: Option<i64>,
+    #[serde(rename = "driftStatus", default)]
+    pub drift_status: Option<String>,
+    #[serde(rename = "refreshReason", default)]
+    pub refresh_reason: Option<String>,
+    #[serde(rename = "refreshCandidateRecipePath", default)]
+    pub refresh_candidate_recipe_path: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserBookmark {
@@ -2311,6 +2399,8 @@ pub struct BrowserBookmark {
     pub toolbar_pinned: bool,
     #[serde(rename = "toolbarOrder", default)]
     pub toolbar_order: Option<u32>,
+    #[serde(rename = "agentWorkflow", default)]
+    pub agent_workflow: Option<BrowserBookmarkAgentWorkflow>,
     #[serde(rename = "createdAtMs")]
     pub created_at_ms: i64,
     #[serde(rename = "updatedAtMs")]
@@ -2326,6 +2416,8 @@ pub struct BrowserBookmarkToolbarItem {
     pub kind: BrowserBookmarkKind,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(rename = "agentWorkflow", default)]
+    pub agent_workflow: Option<BrowserBookmarkAgentWorkflow>,
     #[serde(default)]
     pub children: Vec<BrowserBookmark>,
 }
@@ -2349,6 +2441,8 @@ pub struct BrowserBookmarkUpsertRequest {
     pub toolbar_pinned: Option<bool>,
     #[serde(rename = "toolbarOrder", alias = "toolbar_order", default)]
     pub toolbar_order: Option<u32>,
+    #[serde(rename = "agentWorkflow", alias = "agent_workflow", default)]
+    pub agent_workflow: Option<BrowserBookmarkAgentWorkflow>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

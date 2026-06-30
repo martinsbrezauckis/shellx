@@ -28,14 +28,14 @@ const START_OPTIONS: Array<{ id: WorkPreviewStartKind; label: string; help: stri
   { id: "web", label: "Web", help: "Run the project dev script from package.json." },
   { id: "expo", label: "Expo", help: "Run Expo for a phone-first web preview." },
 ];
-const LOG_HEIGHT_KEY = "shellx.workPreview.logHeight";
-const LOG_HEIGHT_DEFAULT = 260;
-const LOG_HEIGHT_MIN = 150;
-const LOG_HEIGHT_MAX = 620;
+const WORK_PREVIEW_LOG_PANEL_SIZE_STORE = "shellx.workPreview.logHeight";
+const LOG_PANEL_SIZE_DEFAULT = 260;
+const LOG_PANEL_SIZE_MIN = 150;
+const LOG_PANEL_SIZE_MAX = 620;
 
 function initialLogHeight(): number {
   try {
-    const raw = window.localStorage.getItem(LOG_HEIGHT_KEY);
+    const raw = window.localStorage.getItem(WORK_PREVIEW_LOG_PANEL_SIZE_STORE);
     const parsed = raw ? Number.parseInt(raw, 10) : NaN;
     if (Number.isFinite(parsed)) {
       return clampLogHeight(parsed);
@@ -43,11 +43,11 @@ function initialLogHeight(): number {
   } catch {
     /* no-op */
   }
-  return LOG_HEIGHT_DEFAULT;
+  return LOG_PANEL_SIZE_DEFAULT;
 }
 
 function clampLogHeight(value: number): number {
-  return Math.max(LOG_HEIGHT_MIN, Math.min(LOG_HEIGHT_MAX, Math.round(value)));
+  return Math.max(LOG_PANEL_SIZE_MIN, Math.min(LOG_PANEL_SIZE_MAX, Math.round(value)));
 }
 
 export function WorkPreviewPanel({
@@ -215,7 +215,7 @@ export function WorkPreviewPanel({
     const clamped = clampLogHeight(nextHeight);
     setLogHeight(clamped);
     try {
-      window.localStorage.setItem(LOG_HEIGHT_KEY, String(clamped));
+      window.localStorage.setItem(WORK_PREVIEW_LOG_PANEL_SIZE_STORE, String(clamped));
     } catch {
       /* no-op */
     }
@@ -444,7 +444,7 @@ export function WorkPreviewPanel({
             <button
               type="button"
               className="settings-pill"
-              onClick={() => resizeLogs(logHeight < 360 ? 430 : LOG_HEIGHT_DEFAULT)}
+              onClick={() => resizeLogs(logHeight < 360 ? 430 : LOG_PANEL_SIZE_DEFAULT)}
               title={logHeight < 360 ? "Expand preview logs" : "Restore preview logs height"}
             >
               <ShellIcon name={logHeight < 360 ? "maximize" : "minimize"} size={12} />

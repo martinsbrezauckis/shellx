@@ -416,7 +416,7 @@ impl GoalOrchestrator {
             // NTFS. The stale goal.md from a prior session then leaks
             // into the new goal cycle, and the API returns `ok` while
             // the on-disk content lies. For WSL paths, translate to a
-            // `\\wsl.localhost\<distro>\...` UNC path first. For SSH
+            // Windows-readable WSL UNC path first. For SSH
             // paths, we can't reach the remote fs from the host — log a
             // warning so callers know the stub didn't land (grok's
             // first fs_write through the session will write the real

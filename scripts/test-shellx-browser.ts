@@ -143,6 +143,7 @@ const browserCliSource = (() => {
     return "";
   }
 })();
+const skillInstallSource = readFileSync("src-tauri/src/skill_install.rs", "utf8");
 
 assert(rustBrowser.includes("ShellxBrowserRegistry"), "Rust browser registry exists");
 assert(rustLib.includes("shellx_browser_model"), "browser model module is registered");
@@ -208,6 +209,9 @@ assert(rustBrowser.includes("BrowserHistoryEntry"), "Browser history entries are
 assert(rustBrowser.includes("BrowserBookmarkKind"), "Browser bookmarks distinguish links and folders");
 assert(rustBrowser.includes("BrowserBookmarkToolbarItem"), "Browser exposes toolbar bookmark items");
 assert(rustBrowser.includes("BrowserBookmarkUpsertRequest"), "Browser can upsert bookmarks through a structured request");
+assert(rustBrowserModel.includes("BrowserBookmarkAgentWorkflow"), "Browser bookmarks model reusable Agent workflow metadata");
+assert(rustBrowserModel.includes("agentWorkflow") && rustBrowserModel.includes("siteKey") && rustBrowserModel.includes("taskType"), "Browser workflow bookmarks expose taxonomy for agent discovery");
+assert(browserBookmarksSource.includes("normalize_agent_workflow"), "Browser bookmark writes normalize Agent workflow metadata");
 assert(rustBrowser.includes("BrowserTabSnapshot"), "Browser tabs are modeled in state");
 assert(rustBrowser.includes("BrowserTabLock"), "Browser tab lock leases are modeled");
 assert(rustBrowserModel.includes("BrowserTabOwnerKind"), "Browser tabs model user, agent, and delegated ownership");
@@ -271,10 +275,16 @@ assert(rustBrowser.includes("BrowserPerformanceArtifact"), "Browser performance 
 assert(rustBrowserDiagnostics.includes("browserPerformanceExported"), "Browser performance exports emit receipts");
 assert(rustBrowser.includes("BrowserRecipeExportRequest"), "Browser recorder recipe export request is modeled");
 assert(rustBrowser.includes("BrowserRecipeReplayRequest"), "Browser recipe replay request is modeled");
+assert(rustBrowser.includes("BrowserRecipeReplaySkippedStep"), "Browser recipe replay models skipped unsafe or unsupported steps");
 assert(rustBrowserRecipes.includes('"schemaVersion": 2'), "Browser recipe exports use Action Recipe V2 manifests");
 assert(rustBrowserRecipes.includes("variableInputs") && rustBrowserRecipes.includes("decisionPoints") && rustBrowserRecipes.includes("sourceReceipts"), "Browser recipe exports include replay planning sections");
+assert(rustBrowserRecipes.includes("browser_recipe_replay_plan"), "Browser recipe replay builds an executable safe-step plan");
+assert(rustBrowserRecipes.includes("redactedInputRequiresBinding"), "Browser recipe replay skips redacted input steps until Vault/user bindings exist");
+assert(rustBrowserRecipes.includes("\"clickRef\"") && rustBrowserRecipes.includes("\"waitFor\"") && rustBrowserRecipes.includes("\"select\"") && rustBrowserRecipes.includes("\"verify\""), "Browser recipe replay plans real route interaction steps, not only navigation");
+assert(rustBrowserRecipes.includes("liveVaultCaptureRequiresBinding"), "Browser recipe replay leaves Vault capture to live binding instead of replaying raw secrets");
 assert(rustBrowserRecipes.includes("browserRecipeExported"), "Browser recipe exports emit receipts");
 assert(rustBrowserRecipes.includes("browserRecipeReplayCompleted"), "Browser recipe replay emits completion receipts");
+assert(rustBrowserArtifacts.includes("timeoutMs") && rustBrowserArtifacts.includes("force") && rustBrowserArtifacts.includes("valueRedacted"), "Browser recipe export preserves replay metadata while redacting input values");
 assert(rustBrowser.includes("BrowserRobotScheduleRequest"), "Browser robot queue schedule request is modeled");
 assert(rustBrowser.includes("BrowserRobotJob"), "Browser robot queue jobs are modeled");
 assert(rustBrowserRobots.includes("browserRobotScheduled"), "Browser robot scheduling emits receipts");
@@ -1346,8 +1356,8 @@ assert(
   "browser renderer debug commands are scoped away from the main ShellX window",
 );
 assert(
-  appSource.includes('debugUiPatchSource(payload?.patch) === "renderer"') &&
-    appSource.includes('source === "renderer" || source.includes("browser")'),
+  appSource.includes("isRendererDebugUiPatch(payload?.patch)") &&
+    appSource.includes("isRendererDebugUiSourceValue(source) || source.includes(\"browser\")"),
   "main ShellX window ignores Browser/renderer debug state so it cannot overwrite Browser highlight results",
 );
 assert(browserStateHookSource.includes("normalizeBrowserRightTabPatch") && browserStateHookSource.includes("onRightPanelPatch(rightTabPatch)"), "browser renderer maps debug rightTab patches to Browser panel tabs");
@@ -2095,6 +2105,7 @@ assert(liveSmokeSource.includes("/browser/har/export"), "live smoke covers Brows
 assert(liveSmokeSource.includes("/browser/performance/export"), "live smoke covers Browser performance export route");
 assert(liveSmokeSource.includes("/browser/recipes/export"), "live smoke covers Browser recipe export route");
 assert(liveSmokeSource.includes("/browser/recipes/replay"), "live smoke covers Browser recipe replay route");
+assert(debugApiBrowserArtifactsSource.includes("browser_recipe_replay_plan") && debugApiBrowserArtifactsSource.includes("try_apply_engine_action") && debugApiBrowserArtifactsSource.includes("skipped_steps") && rustBrowserRecipes.includes("stepsSkipped"), "Browser recipe replay route applies planned route steps and reports skipped steps");
 assert(liveSmokeSource.includes("/browser/robots/schedule"), "live smoke covers Browser robot schedule route");
 assert(liveSmokeSource.includes("/browser/robots/run"), "live smoke covers Browser robot run route");
 assert(liveSmokeSource.includes("/browser/downloads/request"), "live smoke covers Browser download intent route");
@@ -2142,11 +2153,15 @@ assert(adversarySmokeSource.includes("valueHash"), "adversary smoke classifies p
 assert(adversarySmokeSource.includes("debug-api-fetch"), "adversary smoke checks hostile page Debug API probes");
 assert(adversarySmokeSource.includes("/browser/trace/export"), "adversary smoke exports and scans Browser traces");
 assert(debugApi.includes("publish_shellxagent_descriptor"), "Debug API publishes shellxagent.json discovery descriptor");
+assert(debugApi.includes('"/shellxagent.json"') && debugApi.includes('"/.well-known/shellxagent.json"'), "Debug API serves shellxagent.json discovery descriptor from installed app");
+assert(debugApi.includes('"/agent-doc/manifest"') && debugApi.includes('"/agent-doc/skills/shellx-host/SKILL.md"'), "Debug API serves bundled agent docs from installed app");
 assert(debugApi.includes("\"browserAction\"") && debugApi.includes("/browser/action"), "shellxagent.json advertises the gated Browser action route");
 assert(debugApi.includes("\"rawCdpExposed\"") && debugApi.includes("false"), "shellxagent.json declares raw CDP unavailable");
 assert(debugApi.includes("rawCdpEndpoint") && debugApi.includes("serde_json::Value::Null"), "Debug API tests protect against raw CDP descriptor exposure");
 assert(debugApi.includes("write_private_text_file") && debugApi.includes(".mode(0o600)"), "shellxagent.json is written as a private local descriptor on Unix");
 assert(apiDocs.includes("shellxagent.json") && apiDocs.includes("rawCdpExposed: false"), "API docs describe shellxagent.json without raw CDP");
+assert(apiDocs.includes("~/.codex/skills/shellx-host/SKILL.md") && apiDocs.includes("~/.shellx/agent-docs/shellx-host/SKILL.md"), "API docs describe fresh-install agent skill/docs locations");
+assert(skillInstallSource.includes('join(".codex")') && skillInstallSource.includes('join(".claude")') && skillInstallSource.includes('join("agent-docs")'), "Installer runtime writes shellx-host docs for Grok, Codex, Claude, and ShellX-owned docs");
 assert(packageData.scripts?.["shellx-browser"] === "tsx scripts/shellx-browser-cli.ts", "package exposes ShellX Browser CLI wrapper");
 assert(browserCliSource.includes("readDebugApiConnection"), "Browser CLI reads Debug API port/token from local ShellX files");
 assert(browserCliSource.includes("shellxagent.token"), "Browser CLI uses the installed-app Debug API token");
@@ -2209,6 +2224,10 @@ assert(hostMcp.includes("Do not copy the trace or raw Browser state into the cur
 assert(pluginsModalSource.includes("Native Browser") && pluginsModalSource.includes("Vault Request Center"), "Plugins modal shellx-host row must mention Browser and Vault Request Center");
 assert(!pluginsModalSource.includes("Workflow skills"), "Plugins modal must not advertise retired workflow skills");
 assert(hostMcp.includes("Agent tool description must teach subagent Browser flow"), "Host MCP tests protect Agent Browser guidance");
+assert(hostMcp.includes("browser_workflows") && hostMcp.includes("browser_workflow_save") && hostMcp.includes("browser_workflow_replay"), "Host MCP exposes Agent workflow bookmark discovery, save, and replay");
+assert(hostMcp.includes("exported no replayable steps"), "Host MCP workflow save rejects empty recipes");
+assert(hostMcp.includes("browser_workflow_summaries_filter_by_taxonomy_and_aliases"), "Host MCP tests workflow bookmark taxonomy filtering");
+assert(hostMcp.includes("browser_workflow_apply_blocks_contract_drift"), "Host MCP blocks stale contract workflow apply");
 assert(subagentSource.includes("native ShellX Browser"), "subagent runtime guard tells spawned agents the native Browser exists");
 assert(subagentSource.includes("browser_navigate"), "subagent runtime guard teaches Browser navigation");
 assert(subagentSource.includes("browser_observe"), "subagent runtime guard teaches Browser observation");
@@ -2223,6 +2242,7 @@ assert(shellxHostSkill.includes("Do not write raw `browser_state` or `browser_ob
 assert(shellxHostSkill.includes("browser_capture_secret_to_vault"), "ShellX host skill teaches direct page-secret Vault capture");
 assert(shellxHostSkill.includes("browser_read_email_code"), "ShellX host skill teaches email-code grants");
 assert(shellxHostSkill.includes("browser_use_agent_wallet"), "ShellX host skill teaches agent-wallet grants");
+assert(shellxHostSkill.includes("browser_workflows") && shellxHostSkill.includes("browser_workflow_save") && shellxHostSkill.includes("browser_workflow_replay"), "ShellX host skill teaches reusable Browser workflow save/replay");
 for (const command of [
   "snapshot",
   "navigate",
@@ -2236,9 +2256,13 @@ for (const command of [
   "tabs",
   "locks",
   "trace-open",
+  "workflow-bookmarks",
+  "workflow-save",
+  "workflow-replay",
 ]) {
   assert(browserCliSource.includes(`"${command}"`), `Browser CLI exposes ${command}`);
 }
+assert(browserCliSource.includes("/browser/recipes/export") && browserCliSource.includes("/browser/recipes/replay") && browserCliSource.includes("agentWorkflow") && browserCliSource.includes("exported no replayable steps"), "Browser CLI exposes workflow bookmark save, discovery, and replay");
 
 if (failures > 0) {
   console.error(`\n${failures} ShellX Browser check(s) failed.`);

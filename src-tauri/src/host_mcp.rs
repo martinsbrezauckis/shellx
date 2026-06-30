@@ -66,6 +66,9 @@ static BUILD_AGENT_WATCHERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static BUILD_AGENT_COMPLETIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static BUILD_AGENT_RECEIPT_META: OnceLock<Mutex<HashMap<String, BuildAgentReceiptMeta>>> =
     OnceLock::new();
+const WSL_DOT_LOCALHOST_UNIX_PREFIX: &str = concat!("//wsl.", "localhost/");
+#[cfg(target_os = "windows")]
+const WSL_DOT_LOCALHOST_HOST: &str = concat!("wsl.", "localhost");
 
 fn build_agent_start_lock() -> &'static Mutex<()> {
     BUILD_AGENT_START_LOCK.get_or_init(|| Mutex::new(()))
@@ -197,6 +200,8 @@ pub(crate) const WRITE_CLASS_TOOLS: &[&str] = &[
     "browser_fill_ref",
     "browser_type_text",
     "browser_clear_site_data",
+    "browser_workflow_save",
+    "browser_workflow_replay",
     "browser_fill_from_vault",
     "browser_fill_profile_card",
     "browser_capture_secret_to_vault",
@@ -560,7 +565,7 @@ shellX-host MCP quick map:
 - Model routing: `model_instruction_cards`=user-directed provider/media/handoff cards; `provider_adapters`/`provider_sessions`=CLI health/session state; `send_prompt_to_session`=explicit user-approved handoff to Grok; never fall back to another provider without user approval.
 - Build: `build_state`=run status/gates; `build_receipts`=audit evidence; `build_receipt`=record evidence; `build_checkpoint`=local checkpoint; `build_complete`=finish; `goal_complete`=legacy.
 - Work Preview: `preview_start`=start/restart; `preview_state`=current URL/status; `preview_logs`=stdout/stderr; `preview_diagnose`=browser/runtime/screenshot evidence; inspect screenshotPath with `vision_describe`.
-- Browser: native ShellX Browser exists for agent web work. Use `browser_tabs`/`browser_state`, then `browser_navigate` to open a URL, `browser_observe` for refs, `browser_click_ref`/`browser_fill_ref`/`browser_fill_from_vault`/`browser_fill_profile_card`/`browser_capture_secret_to_vault`/`browser_read_email_code`/`browser_use_agent_wallet` for gated actions, retry valid visible refs with `browser_click_ref force=true` when a synthetic click applies but a Google-style menu/state does not change, use `browser_screenshot fullPage=true` plus `browser_click_at` for split-button arrow/subtargets when whole-button refs still do not change state, `browser_click_at`/`browser_type_text` only for rich editors, canvas areas, or visual-only app overlays with no ref after screenshot evidence and cssScale conversion, re-capture after Browser resize/minimize/restore and scroll off-screen targets into view before coordinate actions, `browser_clear_site_data` for current-origin app-cache recovery when the page itself asks to clear application resources, `browser_resolve_dialog` for task-owned beforeunload prompts, `browser_save_page`/`browser_downloads` for user-requested local artifact paths, and `browser_verify`/`browser_screenshot`/`browser_trace_open` for evidence. If `browser_observe` returns a `secret-*` ref or an action `capturePageSecretToVault`, use `browser_capture_secret_to_vault` with that ref and a durable `secretRef`; avoid clipboard reads, raw reveal, or hand-built selectors unless no capturable ref exists. Taskless Browser tool calls auto-start or reuse an `agent-work` Browser task; pass both `browserTabId` and `taskId` only when intentionally acting in a known task/delegated tab. Do not dump raw `/browser/state` or observation JSON into the current working directory or user folders; `browser_trace_open` writes the bounded redacted diagnostic artifact and returns its exact path.
+- Browser: native ShellX Browser exists for agent web work. Use `browser_tabs`/`browser_state`, then `browser_navigate` to open a URL, `browser_observe` for refs. Before repeating known site tasks, use `browser_workflows` with taxonomy such as `siteKey=google.com taskType=get target=api-key`, then `browser_workflow_replay` dry-run to inspect planned/skipped steps before `apply=true` executes saved navigation/click/wait/select/press/verify route steps; after a successful repeated user-requested task, use `browser_workflow_save` to export the recipe and store a workflow bookmark. Use `browser_click_ref`/`browser_fill_ref`/`browser_fill_from_vault`/`browser_fill_profile_card`/`browser_capture_secret_to_vault`/`browser_read_email_code`/`browser_use_agent_wallet` for gated actions, retry valid visible refs with `browser_click_ref force=true` when a synthetic click applies but a Google-style menu/state does not change, use `browser_screenshot fullPage=true` plus `browser_click_at` for split-button arrow/subtargets when whole-button refs still do not change state, `browser_click_at`/`browser_type_text` only for rich editors, canvas areas, or visual-only app overlays with no ref after screenshot evidence and cssScale conversion, re-capture after Browser resize/minimize/restore and scroll off-screen targets into view before coordinate actions, `browser_clear_site_data` for current-origin app-cache recovery when the page itself asks to clear application resources, `browser_resolve_dialog` for task-owned beforeunload prompts, `browser_save_page`/`browser_downloads` for user-requested local artifact paths, and `browser_verify`/`browser_screenshot`/`browser_trace_open` for evidence. If `browser_observe` returns a `secret-*` ref or an action `capturePageSecretToVault`, use `browser_capture_secret_to_vault` with that ref and a durable `secretRef`; avoid clipboard reads, raw reveal, or hand-built selectors unless no capturable ref exists. Taskless Browser tool calls auto-start or reuse an `agent-work` Browser task; pass both `browserTabId` and `taskId` only when intentionally acting in a known task/delegated tab. Do not dump raw `/browser/state` or observation JSON into the current working directory or user folders; `browser_trace_open` writes the bounded redacted diagnostic artifact and returns its exact path.
 - Attached images: call HTTP `vision_describe` with the path; do not use `read_file` on PNG/JPEG/WebP/GIF/BMP bytes.
 - Other: `mem_*`=cross-tab memory; `secret_get` raw Vault reveal is denied, use `vault_list` plus grants and mediated Browser/Vault tools; `secret_set` is legacy/write-only compatibility; `net_fetch`=allow-listed HTTP; `x_search`=X posts; `clock_now`/`sleep_ms`=timing.
 - Media generation: one image/video per user request unless variants are requested; shellX renders output cards automatically.
@@ -1336,6 +1341,64 @@ fn tool_specs() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "browser_workflows",
+            "description": "List Agent workflow bookmarks saved in the native ShellX Browser. Use this before repeating a known site workflow or intent such as get/api-key: filter by siteKey/site, taskType, target, surface, secretKind, permission, or query; pick a matching bookmark, inspect its taxonomy/goal/health/drift/recipePath, then rehearse with browser_workflow_replay dry-run before apply=true executes the saved route. This is compact discovery, not raw Browser state; continue normal page work with browser_navigate and browser_observe when no saved workflow matches.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Optional text search over label, URL, aliases, goal, taxonomy, health, drift, and recipe metadata." },
+                    "siteKey": { "type": "string", "description": "Optional site/domain filter such as google.com, github.com, or full URL." },
+                    "taskType": { "type": "string", "description": "Optional canonical task type such as get, search, create, upload, login, register, verify, store, or update." },
+                    "target": { "type": "string", "description": "Optional target slug such as api-key, file, document, email, calendar, or account." },
+                    "surface": { "type": "string", "description": "Optional site surface/app slug such as ai-studio, drive, docs, calendar, console, dashboard." },
+                    "permission": { "type": "string", "description": "Optional required permission filter such as vault.secret.store or cookies.accept." },
+                    "secretKind": { "type": "string", "description": "Optional secret kind filter such as apiToken, password, emailCode, credential, or agentWalletBudget." },
+                    "limit": { "type": "integer", "default": 20, "maximum": 100 }
+                }
+            }
+        }),
+        json!({
+            "name": "browser_workflow_save",
+            "description": "Save the current native ShellX Browser task as an experimental Agent workflow bookmark. It exports recent task/tab receipts through `/browser/recipes/export`, then writes a `/browser/bookmarks` row with `agentWorkflow` taxonomy so future agents can find and dry-run it with browser_workflows/browser_workflow_replay. Use after a successful repeated user-requested Browser task; do not use for one-off sensitive approval flows unless the user wants that workflow reusable.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "label": { "type": "string", "description": "Human-readable workflow bookmark name." },
+                    "siteKey": { "type": "string", "description": "Site/domain taxonomy such as google.com or github.com. Defaults from the current tab URL when possible." },
+                    "taskType": { "type": "string", "description": "Task taxonomy such as get, search, create, upload, login, register, verify, store, or update." },
+                    "target": { "type": "string", "description": "Target slug such as api-key, file, document, account, or report." },
+                    "surface": { "type": "string", "description": "Optional app/surface slug such as ai-studio, drive, docs, calendar, console, or dashboard." },
+                    "aliases": { "type": "string", "description": "Optional comma-separated aliases agents may search for later." },
+                    "permissionsNeeded": { "type": "string", "description": "Optional comma-separated workflow permissions such as cookies.accept,vault.secret.store." },
+                    "secretKinds": { "type": "string", "description": "Optional comma-separated secret kinds such as apiToken,password,emailCode." },
+                    "url": { "type": "string", "description": "Optional bookmark URL. Defaults from the current Browser tab when possible." },
+                    "browserTabId": { "type": "string", "description": "Optional Browser tab id to export and bookmark." },
+                    "taskId": { "type": "string", "description": "Optional Browser task id to export." },
+                    "toolbarPinned": { "type": "boolean", "default": false },
+                    "reason": { "type": "string", "description": "Short audit reason for recipe export and bookmark save." },
+                    "timeoutMs": { "type": "integer", "default": 30000 }
+                },
+                "required": ["label", "taskType", "target"]
+            }
+        }),
+        json!({
+            "name": "browser_workflow_replay",
+            "description": "Replay a saved native ShellX Browser Agent workflow recipe through `/browser/recipes/replay`. Pass either `bookmarkId` from browser_workflows or `recipePath`. Replay is dry-run by default so agents can rehearse and inspect planned/skipped steps; pass `apply=true` only when the user/task contract allows executing the saved route. Apply mode performs replayable navigation/click/wait/select/press/verify route steps through normal Browser receipts, ownership, locks, and approval gates. Redacted inputs, Vault fills/captures, and unsupported steps are returned as skipped steps; after replay, observe with browser_observe before continuing live. If no saved workflow fits, use browser_navigate and browser_observe for the normal live Browser flow.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "bookmarkId": { "type": "string", "description": "Workflow bookmark id returned by browser_workflows." },
+                    "recipePath": { "type": "string", "description": "Absolute path to a ShellX Browser recipe JSON artifact." },
+                    "apply": { "type": "boolean", "default": false, "description": "When true, execute replayable saved route steps. Dry-run is the default." },
+                    "dryRun": { "type": "boolean", "default": true, "description": "Explicit dry-run override. Ignored when apply=true." },
+                    "browserTabId": { "type": "string", "description": "Optional Browser tab id. If present, also pass the owning taskId." },
+                    "taskId": { "type": "string", "description": "Optional Browser task id." },
+                    "reason": { "type": "string", "description": "Short audit reason for the replay receipt." },
+                    "timeoutMs": { "type": "integer", "default": 30000 }
+                }
+            }
+        }),
+        json!({
             "name": "browser_fill_from_vault",
             "description": "Fill a native ShellX Browser field with an approved Vault grant through Debug API `/browser/action` action `fillFromVaultGrant`. Agent flow: browser_navigate if needed, browser_observe first to get refs, use vault_list to discover agent-visible secrets, ask the user/ShellX for a Fill grant, then pass `grantId`, `secretRef`, and a Browser `refId` or `selector`; the secret value is injected by ShellX and is never returned to the agent.",
             "inputSchema": {
@@ -1858,7 +1921,7 @@ fn agent_tool_description() -> String {
         lines.push_str(&format!("  - {}: {}\n", name, one));
     }
     lines.push_str(
-        "\nConcurrent: each call spawns its own grok process. Default `wait=true` blocks for the result; set `wait=false` to fan out and poll with Agent_status / Agent_output. Do not call Agent from inside an Agent subagent; subagents must return their own findings directly.\n\nNative Browser: subagents are taught that the native ShellX Browser exists for web work. Browser task flow is `browser_tabs`/`browser_state`, then `browser_navigate`, then `browser_observe` for refs/snapshotId, then click/fill/wait/extract/verify/trace through Browser and Vault gates; retry valid visible refs with `browser_click_ref force=true` when a synthetic click applies but the menu/page state does not change; use `browser_screenshot fullPage=true` plus `browser_click_at` for split-button arrow/subtargets when whole-button refs still do not change state; use `browser_click_at`/`browser_type_text` only for rich editors, canvas areas, or visual-only app overlays without usable refs after screenshot evidence and cssScale conversion; re-capture after Browser resize/minimize/restore and scroll off-screen targets into view before coordinate actions; use `browser_clear_site_data` when a page itself asks to clear application resources; if observe returns a `secret-*` ref or action `capturePageSecretToVault`, call `browser_capture_secret_to_vault` with that ref and a durable `secretRef` instead of reading clipboard/raw values. On failures inspect stepSummary.failedChecks, actionability.coveringElement, and stepSummary.locatorCandidates before retrying from a fresh observe. Use `browser_resolve_dialog` only for task-owned beforeunload prompts. Do not write raw Browser state or observe JSON into the current working directory or user folders; use `browser_trace_open` for redacted diagnostics and returned artifact paths for files.",
+        "\nConcurrent: each call spawns its own grok process. Default `wait=true` blocks for the result; set `wait=false` to fan out and poll with Agent_status / Agent_output. Do not call Agent from inside an Agent subagent; subagents must return their own findings directly.\n\nNative Browser: subagents are taught that the native ShellX Browser exists for web work. Browser task flow is `browser_tabs`/`browser_state`, then `browser_navigate`, then `browser_observe` for refs/snapshotId. Before repeating a known site workflow, use `browser_workflows` with taxonomy such as `siteKey=google.com taskType=get target=api-key`, then `browser_workflow_replay` dry-run before applying saved navigation/click/wait/select/press/verify route steps. After a successful repeated user-requested task, use `browser_workflow_save` to export the recipe and store a workflow bookmark. Continue with click/fill/wait/extract/verify/trace through Browser and Vault gates; retry valid visible refs with `browser_click_ref force=true` when a synthetic click applies but the menu/page state does not change; use `browser_screenshot fullPage=true` plus `browser_click_at` for split-button arrow/subtargets when whole-button refs still do not change state; use `browser_click_at`/`browser_type_text` only for rich editors, canvas areas, or visual-only app overlays without usable refs after screenshot evidence and cssScale conversion; re-capture after Browser resize/minimize/restore and scroll off-screen targets into view before coordinate actions; use `browser_clear_site_data` when a page itself asks to clear application resources; if observe returns a `secret-*` ref or action `capturePageSecretToVault`, call `browser_capture_secret_to_vault` with that ref and a durable `secretRef` instead of reading clipboard/raw values. On failures inspect stepSummary.failedChecks, actionability.coveringElement, and stepSummary.locatorCandidates before retrying from a fresh observe. Use `browser_resolve_dialog` only for task-owned beforeunload prompts. Do not write raw Browser state or observe JSON into the current working directory or user folders; use `browser_trace_open` for redacted diagnostics and returned artifact paths for files.",
     );
     lines
 }
@@ -1956,6 +2019,9 @@ async fn handle_tools_call(
         "browser_fill_ref" => tool_browser_action("fillRef", arguments).await,
         "browser_type_text" => tool_browser_action("typeText", arguments).await,
         "browser_clear_site_data" => tool_browser_action("clearSiteData", arguments).await,
+        "browser_workflows" => tool_browser_workflows(arguments).await,
+        "browser_workflow_save" => tool_browser_workflow_save(arguments).await,
+        "browser_workflow_replay" => tool_browser_workflow_replay(arguments).await,
         "browser_fill_from_vault" => tool_browser_action("fillFromVaultGrant", arguments).await,
         "browser_fill_profile_card" => tool_browser_action("fillProfileCardGrant", arguments).await,
         "browser_capture_secret_to_vault" => {
@@ -2382,7 +2448,7 @@ async fn tool_capabilities_summary(
             { "category": "agents", "tools": ["Agent", "Agent_status", "Agent_output", "Agent_poll_all", "Agent_kill", "Agent_metrics"], "personas": crate::subagent::PERSONA_NAMES },
             { "category": "build", "tools": ["build_state", "build_receipts", "build_receipt", "build_checkpoint", "build_complete"] },
             { "category": "preview", "tools": ["preview_start", "preview_state", "preview_logs", "preview_diagnose"], "note": "For UI/web/Expo work use shellX Work Preview before build_complete." },
-            { "category": "browser", "tools": ["browser_state", "browser_tabs", "browser_locks", "browser_navigate", "browser_observe", "browser_click_ref", "browser_click_at", "browser_fill_ref", "browser_type_text", "browser_clear_site_data", "browser_fill_from_vault", "browser_fill_profile_card", "browser_capture_secret_to_vault", "browser_read_email_code", "browser_use_agent_wallet", "browser_wait_for", "browser_extract", "browser_save_page", "browser_verify", "browser_screenshot", "browser_downloads", "browser_resolve_dialog", "browser_trace_open"], "note": "Native ShellX Browser is the agent web surface. Navigate with browser_navigate, observe refs/snapshotId with browser_observe, act with click/fill/Vault-fill/profile-card/secret-capture/email-code/agent-wallet/wait/extract/verify/screenshot, retry valid visible refs with browser_click_ref force=true when synthetic click applies but menu/page state does not change, use browser_screenshot fullPage=true plus browser_click_at for split-button arrow/subtargets when whole-button refs still do not change state, use browser_click_at/browser_type_text only for rich editors, canvas areas, or visual-only app overlays without refs after screenshot evidence and cssScale conversion, re-capture after Browser resize/minimize/restore and scroll off-screen targets into view before coordinate actions, use browser_clear_site_data for current-origin app-cache recovery when the page asks to clear application resources, and use stepSummary.failedChecks/actionability.coveringElement/stepSummary.locatorCandidates for recovery. If observe returns a redacted secret-* ref or action capturePageSecretToVault, capture it directly to Vault with browser_capture_secret_to_vault and a durable secretRef. Use browser_resolve_dialog only for task-owned beforeunload prompts, browser_save_page/browser_downloads for user-requested local artifacts and final paths, and browser_trace_open for redacted diagnostics. Do not dump raw Browser state or observe JSON into the current working directory or user folders. Locks, receipts, actionability, and redaction remain owned by /browser/*." },
+            { "category": "browser", "tools": ["browser_state", "browser_tabs", "browser_locks", "browser_navigate", "browser_observe", "browser_click_ref", "browser_click_at", "browser_fill_ref", "browser_type_text", "browser_clear_site_data", "browser_workflows", "browser_workflow_save", "browser_workflow_replay", "browser_fill_from_vault", "browser_fill_profile_card", "browser_capture_secret_to_vault", "browser_read_email_code", "browser_use_agent_wallet", "browser_wait_for", "browser_extract", "browser_save_page", "browser_verify", "browser_screenshot", "browser_downloads", "browser_resolve_dialog", "browser_trace_open"], "note": "Native ShellX Browser is the agent web surface. Navigate with browser_navigate, observe refs/snapshotId with browser_observe, use browser_workflows/browser_workflow_replay to discover saved Agent workflow bookmarks, dry-run them first, then apply replayable saved route steps when the user/task contract allows repeating that workflow. Use browser_workflow_save after successful repeated user-requested tasks to save a reusable fast track. Act with click/fill/Vault-fill/profile-card/secret-capture/email-code/agent-wallet/wait/extract/verify/screenshot, retry valid visible refs with browser_click_ref force=true when synthetic click applies but menu/page state does not change, use browser_screenshot fullPage=true plus browser_click_at for split-button arrow/subtargets when whole-button refs still do not change state, use browser_click_at/browser_type_text only for rich editors, canvas areas, or visual-only app overlays without refs after screenshot evidence and cssScale conversion, re-capture after Browser resize/minimize/restore and scroll off-screen targets into view before coordinate actions, use browser_clear_site_data for current-origin app-cache recovery when the page asks to clear application resources, and use stepSummary.failedChecks/actionability.coveringElement/stepSummary.locatorCandidates for recovery. If observe returns a redacted secret-* ref or action capturePageSecretToVault, capture it directly to Vault with browser_capture_secret_to_vault and a durable secretRef. Use browser_resolve_dialog only for task-owned beforeunload prompts, browser_save_page/browser_downloads for user-requested local artifacts and final paths, and browser_trace_open for redacted diagnostics. Do not dump raw Browser state or observe JSON into the current working directory or user folders. Locks, receipts, actionability, and redaction remain owned by /browser/*." },
             { "category": "mediaAndSearch", "tools": ["vision_describe", "voice_stt_v2", "voice_tts", "x_search", "net_fetch"] },
             { "category": "memoryAndTime", "tools": ["mem_set", "mem_get", "mem_list", "mem_delete", "clock_now", "sleep_ms"] },
             { "category": "security", "tools": ["security_scan"] }
@@ -3922,6 +3988,19 @@ fn mcp_arg_bool(args: &Value, key: &str) -> bool {
     }
 }
 
+fn mcp_arg_optional_bool(args: &Value, keys: &[&str]) -> Option<bool> {
+    keys.iter().find_map(|key| match args.get(*key) {
+        Some(Value::Bool(v)) => Some(*v),
+        Some(Value::Number(n)) => Some(n.as_i64() == Some(1)),
+        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
 fn debug_api_base_url() -> Result<String, String> {
     if let Ok(port) = std::env::var("SHELLX_DEBUG_PORT") {
         let port = port.trim();
@@ -4827,6 +4906,746 @@ async fn tool_browser_locks() -> Result<Value, String> {
     Ok(browser_mcp_result(
         format!("browser_locks: {count} locked tab(s)"),
         json!({ "locks": locks }),
+        false,
+    ))
+}
+
+fn browser_collect_toolbar_bookmark_ids(value: Option<&Value>, ids: &mut HashSet<String>) {
+    let Some(items) = value.and_then(|value| value.as_array()) else {
+        return;
+    };
+    for item in items {
+        if let Some(bookmark_id) = json_string(Some(item), "bookmarkId") {
+            ids.insert(bookmark_id);
+        }
+        browser_collect_toolbar_bookmark_ids(item.get("children"), ids);
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct BrowserWorkflowFilters {
+    query: Option<String>,
+    site_key: Option<String>,
+    task_type: Option<String>,
+    target: Option<String>,
+    surface: Option<String>,
+    permission: Option<String>,
+    secret_kind: Option<String>,
+}
+
+fn browser_workflow_slug(value: &str, limit: usize) -> Option<String> {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+        if out.len() >= limit {
+            break;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn browser_workflow_site_key_from_url(url: Option<String>) -> Option<String> {
+    let raw = url?;
+    let candidate = if raw.contains("://") {
+        raw.clone()
+    } else {
+        format!("https://{}", raw)
+    };
+    let host = reqwest::Url::parse(&candidate)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(|host| host.to_ascii_lowercase()))?;
+    let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host)
+    }
+}
+
+fn browser_workflow_filter_site_key(value: Option<String>) -> Option<String> {
+    let raw = value?.split_whitespace().collect::<Vec<_>>().join(" ");
+    let candidate = if raw.contains("://") {
+        raw.clone()
+    } else {
+        format!("https://{}", raw)
+    };
+    reqwest::Url::parse(&candidate)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(|host| host.to_ascii_lowercase()))
+        .or_else(|| {
+            raw.split('/')
+                .next()
+                .map(|host| host.trim().to_ascii_lowercase())
+        })
+        .map(|host| host.strip_prefix("www.").unwrap_or(&host).to_string())
+        .filter(|host| !host.is_empty())
+}
+
+fn browser_workflow_filter_task_type(value: Option<String>) -> Option<String> {
+    let slug = browser_workflow_slug(&value?, 64)?;
+    let first = slug.split('-').next().unwrap_or(slug.as_str());
+    let canonical = match first {
+        "read" | "get" | "search" | "create" | "update" | "upload" | "download" | "fill"
+        | "submit" | "buy" | "login" | "register" | "verify" | "store" | "delete" | "open"
+        | "analyze" => first,
+        "fetch" | "retrieve" | "copy" => "get",
+        "find" => "search",
+        "add" | "new" => "create",
+        "edit" | "change" => "update",
+        "signin" | "sign" => "login",
+        _ => slug.as_str(),
+    };
+    Some(canonical.to_string())
+}
+
+fn browser_workflow_filter_slug(value: Option<String>) -> Option<String> {
+    browser_workflow_slug(&value?, 64)
+}
+
+fn browser_workflow_filter_secret_kind(value: Option<String>) -> Option<String> {
+    let raw = value?;
+    let slug = browser_workflow_slug(&raw, 64)?;
+    let canonical = match slug.as_str() {
+        "apitoken" | "api-token" | "api-key" | "apikey" | "token" => "apiToken",
+        "password" | "passphrase" => "password",
+        "email-code" | "emailcode" | "otp" | "one-time-code" | "verification-code" => "emailCode",
+        "recovery-code" | "recoverykey" | "recovery-key" => "recoveryCode",
+        "wallet-budget" | "agent-wallet" | "agent-wallet-budget" => "agentWalletBudget",
+        "credential" | "credentials" => "credential",
+        _ => raw.trim(),
+    };
+    if canonical.is_empty() {
+        None
+    } else {
+        Some(canonical.to_string())
+    }
+}
+
+fn browser_workflow_json_string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(|value| value.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn browser_workflow_bookmark_summary(
+    bookmark: &Value,
+    toolbar_ids: &HashSet<String>,
+) -> Option<Value> {
+    let workflow = bookmark.get("agentWorkflow")?;
+    if workflow.is_null() {
+        return None;
+    }
+    let bookmark_id = json_string(Some(bookmark), "bookmarkId");
+    let toolbar_pinned = bookmark
+        .get("toolbarPinned")
+        .and_then(|value| value.as_bool())
+        .or_else(|| bookmark_id.as_ref().map(|id| toolbar_ids.contains(id)));
+    let url = json_string(Some(bookmark), "url");
+    let site_key = json_string(Some(workflow), "siteKey")
+        .or_else(|| browser_workflow_site_key_from_url(url.clone()));
+    let aliases = browser_workflow_json_string_array(workflow.get("aliases"));
+    let permissions_needed = browser_workflow_json_string_array(workflow.get("permissionsNeeded"));
+    let secret_kinds = browser_workflow_json_string_array(workflow.get("secretKinds"));
+    Some(json!({
+        "bookmarkId": bookmark_id,
+        "label": json_string(Some(bookmark), "label"),
+        "url": url,
+        "category": json_string(Some(bookmark), "category"),
+        "kind": json_string(Some(bookmark), "kind"),
+        "toolbarPinned": toolbar_pinned,
+        "siteKey": site_key,
+        "taskType": json_string(Some(workflow), "taskType"),
+        "target": json_string(Some(workflow), "target"),
+        "surface": json_string(Some(workflow), "surface"),
+        "aliases": aliases,
+        "contractProfile": json_string(Some(workflow), "contractProfile"),
+        "contractId": json_string(Some(workflow), "contractId"),
+        "contractVersion": workflow.get("contractVersion").and_then(|value| value.as_u64()),
+        "contractHash": json_string(Some(workflow), "contractHash"),
+        "contractOverlayId": json_string(Some(workflow), "contractOverlayId"),
+        "contractAuditStatus": json_string(Some(workflow), "contractAuditStatus"),
+        "contractAuditReason": json_string(Some(workflow), "contractAuditReason"),
+        "lastContractAuditAtMs": workflow.get("lastContractAuditAtMs").and_then(|value| value.as_i64()),
+        "permissionsNeeded": permissions_needed,
+        "secretKinds": secret_kinds,
+        "recipeId": json_string(Some(workflow), "recipeId"),
+        "recipePath": json_string(Some(workflow), "recipePath"),
+        "goal": json_string(Some(workflow), "goal"),
+        "steps": workflow.get("steps").and_then(|value| value.as_u64()),
+        "source": json_string(Some(workflow), "source"),
+        "health": json_string(Some(workflow), "health"),
+        "driftStatus": json_string(Some(workflow), "driftStatus"),
+        "lastRunAtMs": workflow.get("lastRunAtMs").and_then(|value| value.as_i64()),
+        "lastEvaluationReportPath": json_string(Some(workflow), "lastEvaluationReportPath"),
+        "lastImprovementScore": workflow.get("lastImprovementScore").and_then(|value| value.as_i64()),
+        "lastImprovementRating": json_string(Some(workflow), "lastImprovementRating"),
+        "lastAttemptId": json_string(Some(workflow), "lastAttemptId"),
+        "lastAttemptPath": json_string(Some(workflow), "lastAttemptPath"),
+        "lastReplayStatus": json_string(Some(workflow), "lastReplayStatus"),
+        "lastReplayAtMs": workflow.get("lastReplayAtMs").and_then(|value| value.as_i64()),
+        "refreshReason": json_string(Some(workflow), "refreshReason"),
+        "refreshCandidateRecipePath": json_string(Some(workflow), "refreshCandidateRecipePath"),
+    }))
+}
+
+fn browser_workflow_array_contains(workflow: &Value, key: &str, needle: &str) -> bool {
+    let needle = needle.trim();
+    workflow
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items.iter().any(|item| {
+                item.as_str()
+                    .map(|value| value.eq_ignore_ascii_case(needle))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn browser_workflow_site_matches(actual: Option<String>, expected: &str) -> bool {
+    let Some(actual) = actual else {
+        return false;
+    };
+    actual == expected
+        || actual
+            .strip_suffix(expected)
+            .map(|prefix| prefix.ends_with('.'))
+            .unwrap_or(false)
+}
+
+fn browser_workflow_matches_filters(workflow: &Value, filters: &BrowserWorkflowFilters) -> bool {
+    if let Some(site_key) = filters.site_key.as_deref() {
+        let expected = browser_workflow_filter_site_key(Some(site_key.to_string()))
+            .unwrap_or_else(|| site_key.to_string());
+        if !browser_workflow_site_matches(json_string(Some(workflow), "siteKey"), &expected) {
+            return false;
+        }
+    }
+    if let Some(task_type) = filters.task_type.as_deref() {
+        let expected = browser_workflow_filter_task_type(Some(task_type.to_string()))
+            .unwrap_or_else(|| task_type.to_string());
+        if json_string(Some(workflow), "taskType").as_deref() != Some(expected.as_str()) {
+            return false;
+        }
+    }
+    if let Some(target) = filters.target.as_deref() {
+        let expected = browser_workflow_filter_slug(Some(target.to_string()))
+            .unwrap_or_else(|| target.to_string());
+        if json_string(Some(workflow), "target").as_deref() != Some(expected.as_str()) {
+            return false;
+        }
+    }
+    if let Some(surface) = filters.surface.as_deref() {
+        let expected = browser_workflow_filter_slug(Some(surface.to_string()))
+            .unwrap_or_else(|| surface.to_string());
+        if json_string(Some(workflow), "surface").as_deref() != Some(expected.as_str()) {
+            return false;
+        }
+    }
+    if let Some(permission) = filters.permission.as_deref() {
+        let expected = permission.replace(' ', "").to_ascii_lowercase();
+        if !browser_workflow_array_contains(workflow, "permissionsNeeded", &expected) {
+            return false;
+        }
+    }
+    if let Some(secret_kind) = filters.secret_kind.as_deref() {
+        let expected = browser_workflow_filter_secret_kind(Some(secret_kind.to_string()))
+            .unwrap_or_else(|| secret_kind.to_string());
+        if !browser_workflow_array_contains(workflow, "secretKinds", &expected) {
+            return false;
+        }
+    }
+    filters
+        .query
+        .as_deref()
+        .map(|query| browser_workflow_matches_query(workflow, query))
+        .unwrap_or(true)
+}
+
+fn browser_workflow_matches_query(workflow: &Value, query: &str) -> bool {
+    let query = query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    [
+        "bookmarkId",
+        "label",
+        "url",
+        "category",
+        "siteKey",
+        "taskType",
+        "target",
+        "surface",
+        "contractProfile",
+        "contractId",
+        "contractHash",
+        "contractOverlayId",
+        "contractAuditStatus",
+        "contractAuditReason",
+        "recipeId",
+        "recipePath",
+        "goal",
+        "source",
+        "health",
+        "driftStatus",
+        "lastImprovementRating",
+        "lastReplayStatus",
+        "refreshReason",
+    ]
+    .iter()
+    .filter_map(|key| json_string(Some(workflow), key))
+    .any(|value| value.to_ascii_lowercase().contains(&query))
+        || ["aliases", "permissionsNeeded", "secretKinds"]
+            .iter()
+            .filter_map(|key| workflow.get(*key).and_then(|value| value.as_array()))
+            .flatten()
+            .filter_map(|value| value.as_str())
+            .any(|value| value.to_ascii_lowercase().contains(&query))
+}
+
+fn browser_workflow_summaries_from_bookmarks_state(
+    state: &Value,
+    filters: &BrowserWorkflowFilters,
+    limit: usize,
+) -> Vec<Value> {
+    let mut toolbar_ids = HashSet::new();
+    browser_collect_toolbar_bookmark_ids(state.get("bookmarkToolbar"), &mut toolbar_ids);
+    state
+        .get("bookmarks")
+        .and_then(|value| value.as_array())
+        .map(|bookmarks| {
+            bookmarks
+                .iter()
+                .filter_map(|bookmark| browser_workflow_bookmark_summary(bookmark, &toolbar_ids))
+                .filter(|workflow| browser_workflow_matches_filters(workflow, filters))
+                .take(limit)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+fn browser_workflow_recipe_path_from_bookmarks_state(
+    state: &Value,
+    bookmark_id: &str,
+) -> Option<String> {
+    browser_workflow_summary_from_bookmarks_state(state, bookmark_id)
+        .and_then(|workflow| json_string(Some(&workflow), "recipePath"))
+}
+
+fn browser_workflow_summary_from_bookmarks_state(
+    state: &Value,
+    bookmark_id: &str,
+) -> Option<Value> {
+    let mut toolbar_ids = HashSet::new();
+    browser_collect_toolbar_bookmark_ids(state.get("bookmarkToolbar"), &mut toolbar_ids);
+    state
+        .get("bookmarks")
+        .and_then(|value| value.as_array())?
+        .iter()
+        .find(|bookmark| json_string(Some(bookmark), "bookmarkId").as_deref() == Some(bookmark_id))
+        .and_then(|bookmark| browser_workflow_bookmark_summary(bookmark, &toolbar_ids))
+}
+
+fn browser_workflow_contract_apply_block_reason(workflow: &Value) -> Option<String> {
+    let status = json_string(Some(workflow), "contractAuditStatus")?;
+    let normalized = status.trim().to_ascii_lowercase();
+    if !matches!(
+        normalized.as_str(),
+        "contract-drift" | "blocked-by-contract" | "needs-review"
+    ) {
+        return None;
+    }
+    let reason = json_string(Some(workflow), "contractAuditReason")
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "workflow contract audit is not fresh".to_string());
+    Some(format!(
+        "browser_workflow_replay apply blocked by contract audit status '{}': {}",
+        status,
+        compact_browser_summary_value(&reason, 180)
+    ))
+}
+
+fn browser_workflows_text_summary(data: &Value) -> String {
+    let workflows = data
+        .get("workflows")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let count = data
+        .get("count")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(workflows.len() as u64);
+    let samples = workflows
+        .iter()
+        .take(6)
+        .map(|workflow| {
+            let id = json_string(Some(workflow), "bookmarkId").unwrap_or_else(|| "-".to_string());
+            let label =
+                json_string(Some(workflow), "label").unwrap_or_else(|| "Workflow".to_string());
+            let health = json_string(Some(workflow), "health").unwrap_or_else(|| "-".to_string());
+            let drift =
+                json_string(Some(workflow), "driftStatus").unwrap_or_else(|| "-".to_string());
+            let site = json_string(Some(workflow), "siteKey").unwrap_or_else(|| "-".to_string());
+            let task = json_string(Some(workflow), "taskType").unwrap_or_else(|| "-".to_string());
+            let target = json_string(Some(workflow), "target").unwrap_or_else(|| "-".to_string());
+            let steps = workflow
+                .get("steps")
+                .and_then(|value| value.as_u64())
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            format!(
+                "{} label={} site={} task={} target={} health={} drift={} steps={}",
+                id,
+                compact_browser_summary_value(&label, 80),
+                site,
+                task,
+                target,
+                health,
+                drift,
+                steps
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    if samples.is_empty() {
+        "browser_workflows: 0 Agent workflow bookmark(s)".to_string()
+    } else {
+        format!("browser_workflows: {count} Agent workflow bookmark(s); workflows=[{samples}]")
+    }
+}
+
+async fn tool_browser_workflows(args: Value) -> Result<Value, String> {
+    let timeout_secs = browser_mcp_timeout_secs(&args, 10_000);
+    let state = debug_api_get_json("/browser/bookmarks", timeout_secs).await?;
+    let limit = browser_mcp_usize_arg(&args, &["limit"], 20, 100);
+    let filters = BrowserWorkflowFilters {
+        query: mcp_arg_string(&args, &["query", "q"]),
+        site_key: browser_workflow_filter_site_key(mcp_arg_string(
+            &args,
+            &["siteKey", "site_key", "site"],
+        )),
+        task_type: browser_workflow_filter_task_type(mcp_arg_string(
+            &args,
+            &["taskType", "task_type", "task"],
+        )),
+        target: browser_workflow_filter_slug(mcp_arg_string(&args, &["target", "place"])),
+        surface: browser_workflow_filter_slug(mcp_arg_string(&args, &["surface"])),
+        permission: mcp_arg_string(&args, &["permission", "permissionNeeded"])
+            .map(|value| value.replace(' ', "").to_ascii_lowercase()),
+        secret_kind: browser_workflow_filter_secret_kind(mcp_arg_string(
+            &args,
+            &["secretKind", "secret_kind"],
+        )),
+    };
+    let workflows = browser_workflow_summaries_from_bookmarks_state(&state, &filters, limit);
+    let data = json!({
+        "ok": true,
+        "count": workflows.len(),
+        "workflows": workflows,
+    });
+    Ok(browser_mcp_result(
+        browser_workflows_text_summary(&data),
+        data,
+        false,
+    ))
+}
+
+fn browser_workflow_list_arg(args: &Value, keys: &[&str]) -> Vec<String> {
+    if let Some(value) = keys.iter().find_map(|key| args.get(*key)) {
+        if let Some(items) = value.as_array() {
+            return items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToOwned::to_owned)
+                .collect();
+        }
+        if let Some(text) = value.as_str() {
+            return text
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToOwned::to_owned)
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn browser_workflow_insert_optional_list(
+    map: &mut serde_json::Map<String, Value>,
+    key: &str,
+    values: Vec<String>,
+) {
+    if !values.is_empty() {
+        map.insert(key.to_string(), json!(values));
+    }
+}
+
+fn browser_workflow_url_from_state(state: &Value, browser_tab_id: Option<&str>) -> Option<String> {
+    let tabs = state.get("tabs").and_then(|value| value.as_array())?;
+    let requested = browser_tab_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let active = state
+        .get("activeBrowserTabId")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let tab = requested
+        .or(active)
+        .and_then(|id| {
+            tabs.iter()
+                .find(|tab| json_string(Some(tab), "browserTabId").as_deref() == Some(id))
+        })
+        .or_else(|| tabs.first())?;
+    json_string(Some(tab), "url")
+}
+
+async fn tool_browser_workflow_save(args: Value) -> Result<Value, String> {
+    let timeout_secs = browser_mcp_timeout_secs(&args, 30_000);
+    let label = mcp_arg_string(&args, &["label", "name"])
+        .ok_or_else(|| "browser_workflow_save requires label".to_string())?;
+    let task_type = browser_workflow_filter_task_type(mcp_arg_string(
+        &args,
+        &["taskType", "task_type", "task"],
+    ))
+    .ok_or_else(|| "browser_workflow_save requires taskType".to_string())?;
+    let target = browser_workflow_filter_slug(mcp_arg_string(&args, &["target", "place"]))
+        .ok_or_else(|| "browser_workflow_save requires target".to_string())?;
+    let surface = browser_workflow_filter_slug(mcp_arg_string(&args, &["surface"]));
+    let reason = mcp_arg_string(&args, &["reason"])
+        .unwrap_or_else(|| format!("Save Browser workflow bookmark: {label}"));
+
+    let mut export_body = serde_json::Map::new();
+    browser_insert_optional_string(
+        &mut export_body,
+        &args,
+        "taskId",
+        &["taskId", "task_id", "task"],
+    );
+    browser_insert_optional_string(
+        &mut export_body,
+        &args,
+        "browserTabId",
+        &["browserTabId", "browser_tab_id", "browserTab"],
+    );
+    export_body.insert("reason".to_string(), Value::String(reason.clone()));
+    let recipe = debug_api_post_json(
+        "/browser/recipes/export",
+        &Value::Object(export_body),
+        timeout_secs,
+    )
+    .await?;
+    let steps = recipe
+        .get("steps")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    if steps == 0 {
+        return Err(
+            "browser_workflow_save exported no replayable steps; run the Browser task first, then save the workflow"
+                .to_string(),
+        );
+    }
+
+    let browser_tab_id = mcp_arg_string(&args, &["browserTabId", "browser_tab_id", "browserTab"])
+        .or_else(|| json_string(Some(&recipe), "browserTabId"));
+    let url = if let Some(url) = mcp_arg_string(&args, &["url"]) {
+        Some(url)
+    } else {
+        debug_api_get_json("/browser/state", timeout_secs)
+            .await
+            .ok()
+            .and_then(|state| browser_workflow_url_from_state(&state, browser_tab_id.as_deref()))
+    };
+    let site_key =
+        browser_workflow_filter_site_key(mcp_arg_string(&args, &["siteKey", "site_key", "site"]))
+            .or_else(|| browser_workflow_site_key_from_url(url.clone()));
+
+    let mut agent_workflow = serde_json::Map::new();
+    if let Some(site_key) = site_key {
+        agent_workflow.insert("siteKey".to_string(), Value::String(site_key));
+    }
+    agent_workflow.insert("taskType".to_string(), Value::String(task_type));
+    agent_workflow.insert("target".to_string(), Value::String(target));
+    if let Some(surface) = surface {
+        agent_workflow.insert("surface".to_string(), Value::String(surface));
+    }
+    browser_workflow_insert_optional_list(
+        &mut agent_workflow,
+        "aliases",
+        browser_workflow_list_arg(&args, &["aliases", "alias"]),
+    );
+    browser_workflow_insert_optional_list(
+        &mut agent_workflow,
+        "permissionsNeeded",
+        browser_workflow_list_arg(
+            &args,
+            &["permissionsNeeded", "permissions_needed", "permission"],
+        ),
+    );
+    browser_workflow_insert_optional_list(
+        &mut agent_workflow,
+        "secretKinds",
+        browser_workflow_list_arg(&args, &["secretKinds", "secret_kinds", "secretKind"]),
+    );
+    if let Some(recipe_id) = json_string(Some(&recipe), "recipeId") {
+        agent_workflow.insert("recipeId".to_string(), Value::String(recipe_id));
+    }
+    if let Some(recipe_path) = json_string(Some(&recipe), "path") {
+        agent_workflow.insert("recipePath".to_string(), Value::String(recipe_path));
+    }
+    agent_workflow.insert("steps".to_string(), json!(steps));
+    agent_workflow.insert("source".to_string(), Value::String("recipe".to_string()));
+    agent_workflow.insert("health".to_string(), Value::String("fresh".to_string()));
+    agent_workflow.insert(
+        "driftStatus".to_string(),
+        Value::String("fresh".to_string()),
+    );
+    agent_workflow.insert("goal".to_string(), Value::String(label.clone()));
+
+    let mut bookmark = serde_json::Map::new();
+    bookmark.insert("label".to_string(), Value::String(label.clone()));
+    bookmark.insert("kind".to_string(), Value::String("link".to_string()));
+    bookmark.insert(
+        "category".to_string(),
+        Value::String("workflow".to_string()),
+    );
+    if let Some(url) = url {
+        bookmark.insert("url".to_string(), Value::String(url));
+    }
+    if let Some(toolbar_pinned) = mcp_arg_optional_bool(&args, &["toolbarPinned", "toolbar_pinned"])
+    {
+        bookmark.insert("toolbarPinned".to_string(), Value::Bool(toolbar_pinned));
+    }
+    bookmark.insert("agentWorkflow".to_string(), Value::Object(agent_workflow));
+    let mut saved =
+        debug_api_post_json("/browser/bookmarks", &Value::Object(bookmark), timeout_secs).await?;
+    if let Some(object) = saved.as_object_mut() {
+        object.insert("recipe".to_string(), recipe);
+    }
+    Ok(browser_mcp_result(
+        format!(
+            "browser_workflow_save: saved workflow bookmark label={}",
+            compact_browser_summary_value(&label, 120)
+        ),
+        saved,
+        false,
+    ))
+}
+
+async fn tool_browser_workflow_replay(args: Value) -> Result<Value, String> {
+    let timeout_secs = browser_mcp_timeout_secs(&args, 30_000);
+    let bookmark_id = mcp_arg_string(&args, &["bookmarkId", "bookmark_id"]);
+    let mut recipe_path = mcp_arg_string(&args, &["recipePath", "recipe_path"]);
+    let mut bookmark_workflow = None;
+    if let Some(bookmark_id) = bookmark_id.as_deref() {
+        let state = debug_api_get_json("/browser/bookmarks", timeout_secs).await?;
+        bookmark_workflow = browser_workflow_summary_from_bookmarks_state(&state, bookmark_id);
+        if recipe_path.is_none() {
+            recipe_path = bookmark_workflow
+                .as_ref()
+                .and_then(|workflow| json_string(Some(workflow), "recipePath"));
+        }
+    }
+    let recipe_path = recipe_path.ok_or_else(|| {
+        "browser_workflow_replay requires recipePath or bookmarkId with recipePath".to_string()
+    })?;
+
+    let has_browser_tab_id =
+        mcp_arg_string(&args, &["browserTabId", "browser_tab_id", "browserTab"]).is_some();
+    let has_task_id = mcp_arg_string(&args, &["taskId", "task_id", "task"]).is_some();
+    if has_browser_tab_id && !has_task_id {
+        return Err(
+            "browser_workflow_replay calls with browserTabId must also pass the owning taskId"
+                .to_string(),
+        );
+    }
+
+    let dry_run = if mcp_arg_bool(&args, "apply") {
+        false
+    } else {
+        mcp_arg_optional_bool(&args, &["dryRun", "dry_run"]).unwrap_or(true)
+    };
+    if !dry_run {
+        if let Some(reason) = bookmark_workflow
+            .as_ref()
+            .and_then(browser_workflow_contract_apply_block_reason)
+        {
+            return Err(reason);
+        }
+    }
+
+    let mut body = serde_json::Map::new();
+    body.insert("recipePath".to_string(), Value::String(recipe_path.clone()));
+    body.insert("dryRun".to_string(), Value::Bool(dry_run));
+    browser_insert_optional_string(&mut body, &args, "taskId", &["taskId", "task_id", "task"]);
+    browser_insert_optional_string(
+        &mut body,
+        &args,
+        "browserTabId",
+        &["browserTabId", "browser_tab_id", "browserTab"],
+    );
+    body.insert(
+        "reason".to_string(),
+        Value::String(
+            mcp_arg_string(&args, &["reason"])
+                .unwrap_or_else(|| "Host MCP Browser workflow replay".to_string()),
+        ),
+    );
+    let mut body = Value::Object(body);
+    if !dry_run {
+        browser_ensure_agent_task_target("workflowReplay", &mut body, timeout_secs).await?;
+    }
+    let mut data = debug_api_post_json("/browser/recipes/replay", &body, timeout_secs).await?;
+    if let (Some(object), Some(bookmark_id)) = (data.as_object_mut(), bookmark_id) {
+        object.insert("workflowBookmarkId".to_string(), Value::String(bookmark_id));
+    }
+    let status = data
+        .get("status")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    let steps_planned = data
+        .get("stepsPlanned")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let steps_applied = data
+        .get("stepsApplied")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let steps_skipped = data
+        .get("stepsSkipped")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    Ok(browser_mcp_result(
+        format!(
+            "browser_workflow_replay: status={status} dryRun={dry_run} steps={steps_applied}/{steps_planned} skipped={steps_skipped} recipePath={}",
+            compact_browser_summary_value(&recipe_path, 180)
+        ),
+        data,
         false,
     ))
 }
@@ -6817,8 +7636,8 @@ pub(crate) fn enforce_home_containment(
     // session writing to `/home/<user>/x` is UNC-translated to
     // `\\wsl$\<distro>\home\<user>\x` by resolve_path_full. That path
     // is OUTSIDE the Windows HOME tree, so the lexical prefix check
-    // would reject every WSL write. We treat `\\wsl$\<distro>\home\…`
-    // and `\\wsl.localhost\<distro>\home\…` as legitimate HOME
+    // would reject every WSL write. We treat both supported WSL UNC
+    // host forms as legitimate HOME
     // containment (the sensitive-substring denylist above already ran,
     // so vault/token/ssh/id files are still blocked inside that tree).
     let path_lower_unix = path
@@ -6832,9 +7651,9 @@ pub(crate) fn enforce_home_containment(
             .strip_prefix("//?/")
             .unwrap_or(&path_lower_unix);
         let starts_unc =
-            stripped.starts_with("//wsl$/") || stripped.starts_with("//wsl.localhost/");
+            stripped.starts_with("//wsl$/") || stripped.starts_with(WSL_DOT_LOCALHOST_UNIX_PREFIX);
         if starts_unc {
-            // Skip the "//wsl$/" or "//wsl.localhost/" prefix, then
+            // Skip the WSL UNC host prefix, then
             // skip <distro>/. The next segment must be "home". This
             // narrowly matches WSL home trees and rejects e.g.
             // `\\wsl$\Ubuntu\etc\passwd` or `\\wsl$\Ubuntu\root\x`.
@@ -6842,7 +7661,7 @@ pub(crate) fn enforce_home_containment(
                 r
             } else {
                 stripped
-                    .strip_prefix("//wsl.localhost/")
+                    .strip_prefix(WSL_DOT_LOCALHOST_UNIX_PREFIX)
                     .unwrap_or_default()
             };
             // after_prefix is "<distro>/<rest>". #439 (2026-05-21): the
@@ -6980,7 +7799,7 @@ pub(crate) fn validate_fs_path(tool: &str, path: &str) -> Result<PathBuf, String
         return Err(format!("{}: path contains a null byte", tool));
     }
     // UNC detection MUST run before normalization, because
-    // `\\wsl$\Ubuntu-24.04\...` and `\\wsl.localhost\Ubuntu-24.04\...`
+    // WSL UNC paths
     // are legitimate Windows-API paths that a normalize-first path
     // would turn into `//wsl$/Ubuntu-24.04/...` and then reject as
     // "POSIX absolute". UNC bypasses the POSIX-reject branch entirely;
@@ -7022,7 +7841,7 @@ pub(crate) fn validate_fs_path(tool: &str, path: &str) -> Result<PathBuf, String
         // probes) — they resolve correctly to C:\... on Windows via std::fs.
         let n_lc = normalized.to_ascii_lowercase();
         let is_wsl_mount = n_lc.starts_with("/mnt/") || n_lc.starts_with("/cygdrive/");
-        // UNC inputs (`\\wsl$\…`, `\\wsl.localhost\…`,
+        // UNC inputs (including WSL UNC forms and
         // `\\server\share\…`) are valid Windows paths even though
         // their normalized form starts with `/`. Skip POSIX-reject
         // for them so the underlying \\? resolution can happen.
@@ -7141,7 +7960,8 @@ async fn resolve_readable_media_path(
             for distro in distros {
                 candidates.push(format!("\\\\wsl$\\{}{}", distro, input.replace('/', "\\")));
                 candidates.push(format!(
-                    "\\\\wsl.localhost\\{}{}",
+                    "\\\\{}\\{}{}",
+                    WSL_DOT_LOCALHOST_HOST,
                     distro,
                     input.replace('/', "\\")
                 ));
@@ -12184,22 +13004,22 @@ mod tests {
                 "tab/a",
                 Some("ssh"),
                 None,
-                Some("mac mini"),
+                Some("fixture-host"),
                 Some(2222),
-                Some("connections/mac key"),
+                Some("connections/ssh key"),
             ),
-            "/provider-sessions/state?tabId=tab%2Fa&transport=ssh&sshHost=mac%20mini&sshPort=2222&sshKeyVaultRef=connections%2Fmac%20key"
+            "/provider-sessions/state?tabId=tab%2Fa&transport=ssh&sshHost=fixture-host&sshPort=2222&sshKeyVaultRef=connections%2Fssh%20key"
         );
         assert_eq!(
             provider_state_path(
                 "/provider-adapters/state",
                 Some("ssh"),
                 None,
-                Some("mac mini"),
+                Some("fixture-host"),
                 Some(2222),
-                Some("connections/mac key"),
+                Some("connections/ssh key"),
             ),
-            "/provider-adapters/state?transport=ssh&sshHost=mac%20mini&sshPort=2222&sshKeyVaultRef=connections%2Fmac%20key"
+            "/provider-adapters/state?transport=ssh&sshHost=fixture-host&sshPort=2222&sshKeyVaultRef=connections%2Fssh%20key"
         );
     }
 
@@ -12372,6 +13192,9 @@ mod tests {
             "browser_fill_ref",
             "browser_type_text",
             "browser_clear_site_data",
+            "browser_workflows",
+            "browser_workflow_save",
+            "browser_workflow_replay",
             "browser_fill_from_vault",
             "browser_fill_profile_card",
             "browser_capture_secret_to_vault",
@@ -12426,6 +13249,9 @@ mod tests {
             "browser_observe",
             "browser_click_ref",
             "browser_fill_ref",
+            "browser_workflows",
+            "browser_workflow_save",
+            "browser_workflow_replay",
             "browser_fill_from_vault",
             "browser_fill_profile_card",
             "browser_capture_secret_to_vault",
@@ -12672,6 +13498,245 @@ mod tests {
                 "Do not copy the trace or raw Browser state into the current working directory"
             ),
             "browser_trace_open must keep diagnostics in ShellX trace storage by default"
+        );
+
+        let workflows = specs
+            .iter()
+            .find(|s| s.get("name").and_then(|n| n.as_str()) == Some("browser_workflows"))
+            .expect("browser_workflows tool present");
+        assert!(
+            workflows["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Agent workflow bookmarks"),
+            "browser_workflows must expose reusable workflow discovery"
+        );
+
+        let workflow_save = specs
+            .iter()
+            .find(|s| s.get("name").and_then(|n| n.as_str()) == Some("browser_workflow_save"))
+            .expect("browser_workflow_save tool present");
+        assert!(
+            workflow_save["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("recipes/export")
+                && workflow_save["description"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("agentWorkflow"),
+            "browser_workflow_save must record recipe-backed workflow bookmarks"
+        );
+        assert!(
+            is_write_class_tool("browser_workflow_save"),
+            "workflow save writes a recipe artifact and bookmark, so it must be write-class gated"
+        );
+
+        let workflow_replay = specs
+            .iter()
+            .find(|s| s.get("name").and_then(|n| n.as_str()) == Some("browser_workflow_replay"))
+            .expect("browser_workflow_replay tool present");
+        assert!(
+            workflow_replay["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("dry-run by default"),
+            "browser_workflow_replay must default to rehearsal before apply"
+        );
+        assert!(
+            is_write_class_tool("browser_workflow_replay"),
+            "workflow replay can apply actions, so it must be write-class gated"
+        );
+    }
+
+    #[test]
+    fn browser_workflow_summaries_resolve_bookmark_recipes_compactly() {
+        let state = json!({
+            "bookmarks": [
+                {
+                    "bookmarkId": "wf-google-doc",
+                    "label": "Docs editing workflow",
+                    "url": "https://docs.example.invalid/",
+                    "category": "workflow",
+                    "kind": "link",
+                    "agentWorkflow": {
+                        "recipeId": "browser-recipe-doc",
+                        "recipePath": "/tmp/shellx-browser-recipes/doc.json",
+                        "goal": "Open the document and update one heading",
+                        "steps": 5,
+                        "source": "recipe",
+                        "health": "improved",
+                        "driftStatus": "fresh"
+                    }
+                },
+                {
+                    "bookmarkId": "normal-bookmark",
+                    "label": "Normal bookmark",
+                    "url": "https://example.invalid/"
+                }
+            ],
+            "bookmarkToolbar": [
+                {
+                    "bookmarkId": "folder",
+                    "children": [{ "bookmarkId": "wf-google-doc" }]
+                }
+            ]
+        });
+
+        let filters = BrowserWorkflowFilters {
+            query: Some("heading".to_string()),
+            ..BrowserWorkflowFilters::default()
+        };
+        let workflows = browser_workflow_summaries_from_bookmarks_state(&state, &filters, 10);
+        assert_eq!(workflows.len(), 1);
+        assert_eq!(workflows[0]["bookmarkId"], json!("wf-google-doc"));
+        assert_eq!(workflows[0]["toolbarPinned"], json!(true));
+        assert_eq!(
+            workflows[0]["recipePath"],
+            json!("/tmp/shellx-browser-recipes/doc.json")
+        );
+        assert_eq!(
+            browser_workflow_recipe_path_from_bookmarks_state(&state, "wf-google-doc").as_deref(),
+            Some("/tmp/shellx-browser-recipes/doc.json")
+        );
+        let summary = browser_workflows_text_summary(&json!({
+            "ok": true,
+            "count": workflows.len(),
+            "workflows": workflows,
+        }));
+        assert!(summary.contains("Agent workflow bookmark"));
+        assert!(summary.contains("wf-google-doc"));
+    }
+
+    #[test]
+    fn browser_workflow_apply_blocks_contract_drift() {
+        let state = json!({
+            "bookmarks": [
+                {
+                    "bookmarkId": "wf-drifted",
+                    "label": "Drifted workflow",
+                    "category": "workflow",
+                    "agentWorkflow": {
+                        "recipePath": "/tmp/shellx-browser-recipes/drifted.json",
+                        "contractAuditStatus": "contract-drift",
+                        "contractAuditReason": "Vault base contract changed after this workflow was recorded"
+                    }
+                }
+            ]
+        });
+
+        let workflow = browser_workflow_summary_from_bookmarks_state(&state, "wf-drifted")
+            .expect("workflow summary");
+        let reason = browser_workflow_contract_apply_block_reason(&workflow)
+            .expect("drifted workflow is blocked");
+
+        assert!(reason.contains("contract-drift"));
+        assert!(reason.contains("Vault base contract changed"));
+        assert_eq!(
+            browser_workflow_recipe_path_from_bookmarks_state(&state, "wf-drifted").as_deref(),
+            Some("/tmp/shellx-browser-recipes/drifted.json")
+        );
+    }
+
+    #[test]
+    fn browser_workflow_summaries_filter_by_taxonomy_and_aliases() {
+        let state = json!({
+            "bookmarks": [
+                {
+                    "bookmarkId": "wf-google-api-key",
+                    "label": "Google AI Studio API key",
+                    "url": "https://aistudio.google.com/app/apikey",
+                    "category": "workflow",
+                    "kind": "link",
+                    "agentWorkflow": {
+                        "siteKey": "google.com",
+                        "taskType": "get",
+                        "target": "api-key",
+                        "surface": "ai-studio",
+                        "aliases": ["gemini key", "developer token"],
+                        "contractProfile": "default-agent-signup",
+                        "permissionsNeeded": ["cookies.accept", "vault.secret.store"],
+                        "secretKinds": ["apiToken"],
+                        "recipeId": "browser-recipe-google-api-key",
+                        "recipePath": "/tmp/shellx-browser-recipes/google-api-key.json",
+                        "goal": "Get a Google AI Studio API key and store it in Vault",
+                        "steps": 8,
+                        "source": "recipe",
+                        "health": "fresh",
+                        "driftStatus": "fresh"
+                    }
+                },
+                {
+                    "bookmarkId": "wf-google-drive-upload",
+                    "label": "Google Drive upload",
+                    "url": "https://drive.google.com/",
+                    "category": "workflow",
+                    "kind": "link",
+                    "agentWorkflow": {
+                        "siteKey": "google.com",
+                        "taskType": "upload",
+                        "target": "file",
+                        "surface": "drive",
+                        "aliases": ["drive file upload"],
+                        "recipePath": "/tmp/shellx-browser-recipes/google-drive-upload.json",
+                        "health": "fresh"
+                    }
+                },
+                {
+                    "bookmarkId": "wf-github-search",
+                    "label": "GitHub repo search",
+                    "url": "https://github.com/search",
+                    "category": "workflow",
+                    "kind": "link",
+                    "agentWorkflow": {
+                        "siteKey": "github.com",
+                        "taskType": "search",
+                        "target": "repo",
+                        "surface": "github-search",
+                        "recipePath": "/tmp/shellx-browser-recipes/github-search.json",
+                        "health": "fresh"
+                    }
+                }
+            ],
+            "bookmarkToolbar": []
+        });
+
+        let filters = BrowserWorkflowFilters {
+            site_key: Some("google.com".to_string()),
+            task_type: Some("get".to_string()),
+            target: Some("api key".to_string()),
+            query: Some("gemini".to_string()),
+            ..BrowserWorkflowFilters::default()
+        };
+        let workflows = browser_workflow_summaries_from_bookmarks_state(&state, &filters, 10);
+
+        assert_eq!(workflows.len(), 1);
+        assert_eq!(workflows[0]["bookmarkId"], json!("wf-google-api-key"));
+        assert_eq!(workflows[0]["siteKey"], json!("google.com"));
+        assert_eq!(workflows[0]["taskType"], json!("get"));
+        assert_eq!(workflows[0]["target"], json!("api-key"));
+        assert_eq!(workflows[0]["surface"], json!("ai-studio"));
+        assert_eq!(
+            workflows[0]["contractProfile"],
+            json!("default-agent-signup")
+        );
+        assert_eq!(
+            workflows[0]["permissionsNeeded"],
+            json!(["cookies.accept", "vault.secret.store"])
+        );
+        assert_eq!(workflows[0]["secretKinds"], json!(["apiToken"]));
+
+        let intent_filters = BrowserWorkflowFilters {
+            task_type: Some("upload".to_string()),
+            target: Some("file".to_string()),
+            ..BrowserWorkflowFilters::default()
+        };
+        let intent_workflows =
+            browser_workflow_summaries_from_bookmarks_state(&state, &intent_filters, 10);
+        assert_eq!(intent_workflows.len(), 1);
+        assert_eq!(
+            intent_workflows[0]["bookmarkId"],
+            json!("wf-google-drive-upload")
         );
     }
 
@@ -14851,7 +15916,7 @@ status: DONE
         let connections = json!({
             "presets": [{
                 "id": "conn-ssh",
-                "label": "Mac mini",
+                "label": "SSH fixture",
                 "transport": {
                     "kind": "ssh",
                     "host": "dev@example.test",

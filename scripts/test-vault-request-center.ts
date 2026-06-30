@@ -141,7 +141,7 @@ assert.equal(vaultRequestSummaryText([]), "Vault ready");
 const header = readFileSync("src/components/Header.tsx", "utf8");
 const app = readFileSync("src/App.tsx", "utf8");
 const css = readFileSync("src/App.css", "utf8");
-const popoverBlock = css.match(/\.vault-request-popover\s*\{[^}]+\}/)?.[0] ?? "";
+const popoverBlock = css.match(/^\.vault-request-popover\s*\{[^}]+\}/m)?.[0] ?? "";
 assert.ok(
   header.includes('data-debug-id="header-vault-request-center"'),
   "Header must expose a stable Vault Request Center debug id",

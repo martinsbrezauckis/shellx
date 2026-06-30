@@ -2173,6 +2173,8 @@ mod tests {
             "browser_save_page",
             "browser_resolve_dialog",
             "browser_trace_open",
+            "browser_workflow_save",
+            "browser_workflow_replay",
             "vault_request_grant",
         ]
         .into_iter()

@@ -88,6 +88,22 @@ function boolFlag(flags: Record<string, FlagValue>, key: string): boolean {
   return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
+function objectValue(value: unknown): JsonObject | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as JsonObject;
+}
+
+function stringValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function stringArrayValue(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(stringValue).filter((item): item is string => Boolean(item));
+}
+
 function commonActionFields(flags: Record<string, FlagValue>): JsonObject {
   return cleanBody({
     browserTabId: stringFlag(flags, "tab") ?? stringFlag(flags, "browser-tab-id"),
@@ -238,6 +254,12 @@ async function runCommand(parsed: ParsedArgs): Promise<unknown> {
         browserTabId: stringFlag(parsed.flags, "tab") ?? stringFlag(parsed.flags, "browser-tab-id"),
         reason: stringFlag(parsed.flags, "reason") ?? "ShellX Browser CLI trace-open",
       }));
+    case "workflow-bookmarks":
+      return workflowBookmarks(connection, parsed.flags);
+    case "workflow-save":
+      return workflowSave(connection, parsed.flags);
+    case "workflow-replay":
+      return workflowReplay(connection, parsed.flags);
     default:
       throw new Error(`Unknown ShellX Browser command: ${parsed.command}`);
   }
@@ -245,6 +267,173 @@ async function runCommand(parsed: ParsedArgs): Promise<unknown> {
 
 function browserAction(connection: DebugApiConnection, body: JsonObject): Promise<unknown> {
   return callDebugApi(connection, "POST", "/browser/action", body);
+}
+
+async function workflowBookmarks(
+  connection: DebugApiConnection,
+  flags: Record<string, FlagValue>,
+): Promise<unknown> {
+  const state = await callDebugApi<{ bookmarks?: unknown[] }>(connection, "GET", "/browser/bookmarks");
+  const site = stringFlag(flags, "site") ?? stringFlag(flags, "site-key") ?? stringFlag(flags, "siteKey");
+  const taskType = stringFlag(flags, "task-type") ?? stringFlag(flags, "taskType");
+  const target = stringFlag(flags, "target");
+  const surface = stringFlag(flags, "surface");
+  const secretKind = stringFlag(flags, "secret-kind") ?? stringFlag(flags, "secretKind");
+  const query = stringFlag(flags, "query")?.toLowerCase();
+  const limit = Math.min(Number(stringFlag(flags, "limit") ?? "20") || 20, 100);
+  const workflows = (state.bookmarks ?? [])
+    .map(objectValue)
+    .filter((bookmark): bookmark is JsonObject => Boolean(bookmark && objectValue(bookmark.agentWorkflow)))
+    .map((bookmark) => {
+      const workflow = objectValue(bookmark.agentWorkflow) ?? {};
+      const url = stringValue(bookmark.url);
+      return {
+        bookmarkId: stringValue(bookmark.bookmarkId),
+        label: stringValue(bookmark.label),
+        url,
+        category: stringValue(bookmark.category),
+        siteKey: stringValue(workflow.siteKey) ?? siteKeyFromUrl(url),
+        taskType: stringValue(workflow.taskType),
+        target: stringValue(workflow.target),
+        surface: stringValue(workflow.surface),
+        aliases: stringArrayValue(workflow.aliases),
+        permissionsNeeded: stringArrayValue(workflow.permissionsNeeded),
+        secretKinds: stringArrayValue(workflow.secretKinds),
+        recipeId: stringValue(workflow.recipeId),
+        recipePath: stringValue(workflow.recipePath),
+        goal: stringValue(workflow.goal),
+        steps: workflow.steps,
+        health: stringValue(workflow.health),
+        driftStatus: stringValue(workflow.driftStatus),
+      };
+    })
+    .filter((workflow) => !site || domainMatches(workflow.siteKey, normalizeSite(site)))
+    .filter((workflow) => !taskType || workflow.taskType === slug(taskType).split("-")[0])
+    .filter((workflow) => !target || workflow.target === slug(target))
+    .filter((workflow) => !surface || workflow.surface === slug(surface))
+    .filter((workflow) => !secretKind || workflow.secretKinds.some((item) => item.toLowerCase() === secretKind.toLowerCase()))
+    .filter((workflow) => {
+      if (!query) return true;
+      return JSON.stringify(workflow).toLowerCase().includes(query);
+    })
+    .slice(0, limit);
+  return { ok: true, count: workflows.length, workflows };
+}
+
+async function workflowReplay(
+  connection: DebugApiConnection,
+  flags: Record<string, FlagValue>,
+): Promise<unknown> {
+  let recipePath = stringFlag(flags, "recipe-path") ?? stringFlag(flags, "recipePath");
+  const bookmarkId = stringFlag(flags, "bookmark") ?? stringFlag(flags, "bookmark-id") ?? stringFlag(flags, "bookmarkId");
+  if (!recipePath && bookmarkId) {
+    const discovered = await workflowBookmarks(connection, { ...flags, limit: "100" });
+    const workflows = objectValue(discovered)?.workflows;
+    if (Array.isArray(workflows)) {
+      const workflow = workflows
+        .map(objectValue)
+        .find((candidate) => stringValue(candidate?.bookmarkId) === bookmarkId);
+      recipePath = stringValue(workflow?.recipePath);
+    }
+  }
+  if (!recipePath) throw new Error("workflow-replay requires --recipe-path <path> or --bookmark <bookmarkId>");
+  return callDebugApi(connection, "POST", "/browser/recipes/replay", cleanBody({
+    ...commonActionFields(flags),
+    recipePath,
+    dryRun: !(boolFlag(flags, "apply") || boolFlag(flags, "no-dry-run")),
+    reason: stringFlag(flags, "reason") ?? "ShellX Browser CLI workflow-replay",
+  }));
+}
+
+async function workflowSave(
+  connection: DebugApiConnection,
+  flags: Record<string, FlagValue>,
+): Promise<unknown> {
+  const label = stringFlag(flags, "label") ?? stringFlag(flags, "name");
+  if (!label) throw new Error("workflow-save requires --label <name>");
+  const taskType = stringFlag(flags, "task-type") ?? stringFlag(flags, "taskType");
+  if (!taskType) throw new Error("workflow-save requires --task-type <type>");
+  const target = stringFlag(flags, "target");
+  if (!target) throw new Error("workflow-save requires --target <slug>");
+  const reason = stringFlag(flags, "reason") ?? `ShellX Browser CLI workflow-save: ${label}`;
+  const recipe = await callDebugApi<JsonObject>(connection, "POST", "/browser/recipes/export", cleanBody({
+    taskId: stringFlag(flags, "task") ?? stringFlag(flags, "task-id"),
+    browserTabId: stringFlag(flags, "tab") ?? stringFlag(flags, "browser-tab-id"),
+    reason,
+  }));
+  if (Number(recipe.steps ?? 0) <= 0) {
+    throw new Error("workflow-save exported no replayable steps; run the Browser task first, then save the workflow");
+  }
+  const recipePath = stringValue(recipe.path);
+  const recipeId = stringValue(recipe.recipeId);
+  const state = await callDebugApi<{ activeBrowserTabId?: string; tabs?: JsonObject[] }>(connection, "GET", "/browser/state");
+  const tabId = stringFlag(flags, "tab") ?? stringFlag(flags, "browser-tab-id") ?? state.activeBrowserTabId;
+  const tab = (state.tabs ?? []).find((item) => stringValue(item.browserTabId) === tabId) ?? (state.tabs ?? [])[0];
+  const url = stringFlag(flags, "url") ?? stringValue(tab?.url);
+  const siteKey = stringFlag(flags, "site") ?? stringFlag(flags, "site-key") ?? stringFlag(flags, "siteKey") ?? siteKeyFromUrl(url);
+  const workflow = cleanBody({
+    siteKey,
+    taskType: slug(taskType).split("-")[0],
+    target: slug(target),
+    surface: stringFlag(flags, "surface") ? slug(stringFlag(flags, "surface") ?? "") : undefined,
+    aliases: commaListFlag(flags, "aliases"),
+    permissionsNeeded: commaListFlag(flags, "permissions"),
+    secretKinds: commaListFlag(flags, "secret-kinds") ?? commaListFlag(flags, "secretKinds"),
+    recipeId,
+    recipePath,
+    goal: label,
+    steps: recipe.steps,
+    source: "recipe",
+    health: "fresh",
+    driftStatus: "fresh",
+  });
+  const bookmark = await callDebugApi<JsonObject>(connection, "POST", "/browser/bookmarks", cleanBody({
+    label,
+    kind: "link",
+    category: "workflow",
+    url,
+    toolbarPinned: boolFlag(flags, "toolbar-pinned") || boolFlag(flags, "toolbarPinned"),
+    agentWorkflow: workflow,
+  }));
+  return { ok: true, recipe, bookmark };
+}
+
+function commaListFlag(flags: Record<string, FlagValue>, key: string): string[] | undefined {
+  const value = stringFlag(flags, key);
+  if (!value) return undefined;
+  const items = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return items.length ? items : undefined;
+}
+
+function slug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function normalizeSite(value: string): string {
+  try {
+    const url = value.includes("://") ? value : `https://${value}`;
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return value.split("/")[0]?.replace(/^www\./, "").toLowerCase() ?? value.toLowerCase();
+  }
+}
+
+function siteKeyFromUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = value.includes("://") ? value : `https://${value}`;
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function domainMatches(actual: string | null, expected: string): boolean {
+  return Boolean(actual && (actual === expected || actual.endsWith(`.${expected}`)));
 }
 
 function requiredPositional(parsed: ParsedArgs, index: number, label: string): string {
@@ -268,6 +457,9 @@ function usageLines(): string[] {
     "pnpm shellx-browser tabs",
     "pnpm shellx-browser locks",
     "pnpm shellx-browser trace-open --task <taskId>",
+    "pnpm shellx-browser workflow-bookmarks --site google.com --task-type get --target api-key",
+    "pnpm shellx-browser workflow-save --label \"Google API key\" --task-type get --target api-key --site google.com",
+    "pnpm shellx-browser workflow-replay --recipe-path <path> --dry-run",
   ];
 }
 

@@ -53,22 +53,38 @@ fn install_under_temp_home_matches_repo_manifest() {
         .expect("install must succeed under writable HOME");
     assert!(r, "fresh install must return Ok(true)");
 
-    let installed = home
-        .join(".grok")
-        .join("skills")
-        .join("shellx-host")
-        .join("SKILL.md");
-    assert!(
-        installed.is_file(),
-        "expected file at {}",
-        installed.display()
-    );
-    let on_disk = std::fs::read_to_string(&installed).unwrap();
     let from_repo = repo_manifest();
-    assert_eq!(
-        on_disk, from_repo,
-        "installed manifest must equal repo source byte-for-byte"
-    );
+    for installed in [
+        home.join(".grok")
+            .join("skills")
+            .join("shellx-host")
+            .join("SKILL.md"),
+        home.join(".codex")
+            .join("skills")
+            .join("shellx-host")
+            .join("SKILL.md"),
+        home.join(".claude")
+            .join("skills")
+            .join("shellx-host")
+            .join("SKILL.md"),
+        home.join(".shellx")
+            .join("agent-docs")
+            .join("shellx-host")
+            .join("SKILL.md"),
+    ] {
+        assert!(
+            installed.is_file(),
+            "expected file at {}",
+            installed.display()
+        );
+        let on_disk = std::fs::read_to_string(&installed).unwrap();
+        assert_eq!(
+            on_disk,
+            from_repo,
+            "installed manifest at {} must equal repo source byte-for-byte",
+            installed.display()
+        );
+    }
 
     // Idempotency: re-run is a no-op.
     let r2 = app_lib::skill_install::ensure_shellx_host_skill_installed().unwrap();

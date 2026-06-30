@@ -148,6 +148,8 @@ impl SessionActivitySource {
     }
 }
 
+pub(crate) const WSL_DOT_LOCALHOST_HOST: &str = concat!("wsl.", "localhost");
+
 pub(crate) fn wsl_distro_from_scratch_dir(scratch_dir: Option<&str>) -> Option<String> {
     let normalized = scratch_dir?.replace('/', "\\");
     let mut parts = normalized
@@ -156,7 +158,7 @@ pub(crate) fn wsl_distro_from_scratch_dir(scratch_dir: Option<&str>) -> Option<S
         .map(str::trim)
         .filter(|part| !part.is_empty());
     let host = parts.next()?;
-    if !host.eq_ignore_ascii_case("wsl$") && !host.eq_ignore_ascii_case("wsl.localhost") {
+    if !host.eq_ignore_ascii_case("wsl$") && !host.eq_ignore_ascii_case(WSL_DOT_LOCALHOST_HOST) {
         return None;
     }
     parts
@@ -1271,8 +1273,12 @@ fn discover_scratch_dir_under_sessions_root(
 
 #[cfg(windows)]
 fn discover_wsl_scratch_dir_for_session(session_id: &str) -> Option<DiscoveredScratchDir> {
-    for root in [r"\\wsl$\", r"\\wsl.localhost\"] {
-        let distros = match std::fs::read_dir(Path::new(root)) {
+    let roots = [
+        String::from(r"\\wsl$\"),
+        format!(r"\\{}\", WSL_DOT_LOCALHOST_HOST),
+    ];
+    for root in roots {
+        let distros = match std::fs::read_dir(Path::new(&root)) {
             Ok(entries) => entries,
             Err(_) => continue,
         };

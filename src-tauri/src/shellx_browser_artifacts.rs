@@ -83,6 +83,17 @@ pub(crate) fn browser_recipe_step_from_receipt(
                 "selector": evidence.get("selector").cloned().unwrap_or(serde_json::Value::Null),
                 "status": evidence.get("status").cloned().unwrap_or(serde_json::Value::Null),
             });
+            for key in ["force", "timeoutMs", "x", "y", "key"] {
+                if let Some(value) = evidence.get(key) {
+                    step[key] = value.clone();
+                }
+            }
+            if matches!(action, "waitFor" | "scroll" | "verify") {
+                if let Some(value) = evidence.get("value") {
+                    step["value"] = value.clone();
+                    step["valueRedacted"] = json!(false);
+                }
+            }
             if matches!(action, "fillRef" | "type" | "select" | "press") {
                 step["valueRef"] = json!("user-or-vault-supplied");
                 step["valueRedacted"] = json!(true);
@@ -179,4 +190,65 @@ pub(crate) fn write_browser_json_artifact(
     let path = dir.join(format!("{}-{}.json", id, created_at_ms));
     std::fs::write(&path, &bytes).map_err(|e| format!("write {} failed: {}", path.display(), e))?;
     Ok((path.to_string_lossy().into_owned(), bytes.len(), sha256))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shellx_browser::BrowserReceipt;
+
+    #[test]
+    fn recipe_step_from_engine_receipt_preserves_replayable_control_metadata() {
+        let receipt = BrowserReceipt {
+            receipt_id: "receipt-click".to_string(),
+            kind: "browserEngineActionApplied".to_string(),
+            task_id: Some("browser-task".to_string()),
+            profile_id: Some("agent".to_string()),
+            summary: "clicked".to_string(),
+            t: 1234,
+            evidence: json!({
+                "browserTabId": "browser-tab",
+                "action": "clickRef",
+                "refId": "create-key",
+                "selector": "button[data-testid='create-key']",
+                "status": "applied",
+                "force": true,
+                "timeoutMs": 9000
+            }),
+        };
+
+        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
+
+        assert_eq!(step["action"], json!("clickRef"));
+        assert_eq!(step["refId"], json!("create-key"));
+        assert_eq!(step["selector"], json!("button[data-testid='create-key']"));
+        assert_eq!(step["force"], json!(true));
+        assert_eq!(step["timeoutMs"], json!(9000));
+    }
+
+    #[test]
+    fn recipe_step_from_engine_receipt_redacts_fill_values() {
+        let receipt = BrowserReceipt {
+            receipt_id: "receipt-fill".to_string(),
+            kind: "browserEngineActionApplied".to_string(),
+            task_id: Some("browser-task".to_string()),
+            profile_id: Some("agent".to_string()),
+            summary: "filled".to_string(),
+            t: 1234,
+            evidence: json!({
+                "browserTabId": "browser-tab",
+                "action": "fillRef",
+                "refId": "password",
+                "selector": "#password",
+                "status": "applied",
+                "value": "should-not-be-exported"
+            }),
+        };
+
+        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
+
+        assert_eq!(step["action"], json!("fillRef"));
+        assert_eq!(step["valueRedacted"], json!(true));
+        assert!(step.get("value").is_none());
+    }
 }

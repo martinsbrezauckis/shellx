@@ -132,6 +132,8 @@ function ensureMainShellxWindowVisible(): void {
       "-Command",
       [
         "$candidates=@(",
+        "(Join-Path $env:LOCALAPPDATA 'shellX\\shellx.exe'),",
+        "(Join-Path $env:LOCALAPPDATA 'shellx\\shellx.exe'),",
         "'C:\\Users\\FixtureUser\\AppData\\Local\\shellX\\shellx.exe',",
         "'C:\\Users\\FixtureUser\\AppData\\Local\\shellx\\shellx.exe'",
         ");",
@@ -147,6 +149,32 @@ function ensureMainShellxWindowVisible(): void {
   } catch {
     // Non-Windows/dev runs can still pass if the main renderer is already alive.
   }
+}
+
+function restartInstalledShellxVaultE2e(): void {
+  execFileSync("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    [
+      "$ErrorActionPreference='Stop';",
+      "Get-Process shellx -ErrorAction SilentlyContinue | Stop-Process -Force;",
+      "Start-Sleep -Milliseconds 700;",
+      "$candidates=@(",
+      "(Join-Path $env:LOCALAPPDATA 'shellX\\shellx.exe'),",
+      "(Join-Path $env:LOCALAPPDATA 'shellx\\shellx.exe')",
+      ");",
+      "$exe=$candidates | Where-Object { Test-Path $_ } | Select-Object -First 1;",
+      "if (-not $exe) { throw 'installed shellX executable not found' };",
+      "$vaultProfile=Join-Path $env:TEMP ('shellx-vault-e2e-' + [guid]::NewGuid().ToString('N'));",
+      "New-Item -ItemType Directory -Force -Path $vaultProfile | Out-Null;",
+      "$env:SHELLX_VAULT_E2E='1';",
+      "$env:SHELLX_VAULT_PROFILE_DIR=$vaultProfile;",
+      "Start-Process -FilePath $exe;",
+      "Start-Sleep -Seconds 5;",
+    ].join(" "),
+  ], { stdio: "ignore" });
 }
 
 async function focusMainShellxWindow(base: string, token: string): Promise<void> {
@@ -328,13 +356,6 @@ async function openRequestCenter(
   if (itemSelector && await highlightsVisible(base, token, `${name}-popover-already-open`, [
     "[data-debug-id='vault-request-center-popover']",
   ], 1_000)) {
-    await postAppUi(base, token, {
-      source: "vault-request-center-ui-smoke",
-      debugClick: itemSelector,
-      debugHighlights: [],
-    });
-    await sleep(250);
-    await focusMainShellxWindow(base, token);
     await waitForHighlights(base, token, name, selectors);
     return;
   }
@@ -356,22 +377,20 @@ async function openRequestCenter(
   await waitForHighlights(base, token, `${name}-popover-open`, [
     "[data-debug-id='vault-request-center-popover']",
   ], 7_000);
-  if (itemSelector) {
-    await postAppUi(base, token, {
-      source: "vault-request-center-ui-smoke",
-      debugClick: itemSelector,
-      debugHighlights: [],
-    });
-    await sleep(250);
-    await focusMainShellxWindow(base, token);
-  }
   await waitForHighlights(base, token, name, selectors);
 }
 
 async function main(): Promise<void> {
-  const { shellxHome, base, token } = await resolveDebugConnection();
+  let { shellxHome, base, token } = await resolveDebugConnection();
   assert(true, `debug API health responds from ${shellxHome}`);
-  const resetAvailable = await resetVaultE2eIfAvailable(base, token);
+  let resetAvailable = await resetVaultE2eIfAvailable(base, token);
+  if (!resetAvailable) {
+    restartInstalledShellxVaultE2e();
+    ({ shellxHome, base, token } = await resolveDebugConnection());
+    resetAvailable = await waitFor("Vault E2E reset route becomes available after isolated relaunch", async () => {
+      return await resetVaultE2eIfAvailable(base, token) ? { ok: true } : null;
+    }, 12_000, 500).then(() => true).catch(() => false);
+  }
   assert(resetAvailable, "Vault E2E reset route is available for Request Center smoke");
   await focusMainShellxWindow(base, token);
 
@@ -396,16 +415,18 @@ async function main(): Promise<void> {
   });
   const depositSelector = `[data-request-id='browser-vault-deposit:${deposit.depositId}']`;
   await openRequestCenter(base, token, "vault-center-deposit-visible", depositSelector);
-  await postAppUi(base, token, {
+  await postAppUiForbidden(base, token, {
     source: "vault-request-center-ui-smoke",
     debugClick: `${depositSelector} [data-debug-id='vault-request-action-openVault']`,
     debugHighlights: [],
   });
+  assert(true, "Header center rejects debug relay Open Vault for saved-credential request");
+  await api<Json>(base, token, "POST", "/vault/open-panel");
   await waitForHighlights(base, token, "vault-center-open-vault", [
     "[data-debug-id='vault-workspace-modal']",
     "[data-debug-id='vault-filter-input']",
   ]);
-  assert(true, "Header center Open Vault action opens Vault panel");
+  assert(true, "Header center operator path opens Vault panel");
   await postAppUi(base, token, {
     source: "vault-request-center-ui-smoke",
     openModal: "close",
@@ -479,22 +500,13 @@ async function main(): Promise<void> {
   });
   const dismissSelector = `[data-request-id='browser-vault-deposit:${dismissDeposit.depositId}']`;
   await openRequestCenter(base, token, "vault-center-dismiss-visible", dismissSelector);
-  await postAppUi(base, token, {
+  await postAppUiForbidden(base, token, {
     source: "vault-request-center-ui-smoke",
     debugClick: `${dismissSelector} [data-debug-id='vault-request-action-dismissDeposit']`,
     debugHighlights: [],
   });
-  await postAppUi(base, token, {
-    source: "vault-request-center-ui-smoke",
-    debugHighlights: expectedHighlights("vault-center-dismiss-gone", [dismissSelector]),
-  });
-  try {
-    await waitForHighlights(base, token, "vault-center-dismiss-gone", [dismissSelector], 1_500);
-    throw new Error("dismissed deposit still rendered");
-  } catch (err) {
-    if (err instanceof Error && err.message === "dismissed deposit still rendered") throw err;
-  }
-  assert(true, "Header center Done action dismisses saved-credential reminder");
+  await openRequestCenter(base, token, "vault-center-dismiss-still-visible-after-relay-denial", dismissSelector);
+  assert(true, "Header center rejects debug relay Done for saved-credential reminder");
 
   const browserGrant = await api<BrowserSessionGrant>(base, token, "POST", "/browser/session-grants/request", {
     taskId: task.taskId,

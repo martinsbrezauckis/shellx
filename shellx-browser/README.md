@@ -218,8 +218,21 @@ the active host, then returns redacted results plus a
 values. The manifest keeps the workflow goal, redacted steps, variable input
 placeholders, assertions, decision-point notes, source receipt references, and a
 redaction policy so replay can adapt from fresh observations instead of freezing
-one page's selectors. `/browser/recipes/replay` and `/browser/robots/*` provide
-dry-run and scheduled work-queue receipts for agent-driven browser workflows.
+one page's selectors. `/browser/recipes/replay` dry-runs by default; when apply
+is requested, ShellX applies replayable navigation, click/click-ref, wait,
+scroll, select, press, verify, extract, and non-redacted find-text route steps
+through the normal Browser engine, locks, receipts, and approval gates. Redacted
+inputs, live Vault capture/fill, and unsupported actions return explicit
+skipped-step reasons so agents continue from fresh observation and gated Vault
+tools instead of replaying raw secrets.
+
+Saved Browser bookmarks may include experimental `agentWorkflow` metadata for
+repeatable agent tasks. Agents can save a successful task by exporting a recipe
+and writing a workflow bookmark, search those workflow bookmarks by taxonomy
+such as `siteKey`, `taskType`, `target`, `surface`, and `secretKinds`, rehearse
+the attached `recipePath`, then continue live from a fresh observation when the
+workflow is stale or incomplete. `/browser/robots/*` provides scheduled
+work-queue receipts for those agent-driven browser workflows.
 `/browser/storage-state` exposes safe storage manifests only: profile id,
 storage root, cookie/local-storage policy, retention policy, and grant status.
 `/browser/storage-state/export` writes the same value-free manifest as a hashed

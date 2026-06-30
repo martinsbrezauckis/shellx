@@ -135,7 +135,6 @@ function resolveWindowsConfig(): { tauriDriver: string; application: string; nat
     ]);
   const application = process.env.SHELLX_WEBDRIVER_APP?.trim()
     || chooseExistingWindowsPath([
-      winJoin(userProfile, "shellx-build", "shellx", "src-tauri", "target", "release", "shellx.exe"),
       winJoin(localAppData, "shellX", "shellx.exe"),
       winJoin(localAppData, "shellx", "shellx.exe"),
     ]);

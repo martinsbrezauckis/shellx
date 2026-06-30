@@ -2,7 +2,7 @@
 //!
 //! Ships the canonical `shellx-host` skill manifest bundled into the
 //! shellX binary via `include_str!`, and installs it to
-//! `~/.grok/skills/shellx-host/SKILL.md` on app boot.
+//! agent-readable locations on app boot.
 //!
 //! Why bundle, not copy-at-runtime?
 //! - Hermetic: no relative-path lookup, no "where did the source
@@ -20,8 +20,8 @@
 //! with updated manifest): overwrite, returns Ok(true).
 //!
 //! Failure mode: non-fatal. Caller (lib.rs setup) logs and continues —
-//! shellX boots even if `~/` is read-only or `.grok/skills/` can't be
-//! created. The grok agent will just not see the host-skill hints; nothing
+//! shellX boots even if `~/` is read-only or agent skill/docs dirs can't
+//! be created. The agent will just not see the host-skill hints; nothing
 //! else breaks.
 //!
 //! Primary callers:
@@ -42,6 +42,12 @@ use tracing::info;
 /// so a CI build that doesn't ship development-only workspace files
 /// still bakes the manifest into the binary.
 pub const BUNDLED_SKILL_BODY: &str = include_str!("../../skills/shellx-host/SKILL.md");
+
+#[derive(Debug, Clone)]
+pub struct HostSkillInstallTarget {
+    pub id: &'static str,
+    pub path: PathBuf,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct LegacyWorkflowSkill {
@@ -72,7 +78,7 @@ pub const LEGACY_WORKFLOW_SKILLS: &[LegacyWorkflowSkill] = &[
     },
 ];
 
-/// Resolve the on-disk path where the host-skill manifest must land.
+/// Resolve the primary Grok on-disk path where the host-skill manifest lands.
 ///
 /// Linux/macOS: `$HOME/.grok/skills/shellx-host/SKILL.md`.
 /// Windows: `%USERPROFILE%\.grok\skills\shellx-host\SKILL.md`.
@@ -87,6 +93,10 @@ pub fn target_skill_path() -> Option<PathBuf> {
 }
 
 pub fn target_skill_path_for(skill_id: &str) -> Option<PathBuf> {
+    grok_skill_path_for(skill_id)
+}
+
+fn user_home_dir() -> Option<PathBuf> {
     let home = if cfg!(target_os = "windows") {
         // Windows uses USERPROFILE; HOME may also be set under
         // git-bash / msys but USERPROFILE is the canonical native env.
@@ -94,12 +104,60 @@ pub fn target_skill_path_for(skill_id: &str) -> Option<PathBuf> {
     } else {
         std::env::var_os("HOME")?
     };
-    let mut p = PathBuf::from(home);
+    Some(PathBuf::from(home))
+}
+
+fn grok_skill_path_for(skill_id: &str) -> Option<PathBuf> {
+    let mut p = user_home_dir()?;
     p.push(".grok");
     p.push("skills");
     p.push(skill_id);
     p.push("SKILL.md");
     Some(p)
+}
+
+fn shellx_host_skill_install_targets_for_home(home: &Path) -> Vec<HostSkillInstallTarget> {
+    vec![
+        HostSkillInstallTarget {
+            id: "grok",
+            path: home
+                .join(".grok")
+                .join("skills")
+                .join("shellx-host")
+                .join("SKILL.md"),
+        },
+        HostSkillInstallTarget {
+            id: "codex",
+            path: home
+                .join(".codex")
+                .join("skills")
+                .join("shellx-host")
+                .join("SKILL.md"),
+        },
+        HostSkillInstallTarget {
+            id: "claude",
+            path: home
+                .join(".claude")
+                .join("skills")
+                .join("shellx-host")
+                .join("SKILL.md"),
+        },
+        HostSkillInstallTarget {
+            id: "shellx-agent-docs",
+            path: home
+                .join(".shellx")
+                .join("agent-docs")
+                .join("shellx-host")
+                .join("SKILL.md"),
+        },
+    ]
+}
+
+pub fn shellx_host_skill_install_targets() -> Result<Vec<HostSkillInstallTarget>, String> {
+    let home = user_home_dir().ok_or_else(|| {
+        "neither HOME nor USERPROFILE is set; cannot resolve agent skill/docs paths".to_string()
+    })?;
+    Ok(shellx_host_skill_install_targets_for_home(&home))
 }
 
 /// Hex-encode a SHA-256 of an arbitrary string body. Used both for the
@@ -196,10 +254,7 @@ fn ensure_installed_at(path: &Path, body: &str) -> Result<bool, String> {
 fn validate_skill_install_parent(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
-        if let (Ok(home), Ok(canon_parent)) = (
-            std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")),
-            std::fs::canonicalize(parent),
-        ) {
+        if let (Some(home), Ok(canon_parent)) = (user_home_dir(), std::fs::canonicalize(parent)) {
             if let Ok(canon_home) = std::fs::canonicalize(&home) {
                 if !canon_parent.starts_with(&canon_home) {
                     return Err(format!(
@@ -216,9 +271,7 @@ fn validate_skill_install_parent(path: &Path) -> Result<(), String> {
 }
 
 fn home_relative_path_display(path: &Path) -> String {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok()
+    user_home_dir()
         .and_then(|home| {
             path.strip_prefix(&home).ok().map(|rel| {
                 let sep = if cfg!(target_os = "windows") {
@@ -232,19 +285,19 @@ fn home_relative_path_display(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-/// Ensure the bundled host-skill manifest is installed at the canonical
-/// path.
+/// Ensure the bundled host-skill manifest is installed for supported agents.
 ///
 /// Behavior:
-/// 1. Resolve `~/.grok/skills/shellx-host/SKILL.md` via env. If HOME /
-/// USERPROFILE is unset, return Err — callers (lib.rs setup) treat
-/// this as non-fatal and just log a warning.
-/// 2. Delegate to `ensure_installed_at` which creates the parent dir,
-/// short-circuits on byte-equal, otherwise atomically writes.
+/// 1. Resolve the user's home via HOME / USERPROFILE. If neither is
+/// set, return Err — callers (lib.rs setup) treat this as non-fatal.
+/// 2. Write the exact binary-bundled body to Grok, Codex, Claude, and
+/// ShellX-owned agent-docs locations. Each target uses
+/// `ensure_installed_at`, which creates the parent dir, short-circuits
+/// on byte-equal, otherwise writes.
 ///
-/// Returns `Ok(true)` when a write happened, `Ok(false)` when the file
-/// was already up-to-date, `Err(...)` only on env/IO failure (and
-/// callers treat that as a soft warning).
+/// Returns `Ok(true)` when at least one write happened, `Ok(false)` when
+/// all reachable targets were already up-to-date, `Err(...)` only when
+/// no target could be installed.
 /// Write `~/.grok/config.toml` with the `[mcp_servers.grok-shell-host]`
 /// section so grok-build actually initializes the host MCP server at
 /// session start. grok-build ignores mcpServers from ACP `session/new`
@@ -1051,9 +1104,7 @@ pub fn set_host_mcp_enabled(enabled: bool) -> Result<bool, String> {
 }
 
 pub fn ensure_shellx_host_skill_installed() -> Result<bool, String> {
-    let path = target_skill_path().ok_or_else(|| {
-        "neither HOME nor USERPROFILE is set; cannot resolve ~/.grok/skills/".to_string()
-    })?;
+    let targets = shellx_host_skill_install_targets()?;
     /* Symlink TOCTOU defence.
      * Before delegating to `ensure_installed_at`, canonicalize the parent
      * dir (creating it first if missing) and verify the resolved path
@@ -1065,8 +1116,37 @@ pub fn ensure_shellx_host_skill_installed() -> Result<bool, String> {
      * The check runs only at the production-entry boundary so the unit
      * tests against `ensure_installed_at` (which write to tempfile dirs
      * outside $HOME) keep working without an opt-out flag. */
-    validate_skill_install_parent(&path)?;
-    ensure_installed_at(&path, BUNDLED_SKILL_BODY)
+    let mut wrote_any = false;
+    let mut installed_count = 0usize;
+    let mut errors = Vec::<String>::new();
+    for target in targets {
+        match validate_skill_install_parent(&target.path)
+            .and_then(|()| ensure_installed_at(&target.path, BUNDLED_SKILL_BODY))
+        {
+            Ok(wrote) => {
+                installed_count += 1;
+                wrote_any |= wrote;
+            }
+            Err(e) => {
+                errors.push(format!("{} {}: {}", target.id, target.path.display(), e));
+            }
+        }
+    }
+
+    if installed_count == 0 {
+        return Err(format!(
+            "failed to install bundled shellx-host skill/docs to any target: {}",
+            errors.join("; ")
+        ));
+    }
+    if !errors.is_empty() {
+        tracing::warn!(
+            target: "skill_install",
+            "partial shellx-host skill/docs install: {}",
+            errors.join("; ")
+        );
+    }
+    Ok(wrote_any)
 }
 
 pub fn cleanup_legacy_shellx_workflow_skills() -> Result<usize, String> {
@@ -1276,6 +1356,55 @@ mod tests {
             workflow_skill_statuses().is_empty(),
             "retired workflow skills should not be advertised in the Plugins modal"
         );
+    }
+
+    #[test]
+    fn fresh_install_writes_shellx_host_skill_for_supported_agents() {
+        let unique = format!("shellx-host-agent-docs-{}", uuid_like());
+        let root = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let _env_lock = crate::test_env_lock();
+        let _home_guard = HomeEnvGuard::set_home_only(&root);
+
+        let changed = ensure_shellx_host_skill_installed().expect("install host skill docs");
+
+        assert!(
+            changed,
+            "fresh home should report that at least one bundled skill/doc file was written"
+        );
+        for target in [
+            root.join(".grok")
+                .join("skills")
+                .join("shellx-host")
+                .join("SKILL.md"),
+            root.join(".codex")
+                .join("skills")
+                .join("shellx-host")
+                .join("SKILL.md"),
+            root.join(".claude")
+                .join("skills")
+                .join("shellx-host")
+                .join("SKILL.md"),
+            root.join(".shellx")
+                .join("agent-docs")
+                .join("shellx-host")
+                .join("SKILL.md"),
+        ] {
+            assert!(
+                target.is_file(),
+                "fresh installer runtime should write bundled shellx-host docs to {}",
+                target.display()
+            );
+            assert_eq!(
+                std::fs::read_to_string(&target).unwrap(),
+                BUNDLED_SKILL_BODY,
+                "{} should contain the exact binary-bundled skill body",
+                target.display()
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

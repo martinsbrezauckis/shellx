@@ -5,11 +5,15 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use std::sync::Arc;
+use tokio::time::{sleep, Duration, Instant};
 
 use crate::debug_api::{
     browser_registry, emit_browser_latest, emit_browser_receipt, ApiState, BrowserEventListQuery,
     BrowserLogsQuery, BrowserReceiptsQuery, BrowserStorageStateQuery,
 };
+
+const BROWSER_RECIPE_NAVIGATION_SETTLE_TIMEOUT_MS: u64 = 10_000;
 
 pub(crate) fn browser_artifact_routes() -> Router<ApiState> {
     Router::new()
@@ -280,8 +284,8 @@ pub(crate) async fn browser_recipe_replay_http(
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    let steps_planned = match browser_recipe_step_count(&body) {
-        Ok(count) => count,
+    let mut plan = match crate::shellx_browser_recipes::browser_recipe_replay_plan(&body) {
+        Ok(plan) => plan,
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -290,12 +294,86 @@ pub(crate) async fn browser_recipe_replay_http(
                 .into_response();
         }
     };
-    let steps_applied = if body.dry_run.unwrap_or(true) {
-        0
-    } else {
-        steps_planned
-    };
-    match registry.replay_recipe_record(body, steps_planned, steps_applied) {
+    let dry_run = body.dry_run.unwrap_or(true);
+    let mut steps_applied = 0usize;
+    if !dry_run {
+        for replay_action in plan.actions.clone() {
+            let action = replay_action.request;
+            let requested_action = action.action.clone();
+            let response = match crate::shellx_browser::try_apply_engine_action(
+                s.app(),
+                &registry,
+                action.clone(),
+            )
+            .await
+            {
+                Ok(Some(response)) => response,
+                Ok(None) => match registry.apply_action(action) {
+                    Ok(response) => response,
+                    Err(_) => {
+                        plan.skipped_steps.push(
+                            crate::shellx_browser::BrowserRecipeReplaySkippedStep {
+                                index: replay_action.index,
+                                action: Some(requested_action),
+                                reason: "actionApplyFailed".to_string(),
+                            },
+                        );
+                        continue;
+                    }
+                },
+                Err(_) => {
+                    plan.skipped_steps.push(
+                        crate::shellx_browser::BrowserRecipeReplaySkippedStep {
+                            index: replay_action.index,
+                            action: Some(requested_action),
+                            reason: "engineApplyFailed".to_string(),
+                        },
+                    );
+                    continue;
+                }
+            };
+            emit_browser_receipt(&s, &response.receipt);
+            if response.ok && response.status == "applied" {
+                steps_applied += 1;
+                if let Err(e) = crate::debug_api::sync_browser_action_navigation_to_engine(
+                    s.app(),
+                    &registry,
+                    &requested_action,
+                    &response,
+                ) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "ok": false, "error": e, "response": response })),
+                    )
+                        .into_response();
+                }
+                if requested_action.trim() == "navigate" {
+                    if let Err(e) =
+                        wait_for_recipe_replay_navigation_settle(&registry, &response).await
+                    {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "ok": false,
+                                "error": e,
+                                "response": response
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            } else {
+                plan.skipped_steps
+                    .push(crate::shellx_browser::BrowserRecipeReplaySkippedStep {
+                        index: replay_action.index,
+                        action: Some(requested_action),
+                        reason: "actionNotApplied".to_string(),
+                    });
+            }
+        }
+    }
+    match registry.replay_recipe_record(body, plan.steps_planned, steps_applied, plan.skipped_steps)
+    {
         Ok(response) => {
             emit_browser_receipt(&s, &response.receipt);
             Json(response).into_response()
@@ -306,6 +384,60 @@ pub(crate) async fn browser_recipe_replay_http(
         )
             .into_response(),
     }
+}
+
+async fn wait_for_recipe_replay_navigation_settle(
+    registry: &Arc<crate::shellx_browser::ShellxBrowserRegistry>,
+    response: &crate::shellx_browser::BrowserActionResponse,
+) -> Result<(), String> {
+    let deadline =
+        Instant::now() + Duration::from_millis(BROWSER_RECIPE_NAVIGATION_SETTLE_TIMEOUT_MS);
+    loop {
+        if recipe_replay_navigation_is_settled(registry, response)? {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "Browser recipe replay navigation did not settle within {}ms before the next saved step",
+                BROWSER_RECIPE_NAVIGATION_SETTLE_TIMEOUT_MS
+            ));
+        }
+        sleep(Duration::from_millis(75)).await;
+    }
+}
+
+fn recipe_replay_navigation_is_settled(
+    registry: &crate::shellx_browser::ShellxBrowserRegistry,
+    response: &crate::shellx_browser::BrowserActionResponse,
+) -> Result<bool, String> {
+    let state = registry.state();
+    let tab = response
+        .task_id
+        .as_deref()
+        .and_then(|task_id| {
+            state
+                .tabs
+                .iter()
+                .find(|tab| tab.task_id.as_deref() == Some(task_id))
+        })
+        .or_else(|| {
+            state
+                .active_browser_tab_id
+                .as_deref()
+                .and_then(|tab_id| state.tabs.iter().find(|tab| tab.browser_tab_id == tab_id))
+        })
+        .ok_or_else(|| {
+            "Browser recipe replay navigation has no task tab to wait for".to_string()
+        })?;
+    let engine = state
+        .engine_pool
+        .engines
+        .iter()
+        .find(|engine| engine.engine_id == tab.engine_id)
+        .or_else(|| (state.engine.engine_id == tab.engine_id).then_some(&state.engine))
+        .ok_or_else(|| "Browser recipe replay navigation has no engine to wait for".to_string())?;
+    Ok(engine.pending_url.is_none()
+        && !matches!(engine.load_status.as_str(), "navigating" | "loading"))
 }
 
 pub(crate) async fn browser_robots_get_http(
@@ -383,34 +515,6 @@ pub(crate) async fn browser_robot_cancel_http(
         )
             .into_response(),
     }
-}
-
-fn browser_recipe_step_count(
-    request: &crate::shellx_browser::BrowserRecipeReplayRequest,
-) -> Result<usize, String> {
-    let recipe = if let Some(recipe) = request.recipe.as_ref() {
-        Some(recipe.clone())
-    } else if let Some(path) = request
-        .recipe_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("read browser recipe {} failed: {}", path, e))?;
-        Some(
-            serde_json::from_str::<serde_json::Value>(&text)
-                .map_err(|e| format!("parse browser recipe {} failed: {}", path, e))?,
-        )
-    } else {
-        None
-    };
-    Ok(recipe
-        .as_ref()
-        .and_then(|value| value.get("steps"))
-        .and_then(|value| value.as_array())
-        .map(Vec::len)
-        .unwrap_or(0))
 }
 
 pub(crate) async fn browser_storage_state_http(

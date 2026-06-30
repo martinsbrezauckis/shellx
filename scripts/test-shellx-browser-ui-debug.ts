@@ -258,7 +258,7 @@ async function waitForHighlights(
   let broadcastAttempt = 0;
   const broadcast = () => {
     const payload = {
-      source: "browser-ui-debug-smoke",
+      source: surface === "app" ? "app-ui-debug-smoke" : "browser-ui-debug-smoke",
       debugHighlights: expectedHighlights(name, selectors, `${name}-${broadcastAttempt++}`),
     };
     return surface === "app" ? postAppUi(base, token, payload) : postUi(base, token, payload);
@@ -1005,7 +1005,7 @@ async function main(): Promise<void> {
   }, 4_000, 500);
   assert(true, "Browser Vault deposit Open Vault dismisses the prompt card");
   await postAppUi(base, token, {
-    source: "browser-ui-debug-smoke",
+    source: "app-ui-debug-smoke",
     debugHighlights: expectedHighlights("app-vault-opened-from-browser", [
       ".vault-modal",
       "[data-debug-id='vault-filter-input']",
@@ -1017,10 +1017,25 @@ async function main(): Promise<void> {
   ], 12_000, "app");
   assert(true, "Browser Vault prompt Open Vault opens the main app Vault panel");
   await postAppUi(base, token, {
-    source: "browser-ui-debug-smoke",
-    debugClick: ".vault-modal button[aria-label='Close']",
+    source: "app-ui-debug-smoke",
+    openModal: "close",
     debugHighlights: [],
   }).catch(() => undefined);
+  await waitFor("Browser Vault app panel closes before Browser options smoke", async () => {
+    await postAppUi(base, token, {
+      source: "app-ui-debug-smoke",
+      openModal: "close",
+      debugHighlights: [{ id: "app-vault-modal-closed", selector: ".vault-modal", label: "vault closed", color: "blue" }],
+    }).catch(() => undefined);
+    await sleep(120);
+    const ui = await api<{
+      debugHighlightResults?: DebugHighlightResult[];
+      debugHighlightResultsBySurface?: Record<string, DebugHighlightResult[]>;
+    }>(base, token, "GET", "/state/ui");
+    const appResults = ui.debugHighlightResultsBySurface?.app ?? ui.debugHighlightResults ?? [];
+    const result = appResults.find((entry) => entry.id === "app-vault-modal-closed");
+    return result && result.status !== "resolved" ? { ok: true } : null;
+  }, 6_000, 250);
 
   const optionsSelectors = [
     "[data-debug-id='shellx-browser-options-sidecar']",

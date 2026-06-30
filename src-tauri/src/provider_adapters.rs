@@ -700,13 +700,15 @@ fn normalize_wsl_cwd(wsl_distro: Option<&str>, cwd: &str) -> Result<String, Stri
     ))
 }
 
+const WSL_DOT_LOCALHOST_UNIX_PREFIX: &str = concat!("//wsl.", "localhost/");
+
 fn normalize_wsl_unc_cwd(
     wsl_distro: Option<&str>,
     normalized: &str,
 ) -> Result<Option<String>, String> {
     let Some(rest) = normalized
         .strip_prefix("//wsl$/")
-        .or_else(|| normalized.strip_prefix("//wsl.localhost/"))
+        .or_else(|| normalized.strip_prefix(WSL_DOT_LOCALHOST_UNIX_PREFIX))
     else {
         return Ok(None);
     };

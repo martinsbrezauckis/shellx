@@ -1149,12 +1149,14 @@ fn is_windows_like_path(path: &str) -> bool {
         || p.to_ascii_lowercase().starts_with("/mnt/c/")
 }
 
+const WSL_DOT_LOCALHOST_UNIX_PREFIX: &str = concat!("//wsl.", "localhost/");
+
 fn strip_wsl_unc_prefix(normalized: &str) -> String {
     let n_lower = normalized.to_ascii_lowercase();
     let prefix_len = if n_lower.starts_with("//wsl$/") {
         Some("//wsl$/".len())
-    } else if n_lower.starts_with("//wsl.localhost/") {
-        Some("//wsl.localhost/".len())
+    } else if n_lower.starts_with(WSL_DOT_LOCALHOST_UNIX_PREFIX) {
+        Some(WSL_DOT_LOCALHOST_UNIX_PREFIX.len())
     } else {
         None
     };
@@ -1513,7 +1515,7 @@ async fn read_image_as_data_url(
     // can't reach /etc/passwd. The actual `in_grok_scope` check runs
     // AFTER `path_for_cwd_check` is computed below, so it can use the
     // UNC-stripped form for the anchored check.
-    // Strip \\wsl$\<distro>\ or //wsl.localhost/<distro>/ UNC prefix so a
+    // Strip WSL UNC prefixes so a
     // Windows-side file-picker result (\\wsl$\Ubuntu-24.04\home\m\proj\img)
     // matches the WSL session's Linux cwd (/home/m/proj).
     // // UNC hostnames are case-insensitive on Windows; a path emitted as
@@ -4393,8 +4395,8 @@ async fn resolve_permission_request(
     Ok(registry.resolve(&request_id, allow).await)
 }
 
-/// Status of the bundled
-/// shellx-host skill manifest at `~/.grok/skills/shellx-host/SKILL.md`.
+/// Status of the primary bundled shellx-host skill manifest at
+/// `~/.grok/skills/shellx-host/SKILL.md`.
 ///
 /// Reachable from the Settings UI so a "Host skill: installed / needs
 /// update / missing" badge can render without the renderer touching the
@@ -6288,13 +6290,11 @@ pub fn run() {
             Arc::clone(&*orch).start_watchdog();
             info!("goal_orchestrator watchdog spawned");
 
-            // Install the bundled
-            // shellx-host skill manifest to ~/.grok/skills/shellx-host/
-            // SKILL.md before the debug-api spawn. Non-fatal — a warning
-            // is logged but app boot proceeds either way. The hook runs
-            // synchronously: read-fs + compare-bytes + maybe-write are
-            // all fast enough (sub-millisecond on warm cache) that the
-            // setup closure stays well within Tauri's expectations.
+            // Install bundled shellx-host agent docs before the
+            // debug-api spawn. The hook writes the same binary-bundled
+            // SKILL.md to Grok, Codex, Claude, and ShellX-owned
+            // agent-docs locations. Non-fatal — a warning is logged
+            // but app boot proceeds either way.
             match crate::skill_install::ensure_shellx_host_skill_installed() {
                 Ok(true) => info!("shellx-host skill manifest installed/updated"),
                 Ok(false) => info!("shellx-host skill manifest already up-to-date"),

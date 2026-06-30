@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShellX Workflow Matrix Fixture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f7f8;
+      color: #172026;
+    }
+
+    body {
+      margin: 0;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 24px;
+      background: #132c35;
+      color: #f8fbfc;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+
+    button, select, input {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid #1b4754;
+      background: #1f6273;
+      color: white;
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #f7fafb;
+      color: #1b4754;
+    }
+
+    input, select {
+      border: 1px solid #aab9be;
+      border-radius: 6px;
+      padding: 8px 10px;
+      min-width: 220px;
+      background: white;
+      color: #172026;
+    }
+
+    label {
+      display: grid;
+      gap: 5px;
+      margin: 10px 0;
+      font-weight: 650;
+    }
+
+    section {
+      display: none;
+      background: white;
+      border: 1px solid #d6e0e3;
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 1px 2px rgba(15, 32, 38, 0.08);
+    }
+
+    section.active {
+      display: block;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 14px;
+    }
+
+    th, td {
+      border-bottom: 1px solid #d6e0e3;
+      padding: 8px;
+      text-align: left;
+    }
+
+    .status {
+      margin-top: 14px;
+      min-height: 24px;
+      font-weight: 650;
+      color: #10543c;
+    }
+
+    .secret-box {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+
+    #cookie-wall {
+      position: fixed;
+      inset: auto 18px 18px 18px;
+      z-index: 10;
+      background: #10252d;
+      color: white;
+      border-radius: 8px;
+      padding: 14px;
+      box-shadow: 0 8px 24px rgba(16, 37, 45, 0.24);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    #cookie-wall.hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>ShellX Workflow Matrix</strong>
+    <span data-testid="fixture-ready">ShellX workflow matrix ready</span>
+  </header>
+
+  <main>
+    <nav aria-label="Workflow matrix navigation">
+      <button type="button" class="secondary" data-testid="nav-home" data-nav-target="home">Home</button>
+      <button type="button" class="secondary" data-testid="nav-developer" data-nav-target="developer">Developer</button>
+      <button type="button" class="secondary" data-testid="nav-onboarding" data-nav-target="onboarding">Onboarding</button>
+      <button type="button" class="secondary" data-testid="nav-dashboard" data-nav-target="dashboard">Dashboard</button>
+    </nav>
+
+    <section id="home" class="active" data-section="home">
+      <h1>Reusable agent workflows</h1>
+      <p>Use this local page to record and replay ShellX Browser tasks without real credentials.</p>
+    </section>
+
+    <section id="developer" data-section="developer">
+      <h1>Developer console</h1>
+      <label>
+        Project
+        <select data-testid="project-select" id="project-select">
+          <option value="">Choose a project</option>
+          <option value="demo-api">Demo API Project</option>
+          <option value="analytics">Analytics Project</option>
+        </select>
+      </label>
+      <button type="button" data-testid="api-open" id="api-open">Open API keys</button>
+      <div id="api-panel" hidden>
+        <h2>API keys</h2>
+        <button type="button" data-testid="create-api-key" id="create-api-key">Create test API key</button>
+        <div class="secret-box" id="api-key-row" hidden>
+          <label>
+            New test API key
+            <input data-testid="api-key-value" id="api-key-value" readonly value="">
+          </label>
+        </div>
+        <div class="status" data-testid="api-status" id="api-status"></div>
+      </div>
+    </section>
+
+    <section id="onboarding" data-section="onboarding">
+      <h1>Trial account setup</h1>
+      <form data-testid="onboarding-form" id="onboarding-form">
+        <label>
+          Team name
+          <input data-testid="team-name" id="team-name" name="teamName" autocomplete="organization" required>
+        </label>
+        <label>
+          Project name
+          <input data-testid="project-name" id="project-name" name="projectName" required>
+        </label>
+        <label>
+          Project type
+          <select data-testid="project-type" id="project-type" name="projectType" required>
+            <option value="">Choose type</option>
+            <option value="automation">Automation</option>
+            <option value="research">Research</option>
+            <option value="commerce">Commerce</option>
+          </select>
+        </label>
+        <button type="submit" data-testid="submit-onboarding">Submit setup</button>
+      </form>
+      <div class="status" data-testid="onboarding-status" id="onboarding-status"></div>
+    </section>
+
+    <section id="dashboard" data-section="dashboard">
+      <h1>Usage dashboard</h1>
+      <button type="button" data-testid="refresh-dashboard" id="refresh-dashboard">Refresh usage</button>
+      <button type="button" data-testid="sort-usage" id="sort-usage">Sort usage</button>
+      <div class="status" data-testid="dashboard-status" id="dashboard-status">Dashboard ready</div>
+      <table data-testid="usage-table" id="usage-table">
+        <thead>
+          <tr><th>Service</th><th>Calls</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Search</td><td>34</td><td>Nominal</td></tr>
+          <tr><td>Browser</td><td>19</td><td>Nominal</td></tr>
+          <tr><td>Vault</td><td>8</td><td>Nominal</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <div id="cookie-wall" data-testid="cookie-wall">
+    <span>Cookie-style consent fixture blocks workflow until accepted.</span>
+    <button type="button" data-testid="cookie-accept" id="cookie-accept">Accept all</button>
+  </div>
+
+  <script>
+    const sections = Array.from(document.querySelectorAll("section[data-section]"));
+    const cookieWall = document.getElementById("cookie-wall");
+
+    function showSection(id) {
+      for (const section of sections) {
+        section.classList.toggle("active", section.id === id);
+      }
+      history.replaceState(null, "", `#${id}`);
+    }
+
+    document.querySelectorAll("[data-nav-target]").forEach((button) => {
+      button.addEventListener("click", () => showSection(button.dataset.navTarget));
+    });
+
+    document.getElementById("cookie-accept").addEventListener("click", () => {
+      cookieWall.classList.add("hidden");
+    });
+
+    document.getElementById("api-open").addEventListener("click", () => {
+      const selected = document.getElementById("project-select").value;
+      document.getElementById("api-panel").hidden = false;
+      document.getElementById("api-status").textContent = selected
+        ? "API keys ready for selected project"
+        : "API keys ready; project not selected";
+    });
+
+    document.getElementById("create-api-key").addEventListener("click", () => {
+      const key = `sxk_test_matrix_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+      document.getElementById("api-key-value").value = key;
+      document.getElementById("api-key-row").hidden = false;
+      document.getElementById("api-status").textContent = "API key ready";
+    });
+
+    document.getElementById("onboarding-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const team = document.getElementById("team-name").value.trim() || "unbound team";
+      const project = document.getElementById("project-name").value.trim() || "unbound project";
+      const type = document.getElementById("project-type").value || "unbound";
+      document.getElementById("onboarding-status").textContent =
+        `Onboarding submitted: ${team} / ${project} / ${type}`;
+    });
+
+    document.getElementById("refresh-dashboard").addEventListener("click", () => {
+      const score = 70 + Math.floor(Math.random() * 25);
+      document.getElementById("dashboard-status").textContent = `Latest usage score: ${score}`;
+      document.querySelector("#usage-table tbody").innerHTML = `
+        <tr><td>Search</td><td>${score + 11}</td><td>Nominal</td></tr>
+        <tr><td>Browser</td><td>${score + 5}</td><td>Nominal</td></tr>
+        <tr><td>Vault</td><td>${score - 13}</td><td>Nominal</td></tr>
+      `;
+    });
+
+    document.getElementById("sort-usage").addEventListener("click", () => {
+      const tbody = document.querySelector("#usage-table tbody");
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      rows.sort((a, b) => Number(b.children[1].textContent) - Number(a.children[1].textContent));
+      tbody.replaceChildren(...rows);
+      document.getElementById("dashboard-status").textContent += " · Usage sorted descending";
+    });
+
+    if (location.hash) {
+      showSection(location.hash.slice(1));
+    }
+  </script>
+</body>
+</html>

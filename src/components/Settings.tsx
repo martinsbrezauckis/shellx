@@ -36,7 +36,7 @@ import { DataTab } from "./settings/DataTab";
 import { ShellIcon } from "./icons";
 
 export type DensityMode = "compact" | "default" | "comfortable";
-export type ThemeMode = "black" | "black_warm";
+export type ThemeMode = "black" | "black_warm" | "bright";
 export type EffortMode = "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
@@ -134,7 +134,7 @@ export function normalizeSettings(raw: unknown): SettingsValues {
       ? obj.density
       : DEFAULT_SETTINGS.density;
   const theme: ThemeMode =
-    obj.theme === "black_warm" || obj.theme === "black"
+    obj.theme === "black_warm" || obj.theme === "black" || obj.theme === "bright"
       ? obj.theme
       : DEFAULT_SETTINGS.theme;
   const permissionUx: PermissionUxMode =
