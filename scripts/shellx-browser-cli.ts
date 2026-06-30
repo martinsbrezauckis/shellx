@@ -248,6 +248,24 @@ async function runCommand(parsed: ParsedArgs): Promise<unknown> {
         action: "captureScreenshot",
         fullPage: boolFlag(parsed.flags, "full-page") || boolFlag(parsed.flags, "fullPage"),
       });
+    case "dialogs": {
+      const limit = stringFlag(parsed.flags, "limit") ?? "20";
+      return callDebugApi(connection, "GET", `/browser/dialogs?limit=${encodeURIComponent(limit)}`);
+    }
+    case "resolve-dialog": {
+      const dialogId = requiredPositional(parsed, 0, "dialogId");
+      const taskId = stringFlag(parsed.flags, "task") ?? stringFlag(parsed.flags, "task-id");
+      if (!taskId) throw new Error("resolve-dialog requires --task <taskId>");
+      const action = stringFlag(parsed.flags, "action") ?? "dismiss";
+      if (!["accept", "dismiss"].includes(action)) {
+        throw new Error("resolve-dialog --action must be accept or dismiss");
+      }
+      return callDebugApi(connection, "POST", "/browser/dialogs/resolve", {
+        dialogId,
+        taskId,
+        action,
+      });
+    }
     case "trace-open":
       return callDebugApi(connection, "POST", "/browser/trace/export", cleanBody({
         taskId: stringFlag(parsed.flags, "task") ?? stringFlag(parsed.flags, "task-id"),
@@ -454,6 +472,8 @@ function usageLines(): string[] {
     "pnpm shellx-browser extract markdown --selector main",
     "pnpm shellx-browser verify text <value>",
     "pnpm shellx-browser screenshot --full-page --task <taskId>",
+    "pnpm shellx-browser dialogs --limit 20",
+    "pnpm shellx-browser resolve-dialog <dialogId> --task <taskId> --action accept",
     "pnpm shellx-browser tabs",
     "pnpm shellx-browser locks",
     "pnpm shellx-browser trace-open --task <taskId>",

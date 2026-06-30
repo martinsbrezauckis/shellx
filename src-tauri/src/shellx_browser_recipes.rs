@@ -264,14 +264,28 @@ pub(crate) fn browser_recipe_replay_plan(
         steps_planned: steps.len(),
         ..BrowserRecipeReplayPlan::default()
     };
+    let mut blocked_by_live_binding = false;
     for (index, step) in steps.iter().enumerate() {
+        if blocked_by_live_binding {
+            plan.skipped_steps.push(skipped_recipe_step(
+                index,
+                recipe_step_action_name(step),
+                "blockedByLiveBinding",
+            ));
+            continue;
+        }
         match browser_recipe_action_from_step(request, index, step) {
             Ok(Some(action)) => plan.actions.push(BrowserRecipeReplayAction {
                 index,
                 request: action,
             }),
             Ok(None) => {}
-            Err(skipped) => plan.skipped_steps.push(skipped),
+            Err(skipped) => {
+                if recipe_skip_requires_live_binding(&skipped.reason) {
+                    blocked_by_live_binding = true;
+                }
+                plan.skipped_steps.push(skipped);
+            }
         }
     }
     Ok(plan)
@@ -303,11 +317,7 @@ fn browser_recipe_action_from_step(
     index: usize,
     step: &serde_json::Value,
 ) -> Result<Option<BrowserActionRequest>, BrowserRecipeReplaySkippedStep> {
-    let action = step
-        .get("action")
-        .and_then(|value| value.as_str())
-        .map(clean_string)
-        .filter(|value| !value.is_empty());
+    let action = recipe_step_action_name(step);
     let Some(action) = action else {
         return Err(skipped_recipe_step(index, None, "missingAction"));
     };
@@ -496,6 +506,23 @@ fn browser_recipe_action_from_step(
     }
 }
 
+fn recipe_step_action_name(step: &serde_json::Value) -> Option<String> {
+    step.get("action")
+        .and_then(|value| value.as_str())
+        .map(clean_string)
+        .filter(|value| !value.is_empty())
+}
+
+fn recipe_skip_requires_live_binding(reason: &str) -> bool {
+    matches!(
+        reason,
+        "redactedInputRequiresBinding"
+            | "redactedQueryRequiresBinding"
+            | "liveVaultCaptureRequiresBinding"
+            | "liveGrantActionRequiresBinding"
+    )
+}
+
 fn recipe_step_string(step: &serde_json::Value, key: &str) -> Option<String> {
     step.get(key)
         .and_then(|value| value.as_str())
@@ -675,8 +702,8 @@ mod tests {
         let plan = browser_recipe_replay_plan(&request).expect("recipe plan builds");
 
         assert_eq!(plan.steps_planned, 9);
-        assert_eq!(plan.actions.len(), 7);
-        assert_eq!(plan.skipped_steps.len(), 2);
+        assert_eq!(plan.actions.len(), 3);
+        assert_eq!(plan.skipped_steps.len(), 6);
         assert_eq!(plan.actions[0].request.action, "navigate");
         assert_eq!(
             plan.actions[0].request.task_id.as_deref(),
@@ -703,27 +730,63 @@ mod tests {
             Some("[data-testid='api-keys']")
         );
         assert_eq!(plan.actions[2].request.timeout_ms, Some(9000));
-        assert_eq!(plan.actions[3].request.action, "select");
-        assert_eq!(plan.actions[3].request.value.as_deref(), Some("eu"));
-        assert_eq!(plan.actions[4].request.action, "press");
-        assert_eq!(plan.actions[4].request.key.as_deref(), Some("Enter"));
-        assert_eq!(plan.actions[5].request.action, "verify");
-        assert_eq!(plan.actions[5].request.key.as_deref(), Some("element"));
-        assert_eq!(plan.actions[6].request.action, "findText");
-        assert_eq!(
-            plan.actions[6].request.value.as_deref(),
-            Some("Example Domain")
-        );
         assert_eq!(plan.skipped_steps[0].action.as_deref(), Some("fillRef"));
         assert_eq!(plan.skipped_steps[0].reason, "redactedInputRequiresBinding");
+        assert_eq!(plan.skipped_steps[1].action.as_deref(), Some("select"));
+        assert_eq!(plan.skipped_steps[1].reason, "blockedByLiveBinding");
+        assert_eq!(plan.skipped_steps[2].action.as_deref(), Some("press"));
+        assert_eq!(plan.skipped_steps[2].reason, "blockedByLiveBinding");
+        assert_eq!(plan.skipped_steps[3].action.as_deref(), Some("verify"));
+        assert_eq!(plan.skipped_steps[3].reason, "blockedByLiveBinding");
         assert_eq!(
-            plan.skipped_steps[1].action.as_deref(),
+            plan.skipped_steps[4].action.as_deref(),
+            Some("capturePageSecretToVault")
+        );
+        assert_eq!(plan.skipped_steps[4].reason, "blockedByLiveBinding");
+        assert_eq!(plan.skipped_steps[5].action.as_deref(), Some("findText"));
+        assert_eq!(plan.skipped_steps[5].reason, "blockedByLiveBinding");
+    }
+
+    #[test]
+    fn recipe_replay_plan_marks_live_vault_capture_as_binding_point() {
+        let request = BrowserRecipeReplayRequest {
+            recipe: Some(json!({
+                "schemaVersion": 2,
+                "steps": [
+                    {
+                        "action": "navigate",
+                        "url": "https://example.com/"
+                    },
+                    {
+                        "action": "capturePageSecretToVault",
+                        "selector": "[data-testid='secret']"
+                    },
+                    {
+                        "action": "clickRef",
+                        "selector": "[data-testid='continue']"
+                    }
+                ]
+            })),
+            dry_run: Some(false),
+            ..BrowserRecipeReplayRequest::default()
+        };
+
+        let plan = browser_recipe_replay_plan(&request).expect("recipe plan builds");
+
+        assert_eq!(plan.steps_planned, 3);
+        assert_eq!(plan.actions.len(), 1);
+        assert_eq!(plan.actions[0].request.action, "navigate");
+        assert_eq!(plan.skipped_steps.len(), 2);
+        assert_eq!(
+            plan.skipped_steps[0].action.as_deref(),
             Some("capturePageSecretToVault")
         );
         assert_eq!(
-            plan.skipped_steps[1].reason,
+            plan.skipped_steps[0].reason,
             "liveVaultCaptureRequiresBinding"
         );
+        assert_eq!(plan.skipped_steps[1].action.as_deref(), Some("clickRef"));
+        assert_eq!(plan.skipped_steps[1].reason, "blockedByLiveBinding");
     }
 
     #[test]
