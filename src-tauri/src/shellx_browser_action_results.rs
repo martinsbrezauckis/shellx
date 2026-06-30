@@ -45,6 +45,65 @@ fn replayable_engine_control_key(request: &BrowserActionRequest) -> Option<Strin
         .filter(|value| !crate::host_mcp::redact_if_credential_pattern(value))
 }
 
+#[derive(Default)]
+struct BrowserReplayTargetMetadata {
+    selector: Option<String>,
+    label: Option<String>,
+    role: Option<String>,
+}
+
+fn replayable_find_text_query(query: &str) -> Option<String> {
+    let query = clean_string(query);
+    if query.is_empty() || query.len() > 128 || query.chars().any(char::is_control) {
+        return None;
+    }
+    if crate::host_mcp::redact_if_credential_pattern(&query) {
+        return None;
+    }
+    if query.contains("://") && (query.contains('?') || query.contains('#')) {
+        return None;
+    }
+    Some(query)
+}
+
+fn replay_target_metadata(
+    request: &BrowserActionRequest,
+    observation: Option<&BrowserObservation>,
+) -> BrowserReplayTargetMetadata {
+    let mut metadata = BrowserReplayTargetMetadata {
+        selector: request
+            .selector
+            .as_deref()
+            .map(clean_string)
+            .filter(|value| !value.is_empty()),
+        ..BrowserReplayTargetMetadata::default()
+    };
+    let Some(ref_id) = request
+        .ref_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return metadata;
+    };
+    let Some(reference) = observation
+        .and_then(|observation| observation.refs.iter().find(|item| item.ref_id == ref_id))
+    else {
+        return metadata;
+    };
+    if metadata.selector.is_none() {
+        metadata.selector = reference
+            .raw_selector
+            .clone()
+            .or_else(|| reference.selector.clone())
+            .map(|value| clean_string(&value))
+            .filter(|value| !value.is_empty());
+    }
+    metadata.label = Some(clean_string(&reference.label)).filter(|value| !value.is_empty());
+    metadata.role = Some(clean_string(&reference.role)).filter(|value| !value.is_empty());
+    metadata
+}
+
 impl ShellxBrowserRegistry {
     pub fn record_engine_observation(
         &self,
@@ -382,8 +441,10 @@ impl ShellxBrowserRegistry {
         let verification = result.verification.clone();
         let find_result = result.find_result.clone();
         let last_observation = task.last_observation.as_ref();
+        let replay_target = replay_target_metadata(&request, last_observation);
         let find_receipt = find_result.as_ref().map(|value| {
             json!({
+                "query": replayable_find_text_query(&value.query),
                 "queryBytes": value.query.len(),
                 "matchCount": value.match_count,
                 "activeIndex": value.active_index,
@@ -402,7 +463,10 @@ impl ShellxBrowserRegistry {
                 "action": action,
                 "status": status,
                 "refId": request.ref_id.clone(),
-                "selector": request.selector.clone(),
+                "selector": replay_target.selector.clone(),
+                "resolvedSelector": replay_target.selector.clone(),
+                "targetLabel": replay_target.label.clone(),
+                "targetRole": replay_target.role.clone(),
                 "value": replayable_engine_control_value(&action, &request),
                 "key": replayable_engine_control_key(&request),
                 "x": request.x,
@@ -1124,8 +1188,11 @@ fn record_taskless_engine_control_result_locked(
     let actionability = result.actionability.clone();
     let verification = result.verification.clone();
     let find_result = result.find_result.clone();
+    let last_observation = state.tab_observations.get(&tab.browser_tab_id);
+    let replay_target = replay_target_metadata(&request, last_observation);
     let find_receipt = find_result.as_ref().map(|value| {
         json!({
+            "query": replayable_find_text_query(&value.query),
             "queryBytes": value.query.len(),
             "matchCount": value.match_count,
             "activeIndex": value.active_index,
@@ -1144,7 +1211,10 @@ fn record_taskless_engine_control_result_locked(
             "action": action,
             "status": status,
             "refId": request.ref_id.clone(),
-            "selector": request.selector.clone(),
+            "selector": replay_target.selector.clone(),
+            "resolvedSelector": replay_target.selector.clone(),
+            "targetLabel": replay_target.label.clone(),
+            "targetRole": replay_target.role.clone(),
             "value": replayable_engine_control_value(&action, &request),
             "key": replayable_engine_control_key(&request),
             "x": request.x,

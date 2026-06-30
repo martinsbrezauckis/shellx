@@ -2253,6 +2253,8 @@ for (const command of [
   "extract",
   "verify",
   "screenshot",
+  "dialogs",
+  "resolve-dialog",
   "tabs",
   "locks",
   "trace-open",

@@ -72,6 +72,11 @@ pub(crate) fn browser_recipe_step_from_receipt(
         }
         "browserEngineActionApplied" => {
             let action = evidence.get("action").and_then(|value| value.as_str())?;
+            let selector = evidence
+                .get("selector")
+                .cloned()
+                .filter(|value| !value.is_null())
+                .or_else(|| evidence.get("resolvedSelector").cloned());
             let mut step = json!({
                 "stepId": source["stepId"].clone(),
                 "sourceReceiptId": source["sourceReceiptId"].clone(),
@@ -80,7 +85,9 @@ pub(crate) fn browser_recipe_step_from_receipt(
                 "action": action,
                 "browserTabId": source["browserTabId"].clone(),
                 "refId": evidence.get("refId").cloned().unwrap_or(serde_json::Value::Null),
-                "selector": evidence.get("selector").cloned().unwrap_or(serde_json::Value::Null),
+                "selector": selector.unwrap_or(serde_json::Value::Null),
+                "targetLabel": evidence.get("targetLabel").cloned().unwrap_or(serde_json::Value::Null),
+                "targetRole": evidence.get("targetRole").cloned().unwrap_or(serde_json::Value::Null),
                 "status": evidence.get("status").cloned().unwrap_or(serde_json::Value::Null),
             });
             for key in ["force", "timeoutMs", "x", "y", "key"] {
@@ -100,25 +107,35 @@ pub(crate) fn browser_recipe_step_from_receipt(
             }
             Some(redact_trace_value(step))
         }
-        "browserFindTextCompleted" => Some(json!({
-            "stepId": source["stepId"].clone(),
-            "sourceReceiptId": source["sourceReceiptId"].clone(),
-            "sourceKind": source["sourceKind"].clone(),
-            "recordedAtMs": source["recordedAtMs"].clone(),
-            "action": "findText",
-            "browserTabId": source["browserTabId"].clone(),
-            "queryBytes": evidence
-                .get("findResult")
-                .and_then(|value| value.get("queryBytes"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-            "caseSensitive": evidence
-                .get("findResult")
-                .and_then(|value| value.get("caseSensitive"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-            "queryRedacted": true,
-        })),
+        "browserFindTextCompleted" => {
+            let find_result = evidence.get("findResult");
+            let query = find_result
+                .and_then(|value| value.get("query"))
+                .and_then(|value| value.as_str())
+                .and_then(safe_recipe_literal)
+                .map(|value| serde_json::Value::String(value.to_string()));
+            let mut step = json!({
+                "stepId": source["stepId"].clone(),
+                "sourceReceiptId": source["sourceReceiptId"].clone(),
+                "sourceKind": source["sourceKind"].clone(),
+                "recordedAtMs": source["recordedAtMs"].clone(),
+                "action": "findText",
+                "browserTabId": source["browserTabId"].clone(),
+                "queryBytes": find_result
+                    .and_then(|value| value.get("queryBytes"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                "caseSensitive": find_result
+                    .and_then(|value| value.get("caseSensitive"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                "queryRedacted": query.is_none(),
+            });
+            if let Some(query) = query {
+                step["query"] = query;
+            }
+            Some(step)
+        }
         "browserVerificationPassed" | "browserVerificationFailed" => {
             let verification = evidence.get("verification");
             Some(json!({
@@ -157,6 +174,20 @@ pub(crate) fn browser_trace_string_redaction(value: &str) -> Option<serde_json::
     } else {
         None
     }
+}
+
+fn safe_recipe_literal(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
+        return None;
+    }
+    if crate::host_mcp::redact_if_credential_pattern(value) {
+        return None;
+    }
+    if value.contains("://") && (value.contains('?') || value.contains('#')) {
+        return None;
+    }
+    Some(value)
 }
 
 fn is_trace_raw_text_key(key: &str) -> bool {
@@ -224,6 +255,99 @@ mod tests {
         assert_eq!(step["selector"], json!("button[data-testid='create-key']"));
         assert_eq!(step["force"], json!(true));
         assert_eq!(step["timeoutMs"], json!(9000));
+    }
+
+    #[test]
+    fn recipe_step_from_engine_receipt_uses_resolved_selector_for_ref_actions() {
+        let receipt = BrowserReceipt {
+            receipt_id: "receipt-click-resolved".to_string(),
+            kind: "browserEngineActionApplied".to_string(),
+            task_id: Some("browser-task".to_string()),
+            profile_id: Some("agent".to_string()),
+            summary: "clicked".to_string(),
+            t: 1234,
+            evidence: json!({
+                "browserTabId": "browser-tab",
+                "action": "clickRef",
+                "refId": "dom-23",
+                "selector": null,
+                "resolvedSelector": "button[aria-label='Create API key']",
+                "targetLabel": "Create API key",
+                "targetRole": "button",
+                "status": "applied"
+            }),
+        };
+
+        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
+
+        assert_eq!(step["action"], json!("clickRef"));
+        assert_eq!(step["refId"], json!("dom-23"));
+        assert_eq!(
+            step["selector"],
+            json!("button[aria-label='Create API key']")
+        );
+        assert_eq!(step["targetLabel"], json!("Create API key"));
+        assert_eq!(step["targetRole"], json!("button"));
+    }
+
+    #[test]
+    fn recipe_step_from_find_text_receipt_keeps_short_safe_queries() {
+        let receipt = BrowserReceipt {
+            receipt_id: "receipt-find-safe".to_string(),
+            kind: "browserFindTextCompleted".to_string(),
+            task_id: Some("browser-task".to_string()),
+            profile_id: Some("agent".to_string()),
+            summary: "found text".to_string(),
+            t: 1234,
+            evidence: json!({
+                "browserTabId": "browser-tab",
+                "action": "findText",
+                "findResult": {
+                    "query": "Create API key",
+                    "queryBytes": 14,
+                    "matchCount": 1,
+                    "activeIndex": 0,
+                    "scrolled": true,
+                    "caseSensitive": false
+                }
+            }),
+        };
+
+        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
+
+        assert_eq!(step["action"], json!("findText"));
+        assert_eq!(step["query"], json!("Create API key"));
+        assert_eq!(step["queryRedacted"], json!(false));
+    }
+
+    #[test]
+    fn recipe_step_from_find_text_receipt_redacts_credential_queries() {
+        let receipt = BrowserReceipt {
+            receipt_id: "receipt-find-secret".to_string(),
+            kind: "browserFindTextCompleted".to_string(),
+            task_id: Some("browser-task".to_string()),
+            profile_id: Some("agent".to_string()),
+            summary: "found text".to_string(),
+            t: 1234,
+            evidence: json!({
+                "browserTabId": "browser-tab",
+                "action": "findText",
+                "findResult": {
+                    "query": "sk-live-abcdefghijklmnopqrstuvwxyz123456",
+                    "queryBytes": 39,
+                    "matchCount": 1,
+                    "activeIndex": 0,
+                    "scrolled": true,
+                    "caseSensitive": false
+                }
+            }),
+        };
+
+        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
+
+        assert_eq!(step["action"], json!("findText"));
+        assert!(step.get("query").is_none());
+        assert_eq!(step["queryRedacted"], json!(true));
     }
 
     #[test]

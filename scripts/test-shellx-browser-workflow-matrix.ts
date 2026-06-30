@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { shellxDataPaths } from "./shellx-debug-paths";
 
 type JsonObject = Record<string, unknown>;
@@ -160,15 +161,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function elapsedMs(startMs: number): number {
+  return Math.max(0, Math.round(performance.now() - startMs));
+}
+
 async function waitFor<T>(
   label: string,
   fn: () => Promise<T | null>,
   timeoutMs = 20_000,
   intervalMs = 350,
 ): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = performance.now() + timeoutMs;
   let lastError: unknown = null;
-  while (Date.now() < deadline) {
+  while (performance.now() < deadline) {
     try {
       const value = await fn();
       if (value !== null) return value;
@@ -370,7 +375,7 @@ async function completeReplayFollowUp(
   scenario: ScenarioName,
   taskId: string,
 ): Promise<{ completed: boolean; liveFollowUpMs: number }> {
-  const start = Date.now();
+  const start = performance.now();
   try {
     if (scenario === "onboarding") {
       await applied(ctx, taskId, { action: "fillRef", selector: "[data-testid=team-name]", value: "Claude Code" }, "consumer binds skipped team name");
@@ -378,14 +383,30 @@ async function completeReplayFollowUp(
       await applied(ctx, taskId, { action: "select", selector: "[data-testid=project-type]", value: "automation" }, "consumer binds skipped project type");
       await applied(ctx, taskId, { action: "clickRef", selector: "[data-testid=submit-onboarding]" }, "consumer submits form after live binding");
       await verifyText(ctx, taskId, "Onboarding submitted", "consumer verifies onboarding after live binding");
-      return { completed: true, liveFollowUpMs: Date.now() - start };
+      return { completed: true, liveFollowUpMs: elapsedMs(start) };
     }
-    const expected = scenario === "api-key" ? "API key ready" : "Usage sorted descending";
-    await verifyText(ctx, taskId, expected, `consumer verifies ${scenario} replay completion`);
-    return { completed: true, liveFollowUpMs: Date.now() - start };
+    if (scenario === "api-key") {
+      const alreadyReady = await browserAction(ctx, taskId, {
+        action: "verify",
+        key: "text",
+        value: "API key ready",
+        timeoutMs: 800,
+      }).catch(() => null);
+      if (!alreadyReady || alreadyReady.status !== "applied") {
+        await applied(ctx, taskId, { action: "select", selector: "[data-testid=project-select]", value: "demo-api" }, "consumer binds skipped API project");
+        await applied(ctx, taskId, { action: "clickRef", selector: "[data-testid=api-open]" }, "consumer opens API keys panel after live binding");
+        await applied(ctx, taskId, { action: "waitFor", value: "API keys", timeoutMs: 5_000 }, "consumer waits for API keys panel after live binding");
+        await applied(ctx, taskId, { action: "clickRef", selector: "[data-testid=create-api-key]" }, "consumer creates API key after live binding");
+        await applied(ctx, taskId, { action: "waitFor", value: "API key ready", timeoutMs: 5_000 }, "consumer waits for API key after live binding");
+      }
+      await verifyText(ctx, taskId, "API key ready", "consumer verifies api-key replay completion");
+      return { completed: true, liveFollowUpMs: elapsedMs(start) };
+    }
+    await verifyText(ctx, taskId, "Usage sorted descending", `consumer verifies ${scenario} replay completion`);
+    return { completed: true, liveFollowUpMs: elapsedMs(start) };
   } catch (err) {
     console.warn(`  ! ${scenario} follow-up failed: ${err instanceof Error ? err.message : String(err)}`);
-    return { completed: false, liveFollowUpMs: Date.now() - start };
+    return { completed: false, liveFollowUpMs: elapsedMs(start) };
   }
 }
 
@@ -449,7 +470,7 @@ async function recordWorkflow(
   scenario: ScenarioName,
 ): Promise<SavedWorkflow> {
   const task = await startTask(ctx, fixture, `Workflow matrix fresh ${scenario} recorded by ${recorder}`);
-  const start = Date.now();
+  const start = performance.now();
   let actionCount = 0;
   if (scenario === "api-key") {
     actionCount = await recordApiKeyWorkflow(ctx, fixture, task.taskId);
@@ -458,7 +479,7 @@ async function recordWorkflow(
   } else {
     actionCount = await recordDynamicWorkflow(ctx, fixture, task.taskId);
   }
-  const freshMs = Date.now() - start;
+  const freshMs = elapsedMs(start);
   return await exportAndSaveWorkflow(ctx, fixture, task.taskId, recorder, scenario, actionCount, freshMs);
 }
 
@@ -469,14 +490,14 @@ async function replayWorkflow(
   consumer: AgentName,
 ): Promise<ReplayOutcome> {
   const task = await startTask(ctx, fixture, `Workflow matrix replay ${workflow.scenario}: ${consumer} consumes ${workflow.recorder}`);
-  const start = Date.now();
+  const start = performance.now();
   const replay = await api<BrowserRecipeReplayResponse>(ctx, "POST", "/browser/recipes/replay", {
     taskId: task.taskId,
     recipePath: workflow.recipePath,
     dryRun: false,
     reason: `Workflow matrix ${consumer} applies ${workflow.scenario} recipe recorded by ${workflow.recorder}`,
   });
-  const replayMs = Date.now() - start;
+  const replayMs = elapsedMs(start);
   assert(replay.ok && replay.dryRun === false, `${consumer} applies ${workflow.recorder}/${workflow.scenario} workflow recipe`);
   const followUp = await completeReplayFollowUp(ctx, workflow.scenario, task.taskId);
   return {
