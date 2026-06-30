@@ -177,6 +177,20 @@ function restartInstalledShellxVaultE2e(): void {
   ], { stdio: "ignore" });
 }
 
+async function reconnectAfterInstalledVaultE2eRestart(): Promise<DebugConnection> {
+  restartInstalledShellxVaultE2e();
+  const connection = await resolveDebugConnection();
+  await waitFor("Vault E2E reset route becomes available after isolated relaunch", async () => {
+    return await resetVaultE2eIfAvailable(connection.base, connection.token) ? { ok: true } : null;
+  }, 12_000, 500);
+  return connection;
+}
+
+function hasStaleBrowserVaultRequests(state: BrowserState): boolean {
+  return (state.vaultDeposits?.length ?? 0) > 0
+    || (state.sessionGrants?.some((grant) => grant.status === "requested") ?? false);
+}
+
 async function focusMainShellxWindow(base: string, token: string): Promise<void> {
   try {
     await api<Json>(base, token, "POST", "/vault/open-panel");
@@ -215,7 +229,7 @@ async function api<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${method} ${path} failed ${res.status}: ${await res.text()}`);
-  return await res.json() as T;
+  return await res.json();
 }
 
 async function postAppUi(base: string, token: string, body: Json): Promise<void> {
@@ -385,17 +399,19 @@ async function main(): Promise<void> {
   assert(true, `debug API health responds from ${shellxHome}`);
   let resetAvailable = await resetVaultE2eIfAvailable(base, token);
   if (!resetAvailable) {
-    restartInstalledShellxVaultE2e();
-    ({ shellxHome, base, token } = await resolveDebugConnection());
-    resetAvailable = await waitFor("Vault E2E reset route becomes available after isolated relaunch", async () => {
-      return await resetVaultE2eIfAvailable(base, token) ? { ok: true } : null;
-    }, 12_000, 500).then(() => true).catch(() => false);
+    ({ shellxHome, base, token } = await reconnectAfterInstalledVaultE2eRestart());
+    resetAvailable = true;
   }
   assert(resetAvailable, "Vault E2E reset route is available for Request Center smoke");
+  let state = await api<BrowserState>(base, token, "GET", "/browser/state");
+  if (hasStaleBrowserVaultRequests(state)) {
+    ({ shellxHome, base, token } = await reconnectAfterInstalledVaultE2eRestart());
+    assert(true, `Vault Request Center smoke isolated Browser request state in ${shellxHome}`);
+  }
   await focusMainShellxWindow(base, token);
 
-  let state = await api<BrowserState>(base, token, "GET", "/browser/state");
-  let task = state.tasks?.find((entry) => entry.taskId === state.activeTaskId) ?? state.tasks?.[0] ?? null;
+  state = await api<BrowserState>(base, token, "GET", "/browser/state");
+  let task = state.tasks?.find((entry) => entry.taskId === state.activeTaskId) ?? null;
   if (!task) {
     await api<Json>(base, token, "POST", "/browser/open", { startUrl: "https://example.org/" });
     task = await api<BrowserTask>(base, token, "POST", "/browser/task/start", {

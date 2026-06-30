@@ -181,6 +181,19 @@ mod tests {
         ))
     }
 
+    fn json_contains_string_value(value: &serde_json::Value, needle: &str) -> bool {
+        match value {
+            serde_json::Value::String(text) => text == needle,
+            serde_json::Value::Array(items) => items
+                .iter()
+                .any(|item| json_contains_string_value(item, needle)),
+            serde_json::Value::Object(map) => map
+                .values()
+                .any(|item| json_contains_string_value(item, needle)),
+            _ => false,
+        }
+    }
+
     #[test]
     fn browser_settings_persist_personal_lock_without_raw_pin() {
         let path = temp_settings_path("personal-lock");
@@ -198,7 +211,15 @@ mod tests {
             .expect("configure lock");
 
         let raw = std::fs::read_to_string(&path).expect("settings written");
-        assert!(!raw.contains("2468"));
+        let persisted: serde_json::Value =
+            serde_json::from_str(&raw).expect("settings json is readable");
+        assert!(!json_contains_string_value(&persisted, "2468"));
+        let persisted_personal_lock = persisted
+            .get("personalLock")
+            .and_then(serde_json::Value::as_object)
+            .expect("personal lock settings persisted");
+        assert!(!persisted_personal_lock.contains_key("pin"));
+        assert!(!persisted_personal_lock.contains_key("newPin"));
         assert!(raw.contains("optInConfirmedAtMs"));
         assert!(raw.contains("personalLockPinHash"));
 
@@ -237,8 +258,6 @@ mod tests {
                 .expect("unlock with restored pin")
                 .locked
         );
-
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -274,8 +293,6 @@ mod tests {
         );
         assert!(!state.personal_lock.locked);
         assert!(state.personal_lock.opt_in_confirmed_at_ms.is_none());
-
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -308,8 +325,6 @@ mod tests {
         assert!(state.tabs.is_empty());
         assert!(state.tasks.is_empty());
         assert!(state.receipts.is_empty());
-
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -335,7 +350,5 @@ mod tests {
             restored.state().download_folder.as_deref(),
             Some(downloads.as_str())
         );
-
-        let _ = std::fs::remove_file(path);
     }
 }

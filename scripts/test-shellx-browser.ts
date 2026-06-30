@@ -220,7 +220,13 @@ assert(rustBrowserPersonalLock.includes("browser_personal_lock_requires_operator
 assert(rustBrowserPersistence.includes("browser-settings.json"), "Browser privacy, Shields, and Personal Lock settings persist to a dedicated local settings file");
 assert(rustBrowserPersistence.includes("SHELLX_BROWSER_SETTINGS_PATH"), "Browser settings persistence has an isolated test path override");
 assert(rustBrowserPersistence.includes("persistable_personal_lock") && rustBrowserPersistence.includes("copy.locked = false"), "Personal Browser Lock persistence does not trust runtime locked state from disk");
-assert(rustBrowserPersistence.includes("personalLockPinHash") && rustBrowserPersistence.includes('assert!(!raw.contains("2468"))'), "Browser settings persistence stores PIN verifier metadata without raw PINs");
+assert(
+  rustBrowserPersistence.includes("personalLockPinHash") &&
+    rustBrowserPersistence.includes("json_contains_string_value") &&
+    rustBrowserPersistence.includes('assert!(!persisted_personal_lock.contains_key("pin"))') &&
+    rustBrowserPersistence.includes('assert!(!persisted_personal_lock.contains_key("newPin"))'),
+  "Browser settings persistence stores PIN verifier metadata without raw PINs",
+);
 assert(rustBrowserModel.includes("opt_in_confirmed_at_ms") && browserTypesSource.includes("optInConfirmedAtMs"), "Personal Browser Lock stores an explicit opt-in marker across Rust and UI state");
 assert(rustBrowserPersistence.includes("browser_settings_ignore_legacy_unconfirmed_personal_lock_opt_in"), "Browser settings disable legacy Personal Lock state without explicit opt-in");
 assert(rustBrowserPersistence.includes("confirmed opt-in should not lock personal tabs immediately on app launch"), "Confirmed Personal Lock opt-in starts unlocked on app launch");
@@ -1993,6 +1999,8 @@ assert(apiDocs.includes("shellx_browser_delegate_tab_to_agent"), "API docs inclu
 assert(apiDocs.includes("/browser/action"), "API docs include browser actions");
 assert(apiDocs.includes("/browser/tabs/lock"), "API docs include browser tab lock route");
 assert(apiDocs.includes("/browser/personal-lock"), "API docs include personal lock read route");
+assert(apiDocs.includes("current route inventory refreshed 2026-06-30"), "API docs inventory date is current for 0.3.3");
+assert(apiDocs.includes("clearSiteData") && apiDocs.includes("capturePageSecretToVault"), "API docs include current Browser action names");
 assert(uiSource.includes('data-debug-id="shellx-browser-personal-lock-overlay"'), "browser UI exposes personal lock overlay selector");
 assert(browserChromeSource.includes('data-debug-id="shellx-browser-tab-strip"'), "browser UI exposes Browser tab strip selector");
 assert(browserChromeSource.includes("shellx-browser-close-tab-"), "browser chrome exposes Browser tab close controls");
@@ -2013,12 +2021,19 @@ assert(moduleReadme.includes("task-scoped"), "Browser README documents task-scop
 assert(moduleReadme.includes("Magika"), "Browser README records Magika classifier role");
 assert(moduleReadme.includes("MarkItDown"), "Browser README records MarkItDown converter role");
 assert(moduleReadme.includes("Maxun"), "Browser README records Maxun inspiration role");
+assert(
+  moduleReadme.includes("browser_workflows") &&
+    moduleReadme.includes("browser_workflow_save") &&
+    moduleReadme.includes("browser_workflow_replay"),
+  "Browser README documents workflow MCP wrappers",
+);
 assert(packageJson.includes("test-shellx-browser.ts"), "pnpm test includes shellx browser checks");
 const releaseVersion = packageData.version;
 assert(/^\d+\.\d+\.\d+$/.test(releaseVersion), "package version is release semver");
 assert(cargoToml.includes(`version = "${releaseVersion}"`), "Cargo version matches package version");
 assert(tauriConf.version === releaseVersion, "Tauri version matches package version");
 assert(changelog.includes(`## [${releaseVersion}]`), "changelog has current release section");
+assert(changelog.includes("shared Vault broker") && changelog.includes("bright/light mode"), "changelog documents current 0.3.3 public surfaces");
 assert(Boolean(packageData.scripts?.["test:shellx-browser-debug-api"]), "package exposes live Browser debug API smoke");
 assert(Boolean(packageData.scripts?.["test:shellx-browser-ui-debug"]), "package exposes rendered Browser UI debug smoke");
 assert(Boolean(packageData.scripts?.["test:shellx-browser-everyday-apps"]), "package exposes everyday-app Browser smoke");
@@ -2243,6 +2258,12 @@ assert(shellxHostSkill.includes("browser_capture_secret_to_vault"), "ShellX host
 assert(shellxHostSkill.includes("browser_read_email_code"), "ShellX host skill teaches email-code grants");
 assert(shellxHostSkill.includes("browser_use_agent_wallet"), "ShellX host skill teaches agent-wallet grants");
 assert(shellxHostSkill.includes("browser_workflows") && shellxHostSkill.includes("browser_workflow_save") && shellxHostSkill.includes("browser_workflow_replay"), "ShellX host skill teaches reusable Browser workflow save/replay");
+assert(
+  shellxHostSkill.includes("/agent-doc/manifest") &&
+    shellxHostSkill.includes("/agent-doc/skills/shellx-host/SKILL.md") &&
+    shellxHostSkill.includes("/browser/recipes/replay"),
+  "ShellX host skill documents bundled agent-doc routes and Browser recipe replay",
+);
 for (const command of [
   "snapshot",
   "navigate",

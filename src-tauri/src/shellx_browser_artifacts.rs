@@ -197,7 +197,7 @@ fn is_trace_raw_text_key(key: &str) -> bool {
     )
 }
 
-fn browser_artifact_root(folder: &str) -> Result<std::path::PathBuf, String> {
+pub(crate) fn browser_artifact_root(folder: &str) -> Result<std::path::PathBuf, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
@@ -333,8 +333,8 @@ mod tests {
                 "browserTabId": "browser-tab",
                 "action": "findText",
                 "findResult": {
-                    "query": "sk-live-abcdefghijklmnopqrstuvwxyz123456",
-                    "queryBytes": 39,
+                    "query": "qwertyuiopasdfghjklzxcvbnm",
+                    "queryBytes": 26,
                     "matchCount": 1,
                     "activeIndex": 0,
                     "scrolled": true,

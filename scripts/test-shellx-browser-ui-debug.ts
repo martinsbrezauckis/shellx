@@ -598,6 +598,12 @@ async function main(): Promise<void> {
   console.log("\n=== ShellX Browser rendered UI debug smoke ===");
   assert(true, `debug API health responds from ${shellxHome}`);
 
+  await closeAllBrowserTabs(base, token);
+  await waitFor("Browser UI smoke starts from a clean Browser tab state", async () => {
+    const state = await api<BrowserState>(base, token, "GET", "/browser/state");
+    return (state.tabs?.length ?? 0) === 0 ? state : null;
+  }, 8_000, 300);
+
   const {
     task,
     tab: initialTab,

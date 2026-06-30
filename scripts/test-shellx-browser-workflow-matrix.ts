@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo, Socket } from "node:net";
+import type { Socket } from "node:net";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { shellxDataPaths } from "./shellx-debug-paths";
@@ -207,19 +207,17 @@ async function api<T>(ctx: DebugContext, method: string, path: string, body?: un
   } finally {
     clearTimeout(timeout);
   }
-  const text = await res.text();
-  let parsed: unknown = {};
-  if (text.trim()) {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = text;
-    }
-  }
   if (!res.ok) {
+    const text = await res.text();
     throw new Error(`${method} ${path} failed with ${res.status}: ${text.slice(0, 1200)}`);
   }
-  return parsed as T;
+  const text = await res.text();
+  if (!text.trim()) return JSON.parse("{}");
+  try {
+    return JSON.parse(text);
+  } catch {
+    return JSON.parse(JSON.stringify(text));
+  }
 }
 
 async function closeAllBrowserTabs(ctx: DebugContext): Promise<void> {
@@ -268,7 +266,10 @@ async function startWorkflowFixture(): Promise<Fixture> {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve());
   });
-  const address = server.address() as AddressInfo;
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("workflow fixture did not bind to a TCP port");
+  }
   const baseUrl = `http://127.0.0.1:${address.port}`;
   return {
     baseUrl,

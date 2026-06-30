@@ -27,8 +27,9 @@ agents can reach host-side tools (filesystem, vault, vision, subagents).
   ACP-side `terminal/create` is intercepted (see §2.4 below).
 - **xcap + windows-sys PrintWindow** — window screenshot capture
   for `/screenshot`.
-- **chacha20poly1305 + keyring-rs** — encrypted local vault with
-  OS-keyring master key custody.
+- **ShellX Vault broker + chacha20poly1305/keyring-rs** — encrypted local or
+  connected Vault resources, recovery material, grants, safe-folder contracts,
+  and remembered-device custody.
 
 ## Process model
 
@@ -273,23 +274,37 @@ path or import from inside the remote session until remote writes are added.
 
 ## Module map (Rust, `src-tauri/src/`)
 
-The four largest modules carry 60% of the Rust LOC and are
-candidates for further split (#F-05 in the codebase audit).
+The Browser and Vault surfaces are intentionally split into focused modules.
+`host_mcp.rs`, `debug_api.rs`, `lib.rs`, and `App.tsx` are still large
+coordination points, but new Browser behavior should land in the
+`shellx_browser_*` modules and new Vault behavior should land under
+`shellx_vault/` or the shared `vendor/shellx-vault` broker instead of growing
+those coordination files further.
 
 | File | LOC | Role |
 |---|---|---|
-| `acp.rs` | ~4200 | ACP wire to grok, SessionRegistry, terminal/* intercept, per-transport spawn |
-| `host_mcp.rs` | ~4000 | MCP stdio server + every fs_* / net_* / process_* / agent_* / vision tool |
-| `debug_api.rs` | ~4000 | shellXagent HTTP+WS server, auth, ~50 endpoints |
-| `lib.rs` | ~2300 | Tauri setup, IPC commands, session lifecycle, host MCP injection |
-| `mcp_http.rs` | ~700 | HTTP MCP server (origin allow-list, token gate, plan-mode gate) |
-| `host_mcp.rs::validate_fs_path` | ~100 | Single path-policy chokepoint for fs_* tools |
+| `host_mcp.rs` | ~16k | Host MCP tool registry, tool schemas, browser/vault wrappers, fs/net/process/Agent/vision tools, path policy |
+| `debug_api.rs` | ~14k | shellXagent HTTP+WS server, auth/origin gates, route table, descriptor and agent-doc serving |
+| `lib.rs` | ~7k | Tauri setup, IPC command registration, session lifecycle, provider/host MCP injection |
+| `acp.rs` | ~6.5k | ACP wire to Grok, SessionRegistry, terminal/* intercept, per-transport spawn |
+| `shellx_browser.rs` | ~4.9k | Browser registry coordination, task/tab/profile state, receipt dispatch |
+| `shellx_browser_model.rs` | ~2.7k | Browser data model, receipts, transfers, policies, serialized state shapes |
+| `shellx_browser_actions.rs` / `shellx_browser_action_results.rs` | ~2.6k | Engine action execution, actionability, step summaries, redaction-safe result shaping |
+| `shellx_browser_recipes.rs` / `shellx_browser_artifacts.rs` | ~1.2k | Recipe export/replay, trace/HAR/performance/storage artifact writers |
+| `shellx_browser_bookmarks.rs` | ~830 | Bookmark/folder tree, toolbar, workflow bookmark metadata |
+| `shellx_browser_*` smaller modules | varies | Shields, personal lock, developer mode, scripts, engine runtime/state, transfers, tabs, tasks, Vault, session grants |
+| `shellx_vault/backend.rs` | ~3.2k | ShellX Vault setup/unlock/resources, legacy import, broker adapter, UI/Debug API bridge |
+| `shellx_vault/grants.rs` / `recovery.rs` | small | ShellX grant/recovery helpers around the shared broker |
+| `vendor/shellx-vault/crates/vault-broker/` | varies | Shared Vault broker resources, grants, receipts, project capsules, safe folders, backups, sync sets |
+| `mcp_http.rs` | ~2.3k | Streamable HTTP MCP server, origin allow-list, token and tab-bound-token gates |
+| `skill_install.rs` | ~1.8k | Bundled `shellx-host` install to Grok/Codex/Claude and ShellX-owned agent-doc paths |
+| `provider_sessions.rs` | ~2.5k | Codex/Claude/Antigravity process launch, resume ids, stream normalization |
 | `subagent.rs` | ~600 | `Agent` fan-out: spawn, registry, ledger, output capture |
-| `vault.rs` | ~300 | chacha20poly1305 + keyring-rs encrypted secret store |
 | `session_archive.rs` | ~700 | Local zip + SSH tar.gz streaming archive |
-| `mcp_marketplace.rs` | ~400 | Marketplace state, tier S/A/B/C catalog, install/enable plumbing |
-| `winproc.rs` | ~200 | Windows job-object kill-on-close; taskkill exit-128 silence |
+| `mcp_marketplace.rs` | ~400 | Marketplace state, catalog, install/enable plumbing |
 | `process_registry.rs` | ~200 | Tracks shellX-spawned child processes for `process_signal` |
 
 Frontend lives under `src/`. Entry is `src/App.tsx`; settings under
-`src/components/settings/`; the chat surface is `src/components/ChatOutput.tsx`.
+`src/components/settings/`; Browser chrome is under `src/browser/` and
+`src/browser/components/`; the chat surface is
+`src/components/ChatOutput.tsx`.

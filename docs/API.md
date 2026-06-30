@@ -9,16 +9,18 @@
 > publishes its port to `~/.shellx/mcp-http.port` the same way.
 
 **Status:** Implementation guide plus v1.x roadmap (drafted 2026-05-17,
-current route inventory refreshed 2026-06-18).
+current route inventory refreshed 2026-06-30).
 **Audience:** Any future implementer (human or agent) extending shellX's
-debug API beyond what is already wired in `src-tauri/src/debug_api.rs`.
+debug API beyond what is already wired in `src-tauri/src/debug_api.rs` and the
+`src-tauri/src/debug_api_browser*.rs` route handlers.
 **Goal:** Make every UI surface driveable without a GUI, so the
 agent-first verification loop (`pnpm drive`) can prove
 behavior end-to-end.
 
-The wired routes in `src-tauri/src/debug_api.rs` are the source of truth for
-what clients can call today. Sections below that describe routes not listed in
-the current implementation inventory are roadmap targets, not shipped
+The wired route table in `src-tauri/src/debug_api.rs` is the source of truth
+for what clients can call today; Browser handler behavior is split through
+`debug_api_browser*.rs` modules. Sections below that describe routes not listed
+in the current implementation inventory are roadmap targets, not shipped
 endpoints. Breaking changes to wired routes require bumping `X-API-Version`
 major and shipping a migration shim.
 
@@ -50,7 +52,10 @@ long-horizon automation should use `/build/*` and public UI should present
 
 ShellX Vault is the default secret authority for ShellX users and agents.
 Setup routes return recovery/setup metadata only; secret values are not returned
-from agent-facing routes.
+from agent-facing routes. The in-app Vault backend uses the shared ShellX Vault
+broker for resource schemas, grants, safe-folder/project-capsule contracts,
+backup/recovery data, and sync-set groundwork while preserving the ShellX UI
+and Debug API mediation rules below.
 
 | Method | Path | Notes |
 | --- | --- | --- |
@@ -241,7 +246,8 @@ Action routes:
 `/browser/action` currently accepts `navigate`, `observe`, `extractText`,
 `extractMarkdown`, `goBack`, `goForward`, `reload`, `clickRef`, `fillRef`,
 `press`, `click`, `type`, `scroll`, `waitFor`, `select`, `uploadFile`,
-`downloadFile`, `extractTable`, `captureScreenshot`, `verify`, `findText`, `fillFromVaultGrant`,
+`downloadFile`, `extractTable`, `captureScreenshot`, `verify`, `findText`,
+`clearSiteData`, `capturePageSecretToVault`, `fillFromVaultGrant`,
 `fillProfileCardGrant`, `readEmailCodeGrant`, `useAgentWalletGrant`,
 `requestSessionGrant`, `createVaultDeposit`, `writeReport`, `askUser`,
 `bookmarkCurrent`, `clearHistory`, `submitFinal`, `delete`, and
@@ -435,8 +441,8 @@ its own pending `beforeunload` dialog on an agent-owned non-personal task tab,
 so stuck dirty-page navigation can continue without exposing form values.
 Other dialog decisions and prompt values are operator-owned and return
 `browser_prompt_resolution_requires_operator`, while
-`shellx_browser_resolve_dialog` accepts the operator/UI decision and stores only
-a prompt-value presence flag. `GET /browser/permissions` and
+`shellx_browser_resolve_dialog` accepts the operator/UI decision and includes
+only a prompt-value presence flag in the dialog record. `GET /browser/permissions` and
 `POST /browser/permissions` record notification/geolocation/camera/microphone/
 clipboard-style page permission events with safe origin/path only; decisions are
 resolved only by the operator/UI `shellx_browser_resolve_permission` command.
@@ -2054,9 +2060,9 @@ Routes:
 - `POST /outside-connectors/:id/test` → `{ reachable, provider, latencyMs, identity, error }`
 - `POST /outside-connectors/:id/simulate` with `{ senderId, conversationId?, guildId?, text }` → recorded inbound event
 
-Telegram test calls Bot API `getMe` using the token stored at
-`botTokenVaultKey`. Discord test calls `GET /users/@me` using the bot
-token stored at `botTokenVaultKey`.
+Telegram test calls Bot API `getMe` using the Vault reference named
+`botTokenVaultKey`. Discord test calls `GET /users/@me` using the bot-token
+Vault reference named `botTokenVaultKey`.
 
 Telegram `autoPrompt` is the first live session-chat connector. It
 requires an enabled connector, an allowlisted chat id, and either a fixed

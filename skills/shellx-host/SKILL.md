@@ -290,6 +290,10 @@ ports if held). Bearer token at `~/.shellx/shellxagent.token` (mode
 `https://tauri.localhost`, `http://localhost:*`, `http://127.0.0.1:*`.
 
 Current high-use endpoints:
+- `GET /shellxagent.json` — local discovery descriptor for the bound Debug API,
+  gated Browser paths, and agent-doc links.
+- `GET /agent-doc/manifest`, `GET /agent-doc/skills/shellx-host/SKILL.md` —
+  the bundled host-skill docs that installed agents also receive on disk.
 - `GET /state/sessions` — active grok sessions per tab.
 - `GET /sessions/search?q=…` — full-text search across past jsonl logs.
 - `GET /sessions/history`, `GET /sessions/history/:id` — recent saved
@@ -313,6 +317,9 @@ Current high-use endpoints:
   `POST /connections/:id/test`.
 - `GET /vault/status`, `GET /vault/keys`, `POST /vault/get`,
   `POST /vault/set`, `POST /vault/delete`.
+- `GET /browser/state`, `GET /browser/tabs`, `POST /browser/action`,
+  `POST /browser/recipes/export`, `POST /browser/recipes/replay` — native
+  Browser state, actions, and workflow recipe surfaces.
 - `POST /tools/fs_watch`, `POST /tools/process_list`,
   `POST /tools/process_signal`, `POST /tools/process_stats`,
   `POST /tools/process_attach_stdout`, `POST /tools/secret_get`.

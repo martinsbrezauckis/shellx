@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde_json::json;
 
 use crate::shellx_browser::{
@@ -6,7 +8,7 @@ use crate::shellx_browser::{
     BrowserRecipeArtifact, BrowserRecipeExportRequest, BrowserRecipeReplayRequest,
     BrowserRecipeReplayResponse, BrowserRecipeReplaySkippedStep, ShellxBrowserRegistry,
 };
-use crate::shellx_browser_artifacts::browser_recipe_step_from_receipt;
+use crate::shellx_browser_artifacts::{browser_artifact_root, browser_recipe_step_from_receipt};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BrowserRecipeReplayPlan {
@@ -74,20 +76,21 @@ impl ShellxBrowserRegistry {
                 .receipts
                 .iter()
                 .filter(|receipt| {
-                    task_id
-                        .as_deref()
-                        .map(|id| receipt.task_id.as_deref() == Some(id))
-                        .unwrap_or(true)
-                        && browser_tab_id
-                            .as_deref()
-                            .map(|id| {
-                                receipt
-                                    .evidence
-                                    .get("browserTabId")
-                                    .and_then(|value| value.as_str())
-                                    == Some(id)
-                            })
-                            .unwrap_or(true)
+                    let task_matches = match task_id.as_deref() {
+                        Some(id) => receipt.task_id.as_deref() == Some(id),
+                        None => true,
+                    };
+                    let tab_matches = match browser_tab_id.as_deref() {
+                        Some(id) => {
+                            receipt
+                                .evidence
+                                .get("browserTabId")
+                                .and_then(|value| value.as_str())
+                                == Some(id)
+                        }
+                        None => true,
+                    };
+                    task_matches && tab_matches
                 })
                 .collect::<Vec<_>>();
             let steps = matching_receipts
@@ -305,11 +308,36 @@ pub(crate) fn browser_recipe_value_from_request(
     else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("read browser recipe {} failed: {}", path, e))?;
+    let text = read_browser_recipe_artifact(path)?;
     serde_json::from_str::<serde_json::Value>(&text)
         .map(Some)
         .map_err(|e| format!("parse browser recipe {} failed: {}", path, e))
+}
+
+fn read_browser_recipe_artifact(path: &str) -> Result<String, String> {
+    let root = browser_artifact_root("shellx-browser-recipes")?;
+    let root = root.canonicalize().map_err(|e| {
+        format!(
+            "resolve browser recipe root {} failed: {}",
+            root.display(),
+            e
+        )
+    })?;
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() {
+        return Err("browser recipe path must be absolute".to_string());
+    }
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|e| format!("resolve browser recipe {} failed: {}", path, e))?;
+    if !canonical.starts_with(&root) {
+        return Err(format!(
+            "browser recipe path {} is outside ShellX Browser recipe artifacts",
+            path
+        ));
+    }
+    std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("read browser recipe {} failed: {}", canonical.display(), e))
 }
 
 fn browser_recipe_action_from_step(
@@ -471,16 +499,15 @@ fn browser_recipe_action_from_step(
             skipped_recipe_step(index, Some(action), "liveGrantActionRequiresBinding"),
         ),
         "findText" => {
-            if step
-                .get("queryRedacted")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(true)
-            {
-                return Err(skipped_recipe_step(
-                    index,
-                    Some(action),
-                    "redactedQueryRequiresBinding",
-                ));
+            match step.get("queryRedacted").and_then(|value| value.as_bool()) {
+                Some(false) => {}
+                Some(true) | None => {
+                    return Err(skipped_recipe_step(
+                        index,
+                        Some(action),
+                        "redactedQueryRequiresBinding",
+                    ));
+                }
             }
             let Some(query) = step
                 .get("query")
@@ -633,6 +660,26 @@ fn recipe_decision_points(steps: &[serde_json::Value]) -> Vec<serde_json::Value>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recipe_path_reads_are_constrained_to_recipe_artifacts() {
+        let root = browser_artifact_root("shellx-browser-recipes").expect("recipe root resolves");
+        std::fs::create_dir_all(&root).expect("recipe root can be created for test");
+        let outside = tempfile::NamedTempFile::new().expect("outside temp recipe");
+        std::fs::write(outside.path(), r#"{"schemaVersion":2,"steps":[]}"#)
+            .expect("outside temp recipe can be written");
+        let request = BrowserRecipeReplayRequest {
+            recipe_path: Some(outside.path().to_string_lossy().into_owned()),
+            ..BrowserRecipeReplayRequest::default()
+        };
+
+        let error = browser_recipe_value_from_request(&request).expect_err("outside path rejected");
+
+        assert!(
+            error.contains("outside ShellX Browser recipe artifacts"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn recipe_replay_plan_converts_safe_steps_and_skips_redacted_inputs() {
