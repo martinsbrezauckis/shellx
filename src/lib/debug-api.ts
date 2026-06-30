@@ -44,12 +44,13 @@ import { invoke } from "@tauri-apps/api/core";
  * 1. `invoke('get_bound_ports').debugApi` — the actually-bound port
  * written by the server after a successful bind. Survives the
  * 5757→5759 orphan-socket fallback (#311).
- * 2. `invoke('get_debug_port')` — the env-preferred port (5757
- * default), used when get_bound_ports hasn't completed yet.
+ * 2. `invoke('get_debug_port')` — also returns the actual bound port
+ * once the server has accepted, and falls back to the env-preferred
+ * port only during very early startup.
  * 3. DEFAULT_PORT (5757) — final fallback.
  */
 const DEFAULT_PORT = 5757;
-const BOUND_PORT_WAIT_MS = 45_000;
+const BOUND_PORT_WAIT_MS = 1_500;
 
 let cachedBaseUrl: string | null = null;
 let pendingBaseUrlFetch: Promise<string> | null = null;
@@ -72,10 +73,6 @@ interface BoundPortsResponse {
 
 function validPort(port: unknown): port is number {
   return typeof port === "number" && Number.isInteger(port) && port > 0 && port <= 65_535;
-}
-
-function hasTauriInvoke(): boolean {
-  return typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined";
 }
 
 function sleep(ms: number): Promise<void> {
@@ -101,18 +98,12 @@ async function readPreferredDebugPort(): Promise<number | null> {
 }
 
 async function resolveDebugPort(): Promise<number> {
-  if (hasTauriInvoke()) {
-    const started = Date.now();
-    while (Date.now() - started < BOUND_PORT_WAIT_MS) {
-      const bound = await readBoundDebugPort();
-      if (bound !== null) return bound;
-      await sleep(100);
-    }
+  const started = Date.now();
+  while (Date.now() - started < BOUND_PORT_WAIT_MS) {
     const bound = await readBoundDebugPort();
     if (bound !== null) return bound;
-    throw new Error("debug-api bound port was not published by the Tauri host");
+    await sleep(100);
   }
-
   return (await readBoundDebugPort()) ?? (await readPreferredDebugPort()) ?? DEFAULT_PORT;
 }
 

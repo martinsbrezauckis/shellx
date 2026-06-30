@@ -189,7 +189,19 @@ Host MCP Browser flow:
    retrying. It clears browser cache plus non-cookie app storage and preserves
    sign-in where the site allows it. If the page still asks to clear cookies,
    stop and request user approval; do not reset sign-in state silently.
-7. `browser_extract` / `browser_save_page` / `browser_verify` /
+7. `browser_workflows` / `browser_workflow_save` / `browser_workflow_replay` —
+   before repeating a known site workflow, search saved Agent workflow bookmarks
+   by taxonomy such as `siteKey=google.com taskType=get target=api-key`,
+   `surface=drive`, or `secretKind=apiToken`. Rehearse with dry-run first,
+   inspect planned/skipped steps and contract/health/drift metadata, and only
+   use `apply=true` when the user/task contract allows replaying the saved
+   route. Apply mode executes recorded navigation/click/wait/select/press/
+   verify fast-track steps, then you must observe and continue live for redacted
+   inputs, Vault fills/captures, or page drift. After a successful repeated
+   user-requested task, use `browser_workflow_save` to export the recipe and
+   store a reusable fast track. If no workflow matches, continue with live
+   `browser_navigate` and `browser_observe`.
+8. `browser_extract` / `browser_save_page` / `browser_verify` /
    `browser_screenshot` / `browser_downloads` / `browser_trace_open` — collect
    evidence, save page text/markdown to explicit `destinationDir`, the Browser
    default download folder, or OS Downloads with a returned `finalPath`, list

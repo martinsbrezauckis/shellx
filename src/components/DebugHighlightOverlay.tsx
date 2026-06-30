@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type JSX } from "react";
 
 import { apiPost } from "../lib/debug-api";
-import { inTauri } from "../lib/tauri-bridge";
 
 export interface DebugHighlightRequest {
   id?: string | null;
@@ -260,7 +259,7 @@ export function DebugHighlightOverlay({ highlights, surface = "app" }: DebugHigh
   const highlightsKey = useMemo(() => JSON.stringify(highlights), [highlights]);
   const { measuredHighlightsKey, results } = measurement;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let frame: number | null = null;
     const scheduleMeasure = () => {
       if (frame !== null) return;
@@ -299,12 +298,11 @@ export function DebugHighlightOverlay({ highlights, surface = "app" }: DebugHigh
     };
   }, [highlightsKey, highlights]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (measuredHighlightsKey !== highlightsKey) return;
-    const key = JSON.stringify(results);
+    const key = `${surface}:${highlightsKey}:${JSON.stringify(results)}`;
     if (lastReportRef.current === key) return;
     lastReportRef.current = key;
-    if (!inTauri()) return;
     void apiPost("/state/ui", {
       debugSurface: surface,
       debugHighlightResults: results,

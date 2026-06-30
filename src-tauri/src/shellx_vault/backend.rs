@@ -195,6 +195,14 @@ fn stable_default_profile_dir() -> PathBuf {
     shared_default_profile_dir().unwrap_or_else(|_| legacy_shellx_profile_dir())
 }
 
+fn stable_default_profile_dir_without_env_override() -> PathBuf {
+    let mut input = vault_broker::profile::current_profile_input();
+    input.override_dir = None;
+    vault_broker::profile::resolve_profile_dirs(input)
+        .map(|dirs| dirs.canonical_dir)
+        .unwrap_or_else(|_| legacy_shellx_profile_dir())
+}
+
 fn shared_default_profile_dir() -> Result<PathBuf, String> {
     vault_broker::profile::resolve_current_profile_dirs()
         .map(|dirs| dirs.canonical_dir)
@@ -635,7 +643,7 @@ impl ShellxVaultBackend {
             ));
         }
         let profile_key = normalize_guard_path(&self.profile_dir);
-        let stable_key = normalize_guard_path(&stable_default_profile_dir());
+        let stable_key = normalize_guard_path(&stable_default_profile_dir_without_env_override());
         if profile_key == stable_key || profile_key.ends_with("/.shellx/shellx-vault") {
             return Err(format!(
                 "Vault E2E profile refuses stable user Vault path {}",
@@ -1753,9 +1761,15 @@ impl ShellxVaultBackend {
         });
         match decision {
             BrokerGrantDecision::AllowMediated { .. } => GrantDecision::AllowMediated,
-            BrokerGrantDecision::Deny { reason, .. } => GrantDecision::Deny {
-                reason: broker_deny_reason_label(reason),
-            },
+            BrokerGrantDecision::Deny { reason, .. } => {
+                let reason = match reason {
+                    // At this point the grant exists. ShellX callers should see
+                    // this as a grant/actor mismatch, not actor-registry state.
+                    BrokerGrantDenyReason::ActorNotRegistered => "grantActorMismatch".to_string(),
+                    other => broker_deny_reason_label(other),
+                };
+                GrantDecision::Deny { reason }
+            }
         }
     }
 
@@ -2646,6 +2660,17 @@ mod tests {
         backend
             .debug_require_isolated_e2e_profile_for_env(Some(profile_dir.into_os_string()))
             .expect("explicit disposable e2e profile should be accepted");
+    }
+
+    #[test]
+    fn e2e_profile_guard_stable_default_ignores_env_override() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let profile_dir = dir.path().join("shellx-vault-e2e");
+
+        assert_ne!(
+            normalize_guard_path(&profile_dir),
+            normalize_guard_path(&stable_default_profile_dir_without_env_override())
+        );
     }
 
     #[test]

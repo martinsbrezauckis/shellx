@@ -102,6 +102,13 @@ export function GeneralTab({
           >
             Black + warm
           </button>
+          <button
+            type="button"
+            className={`settings-pill ${s.theme === "bright" ? "active" : ""}`}
+            onClick={() => onPatch({ theme: "bright" })}
+          >
+            Bright
+          </button>
         </div>
       </div>
 

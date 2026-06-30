@@ -9,15 +9,8 @@
 # https://github.com/<owner>/<repo>/releases/latest/download/latest.json
 # and surfaces an "Install & restart" banner when a new version lands.
 #
-# REQUIRED SECRETS (set in repo Settings → Secrets):
-# TAURI_SIGNING_PRIVATE_KEY — contents of ~/.shellx-keys/updater.key
-# TAURI_SIGNING_PRIVATE_KEY_PASSWORD — empty string if key has no password
-#
-# To cut a release after explicit per-operation approval:
-# git tag v0.3.x
-# git push origin v0.3.x
-# pnpm release:updater-manifest -- --artifact-root "$HOME/shellx-builds/v0.3.x"
-# gh release create v0.3.x <locally verified assets...> "$HOME/shellx-builds/v0.3.x/latest.json"
+# Official public releases are uploaded from maintainer-verified local
+# artifacts after the release checklist and explicit remote approvals.
 
 name: Release
 

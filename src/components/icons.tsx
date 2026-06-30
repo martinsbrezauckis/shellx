@@ -41,6 +41,7 @@ import {
   Minimize2,
   Mic,
   Monitor,
+  Moon,
   Paperclip,
   Pause,
   Pencil,
@@ -58,6 +59,7 @@ import {
   Square,
   SquareTerminal,
   Star,
+  Sun,
   Tablet,
   Terminal,
   Trash2,
@@ -111,6 +113,7 @@ export type ShellIconName =
   | "minimize"
   | "mic"
   | "monitor"
+  | "moon"
   | "paperclip"
   | "pause"
   | "pencil"
@@ -127,6 +130,7 @@ export type ShellIconName =
   | "phone"
   | "square"
   | "star"
+  | "sun"
   | "tablet"
   | "terminal"
   | "trash"
@@ -175,6 +179,7 @@ const ICONS: Record<Exclude<ShellIconName, "browser-orbit">, LucideIcon> = {
   minimize: Minimize2,
   mic: Mic,
   monitor: Monitor,
+  moon: Moon,
   paperclip: Paperclip,
   pause: Pause,
   pencil: Pencil,
@@ -191,6 +196,7 @@ const ICONS: Record<Exclude<ShellIconName, "browser-orbit">, LucideIcon> = {
   phone: Smartphone,
   square: Square,
   star: Star,
+  sun: Sun,
   tablet: Tablet,
   terminal: SquareTerminal,
   trash: Trash2,

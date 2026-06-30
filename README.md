@@ -168,6 +168,10 @@ Every UI surface has an HTTP equivalent.
   `~/.shellx/debug-api.port`. The host-MCP HTTP port lives at
   `~/.shellx/mcp-http.port`. Both are written at startup so external
   drivers don't have to hard-code a value.
+- **Agent docs:** installer launches write the bundled `shellx-host`
+  skill to Grok, Codex, Claude, and `~/.shellx/agent-docs/`. The same
+  docs are available from the running app at `/agent-doc/manifest` and
+  `/agent-doc/skills/shellx-host/SKILL.md`.
 - **Loopback only.** The servers bind to `127.0.0.1`; LAN clients
   cannot reach them.
 
@@ -183,6 +187,11 @@ curl "$BASE/health"
 # Structural diagnostics
 curl -X POST -H "$H" -H "Content-Type: application/json" \
   -d '{}' "$BASE/diagnostics"
+
+# Agent discovery and bundled host skill docs
+curl -H "$H" "$BASE/shellxagent.json"
+curl -H "$H" "$BASE/agent-doc/manifest"
+curl -H "$H" "$BASE/agent-doc/skills/shellx-host/SKILL.md"
 
 # Connect + prompt + abort
 curl -X POST -H "$H" -H "Content-Type: application/json" \

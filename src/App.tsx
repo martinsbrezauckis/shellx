@@ -1174,6 +1174,7 @@ export default function App(): JSX.Element {
   const [vaultPanelIntent, setVaultPanelIntent] = useState<VaultPanelIntent>("overview");
   const [vaultPanelIntentSeq, setVaultPanelIntentSeq] = useState(0);
   const [vaultRequestCenterOpenSeq, setVaultRequestCenterOpenSeq] = useState(0);
+  const [vaultRequestCenterCloseSeq, setVaultRequestCenterCloseSeq] = useState(0);
   const [browserVaultRequestState, setBrowserVaultRequestState] =
     useState<AppBrowserRequestState>({ sessionGrants: [], vaultDeposits: [], vaultGrants: [] });
   const [dismissedVaultDepositIds, setDismissedVaultDepositIds] = useState<Set<string>>(
@@ -2428,7 +2429,6 @@ export default function App(): JSX.Element {
   useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
 
   useEffect(() => {
-    if (!inTauri()) return;
     let socket: WebSocket | null = null;
     let closed = false;
     let retryTimer: number | null = null;
@@ -2512,6 +2512,8 @@ export default function App(): JSX.Element {
       }
       if (p.vaultRequestCenterOpen === true) {
         setVaultRequestCenterOpenSeq((seq) => seq + 1);
+      } else if (p.vaultRequestCenterOpen === false) {
+        setVaultRequestCenterCloseSeq((seq) => seq + 1);
       }
       const composerMenuPatch = normalizeComposerDebugMenu(p.composerMenu);
       if (composerMenuPatch) {
@@ -2587,11 +2589,15 @@ export default function App(): JSX.Element {
       const source = (patch as Record<string, unknown>).source;
       return typeof source === "string" ? source.trim().toLowerCase() : "";
     };
+    const isRendererDebugUiSourceValue = (source: string): boolean =>
+      source === "renderer" || source.startsWith("renderer-");
+    const isRendererDebugUiPatch = (patch: unknown): boolean =>
+      isRendererDebugUiSourceValue(debugUiPatchSource(patch));
     const isBrowserDebugUiSource = (state: Record<string, unknown>): boolean => {
       const source = typeof state.lastUiPatchSource === "string"
         ? state.lastUiPatchSource.trim().toLowerCase()
         : "";
-      return source === "renderer" || source.includes("browser");
+      return isRendererDebugUiSourceValue(source) || source.includes("browser");
     };
     const applyAuthoritativeUiState = (state: Record<string, unknown>, eventPatch?: unknown) => {
       const revision = uiRevisionFromState(state);
@@ -2608,7 +2614,6 @@ export default function App(): JSX.Element {
           if (!closed) applyPatch(eventPatch);
         });
     };
-
     const connect = async () => {
       try {
         const [base, token] = await Promise.all([debugApiBase(), getDebugToken()]);
@@ -2619,10 +2624,10 @@ export default function App(): JSX.Element {
           try {
             const frame = JSON.parse(String(event.data)) as RawEventFrame;
             if (frame.kind !== "debug-ui-state-patch") return;
+            const payload = frame.payload as { patch?: unknown } | null;
+            if (isRendererDebugUiPatch(payload?.patch)) return;
             if (typeof frame.t === "number" && frame.t <= lastDebugUiPatchMs) return;
             if (typeof frame.t === "number") lastDebugUiPatchMs = frame.t;
-            const payload = frame.payload as { patch?: unknown } | null;
-            if (debugUiPatchSource(payload?.patch) === "renderer") return;
             applyAuthoritativeUiPatch(payload?.patch);
           } catch {
             /* ignore malformed debug stream frames */
@@ -2646,10 +2651,10 @@ export default function App(): JSX.Element {
           if (closed) return;
           for (const frame of frames) {
             if (frame.kind !== "debug-ui-state-patch") continue;
+            const payload = frame.payload as { patch?: unknown } | null;
+            if (isRendererDebugUiPatch(payload?.patch)) continue;
             if (typeof frame.t === "number" && frame.t <= lastDebugUiPatchMs) continue;
             if (typeof frame.t === "number") lastDebugUiPatchMs = frame.t;
-            const payload = frame.payload as { patch?: unknown } | null;
-            if (debugUiPatchSource(payload?.patch) === "renderer") continue;
             applyAuthoritativeUiPatch(payload?.patch);
           }
         })
@@ -2663,9 +2668,11 @@ export default function App(): JSX.Element {
           if (closed) return;
           const revision = uiRevisionFromState(state);
           if (revision === null || revision === lastAppliedUiRevision) return;
-          lastAppliedUiRevision = revision;
           if (isBrowserDebugUiSource(state)) return;
-          applyPatch(state);
+          if (typeof state.lastUiPatchMs === "number" && Number.isFinite(state.lastUiPatchMs)) {
+            lastDebugUiPatchMs = Math.max(lastDebugUiPatchMs, state.lastUiPatchMs);
+          }
+          applyAuthoritativeUiState(state);
         })
         .catch(() => {
           /* Direct state polling is a debug-driver fallback only. */
@@ -4510,6 +4517,13 @@ export default function App(): JSX.Element {
     persistSettings(s);
   }
 
+  function handleThemeToggle(): void {
+    handleSettingsChange({
+      ...settings,
+      theme: settings.theme === "bright" ? "black" : "bright",
+    });
+  }
+
   function closeAllModals(closeBuildReview = true): void {
     // The useKeyboardShortcuts hook listens in CAPTURE phase +
     // stopPropagation, so the central registry's Esc handler runs
@@ -4610,7 +4624,13 @@ export default function App(): JSX.Element {
 
   function dispatchDebugClick(target: HTMLElement): void {
     target.scrollIntoView({ block: "center", inline: "center" });
-    if (target instanceof HTMLInputElement && (target.type === "checkbox" || target.type === "radio")) {
+    if (
+      target instanceof HTMLButtonElement ||
+      target instanceof HTMLAnchorElement ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLSelectElement ||
+      target instanceof HTMLTextAreaElement
+    ) {
       target.click();
       return;
     }
@@ -4619,16 +4639,46 @@ export default function App(): JSX.Element {
     target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
   }
 
+  function reportDebugActionResult(result: Record<string, unknown>): void {
+    void apiPost("/state/ui", {
+      debugSurface: "app",
+      debugActionResults: [result],
+      source: "renderer-debug-action",
+    }).catch(() => {
+      /* debug action receipts are best-effort diagnostics only */
+    });
+  }
+
   function attemptDebugClickSelector(target: DebugClickTarget, deadlineMs: number): void {
     window.requestAnimationFrame(() => {
       const element = findDebugClickElement(target);
       if (element) {
+        const rect = element.getBoundingClientRect();
+        reportDebugActionResult({
+          action: "debugClick",
+          selector: target.selector,
+          status: "clicked",
+          tagName: element.tagName,
+          text: (element.textContent ?? "").trim().slice(0, 120),
+          rect: {
+            left: Math.round(rect.left * 10) / 10,
+            top: Math.round(rect.top * 10) / 10,
+            width: Math.round(rect.width * 10) / 10,
+            height: Math.round(rect.height * 10) / 10,
+          },
+        });
         dispatchDebugClick(element);
         return;
       }
       if (Date.now() < deadlineMs) {
         window.setTimeout(() => attemptDebugClickSelector(target, deadlineMs), 50);
+        return;
       }
+      reportDebugActionResult({
+        action: "debugClick",
+        selector: target.selector,
+        status: "missing",
+      });
     });
   }
 
@@ -4977,11 +5027,14 @@ export default function App(): JSX.Element {
         onAutonomyChange={handleAutonomyChange}
         onWorkspaceClick={() => void handleWorkspaceClick()}
         onOpenSettings={() => setSettingsOpen(true)}
+        theme={settings.theme}
+        onThemeToggle={handleThemeToggle}
         onOpenPlugins={() => setPluginsOpen(true)}
         onOpenConnectorInbox={() => setConnectorInboxOpen(true)}
         outsideConnectorInbox={outsideConnectorInboxSummary}
         vaultRequestCenter={vaultRequestCenter}
         vaultRequestCenterOpenSeq={vaultRequestCenterOpenSeq}
+        vaultRequestCenterCloseSeq={vaultRequestCenterCloseSeq}
         onOpenVault={openVaultPanel}
         onOpenBrowser={handleOpenShellxBrowser}
         onOpenAbout={openAboutInSettings}

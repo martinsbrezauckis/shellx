@@ -4589,6 +4589,53 @@ a.settings-pill:hover {
   --bg-grad: linear-gradient(180deg, #0a0807 0%, #050403 100%);
 }
 
+/* Bright theme variant - additive token flip, dark remains the default. */
+[data-theme="bright"] {
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --bg-grad: linear-gradient(180deg, #ffffff 0%, #ecefeb 100%);
+  --surface: #ffffff;
+  --surface-2: #eeefec;
+  --surface-3: #e1e2de;
+  --hairline: #e2e2dc;
+  --hairline-2: #d1d2ca;
+  --border: #a9aaa1;
+
+  --ink: #1b1b19;
+  --ink-2: #3e3e38;
+  --ink-3: #5e5e56;
+  --ink-4: #77776d;
+
+  --orange: #c2410c;
+  --orange-soft: #ea580c;
+  --green: #15803d;
+  --green-soft: #16a34a;
+  --warm: #b45309;
+  --accent: #1b1b19;
+  --ok: var(--green);
+  --warn: var(--orange);
+  --err: #dc2626;
+
+  --fg-muted: var(--ink-3);
+  --fg-error: var(--err);
+  --bg-elev: var(--surface-2);
+  --fg: var(--ink);
+}
+
+[data-theme="bright"] .top {
+  background: var(--bg-grad);
+}
+
+[data-theme="bright"] .brand img {
+  filter: invert(1) hue-rotate(180deg) saturate(0.6);
+}
+
+[data-theme="bright"] .modal,
+[data-theme="bright"] .find-popover,
+[data-theme="bright"] .vault-request-popover {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.16);
+}
+
 /* ─────────────── Shiki preview ─────────────── */
 
 .shiki-preview {
@@ -6778,6 +6825,11 @@ a.settings-pill:hover {
 }
 .hdr-icon:hover {
   color: var(--ink);
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+.hdr-theme-toggle.active {
+  color: var(--accent);
   border-color: var(--border);
   background: var(--surface-2);
 }

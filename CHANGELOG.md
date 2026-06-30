@@ -7,7 +7,15 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
-## [Unreleased]
+## [0.3.3] - 2026-06-30
+
+### Added
+
+- Experimental Browser workflow fast tracks: agents can save successful
+  Browser tasks as workflow bookmarks, discover them by site/task taxonomy,
+  dry-run the attached recipe, and apply saved navigation/click/wait/select/
+  press/verify route steps through normal Browser gates while secret fills and
+  Vault capture stay live-bound.
 
 ## [0.3.2] - 2026-06-20
 

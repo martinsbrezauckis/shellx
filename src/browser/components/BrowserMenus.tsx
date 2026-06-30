@@ -141,6 +141,19 @@ export function BrowserOptionsMenu({
         </section>
 
         <section className="shellx-browser-options-section">
+          <h3>Panels</h3>
+          <label>
+            <input
+              type="checkbox"
+              checked={showRightSidebar}
+              onChange={(event) => onShowRightSidebarChange(event.target.checked)}
+              data-debug-id="shellx-browser-toggle-right-sidebar"
+            />
+            <span>Right sidebar</span>
+          </label>
+        </section>
+
+        <section className="shellx-browser-options-section">
           <h3>Personal Browser Lock</h3>
           <div className="shellx-browser-personal-lock-status" data-debug-id="shellx-browser-personal-lock-status">
             <span>{!lockEnabled ? "Off" : lockActive ? "Locked" : "Unlocked"}</span>
@@ -291,18 +304,6 @@ export function BrowserOptionsMenu({
           </label>
         </section>
 
-        <section className="shellx-browser-options-section">
-          <h3>Panels</h3>
-          <label>
-            <input
-              type="checkbox"
-              checked={showRightSidebar}
-              onChange={(event) => onShowRightSidebarChange(event.target.checked)}
-              data-debug-id="shellx-browser-toggle-right-sidebar"
-            />
-            <span>Right sidebar</span>
-          </label>
-        </section>
       </div>
     </aside>
   );

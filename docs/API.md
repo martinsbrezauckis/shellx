@@ -29,12 +29,16 @@ debug bearer token from `~/.shellx/shellxagent.token` or
 `SHELLX_DEBUG_SECRET` (legacy `GROK_SHELL_DEBUG_SECRET` also works).
 On launch ShellX also writes `~/.shellx/shellxagent.json`, a private
 discovery descriptor containing the bound Debug API URL, existing bearer
-token when file-based auth is active, and gated Browser route paths. It
-does not expose raw CDP.
+token when file-based auth is active, and gated Browser route paths. The
+same descriptor is available to authenticated local clients at
+`GET /shellxagent.json`. Installer-bundled agent docs are available at
+`GET /agent-doc/manifest` and
+`GET /agent-doc/skills/shellx-host/SKILL.md`. None of these surfaces
+expose raw CDP.
 
 | Method | Path |
 | --- | --- |
-| GET | `/health`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/files`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/tabs/report`, `/state/agent_runs`, `/state/session_assets`, `/state/marketplace_health`, `/state/session_tooling`, `/state/environment`, `/state/grok_environment`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/state/model_instruction_cards`, `/state/agent_cli_setup`, `/panels`, `/preview`, `/preview/work/state`, `/preview/work/logs`, `/preview/work/diagnose`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/provider-adapters/state`, `/provider-sessions/state`, `/vault/status`, `/vault/grants`, `/vault/keys`, `/vault/resources`, `/connections`, `/outside-connectors`, `/outside-connectors/capabilities`, `/outside-connectors/events`, `/browser/state`, `/browser/tabs`, `/browser/profiles`, `/browser/tasks`, `/browser/bookmarks`, `/browser/receipts`, `/browser/privacy`, `/browser/personal-lock`, `/browser/shields`, `/browser/developer-mode`, `/browser/downloads`, `/browser/uploads`, `/browser/logs`, `/browser/storage-state`, `/browser/dialogs`, `/browser/permissions`, `/browser/popups`, `/browser/network`, `/browser/robots` |
+| GET | `/health`, `/shellxagent.json`, `/.well-known/shellxagent.json`, `/agent-doc`, `/agent-doc/manifest`, `/agent-doc/skills/shellx-host/SKILL.md`, `/agent-doc/shellx-host/SKILL.md`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/files`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/tabs/report`, `/state/agent_runs`, `/state/session_assets`, `/state/marketplace_health`, `/state/session_tooling`, `/state/environment`, `/state/grok_environment`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/state/model_instruction_cards`, `/state/agent_cli_setup`, `/panels`, `/preview`, `/preview/work/state`, `/preview/work/logs`, `/preview/work/diagnose`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/provider-adapters/state`, `/provider-sessions/state`, `/vault/status`, `/vault/grants`, `/vault/keys`, `/vault/resources`, `/connections`, `/outside-connectors`, `/outside-connectors/capabilities`, `/outside-connectors/events`, `/browser/state`, `/browser/tabs`, `/browser/profiles`, `/browser/tasks`, `/browser/bookmarks`, `/browser/receipts`, `/browser/privacy`, `/browser/personal-lock`, `/browser/shields`, `/browser/developer-mode`, `/browser/downloads`, `/browser/uploads`, `/browser/logs`, `/browser/storage-state`, `/browser/dialogs`, `/browser/permissions`, `/browser/popups`, `/browser/network`, `/browser/robots` |
 | POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/preview/work/start`, `/preview/work/stop`, `/preview/work/restart`, `/preview/work/diagnose`, `/state/environment/trace_export`, `/state/grok_environment/trace_export`, `/state/session_git/checkpoint`, `/state/session_git/worktree`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/recheck_blocker`, `/build/operator_note`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/provider-adapters/run`, `/provider-sessions/start`, `/provider-sessions/abort`, `/agent_cli_setup/install/prepare`, `/agent_cli_setup/install/confirm`, `/agent_cli_setup/recheck`, `/diagnostics`, `/github/pr/create`, `/vault/lock`, `/vault/setup/begin`, `/vault/setup/confirm-recovery`, `/vault/remember-device`, `/vault/grants`, `/vault/grants/:grant_id/revoke`, `/vault/get`, `/vault/set`, `/vault/delete`, `/connections`, `/connections/provider-scan`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test`, `/outside-connectors/:id/simulate`, `/browser/open`, `/browser/tabs/open`, `/browser/tabs/focus`, `/browser/tabs/reorder`, `/browser/tabs/close`, `/browser/tabs/lock`, `/browser/tabs/heartbeat`, `/browser/tabs/unlock`, `/browser/task/start`, `/browser/task/autonomy`, `/browser/task/control`, `/browser/task/finish`, `/browser/action`, `/browser/logs`, `/browser/downloads/request`, `/browser/downloads/complete`, `/browser/uploads/request`, `/browser/uploads/complete`, `/browser/cdp/execute`, `/browser/trace/export`, `/browser/har/export`, `/browser/performance/export`, `/browser/recipes/export`, `/browser/recipes/replay`, `/browser/robots/schedule`, `/browser/robots/run`, `/browser/robots/cancel`, `/browser/storage-state/export`, `/browser/dialogs`, `/browser/dialogs/resolve`, `/browser/permissions`, `/browser/permissions/resolve`, `/browser/popups`, `/browser/session-grants/request`, `/browser/session-grants/resolve`, `/browser/session-grants/apply`, `/browser/vault-deposits`, `/browser/vault/fill-receipt`, `/browser/vault/generate-receipt`, `/browser/report` |
 | DELETE | `/connections/:id`, `/outside-connectors/:id`, `/browser/bookmarks/:bookmark_id`, `/browser/shields/site/:host` |
 
@@ -190,7 +194,7 @@ Action routes:
 | POST | `/browser/task/control` | `{ taskId?, action:"pause"|"resume"|"abort"|"userTakeover", reason?, requestedBy? }` |
 | POST | `/browser/task/finish` | `{ taskId?, status? }` |
 | POST | `/browser/action` | `{ browserTabId?, taskId?, action, url?, selector?, refId?, value?, key?, grantId?, secretRef?, sensitiveKind?, approvalId?, lockLeaseId?, ownerAgentId?, ownerRunId?, fullPage? }` |
-| POST | `/browser/bookmarks` | `{ bookmarkId?, label, kind?, parentId?, url?, category?, toolbarPinned?, toolbarOrder? }`; `kind` is `link` or `folder`. |
+| POST | `/browser/bookmarks` | `{ bookmarkId?, label, kind?, parentId?, url?, category?, toolbarPinned?, toolbarOrder?, agentWorkflow? }`; `kind` is `link` or `folder`. `agentWorkflow` is experimental metadata for reusable agent workflow bookmarks. |
 | POST | `/browser/bookmarks/reorder` | `{ items: [{ bookmarkId, parentId?, toolbarPinned?, toolbarOrder? }] }`; rejects folder cycles. |
 | DELETE | `/browser/bookmarks/:bookmark_id` | Delete a bookmark; deleting a folder also removes its children. |
 | POST | `/browser/logs` | `{ taskId?, level, source?, message, url?, line?, column?, details? }` |
@@ -214,7 +218,7 @@ Action routes:
 | POST | `/browser/har/export` | `{ taskId?, browserTabId?, reason? }`; writes a redacted HAR artifact without headers, bodies, cookies, query strings, or fragments. |
 | POST | `/browser/performance/export` | `{ taskId?, browserTabId?, reason? }`; writes sanitized navigation/resource timing metrics. |
 | POST | `/browser/recipes/export` | `{ taskId?, browserTabId?, reason? }`; converts recent receipts into a redacted replay recipe. |
-| POST | `/browser/recipes/replay` | `{ taskId?, browserTabId?, recipePath?, recipe?, dryRun?, reason? }`; records dry-run or replay completion receipts. |
+| POST | `/browser/recipes/replay` | `{ taskId?, browserTabId?, recipePath?, recipe?, dryRun?, reason? }`; dry-runs by default, or applies saved navigation/click/wait/select/press/verify route steps when `dryRun:false`; redacted, live-bound, or unsupported steps are skipped with reasons. |
 | POST | `/browser/robots/schedule` | `{ taskId?, browserTabId?, recipePath?, runAtMs?, kind?, reason }` |
 | POST | `/browser/robots/run` | `{ jobId, dryRun? }` |
 | POST | `/browser/robots/cancel` | `{ jobId, reason? }` |
@@ -397,7 +401,19 @@ recipe under `~/.grok/shellx-browser-recipes/`; typed input values become
 Recipe artifacts use Action Recipe V2 fields: `schemaVersion`, workflow `goal`,
 redacted `steps`, `variableInputs`, `assertions`, `decisionPoints`,
 `sourceReceipts`, and `redactionPolicy`.
-`POST /browser/recipes/replay` records dry-run/replay completion, and
+`POST /browser/recipes/replay` dry-runs by default. When called with
+`dryRun:false`, ShellX converts replayable recipe steps such as navigation,
+observe, click/click-ref, wait, scroll, select, press, verify, extract, and
+non-redacted find-text into Browser actions and applies them through the same
+WebView engine, locks, receipts, and approval gates as normal agent Browser
+control. This makes saved workflows real fast tracks for repeated site tasks
+while redacted input, live Vault capture/fill, unsupported actions, and failed
+applies are returned as `skippedSteps` with stable reasons instead of being
+silently replayed. Agents can save repeatable fast-tracks by exporting a
+successful task recipe and then upserting a Browser bookmark with
+`agentWorkflow` taxonomy (`siteKey`, `taskType`, `target`, `surface`,
+`secretKinds`, `recipePath`, and health/drift/contract metadata), so later runs
+can discover the workflow before falling back to live navigation.
 `/browser/robots/*` manages scheduled recipe/work-queue jobs with auditable
 schedule, run, blocked, cancelled, and completed receipts.
 `GET /browser/storage-state` and `POST /browser/storage-state/export` expose
@@ -2407,6 +2423,21 @@ auth is overridden by an env var, the descriptor omits the env token so
 the override is not persisted. The descriptor intentionally advertises
 `rawCdpExposed: false`; Browser automation must continue through the
 gated `/browser/*` Debug API routes.
+
+Authenticated clients can also fetch the live descriptor from
+`GET /shellxagent.json` or `GET /.well-known/shellxagent.json`. This
+served copy omits the token field value because the caller has already
+authenticated and can read `tokenFile` when it needs to reconnect.
+
+Agent-facing documentation is bundled into the desktop binary and exposed
+in two ways on every fresh install:
+
+- On disk: `~/.grok/skills/shellx-host/SKILL.md`,
+  `~/.codex/skills/shellx-host/SKILL.md`,
+  `~/.claude/skills/shellx-host/SKILL.md`, and
+  `~/.shellx/agent-docs/shellx-host/SKILL.md`.
+- Over the authenticated Debug API: `GET /agent-doc/manifest` and
+  `GET /agent-doc/skills/shellx-host/SKILL.md`.
 
 `/health` is the only endpoint exempt from auth — it's the liveness
 probe used by drivers waiting for the app to come up.
