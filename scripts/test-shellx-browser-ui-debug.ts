@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { assertDebugHealthVersion } from "./shellx-debug-version";
 import { shellxHomeCandidates } from "./shellx-debug-paths";
 
 type Json = Record<string, unknown>;
@@ -138,7 +139,10 @@ async function resolveDebugConnection(): Promise<DebugConnection> {
     const base = baseOverride || `http://127.0.0.1:${port}`;
     try {
       const res = await request(base, token, "/health");
-      if (res.ok) return { shellxHome: dir, base, token };
+      if (res.ok) {
+        await assertDebugHealthVersion(res, dir);
+        return { shellxHome: dir, base, token };
+      }
       errors.push(`${dir}: /health ${res.status}`);
     } catch (err) {
       errors.push(`${dir}: ${err instanceof Error ? err.message : String(err)}`);
