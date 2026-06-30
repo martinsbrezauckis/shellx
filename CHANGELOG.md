@@ -7,6 +7,13 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
+## [0.3.4] - 2026-06-30
+
+### Fixed
+
+- Updated a vulnerable transitive networking dependency flagged by the RustSec
+  advisory database.
+
 ## [0.3.3] - 2026-06-30
 
 ### Added
