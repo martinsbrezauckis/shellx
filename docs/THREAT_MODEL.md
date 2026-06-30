@@ -74,8 +74,11 @@ web_search result body, or chat output to xAI's logs.
   `mcp-events.jsonl`, subagent task previews, and any text rendered to
   the Tasks rail. 21+ patterns: `Bearer …`, JWT (`ey…`), `ghp_…`,
   `xai-…`, `sk-…`, `ya29.…`, etc.
-- Vault values never appear in logs; `secret_get` returns the value
-  to grok but the value is not echoed in event streams.
+- ShellX Vault values never appear in logs or agent-facing planning
+  responses. `vault:`, `pass:`, and bare legacy references are denied on
+  the agent-facing `secret_get` path; agents must request a grant and use
+  mediated Browser/Vault fill, injection, or write-only deposit routes.
+  Operator/UI reveal remains a separate user-controlled path.
 
 **Residual risk**: the agent can still read files inside the active
 cwd. A user who opens shellX rooted at `~` or `/` exposes everything
@@ -205,11 +208,14 @@ they can read process memory, install rootkits, intercept keyring,
 and bypass any shellX defense. shellX is a userspace tool; we trust
 the OS.
 
-### O2. Compromise of the user's GPG passphrase / keyring master
-The vault (`vault.rs`) uses chacha20poly1305 with a master key
-custodied by `keyring-rs` (Windows DPAPI / Linux secret-service /
-macOS Keychain). If those custodies are broken, the vault is open.
-shellX does not implement defense-in-depth against keyring breakage.
+### O2. Compromise or loss of Vault recovery material
+ShellX Vault uses encrypted local or connected resources mediated by
+`shellx_vault/` and the shared Vault broker, with OS-backed remembered-device
+custody where configured and recovery materials under user control. If the
+user's device credential, master passphrase, recovery kit, or connected Vault
+endpoint is compromised, an attacker may gain access to stored secrets. If they
+are lost or damaged, stored secrets may be unrecoverable. ShellX does not claim
+server-side escrow or recovery beyond the saved recovery materials.
 
 ### O3. Compromise of grok-build's xAI auth
 Grok-build has its own `~/.grok/auth.json` with an xAI session token.
@@ -240,7 +246,7 @@ Same as O1 — out of scope.
 | Host MCP HTTP loopback port | T6, T7 | `mcp_http.rs::auth + origin gate`, `mcp_http.rs::plan_mode_gate` |
 | Host MCP stdio surface | T1, T2, T3, T5 | `host_mcp.rs::validate_fs_path`, redaction, `net_fetch` allow-list |
 | ACP wire to grok | T2, T4 | `acp.rs::handle_terminal_create` intercept, `sessions/<sid>.jsonl` logging |
-| Vault | T3 | `vault.rs` chacha20poly1305 + keyring-rs |
+| Vault | T3, O2 | `shellx_vault/*`, `vendor/shellx-vault/crates/vault-broker/*`, legacy `vault.rs` compatibility |
 | SSH/WSL tunnel | T7 | (planned) `#330` per-session token |
 
 ## Known open exposures (acknowledged, tracked)

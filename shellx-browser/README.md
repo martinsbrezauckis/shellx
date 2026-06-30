@@ -71,8 +71,10 @@ Write-only Vault deposits use a split receipt model:
 Host MCP exposes the Browser through thin Debug API wrappers:
 `browser_state`, `browser_tabs`, `browser_locks`, `browser_navigate`,
 `browser_observe`, `browser_click_ref`, `browser_click_at`, `browser_fill_ref`,
-`browser_type_text`, `browser_clear_site_data`, `browser_wait_for`,
-`browser_extract`, `browser_verify`, `browser_screenshot`, and
+`browser_type_text`, `browser_clear_site_data`, `browser_workflows`,
+`browser_workflow_save`, `browser_workflow_replay`, `browser_wait_for`,
+`browser_extract`, `browser_save_page`, `browser_verify`,
+`browser_screenshot`, `browser_downloads`, `browser_resolve_dialog`, and
 `browser_trace_open`. Vault-backed wrappers include
 `browser_fill_from_vault`, `browser_fill_profile_card`,
 `browser_capture_secret_to_vault`, `browser_read_email_code`, and
@@ -109,6 +111,9 @@ Read routes:
 - `GET /browser/bookmarks`
 - `GET /browser/receipts`
 - `GET /browser/privacy`
+- `GET /browser/personal-lock`
+- `GET /browser/shields`
+- `GET /browser/developer-mode`
 - `GET /browser/downloads`
 - `GET /browser/uploads`
 - `GET /browser/logs`
@@ -137,6 +142,7 @@ Action routes:
 - `POST /browser/open`
 - `POST /browser/tabs/open`
 - `POST /browser/tabs/focus`
+- `POST /browser/tabs/reorder`
 - `POST /browser/tabs/close`
 - `POST /browser/tabs/lock`
 - `POST /browser/tabs/heartbeat`
@@ -146,6 +152,9 @@ Action routes:
 - `POST /browser/task/control`
 - `POST /browser/task/finish`
 - `POST /browser/action`
+- `POST /browser/bookmarks`
+- `POST /browser/bookmarks/reorder`
+- `DELETE /browser/bookmarks/:bookmark_id`
 - `POST /browser/logs`
 - `POST /browser/downloads/request`
 - `POST /browser/downloads/complete`
@@ -162,7 +171,8 @@ Action routes:
 - `POST /browser/robots/cancel`
 - `POST /browser/storage-state/export`
 - `POST /browser/dialogs`
-- `POST /browser/dialogs/resolve` (operator-only denial path for Debug API)
+- `POST /browser/dialogs/resolve` (agent-owned beforeunload only; operator-owned
+  dialogs remain UI-only)
 - `POST /browser/permissions`
 - `POST /browser/permissions/resolve` (operator-only denial path for Debug API)
 - `POST /browser/popups`

@@ -1,6 +1,6 @@
 # shellX
 
-Desktop client that hosts xAI's **Grok Build CLI**, Claude Code, Codex
+Desktop client that hosts xAI's **Grok Build**, Claude Code, Codex
 CLI, Antigravity CLI, or any agent speaking the Agent Client Protocol.
 It provides tabs, an encrypted vault, voice in / out, session tool
 health, traceable file activity, Git review workflows, an MCP
@@ -42,7 +42,8 @@ artifacts when CI passes.
   Setup includes recovery-kit creation, remembered-device unlock, manual
   lock, password generation, hidden copy/reveal controls, descriptions,
   user-only visibility, and scoped agent grants through the Vault Request
-  Center.
+  Center. The app uses the shared Vault broker for resource schemas,
+  grant receipts, recovery, and future standalone Vault parity.
 - **Persistent sessions.** Each chat saved as JSONL. Full-content
   search across history.
 - **Traceable agent work.** Review file searches, reads, writes,
@@ -60,6 +61,8 @@ artifacts when CI passes.
 - **Host skill guidance.** shellX installs a compact `shellx-host` skill so
   hosted agents know about ShellX Vault, the native Browser, MCP tools,
   Debug API, `/build`, provider handoffs, and local UI evidence surfaces.
+- **Light and dark appearance.** Settings can follow the system theme or
+  force a bright/dark shellX UI.
 - **Build Mode.** `/build "<objective>"` writes a scoped scratchboard,
   lets the agent plan + work across multiple turns, records host
   receipts for checkpoints/review/verification, and uses Preview Doctor
@@ -82,7 +85,9 @@ artifacts when CI passes.
   bookmarks, history, privacy/ad-block modes, HTTPS/security feedback,
   Vault-backed fills, profile-card and email-code helpers, Downloads
   management, full-page screenshots, receipts, replay/debug artifacts, and hard
-  gates for sensitive agent actions.
+  gates for sensitive agent actions. Experimental workflow bookmarks let
+  agents save successful repeated tasks as recipe-backed fast tracks and
+  replay them through the same Browser/Vault gates.
 - **Auto-updater.** Signature-verified through Tauri's updater
   plugin, using release manifests generated from staged signed artifacts.
 

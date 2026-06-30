@@ -16,6 +16,20 @@ explain a visible behavior change.
   dry-run the attached recipe, and apply saved navigation/click/wait/select/
   press/verify route steps through normal Browser gates while secret fills and
   Vault capture stay live-bound.
+- The installer now bundles the `shellx-host` agent documentation into the
+  desktop app, writes it for Grok/Codex/Claude plus ShellX-owned agent docs on
+  launch, and serves it from the authenticated local Debug API.
+- Appearance settings now include a bright/light mode alongside dark and
+  system-following mode.
+
+### Improved
+
+- ShellX Vault now uses the shared Vault broker for resource schemas, grants,
+  recovery, safe-folder/project-capsule contracts, backups, and sync-set
+  groundwork, keeping the in-app Vault aligned with the standalone Vault path.
+- Browser recipe export/replay keeps more safe locator metadata, preserves
+  non-secret find-text steps for replay, and stops replay cleanly at
+  live-bound inputs instead of pretending raw typed values can be replayed.
 
 ## [0.3.2] - 2026-06-20
 
@@ -145,7 +159,7 @@ explain a visible behavior change.
 - Composer Agent picker for choosing Grok, Claude Code, Codex CLI, or
   Antigravity per session tab.
 - Agent CLI discovery and health checks for Local, WSL, and SSH
-  environments, including Grok Build CLI availability.
+  environments, including Grok Build availability.
 - Model instruction cards for named provider/media handoffs, including
   direct GPT Image, Grok Imagine image, and Grok Imagine video recipes,
   explicit-only routing, and no-silent-fallback policy.
