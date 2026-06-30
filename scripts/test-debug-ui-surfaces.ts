@@ -81,7 +81,7 @@ async function postUi(base: string, token: string, body: Json): Promise<void> {
 async function getJson<T>(base: string, token: string, path: string): Promise<T> {
   const res = await request(base, token, path);
   if (!res.ok) throw new Error(`GET ${path} failed ${res.status}: ${await res.text()}`);
-  return await res.json() as T;
+  return await res.json();
 }
 
 function sleep(ms: number): Promise<void> {

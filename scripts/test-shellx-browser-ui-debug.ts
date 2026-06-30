@@ -166,7 +166,7 @@ async function api<T>(base: string, token: string, method: "GET" | "POST" | "DEL
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${method} ${path} failed ${res.status}: ${await res.text()}`);
-  return await res.json() as T;
+  return await res.json();
 }
 
 async function apiMaybe<T>(
@@ -185,7 +185,7 @@ async function apiMaybe<T>(
   });
   const text = await res.text();
   if (!res.ok) return { ok: false, status: res.status, text };
-  return { ok: true, value: text ? JSON.parse(text) as T : {} as T };
+  return { ok: true, value: text ? JSON.parse(text) : {} };
 }
 
 async function postUi(base: string, token: string, body: Json): Promise<void> {

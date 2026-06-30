@@ -91,7 +91,7 @@ async function api<T>(base: string, token: string, method: "GET" | "POST", path:
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${method} ${path} failed ${res.status}: ${await res.text()}`);
-  return await res.json() as T;
+  return await res.json();
 }
 
 async function resolveDebugConnection(): Promise<DebugConnection> {

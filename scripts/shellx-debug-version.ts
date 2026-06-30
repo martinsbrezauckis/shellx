@@ -6,10 +6,14 @@ type DebugHealth = {
   app_version?: unknown;
 };
 
+type PackageJson = {
+  version?: unknown;
+};
+
 function expectedShellxVersion(): string {
   const override = process.env.SHELLX_EXPECTED_VERSION?.trim();
   if (override) return override;
-  const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { version?: unknown };
+  const pkg: PackageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
   if (typeof pkg.version !== "string" || !pkg.version.trim()) {
     throw new Error("package.json does not expose a valid ShellX version");
   }
@@ -20,7 +24,7 @@ export async function assertDebugHealthVersion(res: Response, source: string): P
   const expected = expectedShellxVersion();
   let health: DebugHealth;
   try {
-    health = await res.clone().json() as DebugHealth;
+    health = await res.clone().json();
   } catch (error) {
     throw new Error(`${source}: /health did not return JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
