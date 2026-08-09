@@ -599,7 +599,11 @@ try {
   ], { cwd: root, encoding: "utf8", timeout: 60_000 });
   assert.equal(overwrite.error, undefined, overwrite.error?.message);
   assert.notEqual(overwrite.status, 0, "Vault draft evidence output must remain create-only");
-  assert.match(`${overwrite.stderr}\n${overwrite.stdout}`, /EEXIST|file already exists/i, "Vault draft overwrite refusal must come from create-only output semantics");
+  assert.match(
+    `${overwrite.stderr}\n${overwrite.stdout}`,
+    /EEXIST|(?:file|output) already exists/i,
+    "Vault draft overwrite refusal must come from create-only output semantics",
+  );
 
   console.log("Release surface Vault UI controls passed: 58 exact assignments");
 } finally {

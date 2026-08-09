@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -316,12 +316,26 @@ try {
   assert.deepEqual(validateReleaseSurfaceDriverReport(teardownRequest, sealedTeardownFailure), []);
   assert.equal(releaseSurfaceDriverPhaseReportPassed(sealedTeardownFailure), false);
 
+  const forbiddenMutationPath = join(temp, "overwrite-driver-entered.txt");
   const overwrite = spawnSync(process.execPath, [
     "--import", "tsx", fixtureDriver,
     "--request", requestPath,
     "--out", outputPath,
-  ], { cwd: root, encoding: "utf8" });
+  ], {
+    cwd: root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      SHELLX_RELEASE_FIXTURE_MUTATE_INSTALLED_PATH: forbiddenMutationPath,
+    },
+  });
   assert.notEqual(overwrite.status, 0, "driver evidence must never overwrite an existing report");
+  assert.match(`${overwrite.stderr}\n${overwrite.stdout}`, /release driver output already exists/i);
+  assert.equal(
+    existsSync(forbiddenMutationPath),
+    false,
+    "an existing create-only output must be rejected before the release driver executes",
+  );
 
   const missing = structuredClone(report);
   missing.outcomes = [];

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   releaseSurfaceDriverPhaseReportPassed,
@@ -24,6 +24,7 @@ export async function runReleaseSurfaceDriverCli(
   const requestPath = readArg(args, "--request");
   const outputPath = readArg(args, "--out");
   if (!requestPath || !outputPath) throw new Error("release driver requires --request <json> and --out <new-json>");
+  if (existsSync(outputPath)) throw new Error(`release driver output already exists: ${outputPath}`);
   const request = JSON.parse(readFileSync(requestPath, "utf8")) as ReleaseSurfaceDriverRequest;
   const requestErrors = validateReleaseSurfaceDriverRequest(manifest, request);
   if (requestErrors.length > 0) throw new Error(`invalid release driver request: ${requestErrors.join("; ")}`);

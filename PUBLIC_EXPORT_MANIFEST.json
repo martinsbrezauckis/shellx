@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "6d4ea506e9f5c2843722ca01062b4bec65891903",
-    "tree": "b2d63b0fda08383a560d3cb5374aa1fbb2a5d582"
+    "commit": "66e897ea325e76194986414172deef7ba65c76b2",
+    "tree": "f856ab8125746b11322ed7b778640eeda2179bbb"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1063,
-    "totalBytes": 30180353,
-    "digest": "c6fb9767fdea5868ad4f08c2cce1bc6265d8b4d5572a08dab65c5d03fe8e3114"
+    "totalBytes": 30180971,
+    "digest": "f3925101b5c25b137f0294542c39c905f5a39c031acfb67535feeb1300f06c85"
   },
   "exclusions": {
     "fileCount": 14,
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "8e89efcf984f92aafd8631507043dee5c9f55997d9aff826459ad71da5128477",
+      "sha256": "c9f10a4425e817827e8fb976dbd0a8a534fea46f4c8dcd24dd5a7fa7eb2a742d",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -1644,8 +1644,8 @@
     {
       "path": "scripts/lib/release-surface-driver-cli.ts",
       "mode": "100644",
-      "sha256": "b73ed53aa33e532906c863e6f4f23fbac010bb40e40bbe6862d456407c04f574",
-      "bytes": 2906,
+      "sha256": "fe24526f6432b5584a87e6c2f22a048c90f1443f92ad24f59b2db41cdacb78d8",
+      "bytes": 3020,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4383,8 +4383,8 @@
     {
       "path": "scripts/test-release-surface-driver-protocol.ts",
       "mode": "100644",
-      "sha256": "74a40ea61c7c5ea7afac4331426b5d87c8ea69d608dfc7ba7e4a2b1d082d7aed",
-      "bytes": 18923,
+      "sha256": "abc448c23685385549e5578d7b3dcf614a8e537fb7dbb9f16491216e51429a30",
+      "bytes": 19399,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5032,8 +5032,8 @@
     {
       "path": "scripts/test-release-surface-ui-control-vault-drafts.ts",
       "mode": "100644",
-      "sha256": "cace7a87f4d2e06ee827980fb0c87f6531621b12708e9c8c5c84752ef1e134d2",
-      "bytes": 37039,
+      "sha256": "f7d4e5211b913410194ee9365f0380c6f98d2172c2ffbf1ac016d0f324c5a609",
+      "bytes": 37067,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
