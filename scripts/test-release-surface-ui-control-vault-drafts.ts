@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { FinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
 import type { ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
-import type { ReleaseSurfaceDriverReport, ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
+import {
+  validateReleaseSurfaceDriverReport,
+  type ReleaseSurfaceDriverReport,
+  type ReleaseSurfaceDriverRequest,
+} from "./lib/release-surface-driver-protocol";
 import {
   releaseSurfaceControllerBindingFixture,
   releaseSurfaceFixtureSourceCommit,
@@ -271,7 +275,8 @@ try {
       .filter(Boolean)
       .join("\n"),
   );
-  const report = JSON.parse(reportText) as ReleaseSurfaceDriverReport;
+  const report: ReleaseSurfaceDriverReport = JSON.parse(reportText);
+  assert.deepEqual(validateReleaseSurfaceDriverReport(request, report), []);
   assert.equal(report.outcomes.length, 58);
   assert(syntheticGrantValues.every((value) => !JSON.stringify(report).includes(value)), "report must not retain synthetic Vault grant values");
   const recoveryAssignment = assignments.find((assignment) => assignment.fixtureId === "ui:vault-setup-recovery-action");
@@ -579,7 +584,8 @@ try {
   ], { cwd: root, encoding: "utf8", timeout: 300_000 });
   const boundedReportText = existsSync(boundedReportPath) ? readFileSync(boundedReportPath, "utf8") : "";
   assert.equal(boundedRun.status, 0, [boundedRun.error?.message, boundedRun.stderr, boundedRun.stdout, boundedReportText].filter(Boolean).join("\n"));
-  const boundedReport = JSON.parse(boundedReportText) as ReleaseSurfaceDriverReport;
+  const boundedReport: ReleaseSurfaceDriverReport = JSON.parse(boundedReportText);
+  assert.deepEqual(validateReleaseSurfaceDriverReport(boundedRequest, boundedReport), []);
   assert.equal(boundedReport.outcomes.length, 58);
   assert(boundedReport.outcomes.every((outcome) => (
     outcome.present === "pass" && outcome.invoke === "pass"
