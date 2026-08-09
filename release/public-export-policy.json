@@ -1,0 +1,142 @@
+{
+  "schema": "shellx/public-export-policy@1",
+  "rules": [
+    {
+      "id": "repository-metadata",
+      "action": "include",
+      "category": "repository-metadata",
+      "reason": "Public repository identity, licensing, package metadata, and build configuration.",
+      "exact": [
+        ".gitattributes",
+        ".gitignore",
+        "CHANGELOG.md",
+        "LICENSE",
+        "README.md",
+        "SECURITY.md",
+        "THIRD-PARTY-NOTICES.txt",
+        "index.html",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "shellx-browser.html",
+        "tsconfig.json",
+        "vite.config.ts"
+      ]
+    },
+    {
+      "id": "public-automation",
+      "action": "include",
+      "category": "public-automation",
+      "reason": "Public continuous-integration and release workflow definitions.",
+      "exact": [
+        ".github/dependabot.yml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml"
+      ]
+    },
+    {
+      "id": "public-product-documentation",
+      "action": "include",
+      "category": "public-product-documentation",
+      "reason": "GitHub-facing product, API, architecture, operating, and security documentation classified under docs/public.",
+      "prefixes": [
+        "docs/public/"
+      ]
+    },
+    {
+      "id": "private-working-documentation",
+      "action": "exclude",
+      "category": "private-working-documentation",
+      "reason": "Project-internal working documentation is excluded as one directory boundary and is never exporter input.",
+      "prefixes": [
+        "docs/private/"
+      ]
+    },
+    {
+      "id": "public-release-contracts",
+      "action": "include",
+      "category": "public-release-contracts",
+      "reason": "Public deterministic release contracts, inventories, signing identity, and export policy.",
+      "exact": [
+        "release/FINAL_SURFACE_GATE.md",
+        "release/public-export-policy.json",
+        "release/surface-contract.json",
+        "release/surface-driver-plan.json",
+        "release/surface-inventory.json",
+        "release/windows-signing-profile.json"
+      ]
+    },
+    {
+      "id": "public-security-policy",
+      "action": "include",
+      "category": "public-security-policy",
+      "reason": "Public machine-readable security dispositions used by repository checks.",
+      "exact": [
+        "security/grype-dispositions.json",
+        "security/rustsec-dispositions.json"
+      ]
+    },
+    {
+      "id": "public-agent-resources",
+      "action": "include",
+      "category": "public-agent-resources",
+      "reason": "Agent resources and browser guidance shipped with the public product.",
+      "exact": [
+        "shellx-browser/README.md",
+        "skills/shellx-host/SKILL.md"
+      ]
+    },
+    {
+      "id": "public-build-test-tooling",
+      "action": "include",
+      "category": "public-build-test-tooling",
+      "reason": "Build, test, documentation, release-contract, and reproducibility tooling for the public source tree.",
+      "prefixes": [
+        "scripts/"
+      ]
+    },
+    {
+      "id": "public-frontend-source",
+      "action": "include",
+      "category": "public-frontend-source",
+      "reason": "ShellX public frontend application source.",
+      "prefixes": [
+        "src/"
+      ]
+    },
+    {
+      "id": "public-native-personas",
+      "action": "include",
+      "category": "public-native-agent-personas",
+      "reason": "Public runtime persona resources embedded in the native application.",
+      "exact": [
+        "src-tauri/personas/explore.md",
+        "src-tauri/personas/general-purpose.md",
+        "src-tauri/personas/implementer.md",
+        "src-tauri/personas/release-manager.md",
+        "src-tauri/personas/reviewer.md",
+        "src-tauri/personas/security-auditor.md",
+        "src-tauri/personas/test-writer.md",
+        "src-tauri/personas/verifier.md"
+      ]
+    },
+    {
+      "id": "public-native-source",
+      "action": "include",
+      "category": "public-native-source",
+      "reason": "ShellX public native application, packaging, and platform source.",
+      "prefixes": [
+        "src-tauri/"
+      ]
+    },
+    {
+      "id": "public-vendored-source",
+      "action": "include",
+      "category": "public-vendored-source",
+      "reason": "Source dependencies intentionally vendored into the public repository.",
+      "prefixes": [
+        "vendor/"
+      ]
+    }
+  ]
+}

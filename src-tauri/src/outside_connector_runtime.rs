@@ -13,6 +13,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+use tokio::sync::{OwnedMutexGuard, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{info, warn};
@@ -27,6 +28,7 @@ const TELEGRAM_POLL_TIMEOUT_SECS: u64 = 25;
 const TELEGRAM_IDLE_SLEEP: Duration = Duration::from_secs(3);
 const TELEGRAM_ERROR_SLEEP: Duration = Duration::from_secs(5);
 const OUTSIDE_CONNECTOR_PROMPT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+const OUTSIDE_CONNECTOR_MAX_ACTIVE_DISPATCHES: usize = 16;
 const DISCORD_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
 const DISCORD_INTENT_DIRECT_MESSAGES: u64 = 1 << 12;
 const DISCORD_IDLE_SLEEP: Duration = Duration::from_secs(3);
@@ -38,6 +40,46 @@ const DISCORD_RECONNECT_MAX_SLEEP: Duration = Duration::from_secs(60);
 struct RuntimeConnector {
     id: String,
     token_key: String,
+}
+
+#[derive(Debug)]
+struct OutsideDispatchCoordinator {
+    slots: Arc<Semaphore>,
+    tab_gates: tokio::sync::Mutex<BTreeMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>,
+}
+
+impl OutsideDispatchCoordinator {
+    fn new(max_active: usize) -> Self {
+        Self {
+            slots: Arc::new(Semaphore::new(max_active.max(1))),
+            tab_gates: tokio::sync::Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn try_admit(&self) -> Option<OwnedSemaphorePermit> {
+        Arc::clone(&self.slots).try_acquire_owned().ok()
+    }
+
+    async fn try_lock_tab(&self, tab_id: &str) -> Result<OwnedMutexGuard<()>, String> {
+        let gate = {
+            let mut gates = self.tab_gates.lock().await;
+            gates.retain(|_, gate| gate.strong_count() > 0);
+            match gates.get(tab_id).and_then(std::sync::Weak::upgrade) {
+                Some(gate) => gate,
+                None => {
+                    let gate = Arc::new(tokio::sync::Mutex::new(()));
+                    gates.insert(tab_id.to_string(), Arc::downgrade(&gate));
+                    gate
+                }
+            }
+        };
+        gate.try_lock_owned().map_err(|_| {
+            format!(
+                "target tab {} is already handling another outside-connector prompt",
+                tab_id
+            )
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -71,13 +113,18 @@ impl RuntimeErrorLogLimiter {
 }
 
 pub(crate) fn start_outside_connector_runtime(app: AppHandle) {
+    let dispatch_coordinator = Arc::new(OutsideDispatchCoordinator::new(
+        OUTSIDE_CONNECTOR_MAX_ACTIVE_DISPATCHES,
+    ));
     let telegram_app = app.clone();
+    let telegram_dispatch_coordinator = Arc::clone(&dispatch_coordinator);
     tauri::async_runtime::spawn(async {
-        telegram_poll_loop(telegram_app).await;
+        telegram_poll_loop(telegram_app, telegram_dispatch_coordinator).await;
     });
     let discord_app = app.clone();
+    let discord_dispatch_coordinator = Arc::clone(&dispatch_coordinator);
     tauri::async_runtime::spawn(async {
-        discord_gateway_supervisor_loop(discord_app).await;
+        discord_gateway_supervisor_loop(discord_app, discord_dispatch_coordinator).await;
     });
     info!("outside connector runtime scheduled");
 }
@@ -159,7 +206,7 @@ fn json_id_to_string(value: &Value) -> Option<String> {
     }
 }
 
-async fn telegram_poll_loop(app: AppHandle) {
+async fn telegram_poll_loop(app: AppHandle, dispatch_coordinator: Arc<OutsideDispatchCoordinator>) {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(TELEGRAM_POLL_TIMEOUT_SECS + 10))
         .build()
@@ -194,7 +241,9 @@ async fn telegram_poll_loop(app: AppHandle) {
         }
 
         for connector in connectors {
-            match poll_telegram_connector(&app, &client, &store, &connector).await {
+            match poll_telegram_connector(&app, &client, &store, &connector, &dispatch_coordinator)
+                .await
+            {
                 Ok(()) => {
                     error_log_limiter.clear("telegram", &connector.id);
                 }
@@ -264,6 +313,7 @@ async fn poll_telegram_connector(
     client: &reqwest::Client,
     store: &Arc<OutsideConnectorStore>,
     connector: &RuntimeConnector,
+    dispatch_coordinator: &Arc<OutsideDispatchCoordinator>,
 ) -> Result<(), String> {
     let token = read_vault_value(&connector.token_key).await?;
     let token = crate::outside_connectors::normalize_telegram_bot_token(&token)?;
@@ -317,12 +367,31 @@ async fn poll_telegram_connector(
                     connector.id, event.status
                 );
                 if event.status == OutsideConnectorEventStatus::AutoPrompt {
+                    let Some(dispatch_slot) = dispatch_coordinator.try_admit() else {
+                        record_dispatch_overload(store, &connector.id, &input).await;
+                        let chat_id = input
+                            .conversation_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|id| !id.is_empty())
+                            .unwrap_or(input.sender_id.trim());
+                        let _ = send_telegram_text(
+                            client,
+                            &token,
+                            chat_id,
+                            "shellX is already handling the maximum number of outside-connector prompts. Please retry shortly.",
+                        )
+                        .await;
+                        continue;
+                    };
                     let token = token.clone();
                     let store = Arc::clone(store);
                     let connector_id = connector.id.clone();
                     let app = app.clone();
                     let client = client.clone();
+                    let dispatch_coordinator = Arc::clone(dispatch_coordinator);
                     tokio::spawn(async move {
+                        let _dispatch_slot = dispatch_slot;
                         if let Err(err) = dispatch_telegram_prompt(
                             &app,
                             &client,
@@ -330,6 +399,7 @@ async fn poll_telegram_connector(
                             &connector_id,
                             &token,
                             input,
+                            &dispatch_coordinator,
                         )
                         .await
                         {
@@ -360,6 +430,7 @@ async fn dispatch_telegram_prompt(
     connector_id: &str,
     token: &str,
     input: OutsideConnectorInboundInput,
+    dispatch_coordinator: &OutsideDispatchCoordinator,
 ) -> Result<(), String> {
     let connector = store
         .get(connector_id)
@@ -382,6 +453,23 @@ async fn dispatch_telegram_prompt(
         Ok(tab_id) => tab_id,
         Err(err) => {
             let msg = format!("shellX could not route this Telegram message: {}", err);
+            let _ = send_telegram_text(client, token, &chat_id, &msg).await;
+            let _ = store
+                .record_outbound(
+                    &connector,
+                    &input,
+                    OutsideConnectorEventStatus::Error,
+                    &msg,
+                    Some(err.clone()),
+                )
+                .await;
+            return Err(err);
+        }
+    };
+    let _tab_turn = match dispatch_coordinator.try_lock_tab(&tab_id).await {
+        Ok(turn) => turn,
+        Err(err) => {
+            let msg = format!("shellX could not queue this Telegram message: {}", err);
             let _ = send_telegram_text(client, token, &chat_id, &msg).await;
             let _ = store
                 .record_outbound(
@@ -620,6 +708,29 @@ fn collect_agent_reply(app: &AppHandle, tab_id: &str, started_ms: i64) -> Option
     }
 }
 
+async fn record_dispatch_overload(
+    store: &Arc<OutsideConnectorStore>,
+    connector_id: &str,
+    input: &OutsideConnectorInboundInput,
+) {
+    let Some(connector) = store.get(connector_id).await else {
+        return;
+    };
+    let reason = format!(
+        "outside-connector dispatch limit reached ({})",
+        OUTSIDE_CONNECTOR_MAX_ACTIVE_DISPATCHES
+    );
+    let _ = store
+        .record_outbound(
+            &connector,
+            input,
+            OutsideConnectorEventStatus::Error,
+            "shellX did not dispatch the message because its outside-connector prompt limit was reached.",
+            Some(reason),
+        )
+        .await;
+}
+
 async fn send_telegram_text(
     client: &reqwest::Client,
     token: &str,
@@ -786,7 +897,10 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-async fn discord_gateway_supervisor_loop(app: AppHandle) {
+async fn discord_gateway_supervisor_loop(
+    app: AppHandle,
+    dispatch_coordinator: Arc<OutsideDispatchCoordinator>,
+) {
     let mut tasks: BTreeMap<String, tokio::task::JoinHandle<()>> = BTreeMap::new();
     loop {
         let store = match crate::get_or_open_outside_connectors() {
@@ -817,8 +931,10 @@ async fn discord_gateway_supervisor_loop(app: AppHandle) {
             }
             let task_key = token_key.clone();
             let task_app = app.clone();
+            let task_dispatch_coordinator = Arc::clone(&dispatch_coordinator);
             let handle = tokio::spawn(async move {
-                run_discord_gateway_reconnect_loop(task_app, task_key).await;
+                run_discord_gateway_reconnect_loop(task_app, task_key, task_dispatch_coordinator)
+                    .await;
             });
             tasks.insert(token_key, handle);
         }
@@ -827,7 +943,11 @@ async fn discord_gateway_supervisor_loop(app: AppHandle) {
     }
 }
 
-async fn run_discord_gateway_reconnect_loop(app: AppHandle, token_key: String) {
+async fn run_discord_gateway_reconnect_loop(
+    app: AppHandle,
+    token_key: String,
+    dispatch_coordinator: Arc<OutsideDispatchCoordinator>,
+) {
     let mut reconnect_sleep = DISCORD_RECONNECT_MIN_SLEEP;
     let mut error_log_limiter = RuntimeErrorLogLimiter::default();
     loop {
@@ -866,7 +986,14 @@ async fn run_discord_gateway_reconnect_loop(app: AppHandle, token_key: String) {
             }
         };
 
-        match run_discord_gateway(app.clone(), token_key.clone(), token).await {
+        match run_discord_gateway(
+            app.clone(),
+            token_key.clone(),
+            token,
+            Arc::clone(&dispatch_coordinator),
+        )
+        .await
+        {
             Ok(()) => reconnect_sleep = DISCORD_RECONNECT_MIN_SLEEP,
             Err(e) => {
                 update_discord_token_runtime_error(&token_key, Some(&e)).await;
@@ -917,6 +1044,7 @@ async fn run_discord_gateway(
     app: AppHandle,
     token_key: String,
     token: String,
+    dispatch_coordinator: Arc<OutsideDispatchCoordinator>,
 ) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -987,7 +1115,15 @@ async fn run_discord_gateway(
                 match value.get("op").and_then(Value::as_i64) {
                     Some(0) if value.get("t").and_then(Value::as_str) == Some("MESSAGE_CREATE") => {
                         if let Some(input) = value.get("d").and_then(discord_message_create_to_inbound) {
-                            record_discord_inbound(&app, &client, &token_key, &token, input).await?;
+                            record_discord_inbound(
+                                &app,
+                                &client,
+                                &token_key,
+                                &token,
+                                input,
+                                &dispatch_coordinator,
+                            )
+                            .await?;
                         }
                     }
                     Some(1) => send_discord_heartbeat(&mut write, seq).await?,
@@ -1008,6 +1144,7 @@ async fn record_discord_inbound(
     token_key: &str,
     token: &str,
     input: OutsideConnectorInboundInput,
+    dispatch_coordinator: &Arc<OutsideDispatchCoordinator>,
 ) -> Result<(), String> {
     let store = crate::get_or_open_outside_connectors()?;
     let connectors = enabled_discord_connectors(&store, Some(token_key)).await;
@@ -1018,16 +1155,43 @@ async fn record_discord_inbound(
             connector.id, event.status
         );
         if event.status == OutsideConnectorEventStatus::AutoPrompt {
+            let Some(dispatch_slot) = dispatch_coordinator.try_admit() else {
+                record_dispatch_overload(&store, &connector.id, &input).await;
+                if let Some(channel_id) = input
+                    .conversation_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                {
+                    let _ = send_discord_text(
+                        client,
+                        token,
+                        channel_id,
+                        "shellX is already handling the maximum number of outside-connector prompts. Please retry shortly.",
+                    )
+                    .await;
+                }
+                continue;
+            };
             let app = app.clone();
             let client = client.clone();
             let store = Arc::clone(&store);
             let connector_id = connector.id.clone();
             let token = token.to_string();
             let input = input.clone();
+            let dispatch_coordinator = Arc::clone(dispatch_coordinator);
             tokio::spawn(async move {
-                if let Err(err) =
-                    dispatch_discord_prompt(&app, &client, &store, &connector_id, &token, input)
-                        .await
+                let _dispatch_slot = dispatch_slot;
+                if let Err(err) = dispatch_discord_prompt(
+                    &app,
+                    &client,
+                    &store,
+                    &connector_id,
+                    &token,
+                    input,
+                    &dispatch_coordinator,
+                )
+                .await
                 {
                     warn!(
                         "outside_connector_runtime: discord dispatch failed for {}: {}",
@@ -1047,6 +1211,7 @@ async fn dispatch_discord_prompt(
     connector_id: &str,
     token: &str,
     input: OutsideConnectorInboundInput,
+    dispatch_coordinator: &OutsideDispatchCoordinator,
 ) -> Result<(), String> {
     let connector = store
         .get(connector_id)
@@ -1080,6 +1245,23 @@ async fn dispatch_discord_prompt(
         Ok(tab_id) => tab_id,
         Err(err) => {
             let msg = format!("shellX could not route this Discord message: {}", err);
+            let _ = send_discord_text(client, token, channel_id, &msg).await;
+            let _ = store
+                .record_outbound(
+                    &connector,
+                    &input,
+                    OutsideConnectorEventStatus::Error,
+                    &msg,
+                    Some(err.clone()),
+                )
+                .await;
+            return Err(err);
+        }
+    };
+    let _tab_turn = match dispatch_coordinator.try_lock_tab(&tab_id).await {
+        Ok(turn) => turn,
+        Err(err) => {
+            let msg = format!("shellX could not queue this Discord message: {}", err);
             let _ = send_discord_text(client, token, channel_id, &msg).await;
             let _ = store
                 .record_outbound(
@@ -1378,16 +1560,52 @@ mod tests {
 
     use super::*;
 
-    fn temp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "shellx-outside-connector-{}-{}-{}",
-            label,
-            std::process::id(),
-            now_ms()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("temp dir");
-        dir
+    struct TestDir(tempfile::TempDir);
+
+    impl std::ops::Deref for TestDir {
+        type Target = Path;
+
+        fn deref(&self) -> &Self::Target {
+            self.0.path()
+        }
+    }
+
+    fn temp_dir(label: &str) -> TestDir {
+        TestDir(
+            tempfile::Builder::new()
+                .prefix(&format!("shellx-outside-connector-{label}-"))
+                .tempdir()
+                .expect("temp dir"),
+        )
+    }
+
+    #[tokio::test]
+    async fn dispatch_coordinator_bounds_active_work_and_releases_slots() {
+        let coordinator = OutsideDispatchCoordinator::new(1);
+        let first = coordinator.try_admit().expect("first dispatch admitted");
+        assert!(coordinator.try_admit().is_none());
+
+        drop(first);
+
+        assert!(coordinator.try_admit().is_some());
+    }
+
+    #[tokio::test]
+    async fn dispatch_coordinator_rejects_overlapping_turns_for_one_tab() {
+        let coordinator = OutsideDispatchCoordinator::new(2);
+        let first = coordinator
+            .try_lock_tab("tab-one")
+            .await
+            .expect("first tab turn");
+        let err = coordinator
+            .try_lock_tab("tab-one")
+            .await
+            .expect_err("overlapping turn must fail");
+        assert!(err.contains("already handling another outside-connector prompt"));
+
+        assert!(coordinator.try_lock_tab("tab-two").await.is_ok());
+        drop(first);
+        assert!(coordinator.try_lock_tab("tab-one").await.is_ok());
     }
 
     #[test]

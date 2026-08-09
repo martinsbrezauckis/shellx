@@ -202,7 +202,14 @@ export function SafeMarkdownLink({
   if (onPreviewFile && isPreviewableFileHref(href)) {
     const target = resolveMarkdownPreviewHref(currentPath, href);
     return (
-      <button type="button" className="flink" onClick={() => onPreviewFile(target)}>
+      <button
+        data-debug-id="surface-lib-markdown-links-1"
+        data-shellx-release-observe="title"
+        title={fileDisplayName(href)}
+        type="button"
+        className="flink"
+        onClick={() => onPreviewFile(target)}
+      >
         <span className="ic">
           <ShellIcon name="chevron-right" size={12} />
         </span>
@@ -215,7 +222,13 @@ export function SafeMarkdownLink({
   }
   if (!isHttpUrl(href)) return <span>{children}</span>;
   return (
-    <a
+    <a data-debug-id="surface-lib-markdown-links-2"
+      data-shellx-release-health-link={href === "https://github.com/martinsbrezauckis/shellx/releases"
+        ? "quick-start-releases"
+        : href === "https://github.com/martinsbrezauckis/shellx/issues"
+          ? "quick-start-issues"
+          : undefined}
+      data-shellx-release-observe="href"
       href={href}
       target="_blank"
       rel="noreferrer"

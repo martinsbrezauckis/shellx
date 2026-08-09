@@ -24,6 +24,7 @@
  * case — a render-time null deref turning into a black screen.
  */
 import React, { Component, type ErrorInfo, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 interface Props {
  /** The app tree we're protecting. */
@@ -49,10 +50,13 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("[ErrorBoundary] caught render-time throw:", error, info);
     this.setState({ componentStack: info.componentStack || "" });
 
- // removed forward-declared invoke of
- // `renderer_error` — the Tauri command was never implemented and the
- // .catch swallow made the dead call invisible. A future
- // `/state/renderer-error` endpoint can re-add a real wire here.
+    void invoke("renderer_error", {
+      message: error.message || String(error),
+      stack: error.stack ?? null,
+      componentStack: info.componentStack || null,
+    }).catch(() => {
+      /* Plain-browser previews have no Tauri command surface. */
+    });
   }
 
  /** Reset state so a Reload click can re-render the subtree without
@@ -89,38 +93,38 @@ export class ErrorBoundary extends Component<Props, State> {
           padding: "32px",
           fontFamily: "var(--mono, ui-monospace, Menlo, monospace)",
           fontSize: "var(--fs-ui-sm)",
-          color: "#e8e8e8",
-          background: "#0a0a0a",
+          color: "var(--ink)",
+          background: "var(--bg)",
           overflow: "auto",
           zIndex: 99999,
         }}
       >
-        <h2 style={{ color: "#ff6b6b", margin: "0 0 12px", fontSize: 16 }}>
+        <h2 style={{ color: "var(--err)", margin: "0 0 12px", fontSize: 16 }}>
           shellX renderer hit an unhandled error
         </h2>
-        <p style={{ color: "#bbb", marginBottom: 12 }}>
+        <p style={{ color: "var(--ink-2)", marginBottom: 12 }}>
           The React tree threw during render. The Rust backend is still
           running — Grok ACP sessions, provider CLI sessions, terminal PTYs, and the debug API
           are unaffected. You can try resetting the UI; if it keeps
           throwing, reload the window.
         </p>
         <div style={{
-          background: "#1a1a1a",
+          background: "var(--surface-3)",
           border: "1px solid #333",
           borderRadius: 4,
           padding: "10px 12px",
           marginBottom: 10,
           wordBreak: "break-word",
         }}>
-          <strong style={{ color: "#ff9b6b" }}>{msg}</strong>
+          <strong style={{ color: "var(--orange-soft)" }}>{msg}</strong>
         </div>
         {stack && (
           <details style={{ marginBottom: 12 }}>
-            <summary style={{ cursor: "pointer", color: "#888" }}>
+            <summary style={{ cursor: "pointer", color: "var(--ink-3)" }}>
               stack trace
             </summary>
             <pre style={{
-              background: "#1a1a1a",
+              background: "var(--surface-3)",
               border: "1px solid #333",
               borderRadius: 4,
               padding: "10px 12px",
@@ -133,11 +137,11 @@ export class ErrorBoundary extends Component<Props, State> {
         )}
         {this.state.componentStack && (
           <details style={{ marginBottom: 12 }}>
-            <summary style={{ cursor: "pointer", color: "#888" }}>
+            <summary style={{ cursor: "pointer", color: "var(--ink-3)" }}>
               component stack
             </summary>
             <pre style={{
-              background: "#1a1a1a",
+              background: "var(--surface-3)",
               border: "1px solid #333",
               borderRadius: 4,
               padding: "10px 12px",
@@ -153,9 +157,9 @@ export class ErrorBoundary extends Component<Props, State> {
             type="button"
             onClick={this.handleReset}
             style={{
-              background: "#2a2a2a",
+              background: "var(--surface-3)",
               border: "1px solid #444",
-              color: "#e8e8e8",
+              color: "var(--ink)",
               padding: "8px 16px",
               borderRadius: 4,
               cursor: "pointer",
@@ -169,9 +173,9 @@ export class ErrorBoundary extends Component<Props, State> {
             type="button"
             onClick={this.handleReload}
             style={{
-              background: "#3a2a2a",
+              background: "color-mix(in srgb, var(--err) 18%, var(--surface-2))",
               border: "1px solid #664444",
-              color: "#ffaa88",
+              color: "var(--orange-soft)",
               padding: "8px 16px",
               borderRadius: 4,
               cursor: "pointer",

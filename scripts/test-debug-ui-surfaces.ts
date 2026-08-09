@@ -20,6 +20,11 @@ type DebugConnection = {
   base: string;
   token: string;
 };
+type UiTabContext = {
+  tabId?: string | null;
+};
+
+const SELECTOR_TIMEOUT_MS = Number.parseInt(process.env.SHELLX_DEBUG_SELECTOR_TIMEOUT_MS ?? "60000", 10);
 
 function readTrim(path: string): string | null {
   try {
@@ -73,9 +78,29 @@ async function postUi(base: string, token: string, body: Json): Promise<void> {
   const res = await fetch(`${base}/state/ui`, {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body: JSON.stringify({ debugSurface: "app", source: "debug-ui-surface-sweep", ...body }),
   });
   if (!res.ok) throw new Error(`POST /state/ui failed ${res.status}: ${await res.text()}`);
+}
+
+async function focusMainShellxWindow(base: string, token: string): Promise<void> {
+  try {
+    const headers = new Headers({ "Content-Type": "application/json" });
+    const res = await request(base, token, "/vault/open-panel", {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    if (res.ok) await sleep(500);
+  } catch {
+    // Focusing is best-effort; selector assertions below remain the source of truth.
+  }
+  await postUi(base, token, {
+    openModal: "close",
+    debugHighlights: [],
+    source: "debug-ui-surface-focus",
+  });
+  await sleep(250);
 }
 
 async function getJson<T>(base: string, token: string, path: string): Promise<T> {
@@ -88,21 +113,46 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function expectedSelectors(name: string, selectors: string[]): Json[] {
+function expectedSelectors(name: string, selectors: string[], label = name): Json[] {
   return selectors.map((selector, index) => ({
     id: `${name}-${index}`,
     selector,
-    label: name,
+    label,
     color: "blue",
   }));
 }
 
-function stepBody(step: Step): Json {
-  if (step.expectedSelectors?.length) {
-    return { ...step.body, debugHighlights: expectedSelectors(step.name, step.expectedSelectors) };
+const INTERACTION_KEYS = ["debugClick", "clickSelector", "debugInput", "debugDrag"] as const;
+const TRANSIENT_KEYS = new Set<string>([...INTERACTION_KEYS, "debugHighlights"]);
+
+function hasKeys(body: Json): boolean {
+  return Object.keys(body).length > 0;
+}
+
+function stepStateBody(step: Step): Json {
+  const body: Json = {};
+  for (const [key, value] of Object.entries(step.body)) {
+    if (!TRANSIENT_KEYS.has(key)) body[key] = value;
   }
-  if (Object.prototype.hasOwnProperty.call(step.body, "debugHighlights")) return step.body;
-  return { ...step.body, debugHighlights: [] };
+  return body;
+}
+
+function stepInteractionBody(step: Step): Json {
+  const body: Json = {};
+  for (const key of INTERACTION_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(step.body, key)) body[key] = step.body[key];
+  }
+  return body;
+}
+
+function stepHighlightBody(step: Step): Json {
+  if (step.expectedSelectors?.length) {
+    return { debugHighlights: expectedSelectors(step.name, step.expectedSelectors) };
+  }
+  if (Object.prototype.hasOwnProperty.call(step.body, "debugHighlights")) {
+    return { debugHighlights: step.body.debugHighlights };
+  }
+  return { debugHighlights: [] };
 }
 
 async function waitForDebugSelectors(
@@ -112,14 +162,30 @@ async function waitForDebugSelectors(
   selectors: string[],
 ): Promise<void> {
   const expectedIds = selectors.map((_, index) => `${name}-${index}`);
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + (Number.isFinite(SELECTOR_TIMEOUT_MS) ? SELECTOR_TIMEOUT_MS : 60_000);
   let lastResults: DebugHighlightResult[] = [];
+  let lastBroadcastMs = Date.now();
+  let broadcastAttempt = 0;
   while (Date.now() < deadline) {
-    const ui = await getJson<{ debugHighlightResults?: DebugHighlightResult[] }>(base, token, "/state/ui");
-    lastResults = Array.isArray(ui.debugHighlightResults) ? ui.debugHighlightResults : [];
+    const ui = await getJson<{
+      debugHighlightResults?: DebugHighlightResult[];
+      debugHighlightResultsBySurface?: Record<string, DebugHighlightResult[]>;
+    }>(base, token, "/state/ui");
+    const appResults = ui.debugHighlightResultsBySurface?.app;
+    lastResults = Array.isArray(appResults)
+      ? appResults
+      : Array.isArray(ui.debugHighlightResults)
+        ? ui.debugHighlightResults
+        : [];
     const byId = new Map(lastResults.map((result) => [result.id, result]));
     const allResolved = expectedIds.every((id) => byId.get(id)?.status === "resolved");
     if (allResolved) return;
+    if (Date.now() - lastBroadcastMs > 1_000) {
+      await postUi(base, token, {
+        debugHighlights: expectedSelectors(name, selectors, `${name}-${broadcastAttempt++}`),
+      });
+      lastBroadcastMs = Date.now();
+    }
     await sleep(150);
   }
   const status = expectedIds.map((id) => {
@@ -144,34 +210,46 @@ async function screenshot(base: string, token: string, outDir: string, name: str
   writeFileSync(join(outDir, `${name}.png`), bytes);
 }
 
-async function waitForFreshActiveTab(base: string, token: string, previousActiveTabId: string | null): Promise<string> {
+async function waitForFreshOpenTab(base: string, token: string, previousTabIds: Set<string>): Promise<string> {
   const deadline = Date.now() + 20_000;
-  let lastActiveTabId: string | null = null;
+  let lastTabIds: string[] = [];
   while (Date.now() < deadline) {
-    const ui = await getJson<{ activeTabId?: string | null }>(base, token, "/state/ui");
-    const activeTabId = ui.activeTabId ?? null;
-    lastActiveTabId = activeTabId;
-    if (activeTabId && activeTabId !== previousActiveTabId) return activeTabId;
+    const ui = await getJson<{ openTabs?: UiTabContext[] }>(base, token, "/state/ui");
+    const openTabs = Array.isArray(ui.openTabs) ? ui.openTabs : [];
+    lastTabIds = openTabs
+      .map((tab) => tab.tabId)
+      .filter((tabId): tabId is string => typeof tabId === "string" && tabId.length > 0);
+    const fresh = [...lastTabIds].reverse().find((tabId) => !previousTabIds.has(tabId));
+    if (fresh) return fresh;
     await sleep(150);
   }
   throw new Error(
-    `fresh debug UI session tab did not become active; previous=${previousActiveTabId ?? "(none)"} last=${lastActiveTabId ?? "(none)"}`,
+    `fresh debug UI session tab did not appear; previous=${previousTabIds.size} last=[${lastTabIds.join(", ")}]`,
   );
 }
 
 async function openFreshComposerTab(base: string, token: string): Promise<string> {
-  const before = await getJson<{ activeTabId?: string | null }>(base, token, "/state/ui");
+  const before = await getJson<{ openTabs?: UiTabContext[] }>(base, token, "/state/ui");
+  const existingTabIds = (Array.isArray(before.openTabs) ? before.openTabs : [])
+    .map((tab) => tab.tabId)
+    .filter((tabId): tabId is string => typeof tabId === "string" && tabId.length > 0);
+  if (existingTabIds.length > 0) {
+    const activeTabId = existingTabIds[existingTabIds.length - 1]!;
+    await postUi(base, token, { activeTabId, openModal: "close", composerMenu: "close", bottomTab: "Chat", debugHighlights: [] });
+    return activeTabId;
+  }
+  const previousTabIds = new Set(existingTabIds);
   await postUi(base, token, {
     openModal: "palette",
     debugHighlights: expectedSelectors("new-session-palette", ["[data-debug-id='command-palette-input']"]),
   });
   await waitForDebugSelectors(base, token, "new-session-palette", ["[data-debug-id='command-palette-input']"]);
   await postUi(base, token, {
-    clickSelector: { selector: "button.palette-row", text: "New session" },
+    debugClick: { selector: "button.palette-row", text: "New session tab" },
     debugHighlights: [],
   });
-  const activeTabId = await waitForFreshActiveTab(base, token, before.activeTabId ?? null);
-  await postUi(base, token, { openModal: "close", composerMenu: "close", bottomTab: "Chat", debugHighlights: [] });
+  const activeTabId = await waitForFreshOpenTab(base, token, previousTabIds);
+  await postUi(base, token, { activeTabId, openModal: "close", composerMenu: "close", bottomTab: "Chat", debugHighlights: [] });
   return activeTabId;
 }
 
@@ -182,6 +260,7 @@ async function main(): Promise<void> {
   console.log(`debugApi=${base}`);
   console.log(`shellxHome=${shellxHome}`);
 
+  await focusMainShellxWindow(base, token);
   await postUi(base, token, {
     openModal: "close",
     composerMenu: "close",
@@ -267,7 +346,17 @@ async function main(): Promise<void> {
   steps.splice(0, 0, { name: "session-tab-focus", body: { activeTabId: freshTabId } });
 
   for (const step of steps) {
-    await postUi(base, token, stepBody(step));
+    const stateBody = stepStateBody(step);
+    if (hasKeys(stateBody)) {
+      await postUi(base, token, stateBody);
+      await sleep(200);
+    }
+    const interactionBody = stepInteractionBody(step);
+    if (hasKeys(interactionBody)) {
+      await postUi(base, token, interactionBody);
+      await sleep(250);
+    }
+    await postUi(base, token, stepHighlightBody(step));
     if (step.expectedSelectors?.length) {
       await waitForDebugSelectors(base, token, step.name, step.expectedSelectors);
     }

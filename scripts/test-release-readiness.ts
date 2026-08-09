@@ -124,6 +124,10 @@ assert(
   broken.find((c) => c.id === "preview-qa-studio")?.status === "fail",
   "missing Preview QA Studio receipt blocks release",
 );
+assert(
+  broken.find((c) => c.id === "preview-qa-studio")?.command?.includes("--receipt <live-receipt.json>") === true,
+  "Preview QA Studio gate requires an explicit live receipt",
+);
 assert(broken.find((c) => c.id === "mac-app-smoke")?.status === "fail", "missing macOS app smoke blocks release staging");
 assert(broken.find((c) => c.id === "mac-artifact")?.status === "fail", "missing macOS artifact blocks release staging");
 assert(broken.find((c) => c.id === "updater-manifest")?.status === "fail", "missing updater manifest blocks release staging");
@@ -161,7 +165,24 @@ assert(/fake grok/i.test(ciWorkflow), "CI workflow documents the fake grok shim"
 const releaseWorkflow = readFileSync(".github/workflows/release.yml", "utf8");
 assert(
   releaseWorkflow.includes("save-if: ${{ runner.os != 'Windows' }}"),
-  "release workflow does not fail Windows artifact uploads on post-job Rust cache save",
+  "build-only release smoke does not fail Windows completion on post-job Rust cache save",
+);
+assert(
+  /permissions:\s*\n\s*contents: read/.test(releaseWorkflow),
+  "build-only release smoke has read-only repository contents permission",
+);
+assert(
+  releaseWorkflow.includes("pnpm tauri build --features debug-api"),
+  "build-only release smoke compiles Tauri bundles directly",
+);
+assert(
+  !/contents:\s*write/.test(releaseWorkflow) &&
+    !/\btagName:|\breleaseName:|\breleaseDraft:|\breleaseBody:|\bprerelease:/.test(releaseWorkflow),
+  "build-only release smoke cannot configure GitHub tag or release creation",
+);
+assert(
+  !/GITHUB_TOKEN|TAURI_SIGNING_PRIVATE_KEY|secrets\./.test(releaseWorkflow),
+  "build-only release smoke receives no publish or signing secrets",
 );
 
 const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as { scripts?: Record<string, string> };
@@ -171,6 +192,10 @@ assert(
     !publicScriptText.includes("release-docs-audit") &&
     !publicScriptText.includes("test-release-docs-audit"),
   "public package scripts do not expose internal release audit runners",
+);
+assert(
+  packageJson.scripts?.["release:preview-qa"] === "tsx scripts/verify-preview-qa-receipt.ts",
+  "Preview QA release command validates evidence instead of running the receipt-builder unit test",
 );
 
 const gitignore = readFileSync(".gitignore", "utf8");

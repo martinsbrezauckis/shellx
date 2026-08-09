@@ -3,13 +3,14 @@ use serde_json::json;
 use crate::shellx_browser::{
     clean_string, ensure_engine_matches_tab_context, ensure_engine_task_matches_active_context,
     lock_or_recover, now_ms, push_receipt, update_tab_url, update_task_engine_snapshot_locked,
-    BrowserAccessibilityNode, BrowserActionRequest, BrowserActionResponse, BrowserDomSummary,
-    BrowserEngineSnapshot, BrowserObservation, BrowserObservationRef, BrowserScreenshotArtifact,
-    BrowserState, BrowserTaskSnapshot, ShellxBrowserRegistry,
+    BrowserActionRequest, BrowserActionResponse, BrowserEngineSnapshot, BrowserObservation,
+    BrowserScreenshotArtifact, BrowserState, ShellxBrowserRegistry,
 };
 use crate::shellx_browser_actions::EngineControlResult;
-use crate::shellx_browser_control::{
-    assign_browser_snapshot_id, decorate_browser_step_summary_for_request,
+use crate::shellx_browser_control::decorate_browser_step_summary_for_request;
+use crate::shellx_browser_observations::{
+    browser_accessibility_tree_with_refs, browser_observation_refs_with_synthetic,
+    finalize_browser_observation, preserve_raw_observation_selectors,
 };
 use crate::shellx_browser_protected_values::{
     browser_is_protected_fill_request, browser_protected_values_for_tab,
@@ -124,6 +125,7 @@ impl ShellxBrowserRegistry {
             );
         };
         let idx = find_task_index(&state, &task_id)?;
+        let previous_observation = state.tasks[idx].last_observation.clone();
         let raw_observation_url = observation.url.clone();
         let raw_observation_title = observation.title.clone();
         reconcile_task_engine_result_before_context_check(
@@ -154,7 +156,7 @@ impl ShellxBrowserRegistry {
         }
         observation.accessibility_tree =
             browser_accessibility_tree_with_refs(&observation.refs, observation.accessibility_tree);
-        assign_browser_snapshot_id(&mut observation);
+        finalize_browser_observation(&mut observation, previous_observation.as_ref());
         state.tasks[idx].last_observation = Some(observation.clone());
         let updated_at_ms = now_ms();
         state.tasks[idx].updated_at_ms = updated_at_ms;
@@ -245,78 +247,6 @@ impl ShellxBrowserRegistry {
             step_summary: Some(step_summary),
             receipt,
         })
-    }
-
-    pub fn resolve_engine_selector(
-        &self,
-        requested_browser_tab_id: Option<String>,
-        requested_task_id: Option<String>,
-        ref_id: Option<String>,
-        selector: Option<String>,
-    ) -> Result<Option<String>, String> {
-        if let Some(selector) = selector
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Ok(Some(selector.to_string()));
-        }
-        let Some(ref_id) = ref_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return Ok(None);
-        };
-        if ref_id == "page" || ref_id == "address" || ref_id == "report" {
-            return Ok(None);
-        }
-        if ref_id.starts_with('#')
-            || ref_id.starts_with('.')
-            || ref_id.starts_with('[')
-            || ref_id.contains('>')
-            || ref_id.contains(':')
-        {
-            return Ok(Some(ref_id.to_string()));
-        }
-        let state = lock_or_recover(&self.state);
-        let task_id = requested_task_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                requested_browser_tab_id
-                    .as_deref()
-                    .map(clean_string)
-                    .filter(|value| !value.is_empty())
-                    .and_then(|tab_id| {
-                        state
-                            .tabs
-                            .iter()
-                            .find(|tab| tab.browser_tab_id == tab_id)
-                            .and_then(|tab| tab.task_id.clone())
-                    })
-            })
-            .or_else(|| state.active_task_id.clone());
-        if let Some(task_id) = task_id {
-            let idx = find_task_index(&state, &task_id)?;
-            if let Some(selector) = state.tasks[idx]
-                .last_observation
-                .as_ref()
-                .and_then(|observation| selector_for_observation_ref(observation, ref_id))
-            {
-                return Ok(Some(selector));
-            }
-        }
-        let tab_id = requested_browser_tab_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .or_else(|| state.active_browser_tab_id.clone());
-        Ok(tab_id
-            .as_deref()
-            .and_then(|tab_id| state.tab_observations.get(tab_id))
-            .and_then(|observation| selector_for_observation_ref(observation, ref_id)))
     }
 
     pub(crate) fn record_engine_control_result(
@@ -699,19 +629,6 @@ impl ShellxBrowserRegistry {
     }
 }
 
-fn selector_for_observation_ref(observation: &BrowserObservation, ref_id: &str) -> Option<String> {
-    observation
-        .refs
-        .iter()
-        .find(|candidate| candidate.ref_id == ref_id)
-        .and_then(|candidate| {
-            candidate
-                .raw_selector
-                .clone()
-                .or_else(|| candidate.selector.clone())
-        })
-}
-
 fn action_task_id_for_request(
     state: &BrowserState,
     request: &BrowserActionRequest,
@@ -891,6 +808,11 @@ fn record_taskless_engine_observation_locked(
     let tab_idx = target_tab_idx
         .ok_or_else(|| "browser observation requires an active browser tab".to_string())?;
     ensure_engine_matches_tab_context(state, tab_idx)?;
+    let previous_observation = state
+        .tabs
+        .get(tab_idx)
+        .and_then(|tab| state.tab_observations.get(&tab.browser_tab_id))
+        .cloned();
     observation.task_id = state
         .tabs
         .get(tab_idx)
@@ -911,7 +833,7 @@ fn record_taskless_engine_observation_locked(
     }
     observation.accessibility_tree =
         browser_accessibility_tree_with_refs(&observation.refs, observation.accessibility_tree);
-    assign_browser_snapshot_id(&mut observation);
+    finalize_browser_observation(&mut observation, previous_observation.as_ref());
     let updated_at_ms = now_ms();
     let engine_snapshot = update_tab_engine_snapshot_locked(state, tab_idx, |engine| {
         engine.mounted = true;
@@ -1282,153 +1204,4 @@ where
         state.engine_waitlist = snapshot.waitlist.clone();
     }
     Some(snapshot)
-}
-
-pub(crate) fn observation_for_task(task: &BrowserTaskSnapshot) -> BrowserObservation {
-    let url = task.current_url.clone();
-    let title = url
-        .as_deref()
-        .and_then(|value| value.split('/').nth(2))
-        .map(|domain| format!("ShellX Browser page: {}", domain))
-        .unwrap_or_else(|| "ShellX Browser blank page".to_string());
-    let text = format!(
-        "Browser task: {}\nCurrent URL: {}\nObservation source: ShellX Browser state. Page DOM extraction requires the browser engine harness.",
-        task.goal,
-        url.as_deref().unwrap_or("(blank)")
-    );
-    let refs = browser_observation_refs_with_synthetic(task, url.clone(), Vec::new());
-    let mut observation = BrowserObservation {
-        task_id: task.task_id.clone(),
-        snapshot_id: String::new(),
-        url: url.clone(),
-        title: title.clone(),
-        markdown: format!("# {}\n\n{}", title, text),
-        dom_summary: BrowserDomSummary {
-            text_bytes: text.len(),
-            ..BrowserDomSummary::default()
-        },
-        form_fields: Vec::new(),
-        accessibility_tree: browser_accessibility_tree_with_refs(&refs, Vec::new()),
-        privacy_stats: None,
-        text,
-        refs,
-        untrusted_input: true,
-        requires_engine: true,
-    };
-    assign_browser_snapshot_id(&mut observation);
-    observation
-}
-
-fn browser_observation_refs_with_synthetic(
-    task: &BrowserTaskSnapshot,
-    url: Option<String>,
-    refs: Vec<BrowserObservationRef>,
-) -> Vec<BrowserObservationRef> {
-    let current_url = url.or_else(|| task.current_url.clone());
-    let page_label = current_url
-        .as_deref()
-        .map(|value| format!("Current page {}", value))
-        .unwrap_or_else(|| "Blank page".to_string());
-    let mut merged = vec![
-        BrowserObservationRef {
-            ref_id: "page".to_string(),
-            role: "document".to_string(),
-            label: page_label,
-            name: Some("Current page".to_string()),
-            test_id: None,
-            selector: None,
-            raw_selector: None,
-            value: current_url.clone(),
-            action: Some("observe".to_string()),
-            locator_suggestions: Vec::new(),
-            bounds: None,
-            visible: None,
-            enabled: None,
-            editable: None,
-            frame_id: Some("browser-chrome".to_string()),
-            strict_match_count: None,
-        },
-        BrowserObservationRef {
-            ref_id: "address".to_string(),
-            role: "textbox".to_string(),
-            label: "Address".to_string(),
-            name: Some("Address".to_string()),
-            test_id: None,
-            selector: None,
-            raw_selector: None,
-            value: current_url,
-            action: Some("navigate".to_string()),
-            locator_suggestions: Vec::new(),
-            bounds: None,
-            visible: None,
-            enabled: Some(true),
-            editable: Some(true),
-            frame_id: Some("browser-chrome".to_string()),
-            strict_match_count: None,
-        },
-        BrowserObservationRef {
-            ref_id: "report".to_string(),
-            role: "button".to_string(),
-            label: "Write report".to_string(),
-            name: Some("Write report".to_string()),
-            test_id: None,
-            selector: None,
-            raw_selector: None,
-            value: None,
-            action: Some("writeReport".to_string()),
-            locator_suggestions: Vec::new(),
-            bounds: None,
-            visible: None,
-            enabled: Some(true),
-            editable: Some(false),
-            frame_id: Some("browser-chrome".to_string()),
-            strict_match_count: None,
-        },
-    ];
-    merged.extend(
-        refs.into_iter()
-            .filter(|item| !matches!(item.ref_id.as_str(), "page" | "address" | "report")),
-    );
-    merged
-}
-
-fn preserve_raw_observation_selectors(observation: &mut BrowserObservation) {
-    for reference in &mut observation.refs {
-        if reference.raw_selector.is_none() {
-            reference.raw_selector = reference.selector.clone();
-        }
-    }
-}
-
-fn browser_accessibility_tree_with_refs(
-    refs: &[BrowserObservationRef],
-    nodes: Vec<BrowserAccessibilityNode>,
-) -> Vec<BrowserAccessibilityNode> {
-    let mut merged = nodes
-        .into_iter()
-        .filter(|item| !item.label.trim().is_empty())
-        .take(240)
-        .collect::<Vec<_>>();
-    let mut synthetic = Vec::new();
-    for item in refs
-        .iter()
-        .filter(|item| matches!(item.ref_id.as_str(), "page" | "address" | "report"))
-    {
-        if merged
-            .iter()
-            .any(|node| node.ref_id.as_deref() == Some(item.ref_id.as_str()))
-        {
-            continue;
-        }
-        synthetic.push(BrowserAccessibilityNode {
-            ref_id: Some(item.ref_id.clone()),
-            role: item.role.clone(),
-            label: item.label.clone(),
-            selector: item.selector.clone(),
-            action: item.action.clone(),
-        });
-    }
-    let remaining = 240usize.saturating_sub(synthetic.len());
-    synthetic.extend(merged.drain(..).take(remaining));
-    synthetic
 }

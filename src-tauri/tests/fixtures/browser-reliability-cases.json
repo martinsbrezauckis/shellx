@@ -1,0 +1,120 @@
+{
+  "recoveryCases": [
+    {
+      "name": "fingerprint mismatch never locator-recovers",
+      "action": "clickRef",
+      "body": { "action": "clickRef", "refId": "dom-old" },
+      "response": {
+        "ok": false,
+        "status": "staleRef",
+        "actionability": { "failedChecks": ["fingerprint"] },
+        "stepSummary": {
+          "locatorCandidates": [
+            {
+              "refId": "dom-new",
+              "selector": "[data-testid='save']",
+              "action": "clickRef",
+              "visible": true,
+              "enabled": true,
+              "strictMatchCount": 1
+            }
+          ]
+        }
+      },
+      "expectedStrategy": null
+    },
+    {
+      "name": "missing ref may use one strict visible replacement",
+      "action": "clickRef",
+      "body": { "action": "clickRef", "refId": "dom-old" },
+      "response": {
+        "ok": false,
+        "status": "notFound",
+        "actionability": { "failedChecks": ["attached"] },
+        "stepSummary": {
+          "locatorCandidates": [
+            {
+              "refId": "dom-new",
+              "selector": "[data-testid='save']",
+              "action": "clickRef",
+              "visible": true,
+              "enabled": true,
+              "strictMatchCount": 1
+            }
+          ]
+        }
+      },
+      "expectedStrategy": "strictLocator"
+    },
+    {
+      "name": "covered click may retry native pointer dispatch",
+      "action": "clickRef",
+      "body": { "action": "clickRef", "refId": "dom-covered" },
+      "response": {
+        "ok": false,
+        "status": "notActionable",
+        "actionability": { "failedChecks": ["receivesEvents"] }
+      },
+      "expectedStrategy": "forceClick"
+    },
+    {
+      "name": "sensitive click never auto-recovers",
+      "action": "clickRef",
+      "body": {
+        "action": "clickRef",
+        "refId": "dom-secret",
+        "secretRef": "fixture/credential"
+      },
+      "response": {
+        "ok": false,
+        "status": "notActionable",
+        "actionability": { "failedChecks": ["receivesEvents"] }
+      },
+      "expectedStrategy": null
+    }
+  ],
+  "replayCases": [
+    {
+      "name": "safe route remains replayable",
+      "steps": [
+        { "action": "navigate", "url": "https://example.com/" },
+        { "action": "clickRef", "selector": "[data-testid='settings']" },
+        { "action": "waitFor", "selector": "[data-testid='ready']" },
+        { "action": "verify", "key": "element", "selector": "[data-testid='ready']" }
+      ],
+      "expectedActions": ["navigate", "clickRef", "waitFor", "verify"],
+      "expectedSkippedReasons": [],
+      "expectedDecisionIds": ["domain-or-redirect-variant"]
+    },
+    {
+      "name": "redacted input pauses the remaining route",
+      "steps": [
+        { "action": "fillRef", "selector": "#email", "valueRedacted": true },
+        { "action": "clickRef", "selector": "[data-testid='continue']" }
+      ],
+      "expectedActions": [],
+      "expectedSkippedReasons": ["redactedInputRequiresBinding", "blockedByLiveBinding"],
+      "expectedDecisionIds": ["input-source-selection"]
+    },
+    {
+      "name": "redacted text requires a fresh observation",
+      "steps": [
+        { "action": "findText", "queryRedacted": true },
+        { "action": "verify", "key": "element", "selector": "#result" }
+      ],
+      "expectedActions": [],
+      "expectedSkippedReasons": ["redactedTextRequiresFreshObservation", "blockedByLiveBinding"],
+      "expectedDecisionIds": ["fresh-observation-after-redacted-text"]
+    },
+    {
+      "name": "unsupported step is isolated without blocking later safe work",
+      "steps": [
+        { "action": "customSiteScript", "value": "not executable" },
+        { "action": "navigate", "url": "https://example.com/next" }
+      ],
+      "expectedActions": ["navigate"],
+      "expectedSkippedReasons": ["actionRequiresContractOrUnsupportedReplay"],
+      "expectedDecisionIds": ["domain-or-redirect-variant"]
+    }
+  ]
+}

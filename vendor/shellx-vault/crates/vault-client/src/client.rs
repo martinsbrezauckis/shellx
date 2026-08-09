@@ -6,6 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
+use std::net::IpAddr;
 
 /// CAS header (must match the server's `api::PARENT_GEN_HEADER`).
 const PARENT_GEN_HEADER: &str = "x-sxvault-parent-gen";
@@ -73,8 +74,12 @@ pub enum CommitResult {
 impl Api {
     pub fn new(server_url: &str, repo: &str, token: &str) -> Result<Self> {
         let base_url = server_url.trim_end_matches('/').to_string();
-        if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
-            bail!("server URL must start with http:// or https://");
+        let parsed = reqwest::Url::parse(&base_url).context("server URL is invalid")?;
+        match parsed.scheme() {
+            "https" => {}
+            "http" if is_loopback_host(parsed.host_str()) => {}
+            "http" => bail!("plain http server URL is allowed only for localhost or loopback"),
+            _ => bail!("server URL must start with http:// or https://"),
         }
         if repo.is_empty()
             || !repo
@@ -360,5 +365,33 @@ impl Api {
             bail!("blob download {id_hex} failed: {}", resp.status());
         }
         Ok(resp.bytes().await?.to_vec())
+    }
+}
+
+fn is_loopback_host(host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    let host = host.trim_matches(['[', ']']);
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Api;
+
+    #[test]
+    fn api_allows_https_and_loopback_http_only() {
+        assert!(Api::new("https://vault.example.com", "default", "tok").is_ok());
+        assert!(Api::new("http://127.0.0.1:7440", "default", "tok").is_ok());
+        assert!(Api::new("http://localhost:7440", "default", "tok").is_ok());
+        assert!(Api::new("http://[::1]:7440", "default", "tok").is_ok());
+        assert!(Api::new("http://vault.example.invalid:7440", "default", "tok").is_err());
+        assert!(Api::new("http://vault.example.com", "default", "tok").is_err());
     }
 }

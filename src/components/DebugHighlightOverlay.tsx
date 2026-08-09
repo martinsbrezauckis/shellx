@@ -1,6 +1,12 @@
 import { useLayoutEffect, useMemo, useRef, useState, type JSX } from "react";
 
 import { apiPost } from "../lib/debug-api";
+import {
+  normalizeDebugElementObservationFields,
+  observeDebugElement,
+  type DebugElementObservation,
+  type DebugElementObservationField,
+} from "../lib/debug-element-observation";
 
 export interface DebugHighlightRequest {
   id?: string | null;
@@ -9,6 +15,7 @@ export interface DebugHighlightRequest {
   color?: string | null;
   index?: number | null;
   text?: string | null;
+  observe?: DebugElementObservationField[] | null;
 }
 
 export interface DebugHighlightRect {
@@ -28,6 +35,10 @@ export interface DebugHighlightResult {
   rect?: DebugHighlightRect | null;
   visibleRect?: DebugHighlightRect | null;
   clipped?: boolean;
+  contentClipped?: boolean;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  observation?: DebugElementObservation | null;
 }
 
 interface RenderedHighlight extends Omit<DebugHighlightResult, "rect" | "visibleRect"> {
@@ -55,6 +66,7 @@ const COLOR_MAP: Record<string, string> = {
   white: "#f5f7fb",
 };
 const DEFAULT_HIGHLIGHT_COLOR = "#1e88e5";
+const VIEWPORT_EDGE = 0;
 const VIEWPORT_PADDING = 4;
 const LABEL_WIDTH = 280;
 const LABEL_HEIGHT = 28;
@@ -98,10 +110,10 @@ function roundPlainRect(rect: DebugHighlightRect): DebugHighlightRect {
 }
 
 function visibleViewportRect(rect: DebugHighlightRect): DebugHighlightRect | null {
-  const left = Math.max(rect.left, VIEWPORT_PADDING);
-  const top = Math.max(rect.top, VIEWPORT_PADDING);
-  const right = Math.min(rect.left + rect.width, window.innerWidth - VIEWPORT_PADDING);
-  const bottom = Math.min(rect.top + rect.height, window.innerHeight - VIEWPORT_PADDING);
+  const left = Math.max(rect.left, VIEWPORT_EDGE);
+  const top = Math.max(rect.top, VIEWPORT_EDGE);
+  const right = Math.min(rect.left + rect.width, window.innerWidth - VIEWPORT_EDGE);
+  const bottom = Math.min(rect.top + rect.height, window.innerHeight - VIEWPORT_EDGE);
   if (right <= left || bottom <= top) return null;
   return roundPlainRect({
     left,
@@ -200,8 +212,12 @@ function measureHighlights(highlights: DebugHighlightRequest[]): {
       });
       return;
     }
+    const observationFields = normalizeDebugElementObservationFields(item.observe);
     const visibleRect = visibleViewportRect(rect);
     if (!visibleRect) {
+      const observation = element instanceof HTMLAnchorElement && observationFields.includes("href")
+        ? observeDebugElement(element, ["href"])
+        : undefined;
       results.push({
         id,
         selector,
@@ -211,10 +227,17 @@ function measureHighlights(highlights: DebugHighlightRequest[]): {
         message: "matched element is outside the visible viewport",
         rect,
         visibleRect: null,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        observation,
       });
       return;
     }
+    const observation = observationFields.length > 0
+      ? observeDebugElement(element, observationFields)
+      : undefined;
     const clipped = isClipped(rect, visibleRect);
+    const contentClipped = element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight;
     const aboveTop = visibleRect.top - LABEL_HEIGHT;
     const labelPlacement: "above" | "below" = aboveTop >= 4 ? "above" : "below";
     const unclampedLabelTop = labelPlacement === "above" ? aboveTop : visibleRect.top + visibleRect.height + 6;
@@ -229,6 +252,10 @@ function measureHighlights(highlights: DebugHighlightRequest[]): {
       rect,
       visibleRect,
       clipped,
+      contentClipped,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      observation,
       labelText,
       labelLeft,
       labelTop,
@@ -244,6 +271,10 @@ function measureHighlights(highlights: DebugHighlightRequest[]): {
       rect,
       visibleRect,
       clipped,
+      contentClipped,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      observation,
     });
   });
   return { rendered, results };

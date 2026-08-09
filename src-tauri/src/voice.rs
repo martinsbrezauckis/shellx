@@ -368,13 +368,21 @@ pub async fn synthesize_voice(text: String) -> Result<SynthesizeResult, String> 
 
     let status = resp.status();
     if !status.is_success() {
-        let err_body = resp.text().await.unwrap_or_default();
+        let err_body =
+            crate::http_body::read_reqwest_body_bounded(resp, 64 * 1024, "xAI TTS error response")
+                .await
+                .map(|body| String::from_utf8_lossy(&body).into_owned())
+                .unwrap_or_else(|error| error);
         warn!(
             "xAI TTS non-2xx: {} body={}",
             status,
             err_body.chars().take(400).collect::<String>()
         );
-        return Err(format!("xAI TTS {}: {}", status, err_body));
+        return Err(format!(
+            "xAI TTS {}: {}",
+            status,
+            err_body.chars().take(1_000).collect::<String>()
+        ));
     }
 
     // Upstream could return arbitrary bytes; cap at
@@ -382,25 +390,12 @@ pub async fn synthesize_voice(text: String) -> Result<SynthesizeResult, String> 
     // 16 MiB of mp3 is ~17 hours of speech at 64 kbps — more than
     // any sane TTS reply needs.
     const MAX_AUDIO_BYTES: u64 = 16 * 1024 * 1024;
-    if let Some(declared) = resp.content_length() {
-        if declared > MAX_AUDIO_BYTES {
-            return Err(format!(
-                "xAI TTS response too large: {} bytes (cap {})",
-                declared, MAX_AUDIO_BYTES
-            ));
-        }
-    }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("read xAI TTS body failed: {}", e))?;
-    if (bytes.len() as u64) > MAX_AUDIO_BYTES {
-        return Err(format!(
-            "xAI TTS response too large: {} bytes (cap {})",
-            bytes.len(),
-            MAX_AUDIO_BYTES
-        ));
-    }
+    let bytes = crate::http_body::read_reqwest_body_bounded(
+        resp,
+        MAX_AUDIO_BYTES as usize,
+        "xAI TTS response",
+    )
+    .await?;
 
     use base64::Engine as _;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);

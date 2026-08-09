@@ -1,6 +1,6 @@
 //! Integration test: invoke ensure_shellx_host_skill_installed against
-//! a controlled HOME and assert the installed file matches the repo
-//! manifest byte-for-byte.
+//! a controlled HOME and assert ShellX owns the canonical manifest while
+//! direct CLI homes stay free of the session-only integration.
 //!
 //! Runs OUTSIDE the lib crate's cfg(test) section, so we exercise the
 //! public surface (`ensure_shellx_host_skill_installed`) the same way
@@ -49,40 +49,40 @@ fn install_under_temp_home_matches_repo_manifest() {
         std::env::set_var("USERPROFILE", &home);
     }
 
+    let from_repo = repo_manifest();
+    let legacy_paths = [
+        home.join(".grok/skills/shellx-host/SKILL.md"),
+        home.join(".codex/skills/shellx-host/SKILL.md"),
+        home.join(".claude/skills/shellx-host/SKILL.md"),
+    ];
+    for legacy in &legacy_paths {
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(legacy, &from_repo).unwrap();
+    }
+
+    let removed = app_lib::skill_install::cleanup_legacy_global_shellx_host_skills()
+        .expect("legacy direct-CLI cleanup must succeed");
+    assert_eq!(removed, 3);
     let r = app_lib::skill_install::ensure_shellx_host_skill_installed()
         .expect("install must succeed under writable HOME");
     assert!(r, "fresh install must return Ok(true)");
 
-    let from_repo = repo_manifest();
-    for installed in [
-        home.join(".grok")
-            .join("skills")
-            .join("shellx-host")
-            .join("SKILL.md"),
-        home.join(".codex")
-            .join("skills")
-            .join("shellx-host")
-            .join("SKILL.md"),
-        home.join(".claude")
-            .join("skills")
-            .join("shellx-host")
-            .join("SKILL.md"),
-        home.join(".shellx")
-            .join("agent-docs")
-            .join("shellx-host")
-            .join("SKILL.md"),
-    ] {
+    let installed = home.join(".shellx/agent-docs/shellx-host/SKILL.md");
+    assert!(
+        installed.is_file(),
+        "expected file at {}",
+        installed.display()
+    );
+    let on_disk = std::fs::read_to_string(&installed).unwrap();
+    assert_eq!(
+        on_disk, from_repo,
+        "ShellX-owned manifest must equal repo source byte-for-byte",
+    );
+    for legacy in &legacy_paths {
         assert!(
-            installed.is_file(),
-            "expected file at {}",
-            installed.display()
-        );
-        let on_disk = std::fs::read_to_string(&installed).unwrap();
-        assert_eq!(
-            on_disk,
-            from_repo,
-            "installed manifest at {} must equal repo source byte-for-byte",
-            installed.display()
+            !legacy.exists(),
+            "legacy direct-CLI skill must be removed from {}",
+            legacy.display()
         );
     }
 

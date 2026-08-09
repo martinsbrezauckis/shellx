@@ -77,8 +77,8 @@ fn capsules_hydrate_into_normal_workspace_collect_return_and_preview_apply() {
     registry
         .create_capsule(
             "capsule-3",
-            "Release Studio",
-            "/work/release-studio",
+            "Design tooling",
+            "/work/design-tooling",
             "workstation",
             CapsuleOptions::default(),
             vec![
@@ -92,15 +92,18 @@ fn capsules_hydrate_into_normal_workspace_collect_return_and_preview_apply() {
     let hydrated = registry
         .hydrate_capsule(
             "capsule-3",
-            "mac-workstation",
-            "/workspace/release-studio",
+            "secondary-workstation",
+            "/workspace/design-tooling",
             21,
         )
         .unwrap();
-    assert_eq!(hydrated.target_device.as_deref(), Some("mac-workstation"));
+    assert_eq!(
+        hydrated.target_device.as_deref(),
+        Some("secondary-workstation")
+    );
     assert_eq!(
         hydrated.workspace_path.as_deref(),
-        Some("/workspace/release-studio")
+        Some("/workspace/design-tooling")
     );
 
     let returned = registry
@@ -108,7 +111,7 @@ fn capsules_hydrate_into_normal_workspace_collect_return_and_preview_apply() {
             "capsule-3",
             "return-1",
             "agent-codex",
-            "mac-mini",
+            "remote-macos",
             vec![
                 CapsuleCandidate::file("src/lib.rs", 140, "agent-lib"),
                 CapsuleCandidate::file("README.md", 40, "base-readme"),

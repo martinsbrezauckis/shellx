@@ -14,9 +14,9 @@
  * └─────────┴──────────────────────────────────┴────────────────┘
  * * react-resizable-panels handles the horizontal + vertical divisions;
  * sizes persist to localStorage and mirror to /panels for the debug driver.
- * * The `events[]` array is the single source of truth for chat content;
- * `groupEvents` folds it into chat-bubble groups consumed by ChatOutput.
- * RawLog is still the unfiltered verification surface in the Logs tab.
+ * * The bounded `events[]` tail is the renderer source of truth for chat
+ * content; `groupEvents` folds it into chat-bubble groups consumed by
+ * ChatOutput. Complete transcripts remain in per-session JSONL on disk.
  * * Keyboard shortcuts: registry in `src/lib/shortcuts.ts`; HelpModal and
  * App.tsx both read from it. Bindings wired here:
  * ?            help
@@ -26,7 +26,6 @@
  * ⌘U           attach file picker
  * ⌘`           toggle Chat ↔ Terminal in bottom panel
  * ⌘,           open settings
- * ⇧Tab         cycle autonomy mode
  * j/k/y/n/e    per-hunk diff nav (handled inside ChatOutput)
  * * File attach: picker, OS drag/drop, pasted clipboard images/files, and
  * screenshots all route through the same classifier. Text files ≤64 KB inline
@@ -36,70 +35,127 @@
  * * Sessions persist to ~/.shellx/sessions/<id>.jsonl one line per event;
  * Tauri command for the writer, debug-api for the read side.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 import "./App.css";
 
-import { Header, type AutonomyMode } from "./components/Header";
+import { Header } from "./components/Header";
+import type { AutonomyMode } from "./lib/autonomy";
+import { composerDraftForTab, pruneComposerDrafts, updateComposerDraftForTab } from "./lib/composer-drafts";
 import type { ChatHit } from "./components/FindPopover";
 import { LeftRail } from "./components/LeftRail";
 import { ChatOutput } from "./components/ChatOutput";
 import {
   BottomPanel,
   readPersistedBottomTab,
-  type BottomTab,
-  type ComposerDebugMenu,
   type ComposerAttachmentKind,
   type ComposerAttachmentChip,
   type SlashCommandItem,
 } from "./components/BottomPanel";
-import { RightRail, type PreviewTarget, type RightTab } from "./components/RightRail";
-import { PreviewCenter } from "./components/PreviewCenter";
-import { AttachmentMediaBoard } from "./components/AttachmentMediaBoard";
+import { RightRail, type PreviewTarget } from "./components/RightRail";
 import { SessionTabs, type SessionTab } from "./components/SessionTabs";
-import { HelpModal } from "./components/HelpModal";
 import { CommandPalette, type PaletteAction } from "./components/CommandPalette";
-import { PRCreateModal } from "./components/PRCreateModal";
-// Synchronous Confirm-mode gate for `terminal/create`. Mounted
-// unconditionally — visibility is driven by `permission-request` events
-// from acp.rs.
+// Defensive provider-permission surface retained for legacy sessions and
+// release diagnostics. Normal ShellX sessions run provider-native Full Auto.
 import { PermissionModal } from "./components/PermissionModal";
-import { VaultPanel } from "./components/VaultPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
-import { PluginsModal } from "./components/PluginsModal";
-import { ConnectorInboxModal } from "./components/ConnectorInboxModal";
-import { TAB_KEY as SETTINGS_TAB_KEY } from "./components/Settings";
+import type { DebugUpdateFixtureMode } from "./lib/update-notes";
+import { DebugApiConnectionBanner } from "./components/DebugApiConnectionBanner";
 import { SESSION_TABS_KEY, hydrateUserData, persistUserData, readUserDataLocalStorage, type UserDataKey } from "./lib/userStore";
-import { ActivityBrowserModal } from "./components/ActivityBrowserModal";
-import { BuiltinDocModal } from "./components/BuiltinDocModal";
 import { GoalPlanReviewModal } from "./components/GoalPlanReviewModal";
 import { BuildPlanReviewModal } from "./components/BuildPlanReviewModal";
+import { AgentCliSetupDialog } from "./components/AgentCliSetupAssistant";
 import { DebugHighlightOverlay, type DebugHighlightRequest } from "./components/DebugHighlightOverlay";
+import { normalizeDebugHighlightRequests, sameDebugHighlightRequests } from "./lib/debug-highlight-normalization";
+import { SHELLX_SETUP_GUIDE_DISMISSED_EVENT, ShellxSetupGuide } from "./components/ShellxSetupGuide";
 import { ShellIcon } from "./components/icons";
+import { LazySurface } from "./components/LazySurface";
+import { startReleaseTauriInvokeRelay } from "./lib/release-tauri-invoke-relay";
+import { useModalFocus } from "./lib/useModalFocus";
 import type { HashItem } from "./components/HashAutocomplete";
 import {
-  Settings,
   readSettingsLocal,
   normalizeSettings,
   applyTheme,
   persistSettings,
   DEFAULT_SETTINGS,
+  TAB_KEY as SETTINGS_TAB_KEY,
+  type SettingsTab,
   type SettingsValues,
-} from "./components/Settings";
+} from "./lib/settings";
 import { useKeyboardShortcuts } from "./lib/shortcuts";
+import {
+  normalizeBottomTabPatch,
+  normalizeComposerDebugMenu,
+  normalizeDebugModal,
+  normalizeRightTabPatch,
+  type BottomTab,
+  type ComposerDebugMenu,
+  type DebugModalId,
+  type RightTab,
+} from "./lib/ui-navigation";
 import { api, apiGet, apiPost, apiPostJson, debugApiBase, getDebugToken } from "./lib/debug-api";
+import {
+  DEBUG_UI_CONNECT_TIMEOUT_MS,
+  DEBUG_UI_POLL_MS,
+  debugUiPollDelay,
+  debugUiPollingEnabled,
+  debugUiRetryDelay,
+  type DebugUiConnectionStatus,
+} from "./lib/debug-ui-connection";
 import { inTauri } from "./lib/tauri-bridge";
+import { openShellxDialog } from "./lib/shellx-dialog";
+import {
+  joinRemoteFolderPath,
+  normalizeRemoteFolderPath,
+  parentRemoteFolderPath,
+} from "./lib/folder-path";
 import { groupEvents } from "./lib/grouping";
+import { useBrowserCoworkPromptBridge } from "./lib/use-browser-cowork-bridge";
 import { extractSessionAttachments, extractSessionMedia } from "./lib/session-media";
 import {
   extractSessionAssetRegistry,
   type SessionAssetItem,
 } from "./lib/session-assets";
 import { PendingLocalEventQueue, localEventTabId } from "./lib/pending-local-events";
+import {
+  appendBoundedRendererEvents,
+  historyTruncationFrame,
+  MAX_SESSION_LOG_REHYDRATION_LINES,
+  withRendererEventTabId,
+} from "./lib/bounded-event-store";
+import {
+  applyDebugRendererFixture,
+  debugBuildRunCockpitFixture,
+  debugBottomPanelTerminalFixture,
+  type DebugBuildRunCockpitFixture,
+  type DebugBottomPanelTerminalFixture,
+} from "./lib/debug-renderer-fixture";
+import {
+  debugRightRailGitLifecycleFixture,
+  type DebugRightRailGitLifecycleFixture,
+} from "./lib/debug-right-rail-git-fixture";
+import {
+  applyDebugPermissionDecisionFixtureEvents,
+  debugPermissionDecisionFixture,
+  type DebugPermissionDecisionFixture,
+} from "./lib/debug-permission-decision-fixture";
+import {
+  DEBUG_AGENT_CLI_SETUP_PRESET,
+  debugAgentCliSetupFixture,
+  normalizeDebugAgentCliSetupFixtureMode,
+  type DebugAgentCliSetupFixtureMode,
+} from "./lib/debug-agent-cli-setup-fixture";
+import {
+  debugGoalPlanReviewFixture,
+  normalizeDebugGoalPlanReviewFixtureMode,
+  type DebugGoalPlanReviewFixtureMode,
+} from "./lib/debug-goal-plan-review-fixture";
+import { classifyComposerSubmission } from "./lib/acp-interjection";
 import { extractAssistantTurnAfterIndex, getVoiceTurnToSpeak } from "./lib/voice-chat";
 import {
   addBuildOperatorNote,
@@ -135,7 +191,7 @@ import {
   reconnectContinuityUiText,
   type SessionResumeTranscript,
 } from "./lib/session-continuity";
-import { titleOverrideForClosingTab } from "./lib/session-titles";
+import { newestSessionTitleCandidates, titleOverrideForClosingTab } from "./lib/session-titles";
 import {
   summarizeOutsideConnectorInbox,
   type OutsideConnector,
@@ -150,6 +206,7 @@ import {
   vaultRequestSummaryText,
   type VaultRequestCenterAction,
   type VaultRequestCenterItem,
+  type VaultAgentRequestSource,
 } from "./lib/vault-request-center";
 import type { VaultPanelIntent } from "./lib/vault-ui";
 import { isTrustedShellxUserEvent, type ShellxUserEventLike } from "./lib/trusted-user-event";
@@ -167,6 +224,7 @@ import {
   getProviderAdapterState,
   getProviderSessionState,
   normalizeShellxToolExposure,
+  providerExecutionTargetLabel,
   providerSessionGroupShape,
   shellxToolExposureForProviderStart,
   startProviderSession,
@@ -175,10 +233,50 @@ import {
   type ProviderId,
   type ProviderShellxToolExposure,
 } from "./lib/provider-sessions";
+import {
+  debugProviderActionFixture,
+  dispatchDebugProviderAction,
+  providerActionPromptMatches,
+  type DebugProviderActionFixture,
+  type DebugProviderActionReceipt,
+} from "./lib/debug-provider-action-fixture";
 import type { ConnectionPreset, ConnectionProviderScanEntry } from "./components/ConnectionPicker";
+import {
+  CONNECTION_PROVIDER_CAPABILITY_TTL_MS,
+  providerScanStatus,
+  scanConnectionProviderCapabilities,
+} from "./lib/connection-provider-capabilities";
+
+const Settings = lazy(() => import("./components/Settings")
+  .then((module) => ({ default: module.Settings })));
+const HelpModal = lazy(() => import("./components/HelpModal")
+  .then((module) => ({ default: module.HelpModal })));
+const PluginsModal = lazy(() => import("./components/PluginsModal")
+  .then((module) => ({ default: module.PluginsModal })));
+const ConnectorInboxModal = lazy(() => import("./components/ConnectorInboxModal")
+  .then((module) => ({ default: module.ConnectorInboxModal })));
+const BuiltinDocModal = lazy(() => import("./components/BuiltinDocModal")
+  .then((module) => ({ default: module.BuiltinDocModal })));
+const PRCreateModal = lazy(() => import("./components/PRCreateModal")
+  .then((module) => ({ default: module.PRCreateModal })));
+const AttachmentMediaBoard = lazy(() => import("./components/AttachmentMediaBoard")
+  .then((module) => ({ default: module.AttachmentMediaBoard })));
+const PreviewCenter = lazy(() => import("./components/PreviewCenter")
+  .then((module) => ({ default: module.PreviewCenter })));
+const ActivityBrowserModal = lazy(() => import("./components/ActivityBrowserModal")
+  .then((module) => ({ default: module.ActivityBrowserModal })));
+const VaultPanel = lazy(() => import("./components/VaultPanel")
+  .then((module) => ({ default: module.VaultPanel })));
 import type { AcpCommand, RawEventFrame } from "./types/acp";
 
 type Status = "Idle" | "Starting" | "Connected" | "Aborting" | "Error";
+
+interface SessionJsonlTailResponse {
+  lines: string[];
+  omittedLines: number;
+}
+
+const RECONNECT_SESSION_LOG_TAIL_LINES = 1_200;
 
 // Tauri channels — allow-list consumed by the listener useEffect below.
 // DO NOT add "session-update" (causes dup events).
@@ -255,6 +353,8 @@ function vaultRequestActionRequiresTrustedUserEvent(action: VaultRequestCenterAc
     "denyBrowserGrant",
     "approveVaultGrant",
     "denyVaultGrant",
+    "approveVaultAgentRequest",
+    "denyVaultAgentRequest",
   ].includes(action.kind);
 }
 
@@ -271,105 +371,8 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
-const RIGHT_TAB_IDS: ReadonlySet<string> = new Set(["Tasks", "Tooling", "Git", "Preview", "Plan", "Files"]);
-const BOTTOM_TAB_IDS: ReadonlySet<string> = new Set(["Chat", "Terminal", "Images", "Videos", "Logs", "Stderr"]);
-const COMPOSER_DEBUG_MENUS: ReadonlySet<string> = new Set(["connection", "agent", "branch", "close"]);
-const DEBUG_MODAL_IDS: ReadonlySet<string> = new Set([
-  "activity",
-  "assets",
-  "buildPlanReview",
-  "close",
-  "connectorInbox",
-  "help",
-  "palette",
-  "plugins",
-  "preview",
-  "pr",
-  "settings",
-  "vault",
-  "workPreview",
-]);
-const RIGHT_TAB_BY_WIRE = new Map<string, RightTab>(
-  Array.from(RIGHT_TAB_IDS, (tab) => [tab.toLowerCase(), tab as RightTab]),
-);
-const BOTTOM_TAB_BY_WIRE = new Map<string, BottomTab>(
-  Array.from(BOTTOM_TAB_IDS, (tab) => [tab.toLowerCase(), tab as BottomTab]),
-);
-type DebugModalId =
-  | "activity"
-  | "assets"
-  | "buildPlanReview"
-  | "close"
-  | "connectorInbox"
-  | "help"
-  | "palette"
-  | "plugins"
-  | "preview"
-  | "pr"
-  | "settings"
-  | "vault"
-  | "workPreview";
-
-function isRightTab(value: unknown): value is RightTab {
-  return typeof value === "string" && RIGHT_TAB_IDS.has(value);
-}
-
-function isBottomTab(value: unknown): value is BottomTab {
-  return typeof value === "string" && BOTTOM_TAB_IDS.has(value);
-}
-
-function normalizeRightTabPatch(value: unknown): RightTab | null {
-  if (isRightTab(value)) return value;
-  if (typeof value !== "string") return null;
-  return RIGHT_TAB_BY_WIRE.get(value.trim().toLowerCase()) ?? null;
-}
-
-function normalizeBottomTabPatch(value: unknown): BottomTab | null {
-  if (isBottomTab(value)) return value;
-  if (typeof value !== "string") return null;
-  return BOTTOM_TAB_BY_WIRE.get(value.trim().toLowerCase()) ?? null;
-}
-
-function normalizeComposerDebugMenu(value: unknown): ComposerDebugMenu | null {
-  if (typeof value !== "string") return null;
-  const key = value.trim();
-  return COMPOSER_DEBUG_MENUS.has(key) ? key as ComposerDebugMenu : null;
-}
-
-function normalizeDebugModal(value: unknown): DebugModalId | null {
-  if (typeof value !== "string") return null;
-  const key = value.trim();
-  return DEBUG_MODAL_IDS.has(key) ? key as DebugModalId : null;
-}
-
 function normalizeDebugSurface(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null;
-}
-
-function normalizeDebugHighlights(value: unknown): DebugHighlightRequest[] | null {
-  if (!Array.isArray(value)) return null;
-  return value
-    .map((entry): DebugHighlightRequest | null => {
-      if (!entry || typeof entry !== "object") return null;
-      const body = entry as Record<string, unknown>;
-      const selector = typeof body.selector === "string" ? body.selector.trim() : "";
-      if (!selector) return null;
-      const normalized: DebugHighlightRequest = { selector };
-      if (typeof body.id === "string" && body.id.trim()) normalized.id = body.id.trim();
-      if (typeof body.label === "string" && body.label.trim()) normalized.label = body.label.trim();
-      if (typeof body.color === "string" && body.color.trim()) normalized.color = body.color.trim();
-      if (typeof body.text === "string" && body.text.trim()) normalized.text = body.text.trim();
-      if (typeof body.index === "number" && Number.isFinite(body.index)) {
-        normalized.index = Math.max(0, Math.floor(body.index));
-      }
-      return normalized;
-    })
-    .filter((entry): entry is DebugHighlightRequest => entry !== null)
-    .slice(0, 24);
-}
-
-function sameDebugHighlights(a: DebugHighlightRequest[], b: DebugHighlightRequest[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function formatBytes(bytes: number): string {
@@ -542,6 +545,7 @@ interface AppVaultGrant {
   secretRef: string;
   actorScope: string;
   operation: string;
+  origin?: string | null;
   createdAtMs?: number | null;
   expiresAtMs?: number | null;
   revoked: boolean;
@@ -552,6 +556,11 @@ interface AppBrowserRequestState {
   sessionGrants?: AppBrowserSessionGrant[];
   vaultDeposits?: AppBrowserVaultDeposit[];
   vaultGrants?: AppVaultGrant[];
+  agentRequests?: VaultAgentRequestSource[];
+}
+
+interface AppVaultAgentRequestSnapshot {
+  requests?: VaultAgentRequestSource[];
 }
 
 function mergeAppVaultGrants(
@@ -562,6 +571,18 @@ function mergeAppVaultGrants(
   for (const grant of nativeGrants) byId.set(grant.grantId, grant);
   for (const grant of debugGrants) {
     if (!byId.has(grant.grantId)) byId.set(grant.grantId, grant);
+  }
+  return [...byId.values()];
+}
+
+function mergeAppVaultAgentRequests(
+  nativeRequests: readonly VaultAgentRequestSource[],
+  debugRequests: readonly VaultAgentRequestSource[],
+): VaultAgentRequestSource[] {
+  const byId = new Map<string, VaultAgentRequestSource>();
+  for (const request of nativeRequests) byId.set(request.requestId, request);
+  for (const request of debugRequests) {
+    if (!byId.has(request.requestId)) byId.set(request.requestId, request);
   }
   return [...byId.values()];
 }
@@ -702,8 +723,14 @@ function providerScanSignature(providers: ConnectionProviderScanEntry[] | undefi
     .map((provider) => [
       provider.providerId,
       provider.canRun ? "1" : "0",
+      provider.status ?? "unknown",
       provider.binary ?? "",
       provider.version ?? "",
+      provider.binarySha256 ?? "",
+      String(provider.binaryBytes ?? ""),
+      provider.targetKey ?? "",
+      provider.detail ?? "",
+      String(provider.checkedAtMs),
     ].join("|"))
     .sort()
     .join("\n");
@@ -723,6 +750,8 @@ function connectionTransportSignature(preset: ConnectionPreset): string {
         transport.port?.toString() ?? "",
         transport.keyVaultRef ?? "",
         transport.remoteGrokPath ?? "",
+        transport.remoteRuntime ?? "posix",
+        transport.wslDistro ?? "",
       ].join("|");
     case "ws_direct":
       return ["ws_direct", transport.url, transport.secretVaultRef ?? ""].join("|");
@@ -852,15 +881,9 @@ export default function App(): JSX.Element {
       try { localStorage.setItem("shellX.cwd.v1", cwd); } catch { /* no-op */ }
     }
   }, [cwd]);
-  const [prompt, setPrompt] = useState<string>("");
-  /**
-   * Mirror of `prompt` consumed by async callbacks (for example mic-stop
-   * transcribe flow) so they see the latest value rather than a
-   * closure-captured stale one. Reading via `.current` is always current
-   * at invocation time, regardless of which render created the function.
-   */
-  const promptRef = useRef<string>("");
-  useEffect(() => { promptRef.current = prompt; }, [prompt]);
+  const [promptByTab, setPromptByTab] = useState<Record<string, string>>({});
+  const promptByTabRef = useRef<Record<string, string>>({});
+  useEffect(() => { promptByTabRef.current = promptByTab; }, [promptByTab]);
 
   /**
    * Header badge: count of running grok subprocesses + host-MCP
@@ -915,6 +938,18 @@ export default function App(): JSX.Element {
    */
   const [agentCaps, setAgentCaps] = useState<Record<string, unknown> | null>(null);
   const [events, setEvents] = useState<RawEventFrame[]>([]);
+  const [debugBottomPanelTerminals, setDebugBottomPanelTerminals] = useState<DebugBottomPanelTerminalFixture[]>([]);
+  const [debugBuildRunFixture, setDebugBuildRunFixture] = useState<DebugBuildRunCockpitFixture | null>(null);
+  const [debugRightRailGitFixture, setDebugRightRailGitFixture] =
+    useState<DebugRightRailGitLifecycleFixture | null>(null);
+  const [debugPermissionFixture, setDebugPermissionDecisionFixture] =
+    useState<DebugPermissionDecisionFixture | null>(null);
+  const [debugProviderAction, setDebugProviderAction] =
+    useState<DebugProviderActionFixture | null>(null);
+  const [debugProviderActionReceipt, setDebugProviderActionReceipt] =
+    useState<DebugProviderActionReceipt | null>(null);
+  const [debugUpdateFixture, setDebugUpdateFixture] =
+    useState<DebugUpdateFixtureMode>("live");
   const eventsLenRef = useRef(0);
   useEffect(() => { eventsLenRef.current = events.length; }, [events.length]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -942,13 +977,26 @@ export default function App(): JSX.Element {
   const [buildReviewRequestSeq, setBuildReviewRequestSeq] = useState(0);
   const [buildReviewCloseSeq, setBuildReviewCloseSeq] = useState(0);
   const [debugHighlights, setDebugHighlights] = useState<DebugHighlightRequest[]>([]);
+  const [agentCliSetupFixtureMode, setAgentCliSetupFixtureMode] =
+    useState<DebugAgentCliSetupFixtureMode>("closed");
+  const [goalPlanReviewFixtureMode, setGoalPlanReviewFixtureMode] =
+    useState<DebugGoalPlanReviewFixtureMode>("closed");
+  const [debugUiConnectionStatus, setDebugUiConnectionStatus] = useState<DebugUiConnectionStatus>("connecting");
+  const [debugUiConnectionFixture, setDebugUiConnectionFixture] =
+    useState<DebugUiConnectionStatus | null>(null);
+  const [releaseTestRendererCrash, setReleaseTestRendererCrash] = useState(false);
+  const [releaseTestLazySurface, setReleaseTestLazySurface] =
+    useState<"error" | "recovered" | null>(null);
+  const [releaseTestVoiceRecording, setReleaseTestVoiceRecording] = useState(false);
+  const [releaseTestExternalEffectBoundary, setReleaseTestExternalEffectBoundary] =
+    useState<"pr-create" | "artifact-archive" | null>(null);
 
   // ─── UI state ─────────────────────────────────────────────────────────
   // Autonomy default is "bypassPermissions". Key is v2 so any persisted
-  // v1 entry (which could carry the old "default" Confirm mode) is
+  // v1 entry (which could carry the old interactive permission mode) is
   // dropped on first read. Persisted "default" values upgrade to
   // bypassPermissions so installs from before the chip-cycle collapse
-  // don't strand the user on Confirm-mode popups.
+  // don't strand the user on obsolete permission popups.
   const AUTONOMY_KEY = "shellX.autonomy.v2";
   const [autonomy, setAutonomy] = useState<AutonomyMode>(() => {
     try {
@@ -969,6 +1017,10 @@ export default function App(): JSX.Element {
   const [helpOpen, setHelpOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettingsTab = useCallback((tab: SettingsTab) => {
+    try { localStorage.setItem(SETTINGS_TAB_KEY, tab); } catch { /* ignore */ }
+    setSettingsOpen(true);
+  }, []);
   // #360:  global "open Settings on a specific tab" listener.
   // PluginsModal's "Add key" CTA dispatches this so users land on the
   // Vault tab without a manual click trail. The detail.tab is written
@@ -1008,12 +1060,19 @@ export default function App(): JSX.Element {
         kind,
         payload,
       };
-      setEvents((prev) => [...prev, synthetic]);
+      setEvents((prev) => appendBoundedRendererEvents(prev, synthetic));
     };
     window.addEventListener("shellx:synthetic-event", handler);
     return () => window.removeEventListener("shellx:synthetic-event", handler);
   }, []);
   const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [debugPluginsFixture, setDebugPluginsFixture] = useState<"owned-safe" | "owned-production" | null>(null);
+  const [debugConnectorsFixture, setDebugConnectorsFixture] = useState<"owned-safe" | null>(null);
+  const [debugBuildPlanFixture, setDebugBuildPlanFixture] = useState<"owned-ready" | null>(null);
+  const [debugShellxagentFixture, setDebugShellxagentFixture] = useState<"owned-safe" | null>(null);
+  const [debugClipboardFixture, setDebugClipboardFixture] = useState<
+    "tasks" | "vault-draft" | "vault-password" | "shellxagent-token" | "work-preview" | null
+  >(null);
   const [connectorInboxOpen, setConnectorInboxOpen] = useState(false);
   const [outsideConnectorHeaderConnectors, setOutsideConnectorHeaderConnectors] = useState<OutsideConnector[]>([]);
   const [outsideConnectorHeaderEvents, setOutsideConnectorHeaderEvents] = useState<OutsideConnectorEvent[]>([]);
@@ -1076,9 +1135,8 @@ export default function App(): JSX.Element {
    * About surface. Write the tab key before opening; Settings re-reads
    * it on every open (see Settings.tsx). */
   const openAboutInSettings = useCallback(() => {
-    try { localStorage.setItem(SETTINGS_TAB_KEY, "about"); } catch { /* ignore */ }
-    setSettingsOpen(true);
-  }, []);
+    openSettingsTab("about");
+  }, [openSettingsTab]);
   // Preview Center opened by ChatOutput clicks on file paths. Documents
   // stay read-only; runnable HTML routes through Work Preview.
   const [previewPath, setPreviewPath] = useState<string | null>(null);
@@ -1173,10 +1231,16 @@ export default function App(): JSX.Element {
   const [vaultOpen, setVaultOpen] = useState(false);
   const [vaultPanelIntent, setVaultPanelIntent] = useState<VaultPanelIntent>("overview");
   const [vaultPanelIntentSeq, setVaultPanelIntentSeq] = useState(0);
+  const pendingVaultPanelAckIdsRef = useRef<Set<string>>(new Set());
   const [vaultRequestCenterOpenSeq, setVaultRequestCenterOpenSeq] = useState(0);
   const [vaultRequestCenterCloseSeq, setVaultRequestCenterCloseSeq] = useState(0);
   const [browserVaultRequestState, setBrowserVaultRequestState] =
-    useState<AppBrowserRequestState>({ sessionGrants: [], vaultDeposits: [], vaultGrants: [] });
+    useState<AppBrowserRequestState>({
+      sessionGrants: [],
+      vaultDeposits: [],
+      vaultGrants: [],
+      agentRequests: [],
+    });
   const [dismissedVaultDepositIds, setDismissedVaultDepositIds] = useState<Set<string>>(
     () => loadDismissedVaultDepositIds(),
   );
@@ -1196,16 +1260,37 @@ export default function App(): JSX.Element {
         return [];
       }
     };
+    const readDebugVaultAgentRequests = async (): Promise<VaultAgentRequestSource[]> => {
+      try {
+        const response = await apiGet<AppVaultAgentRequestSnapshot>("/vault/agent-requests");
+        return response.requests ?? [];
+      } catch {
+        return [];
+      }
+    };
     try {
-      const [next, nativeVaultGrants, debugVaultGrants] = await Promise.all([
+      const [
+        next,
+        nativeVaultGrants,
+        debugVaultGrants,
+        nativeAgentRequests,
+        debugAgentRequests,
+      ] = await Promise.all([
         invoke<AppBrowserRequestState>("shellx_browser_state"),
         invoke<AppVaultGrant[]>("shellx_vault_list_grants").catch(() => [] as AppVaultGrant[]),
         readDebugVaultGrants(),
+        invoke<AppVaultAgentRequestSnapshot>("shellx_vault_agent_request_center")
+          .catch(() => ({ requests: [] } as AppVaultAgentRequestSnapshot)),
+        readDebugVaultAgentRequests(),
       ]);
       setBrowserVaultRequestState({
         sessionGrants: next.sessionGrants ?? [],
         vaultDeposits: next.vaultDeposits ?? [],
         vaultGrants: mergeAppVaultGrants(nativeVaultGrants, debugVaultGrants),
+        agentRequests: mergeAppVaultAgentRequests(
+          nativeAgentRequests.requests ?? [],
+          debugAgentRequests,
+        ),
       });
       return;
     } catch {
@@ -1213,14 +1298,16 @@ export default function App(): JSX.Element {
       // the existing local Debug API when it is enabled.
     }
     try {
-      const [next, debugVaultGrants] = await Promise.all([
+      const [next, debugVaultGrants, debugAgentRequests] = await Promise.all([
         apiGet<AppBrowserRequestState>("/browser/state"),
         readDebugVaultGrants(),
+        readDebugVaultAgentRequests(),
       ]);
       setBrowserVaultRequestState({
         sessionGrants: next.sessionGrants ?? [],
         vaultDeposits: next.vaultDeposits ?? [],
         vaultGrants: debugVaultGrants,
+        agentRequests: debugAgentRequests,
       });
     } catch {
       // Browser may not be running yet; keep the last known summary.
@@ -1244,7 +1331,11 @@ export default function App(): JSX.Element {
     if (!inTauri()) return;
     let unlisten: UnlistenFn | null = null;
     let disposed = false;
-    void listen("shellx:open-vault-panel", () => {
+    void listen<{ requestId?: unknown }>("shellx:open-vault-panel", ({ payload }) => {
+      const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
+      if (requestId.startsWith("vault-panel-open-") && requestId.length <= 128) {
+        pendingVaultPanelAckIdsRef.current.add(requestId);
+      }
       openVaultPanel("overview");
     })
       .then((fn) => {
@@ -1260,6 +1351,17 @@ export default function App(): JSX.Element {
       unlisten?.();
     };
   }, [openVaultPanel]);
+  useEffect(() => {
+    if (!vaultOpen || !inTauri() || pendingVaultPanelAckIdsRef.current.size === 0) return;
+    const requestIds = [...pendingVaultPanelAckIdsRef.current];
+    for (const requestId of requestIds) pendingVaultPanelAckIdsRef.current.delete(requestId);
+    for (const requestId of requestIds) {
+      void emit("shellx:vault-panel-opened", { requestId }).catch((err) => {
+        pendingVaultPanelAckIdsRef.current.add(requestId);
+        console.warn("[App] shellx:vault-panel-opened acknowledgement failed:", err);
+      });
+    }
+  }, [vaultOpen, vaultPanelIntentSeq]);
   const [maxTokens, setMaxTokens] = useState<number>(128_000);
   const [sessionTitle, setSessionTitle] = useState<string>("new session");
   // isSending is per-tab on TabEntry.
@@ -1327,12 +1429,25 @@ export default function App(): JSX.Element {
     try { return localStorage.getItem(ACTIVE_TAB_KEY) || null; }
     catch { return null; }
   });
+  const prompt = composerDraftForTab(promptByTab, activeTabId);
+  const setPrompt = useCallback((next: string | ((current: string) => string)): void => {
+    const targetTabId = activeTabId;
+    setPromptByTab((drafts) => {
+      const current = composerDraftForTab(drafts, targetTabId);
+      const value = typeof next === "function" ? next(current) : next;
+      return updateComposerDraftForTab(drafts, targetTabId, value);
+    });
+  }, [activeTabId]);
   useEffect(() => {
     // If saved active id doesn't exist among tabs, fall back to first.
     if (activeTabId && tabs.some((t) => t.tabId === activeTabId)) return;
     const first = tabs[0]?.tabId ?? null;
     if (first !== activeTabId) setActiveTabId(first);
   }, [tabs, activeTabId]);
+  useEffect(() => {
+    const liveTabIds = new Set(tabs.map((tab) => tab.tabId));
+    setPromptByTab((drafts) => pruneComposerDrafts(drafts, liveTabIds));
+  }, [tabs]);
   useEffect(() => {
     try {
       if (activeTabId) localStorage.setItem(ACTIVE_TAB_KEY, activeTabId);
@@ -1776,6 +1891,7 @@ export default function App(): JSX.Element {
         connectionId: activeTab.connectionId ?? null,
         connectionLabel: activeTab.connectionLabel ?? "Local",
         connectionTransport: activeTab.connectionTransport ?? "local",
+        shellxToolExposure: normalizeShellxToolExposure(activeTab.shellxToolExposure),
       },
       source: "renderer",
     }).catch(() => { /* debug API may be off */ });
@@ -1787,6 +1903,7 @@ export default function App(): JSX.Element {
     activeTab?.connectionId,
     activeTab?.connectionLabel,
     activeTab?.connectionTransport,
+    activeTab?.shellxToolExposure,
   ]);
   useEffect(() => {
     const openTabs = tabs.map((t) => ({
@@ -1813,9 +1930,12 @@ export default function App(): JSX.Element {
     connectionId: string | null;
     transportSignature: string;
     providers: ConnectionProviderScanEntry[];
+    freshUntilMs: number;
   } | null>(null);
+  const [debugAgentPickerFixture, setDebugAgentPickerFixture] = useState(false);
   useEffect(() => {
     let cancelled = false;
+    setActiveConnectionPreset(null);
     void loadConnectionPreset(activeTab?.connectionId ?? null)
       .then((preset) => {
         if (!cancelled) setActiveConnectionPreset(preset);
@@ -1828,18 +1948,29 @@ export default function App(): JSX.Element {
     };
   }, [activeTab?.connectionId]);
   const activeAgentProviderScan = useMemo(() => {
+    if (debugAgentPickerFixture) {
+      return [{
+        providerId: "codex-cli" as const,
+        canRun: true,
+        status: "ready" as const,
+        binary: "shellx-release-owned-codex",
+        version: "shellx-release-owned-codex 0.3.5",
+        checkedAtMs: Number.MAX_SAFE_INTEGER,
+      }];
+    }
     const connectionId = activeTab?.connectionId ?? null;
     const transportSignature = activeConnectionPreset
       ? connectionTransportSignature(activeConnectionPreset)
       : connectionTransportSignature(currentLocalConnectionPreset());
     if (
       activeProviderScanOverride?.connectionId === connectionId &&
-      activeProviderScanOverride.transportSignature === transportSignature
+      activeProviderScanOverride.transportSignature === transportSignature &&
+      activeProviderScanOverride.freshUntilMs > Date.now()
     ) {
       return activeProviderScanOverride.providers;
     }
-    return activeConnectionPreset?.providerScan ?? [];
-  }, [activeConnectionPreset, activeProviderScanOverride, activeTab?.connectionId]);
+    return [];
+  }, [activeConnectionPreset, activeProviderScanOverride, activeTab?.connectionId, debugAgentPickerFixture]);
   useEffect(() => {
     if (!activeTab || !activeTab.connectionTransport || activeTab.connectionTransport === "local") return;
     const current = activeTab.cwd ?? "";
@@ -1859,21 +1990,14 @@ export default function App(): JSX.Element {
     updateTabById,
   ]);
   const scanRequestKeys = useRef<Set<string>>(new Set());
-  const completedAutoScanKeys = useRef<Set<string>>(new Set());
+  const completedAutoScanKeys = useRef<Map<string, number>>(new Map());
   const handleProviderScanUpdated = useCallback((preset: ConnectionPreset, providers: ConnectionProviderScanEntry[]) => {
     const connectionId = preset.id ? preset.id : null;
     const transportSignature = connectionTransportSignature(preset);
+    const checkedAtMs = Math.max(0, ...providers.map((provider) => provider.checkedAtMs));
+    const freshUntilMs = checkedAtMs + CONNECTION_PROVIDER_CAPABILITY_TTL_MS;
     const nextPreset: ConnectionPreset = { ...preset, providerScan: providers };
-    setActiveProviderScanOverride((prev) => {
-      if (
-        prev?.connectionId === connectionId &&
-        prev.transportSignature === transportSignature &&
-        providerScanSignature(prev.providers) === providerScanSignature(providers)
-      ) {
-        return prev;
-      }
-      return { connectionId, transportSignature, providers };
-    });
+    setActiveProviderScanOverride({ connectionId, transportSignature, providers, freshUntilMs });
     setActiveConnectionPreset((prev) => {
       if (
         prev?.id === preset.id &&
@@ -1914,24 +2038,40 @@ export default function App(): JSX.Element {
     if (!["local", "wsl", "ssh"].includes(preset.transport.kind)) return;
     const connectionId = preset.id ? preset.id : null;
     const requestKey = `${activeTabId ?? "no-tab"}:${connectionId ?? "local"}:${connectionTransportSignature(preset)}`;
-    if (!options.force && completedAutoScanKeys.current.has(requestKey)) return;
+    if (!options.force && (completedAutoScanKeys.current.get(requestKey) ?? 0) > Date.now()) return;
     if (scanRequestKeys.current.has(requestKey)) return;
     scanRequestKeys.current.add(requestKey);
     pushUiEvent(`→ scanning agent CLIs for ${preset.label}`);
-    void invoke<ConnectionProviderScanEntry[]>("connection_provider_scan", { preset })
-      .then((providers) => {
-        handleProviderScanUpdated(preset, providers);
-        const ready = providers.filter((provider) => provider.canRun).length;
+    void scanConnectionProviderCapabilities(preset)
+      .then((snapshot) => {
+        handleProviderScanUpdated(preset, snapshot.providers);
+        completedAutoScanKeys.current.set(requestKey, snapshot.freshUntilMs);
+        const ready = snapshot.providers.filter((provider) => providerScanStatus(provider) === "ready").length;
         pushUiEvent(`✓ ${preset.label}: ${ready} agent CLI${ready === 1 ? "" : "s"} ready`);
       })
       .catch((err) => {
         pushUiEvent(`✗ agent CLI scan failed for ${preset.label}: ${err}`);
       })
       .finally(() => {
-        completedAutoScanKeys.current.add(requestKey);
         scanRequestKeys.current.delete(requestKey);
       });
   }, [activeTabId, handleProviderScanUpdated]);
+
+  useEffect(() => {
+    if (!activeTab || !["local", "wsl", "ssh"].includes(activeTab.connectionTransport ?? "local")) return;
+    if (activeTab.connectionId && activeConnectionPreset?.id !== activeTab.connectionId) return;
+    const preset = activeConnectionPreset ?? currentLocalConnectionPreset();
+    scanConnectionProvidersForPreset(preset);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "hidden") scanConnectionProvidersForPreset(preset);
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [activeConnectionPreset, activeTab?.connectionId, activeTab?.connectionTransport, activeTab?.tabId, scanConnectionProvidersForPreset]);
 
   const activePendingAttachmentKey = pendingAttachmentKey(activeTabId);
   const pendingAttachments = pendingAttachmentsByTab[activePendingAttachmentKey]?.text ?? [];
@@ -2108,12 +2248,14 @@ export default function App(): JSX.Element {
       browserSessionGrants: browserVaultRequestState.sessionGrants ?? [],
       browserVaultDeposits: browserVaultRequestState.vaultDeposits ?? [],
       vaultGrants: browserVaultRequestState.vaultGrants ?? [],
+      agentRequests: browserVaultRequestState.agentRequests ?? [],
       dismissedDepositIds: dismissedVaultDepositIds,
     }),
     [
       browserVaultRequestState.sessionGrants,
       browserVaultRequestState.vaultDeposits,
       browserVaultRequestState.vaultGrants,
+      browserVaultRequestState.agentRequests,
       dismissedVaultDepositIds,
       sessionVaultPermissions,
     ],
@@ -2152,7 +2294,7 @@ export default function App(): JSX.Element {
             _meta: { tabId: request.tabId ?? activeTabIdRef.current ?? "default" },
           },
         };
-        setEvents((prev) => [...prev, synthetic]);
+        setEvents((prev) => appendBoundedRendererEvents(prev, synthetic));
         return;
       }
       if (action.kind === "approveBrowserGrant" || action.kind === "denyBrowserGrant") {
@@ -2200,6 +2342,30 @@ export default function App(): JSX.Element {
         void invoke(command, { grantId: request.grantId })
           .catch((err) => {
             console.warn("[VaultRequestCenter] vault grant resolve failed:", err);
+          })
+          .finally(() => void refreshBrowserVaultRequests());
+        return;
+      }
+      if (
+        action.kind === "approveVaultAgentRequest" ||
+        action.kind === "denyVaultAgentRequest"
+      ) {
+        if (!request.agentRequestId || !request.expectedDigest) return;
+        setBrowserVaultRequestState((current) => ({
+          ...current,
+          agentRequests: (current.agentRequests ?? []).filter(
+            (candidate) => candidate.requestId !== request.agentRequestId,
+          ),
+        }));
+        const command = action.kind === "approveVaultAgentRequest"
+          ? "shellx_vault_agent_request_approve"
+          : "shellx_vault_agent_request_deny";
+        void invoke(command, {
+          requestId: request.agentRequestId,
+          expectedDigest: request.expectedDigest,
+        })
+          .catch((err) => {
+            console.warn("[VaultRequestCenter] Vault agent request resolve failed:", err);
           })
           .finally(() => void refreshBrowserVaultRequests());
         return;
@@ -2327,26 +2493,14 @@ export default function App(): JSX.Element {
     ];
   }, [selectedAgentForSlash, skills]);
 
-  // Session title from session_summary_generated events. For each tab,
-  // pick the newest summary in the current events snapshot and apply it
+  // Session title from Grok summaries or standard ACP metadata updates. For
+  // each tab, pick the newest title in the current events snapshot and apply it
   // unless the tab is locked (titleLocked = user-owned). Backgrounded
   // tabs are updated too — focus is not required. wouldChange guards
   // bail out cleanly when nothing would actually move, breaking the
   // [events, tabs, ...] dependency loop.
   useEffect(() => {
-    // Per-tab newest summary in this events snapshot.
-    const newest = new Map<string, { t: number; summary: string }>();
-    for (const e of events) {
-      const p: any = e?.payload;
-      const inner = p?.params?.update;
-      if (inner?.sessionUpdate !== "session_summary_generated") continue;
-      if (typeof inner.session_summary !== "string") continue;
-      const evtTab = p?._meta?.tabId ?? activeTabId ?? "default";
-      const prev = newest.get(evtTab);
-      if (!prev || e.t > prev.t) {
-        newest.set(evtTab, { t: e.t, summary: inner.session_summary });
-      }
-    }
+    const newest = newestSessionTitleCandidates(events, activeTabId ?? "default");
     if (newest.size === 0) return;
     // Pre-compute whether any tab would actually change; bail early if
     // not, otherwise setTabs(prev => prev.map(...)) always returns a
@@ -2360,7 +2514,7 @@ export default function App(): JSX.Element {
       if (t.titleLocked) continue;
       const sid = t.sessionId ?? undefined;
       const override = sid ? chatTitleOverrides[sid] : undefined;
-      const finalTitle = override ?? candidate.summary;
+      const finalTitle = override ?? candidate.title;
       const titleChanged = t.title !== finalTitle;
       const lockChanged = override ? !t.titleLocked : false;
       if (titleChanged || lockChanged) {
@@ -2379,7 +2533,7 @@ export default function App(): JSX.Element {
           if (t.titleLocked) return t;
           const sid = t.sessionId ?? undefined;
           const override = sid ? chatTitleOverrides[sid] : undefined;
-          const finalTitle = override ?? candidate.summary;
+          const finalTitle = override ?? candidate.title;
           if (t.title === finalTitle && (override ? t.titleLocked : true)) {
             return t;
           }
@@ -2429,9 +2583,18 @@ export default function App(): JSX.Element {
   useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
 
   useEffect(() => {
+    // DEBUG_UI_CONNECTION_OWNER_START
     let socket: WebSocket | null = null;
     let closed = false;
+    let connectTimer: number | null = null;
     let retryTimer: number | null = null;
+    let recentPollTimer: number | null = null;
+    let statePollTimer: number | null = null;
+    let nativeStatePollTimer: number | null = null;
+    let nativeStatePollErrorReported = false;
+    let unlistenDebugUiPatch: UnlistenFn | null = null;
+    let retryAttempt = 0;
+    let connectionStatus: DebugUiConnectionStatus = "connecting";
     const connectedAfterMs = Date.now() - 500;
     let lastDebugUiPatchMs = connectedAfterMs;
     let lastAppliedUiRevision: number | null = null;
@@ -2506,6 +2669,181 @@ export default function App(): JSX.Element {
           }
         }
       }
+      if (p.clearPreview === true) {
+        setPreviewPath(null);
+        setPreviewFileContext(null);
+        setTabs((prev) => prev.map((tab) => ({ ...tab, preview: undefined })));
+      }
+      const debugAttachPaths = Array.isArray(p.debugAttachPaths)
+        ? p.debugAttachPaths
+            .filter((path): path is string => typeof path === "string" && path.trim().length > 0)
+            .map((path) => path.trim().slice(0, 4096))
+            .slice(0, 8)
+        : [];
+      if (debugAttachPaths.length > 0) {
+        void processAttachedPaths(debugAttachPaths, { copyIntoScope: false });
+      }
+      const debugRemoveAttachmentPaths = Array.isArray(p.debugRemoveAttachmentPaths)
+        ? new Set(p.debugRemoveAttachmentPaths
+            .filter((path): path is string => typeof path === "string" && path.trim().length > 0)
+            .map((path) => path.trim().slice(0, 4096))
+            .slice(0, 8))
+        : null;
+      if (debugRemoveAttachmentPaths && debugRemoveAttachmentPaths.size > 0) {
+        updatePendingAttachmentsForTab(activeTabIdRef.current, (current) => ({
+          text: current.text.filter((item) => !debugRemoveAttachmentPaths.has(item.path)),
+          chips: current.chips.filter((chip) => !debugRemoveAttachmentPaths.has(chip.path)),
+        }));
+      }
+      if (Object.prototype.hasOwnProperty.call(p, "debugRendererFixture")) {
+        const fixtureTabId = activeTabIdRef.current ?? tabsRef.current[0]?.tabId ?? "default";
+        const providerActionFixture = debugProviderActionFixture(p.debugRendererFixture);
+        if (providerActionFixture !== undefined) {
+          setDebugProviderAction(providerActionFixture);
+          setDebugProviderActionReceipt(null);
+          if (providerActionFixture?.action === "activity-ask-agent") {
+            setActivityOpen(true);
+          } else if (providerActionFixture?.action.startsWith("tasks-")) {
+            setRightRailRequest((cur) => ({ tab: "Tasks", seq: (cur?.seq ?? 0) + 1 }));
+          } else if (providerActionFixture?.action.startsWith("work-preview-")) {
+            setRightRailRequest((cur) => ({ tab: "Preview", seq: (cur?.seq ?? 0) + 1 }));
+          } else if (providerActionFixture?.action.startsWith("right-rail-")) {
+            setRightRailRequest((cur) => ({ tab: "Tooling", seq: (cur?.seq ?? 0) + 1 }));
+          }
+        } else {
+        const permissionDecisionFixture = debugPermissionDecisionFixture(
+          p.debugRendererFixture,
+        );
+        if (permissionDecisionFixture !== undefined) {
+          setDebugPermissionDecisionFixture(permissionDecisionFixture);
+          setEvents((current) => applyDebugPermissionDecisionFixtureEvents(
+            current,
+            permissionDecisionFixture,
+            fixtureTabId,
+          ));
+        } else {
+          const rightRailGitFixture = debugRightRailGitLifecycleFixture(
+            p.debugRendererFixture,
+            fixtureTabId,
+          );
+          if (rightRailGitFixture !== undefined) {
+            setDebugRightRailGitFixture(rightRailGitFixture);
+          } else {
+            setEvents((current) => applyDebugRendererFixture(
+              current,
+              p.debugRendererFixture,
+              fixtureTabId,
+            ));
+            const terminals = debugBottomPanelTerminalFixture(p.debugRendererFixture);
+            if (terminals) setDebugBottomPanelTerminals(terminals);
+            setDebugBuildRunFixture(debugBuildRunCockpitFixture(
+              p.debugRendererFixture,
+              fixtureTabId,
+            ));
+            if (p.debugRendererFixture === "clear") {
+              setDebugRightRailGitFixture(null);
+              setDebugPermissionDecisionFixture(null);
+            }
+          }
+        }
+        }
+      }
+      if (p.debugHashItems === "owned") {
+        setHashItems([{
+          kind: "issue",
+          number: 735,
+          title: "Owned autocomplete fixture",
+          url: "https://example.invalid/shellx/issues/735",
+        }]);
+      } else if (p.debugHashItems === "clear") {
+        setHashItems([]);
+      }
+      if (p.debugUiConnectionFixture === "disconnected") {
+        setDebugUiConnectionFixture("disconnected");
+      } else if (p.debugUiConnectionFixture === "clear") {
+        setDebugUiConnectionFixture(null);
+      }
+      if (p.releaseTestRendererCrash === true) {
+        setReleaseTestRendererCrash(true);
+      }
+      if (p.releaseTestLazySurface === "owned-error") {
+        setReleaseTestLazySurface("error");
+      } else if (p.releaseTestLazySurface === "clear") {
+        setReleaseTestLazySurface(null);
+      }
+      if (p.releaseTestLegacyAutonomy === "legacy-default") {
+        setAutonomy("default");
+        const targetTabId = activeTabIdRef.current;
+        if (targetTabId) {
+          setTabs((current) => current.map((tab) => (
+            tab.tabId === targetTabId ? { ...tab, autonomy: "default" } : tab
+          )));
+        }
+      }
+      if (p.releaseTestVoiceCapture === "recording") {
+        setReleaseTestVoiceRecording(true);
+      } else if (p.releaseTestVoiceCapture === "clear") {
+        setReleaseTestVoiceRecording(false);
+      }
+      if (p.releaseTestExternalEffectBoundary === "pr-create"
+        || p.releaseTestExternalEffectBoundary === "artifact-archive") {
+        setReleaseTestExternalEffectBoundary(p.releaseTestExternalEffectBoundary);
+      } else if (p.releaseTestExternalEffectBoundary === "clear") {
+        setReleaseTestExternalEffectBoundary(null);
+      }
+      const agentCliSetupFixturePatch = normalizeDebugAgentCliSetupFixtureMode(
+        p.agentCliSetupFixture,
+      );
+      if (agentCliSetupFixturePatch) {
+        setAgentCliSetupFixtureMode(agentCliSetupFixturePatch);
+      }
+      if (p.debugAgentPickerFixture === "owned-ready") {
+        setDebugAgentPickerFixture(true);
+      } else if (p.debugAgentPickerFixture === "clear") {
+        setDebugAgentPickerFixture(false);
+      }
+      if (p.debugUpdateFixture === "owned-check" || p.debugUpdateFixture === "owned-available") {
+        setDebugUpdateFixture(p.debugUpdateFixture);
+      } else if (p.debugUpdateFixture === "clear") {
+        setDebugUpdateFixture("owned-cleared");
+      }
+      if (p.debugPluginsFixture === "owned-safe") {
+        setDebugPluginsFixture("owned-safe");
+      } else if (p.debugPluginsFixture === "owned-production") {
+        setDebugPluginsFixture("owned-production");
+      } else if (p.debugPluginsFixture === "clear") {
+        setDebugPluginsFixture(null);
+      }
+      if (p.debugConnectorsFixture === "owned-safe") {
+        setDebugConnectorsFixture("owned-safe");
+      } else if (p.debugConnectorsFixture === "clear") {
+        setDebugConnectorsFixture(null);
+      }
+      const goalPlanReviewFixturePatch = normalizeDebugGoalPlanReviewFixtureMode(
+        p.goalPlanReviewFixture,
+      );
+      if (goalPlanReviewFixturePatch) {
+        setGoalPlanReviewFixtureMode(goalPlanReviewFixturePatch);
+      }
+      if (p.debugBuildPlanFixture === "owned-ready") {
+        setDebugBuildPlanFixture("owned-ready");
+      } else if (p.debugBuildPlanFixture === "clear") {
+        setDebugBuildPlanFixture(null);
+      }
+      if (p.debugShellxagentFixture === "owned-safe") {
+        setDebugShellxagentFixture("owned-safe");
+      } else if (p.debugShellxagentFixture === "clear") {
+        setDebugShellxagentFixture(null);
+      }
+      if (p.debugClipboardFixture === "tasks"
+        || p.debugClipboardFixture === "vault-draft"
+        || p.debugClipboardFixture === "vault-password"
+        || p.debugClipboardFixture === "shellxagent-token"
+        || p.debugClipboardFixture === "work-preview") {
+        setDebugClipboardFixture(p.debugClipboardFixture);
+      } else if (p.debugClipboardFixture === "clear") {
+        setDebugClipboardFixture(null);
+      }
       const openModalPatch = normalizeDebugModal(p.openModal);
       if (openModalPatch) {
         openDebugModal(openModalPatch);
@@ -2514,6 +2852,14 @@ export default function App(): JSX.Element {
         setVaultRequestCenterOpenSeq((seq) => seq + 1);
       } else if (p.vaultRequestCenterOpen === false) {
         setVaultRequestCenterCloseSeq((seq) => seq + 1);
+      }
+      if (typeof p.setupGuideDismissed === "boolean") {
+        window.dispatchEvent(new CustomEvent(SHELLX_SETUP_GUIDE_DISMISSED_EVENT, {
+          detail: { dismissed: p.setupGuideDismissed },
+        }));
+      }
+      if (p.refreshPastChats === true) {
+        void refreshPastChats();
       }
       const composerMenuPatch = normalizeComposerDebugMenu(p.composerMenu);
       if (composerMenuPatch) {
@@ -2529,9 +2875,9 @@ export default function App(): JSX.Element {
       if (debugInputPatch) runDebugInputSelector(debugInputPatch);
       const debugDragPatch = p.debugDrag;
       if (debugDragPatch) runDebugDragSelector(debugDragPatch);
-      const debugHighlightsPatch = normalizeDebugHighlights(p.debugHighlights);
+      const debugHighlightsPatch = normalizeDebugHighlightRequests(p.debugHighlights);
       if (debugHighlightsPatch) {
-        setDebugHighlights((prev) => sameDebugHighlights(prev, debugHighlightsPatch) ? prev : debugHighlightsPatch);
+        setDebugHighlights((prev) => sameDebugHighlightRequests(prev, debugHighlightsPatch) ? prev : debugHighlightsPatch);
       }
       const cwdPickerPatch = p.cwdPicker;
       if (cwdPickerPatch) {
@@ -2542,8 +2888,13 @@ export default function App(): JSX.Element {
         const picker = typeof cwdPickerPatch === "object" && cwdPickerPatch !== null
           ? cwdPickerPatch as Record<string, unknown>
           : {};
-        const requestedTabId = typeof picker.tabId === "string" ? picker.tabId : activeTabIdRef.current;
-        const tab = requestedTabId
+        const isolated = picker.isolated === true;
+        const requestedTabId = isolated
+          ? null
+          : typeof picker.tabId === "string" ? picker.tabId : activeTabIdRef.current;
+        const tab = isolated
+          ? null
+          : requestedTabId
           ? tabsRef.current.find((entry) => entry.tabId === requestedTabId) ?? null
           : tabsRef.current.find((entry) => entry.tabId === activeTabIdRef.current) ?? null;
         const transport = tab?.connectionTransport ?? "local";
@@ -2552,7 +2903,9 @@ export default function App(): JSX.Element {
           : tab?.cwd ?? cwdRef.current;
         setRemoteFolderPicker({
           tabId: tab?.tabId ?? requestedTabId ?? null,
-          connectionId: typeof picker.connectionId === "string" ? picker.connectionId : tab?.connectionId ?? null,
+          connectionId: isolated
+            ? null
+            : typeof picker.connectionId === "string" ? picker.connectionId : tab?.connectionId ?? null,
           initialPath: initialPath || "/",
           label: typeof picker.label === "string" && picker.label.trim()
             ? picker.label.trim()
@@ -2575,6 +2928,28 @@ export default function App(): JSX.Element {
         "clickSelector",
         "cwdPicker",
         "vaultRequestCenterOpen",
+        "setupGuideDismissed",
+        "refreshPastChats",
+        "clearPreview",
+        "debugAttachPaths",
+        "debugRemoveAttachmentPaths",
+        "debugRendererFixture",
+        "debugHashItems",
+        "debugUiConnectionFixture",
+        "releaseTestRendererCrash",
+        "releaseTestLazySurface",
+        "releaseTestLegacyAutonomy",
+        "releaseTestVoiceCapture",
+        "releaseTestExternalEffectBoundary",
+        "agentCliSetupFixture",
+        "debugAgentPickerFixture",
+        "debugUpdateFixture",
+        "debugPluginsFixture",
+        "debugConnectorsFixture",
+        "goalPlanReviewFixture",
+        "debugBuildPlanFixture",
+        "debugShellxagentFixture",
+        "debugClipboardFixture",
       ]) {
         if (Object.prototype.hasOwnProperty.call(p, key)) transient[key] = p[key];
       }
@@ -2604,88 +2979,259 @@ export default function App(): JSX.Element {
       if (revision !== null) lastAppliedUiRevision = revision;
       applyPatch({ ...state, ...transientPatchFromEvent(eventPatch) });
     };
-    const applyAuthoritativeUiPatch = (eventPatch: unknown) => {
-      void apiGet<Record<string, unknown>>("/state/ui")
+    const readAuthoritativeUiState = async (): Promise<Record<string, unknown>> => {
+      try {
+        return await invoke<Record<string, unknown>>("debug_ui_snapshot");
+      } catch {
+        return apiGet<Record<string, unknown>>("/state/ui");
+      }
+    };
+    const applyAuthoritativeUiPatch = (
+      eventPatch: unknown,
+      eventState?: Record<string, unknown> | null,
+    ) => {
+      if (eventState) {
+        const revision = uiRevisionFromState(eventState);
+        if (revision !== null && revision === lastAppliedUiRevision) return;
+        applyAuthoritativeUiState(eventState, eventPatch);
+        return;
+      }
+      void readAuthoritativeUiState()
         .then((state) => {
           if (closed) return;
+          const revision = uiRevisionFromState(state);
+          if (revision !== null && revision === lastAppliedUiRevision) return;
           applyAuthoritativeUiState(state, eventPatch);
         })
         .catch(() => {
           if (!closed) applyPatch(eventPatch);
         });
     };
+    const publishConnectionStatus = (status: DebugUiConnectionStatus) => {
+      connectionStatus = status;
+      if (!closed) {
+        setDebugUiConnectionStatus((current) => current === status ? current : status);
+      }
+    };
+    const clearConnectTimer = () => {
+      if (connectTimer !== null) window.clearTimeout(connectTimer);
+      connectTimer = null;
+    };
+    const stopFallbackPolling = () => {
+      if (recentPollTimer !== null) window.clearTimeout(recentPollTimer);
+      if (statePollTimer !== null) window.clearTimeout(statePollTimer);
+      recentPollTimer = null;
+      statePollTimer = null;
+    };
+    const pollRecentEvents = async (): Promise<void> => {
+      if (closed || !debugUiPollingEnabled(connectionStatus)) return;
+      try {
+        const frames = await apiGet<RawEventFrame[]>(
+          `/events/recent?limit=80&since=${encodeURIComponent(String(lastDebugUiPatchMs))}`,
+        );
+        if (closed || !debugUiPollingEnabled(connectionStatus)) return;
+        for (const frame of frames) {
+          if (frame.kind !== "debug-ui-state-patch") continue;
+          const payload = frame.payload as { patch?: unknown; state?: Record<string, unknown> } | null;
+          if (isRendererDebugUiPatch(payload?.patch)) continue;
+          if (typeof frame.t === "number" && frame.t <= lastDebugUiPatchMs) continue;
+          if (typeof frame.t === "number") lastDebugUiPatchMs = frame.t;
+          applyAuthoritativeUiPatch(payload?.patch, payload?.state);
+        }
+      } catch {
+        /* WebSocket health owns reconnect state; this poll only covers dropped frames. */
+      } finally {
+        if (!closed && debugUiPollingEnabled(connectionStatus)) {
+          recentPollTimer = window.setTimeout(() => void pollRecentEvents(), debugUiPollDelay(connectionStatus));
+        }
+      }
+    };
+    const pollUiState = async (): Promise<void> => {
+      if (closed || !debugUiPollingEnabled(connectionStatus)) return;
+      try {
+        const state = await readAuthoritativeUiState();
+        if (closed || !debugUiPollingEnabled(connectionStatus)) return;
+        const revision = uiRevisionFromState(state);
+        if (revision !== null && revision !== lastAppliedUiRevision && !isBrowserDebugUiSource(state)) {
+          applyAuthoritativeUiState(state);
+        }
+      } catch {
+        /* WebSocket health owns reconnect state; this is an authoritative-state fallback. */
+      } finally {
+        if (!closed && debugUiPollingEnabled(connectionStatus)) {
+          statePollTimer = window.setTimeout(() => void pollUiState(), debugUiPollDelay(connectionStatus));
+        }
+      }
+    };
+    const startFallbackPolling = () => {
+      stopFallbackPolling();
+      if (!debugUiPollingEnabled(connectionStatus)) return;
+      const delay = debugUiPollDelay(connectionStatus);
+      recentPollTimer = window.setTimeout(() => void pollRecentEvents(), delay);
+      statePollTimer = window.setTimeout(() => void pollUiState(), delay);
+    };
+    const pollNativeUiState = async (): Promise<void> => {
+      if (closed) return;
+      try {
+        const state = await invoke<Record<string, unknown>>("debug_ui_snapshot");
+        if (closed) return;
+        nativeStatePollErrorReported = false;
+        const revision = uiRevisionFromState(state);
+        if (
+          !isBrowserDebugUiSource(state)
+          && (revision === null || revision !== lastAppliedUiRevision)
+        ) {
+          applyAuthoritativeUiState(state);
+        }
+      } catch (error) {
+        if (!nativeStatePollErrorReported) {
+          nativeStatePollErrorReported = true;
+          void apiPostJson("/state/ui", {
+            source: "renderer-native-poll-error",
+            debugSurface: "app",
+            debugActionResults: [{
+              action: "nativeStatePoll",
+              status: "failed",
+              message: String(error).slice(0, 500),
+            }],
+          }).catch(() => undefined);
+        }
+      } finally {
+        if (!closed) nativeStatePollTimer = window.setTimeout(() => void pollNativeUiState(), DEBUG_UI_POLL_MS);
+      }
+    };
+    const scheduleReconnect = () => {
+      if (closed) return;
+      stopFallbackPolling();
+      publishConnectionStatus("disconnected");
+      startFallbackPolling();
+      if (retryTimer !== null) return;
+      const delay = debugUiRetryDelay(retryAttempt);
+      retryAttempt += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        void connect();
+      }, delay);
+    };
     const connect = async () => {
+      if (closed) return;
+      if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      if (connectionStatus !== "disconnected" || retryAttempt === 0) {
+        publishConnectionStatus("connecting");
+      }
       try {
         const [base, token] = await Promise.all([debugApiBase(), getDebugToken()]);
         if (closed) return;
         const url = `${base.replace(/^http/, "ws")}/events?token=${encodeURIComponent(token)}`;
-        socket = new WebSocket(url);
-        socket.onmessage = (event) => {
+        const nextSocket = new WebSocket(url);
+        socket = nextSocket;
+        clearConnectTimer();
+        connectTimer = window.setTimeout(() => {
+          if (closed || socket !== nextSocket || nextSocket.readyState !== WebSocket.CONNECTING) return;
+          nextSocket.onclose = null;
+          nextSocket.onerror = null;
+          socket = null;
+          nextSocket.close();
+          scheduleReconnect();
+        }, DEBUG_UI_CONNECT_TIMEOUT_MS);
+        nextSocket.onopen = () => {
+          if (closed || socket !== nextSocket) return;
+          clearConnectTimer();
+          retryAttempt = 0;
+          publishConnectionStatus("connected");
+          startFallbackPolling();
+          void readAuthoritativeUiState()
+            .then((state) => {
+              if (!closed && socket === nextSocket) applyAuthoritativeUiState(state);
+            })
+            .catch(() => {
+              /* The status-gated poll retries authoritative state while the socket stays healthy. */
+            });
+        };
+        nextSocket.onmessage = (event) => {
           try {
             const frame = JSON.parse(String(event.data)) as RawEventFrame;
             if (frame.kind !== "debug-ui-state-patch") return;
-            const payload = frame.payload as { patch?: unknown } | null;
+            const payload = frame.payload as { patch?: unknown; state?: Record<string, unknown> } | null;
             if (isRendererDebugUiPatch(payload?.patch)) return;
             if (typeof frame.t === "number" && frame.t <= lastDebugUiPatchMs) return;
             if (typeof frame.t === "number") lastDebugUiPatchMs = frame.t;
-            applyAuthoritativeUiPatch(payload?.patch);
+            applyAuthoritativeUiPatch(payload?.patch, payload?.state);
           } catch {
             /* ignore malformed debug stream frames */
           }
         };
-        socket.onclose = () => {
-          if (closed) return;
-          retryTimer = window.setTimeout(() => void connect(), 2000);
+        nextSocket.onclose = () => {
+          if (socket !== nextSocket) return;
+          clearConnectTimer();
+          socket = null;
+          scheduleReconnect();
+        };
+        nextSocket.onerror = () => {
+          /* onclose is the single reconnect owner, avoiding duplicate retry timers. */
         };
       } catch {
-        if (!closed) retryTimer = window.setTimeout(() => void connect(), 4000);
+        socket = null;
+        scheduleReconnect();
       }
     };
+    const reconnectNow = () => {
+      if (closed) return;
+      retryAttempt = 0;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      retryTimer = null;
+      clearConnectTimer();
+      stopFallbackPolling();
+      const previous = socket;
+      socket = null;
+      if (previous) {
+        previous.onclose = null;
+        previous.close();
+      }
+      void connect();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && connectionStatus !== "connected") reconnectNow();
+    };
 
+    void pollNativeUiState();
+    try {
+      void listen<{ patch?: unknown; state?: Record<string, unknown> }>("debug-ui-state-patch", (event) => {
+        if (closed || isRendererDebugUiPatch(event.payload?.patch)) return;
+        applyAuthoritativeUiPatch(event.payload?.patch, event.payload?.state);
+      }).then((unlisten) => {
+        if (closed) unlisten();
+        else unlistenDebugUiPatch = unlisten;
+      }).catch(() => {
+        /* Snapshot polling remains available when native event setup fails. */
+      });
+    } catch {
+      /* A missing event bridge must not prevent native snapshot polling. */
+    }
     void connect();
-    const pollTimer = window.setInterval(() => {
-      void apiGet<RawEventFrame[]>(
-        `/events/recent?limit=80&since=${encodeURIComponent(String(lastDebugUiPatchMs))}`,
-      )
-        .then((frames) => {
-          if (closed) return;
-          for (const frame of frames) {
-            if (frame.kind !== "debug-ui-state-patch") continue;
-            const payload = frame.payload as { patch?: unknown } | null;
-            if (isRendererDebugUiPatch(payload?.patch)) continue;
-            if (typeof frame.t === "number" && frame.t <= lastDebugUiPatchMs) continue;
-            if (typeof frame.t === "number") lastDebugUiPatchMs = frame.t;
-            applyAuthoritativeUiPatch(payload?.patch);
-          }
-        })
-        .catch(() => {
-          /* WebSocket remains primary; polling only covers dropped app-surface patches. */
-        });
-    }, 1000);
-    const statePollTimer = window.setInterval(() => {
-      void apiGet<Record<string, unknown>>("/state/ui")
-        .then((state) => {
-          if (closed) return;
-          const revision = uiRevisionFromState(state);
-          if (revision === null || revision === lastAppliedUiRevision) return;
-          if (isBrowserDebugUiSource(state)) return;
-          if (typeof state.lastUiPatchMs === "number" && Number.isFinite(state.lastUiPatchMs)) {
-            lastDebugUiPatchMs = Math.max(lastDebugUiPatchMs, state.lastUiPatchMs);
-          }
-          applyAuthoritativeUiState(state);
-        })
-        .catch(() => {
-          /* Direct state polling is a debug-driver fallback only. */
-        });
-    }, 1000);
+    window.addEventListener("shellx:debug-api-retry", reconnectNow);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       closed = true;
       if (retryTimer !== null) window.clearTimeout(retryTimer);
-      window.clearInterval(pollTimer);
-      window.clearInterval(statePollTimer);
+      clearConnectTimer();
+      stopFallbackPolling();
+      if (nativeStatePollTimer !== null) window.clearTimeout(nativeStatePollTimer);
+      window.removeEventListener("shellx:debug-api-retry", reconnectNow);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      unlistenDebugUiPatch?.();
       socket?.close();
     };
+    // DEBUG_UI_CONNECTION_OWNER_END
   }, []);
+
+  if (releaseTestRendererCrash) {
+    throw new Error("SHELLX_RELEASE_TEST_RENDERER_CRASH_035");
+  }
 
   // #355:  TTS-back dedupe guard. The completion useEffect can
   // fire from EITHER the typed `prompt-complete` event (Path A) OR a
@@ -2715,6 +3261,7 @@ export default function App(): JSX.Element {
   const persist = useCallback(async (ev: RawEventFrame): Promise<boolean> => {
     const tag = (ev as any)?.payload?._meta?.tabId
       ?? (ev as any)?.payload?.params?._meta?.tabId
+      ?? (ev as any)?._meta?.tabId
       ?? null;
     const tabKey: string | null = tag ?? activeTabIdRef.current ?? null;
     if (!tabKey) return false;
@@ -2754,9 +3301,12 @@ export default function App(): JSX.Element {
         if (!tab.sessionId || rehydratedSessionIds.current.has(tab.sessionId)) continue;
         rehydratedSessionIds.current.add(tab.sessionId);
         try {
-          const lines = await invoke<string[]>("read_session_jsonl", { sessionId: tab.sessionId });
+          const tail = await invoke<SessionJsonlTailResponse>("read_session_jsonl_tail", {
+            sessionId: tab.sessionId,
+            limit: MAX_SESSION_LOG_REHYDRATION_LINES,
+          });
           const recovered: RawEventFrame[] = [];
-          for (const line of lines) {
+          for (const line of tail.lines) {
             try {
               const ev = JSON.parse(line) as RawEventFrame;
               const p: any = ev.payload;
@@ -2787,9 +3337,16 @@ export default function App(): JSX.Element {
               recovered.push(ev);
             } catch { /* skip malformed line */ }
           }
+          if (tail.omittedLines > 0) {
+            recovered.unshift(historyTruncationFrame(
+              tab.tabId,
+              tail.omittedLines,
+              recovered[0]?.t ?? Date.now(),
+            ));
+          }
           if (recovered.length > 0) {
-            setEvents((prev) => [...prev, ...recovered]);
-            console.info(`[shellX] rehydrated ${recovered.length} events from ${tab.sessionId}.jsonl into ${tab.tabId.slice(0, 8)}`);
+            setEvents((prev) => appendBoundedRendererEvents(prev, recovered));
+            console.info(`[shellX] rehydrated ${recovered.length} bounded events from ${tab.sessionId}.jsonl into ${tab.tabId.slice(0, 8)}`);
           }
         } catch { /* non-fatal */ }
       }
@@ -2800,28 +3357,45 @@ export default function App(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | null = null;
+    void startReleaseTauriInvokeRelay()
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(() => {
+        // Production instances still register the native listener, but every
+        // relay claim fails closed unless the backend is an isolated profile.
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
     // Skip listener wiring outside the Tauri webview — `listen()` would
     // throw because the IPC bridge isn't on `window.__TAURI_INTERNALS__`.
     // In plain browser preview (Vite/Playwright) the app still renders;
     // only the event-driven parts (live grok messages) stay dark.
     const inTauri = typeof (window as any).__TAURI_INTERNALS__ !== "undefined";
     if (!inTauri) {
-      pushUiEvent("· running outside Tauri (Vite-only / browser preview) — event listeners skipped");
       return;
     }
 
     const unlisteners: Array<Promise<UnlistenFn>> = TAURI_CHANNELS.map((ch) =>
       listen<unknown>(ch, (event) => {
-        const ev: RawEventFrame = {
+        const currentActiveTab = activeTabIdRef.current;
+        const ev = withRendererEventTabId({
           t: Date.now(),
           kind: ch,
           payload: event.payload,
-        };
-        setEvents((prev) => [...prev, ev]);
+        }, currentActiveTab);
+        setEvents((prev) => appendBoundedRendererEvents(prev, ev));
         // Read persist + activeTabId via refs so the callback never
         // closes over stale values. The outer useEffect has [] deps.
         void persistRef.current(ev);
-        const currentActiveTab = activeTabIdRef.current;
         const sid = extractSessionId(event.payload);
         if (sid) {
           // Route the (tabId, sessionId) binding into tabSessionByTab
@@ -3127,7 +3701,7 @@ export default function App(): JSX.Element {
       const spawnAutonomy = target.autonomy ?? targetTab?.autonomy ?? autonomy;
       try {
         await invoke("set_permission_mode", { mode: spawnAutonomy, tabId: myTabId });
-      } catch { /* non-fatal — falls back to "default" / Confirm */ }
+      } catch { /* non-fatal — native spawn also defaults to Full Auto */ }
       const result = await invoke<string>("start_grok_session", {
         cwd: spawnCwd,
         wslDistro: null,
@@ -3175,6 +3749,8 @@ export default function App(): JSX.Element {
     sshHost?: string;
     sshPort?: number;
     sshKeyVaultRef?: string;
+    sshRemoteRuntime?: "posix" | "windows" | "windows_wsl";
+    sshWslDistro?: string;
     preset: ConnectionPreset | null;
   }> {
     const preset = await loadConnectionPreset(tab.connectionId ?? null);
@@ -3202,6 +3778,8 @@ export default function App(): JSX.Element {
         sshHost,
         sshPort: preset?.transport.kind === "ssh" ? preset.transport.port : undefined,
         sshKeyVaultRef: preset?.transport.kind === "ssh" ? preset.transport.keyVaultRef : undefined,
+        sshRemoteRuntime: preset?.transport.kind === "ssh" ? preset.transport.remoteRuntime ?? "posix" : undefined,
+        sshWslDistro: preset?.transport.kind === "ssh" ? preset.transport.wslDistro : undefined,
         preset,
       };
     }
@@ -3217,6 +3795,8 @@ export default function App(): JSX.Element {
     sshHost?: string;
     sshPort?: number;
     sshKeyVaultRef?: string;
+    sshRemoteRuntime?: "posix" | "windows" | "windows_wsl";
+    sshWslDistro?: string;
     storedConversationId?: string;
   }> {
     const execution = await resolveProviderExecutionForTab(tab);
@@ -3226,6 +3806,8 @@ export default function App(): JSX.Element {
         sshHost: execution.sshHost,
         sshPort: execution.sshPort,
         sshKeyVaultRef: execution.sshKeyVaultRef,
+        sshRemoteRuntime: execution.sshRemoteRuntime,
+        sshWslDistro: execution.sshWslDistro,
       });
       const adapter = state.providers.find((provider) => provider.providerId === providerId);
       if (!adapter?.canRun) {
@@ -3233,8 +3815,14 @@ export default function App(): JSX.Element {
         const lastSeenText = lastSeen
           ? ` Last saved scan found ${lastSeen.version ?? lastSeen.binary ?? "an entry"}${lastSeen.canRun ? " as runnable" : " but not runnable"}.`
           : "";
+        const targetLabel = providerExecutionTargetLabel({
+          transport: execution.transport,
+          sshHost: execution.sshHost,
+          sshRemoteRuntime: execution.sshRemoteRuntime,
+          sshWslDistro: execution.sshWslDistro,
+        });
         throw new Error(
-          `${agentDisplayName(providerId)} is not available on SSH ${execution.sshHost}.${lastSeenText} Rescan the connection or fix the CLI path/PATH in that environment.`,
+          `${agentDisplayName(providerId)} is not available in ${targetLabel}.${lastSeenText} Rescan the connection or use Set up CLIs for that exact environment. Native Windows and Windows + WSL have separate CLI installations and path frames.`,
         );
       }
       const sessionState = await getProviderSessionState(tab.tabId, {
@@ -3242,12 +3830,16 @@ export default function App(): JSX.Element {
         sshHost: execution.sshHost,
         sshPort: execution.sshPort,
         sshKeyVaultRef: execution.sshKeyVaultRef,
+        sshRemoteRuntime: execution.sshRemoteRuntime,
+        sshWslDistro: execution.sshWslDistro,
       });
       return {
         transport: execution.transport,
         sshHost: execution.sshHost,
         sshPort: execution.sshPort,
         sshKeyVaultRef: execution.sshKeyVaultRef,
+        sshRemoteRuntime: execution.sshRemoteRuntime,
+        sshWslDistro: execution.sshWslDistro,
         storedConversationId: sessionState.storedConversations?.[providerId],
       };
     }
@@ -3323,6 +3915,8 @@ export default function App(): JSX.Element {
         sshHost: providerExecution.sshHost,
         sshPort: providerExecution.sshPort,
         sshKeyVaultRef: providerExecution.sshKeyVaultRef,
+        sshRemoteRuntime: providerExecution.sshRemoteRuntime,
+        sshWslDistro: providerExecution.sshWslDistro,
       });
       const startedPatch: Partial<TabEntry> = {
         sessionLockPending: false,
@@ -3347,11 +3941,38 @@ export default function App(): JSX.Element {
   }
 
   async function send(): Promise<void> {
-    // Read via promptRef so stale-closure callers (e.g. mic-stop
-    // transcribe flow) still see the latest composer value.
-    const currentPrompt = promptRef.current;
+    // Bind the text to the same tab whose provider, cwd, and attachments are
+    // about to be used. A tab switch can no longer lend another tab's draft
+    // to this send path.
+    const composerTabId = activeTab?.tabId ?? null;
+    const currentPrompt = composerDraftForTab(promptByTabRef.current, composerTabId);
     const queuedAttachmentChips = pendingAttachmentChips;
     if (!currentPrompt.trim() && queuedAttachmentChips.length === 0) return;
+    const submission = classifyComposerSubmission({
+      isSending,
+      selectedAgent: normalizeAgentSelection(activeTab?.agentId),
+      status,
+      text: currentPrompt,
+      attachmentCount: queuedAttachmentChips.length,
+    });
+    if (submission.mode === "blocked") {
+      setError(submission.message);
+      return;
+    }
+    if (submission.mode === "interject") {
+      const tabId = activeTab?.tabId ?? null;
+      setError(null);
+      try {
+        await invoke<string>("interject_prompt", { text: currentPrompt, tabId });
+        pushPromptEcho(currentPrompt, tabId, false);
+        pushUiEventForTab("◎ steering queued", tabId);
+        setPrompt("");
+      } catch (err: any) {
+        setError(String(err));
+        pushUiEventForTab(`✗ steering failed: ${err}`, tabId);
+      }
+      return;
+    }
     // `/pr` slash opens the PR-create modal instead of sending to
     // grok. Whole-word `/pr` at the start only.
     const stripped = currentPrompt.trim();
@@ -3430,7 +4051,9 @@ export default function App(): JSX.Element {
     if (buildObjective !== null) {
       const usedLegacyGoalCommand = stripped === "/goal" || stripped.startsWith("/goal ");
       if (!buildObjective) {
-        pushUiEvent("✗ /build requires an objective: /build <what to accomplish>");
+        pushUiEvent(usedLegacyGoalCommand
+          ? "✗ /goal requires an objective: /goal <what to accomplish> (legacy alias of /build)"
+          : "✗ /build requires an objective: /build <what to accomplish>");
         return;
       }
       const myTabId = activeTab?.tabId ?? null;
@@ -3508,6 +4131,12 @@ export default function App(): JSX.Element {
       const msg = "Choose an agent before sending.";
       setError(msg);
       pushUiEvent(`✗ ${msg}`);
+      return;
+    }
+    if (debugProviderAction?.action === "composer-send") {
+      setPrompt("");
+      clearPendingAttachmentsForTab(myTabId);
+      await sendPromptText(txt, myTabId, visiblePrompt);
       return;
     }
     if (activeTab && myTabId && isProviderAgent(selectedAgent)) {
@@ -3612,15 +4241,36 @@ export default function App(): JSX.Element {
     }
   }
 
-  /* Send a specific text to a specific tab WITHOUT mutating the App-
-   * level composer state. The composer `prompt` state is shared
-   * across tabs, so routing internal action prompts through setPrompt
-   * would leak the text into every tab and the closure-captured send()
-   * would bail on stale `prompt`. Callers capture tabId at click time so a mid-flight
+  /* Send a specific text to a specific tab WITHOUT mutating that tab's
+   * user-authored composer draft. Callers capture tabId at click time so a mid-flight
    * tab switch lands the prompt on the originating tab. Slash-command
    * interception is skipped — this path is for structured prompts. */
-  async function sendPromptText(text: string, tabId: string | null): Promise<void> {
-    if (!text.trim()) return;
+  async function sendPromptText(
+    text: string,
+    tabId: string | null,
+    visibleText: string = text,
+  ): Promise<boolean> {
+    if (!text.trim()) return false;
+    if (debugProviderAction) {
+      if (!providerActionPromptMatches(debugProviderAction.action, text)) {
+        const msg = `Release provider fixture rejected a prompt for ${debugProviderAction.action}.`;
+        setError(msg);
+        pushUiEventForTab(`✗ ${msg}`, tabId);
+        return false;
+      }
+      setError(null);
+      try {
+        const receipt = await dispatchDebugProviderAction(debugProviderAction, text);
+        setDebugProviderActionReceipt(receipt);
+        pushUiEventForTab(`◎ release provider action ${receipt.action} completed`, tabId);
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+        pushUiEventForTab(`✗ ${msg}`, tabId);
+        return false;
+      }
+    }
     const targetTab = tabId
       ? tabsRef.current.find((t) => t.tabId === tabId) ?? null
       : activeTab;
@@ -3629,11 +4279,10 @@ export default function App(): JSX.Element {
       const msg = "Choose an agent before sending.";
       setError(msg);
       pushUiEventForTab(`✗ ${msg}`, tabId ?? targetTab?.tabId ?? null);
-      return;
+      return false;
     }
     if (targetTab && isProviderAgent(selectedAgent)) {
-      await sendProviderPromptForTab(targetTab, selectedAgent, text);
-      return;
+      return await sendProviderPromptForTab(targetTab, selectedAgent, text, visibleText);
     }
     setError(null);
     updateTabById(tabId, { isSending: true });
@@ -3647,7 +4296,7 @@ export default function App(): JSX.Element {
         turnKey: `${tabId ?? ""}::voice::${Date.now()}`,
       });
     }
-    pushPromptEcho(text, tabId, voiceReplyExpected);
+    pushPromptEcho(visibleText, tabId, voiceReplyExpected);
     try {
       // also attach `voiceReplyExpected: true` on the outgoing
       // ACP envelope's `_meta` block. The host-MCP
@@ -3661,6 +4310,7 @@ export default function App(): JSX.Element {
         tabId,
         voiceReplyExpected,
       });
+      return true;
     } catch (err: any) {
       voicePendingTurnRef.current.delete(tabId ?? "__default__");
       setError(String(err));
@@ -3669,8 +4319,13 @@ export default function App(): JSX.Element {
         payload: tabId ? { _meta: { tabId }, text: `✗ ${err}` } : `✗ ${err}`,
       });
       updateTabById(tabId, { isSending: false });
+      return false;
     }
   }
+
+  useBrowserCoworkPromptBridge((request) => (
+    sendPromptText(request.prompt, request.targetTabId, request.visiblePrompt)
+  ));
 
   async function buildReconnectPromptWithSessionTail(
     userPrompt: string,
@@ -3679,8 +4334,13 @@ export default function App(): JSX.Element {
   ): Promise<string> {
     let resumeTranscript: SessionResumeTranscript | null = null;
     try {
-      const lines = await invoke<string[]>("read_session_jsonl", { sessionId: priorSessionId });
-      resumeTranscript = buildSessionResumeTranscript(lines);
+      const tail = await invoke<SessionJsonlTailResponse>("read_session_jsonl_tail", {
+        sessionId: priorSessionId,
+        limit: RECONNECT_SESSION_LOG_TAIL_LINES,
+      });
+      resumeTranscript = buildSessionResumeTranscript(tail.lines, {
+        omittedRawLines: tail.omittedLines,
+      });
     } catch {
       // The prompt still carries the previous session id and log hint.
     }
@@ -3733,7 +4393,7 @@ export default function App(): JSX.Element {
   }
 
   function pushLocalEvent(ev: RawEventFrame): void {
-    setEvents((prev) => [...prev, ev]);
+    setEvents((prev) => appendBoundedRendererEvents(prev, ev));
     if (ev.kind === "ui") {
       void persistRef.current(ev).then((ok) => {
         if (ok) return;
@@ -3811,34 +4471,6 @@ export default function App(): JSX.Element {
     });
   }
 
-  function handleAutonomyChange(mode: AutonomyMode): void {
-    void setAutonomyAndPersist(mode);
-  }
-
-  /**
-   * Workspace chip → directory picker via Tauri's dialog plugin.
-   * Falls back to window.prompt when the plugin isn't reachable
-   * (browser preview, dialog permission denied).
-   */
-  async function handleWorkspaceClick(): Promise<void> {
-    try {
-      const selected = await openDialog({
-        directory: true,
-        multiple: false,
-        defaultPath: cwd,
-      });
-      if (typeof selected === "string" && selected.trim()) {
-        setCwd(selected);
-        pushUiEvent(`→ cwd set to ${selected}`);
-      }
-    } catch (err: any) {
-      // Fallback (e.g. dialog plugin not registered).
-      const next = window.prompt("Set cwd:", cwd);
-      if (next && next.trim()) setCwd(next.trim());
-      console.warn("workspace picker fallback:", err);
-    }
-  }
-
   /**
    * Attach files via the OS dialog and route each one through the
    * right path. The classifier lives Rust-side (`read_text_file_if_text`):
@@ -3856,7 +4488,7 @@ export default function App(): JSX.Element {
   async function handleAttach(): Promise<void> {
     let selected: string | string[] | null;
     try {
-      selected = await openDialog({ multiple: true, defaultPath: cwd });
+      selected = await openShellxDialog({ multiple: true, defaultPath: cwd });
     } catch (err: any) {
       pushUiEvent(`✗ attach picker failed: ${err}`);
       return;
@@ -4419,9 +5051,12 @@ export default function App(): JSX.Element {
     // dedupe set stays intact for the background listener.
     if (!inTauri()) return;
     try {
-      const lines = await invoke<string[]>("read_session_jsonl", { sessionId: id });
+      const tail = await invoke<SessionJsonlTailResponse>("read_session_jsonl_tail", {
+        sessionId: id,
+        limit: MAX_SESSION_LOG_REHYDRATION_LINES,
+      });
       const recovered: RawEventFrame[] = [];
-      for (const line of lines) {
+      for (const line of tail.lines) {
         try {
           const ev = JSON.parse(line) as RawEventFrame;
           const p: any = ev.payload;
@@ -4436,8 +5071,15 @@ export default function App(): JSX.Element {
           recovered.push(ev);
         } catch { /* skip malformed */ }
       }
+      if (tail.omittedLines > 0) {
+        recovered.unshift(historyTruncationFrame(
+          t.tabId,
+          tail.omittedLines,
+          recovered[0]?.t ?? Date.now(),
+        ));
+      }
       if (recovered.length > 0) {
-        setEvents((prev) => [...prev, ...recovered]);
+        setEvents((prev) => appendBoundedRendererEvents(prev, recovered));
         const inferredAgent = latestAgentFromEventFrames(recovered);
         if (inferredAgent) {
           updateTabById(t.tabId, { agentId: inferredAgent });
@@ -4478,7 +5120,11 @@ export default function App(): JSX.Element {
       // Archive the tab into closedTabs so the sidebar's Past Chats
       // list still shows it even if it never produced a jsonl (failed
       // to connect). Empty/untitled tabs are skipped.
-      if (closing && (closing.title || closing.sessionId)) {
+      const pristineNewTab = closing
+        && closing.sessionId == null
+        && !closing.firstMessageMs
+        && (!closing.title || closing.title === "new session");
+      if (closing && !pristineNewTab && (closing.title || closing.sessionId)) {
         archiveClosedTab(closing);
       }
       const next = prev.filter((t) => t.tabId !== tid);
@@ -4525,10 +5171,10 @@ export default function App(): JSX.Element {
   }
 
   function closeAllModals(closeBuildReview = true): void {
-    // The useKeyboardShortcuts hook listens in CAPTURE phase +
-    // stopPropagation, so the central registry's Esc handler runs
-    // BEFORE any local modal's own Esc listener. Every modal's open
-    // flag must reset here or the modal stays open on Esc.
+    // The useKeyboardShortcuts hook listens in capture phase, so the
+    // central registry's Esc handler runs before local bubble listeners.
+    // It deliberately does not stop propagation. Every modal's open flag
+    // must reset here or the modal stays open after the shared handler.
     setHelpOpen(false);
     setPaletteOpen(false);
     setSettingsOpen(false);
@@ -4541,6 +5187,8 @@ export default function App(): JSX.Element {
     setActivityOpen(false);
     setRemoteFolderPicker(null);
     setBuiltinDocId(null);
+    setAgentCliSetupFixtureMode("closed");
+    setGoalPlanReviewFixtureMode("closed");
     if (closeBuildReview) {
       setBuildReviewCloseSeq((seq) => seq + 1);
     }
@@ -4820,7 +5468,6 @@ export default function App(): JSX.Element {
     "new-session": handleNewTab,
     "close-session": () => handleCloseTab(),
     attach: () => { void handleAttach(); },
-    "cycle-autonomy": () => void setAutonomyAndPersist(cycleAutonomy(autonomy)),
     // j/k/y/n/e are handled inside ChatOutput (per-card focus). Leave
     // them un-mapped here so the registry's skipInInput logic doesn't
     // block focus-aware behavior.
@@ -4877,11 +5524,10 @@ export default function App(): JSX.Element {
       { id: "act-pr", label: "Create pull request (/pr)", group: "Action", run: () => setPrModalOpen(true) },
       { id: "act-vault", label: "Open vault (secrets)", group: "Action", run: () => openVaultPanel("overview") },
       { id: "act-help",     label: "Show keyboard shortcuts (?)", group: "Action", run: () => setHelpOpen(true) },
-      // `plan` and `acceptEdits` modes were silent no-ops in
-      // grok-build's ACP transport and are coerced to "default" at the
-      // bridge layer. Drop them from the command palette so users
-      // don't see options that don't do anything.
-      { id: "act-auto-confirm", label: "Autonomy: Confirm (default)", group: "Action", run: () => void setAutonomyAndPersist("default") },
+      // Confirm/plan/accept-edits are not reliable cross-provider user modes.
+      // Keep the normal ShellX workflow fixed to Full Auto; legacy/internal
+      // values remain accepted at the transport boundary only for migration
+      // and release diagnostics.
       { id: "act-auto-auto",    label: "Autonomy: Auto (bypassPermissions)", group: "Action", run: () => void setAutonomyAndPersist("bypassPermissions") },
     ];
     return acts;
@@ -5018,14 +5664,8 @@ export default function App(): JSX.Element {
 
   return (
     <div className="shell">
-      <UpdateBanner />
+      <UpdateBanner debugFixture={debugUpdateFixture} />
       <Header
-        cwd={cwd}
-        autonomy={autonomy}
-        totalTokens={totalTokens}
-        maxTokens={maxTokens}
-        onAutonomyChange={handleAutonomyChange}
-        onWorkspaceClick={() => void handleWorkspaceClick()}
         onOpenSettings={() => setSettingsOpen(true)}
         theme={settings.theme}
         onThemeToggle={handleThemeToggle}
@@ -5035,12 +5675,10 @@ export default function App(): JSX.Element {
         vaultRequestCenter={vaultRequestCenter}
         vaultRequestCenterOpenSeq={vaultRequestCenterOpenSeq}
         vaultRequestCenterCloseSeq={vaultRequestCenterCloseSeq}
+        debugClipboardFixture={debugClipboardFixture === "vault-password" ? "vault-password" : null}
         onOpenVault={openVaultPanel}
         onOpenBrowser={handleOpenShellxBrowser}
         onOpenAbout={openAboutInSettings}
-        hideAutonomyDial={true}
-        /* tabId routes the per-tab set_permission_mode invoke. */
-        activeTabId={activeTabId}
         /* Live-sessions badge: count of tabs with a live grok
          * subprocess attached. sessionId is durable history; status is
          * reconciled against the current Rust registry on boot. */
@@ -5050,8 +5688,8 @@ export default function App(): JSX.Element {
          * list_background_tasks every 2 s above. */
         liveGrokCount={liveGrokCount}
         /* Find searches the live session-tab corpus. Each open tab
-         * becomes a ChatHit so Cmd+K + the header Find popover
-         * surface real work-in-progress. JSONL content search lands
+         * becomes a ChatHit so the header Find popover can surface
+         * real work-in-progress. JSONL content search lands
          * once /sessions/search ships. */
         findCorpus={tabs.map((t) => ({
           id: t.tabId,
@@ -5079,9 +5717,27 @@ export default function App(): JSX.Element {
         }}
       />
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && <div className="error-banner" role="alert" aria-live="assertive">{error}</div>}
+
+      <DebugApiConnectionBanner
+        status={debugUiConnectionFixture ?? debugUiConnectionStatus}
+        onRetry={() => {
+          setDebugUiConnectionFixture(null);
+          window.dispatchEvent(new Event("shellx:debug-api-retry"));
+        }}
+      />
 
       <ClipboardCopiedToast />
+
+      <ShellxSetupGuide
+        settings={settings}
+        requestCount={vaultRequestItems.length}
+        agentsConfigured={activeAgentProviderScan.some((provider) => providerScanStatus(provider) === "ready")}
+        onOpenVault={openVaultPanel}
+        onOpenBrowser={handleOpenShellxBrowser}
+        onOpenRequests={() => setVaultRequestCenterOpenSeq((seq) => seq + 1)}
+        onOpenSettingsTab={openSettingsTab}
+      />
 
       <div className="shell-body">
         <PanelGroup
@@ -5096,7 +5752,7 @@ export default function App(): JSX.Element {
                 t.projectId === p.id OR (for past chats)
                 sessionProjects[t.sessionId] === p.id. */}
             <LeftRail
-              cwd={cwd}
+              cwd={activeTab?.cwd ?? cwd}
               activeTabId={activeTabId}
               onPreviewFile={handlePreviewFile}
               onOpenProject={handleOpenProject}
@@ -5458,6 +6114,7 @@ export default function App(): JSX.Element {
                             activeTabId={activeTabId}
                             cwd={activeTab?.cwd ?? ""}
                             agentId={activeAgentForControls}
+                            releaseTestBoundary={releaseTestExternalEffectBoundary === "artifact-archive"}
                           />
                         </div>
                         <ChatOutput
@@ -5468,6 +6125,9 @@ export default function App(): JSX.Element {
                           // ACP-origin PTY in the registry.
                           tabId={activeTabId ?? undefined}
                           assistantFallbackLabel={agentDisplayName(activeAgentForChat ?? "grok")}
+                          debugPermissionFixture={debugPermissionFixture?.surface === "pill"
+                            ? debugPermissionFixture
+                            : null}
                         />
                   </div>
                 </Panel>
@@ -5543,7 +6203,7 @@ export default function App(): JSX.Element {
                           });
                           return;
                         }
-                        const selected = await openDialog({
+                        const selected = await openShellxDialog({
                           directory: true,
                           multiple: false,
                           defaultPath: activeTab?.cwd ?? cwd,
@@ -5561,6 +6221,8 @@ export default function App(): JSX.Element {
 	                    connectionLocked={Boolean(activeTab?.firstMessageMs || activeTab?.sessionLockPending)}
                     debugOpenMenu={debugComposerMenuRequest?.menu ?? null}
                     debugOpenMenuSeq={debugComposerMenuRequest?.seq}
+                    debugAcpTerminals={debugBottomPanelTerminals}
+                    releaseTestVoiceRecording={releaseTestVoiceRecording}
                     scopeConnection={activeTab?.connectionLabel ?? "Local"}
                     scopeConnectionId={activeTab?.connectionId ?? null}
                     scopeConnectionTransport={activeTab?.connectionTransport ?? "local"}
@@ -5632,9 +6294,22 @@ export default function App(): JSX.Element {
                       connectionId={activeTab?.connectionId ?? null}
                       sessionStatus={activeTab?.status ?? "Idle"}
                       activeAgentId={activeAgentForControls}
+                      debugBuildRunFixture={debugBuildRunFixture}
+                      debugRightRailGitFixture={debugRightRailGitFixture}
+                      debugProviderAction={debugProviderAction?.action ?? null}
+                      debugClipboardFixture={debugClipboardFixture === "tasks"
+                        ? "tasks"
+                        : debugClipboardFixture === "work-preview" ? "work-preview" : null}
+                      debugUpdateFixture={debugUpdateFixture}
                       shellxToolExposure={activeTab?.shellxToolExposure ?? DEFAULT_SHELLX_TOOL_EXPOSURE}
                       onShellxToolExposureChange={handleShellxToolExposureChange}
                       onProviderScanUpdated={handleProviderScanUpdated}
+                      agentCliStatusFixture={
+                        agentCliSetupFixtureMode === "status-card"
+                          ? debugAgentCliSetupFixture("status-card")
+                          : undefined
+                      }
+                      agentCliStatusLive={agentCliSetupFixtureMode === "live-status"}
                       onSendPromptToActiveTab={(text) => void sendPromptText(text, activeTabId)}
                       onConnectActiveTab={(target) => connect({
                         tabId: target?.tabId ?? activeTab?.tabId ?? null,
@@ -5669,17 +6344,35 @@ export default function App(): JSX.Element {
       {/* Status pills + event count live in the header / mid-head.
        * No global footer strip. */}
 
-      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
-      {/* Mounted at App level so any tab's pending Confirm prompt
-       * can pop the dialog. Listens for `permission-request` events
-       * with `scope: "terminal/create"` + a `request_id` field.
-       * *  Issue #374 — the in-chat PermissionPill is now the canonical
-       * surface; the modal is gated by the `permissionUx` setting so
-       * Confirm-mode users can opt out of the focus-stealing popup
-       * while still seeing pills in the chat (which double as the
-       * audit trail). Default is "pill" only; legacy "modal" keeps
-       * the popup; "both" shows both surfaces. */}
-      {settings.permissionUx !== "pill" && <PermissionModal />}
+      {helpOpen && (
+        <LazySurface label="Help" onDismiss={() => setHelpOpen(false)}>
+          <HelpModal onClose={() => setHelpOpen(false)} />
+        </LazySurface>
+      )}
+      {(agentCliSetupFixtureMode === "cards"
+        || agentCliSetupFixtureMode === "confirmation"
+        || agentCliSetupFixtureMode === "live-setup"
+        || agentCliSetupFixtureMode === "install-lifecycle"
+        || agentCliSetupFixtureMode === "clipboard-cards"
+        || agentCliSetupFixtureMode === "clipboard-confirmation") && (
+        <AgentCliSetupDialog
+          preset={DEBUG_AGENT_CLI_SETUP_PRESET}
+          onClose={() => setAgentCliSetupFixtureMode("closed")}
+          fixture={agentCliSetupFixtureMode === "live-setup"
+            ? undefined
+            : debugAgentCliSetupFixture(agentCliSetupFixtureMode)}
+        />
+      )}
+      {/* Compatibility-only provider prompt surface. Full Auto is the normal
+       * ShellX mode, but a migrated session or release fixture may still emit
+       * a defensive `terminal/create` decision request. */}
+      {(settings.permissionUx !== "pill" || debugPermissionFixture?.surface === "modal") && (
+        <PermissionModal
+          debugFixture={debugPermissionFixture?.surface === "modal"
+            ? debugPermissionFixture
+            : null}
+        />
+      )}
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
@@ -5687,75 +6380,112 @@ export default function App(): JSX.Element {
         skills={visibleSlashCommands}
         insertSlash={insertSlashIntoPrompt}
       />
-      <Settings
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        initial={settings}
-        onChange={handleSettingsChange}
-      />
-      <PluginsModal
-        open={pluginsOpen}
-        onClose={() => setPluginsOpen(false)}
-        activeTabId={activeTabId}
-      />
-      <ConnectorInboxModal
-        open={connectorInboxOpen}
-        onClose={() => setConnectorInboxOpen(false)}
-        onSeen={markConnectorInboxSeen}
-      />
-      <AttachmentMediaBoard
-        open={assetBoardOpen}
-        attachments={pendingAttachmentChips}
-        sessionAttachments={sessionAttachments}
-        images={sessionMedia.images}
-        videos={sessionMedia.videos}
-        sessionAssets={sessionAssetRegistry.all}
-        activeTabId={activeTabId}
-        tabId={activeTabId}
-        sessionCwd={activeTab?.cwd ?? cwd}
-        onClose={() => setAssetBoardOpen(false)}
-        onAttach={() => void handleAttach()}
-        onAttachScreenshot={() => void handleAttachScreenshot()}
-        onRemoveAttachment={removePendingAttachment}
-        onPreviewFile={handlePreviewFile}
-        onPreviewAsset={handlePreviewAsset}
-        onImportAsset={(asset) => void importAssetToActiveScope(asset)}
-        onAttachAsset={(asset) => void handleAttachAsset(asset)}
-        onInsertPrompt={appendTextToPrompt}
-      />
-      <BuiltinDocModal
-        docId={builtinDocId}
-        onClose={() => setBuiltinDocId(null)}
-      />
-      <PreviewCenter
-        open={previewCenterOpen}
-        view={previewCenterView}
-        filePath={previewPath}
-        tabId={previewFileContext?.tabId ?? activeTabId}
-        sessionCwd={previewFileContext?.sessionCwd ?? activeTab?.cwd ?? cwd}
-        workState={activeWorkPreviewState}
-        onClose={() => setPreviewCenterOpen(false)}
-        onViewChange={setPreviewCenterView}
-        onPreviewFile={handlePreviewFile}
-        onRunWorkPreview={handlePreviewFile}
-        onAskGrokToFix={(state) => void handleAskGrokToFixPreview(state)}
-      />
-      <ActivityBrowserModal
-        open={activityOpen}
-        tabId={activeTabId}
-        sessionId={activeTab?.sessionId ?? null}
-        sessionCwd={activeTab?.cwd ?? cwd}
-        transport={activeTab?.connectionTransport ?? "local"}
-        onClose={() => setActivityOpen(false)}
-        onPreviewFile={handlePreviewFile}
-        onAskAgent={(text) => void sendPromptText(text, activeTabId)}
-      />
+      {settingsOpen && (
+        <LazySurface label="Settings" onDismiss={() => setSettingsOpen(false)}>
+          <Settings
+            open
+            onClose={() => setSettingsOpen(false)}
+            initial={settings}
+            onChange={handleSettingsChange}
+            debugShellxagentFixture={debugShellxagentFixture}
+            debugClipboardFixture={debugClipboardFixture === "shellxagent-token"
+              ? "shellxagent-token"
+              : debugClipboardFixture === "vault-draft" ? "vault-draft" : null}
+            connectorsDebugFixture={debugConnectorsFixture}
+            debugUpdateFixture={debugUpdateFixture}
+          />
+        </LazySurface>
+      )}
+      {pluginsOpen && (
+        <LazySurface label="Plugins" onDismiss={() => setPluginsOpen(false)}>
+          <PluginsModal
+            open
+            onClose={() => setPluginsOpen(false)}
+            activeTabId={activeTabId}
+            debugFixture={debugPluginsFixture}
+          />
+        </LazySurface>
+      )}
+      {connectorInboxOpen && (
+        <LazySurface label="Connector inbox" onDismiss={() => setConnectorInboxOpen(false)}>
+          <ConnectorInboxModal
+            open
+            onClose={() => setConnectorInboxOpen(false)}
+            onSeen={markConnectorInboxSeen}
+          />
+        </LazySurface>
+      )}
+      {assetBoardOpen && (
+        <LazySurface label="Asset board" onDismiss={() => setAssetBoardOpen(false)}>
+          <AttachmentMediaBoard
+            open
+            attachments={pendingAttachmentChips}
+            sessionAttachments={sessionAttachments}
+            images={sessionMedia.images}
+            videos={sessionMedia.videos}
+            sessionAssets={sessionAssetRegistry.all}
+            activeTabId={activeTabId}
+            tabId={activeTabId}
+            sessionCwd={activeTab?.cwd ?? cwd}
+            onClose={() => setAssetBoardOpen(false)}
+            onAttach={() => void handleAttach()}
+            onAttachScreenshot={() => void handleAttachScreenshot()}
+            onRemoveAttachment={removePendingAttachment}
+            onPreviewFile={handlePreviewFile}
+            onPreviewAsset={handlePreviewAsset}
+            onImportAsset={(asset) => void importAssetToActiveScope(asset)}
+            onAttachAsset={(asset) => void handleAttachAsset(asset)}
+            onInsertPrompt={appendTextToPrompt}
+          />
+        </LazySurface>
+      )}
+      {builtinDocId && (
+        <LazySurface label="Documentation" onDismiss={() => setBuiltinDocId(null)}>
+          <BuiltinDocModal
+            docId={builtinDocId}
+            onClose={() => setBuiltinDocId(null)}
+          />
+        </LazySurface>
+      )}
+      {previewCenterOpen && (
+        <LazySurface label="Preview center" onDismiss={() => setPreviewCenterOpen(false)}>
+          <PreviewCenter
+            open
+            view={previewCenterView}
+            filePath={previewPath}
+            tabId={previewFileContext?.tabId ?? activeTabId}
+            sessionCwd={previewFileContext?.sessionCwd ?? activeTab?.cwd ?? cwd}
+            workState={activeWorkPreviewState}
+            onClose={() => setPreviewCenterOpen(false)}
+            onViewChange={setPreviewCenterView}
+            onPreviewFile={handlePreviewFile}
+            onRunWorkPreview={handlePreviewFile}
+            onAskGrokToFix={(state) => void handleAskGrokToFixPreview(state)}
+            debugProviderAction={debugProviderAction?.action ?? null}
+          />
+        </LazySurface>
+      )}
+      {activityOpen && (
+        <LazySurface label="Activity browser" onDismiss={() => setActivityOpen(false)}>
+          <ActivityBrowserModal
+            open
+            tabId={activeTabId}
+            sessionId={activeTab?.sessionId ?? null}
+            sessionCwd={activeTab?.cwd ?? cwd}
+            transport={activeTab?.connectionTransport ?? "local"}
+            onClose={() => setActivityOpen(false)}
+            onPreviewFile={handlePreviewFile}
+            onAskAgent={(text) => void sendPromptText(text, activeTabId)}
+          />
+        </LazySurface>
+      )}
       <BuildPlanReviewModal
         activeTabId={activeTabId}
         sessionCwd={activeTab?.cwd ?? cwd}
         eventsLen={eventsForActiveTab.length}
         openRequestSeq={buildReviewRequestSeq}
         closeRequestSeq={buildReviewCloseSeq}
+        debugFixture={debugBuildPlanFixture}
         onPreviewFile={handlePreviewFile}
         onAccepted={() => {
           setRightRailRequest((cur) => ({ tab: "Plan", seq: (cur?.seq ?? 0) + 1 }));
@@ -5768,11 +6498,22 @@ export default function App(): JSX.Element {
         activeTabId={activeTabId}
         eventsLen={eventsForActiveTab.length}
         openRequestSeq={goalReviewRequestSeq}
+        fixture={goalPlanReviewFixtureMode === "closed"
+          ? undefined
+          : debugGoalPlanReviewFixture(goalPlanReviewFixtureMode)}
         onPreviewFile={handlePreviewFile}
         onAccepted={() => {
+          if (goalPlanReviewFixtureMode !== "closed") {
+            setGoalPlanReviewFixtureMode("closed");
+            return;
+          }
           setRightRailRequest((cur) => ({ tab: "Plan", seq: (cur?.seq ?? 0) + 1 }));
         }}
         onReviewLater={() => {
+          if (goalPlanReviewFixtureMode !== "closed") {
+            setGoalPlanReviewFixtureMode("closed");
+            return;
+          }
           setRightRailRequest((cur) => ({ tab: "Plan", seq: (cur?.seq ?? 0) + 1 }));
         }}
       />
@@ -5784,29 +6525,67 @@ export default function App(): JSX.Element {
           setRemoteFolderPicker(null);
         }}
       />
-      <PRCreateModal
-        open={prModalOpen}
-        onClose={() => setPrModalOpen(false)}
-        defaultBase="main"
-        defaultTitle={prDraftTitle}
-        defaultBody={prDraftBody}
-        transcriptAppendix={prTranscript}
-        activeTabId={activeTabId}
-        onCreated={(url) => {
-          pushUiEvent(url ? `→ PR opened ↗ ${url}` : "→ PR created");
-        }}
-      />
+      {prModalOpen && (
+        <LazySurface label="Pull request" onDismiss={() => setPrModalOpen(false)}>
+          <PRCreateModal
+            open
+            onClose={() => setPrModalOpen(false)}
+            defaultBase="main"
+            defaultTitle={prDraftTitle}
+            defaultBody={prDraftBody}
+            transcriptAppendix={prTranscript}
+            activeTabId={activeTabId}
+            onCreated={(url) => {
+              pushUiEvent(url ? `→ PR opened ↗ ${url}` : "→ PR created");
+            }}
+            releaseTestBoundary={releaseTestExternalEffectBoundary === "pr-create"}
+          />
+        </LazySurface>
+      )}
       {/* VaultPanel — opened via Cmd+K palette → "Open vault
        * (secrets)". Self-renders only when open=true. */}
-      <VaultPanel
-        open={vaultOpen}
-        intent={vaultPanelIntent}
-        intentSeq={vaultPanelIntentSeq}
-        onClose={() => setVaultOpen(false)}
-      />
+      {vaultOpen && (
+        <LazySurface label="Vault" onDismiss={() => setVaultOpen(false)}>
+          <VaultPanel
+            open
+            intent={vaultPanelIntent}
+            intentSeq={vaultPanelIntentSeq}
+            onClose={() => setVaultOpen(false)}
+          />
+        </LazySurface>
+      )}
+      {releaseTestLazySurface && (
+        <LazySurface
+          label="Release recovery fixture"
+          onDismiss={() => setReleaseTestLazySurface(null)}
+          onRetry={() => setReleaseTestLazySurface("recovered")}
+        >
+          {releaseTestLazySurface === "error" ? (
+            <ReleaseLazySurfaceFailure />
+          ) : (
+            <output data-shellx-release-control="lazy-surface-recovered">
+              Lazy surface recovered
+            </output>
+          )}
+        </LazySurface>
+      )}
       <DebugHighlightOverlay surface="app" highlights={debugHighlights} />
+      {debugProviderActionReceipt && (
+        <output
+          data-shellx-release-control="provider-action-receipt"
+          data-shellx-release-observe="title"
+          title={`Provider action receipt — ${debugProviderActionReceipt.action} — ${debugProviderActionReceipt.promptSha256}`}
+          style={{ position: "fixed", right: 12, bottom: 12, zIndex: 120, maxWidth: 420 }}
+        >
+          Provider action completed: {debugProviderActionReceipt.action}
+        </output>
+      )}
     </div>
   );
+}
+
+function ReleaseLazySurfaceFailure(): never {
+  throw new Error("SHELLX_RELEASE_LAZY_SURFACE_OWNED_ERROR");
 }
 
 interface RemoteFolderPickerRequest {
@@ -5837,10 +6616,12 @@ function RemoteFolderPickerModal({
   const [entries, setEntries] = useState<RemoteFolderEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(Boolean(request), dialogRef, onClose);
 
   useEffect(() => {
     if (!request) return;
-    const initial = remoteNormalizePath(request.initialPath || "/");
+    const initial = normalizeRemoteFolderPath(request.initialPath || "/");
     setPath(initial);
     setDraftPath(initial);
     setEntries(null);
@@ -5881,22 +6662,19 @@ function RemoteFolderPickerModal({
 
   if (!request) return null;
 
-  const parent = remoteParentPath(path);
+  const parent = parentRemoteFolderPath(path);
   const goToDraft = (): void => {
-    const next = remoteNormalizePath(draftPath);
+    const next = normalizeRemoteFolderPath(draftPath);
     if (!next) return;
     setPath(next);
     setDraftPath(next);
   };
-  const draftNormalized = remoteNormalizePath(draftPath || path);
+  const draftNormalized = normalizeRemoteFolderPath(draftPath || path);
   const canUsePath = !loading && !error && entries !== null && draftNormalized === path;
   const folders = (entries ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Remote folder picker"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -5911,14 +6689,18 @@ function RemoteFolderPickerModal({
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Remote folder picker"
         style={{
           width: "min(680px, calc(100vw - 32px))",
           maxHeight: "min(620px, calc(100vh - 48px))",
           display: "flex",
           flexDirection: "column",
-          background: "var(--bg-elev, #111)",
-          color: "var(--fg, #eee)",
-          border: "1px solid var(--border, #333)",
+          background: "var(--bg-elev)",
+          color: "var(--fg)",
+          border: "1px solid var(--border)",
           borderRadius: 8,
           boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
           overflow: "hidden",
@@ -5930,12 +6712,12 @@ function RemoteFolderPickerModal({
             alignItems: "center",
             gap: 8,
             padding: "10px 12px",
-            borderBottom: "1px solid var(--border, #333)",
+            borderBottom: "1px solid var(--border)",
           }}
         >
           <ShellIcon name="folder-open" size={16} />
-          <strong style={{ fontSize: "var(--fs-ui-sm, 13px)" }}>Remote Folder</strong>
-          <span style={{ color: "var(--fg-muted, #999)", fontSize: "var(--fs-ui-xs, 12px)" }}>
+          <strong style={{ fontSize: "var(--fs-ui-sm)" }}>Remote Folder</strong>
+          <span style={{ color: "var(--fg-muted)", fontSize: "var(--fs-ui-xs)" }}>
             {request.label}
           </span>
           <span style={{ flex: 1 }} />
@@ -5944,13 +6726,15 @@ function RemoteFolderPickerModal({
             className="mp-action-btn mp-action-btn-secondary"
             data-debug-id="remote-cwd-close"
             onClick={onClose}
+            aria-label="Close remote folder picker"
           >
             <ShellIcon name="close" size={13} />
           </button>
         </div>
-        <div style={{ display: "flex", gap: 8, padding: 12, borderBottom: "1px solid var(--border, #333)" }}>
+        <div style={{ display: "flex", gap: 8, padding: 12, borderBottom: "1px solid var(--border)" }}>
           <input
             data-debug-id="remote-cwd-input"
+            data-shellx-release-observe="value"
             value={draftPath}
             onChange={(e) => setDraftPath(e.target.value)}
             onKeyDown={(e) => {
@@ -5961,12 +6745,12 @@ function RemoteFolderPickerModal({
               flex: 1,
               minWidth: 0,
               padding: "6px 8px",
-              background: "var(--bg, #090909)",
+              background: "var(--bg)",
               color: "inherit",
-              border: "1px solid var(--border, #333)",
+              border: "1px solid var(--border)",
               borderRadius: 4,
               fontFamily: "var(--mono, monospace)",
-              fontSize: "var(--fs-ui-sm, 13px)",
+              fontSize: "var(--fs-ui-sm)",
             }}
           />
           <button
@@ -5981,6 +6765,7 @@ function RemoteFolderPickerModal({
             type="button"
             className="mp-action-btn"
             data-debug-id="remote-cwd-use"
+            data-shellx-release-observe="disabled"
             onClick={() => onSelect(path)}
             disabled={!canUsePath}
             title={canUsePath ? "Use this folder" : "Press Go and wait for a valid folder before using it"}
@@ -5988,7 +6773,7 @@ function RemoteFolderPickerModal({
             Use
           </button>
         </div>
-        <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border, #333)" }}>
+        <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
           <button
             type="button"
             className="mp-action-btn mp-action-btn-secondary"
@@ -5999,21 +6784,22 @@ function RemoteFolderPickerModal({
               setDraftPath(parent);
             }}
             disabled={!parent}
+            aria-label="Up one folder level"
           >
             <ShellIcon name="arrow-up" size={13} />
           </button>
-          <code style={{ fontSize: "var(--fs-ui-xs, 12px)", color: "var(--fg-muted, #aaa)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <code style={{ fontSize: "var(--fs-ui-xs)", color: "var(--fg-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {path}
           </code>
         </div>
         {error && (
-          <div style={{ padding: "8px 12px", color: "var(--fg-error, #f66)", fontSize: "var(--fs-ui-sm, 13px)", borderBottom: "1px solid var(--border, #333)" }}>
+          <div style={{ padding: "8px 12px", color: "var(--fg-error)", fontSize: "var(--fs-ui-sm)", borderBottom: "1px solid var(--border)" }}>
             {error}
           </div>
         )}
         <div style={{ flex: 1, minHeight: 220, overflow: "auto", padding: 8 }}>
           {loading ? (
-            <div style={{ padding: 12, color: "var(--fg-muted, #999)", fontSize: "var(--fs-ui-sm, 13px)" }}>
+            <div style={{ padding: 12, color: "var(--fg-muted)", fontSize: "var(--fs-ui-sm)" }}>
               Loading folders...
             </div>
           ) : folders.length === 0 ? (
@@ -6044,7 +6830,7 @@ function RemoteFolderPickerModal({
                   <span>..</span>
                 </button>
               )}
-              <div style={{ padding: 12, color: "var(--fg-muted, #999)", fontSize: "var(--fs-ui-sm, 13px)" }}>
+              <div style={{ padding: 12, color: "var(--fg-muted)", fontSize: "var(--fs-ui-sm)" }}>
                 No subfolders found.
               </div>
             </>
@@ -6077,7 +6863,7 @@ function RemoteFolderPickerModal({
                 </button>
               )}
               {folders.map((entry) => {
-                const next = remoteJoinPath(path, entry.name);
+                const next = joinRemoteFolderPath(path, entry.name);
                 return (
                   <button
                     key={entry.name}
@@ -6114,28 +6900,6 @@ function RemoteFolderPickerModal({
       </div>
     </div>
   );
-}
-
-function remoteNormalizePath(path: string): string {
-  let trimmed = path.trim().replace(/\\/g, "/");
-  const wslUnc = trimmed.match(/^\/\/wsl(?:\.localhost|\$)\/[^/]+(\/.*)?$/i);
-  if (wslUnc) trimmed = wslUnc[1] || "/";
-  trimmed = trimmed.replace(/\/+/g, "/");
-  if (!trimmed) return "/";
-  if (!trimmed.startsWith("/")) return `/${trimmed}`.replace(/\/+/g, "/");
-  if (trimmed === "/") return "/";
-  return trimmed.replace(/\/+$/, "") || "/";
-}
-
-function remoteParentPath(path: string): string | null {
-  const normalized = remoteNormalizePath(path);
-  if (normalized === "/") return null;
-  const idx = normalized.lastIndexOf("/");
-  return idx <= 0 ? "/" : normalized.slice(0, idx);
-}
-
-function remoteJoinPath(base: string, child: string): string {
-  return remoteNormalizePath(`${remoteNormalizePath(base).replace(/\/$/, "")}/${child.replace(/^\/+/, "")}`);
 }
 
 /* ─────────────── Helpers ─────────────── */
@@ -6288,19 +7052,6 @@ function extractSessionId(payload: unknown): string | undefined {
   );
 }
 
-function cycleAutonomy(mode: AutonomyMode): AutonomyMode {
-  // Cycle is just default (Confirm) ↔ bypassPermissions (Auto). The
-  // legacy `plan` and `acceptEdits` modes were silent no-ops and have
-  // been dropped; stale localStorage values coerce to default rather
-  // than stranding the user on a no-op state.
-  const order: AutonomyMode[] = ["default", "bypassPermissions"];
-  const coerced: AutonomyMode = mode === "plan" || mode === "acceptEdits" ? "default" : mode;
-  const i = order.indexOf(coerced);
-  if (i < 0) return "bypassPermissions";
-  const next = order[(i + 1) % order.length];
-  return next ?? "bypassPermissions";
-}
-
 function readLocal<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -6369,17 +7120,23 @@ function SessionArtifactDownload({
   activeTabId,
   cwd,
   agentId,
+  releaseTestBoundary = false,
 }: {
   activeTabId: string | null;
   cwd: string;
   agentId: AgentSelection;
+  releaseTestBoundary?: boolean;
 }): JSX.Element | null {
-  if (agentId !== "grok") return null;
+  const [releaseReceipt, setReleaseReceipt] = useState<string | null>(null);
+  useEffect(() => {
+    if (!releaseTestBoundary) setReleaseReceipt(null);
+  }, [releaseTestBoundary]);
+  if (agentId !== "grok" && !releaseTestBoundary) return null;
   // Disabled state: button is dim and shows a tooltip explaining why.
   // We consider "no session active" = no activeTabId OR no cwd assigned
   // to the active tab. The archive command can't produce a meaningful
   // zip without a cwd to walk.
-  const disabledReason = !activeTabId || !cwd
+  const disabledReason = !releaseTestBoundary && (!activeTabId || !cwd)
     ? "no session active"
     : "";
   const disabled = disabledReason.length > 0;
@@ -6387,9 +7144,14 @@ function SessionArtifactDownload({
     <button
       type="button"
       className="hdr-icon mid-head-dl"
+      data-shellx-release-observe="title"
       disabled={disabled}
       onClick={async () => {
         if (disabled) return;
+        if (releaseTestBoundary) {
+          setReleaseReceipt("release fixture artifact archive stopped before save picker");
+          return;
+        }
         try {
           const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
           const defaultName = `shellx-session-${stamp}.zip`;
@@ -6416,9 +7178,9 @@ function SessionArtifactDownload({
           alert(`Download failed: ${String(e)}`);
         }
       }}
-      title={disabled
+      title={releaseReceipt ?? (disabled
         ? disabledReason
-        : "Download this Grok session's artifacts (workspace + scratch) as a zip"}
+        : "Download this Grok session's artifacts (workspace + scratch) as a zip")}
       aria-label="Download Grok session artifacts"
     >
       ⬇

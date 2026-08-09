@@ -194,6 +194,7 @@
             <option value="commerce">Commerce</option>
           </select>
         </label>
+        <button type="button" data-testid="preview-onboarding">Preview setup</button>
         <button type="submit" data-testid="submit-onboarding">Submit setup</button>
       </form>
       <div class="status" data-testid="onboarding-status" id="onboarding-status"></div>
@@ -263,6 +264,14 @@
       const type = document.getElementById("project-type").value || "unbound";
       document.getElementById("onboarding-status").textContent =
         `Onboarding submitted: ${team} / ${project} / ${type}`;
+    });
+
+    document.querySelector("[data-testid='preview-onboarding']").addEventListener("click", () => {
+      const team = document.getElementById("team-name").value.trim() || "unbound team";
+      const project = document.getElementById("project-name").value.trim() || "unbound project";
+      const type = document.getElementById("project-type").value || "unbound";
+      document.getElementById("onboarding-status").textContent =
+        `Onboarding preview ready: ${team} / ${project} / ${type}`;
     });
 
     document.getElementById("refresh-dashboard").addEventListener("click", () => {

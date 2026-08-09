@@ -1,52 +1,7 @@
-use sha2::{Digest, Sha256};
-
 use crate::shellx_browser::{
     clean_string, BrowserActionRequest, BrowserActionabilityCheck, BrowserAgentStepSummary,
     BrowserLocatorRecoveryCandidate, BrowserObservation, BrowserObservationRef,
 };
-
-pub(crate) fn assign_browser_snapshot_id(observation: &mut BrowserObservation) {
-    if !observation.snapshot_id.trim().is_empty() {
-        return;
-    }
-    observation.snapshot_id = browser_snapshot_id(observation);
-}
-
-pub(crate) fn browser_snapshot_id(observation: &BrowserObservation) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(observation.task_id.as_bytes());
-    hasher.update(b"\n");
-    if let Some(url) = observation.url.as_deref() {
-        hasher.update(url.as_bytes());
-    }
-    hasher.update(b"\n");
-    hasher.update(observation.title.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(observation.dom_summary.links.to_string().as_bytes());
-    hasher.update(b":");
-    hasher.update(observation.dom_summary.buttons.to_string().as_bytes());
-    hasher.update(b":");
-    hasher.update(observation.dom_summary.inputs.to_string().as_bytes());
-    hasher.update(b"\n");
-    for reference in observation.refs.iter().take(80) {
-        hasher.update(reference.ref_id.as_bytes());
-        hasher.update(b"|");
-        hasher.update(reference.role.as_bytes());
-        hasher.update(b"|");
-        hasher.update(reference.label.as_bytes());
-        hasher.update(b"|");
-        if let Some(selector) = reference.selector.as_deref() {
-            hasher.update(selector.as_bytes());
-        }
-        hasher.update(b"|");
-        if let Some(action) = reference.action.as_deref() {
-            hasher.update(action.as_bytes());
-        }
-        hasher.update(b"\n");
-    }
-    let hash = format!("{:x}", hasher.finalize());
-    format!("browser-snapshot-{}", &hash[..16])
-}
 
 pub(crate) fn decorate_browser_step_summary_for_request(
     summary: &mut BrowserAgentStepSummary,
@@ -85,6 +40,12 @@ pub(crate) fn decorate_browser_step_summary_for_request(
         &request.action,
     );
     if let Some(check) = actionability {
+        if check.fingerprint_matches == Some(false) {
+            push_unique_hint(
+                &mut summary.recovery_hints,
+                "The observed ref is stale because the live element identity changed; run a fresh observe and use the new ref before retrying.".to_string(),
+            );
+        }
         if let Some(covering) = check.covering_element.as_ref() {
             let cover_label = covering
                 .label

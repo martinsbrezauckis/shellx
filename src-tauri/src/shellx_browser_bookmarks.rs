@@ -2,10 +2,13 @@ use serde_json::json;
 use tauri::Url;
 
 use crate::shellx_browser::{
-    lock_or_recover, push_receipt, BrowserBookmark, BrowserBookmarkAgentWorkflow,
-    BrowserBookmarkKind, BrowserBookmarkReorderRequest, BrowserBookmarkResponse,
-    BrowserBookmarkToolbarItem, BrowserBookmarkUpsertRequest, BrowserClearHistoryRequest,
-    BrowserReceipt, BrowserState, ShellxBrowserRegistry,
+    lock_or_recover, next_browser_evidence_sequence, push_receipt, BrowserBookmark,
+    BrowserBookmarkAgentWorkflow, BrowserBookmarkKind, BrowserBookmarkReorderRequest,
+    BrowserBookmarkResponse, BrowserBookmarkToolbarItem, BrowserBookmarkUpsertRequest,
+    BrowserClearHistoryRequest, BrowserReceipt, BrowserState, ShellxBrowserRegistry,
+};
+use crate::shellx_browser_workflow_taxonomy::{
+    canonical_workflow_task_type, workflow_slug as browser_workflow_slug,
 };
 
 impl ShellxBrowserRegistry {
@@ -443,12 +446,25 @@ fn push_bookmark_receipt(
         profile_id: None,
         summary,
         t: now_ms(),
+        sequence: next_browser_evidence_sequence(state),
         evidence,
     };
     state.receipts.push(receipt.clone());
     if state.receipts.len() > 1000 {
         let overflow = state.receipts.len() - 1000;
-        state.receipts.drain(0..overflow);
+        let dropped_task_ids = state
+            .receipts
+            .drain(0..overflow)
+            .filter_map(|receipt| receipt.task_id)
+            .collect::<Vec<_>>();
+        state.receipt_retention_dropped = state
+            .receipt_retention_dropped
+            .saturating_add(overflow as u64);
+        for task_id in dropped_task_ids {
+            if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
+                task.retention_dropped_receipts = task.retention_dropped_receipts.saturating_add(1);
+            }
+        }
     }
     receipt
 }
@@ -479,31 +495,6 @@ fn clean_bookmark_text(value: Option<String>, limit: usize) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn workflow_slug(value: &str, limit: usize) -> Option<String> {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash && !out.is_empty() {
-            out.push('-');
-            last_dash = true;
-        }
-        if out.len() >= limit {
-            break;
-        }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
-}
-
 fn clean_workflow_site_key(value: Option<String>) -> Option<String> {
     let raw = clean_bookmark_text(value, 256)?;
     let candidate = if raw.contains("://") {
@@ -526,7 +517,7 @@ fn clean_workflow_site_key(value: Option<String>) -> Option<String> {
         .to_string();
     let labels = host
         .split('.')
-        .filter_map(|label| workflow_slug(label, 63))
+        .filter_map(|label| browser_workflow_slug(label, 63))
         .collect::<Vec<_>>();
     if labels.is_empty() {
         None
@@ -536,24 +527,11 @@ fn clean_workflow_site_key(value: Option<String>) -> Option<String> {
 }
 
 fn clean_workflow_task_type(value: Option<String>) -> Option<String> {
-    let slug = workflow_slug(&clean_bookmark_text(value, 64)?, 64)?;
-    let first = slug.split('-').next().unwrap_or(slug.as_str());
-    let canonical = match first {
-        "read" | "get" | "search" | "create" | "update" | "upload" | "download" | "fill"
-        | "submit" | "buy" | "login" | "register" | "verify" | "store" | "delete" | "open"
-        | "analyze" => first,
-        "fetch" | "retrieve" | "copy" => "get",
-        "find" => "search",
-        "add" | "new" => "create",
-        "edit" | "change" => "update",
-        "signin" | "sign-in" | "sign" => "login",
-        _ => slug.as_str(),
-    };
-    Some(canonical.to_string())
+    canonical_workflow_task_type(value)
 }
 
 fn clean_workflow_slug_field(value: Option<String>, limit: usize) -> Option<String> {
-    workflow_slug(&clean_bookmark_text(value, limit)?, limit)
+    browser_workflow_slug(&clean_bookmark_text(value, limit)?, limit)
 }
 
 fn clean_workflow_aliases(values: Vec<String>) -> Vec<String> {
@@ -576,7 +554,7 @@ fn clean_workflow_permissions(values: Vec<String>) -> Vec<String> {
 
 fn clean_workflow_secret_kind(value: String) -> Option<String> {
     let cleaned = clean_bookmark_text(Some(value), 64)?;
-    let slug = workflow_slug(&cleaned, 64)?;
+    let slug = browser_workflow_slug(&cleaned, 64)?;
     let canonical = match slug.as_str() {
         "apitoken" | "api-token" | "api-key" | "apikey" | "token" => "apiToken",
         "password" | "passphrase" => "password",
@@ -622,7 +600,14 @@ fn clean_workflow_health(value: Option<String>) -> Option<String> {
 fn clean_workflow_rating(value: Option<String>) -> Option<String> {
     let value = clean_bookmark_text(value, 32)?;
     match value.as_str() {
-        "strong-improvement" | "improved" | "neutral" | "regressed" => Some(value),
+        "strong-improvement"
+        | "improved"
+        | "neutral"
+        | "regressed"
+        | "insufficient-evidence"
+        | "safety-regression"
+        | "unsafe-candidate"
+        | "incomplete-evaluation" => Some(value),
         _ => None,
     }
 }
@@ -683,9 +668,22 @@ fn normalize_agent_workflow(
     let last_replay_status = clean_workflow_replay_status(workflow.last_replay_status);
     let last_replay_at_ms = workflow.last_replay_at_ms.filter(|value| *value > 0);
     let drift_status = clean_workflow_drift_status(workflow.drift_status);
-    let refresh_reason = clean_bookmark_text(workflow.refresh_reason, 512);
-    let refresh_candidate_recipe_path =
+    let mut refresh_reason = clean_bookmark_text(workflow.refresh_reason, 512);
+    let mut refresh_candidate_recipe_path =
         clean_bookmark_text(workflow.refresh_candidate_recipe_path, 4096);
+    let needs_refresh = matches!(
+        health.as_deref(),
+        Some("degraded" | "needs-review" | "broken")
+    ) || matches!(
+        drift_status.as_deref(),
+        Some("needs-review" | "drifted" | "broken")
+    );
+    if !needs_refresh {
+        refresh_reason = None;
+        refresh_candidate_recipe_path = None;
+    } else if refresh_reason.is_none() {
+        refresh_candidate_recipe_path = None;
+    }
     if site_key.is_none()
         && task_type.is_none()
         && target.is_none()
@@ -825,5 +823,60 @@ mod tests {
             toolbar_workflow.recipe_id.as_deref(),
             Some("browser-recipe-123")
         );
+    }
+
+    #[test]
+    fn workflow_task_type_preserves_signup_intent() {
+        assert_eq!(
+            clean_workflow_task_type(Some("sign-up".to_string())).as_deref(),
+            Some("register")
+        );
+        assert_eq!(
+            clean_workflow_task_type(Some("signup".to_string())).as_deref(),
+            Some("register")
+        );
+        assert_eq!(
+            clean_workflow_task_type(Some("sign-in".to_string())).as_deref(),
+            Some("login")
+        );
+    }
+
+    #[test]
+    fn workflow_evaluation_metadata_preserves_fail_closed_ratings_and_current_refreshes() {
+        let degraded = normalize_agent_workflow(BrowserBookmarkAgentWorkflow {
+            health: Some("degraded".to_string()),
+            drift_status: Some("needs-review".to_string()),
+            last_improvement_score: Some(-25),
+            last_improvement_rating: Some("safety-regression".to_string()),
+            last_attempt_id: Some("attempt-17".to_string()),
+            last_attempt_path: Some("/tmp/attempt-17.json".to_string()),
+            last_evaluation_report_path: Some("/tmp/evaluation-17.json".to_string()),
+            refresh_reason: Some("The page contract changed".to_string()),
+            refresh_candidate_recipe_path: Some("/tmp/recipe-refresh.json".to_string()),
+            ..BrowserBookmarkAgentWorkflow::default()
+        })
+        .expect("degraded workflow remains available");
+
+        assert_eq!(
+            degraded.last_improvement_rating.as_deref(),
+            Some("safety-regression")
+        );
+        assert_eq!(degraded.last_improvement_score, Some(-25));
+        assert_eq!(
+            degraded.refresh_candidate_recipe_path.as_deref(),
+            Some("/tmp/recipe-refresh.json")
+        );
+
+        let fresh = normalize_agent_workflow(BrowserBookmarkAgentWorkflow {
+            health: Some("fresh".to_string()),
+            drift_status: Some("fresh".to_string()),
+            refresh_reason: degraded.refresh_reason,
+            refresh_candidate_recipe_path: degraded.refresh_candidate_recipe_path,
+            ..BrowserBookmarkAgentWorkflow::default()
+        })
+        .expect("fresh workflow remains available");
+
+        assert_eq!(fresh.refresh_reason, None);
+        assert_eq!(fresh.refresh_candidate_recipe_path, None);
     }
 }

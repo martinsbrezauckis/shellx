@@ -1,0 +1,20 @@
+.vault-field {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.vault-field-label {
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.vault-field > .settings-input {
+  min-width: 0;
+}
+
+.vault-remember-device-control .vault-field {
+  flex: 1 1 180px;
+}

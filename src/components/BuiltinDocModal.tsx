@@ -15,13 +15,14 @@
  * auto-copy-on-selection.
  */
 
-import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import { useCallback, useRef, useState, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { BUILTIN_DOCS } from "../lib/builtin-docs";
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import { SafeMarkdownLink } from "../lib/markdown-links";
 import { ShellIcon } from "./icons";
+import { useModalFocus } from "../lib/useModalFocus";
 
 interface BuiltinDocModalProps {
  /** Doc id from BUILTIN_DOCS ("features" / "readme"). Null = closed. */
@@ -30,41 +31,18 @@ interface BuiltinDocModalProps {
 }
 
 export function BuiltinDocModal({ docId, onClose }: BuiltinDocModalProps): JSX.Element | null {
- // Esc closes
-  useEffect(() => {
-    if (!docId) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [docId, onClose]);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(Boolean(docId), dialogRef, onClose);
 
   if (!docId) return null;
   const doc = BUILTIN_DOCS[docId];
-  if (!doc) {
- // Defensive — if a caller passes an unknown id, render an error
- // card instead of crashing. Bug here should be caught in dev.
-    return (
-      <div className="preview-backdrop" onClick={onClose} role="dialog" aria-modal="true">
-        <div className="preview-modal" onClick={(e) => e.stopPropagation()}>
-          <div className="preview-head">
-            <span className="preview-fname">Unknown doc</span>
-            <button type="button" className="preview-close" onClick={onClose}>
-              <ShellIcon name="close" size={14} />
-            </button>
-          </div>
-          <div className="preview-body">
-            <div className="preview-err">No doc registered for id "{docId}".</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (!doc) return null;
 
   const lineCount = doc.body.split("\n").length;
 
   return (
-    <div className="preview-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label={doc.title}>
-      <div className="preview-modal" onClick={(e) => e.stopPropagation()}>
+    <div data-debug-id="surface-components-builtindocmodal-4" className="preview-backdrop" onClick={onClose}>
+      <div ref={dialogRef} data-debug-id="surface-components-builtindocmodal-5" className="preview-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={doc.title}>
         <div className="preview-head">
           <span className="preview-fname" title={doc.id}>{doc.title}</span>
           <span className="preview-kind">in-app docs</span>

@@ -3,7 +3,7 @@
 //! The server's whole contract: store opaque blobs by ID per repository,
 //! CAS-append and serve sealed manifests, enforce repo-scoped bearer-token
 //! auth and quotas. It never sees keys, plaintext, filenames, or tree
-//! structure.
+//! structure; see docs/SECURITY.md.
 //!
 //! Subcommands:
 //! - `init` — write a fresh config with a "default" repo + first device
@@ -11,7 +11,7 @@
 //! - `add-repo` — add a repository (own keyfile + tokens + quota)
 //! - `add-token` — mint a token for a repo (rw or ro)
 //! - `serve` — run the HTTP server (loopback by default; external access
-//!   via a tunnel or reverse proxy)
+//!   via Cloudflare tunnel per INFRASTRUCTURE.md)
 //!
 //! Config changes require a restart — acceptable for a personal server,
 //! and it keeps `serve` free of config-reload complexity.

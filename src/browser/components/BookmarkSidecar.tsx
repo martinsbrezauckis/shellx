@@ -1,100 +1,18 @@
 import type { DragEvent, JSX, PointerEvent } from "react";
 
-import type { BrowserBookmark, BrowserBookmarkToolbarItem } from "../types";
+import type {
+  BrowserBookmark,
+  BrowserBookmarkAgentWorkflow,
+} from "../types";
+import type { BrowserWorkflowPreviewSummary } from "../browserWorkflowPreview";
+import {
+  browserWorkflowBadgeLabel,
+  browserWorkflowNeedsRefresh,
+} from "../browserWorkflowPresentation";
 import { ShellIcon } from "../../components/icons";
+import "../browserWorkflows.css";
 
 type BookmarkUrlResolver = (bookmark: { url?: string | null }) => string;
-
-interface BookmarkToolbarProps {
-  bookmarkToolbar: BrowserBookmarkToolbarItem[];
-  openToolbarFolder: BrowserBookmarkToolbarItem | null;
-  openToolbarFolderId: string | null;
-  bookmarkUrl: BookmarkUrlResolver;
-  onNavigateToToolbarUrl: (url: string) => void;
-  onSetOpenToolbarFolderId: (updater: string | null | ((current: string | null) => string | null)) => void;
-}
-
-export function BookmarkToolbar({
-  bookmarkToolbar,
-  openToolbarFolder,
-  openToolbarFolderId,
-  bookmarkUrl,
-  onNavigateToToolbarUrl,
-  onSetOpenToolbarFolderId,
-}: BookmarkToolbarProps): JSX.Element | null {
-  if (bookmarkToolbar.length === 0 && !openToolbarFolder) return null;
-
-  return (
-    <>
-      {bookmarkToolbar.length > 0 && (
-        <nav className="shellx-browser-bookmark-toolbar" data-debug-id="shellx-browser-bookmark-toolbar" aria-label="Bookmark toolbar">
-          {bookmarkToolbar.map((item) =>
-            item.kind === "folder" ? (
-              <div key={item.bookmarkId} className="shellx-browser-bookmark-folder">
-                <button
-                  type="button"
-                  className={openToolbarFolderId === item.bookmarkId ? "active" : ""}
-                  onClick={() => onSetOpenToolbarFolderId((current) => (current === item.bookmarkId ? null : item.bookmarkId))}
-                  data-debug-id={`shellx-browser-bookmark-folder-${item.bookmarkId}`}
-                  title={item.label}
-                  aria-expanded={openToolbarFolderId === item.bookmarkId}
-                >
-                  <ShellIcon name="folder" size={14} />
-                  <span>{item.label}</span>
-                </button>
-              </div>
-            ) : (
-              <button
-                key={item.bookmarkId}
-                type="button"
-                className="shellx-browser-bookmark-toolbar-link"
-                onClick={() => {
-                  const url = bookmarkUrl(item);
-                  if (url) onNavigateToToolbarUrl(url);
-                }}
-                disabled={!bookmarkUrl(item)}
-                data-debug-id={`shellx-browser-bookmark-toolbar-link-${item.bookmarkId}`}
-                title={item.label}
-              >
-                <ShellIcon name="bookmark" size={14} />
-                <span>{item.label}</span>
-              </button>
-            ),
-          )}
-        </nav>
-      )}
-
-      {openToolbarFolder && (
-        <section
-          className="shellx-browser-bookmark-folder-menu shellx-browser-bookmark-folder-menu-dock"
-          data-debug-id={`shellx-browser-bookmark-folder-menu-${openToolbarFolder.bookmarkId}`}
-          aria-label={`${openToolbarFolder.label} bookmarks`}
-        >
-          {openToolbarFolder.children.map((child) => {
-            const url = bookmarkUrl(child);
-            return (
-              <button
-                key={child.bookmarkId}
-                type="button"
-                onClick={() => {
-                  if (!url) return;
-                  onSetOpenToolbarFolderId(null);
-                  onNavigateToToolbarUrl(url);
-                }}
-                disabled={!url}
-                data-debug-id={`shellx-browser-bookmark-folder-child-${child.bookmarkId}`}
-              >
-                <ShellIcon name={child.kind === "folder" ? "folder" : "bookmark"} size={13} />
-                <span>{child.label}</span>
-              </button>
-            );
-          })}
-          {openToolbarFolder.children.length === 0 && <div className="shellx-browser-empty-state">Empty folder</div>}
-        </section>
-      )}
-    </>
-  );
-}
 
 interface BookmarkSidecarProps {
   open: boolean;
@@ -111,6 +29,7 @@ interface BookmarkSidecarProps {
   bookmarkRenameDrafts: Record<string, string>;
   bookmarkUrlDrafts: Record<string, string>;
   draggedBookmarkId: string | null;
+  workflowPreview: BrowserWorkflowPreviewSummary | null;
   bookmarkUrl: BookmarkUrlResolver;
   onOpenBookmark: (bookmark: BrowserBookmark) => void;
   onToggleBookmarkPin: (bookmark: BrowserBookmark) => void;
@@ -134,7 +53,7 @@ interface BookmarkSidecarProps {
   onSetBookmarkManageMode: (manage: boolean) => void;
 }
 
-export function BookmarkSidecar({
+export default function BookmarkSidecar({
   open,
   busy,
   bookmarkManageMode,
@@ -149,6 +68,7 @@ export function BookmarkSidecar({
   bookmarkRenameDrafts,
   bookmarkUrlDrafts,
   draggedBookmarkId,
+  workflowPreview,
   bookmarkUrl,
   onOpenBookmark,
   onToggleBookmarkPin,
@@ -173,17 +93,33 @@ export function BookmarkSidecar({
 }: BookmarkSidecarProps): JSX.Element | null {
   if (!open) return null;
 
+  const renderWorkflowBadges = (workflow?: BrowserBookmarkAgentWorkflow | null): JSX.Element | null => {
+    if (!workflow) return null;
+    return (
+      <span className="shellx-browser-bookmark-workflow-badges">
+        <span className="shellx-browser-bookmark-workflow-badge">
+          {browserWorkflowBadgeLabel(workflow)}
+        </span>
+        {browserWorkflowNeedsRefresh(workflow) && (
+          <span className="shellx-browser-bookmark-refresh-badge">Refresh suggested</span>
+        )}
+      </span>
+    );
+  };
+
   const renderBookmarkListRow = (bookmark: BrowserBookmark, depth = 0): JSX.Element => {
     const url = bookmarkUrl(bookmark);
+    const hasWorkflow = Boolean(bookmark.agentWorkflow?.recipePath?.trim());
     const children = bookmarkChildrenByParent.get(bookmark.bookmarkId) ?? [];
     const detail = bookmark.kind === "folder"
       ? `${children.length} item${children.length === 1 ? "" : "s"}`
-      : url || bookmark.category;
+      : bookmark.agentWorkflow?.goal?.trim() || url || bookmark.category;
     const content = (
       <>
-        <ShellIcon name={bookmark.kind === "folder" ? "folder" : "bookmark"} size={13} />
+        <ShellIcon name={hasWorkflow ? "play" : bookmark.kind === "folder" ? "folder" : "bookmark"} size={13} />
         <span>{bookmark.label}</span>
         <small>{detail}</small>
+        {renderWorkflowBadges(bookmark.agentWorkflow)}
       </>
     );
     return (
@@ -192,7 +128,7 @@ export function BookmarkSidecar({
         className="shellx-browser-bookmark-list-item"
         style={{ marginLeft: depth ? depth * 16 : 0 }}
       >
-        {url ? (
+        {url || hasWorkflow ? (
           <button
             type="button"
             className="shellx-browser-bookmark-list-row"
@@ -220,6 +156,7 @@ export function BookmarkSidecar({
 
   const renderBookmarkManagerRow = (bookmark: BrowserBookmark, depth = 0): JSX.Element => {
     const url = bookmarkUrl(bookmark);
+    const hasWorkflow = Boolean(bookmark.agentWorkflow?.recipePath?.trim());
     const children = bookmarkChildrenByParent.get(bookmark.bookmarkId) ?? [];
     const renameValue = bookmarkRenameDrafts[bookmark.bookmarkId] ?? bookmark.label;
     return (
@@ -302,19 +239,20 @@ export function BookmarkSidecar({
                   {children.length} item{children.length === 1 ? "" : "s"}
                 </small>
               )}
+              {renderWorkflowBadges(bookmark.agentWorkflow)}
             </div>
           </div>
           <div className="shellx-browser-bookmark-row-actions">
-            {url && (
-              <button
+            {(url || hasWorkflow) && (
+              <button data-debug-id="surface-browser-components-bookmarksidecar-5"
                 type="button"
                 className="shellx-browser-bookmark-icon-action"
                 onClick={() => onOpenBookmark(bookmark)}
                 disabled={busy}
-                title={`Open ${bookmark.label}`}
-                aria-label={`Open ${bookmark.label}`}
+                title={hasWorkflow ? `Preview ${bookmark.label}` : `Open ${bookmark.label}`}
+                aria-label={hasWorkflow ? `Preview ${bookmark.label}` : `Open ${bookmark.label}`}
               >
-                <ShellIcon name="external-link" size={13} />
+                <ShellIcon name={hasWorkflow ? "play" : "external-link"} size={13} />
               </button>
             )}
             <button
@@ -351,7 +289,12 @@ export function BookmarkSidecar({
   };
 
   return (
-    <aside className="shellx-browser-left-sidecar shellx-browser-bookmark-manager-dock shellx-browser-bookmark-sidecar" data-debug-id="shellx-browser-bookmark-manager-dock">
+    <aside
+      id="shellx-browser-bookmark-manager-dock"
+      className="shellx-browser-left-sidecar shellx-browser-bookmark-manager-dock shellx-browser-bookmark-sidecar"
+      data-debug-id="shellx-browser-bookmark-manager-dock"
+      aria-labelledby="shellx-browser-bookmarks-menu"
+    >
       <div className="shellx-browser-bookmark-manager-head">
         <h2>{bookmarkManageMode ? "Bookmark manager" : "Bookmarks"}</h2>
         <button
@@ -360,6 +303,7 @@ export function BookmarkSidecar({
           onClick={() => onSetBookmarkManagerOpen(false)}
           data-debug-id="shellx-browser-bookmark-manager-close"
           title="Close bookmarks"
+          aria-label="Close bookmarks"
         >
           <ShellIcon name="close" size={14} />
         </button>
@@ -370,6 +314,8 @@ export function BookmarkSidecar({
               className={!bookmarkManageMode ? "active" : ""}
               onClick={() => onSetBookmarkManageMode(false)}
               data-debug-id="shellx-browser-bookmark-list-mode"
+              aria-pressed={!bookmarkManageMode}
+              data-shellx-release-observe="pressed"
             >
               List
             </button>
@@ -378,12 +324,31 @@ export function BookmarkSidecar({
               className={bookmarkManageMode ? "active" : ""}
               onClick={() => onSetBookmarkManageMode(true)}
               data-debug-id="shellx-browser-bookmark-manager-toggle"
+              aria-pressed={bookmarkManageMode}
+              data-shellx-release-observe="pressed"
             >
               Edit
             </button>
           </div>
         </div>
       </div>
+      {workflowPreview && (
+        <div
+          className={`shellx-browser-workflow-preview ${workflowPreview.status === "error" ? "error" : ""}`}
+          role="status"
+          aria-live="polite"
+          data-debug-id="shellx-browser-workflow-preview"
+        >
+          <strong>Workflow preview</strong>
+          <span>
+            {workflowPreview.status === "loading"
+              ? "Checking the saved workflow without performing actions…"
+              : workflowPreview.status === "error"
+                ? "The workflow could not be safely previewed."
+                : `${workflowPreview.stepsPlanned} planned · ${workflowPreview.stepsSkipped} live recovery · ${workflowPreview.decisionPoints} decisions`}
+          </span>
+        </div>
+      )}
       {bookmarkManageMode ? (
         <section className="shellx-browser-bookmark-manager" data-debug-id="shellx-browser-bookmark-manager">
           <div className="shellx-browser-bookmark-editor">
@@ -393,6 +358,7 @@ export function BookmarkSidecar({
               placeholder="Name"
               aria-label="Bookmark name"
               data-debug-id="shellx-browser-bookmark-draft-label"
+              data-shellx-release-observe="value"
             />
             <input
               value={bookmarkDraftUrl}
@@ -400,12 +366,14 @@ export function BookmarkSidecar({
               placeholder="https://example.com"
               aria-label="Bookmark URL"
               data-debug-id="shellx-browser-bookmark-draft-url"
+              data-shellx-release-observe="value"
             />
             <select
               value={bookmarkDraftParentId}
               onChange={(event) => onDraftParentChange(event.currentTarget.value)}
               aria-label="Save new bookmark in"
               data-debug-id="shellx-browser-bookmark-draft-folder"
+              data-shellx-release-observe="value"
             >
               <option value="">Top level</option>
               {bookmarkFolders.map((folder) => (

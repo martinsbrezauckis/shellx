@@ -1,0 +1,149 @@
+/* Keyboard-complete list and disclosure controls layered over legacy App.css. */
+.left-collapse-all,
+.proj-row > .pcaret,
+.proj-row-main,
+.chat-row-main,
+.unfiled-row-main,
+.fv-row-main,
+.connection-row-main,
+.mp-tier-button {
+  appearance: none;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.left-collapse-all {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.proj-row,
+.fv-row {
+  cursor: default;
+}
+
+.proj-row > .pcaret {
+  flex: 0 0 20px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.proj-row-main,
+.chat-row-main,
+.unfiled-row-main,
+.fv-row-main,
+.connection-row-main,
+.mp-tier-button {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.proj-row-main,
+.chat-row-main,
+.unfiled-row-main,
+.fv-row-main,
+.connection-row-main {
+  flex: 1 1 auto;
+}
+
+.proj-row-main {
+  gap: 8px;
+}
+
+.chat-row-main,
+.unfiled-row-main {
+  gap: 10px;
+}
+
+.fv-row-main {
+  gap: 8px;
+}
+
+.connection-row-main {
+  gap: 8px;
+}
+
+.connection-row-copy {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mp-tier-button {
+  width: 100%;
+  gap: 6px;
+}
+
+.row-edit,
+.row-del {
+  border: 0;
+}
+
+.ctxmenu-action {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 4px;
+  padding: 5px 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-ui-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ctxmenu-action.secondary {
+  color: var(--ink-2);
+}
+
+.ctxmenu-action:hover,
+.ctxmenu-action:focus-visible {
+  background: var(--hairline);
+}
+
+.row-pill.doom-loop,
+.row-pill.host-mcp-unreachable {
+  width: 100%;
+  font: inherit;
+  text-align: left;
+}
+
+.left-collapse-all:focus-visible,
+.proj-row > .pcaret:focus-visible,
+.proj-row-main:focus-visible,
+.chat-row-main:focus-visible,
+.unfiled-row-main:focus-visible,
+.fv-row-main:focus-visible,
+.connection-row-main:focus-visible,
+.mp-tier-button:focus-visible,
+.row-edit:focus-visible,
+.row-del:focus-visible,
+.row-pill.doom-loop:focus-visible,
+.row-pill.host-mcp-unreachable:focus-visible {
+  outline: 2px solid var(--accent, #7aa2ff);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

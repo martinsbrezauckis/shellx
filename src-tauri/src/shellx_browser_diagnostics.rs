@@ -307,7 +307,7 @@ impl ShellxBrowserRegistry {
             .as_deref()
             .map(clean_string)
             .filter(|value| !value.is_empty());
-        let bundle = {
+        let (bundle, task_id, browser_tab_id, profile_id) = {
             let state = lock_or_recover(&self.state);
             let task_id = task_id.or_else(|| state.active_task_id.clone());
             let browser_tab_id = browser_tab_id.or_else(|| state.active_browser_tab_id.clone());
@@ -321,6 +321,7 @@ impl ShellxBrowserRegistry {
                 .as_deref()
                 .and_then(|task_id| state.tasks.iter().find(|task| task.task_id == task_id))
                 .cloned();
+            let profile_id = task.as_ref().map(|task| task.profile_id.clone());
             let tab = browser_tab_id
                 .as_deref()
                 .and_then(|tab_id| state.tabs.iter().find(|tab| tab.browser_tab_id == tab_id))
@@ -462,7 +463,12 @@ impl ShellxBrowserRegistry {
                     "note": "Trace bundle keeps structured Browser evidence and metadata only."
                 }
             });
-            redact_trace_value(bundle)
+            (
+                redact_trace_value(bundle),
+                task_id,
+                browser_tab_id,
+                profile_id,
+            )
         };
         let (path, bytes, sha256) = write_browser_json_artifact(
             "shellx-browser-traces",
@@ -471,21 +477,6 @@ impl ShellxBrowserRegistry {
             created_at_ms,
             &bundle,
         )?;
-        let task_id = bundle
-            .get("task")
-            .and_then(|task| task.get("taskId"))
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
-        let browser_tab_id = bundle
-            .get("tab")
-            .and_then(|tab| tab.get("browserTabId"))
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
-        let profile_id = bundle
-            .get("task")
-            .and_then(|task| task.get("profileId"))
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
         let mut state = lock_or_recover(&self.state);
         let receipt = push_receipt(
             &mut state,

@@ -3,7 +3,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { shellxDataPaths } from "./shellx-debug-paths";
+import { cleanupOwnedBrowserLifecycle } from "./shellx-browser-test-cleanup";
+import { resolveShellxDebugApiConnection } from "./shellx-debug-paths";
 
 type JsonObject = Record<string, unknown>;
 
@@ -99,38 +100,11 @@ const EVIDENCE_ROOT = process.env.SHELLX_BROWSER_EVIDENCE_ROOT?.trim()
 const EVIDENCE_OUT = join(EVIDENCE_ROOT, "browser-adversary");
 const ALLOWED_PAGE_FIELD_CAPTURE_KINDS = new Set(["input", "change", "keydown", "mutation"]);
 
-function readFirst(paths: string[]): string | null {
-  for (const path of paths) {
-    if (!existsSync(path)) continue;
-    const value = readFileSync(path, "utf8").trim();
-    if (value) return value;
-  }
-  return null;
-}
-
-function debugBase(): DebugContext {
-  const explicitBase = process.env.SHELLX_DEBUG_BASE?.trim();
-  const port = process.env.SHELLX_DEBUG_PORT?.trim()
-    ?? readFirst(shellxDataPaths("debug-api.port"));
-  const token = process.env.SHELLX_DEBUG_SECRET?.trim()
-    ?? process.env.SHELLX_DEBUG_TOKEN?.trim()
-    ?? readFirst(shellxDataPaths("shellxagent.token"))
-    ?? readFirst(shellxDataPaths("debug.token"));
-  if (!explicitBase && !port) {
-    throw new Error("ShellX debug API port not found. Start the installed app or set SHELLX_DEBUG_BASE.");
-  }
-  if (!token) {
-    throw new Error("ShellX debug API token not found. Set SHELLX_DEBUG_SECRET or start the installed app.");
-  }
-  const base = explicitBase ?? `http://127.0.0.1:${port}`;
-  let resolvedPort = port ?? "";
-  try {
-    resolvedPort = new URL(base).port || resolvedPort;
-  } catch {
-    // Keep the file-sourced port for clearer fixture probing if explicit base is malformed.
-  }
-  if (!resolvedPort) throw new Error(`Could not resolve Debug API port from ${base}`);
-  return { base, token, port: resolvedPort };
+async function debugBase(): Promise<DebugContext> {
+  const connection = await resolveShellxDebugApiConnection();
+  const url = new URL(connection.base);
+  const port = url.port || (url.protocol === "https:" ? "443" : "80");
+  return { ...connection, port };
 }
 
 function assert(cond: boolean, message: string): void {
@@ -326,7 +300,7 @@ function publicCaptureSummary(captures: CaptureEntry[]): JsonObject[] {
 
 async function main(): Promise<void> {
   console.log("\n=== ShellX Vault Browser adversary smoke ===");
-  const ctx = debugBase();
+  const ctx = await debugBase();
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const outDir = process.env.SHELLX_BROWSER_ADVERSARY_OUT ?? join(EVIDENCE_OUT, stamp);
   mkdirSync(outDir, { recursive: true });
@@ -334,6 +308,8 @@ async function main(): Promise<void> {
   const sentinelHash = sha256(sentinel);
   let fixture: FixtureServer | null = null;
   let tabId: string | null = null;
+  const taskIds = new Set<string>();
+  const tabIds = new Set<string>();
 
   try {
     const health = await api<JsonObject>(ctx, "GET", "/health");
@@ -357,9 +333,11 @@ async function main(): Promise<void> {
       autonomy: "assistedAutonomous",
       expectedDomains: ["127.0.0.1"],
     });
+    taskIds.add(task.taskId);
     assert(task.profileId === "agent-work", "adversary Browser task uses Agent Work profile");
     const loaded = await waitForBrowserEngine(ctx, fixture.routeUrl, task.taskId);
     tabId = activeTaskTab(loaded, task.taskId)?.browserTabId ?? null;
+    if (tabId) tabIds.add(tabId);
     assert(Boolean(tabId), "adversary task has an active Browser tab");
 
     const initialObserve = await browserAction(ctx, task.taskId, { action: "observe" });
@@ -472,10 +450,14 @@ async function main(): Promise<void> {
     console.log(`Adversary smoke evidence: ${outDir}`);
     console.log("ShellX Vault Browser adversary smoke passed");
   } finally {
-    if (tabId) {
-      await api<JsonObject>(ctx, "POST", "/browser/tabs/close", { browserTabId: tabId }).catch(() => undefined);
+    try {
+      await cleanupOwnedBrowserLifecycle(
+        (method, path, body) => api(ctx, method, path, body),
+        { taskIds, tabIds, label: "vault-browser-adversary" },
+      );
+    } finally {
+      await fixture?.close();
     }
-    await fixture?.close();
   }
 }
 

@@ -9,16 +9,15 @@
  * marketplace and the PAT lives in vault at `github/pat`.
  */
 import type { JSX } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   FONT_PX_MAX,
   FONT_PX_MIN,
   FONT_PX_DEFAULT,
-  type PermissionUxMode,
   type SettingsValues,
-} from "../Settings";
+} from "../../lib/settings";
 import { ShellIcon } from "../icons";
 import { inTauri } from "../../lib/tauri-bridge";
+import { openShellxDialog } from "../../lib/shellx-dialog";
 
 export function GeneralTab({
   s,
@@ -31,7 +30,7 @@ export function GeneralTab({
   const tauriAvailable = inTauri();
   const chooseDownloadFolder = async (): Promise<void> => {
     if (!tauriAvailable) return;
-    const selected = await openDialog({ directory: true, multiple: false });
+    const selected = await openShellxDialog({ directory: true, multiple: false });
     const value = Array.isArray(selected) ? selected[0] : selected;
     if (typeof value === "string") {
       onPatch({ browserDownloadFolder: value });
@@ -56,6 +55,7 @@ export function GeneralTab({
             value={s.chatFontPx}
             onChange={(e) => onPatch({ chatFontPx: Number(e.target.value) })}
             aria-label="Chat font size in pixels"
+            data-shellx-release-observe="value"
           />
           <span className="settings-font-val">{s.chatFontPx}px</span>
           <button
@@ -73,11 +73,13 @@ export function GeneralTab({
         <label className="settings-label">Density</label>
         <div className="settings-pills">
           {(["compact", "default", "comfortable"] as const).map((d) => (
-            <button
+            <button data-debug-id={`settings-density-${d}`}
               key={d}
               type="button"
               className={`settings-pill ${s.density === d ? "active" : ""}`}
               onClick={() => onPatch({ density: d })}
+              aria-pressed={s.density === d}
+              data-shellx-release-observe="pressed"
             >
               {d}
             </button>
@@ -89,23 +91,32 @@ export function GeneralTab({
         <label className="settings-label">Theme</label>
         <div className="settings-pills">
           <button
+            aria-label="Use Black theme"
             type="button"
             className={`settings-pill ${s.theme === "black" ? "active" : ""}`}
             onClick={() => onPatch({ theme: "black" })}
+            aria-pressed={s.theme === "black"}
+            data-shellx-release-observe="pressed"
           >
             Black
           </button>
           <button
+            aria-label="Use Black and warm theme"
             type="button"
             className={`settings-pill ${s.theme === "black_warm" ? "active" : ""}`}
             onClick={() => onPatch({ theme: "black_warm" })}
+            aria-pressed={s.theme === "black_warm"}
+            data-shellx-release-observe="pressed"
           >
             Black + warm
           </button>
           <button
+            aria-label="Use Bright theme"
             type="button"
             className={`settings-pill ${s.theme === "bright" ? "active" : ""}`}
             onClick={() => onPatch({ theme: "bright" })}
+            aria-pressed={s.theme === "bright"}
+            data-shellx-release-observe="pressed"
           >
             Bright
           </button>
@@ -123,6 +134,7 @@ export function GeneralTab({
               onChange={(event) => patchBrowserDownloadFolder(event.currentTarget.value)}
               placeholder="Choose a default download folder"
               data-debug-id="settings-browser-download-folder"
+              data-shellx-release-observe="value"
               aria-label="Browser default download folder"
             />
             <button
@@ -139,44 +151,6 @@ export function GeneralTab({
           </div>
           <p className="settings-inline-hint">
             Used by Browser page-save and download intents before a transfer is approved.
-          </p>
-        </div>
-      </div>
-
- {/* Permission UX surface (issue #374). Confirm autonomy mode emits
- * `session/request_permission` for every gated tool call; this
- * setting picks the visual surface used to gate them. "pill" is
- * the default for public-release users — in-chat chip with
- * Allow / Allow-always / Deny buttons that doesn't steal focus.
- * "modal" keeps the legacy interrupt popup. "both" shows the
- * modal AND the pill (the pill is also the audit trail).
- */}
-      <div className="settings-row">
-        <label className="settings-label">Permission UX</label>
-        <div className="settings-field-stack">
-          <div className="settings-pills">
-            {(["pill", "modal", "both"] as const).map((m: PermissionUxMode) => (
-              <button
-                key={m}
-                type="button"
-                className={`settings-pill ${s.permissionUx === m ? "active" : ""}`}
-                onClick={() => onPatch({ permissionUx: m })}
-                title={
-                  m === "pill"
-                    ? "In-chat chip only (default)"
-                    : m === "modal"
-                      ? "Popup plus audit chip"
-                      : "Popup and chat chip"
-                }
-              >
-                {m === "pill" ? "Pill" : m === "modal" ? "Modal" : "Both"}
-              </button>
-            ))}
-          </div>
-          <p className="settings-inline-hint">
-            Used only in Confirm mode when the active agent asks before a gated tool call.
-            Auto mode bypasses this prompt. The chat pill stays as the audit trail;
-            Modal adds the older popup interrupt.
           </p>
         </div>
       </div>

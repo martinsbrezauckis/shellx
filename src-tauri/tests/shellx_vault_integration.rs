@@ -368,6 +368,7 @@ async fn persistent_grant_allows_mediated_env_but_not_raw_reveal() {
                 workspace: "/repo".into(),
             },
             operation: GrantOperation::InjectEnv,
+            origin: None,
             expires_at_ms: None,
         })
         .await
@@ -406,6 +407,7 @@ async fn created_grant_starts_pending_until_operator_approval() {
                 workspace: "/repo".into(),
             },
             operation: GrantOperation::InjectEnv,
+            origin: None,
             expires_at_ms: None,
         })
         .await
@@ -452,6 +454,7 @@ async fn agent_grant_denies_wrong_agent_and_allows_matching_agent() {
                 agent_id: "agent-a".into(),
             },
             operation: GrantOperation::InjectEnv,
+            origin: None,
             expires_at_ms: None,
         })
         .await
@@ -553,6 +556,7 @@ async fn actor_grants_match_provider_workspace_origin_and_connector_contexts() {
                 secret_ref: "providers.openai.api_key".into(),
                 actor_scope: scope,
                 operation: GrantOperation::ProviderUse,
+                origin: None,
                 expires_at_ms: None,
             })
             .await
@@ -621,6 +625,7 @@ async fn debug_probe_secret_use_honors_actor_scope_without_exposing_secret() {
                 agent_id: "agent-a".into(),
             },
             operation: GrantOperation::InjectEnv,
+            origin: None,
             expires_at_ms: None,
         })
         .await
@@ -669,6 +674,7 @@ async fn timed_grant_expires_and_revoked_grant_denies() {
                 agent_id: "agent-a".into(),
             },
             operation: GrantOperation::Fill,
+            origin: Some("https://connections.example.test".into()),
             expires_at_ms: Some(1),
         })
         .await
@@ -688,6 +694,7 @@ async fn timed_grant_expires_and_revoked_grant_denies() {
                 agent_id: "agent-a".into(),
             },
             operation: GrantOperation::Fill,
+            origin: Some("https://connections.example.test".into()),
             expires_at_ms: None,
         })
         .await
@@ -897,6 +904,7 @@ async fn user_only_resource_is_hidden_and_revokes_resource_grants() {
             secret_ref: "email-inboxes/test-gmail".into(),
             actor_scope: GrantScope::AllShellxAgents,
             operation: GrantOperation::EmailCodeRead,
+            origin: Some("https://mail.example.test".into()),
             expires_at_ms: None,
         })
         .await
@@ -904,10 +912,15 @@ async fn user_only_resource_is_hidden_and_revokes_resource_grants() {
     let grant = approve_test_grant(&backend, &grant.grant_id).await;
     assert!(matches!(
         backend
-            .authorize_secret_use(
+            .authorize_secret_use_for_actor(
                 &grant.grant_id,
                 "email-inboxes/test-gmail",
                 &GrantOperation::EmailCodeRead,
+                &GrantActorContext {
+                    agent_id: Some("fixture-agent".into()),
+                    origin: Some("https://mail.example.test".into()),
+                    ..GrantActorContext::default()
+                },
             )
             .await,
         GrantDecision::AllowMediated

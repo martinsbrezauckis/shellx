@@ -1,4 +1,4 @@
-export type UpdateErrorKind = "no-release" | "network" | "signature" | "manifest" | "download" | "unknown";
+export type UpdateErrorKind = "no-release" | "network" | "signature" | "manifest" | "download" | "manual-install" | "unknown";
 export type UpdateDiagnosticKind = "idle" | "checking" | "current" | "available" | "installing" | "error";
 export type DiagnosticAccent = "ok" | "warn" | "bad" | "muted";
 
@@ -23,6 +23,9 @@ export function classifyUpdateError(message: string | null | undefined): UpdateE
   if (!text.trim()) return "unknown";
   if (/signature|verification|verify|corrupt/.test(text)) return "signature";
   if (/network|enotfound|getaddrinfo|dns|timeout|timed\s*out|connect.*refused|fetch.*failed/.test(text)) return "network";
+  if (/invalid\s*updater\s*(binary\s*)?format|invalidupdaterformat|unsupported\s*(bundle|package)\s*format/.test(text)) {
+    return "manual-install";
+  }
   if (/download|asset|install/.test(text)) return "download";
   if (
     /404|\bnot\s+found\b|no\s*update|release.*missing|valid release json|fallback platforms|platforms.*object|none.*platforms.*found|darwin-aarch64/.test(
@@ -35,7 +38,7 @@ export function classifyUpdateError(message: string | null | undefined): UpdateE
 
 export function updateErrorIsQuiet(message: string | null | undefined): boolean {
   const kind = classifyUpdateError(message);
-  return kind === "no-release" || kind === "network";
+  return kind === "no-release" || kind === "network" || kind === "manual-install";
 }
 
 export function summarizeUpdateDiagnostic(input: UpdateDiagnosticInput): UpdateDiagnosticSummary {
@@ -74,6 +77,7 @@ export function summarizeUpdateDiagnostic(input: UpdateDiagnosticInput): UpdateD
     const label = errorKind === "signature" ? "security"
       : errorKind === "download" ? "download"
         : errorKind === "manifest" ? "manifest"
+          : errorKind === "manual-install" ? "manual update"
           : errorKind === "network" ? "network"
             : errorKind === "no-release" ? "no release"
               : "error";

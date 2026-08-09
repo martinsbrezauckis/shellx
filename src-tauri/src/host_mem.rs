@@ -68,6 +68,10 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 
 const MAX_MEM_VALUE_BYTES: usize = 1024 * 1024;
+const MAX_MEM_NAMESPACE_BYTES: usize = 200;
+const MAX_MEM_KEY_BYTES: usize = 1000;
+const MAX_MEM_LIST_ROWS: usize = 500;
+const MAX_MEM_LIST_BYTES: usize = 2 * 1024 * 1024;
 
 // ───── path resolution ─────
 
@@ -155,6 +159,12 @@ fn parse_ns_key(args: &Value, ctx: &str) -> Result<(String, String), String> {
     if key.trim().is_empty() {
         return Err(format!("{}: 'key' must be non-empty", ctx));
     }
+    if key.len() > MAX_MEM_KEY_BYTES {
+        return Err(format!(
+            "{}: 'key' exceeds {} byte cap",
+            ctx, MAX_MEM_KEY_BYTES
+        ));
+    }
     let namespace = args
         .get("namespace")
         .and_then(|v| v.as_str())
@@ -162,6 +172,12 @@ fn parse_ns_key(args: &Value, ctx: &str) -> Result<(String, String), String> {
         .to_string();
     if namespace.trim().is_empty() {
         return Err(format!("{}: 'namespace' must be non-empty", ctx));
+    }
+    if namespace.len() > MAX_MEM_NAMESPACE_BYTES {
+        return Err(format!(
+            "{}: 'namespace' exceeds {} byte cap",
+            ctx, MAX_MEM_NAMESPACE_BYTES
+        ));
     }
     Ok((namespace, key))
 }
@@ -317,11 +333,23 @@ pub async fn list(args: Value) -> Result<Value, String> {
     if namespace.trim().is_empty() {
         return Err("mem_list: 'namespace' must be non-empty".to_string());
     }
+    if namespace.len() > MAX_MEM_NAMESPACE_BYTES {
+        return Err(format!(
+            "mem_list: 'namespace' exceeds {} byte cap",
+            MAX_MEM_NAMESPACE_BYTES
+        ));
+    }
     let prefix = args
         .get("prefix")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    if prefix.len() > MAX_MEM_KEY_BYTES {
+        return Err(format!(
+            "mem_list: 'prefix' exceeds {} byte cap",
+            MAX_MEM_KEY_BYTES
+        ));
+    }
     let now = now_ms();
     // SQLite `LIKE 'prefix%'` is the standard prefix-match idiom. We
     // sanitize by escaping any %/_/\ chars in the user-supplied prefix
@@ -334,64 +362,81 @@ pub async fn list(args: Value) -> Result<Value, String> {
     let like_pattern = format!("{}%", escaped_prefix);
 
     let ns_for_blocking = namespace.clone();
-    let entries: Vec<Value> = tokio::task::spawn_blocking(move || -> Result<Vec<Value>, String> {
-        let conn = open_db()?;
-        let mut stmt = conn
-            .prepare(
-                "SELECT key, value, mtime_unix_ms, expires_at_unix_ms
+    let (entries, truncated, retained_bytes): (Vec<Value>, bool, usize) =
+        tokio::task::spawn_blocking(move || -> Result<(Vec<Value>, bool, usize), String> {
+            let conn = open_db()?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT key, value, mtime_unix_ms, expires_at_unix_ms
                      FROM kv
                      WHERE namespace = ?1 AND key LIKE ?2 ESCAPE '\\'
                      ORDER BY key ASC
-                     LIMIT 500",
-            )
-            .map_err(|e| format!("mem_list: prepare failed: {}", e))?;
-        let mut rows = stmt
-            .query(params![ns_for_blocking, like_pattern])
-            .map_err(|e| format!("mem_list: query failed: {}", e))?;
-        let mut out: Vec<Value> = Vec::new();
-        while let Some(row) = rows
-            .next()
-            .map_err(|e| format!("mem_list: row read: {}", e))?
-        {
-            let key: String = row
-                .get(0)
-                .map_err(|e| format!("mem_list: key col: {}", e))?;
-            let value: String = row
-                .get(1)
-                .map_err(|e| format!("mem_list: value col: {}", e))?;
-            let mtime: i64 = row
-                .get(2)
-                .map_err(|e| format!("mem_list: mtime col: {}", e))?;
-            let expires_at: Option<i64> = row
-                .get(3)
-                .map_err(|e| format!("mem_list: expires col: {}", e))?;
-            // Filter expired rows out of the result. Bulk-delete is
-            // intentionally NOT done here — keeps mem_list a pure
-            // read-only operation that callers can rely on.
-            if let Some(exp) = expires_at {
-                if exp <= now {
-                    continue;
+                     LIMIT 501",
+                )
+                .map_err(|e| format!("mem_list: prepare failed: {}", e))?;
+            let mut rows = stmt
+                .query(params![ns_for_blocking, like_pattern])
+                .map_err(|e| format!("mem_list: query failed: {}", e))?;
+            let mut out: Vec<Value> = Vec::new();
+            let mut retained_bytes = 0usize;
+            let mut truncated = false;
+            while let Some(row) = rows
+                .next()
+                .map_err(|e| format!("mem_list: row read: {}", e))?
+            {
+                let key: String = row
+                    .get(0)
+                    .map_err(|e| format!("mem_list: key col: {}", e))?;
+                let value: String = row
+                    .get(1)
+                    .map_err(|e| format!("mem_list: value col: {}", e))?;
+                let mtime: i64 = row
+                    .get(2)
+                    .map_err(|e| format!("mem_list: mtime col: {}", e))?;
+                let expires_at: Option<i64> = row
+                    .get(3)
+                    .map_err(|e| format!("mem_list: expires col: {}", e))?;
+                // Filter expired rows out of the result. Bulk-delete is
+                // intentionally NOT done here — keeps mem_list a pure
+                // read-only operation that callers can rely on.
+                if let Some(exp) = expires_at {
+                    if exp <= now {
+                        continue;
+                    }
                 }
+                if out.len() >= MAX_MEM_LIST_ROWS {
+                    truncated = true;
+                    break;
+                }
+                let entry_bytes = key.len().saturating_add(value.len()).saturating_add(128);
+                if retained_bytes.saturating_add(entry_bytes) > MAX_MEM_LIST_BYTES {
+                    truncated = true;
+                    break;
+                }
+                let mut entry = json!({
+                    "key": key,
+                    "value": value,
+                    "mtime_unix_ms": mtime,
+                });
+                if let Some(exp) = expires_at {
+                    entry["expires_at_unix_ms"] = json!(exp);
+                }
+                retained_bytes = retained_bytes.saturating_add(entry_bytes);
+                out.push(entry);
             }
-            let mut entry = json!({
-                "key": key,
-                "value": value,
-                "mtime_unix_ms": mtime,
-            });
-            if let Some(exp) = expires_at {
-                entry["expires_at_unix_ms"] = json!(exp);
-            }
-            out.push(entry);
-        }
-        Ok(out)
-    })
-    .await
-    .map_err(|e| format!("mem_list: join error: {}", e))??;
+            Ok((out, truncated, retained_bytes))
+        })
+        .await
+        .map_err(|e| format!("mem_list: join error: {}", e))??;
 
     let count = entries.len();
     Ok(json!({
         "entries": entries,
         "count": count,
+        "truncated": truncated,
+        "retained_bytes": retained_bytes,
+        "row_limit": MAX_MEM_LIST_ROWS,
+        "byte_limit": MAX_MEM_LIST_BYTES,
     }))
 }
 
@@ -635,6 +680,50 @@ mod tests {
             "error should explain value cap, got: {}",
             err
         );
+    }
+
+    #[tokio::test]
+    async fn list_stops_at_the_response_byte_budget() {
+        let _td = TempDb::new("list-byte-budget");
+        for key in ["a", "b", "c"] {
+            set(json!({
+                "key": key,
+                "value": "x".repeat(MAX_MEM_VALUE_BYTES),
+            }))
+            .await
+            .expect("seed bounded memory row");
+        }
+
+        let listed = list(json!({})).await.expect("bounded list");
+        assert_eq!(listed["count"], json!(1));
+        assert_eq!(listed["truncated"], json!(true));
+        assert!(listed["retained_bytes"].as_u64().unwrap_or_default() <= MAX_MEM_LIST_BYTES as u64);
+        assert!(
+            serde_json::to_vec(&listed)
+                .expect("serialize bounded list")
+                .len()
+                < MAX_MEM_LIST_BYTES
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_names_and_prefixes_are_bounded() {
+        let _td = TempDb::new("name-bounds");
+        let long_key = "k".repeat(MAX_MEM_KEY_BYTES + 1);
+        let long_namespace = "n".repeat(MAX_MEM_NAMESPACE_BYTES + 1);
+
+        assert!(set(json!({ "key": long_key, "value": "value" }))
+            .await
+            .expect_err("long key must fail")
+            .contains("key"));
+        assert!(list(json!({ "namespace": long_namespace }))
+            .await
+            .expect_err("long namespace must fail")
+            .contains("namespace"));
+        assert!(list(json!({ "prefix": "p".repeat(MAX_MEM_KEY_BYTES + 1) }))
+            .await
+            .expect_err("long prefix must fail")
+            .contains("prefix"));
     }
 
     #[tokio::test]

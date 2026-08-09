@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   buildActivityGraph,
+  buildActivityClipboardSummary,
   buildActivityTree,
   combineActivityTraces,
   filterActivityActions,
@@ -25,9 +26,11 @@ import {
 } from "../lib/build-run";
 import { inTauri } from "../lib/tauri-bridge";
 import { ShellIcon, type ShellIconName } from "./icons";
+import { useModalFocus } from "../lib/useModalFocus";
 
 type ActivityView = "files" | "graph" | "evidence" | "timeline" | "summary";
 type ActivityEvidenceSectionKey = "changes" | "reads" | "commands" | "git";
+const ACTIVITY_VIEW_ORDER: ActivityView[] = ["files", "graph", "evidence", "timeline", "summary"];
 const ACTIVITY_GRAPH_WIDTH = 1000;
 const ACTIVITY_GRAPH_HEIGHT = 560;
 
@@ -78,18 +81,21 @@ export function ActivityBrowserModal({
   const suppressBackdropClickRef = useRef(false);
   const suppressBackdropClickTimerRef = useRef<number | null>(null);
   const [modalSize, setModalSize] = useState({ width: 1180, height: 860 });
+  useModalFocus(open, modalRef, onClose);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const handleViewTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, current: ActivityView) => {
+    const currentIndex = ACTIVITY_VIEW_ORDER.indexOf(current);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % ACTIVITY_VIEW_ORDER.length;
+    else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + ACTIVITY_VIEW_ORDER.length) % ACTIVITY_VIEW_ORDER.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = ACTIVITY_VIEW_ORDER.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const next = ACTIVITY_VIEW_ORDER[nextIndex] ?? current;
+    setView(next);
+    document.getElementById(`activity-tab-${next}`)?.focus();
+  };
 
   useEffect(() => {
     if (!open) {
@@ -217,26 +223,18 @@ export function ActivityBrowserModal({
   }, [activityQueryText, onAskAgent, onClose, source, tabId]);
 
   const copySummary = useCallback(() => {
-    const lines = [
-      `Session activity: ${source?.sessionId ?? "(no session)"}`,
-      `status: ${source?.status ?? "unknown"}`,
-      `transport: ${source?.transport ?? "unknown"}`,
-      `search: ${activityQueryText || "(none)"}`,
-      `matching actions: ${visibleActions.length}/${actions.length}`,
-      `actions: ${summary.total}`,
-      `verified: ${summary.verified}`,
-      `observed: ${summary.observed}`,
-      `inferred: ${summary.inferred}`,
-      `agent written: ${summary.agentWritten}`,
-      `agent deleted: ${summary.agentDeleted}`,
-      `reads: ${summary.read}`,
-      `lists: ${summary.listed}`,
-      `searches: ${summary.searched}`,
-      `git: ${summary.git}`,
-      `hunk source: ${source?.hunkRecordsPath ?? "(none)"}`,
-      `update source: ${source?.updatesPath ?? "(none)"}`,
-    ];
-    try { void navigator.clipboard.writeText(lines.join("\n")); } catch { /* no-op */ }
+    const text = buildActivityClipboardSummary({
+      sessionId: source?.sessionId,
+      status: source?.status,
+      transport: source?.transport,
+      search: activityQueryText,
+      visibleActionCount: visibleActions.length,
+      totalActionCount: actions.length,
+      summary,
+      hunkRecordsPath: source?.hunkRecordsPath,
+      updatesPath: source?.updatesPath,
+    });
+    try { void navigator.clipboard.writeText(text); } catch { /* no-op */ }
   }, [actions.length, activityQueryText, source, summary, visibleActions.length]);
 
   const resizeActivityModal = useCallback((nextWidth: number, nextHeight: number) => {
@@ -338,16 +336,17 @@ export function ActivityBrowserModal({
   return (
     <div
       className="preview-backdrop"
+      data-debug-id="activity-browser-backdrop"
       onClick={handleBackdropClick}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Activity Browser"
     >
-      <div
+      <div data-debug-id="surface-components-activitybrowsermodal-2"
         ref={modalRef}
         className="preview-modal activity-modal"
         style={modalStyle}
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Activity Browser"
       >
         <div className="preview-head">
           <span className="preview-fname" title={rootPath || undefined}>Activity Browser</span>
@@ -356,46 +355,71 @@ export function ActivityBrowserModal({
           <div className="preview-mode-toggle" role="tablist" aria-label="Activity view">
             <button
               type="button"
+              id="activity-tab-files"
+              role="tab"
+              aria-controls="activity-panel-files"
               data-debug-id="activity-tab-files"
               className={view === "files" ? "active" : ""}
               onClick={() => setView("files")}
+              onKeyDown={(event) => handleViewTabKeyDown(event, "files")}
               aria-selected={view === "files"}
+              tabIndex={view === "files" ? 0 : -1}
             >
               Files
             </button>
             <button
               type="button"
+              id="activity-tab-graph"
+              role="tab"
+              aria-controls="activity-panel-graph"
               data-debug-id="activity-tab-graph"
               className={view === "graph" ? "active" : ""}
               onClick={() => setView("graph")}
+              onKeyDown={(event) => handleViewTabKeyDown(event, "graph")}
               aria-selected={view === "graph"}
+              tabIndex={view === "graph" ? 0 : -1}
             >
               Graph
             </button>
             <button
               type="button"
+              id="activity-tab-evidence"
+              role="tab"
+              aria-controls="activity-panel-evidence"
               data-debug-id="activity-tab-evidence"
               className={view === "evidence" ? "active" : ""}
               onClick={() => setView("evidence")}
+              onKeyDown={(event) => handleViewTabKeyDown(event, "evidence")}
               aria-selected={view === "evidence"}
+              tabIndex={view === "evidence" ? 0 : -1}
             >
               Evidence
             </button>
             <button
               type="button"
+              id="activity-tab-timeline"
+              role="tab"
+              aria-controls="activity-panel-timeline"
               data-debug-id="activity-tab-timeline"
               className={view === "timeline" ? "active" : ""}
               onClick={() => setView("timeline")}
+              onKeyDown={(event) => handleViewTabKeyDown(event, "timeline")}
               aria-selected={view === "timeline"}
+              tabIndex={view === "timeline" ? 0 : -1}
             >
               Timeline
             </button>
             <button
               type="button"
+              id="activity-tab-summary"
+              role="tab"
+              aria-controls="activity-panel-summary"
               data-debug-id="activity-tab-summary"
               className={view === "summary" ? "active" : ""}
               onClick={() => setView("summary")}
+              onKeyDown={(event) => handleViewTabKeyDown(event, "summary")}
               aria-selected={view === "summary"}
+              tabIndex={view === "summary" ? 0 : -1}
             >
               Summary
             </button>
@@ -405,6 +429,7 @@ export function ActivityBrowserModal({
             <input
               type="search"
               data-debug-id="activity-search"
+              data-shellx-release-observe="value"
               value={activityQuery}
               placeholder="Search trace"
               disabled={actions.length === 0}
@@ -428,7 +453,12 @@ export function ActivityBrowserModal({
           </button>
         </div>
 
-        <div className="preview-body activity-body">
+        <div
+          id={`activity-panel-${view}`}
+          className="preview-body activity-body"
+          role="tabpanel"
+          aria-labelledby={`activity-tab-${view}`}
+        >
           {err && <div className="preview-err">{err}</div>}
           {loading && !err && <div className="preview-loading">Loading activity trace...</div>}
 
@@ -500,7 +530,13 @@ export function ActivityBrowserModal({
         </div>
 
         <div className="preview-actions activity-actions">
-          <button type="button" className="pact" onClick={copySummary} disabled={!source}>
+          <button
+            type="button"
+            className="pact"
+            id="activity-copy-summary"
+            onClick={copySummary}
+            disabled={!source}
+          >
             Copy summary
           </button>
           <button type="button" className="pact" onClick={askAgent} disabled={!tabId || !onAskAgent}>
@@ -581,6 +617,7 @@ function ActivityGraphView({
     if (!item || !canvasRect || canvasRect.width <= 0 || canvasRect.height <= 0) return;
     event.preventDefault();
     event.stopPropagation();
+    event.currentTarget.focus({ preventScroll: true });
     setSelectedId(nodeId);
     const start = {
       x: item.x,
@@ -598,6 +635,34 @@ function ActivityGraphView({
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp, { once: true });
   }, [handleNodePointerMove, layout.byId]);
+
+  const handleNodeKeyDown = useCallback((nodeId: string, event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const item = layout.byId.get(nodeId);
+    if (!item) return;
+    const step = event.shiftKey ? 64 : 24;
+    const delta = event.key === "ArrowLeft"
+      ? { x: -step, y: 0 }
+      : event.key === "ArrowRight"
+        ? { x: step, y: 0 }
+        : event.key === "ArrowUp"
+          ? { x: 0, y: -step }
+          : event.key === "ArrowDown"
+            ? { x: 0, y: step }
+            : null;
+    if (!delta) return;
+    event.preventDefault();
+    setSelectedId(nodeId);
+    setNodePositions((current) => {
+      const position = current[nodeId] ?? { x: item.x, y: item.y };
+      return {
+        ...current,
+        [nodeId]: {
+          x: clamp(position.x + delta.x, 56, ACTIVITY_GRAPH_WIDTH - 56),
+          y: clamp(position.y + delta.y, 42, ACTIVITY_GRAPH_HEIGHT - 42),
+        },
+      };
+    });
+  }, [layout.byId]);
 
   const resizeGraphDetail = useCallback((nextWidth: number) => {
     const shellWidth = shellRef.current?.getBoundingClientRect().width ?? 900;
@@ -682,9 +747,12 @@ function ActivityGraphView({
           {layout.nodes.map(({ node, x, y }) => {
             const dominant = dominantKind(node.counts);
             return (
-              <button
+              <button data-debug-id="surface-components-activitybrowsermodal-14"
                 type="button"
                 key={node.id}
+                data-activity-node-id={node.id}
+                data-shellx-release-observe="pressed focused"
+                aria-pressed={selected?.id === node.id}
                 className={[
                   "activity-graph-node",
                   `activity-graph-node-${node.kind}`,
@@ -699,6 +767,7 @@ function ActivityGraphView({
                 title={node.relativePath || node.label}
                 onClick={() => setSelectedId(node.id)}
                 onPointerDown={(event) => handleNodePointerDown(node.id, event)}
+                onKeyDown={(event) => handleNodeKeyDown(node.id, event)}
               >
                 <span className="activity-graph-node-icon" aria-hidden="true">
                   <ShellIcon name={graphNodeIconName(node)} size={14} />
@@ -745,9 +814,10 @@ function ActivityGraphView({
                 {selectedActions.length === 0 ? (
                   <code>-</code>
                 ) : selectedActions.map((action) => (
-                  <button
+                  <button data-debug-id="surface-components-activitybrowsermodal-16"
                     type="button"
                     key={action.id}
+                    data-activity-path={action.path}
                     onClick={() => onOpenFile(action.path)}
                     title={action.path}
                   >
@@ -997,18 +1067,22 @@ function ActivityNodeRow({
           role="treeitem"
           aria-expanded={canExpand ? isOpen : undefined}
         >
-          <button
+          <button data-debug-id="surface-components-activitybrowsermodal-17"
             type="button"
             className="activity-twist"
+            data-activity-path={node.path}
+            data-shellx-release-observe="expanded disabled"
             onClick={() => canExpand && onToggle(node.id)}
             disabled={!canExpand}
+            aria-expanded={canExpand ? isOpen : undefined}
             aria-label={canExpand ? (isOpen ? "Collapse folder" : "Expand folder") : "File"}
           >
             {canExpand && <ShellIcon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />}
           </button>
-          <button
+          <button data-debug-id="surface-components-activitybrowsermodal-18"
             type="button"
             className={`activity-name activity-name-${node.kind}`}
+            data-activity-path={node.path}
             title={rowTitle}
             onClick={() => node.kind === "file" ? onOpenFile(node.path) : onToggle(node.id)}
           >
@@ -1044,9 +1118,10 @@ function ActivityTimeline({
   return (
     <div className="activity-timeline">
       {actions.map((action) => (
-        <button
+        <button data-debug-id="surface-components-activitybrowsermodal-19"
           type="button"
           key={action.id}
+          data-activity-path={action.path}
           className={`activity-event activity-${action.kind}`}
           onClick={() => onOpenFile(action.path)}
           title={action.path}
@@ -1318,9 +1393,10 @@ function ActivityEvidenceSection({
       ) : (
         <div className="activity-evidence-list">
           {groups.slice(0, 18).map((group) => (
-            <button
+            <button data-debug-id="surface-components-activitybrowsermodal-21"
               type="button"
               key={group.key}
+              data-activity-path={group.path}
               className={`activity-evidence-row activity-evidence-row-${group.dominantKind}`}
               onClick={() => onOpenFile(group.path)}
               title={group.path}

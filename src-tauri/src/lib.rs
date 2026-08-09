@@ -27,13 +27,18 @@ mod host_mcp;
 pub mod model_instruction_cards;
 mod outside_connector_runtime;
 mod outside_connectors;
+mod process_output;
 pub mod provider_adapters;
+#[doc(hidden)]
+pub mod provider_codex_app_server;
+mod provider_runtime;
 pub mod provider_sessions;
 // SQLite-backed cross-tab durable key-value store. Backs
 // the `mem_set` / `mem_get` / `mem_list` / `mem_delete` host MCP tools
 // (registered in host_mcp.rs). One db file at `~/.shellx/memory.db`,
 // shared across every tab and every subagent that grok spawns.
 mod host_mem;
+mod http_body;
 mod loopback_security;
 // Cross-process subagent state mirror. Sibling
 // to host_mem.rs — same SQLite-WAL pattern, separate `subagents.db`.
@@ -42,6 +47,8 @@ mod loopback_security;
 // process. The DB is the shared store.
 mod host_subagents;
 mod process_registry;
+mod session_log;
+mod tab_tasks;
 // `Agent` MCP tool — spawns a fresh `grok -p` subprocess with a
 // persona-prepended prompt. Lives
 // next to host_mcp so the MCP server can call into it directly. Public
@@ -64,6 +71,7 @@ mod vault;
 mod voice;
 mod winproc;
 
+pub(crate) mod build_metadata;
 #[cfg(feature = "debug-api")]
 mod debug_api;
 #[cfg(feature = "debug-api")]
@@ -71,11 +79,26 @@ mod debug_api_browser;
 #[cfg(feature = "debug-api")]
 mod debug_api_browser_artifacts;
 #[cfg(feature = "debug-api")]
+mod debug_api_browser_caller;
+#[cfg(feature = "debug-api")]
+mod debug_api_browser_events;
+#[cfg(feature = "debug-api")]
+mod debug_api_browser_recipe_replay;
+#[cfg(feature = "debug-api")]
+mod debug_api_browser_rendered_check;
+#[cfg(feature = "debug-api")]
 mod debug_api_browser_security;
 #[cfg(feature = "debug-api")]
 mod debug_api_browser_settings;
 #[cfg(feature = "debug-api")]
 mod debug_api_browser_state;
+#[cfg(feature = "debug-api")]
+mod debug_api_release_browser_fixture;
+#[cfg(feature = "debug-api")]
+mod debug_api_release_clipboard;
+mod debug_api_release_native_picker;
+#[cfg(feature = "debug-api")]
+mod debug_api_release_relay;
 #[cfg(feature = "debug-api")]
 mod work_preview;
 
@@ -99,38 +122,73 @@ pub(crate) mod session_activity;
 mod session_archive;
 mod session_git;
 pub mod shellx_browser;
+pub(crate) mod shellx_browser_action_execution;
 pub(crate) mod shellx_browser_action_results;
+pub(crate) mod shellx_browser_action_script;
+pub(crate) mod shellx_browser_actionability;
 pub(crate) mod shellx_browser_actions;
+pub(crate) mod shellx_browser_artifact_model;
 pub(crate) mod shellx_browser_artifacts;
 pub(crate) mod shellx_browser_bookmarks;
+pub(crate) mod shellx_browser_caller;
 pub(crate) mod shellx_browser_cdp_runtime;
 pub(crate) mod shellx_browser_control;
+pub(crate) mod shellx_browser_coordinate_input;
+pub(crate) mod shellx_browser_cowork;
 pub(crate) mod shellx_browser_destructive_actions;
 pub(crate) mod shellx_browser_developer_mode;
 pub(crate) mod shellx_browser_diagnostics;
+pub(crate) mod shellx_browser_dom_traversal;
+pub(crate) mod shellx_browser_element_identity;
+pub(crate) mod shellx_browser_element_targets;
 pub(crate) mod shellx_browser_engine;
+pub(crate) mod shellx_browser_engine_model;
 pub(crate) mod shellx_browser_engine_runtime;
 pub(crate) mod shellx_browser_engine_state;
+pub(crate) mod shellx_browser_evaluation_identity;
+pub(crate) mod shellx_browser_evaluation_model;
+pub(crate) mod shellx_browser_evaluations;
+pub(crate) mod shellx_browser_evidence;
+pub(crate) mod shellx_browser_flight_recorder;
+pub(crate) mod shellx_browser_flight_recorder_model;
+pub(crate) mod shellx_browser_flight_recorder_sanitization;
+pub(crate) mod shellx_browser_initialization;
 pub(crate) mod shellx_browser_model;
+pub(crate) mod shellx_browser_observation_model;
+pub(crate) mod shellx_browser_observations;
 pub(crate) mod shellx_browser_persistence;
 pub(crate) mod shellx_browser_personal_lock;
+pub(crate) mod shellx_browser_policy;
 pub(crate) mod shellx_browser_privacy;
 pub(crate) mod shellx_browser_profiles;
 pub(crate) mod shellx_browser_prompts;
 pub(crate) mod shellx_browser_protected_values;
+pub(crate) mod shellx_browser_recipe_analysis;
 pub(crate) mod shellx_browser_recipes;
+pub(crate) mod shellx_browser_rendered_check;
+pub(crate) mod shellx_browser_rendered_check_evidence;
 pub(crate) mod shellx_browser_reports;
 pub(crate) mod shellx_browser_robots;
 pub(crate) mod shellx_browser_scripts;
 pub(crate) mod shellx_browser_security;
 pub(crate) mod shellx_browser_session_grants;
+pub(crate) mod shellx_browser_settings_model;
 pub(crate) mod shellx_browser_shields;
+pub(crate) mod shellx_browser_site_data;
 pub(crate) mod shellx_browser_state;
 pub(crate) mod shellx_browser_storage_state;
 pub(crate) mod shellx_browser_tabs;
+pub(crate) mod shellx_browser_task_control;
+pub(crate) mod shellx_browser_task_model;
 pub(crate) mod shellx_browser_tasks;
+pub(crate) mod shellx_browser_transfer_privacy;
 pub(crate) mod shellx_browser_transfers;
 pub(crate) mod shellx_browser_vault;
+pub(crate) mod shellx_browser_webview_runtime;
+pub(crate) mod shellx_browser_window_open_runtime;
+pub(crate) mod shellx_browser_workflow_taxonomy;
+#[cfg(target_os = "windows")]
+pub(crate) mod webview_runtime_paths;
 
 use serde::Serialize;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -255,24 +313,37 @@ async fn run_tab_cwd_command_inner(
     use crate::winproc::NoWindowExt as _;
     let mut cmd = if let Some(ssh) = ssh_config {
         crate::acp::validate_ssh_destination_arg(&ssh.host)?;
-        let remote_args = args
-            .iter()
-            .map(|arg| crate::acp::shell_quote_for_remote(arg))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let remote = if remote_args.is_empty() {
-            format!(
-                "cd -- {} && {}",
-                crate::acp::shell_quote_for_remote(&command_cwd),
-                crate::acp::shell_quote_for_remote(&program),
-            )
+        let remote = if ssh.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+            crate::acp::wrap_ssh_windows_command(&crate::acp::windows_native_process_script(
+                Some(&command_cwd),
+                &program,
+                &args,
+            ))
         } else {
-            format!(
-                "cd -- {} && {} {}",
-                crate::acp::shell_quote_for_remote(&command_cwd),
-                crate::acp::shell_quote_for_remote(&program),
-                remote_args,
-            )
+            let remote_args = args
+                .iter()
+                .map(|arg| crate::acp::shell_quote_for_remote(arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let remote = if remote_args.is_empty() {
+                format!(
+                    "cd -- {} && {}",
+                    crate::acp::shell_quote_for_remote(&command_cwd),
+                    crate::acp::shell_quote_for_remote(&program),
+                )
+            } else {
+                format!(
+                    "cd -- {} && {} {}",
+                    crate::acp::shell_quote_for_remote(&command_cwd),
+                    crate::acp::shell_quote_for_remote(&program),
+                    remote_args,
+                )
+            };
+            crate::acp::wrap_ssh_posix_command(
+                ssh.remote_runtime,
+                ssh.wsl_distro.as_deref(),
+                &remote,
+            )?
         };
         let mut c = tokio::process::Command::new("ssh");
         c.arg("-o").arg("BatchMode=yes");
@@ -280,6 +351,12 @@ async fn run_tab_cwd_command_inner(
         c.arg("-T");
         if let Some(p) = ssh.port {
             c.arg("-p").arg(p.to_string());
+        }
+        if let Some(key_path) =
+            crate::provider_adapters::resolve_provider_ssh_key_path(ssh.key_vault_ref.as_deref())
+                .await?
+        {
+            c.arg("-i").arg(key_path);
         }
         c.arg("--").arg(&ssh.host).arg(remote);
         c
@@ -332,7 +409,7 @@ async fn run_tab_cwd_command_inner(
         .map_err(|e| format!("{} spawn failed: {}", program, e))
 }
 
-/// Shared helper that auto-injects the grok-shell-host
+/// Shared helper that auto-injects the authenticated shellx-host-http
 /// MCP server entry into a session/new mcpServers list. Returns the
 /// merged list. Called by BOTH `start_grok_session` (Tauri command,
 /// UI path) and `debug_api::connect` (debug-api path) so the host MCP
@@ -341,72 +418,51 @@ async fn run_tab_cwd_command_inner(
 /// Semantics:
 /// - Caller may pass an existing `Vec<Value>` of MCP servers (e.g. the
 /// UI form added something, or a script registered other servers).
-/// - We append the shellx-host entry UNLESS the caller already
-/// included one with `name == grok-shell-host` (UI toggle wins).
-/// - Dev binaries are safe here: `main.rs` dispatches `--mcp-server`
-/// before Tauri starts, so re-invoking the current executable runs the
-/// headless stdio server rather than opening another window.
+/// - Any caller-supplied entry using a ShellX-owned host name is replaced by
+///   the current tab-bound HTTP entry. Other MCP registrations are preserved.
+/// - Any prior ShellX-owned `grok-shell-host` stdio entry is removed. A
+///   separate stdio child cannot reach the desktop app's per-tab permission
+///   registry, so write-class tools correctly fail closed there.
 ///
-/// The MCP server entry shape matches what `session/new.mcpServers`
-/// expects per `acp.rs:SessionNewParams.mcp_servers` (camelCase JSON):
-/// { "name": "grok-shell-host", "command": "<exe>", "args": ["--mcp-server"], "env": [...] }
-///
-/// (#349): when `tab_id` is provided, `SHELLX_HOST_MCP_TAB_ID` is
-/// added to the per-server `env` array. The spawned `--mcp-server` child
-/// reads it on each tool dispatch as the fallback when no per-call
-/// MCP-Tab-Id header is available (i.e. the stdio transport, which has
-/// no headers). Without this, `goal_complete` and any other per-tab
-/// tool errors with "missing MCP-Tab-Id header" on Local Windows where
-/// the host MCP runs via stdio.
+/// The MCP server entry uses ACP's HTTP transport shape: `{ type, name, url,
+/// headers }`. The bearer is tab-bound and exists only on the ACP pipe; it is
+/// not written into project or user configuration. `MCP-Tab-Id` gives the
+/// desktop HTTP server the exact autonomy/permission slot to enforce.
 pub fn inject_host_mcp_server(
     existing: Option<Vec<serde_json::Value>>,
     tab_id: Option<&str>,
 ) -> Vec<serde_json::Value> {
     let mut servers = existing.unwrap_or_default();
-    let already_present = servers
-        .iter()
-        .any(|s| s.get("name").and_then(|v| v.as_str()) == Some(crate::host_mcp::SERVER_NAME));
-    if already_present {
-        return servers;
-    }
-    let Ok(exe) = std::env::current_exe() else {
-        return servers;
-    };
-    let exe_str = exe.to_string_lossy().to_string();
-    // Per the ACP MCP spec the `env` field is an array of {name, value}
-    // pairs (NOT a map). Build the entries for tab_id when known.
-    let env_entries: Vec<serde_json::Value> = tab_id
-        .filter(|s| !s.is_empty())
-        .map(|tid| {
-            vec![serde_json::json!({
-                "name": "SHELLX_HOST_MCP_TAB_ID",
-                "value": tid,
-            })]
-        })
-        .unwrap_or_default();
+    servers.retain(|server| {
+        let name = server.get("name").and_then(|value| value.as_str());
+        name != Some(crate::host_mcp::SERVER_NAME) && name != Some("shellx-host-http")
+    });
+    let tab_id = tab_id
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default");
+    let token = crate::mcp_http::tab_bound_mcp_token(tab_id);
     servers.push(serde_json::json!({
-        "name": crate::host_mcp::SERVER_NAME,
-        "command": exe_str,
-        "args": ["--mcp-server"],
-        "env": env_entries,
+        "type": "http",
+        "name": "shellx-host-http",
+        "url": format!("http://127.0.0.1:{}/mcp", crate::mcp_http::mcp_port()),
+        "headers": [
+            { "name": "Authorization", "value": format!("Bearer {}", token) },
+            { "name": "MCP-Tab-Id", "value": tab_id },
+        ],
     }));
     servers
 }
 
-/// Inject the local stdio host MCP only for local Grok processes. WSL/SSH
-/// Grok sessions cannot execute the Windows/local shellX binary from
-/// `session/new.mcpServers`; those transports use the project-scoped
-/// `shellx-host-http` config written during spawn instead.
+/// Inject the tab-bound HTTP host MCP directly into every Grok ACP session.
+/// WSL reaches the desktop listener through its loopback bridge; SSH routes the
+/// same remote-loopback URL through ShellX's required reverse tunnel. No
+/// transport needs a persistent project or account Grok registration.
 pub fn inject_host_mcp_server_for_transport(
     existing: Option<Vec<serde_json::Value>>,
     tab_id: Option<&str>,
-    transport_kind: &str,
+    _transport_kind: &str,
 ) -> Vec<serde_json::Value> {
-    if transport_kind == "local" {
-        inject_host_mcp_server(existing, tab_id)
-    } else {
-        existing.unwrap_or_default()
-    }
+    inject_host_mcp_server(existing, tab_id)
 }
 
 #[cfg(test)]
@@ -414,17 +470,68 @@ mod host_mcp_injection_tests {
     use super::*;
 
     #[test]
-    fn local_transport_injects_stdio_host_mcp() {
+    fn local_transport_injects_tab_bound_http_host_mcp() {
         let servers = inject_host_mcp_server_for_transport(None, Some("tab-local"), "local");
-
-        assert!(servers
+        let server = servers
             .iter()
-            .any(|server| server.get("name").and_then(|value| value.as_str())
-                == Some(crate::host_mcp::SERVER_NAME)));
+            .find(|server| {
+                server.get("name").and_then(|value| value.as_str()) == Some("shellx-host-http")
+            })
+            .expect("HTTP host MCP injected");
+        assert_eq!(server["type"], "http");
+        assert!(server["url"].as_str().unwrap_or_default().ends_with("/mcp"));
+        let headers = server["headers"].as_array().expect("headers array");
+        assert!(headers
+            .iter()
+            .any(|header| { header["name"] == "MCP-Tab-Id" && header["value"] == "tab-local" }));
+        let authorization = headers
+            .iter()
+            .find(|header| header["name"] == "Authorization")
+            .and_then(|header| header["value"].as_str())
+            .expect("Authorization header");
+        assert!(authorization.starts_with("Bearer sx_tab_"));
+        assert!(!servers.iter().any(|server| {
+            server.get("name").and_then(|value| value.as_str())
+                == Some(crate::host_mcp::SERVER_NAME)
+        }));
     }
 
     #[test]
-    fn remote_transports_do_not_inject_local_stdio_host_mcp() {
+    fn local_transport_replaces_legacy_stdio_host_entry() {
+        let servers = inject_host_mcp_server_for_transport(
+            Some(vec![
+                serde_json::json!({
+                    "name": crate::host_mcp::SERVER_NAME,
+                    "command": "stale-shellx",
+                    "args": ["--mcp-server"],
+                }),
+                serde_json::json!({
+                    "name": "shellx-host-http",
+                    "type": "http",
+                    "url": "http://attacker.invalid/mcp",
+                }),
+                serde_json::json!({
+                    "name": "user-server",
+                    "command": "keep-me",
+                }),
+            ]),
+            Some("tab-local"),
+            "local",
+        );
+
+        assert_eq!(servers.len(), 2);
+        assert!(servers
+            .iter()
+            .any(|server| { server["name"] == "user-server" && server["command"] == "keep-me" }));
+        let host = servers
+            .iter()
+            .find(|server| server["name"] == "shellx-host-http")
+            .expect("replacement host entry");
+        assert_ne!(host["url"], "http://attacker.invalid/mcp");
+    }
+
+    #[test]
+    fn remote_transports_inject_session_scoped_http_host_mcp() {
         for transport in ["wsl", "ssh"] {
             let existing = vec![serde_json::json!({
                 "name": "caller-provided",
@@ -436,11 +543,11 @@ mod host_mcp_injection_tests {
                 transport,
             );
 
-            assert_eq!(servers, existing);
-            assert!(!servers
-                .iter()
-                .any(|server| server.get("name").and_then(|value| value.as_str())
-                    == Some(crate::host_mcp::SERVER_NAME)));
+            assert_eq!(servers.len(), existing.len() + 1);
+            assert!(servers.iter().any(|server| {
+                server.get("name").and_then(|value| value.as_str()) == Some("shellx-host-http")
+                    && server.get("type").and_then(|value| value.as_str()) == Some("http")
+            }));
         }
     }
 }
@@ -455,12 +562,9 @@ mod host_mcp_injection_tests {
 /// `connection_id`: optional saved
 /// ConnectionPreset id. When set, the preset overrides the
 /// `wsl_distro`/`wsl_grok_path` params and supplies the transport
-/// config. SSH transport spawn is wired through the existing WSL-style
-/// pre-configuration path where possible; the full preset-driven
-/// Command (build_command_for_transport in acp.rs) is reserved for
-/// the follow-up that restructures GrokAcpSession::start. For now
-/// SSH presets return a friendly "not yet wired" error so callers
-/// can plan around it.
+/// config. Local presets preserve the scanned executable path, WSL presets
+/// use the selected distro, and SSH presets route through the session's
+/// transport-aware command builder.
 ///
 /// Args stay positional because this is a #[tauri::command] — the args
 /// bind to `invoke('start_grok_session', { cwd, wsl_distro, ... })` on
@@ -498,11 +602,10 @@ async fn start_grok_session(
             .await
             .ok_or_else(|| format!("unknown connection_id: {}", id))?;
         match &preset.transport {
-            crate::acp::Transport::Local { .. } => {
-                // No extra config — falls through to platform default.
-                // wsl_distro is forced None so a stale UI field can't
-                // re-activate the WSL path against operator intent.
-                s.set_wsl_config(None, None);
+            crate::acp::Transport::Local { grok_path } => {
+                // Preserve the exact scanned preset executable and clear any
+                // stale WSL/SSH routing retained by this reused tab.
+                s.set_local_config(grok_path.clone());
             }
             crate::acp::Transport::Wsl { distro, grok_path } => {
                 // Pre-flight test that Grok is reachable inside the
@@ -524,9 +627,8 @@ async fn start_grok_session(
                         format!("test -x {quoted} && printf '%s\\n' {quoted}")
                     } else {
                         format!(
-                            "export PATH=\"$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$HOME/.claude/bin:$HOME/.grok/bin:$HOME/.bun/bin:$PATH\"; \
-                             if [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1; fi; \
-                             command -v {quoted} 2>/dev/null"
+                            "{} command -v {quoted} 2>/dev/null",
+                            crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
                         )
                     };
                     let probe = std::process::Command::new("wsl.exe")
@@ -575,6 +677,8 @@ async fn start_grok_session(
                 port,
                 key_vault_ref,
                 remote_grok_path,
+                remote_runtime,
+                wsl_distro,
             } => {
                 // SSH transport — stash the config on the session;
                 // `s.start` will route through
@@ -587,6 +691,8 @@ async fn start_grok_session(
                     port: *port,
                     key_vault_ref: key_vault_ref.clone(),
                     remote_grok_path: remote_grok_path.clone(),
+                    remote_runtime: *remote_runtime,
+                    wsl_distro: wsl_distro.clone(),
                 }));
             }
             t if t.is_p_transport_2() => {
@@ -601,12 +707,16 @@ async fn start_grok_session(
         conn_id_used = Some(preset.id.clone());
     } else if wsl_distro.is_some() || wsl_grok_path.is_some() {
         s.set_wsl_config(wsl_distro.clone(), wsl_grok_path.clone());
+    } else {
+        // No preset or inline remote fields means an explicit ambient local
+        // launch. Clear any transport state left by the tab's prior session.
+        s.set_local_config(None);
     }
 
-    // Auto-register the local stdio host MCP only for local Grok. WSL/SSH
-    // sessions use the shellx-host-http project config installed by the
-    // transport spawn path; injecting the local executable into remote
-    // `session/new.mcpServers` makes Grok try to spawn an impossible binary.
+    // Register the tab-bound HTTP host MCP in the ACP session for every
+    // transport. SSH exposes the desktop port through its reverse tunnel and
+    // WSL uses the already-verified loopback bridge, so no remote executable or
+    // persistent Grok config is required.
     let transport_kind = s.transport_kind().to_string();
     let servers =
         inject_host_mcp_server_for_transport(mcp_servers, Some(tab_key.as_str()), &transport_kind);
@@ -630,28 +740,21 @@ async fn start_grok_session(
             );
             s.set_permission_mode(Some(mode));
         } else {
-            // Fresh-tab /connect with no prior /autonomy means BOTH
-            // per-session mode AND
-            // per-tab autonomy are None. The first host-MCP tool call
-            // then waits 60s for a permission decision that no UI is
-            // going to send (the modal only renders for terminal/create,
-            // and even then only the UI fires it; nobody fires for
-            // fs_* / net_fetch / Agent / etc. on a never-configured
-            // tab). Agent gives up with `stopReason: cancelled,
-            // reasonDetail: agent_chose` after ~100s.
-            // // Default to "default" (Confirm mode) so grok at least
-            // gets a structured permission-request → -32001 deny
-            // path instead of an unending hang.
+            // A fresh tab has no persisted autonomy yet. Resolve it to the
+            // same provider-native Full Auto default used by every other
+            // ShellX provider surface; leaving it null makes the first host
+            // tool wait for a decision that the normal UI no longer offers.
             tracing::info!(
-                "start_grok_session: tab '{}' has no autonomy preference set anywhere — defaulting to 'default' (Confirm)",
-                tab_key
+                "start_grok_session: tab '{}' has no autonomy preference set anywhere — defaulting to '{}' (Full Auto)",
+                tab_key,
+                acp::SHELLX_DEFAULT_PERMISSION_MODE
             );
-            s.set_permission_mode(Some("default".to_string()));
+            s.set_permission_mode(Some(acp::SHELLX_DEFAULT_PERMISSION_MODE.to_string()));
             // Also mirror this into the registry so subsequent restarts
             // don't fall back here (and so set_permission_mode calls
             // from the UI see a consistent baseline).
             registry
-                .set_tab_autonomy(&tab_key, "default".to_string())
+                .set_tab_autonomy(&tab_key, acp::SHELLX_DEFAULT_PERMISSION_MODE.to_string())
                 .await;
         }
     }
@@ -689,6 +792,11 @@ async fn start_grok_session(
         let probe_transport = crate::mcp_health::ProbeTransport {
             wsl_distro: s.wsl_distro().map(str::to_string),
             ssh_target: s.ssh_config().map(|ssh| ssh.host.clone()),
+            ssh_remote_runtime: s
+                .ssh_config()
+                .map(|ssh| ssh.remote_runtime)
+                .unwrap_or_default(),
+            ssh_wsl_distro: s.ssh_config().and_then(|ssh| ssh.wsl_distro.clone()),
         };
         // Drop the session lock before scheduling so the probe task
         // doesn't deadlock against a parallel set_permission_mode etc.
@@ -930,6 +1038,31 @@ async fn send_prompt(
     }
 }
 
+/// Queue a human correction into a running Grok turn. Grok applies it at the
+/// next safe point without cancelling the current prompt.
+#[tauri::command]
+async fn interject_prompt(
+    text: String,
+    #[allow(non_snake_case)] tab_id: Option<String>,
+    registry: State<'_, Arc<SessionRegistry>>,
+) -> Result<String, String> {
+    if text.trim().is_empty() {
+        return Err("Empty interjection".to_string());
+    }
+    let tab_key = tab_id_or_default(tab_id);
+    let session = registry
+        .get_existing(&tab_key)
+        .await
+        .ok_or_else(|| "No active session for this tab".to_string())?;
+    let (interjection_id, response) = {
+        let guard = session.lock().await;
+        guard.initiate_interject_prompt(&text).await?
+    };
+    // Keep abort and other per-tab control responsive while Grok queues the correction.
+    response.wait().await?;
+    Ok(interjection_id)
+}
+
 /// Abort/kill the current Grok session process.
 #[tauri::command]
 async fn abort_session(
@@ -942,6 +1075,13 @@ async fn abort_session(
     {
         let mut s = arc.lock().await;
         s.abort_session().await?;
+    }
+    let aborted_tab_tasks = crate::tab_tasks::abort_tab(&tab_key);
+    if aborted_tab_tasks > 0 {
+        info!(
+            "abort_session: aborted {} owned background task(s) for tab_id={}",
+            aborted_tab_tasks, tab_key
+        );
     }
     let cleaned = cleanup_host_mcp_children_for_tab(&process_registry, &tab_key).await;
     if cleaned > 0 {
@@ -965,10 +1105,10 @@ async fn get_detected_max_tokens(
     Ok(s.get_detected_max_context_length().unwrap_or(128_000))
 }
 
-/// Set the autonomy mode for the next session spawn.
-/// Accepts grok's `--permission-mode` values: `plan` (Observe),
-/// `acceptEdits` (Propose), `default` (Confirm), `bypassPermissions`
-/// (Auto). Pass `None` to revert to grok's default.
+/// Set the permission mode for the next session spawn. The normal ShellX
+/// surface uses `bypassPermissions`; legacy Grok wire values remain accepted
+/// for saved sessions and diagnostic callers. Passing `None` resets to the
+/// ShellX Full Auto default rather than Grok's interactive default.
 ///
 /// Idempotent. Has effect on the NEXT spawn — does not retroactively
 /// change a running session.
@@ -979,21 +1119,24 @@ async fn set_permission_mode(
     registry: State<'_, Arc<SessionRegistry>>,
 ) -> Result<String, String> {
     let tab_key = tab_id_or_default(tab_id);
+    let effective_mode = acp::resolve_shellx_permission_mode(mode);
     // Mirror into tab_autonomy so the value survives /abort + /goal
-    // inner-session rebuilds. Mirror to "default" too while the legacy
+    // inner-session rebuilds. Mirror to the default slot too while the legacy
     // default-slot path still has readers (will be removed once all
     // callers pass tabId).
-    if let Some(ref m) = mode {
-        registry.set_tab_autonomy(&tab_key, m.clone()).await;
-        if tab_key != "default" {
-            registry.set_tab_autonomy("default", m.clone()).await;
-        }
+    registry
+        .set_tab_autonomy(&tab_key, effective_mode.clone())
+        .await;
+    if tab_key != "default" {
+        registry
+            .set_tab_autonomy("default", effective_mode.clone())
+            .await;
     }
     let arc = registry.get_or_create(&tab_key).await;
     let mut s = arc.lock().await;
-    s.set_permission_mode(mode.clone());
-    info!("set_permission_mode: {:?}", mode);
-    Ok(mode.unwrap_or_else(|| "default".to_string()))
+    s.set_permission_mode(Some(effective_mode.clone()));
+    info!("set_permission_mode: {}", effective_mode);
+    Ok(effective_mode)
 }
 
 /// Renderer-side sensitive-file denylist. Anchored to filename
@@ -1044,28 +1187,28 @@ fn reject_if_sensitive_path(normalized: &str, original: &str) -> Result<(), Stri
 /// can't escape the sessions dir.
 #[tauri::command]
 async fn read_session_jsonl(session_id: String) -> Result<Vec<String>, String> {
-    if session_id.is_empty()
-        || !session_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(format!("invalid session_id: {}", session_id));
-    }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "HOME/USERPROFILE unset".to_string())?;
-    let path = std::path::PathBuf::from(home)
-        .join(".shellx")
-        .join("sessions")
-        .join(format!("{}.jsonl", session_id));
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
     // Read all records; tolerate older logs where concurrent appends
     // occasionally wrote two JSON objects on one physical line. The
     // renderer expects one RawEventFrame JSON string per array item.
-    let content = std::fs::read_to_string(&path).map_err(|e| format!("read failed: {}", e))?;
-    Ok(split_session_jsonl_records(&content))
+    tokio::task::spawn_blocking(move || session_log::read_all_session_jsonl(&session_id))
+        .await
+        .map_err(|e| format!("session log reader task failed: {e}"))?
+}
+
+/// Read only the newest valid records required by an in-memory consumer.
+/// The complete append-only JSONL stays on disk; this avoids copying an
+/// arbitrarily large transcript through Tauri IPC during tab hydration.
+#[tauri::command]
+async fn read_session_jsonl_tail(
+    session_id: String,
+    limit: usize,
+) -> Result<session_log::SessionJsonlTail, String> {
+    let safe_limit = limit.clamp(1, session_log::MAX_SESSION_JSONL_TAIL_RECORDS);
+    tokio::task::spawn_blocking(move || {
+        session_log::read_session_jsonl_tail(&session_id, safe_limit)
+    })
+    .await
+    .map_err(|e| format!("session log tail reader task failed: {e}"))?
 }
 
 /// Tab close handler — drops the registry slot for
@@ -1085,6 +1228,13 @@ async fn drop_tab_session(
     process_registry: State<'_, Arc<ProcessRegistry>>,
     provider_registry: State<'_, Arc<provider_sessions::ProviderSessionRegistry>>,
 ) -> Result<bool, String> {
+    let aborted_tab_tasks = crate::tab_tasks::abort_tab(&tab_id);
+    if aborted_tab_tasks > 0 {
+        info!(
+            "drop_tab_session: aborted {} owned background task(s) for tab_id={}",
+            aborted_tab_tasks, tab_id
+        );
+    }
     let provider_aborted = provider_registry
         .abort_active_child(&tab_id, None)
         .await
@@ -1096,6 +1246,7 @@ async fn drop_tab_session(
         );
     }
     let removed = registry.drop_tab(&tab_id).await;
+    registry.clear_tab_autonomy(&tab_id).await;
     if removed {
         info!(
             "drop_tab_session: released registry slot for tab_id={}",
@@ -1613,6 +1764,15 @@ async fn ssh_run_preview_command(
         cmd.arg("-i").arg(key_path);
     }
     cmd.arg("--").arg(&ssh.host);
+    let remote_command = if ssh.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        crate::acp::wrap_ssh_windows_command(&remote_command)
+    } else {
+        crate::acp::wrap_ssh_posix_command(
+            ssh.remote_runtime,
+            ssh.wsl_distro.as_deref(),
+            &remote_command,
+        )?
+    };
     cmd.arg(remote_command);
     use crate::winproc::NoWindowExt as _;
     cmd.no_window();
@@ -1643,10 +1803,18 @@ async fn ssh_realpath_for_preview(
     ssh: &crate::acp::SshSpawnConfig,
     remote_path: &str,
 ) -> Result<String, String> {
-    let q = crate::acp::shell_quote_for_remote(remote_path);
-    let script = format!(
-        "p={q}; if command -v realpath >/dev/null 2>&1; then realpath -- \"$p\" 2>/dev/null || realpath \"$p\"; else python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \"$p\"; fi"
-    );
+    let script = if ssh.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        format!(
+            "{}$path={};$resolved=(Resolve-Path -LiteralPath $path -ErrorAction Stop).ProviderPath;[Console]::Out.WriteLine($resolved)",
+            crate::acp::windows_remote_shell_prelude(),
+            crate::acp::powershell_single_quote(remote_path),
+        )
+    } else {
+        let q = crate::acp::shell_quote_for_remote(remote_path);
+        format!(
+            "p={q}; if command -v realpath >/dev/null 2>&1; then realpath -- \"$p\" 2>/dev/null || realpath \"$p\"; else python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \"$p\"; fi"
+        )
+    };
     let out = ssh_run_preview_command(ssh, script, "realpath").await?;
     let resolved = String::from_utf8_lossy(&out).trim().to_string();
     if resolved.is_empty() {
@@ -1662,10 +1830,18 @@ async fn ssh_preview_file_size(
     ssh: &crate::acp::SshSpawnConfig,
     remote_path: &str,
 ) -> Result<u64, String> {
-    let q = crate::acp::shell_quote_for_remote(remote_path);
-    let script = format!(
-        "p={q}; if stat -c %s -- \"$p\" >/dev/null 2>&1; then stat -c %s -- \"$p\"; else stat -f %z \"$p\"; fi"
-    );
+    let script = if ssh.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        format!(
+            "{}$path={};$item=Get-Item -LiteralPath $path -ErrorAction Stop;if($item.PSIsContainer){{throw 'preview path is a directory'}};[Console]::Out.WriteLine($item.Length)",
+            crate::acp::windows_remote_shell_prelude(),
+            crate::acp::powershell_single_quote(remote_path),
+        )
+    } else {
+        let q = crate::acp::shell_quote_for_remote(remote_path);
+        format!(
+            "p={q}; if stat -c %s -- \"$p\" >/dev/null 2>&1; then stat -c %s -- \"$p\"; else stat -f %z \"$p\"; fi"
+        )
+    };
     let out = ssh_run_preview_command(ssh, script, "stat").await?;
     let s = String::from_utf8_lossy(&out).trim().to_string();
     s.parse::<u64>()
@@ -1685,8 +1861,16 @@ async fn ssh_read_file_bytes_with_cap(
             label, size, cap
         ));
     }
-    let q = crate::acp::shell_quote_for_remote(remote_path);
-    let script = format!("cat -- {q}");
+    let script = if ssh.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        format!(
+            "{}$path={};$bytes=[IO.File]::ReadAllBytes($path);$stdout=[Console]::OpenStandardOutput();$stdout.Write($bytes,0,$bytes.Length);$stdout.Flush()",
+            crate::acp::windows_remote_shell_prelude(),
+            crate::acp::powershell_single_quote(remote_path),
+        )
+    } else {
+        let q = crate::acp::shell_quote_for_remote(remote_path);
+        format!("cat -- {q}")
+    };
     let out = ssh_run_preview_command(ssh, script, "cat").await?;
     if out.len() as u64 > cap {
         return Err(format!(
@@ -1849,7 +2033,10 @@ async fn capture_app_screenshot_to_file() -> Result<String, String> {
 /// only; other schemes are
 /// refused to keep the surface narrow.
 #[tauri::command]
-async fn open_url_in_browser(url: String) -> Result<(), String> {
+async fn open_url_in_browser(
+    url: String,
+    #[cfg(feature = "debug-api")] hub: State<'_, Arc<DebugHub>>,
+) -> Result<(), String> {
     let lower = url.to_ascii_lowercase();
     if !lower.starts_with("http://") && !lower.starts_with("https://") {
         return Err(format!("only http(s) URLs are openable, got: {}", url));
@@ -1866,8 +2053,13 @@ async fn open_url_in_browser(url: String) -> Result<(), String> {
     }) {
         return Err(format!("URL contains shell-unsafe chars: {}", url));
     }
+    #[cfg(feature = "debug-api")]
+    if crate::isolated_test_instance_requested() {
+        hub.record_raw_event("external-url-dispatched", serde_json::json!({ "url": url }));
+        return Ok(());
+    }
     #[cfg(target_os = "windows")]
-    {
+    let _child = {
         // Use rundll32 url.dll instead of cmd start — it's the
         // canonical Windows protocol handler and doesn't go through
         // cmd quoting at all, so even a tricky URL can't chain a
@@ -1875,38 +2067,23 @@ async fn open_url_in_browser(url: String) -> Result<(), String> {
         std::process::Command::new("rundll32")
             .args(["url.dll,FileProtocolHandler", &url])
             .spawn()
-            .map_err(|e| format!("rundll32 url.dll failed: {}", e))?;
-        return Ok(());
-    }
+            .map_err(|e| format!("rundll32 url.dll failed: {}", e))?
+    };
     #[cfg(target_os = "macos")]
-    {
+    let _child = {
         std::process::Command::new("open")
             .arg(&url)
             .spawn()
-            .map_err(|e| format!("open failed: {}", e))?;
-        Ok(())
-    }
+            .map_err(|e| format!("open failed: {}", e))?
+    };
     #[cfg(all(unix, not(target_os = "macos")))]
-    {
+    let _child = {
         std::process::Command::new("xdg-open")
             .arg(&url)
             .spawn()
-            .map_err(|e| format!("xdg-open failed: {}", e))?;
-        Ok(())
-    }
-}
-
-/// Read current header state — workspace cwd, autonomy
-/// mode, detected max tokens, session id, etc. React's header bar
-/// polls / reads from this once on mount and after autonomy changes.
-#[tauri::command]
-async fn get_header_state(
-    #[allow(non_snake_case)] tab_id: Option<String>,
-    registry: State<'_, Arc<SessionRegistry>>,
-) -> Result<serde_json::Value, String> {
-    let arc = registry.get_or_create(&tab_id_or_default(tab_id)).await;
-    let s = arc.lock().await;
-    Ok(s.get_debug_session_info())
+            .map_err(|e| format!("xdg-open failed: {}", e))?
+    };
+    Ok(())
 }
 
 /// Append a single JSON line to
@@ -2335,9 +2512,11 @@ async fn rename_past_session(
     existing.push_str(&line_str);
     existing.push('\n');
 
-    let tmp = path.with_extension("jsonl.tmp");
-    std::fs::write(&tmp, existing.as_bytes()).map_err(|e| format!("write tmp file: {}", e))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("atomic rename: {}", e))?;
+    crate::session_git::atomic_write_private_file(
+        &path,
+        existing.as_bytes(),
+        "rename past session",
+    )?;
     info!(
         "rename_past_session: id={} new_title=\"{}\"",
         session_id, trimmed
@@ -2471,6 +2650,8 @@ async fn provider_file_target_for_connection_id(
             host,
             port,
             key_vault_ref,
+            remote_runtime,
+            wsl_distro,
             ..
         } => Ok(Some(
             provider_sessions::ProviderSessionRunTarget::new(
@@ -2479,7 +2660,8 @@ async fn provider_file_target_for_connection_id(
                 Some(host),
                 port,
             )
-            .with_ssh_key_vault_ref(key_vault_ref),
+            .with_ssh_key_vault_ref(key_vault_ref)
+            .with_ssh_runtime(remote_runtime, wsl_distro),
         )),
         other => Err(format!(
             "connection transport {} is not supported for file browsing",
@@ -2503,6 +2685,8 @@ async fn list_provider_target_project_files(
                 target.ssh_host.as_deref(),
                 target.ssh_port,
                 target.ssh_key_vault_ref.as_deref(),
+                target.ssh_remote_runtime,
+                target.ssh_wsl_distro.as_deref(),
                 path,
                 include_hidden,
             )
@@ -2634,6 +2818,8 @@ async fn list_provider_ssh_project_files(
     ssh_host: Option<&str>,
     ssh_port: Option<u16>,
     ssh_key_vault_ref: Option<&str>,
+    ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<&str>,
     path: String,
     include_hidden: bool,
 ) -> Result<Vec<FsEntry>, String> {
@@ -2643,19 +2829,44 @@ async fn list_provider_ssh_project_files(
         .ok_or_else(|| "provider SSH file listing requires sshHost".to_string())?;
     crate::acp::validate_ssh_destination_arg(host)?;
     let cwd = path.trim();
-    if !cwd.starts_with('/') {
-        return Err(format!("provider SSH path must be absolute: {}", path));
+    let absolute = if ssh_remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        crate::acp::is_windows_absolute_remote_path(cwd)
+    } else {
+        cwd.starts_with('/')
+    };
+    if !absolute {
+        return Err(format!(
+            "provider SSH path must be absolute for the selected runtime: {}",
+            path
+        ));
     }
-    let output = run_ssh_cwd_command(
+    let transport = ProviderSshCommandTransport {
         host,
-        ssh_port,
-        ssh_key_vault_ref,
-        cwd,
-        "sh",
-        vec!["-c".to_string(), portable_project_files_listing_script()],
-        Duration::from_secs(10),
-    )
-    .await?;
+        port: ssh_port,
+        key_vault_ref: ssh_key_vault_ref,
+        remote_runtime: ssh_remote_runtime,
+        wsl_distro: ssh_wsl_distro,
+    };
+    let (program, args) = if ssh_remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        (
+            "powershell.exe",
+            vec![
+                "-NoLogo".to_string(),
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-Command".to_string(),
+                "$stdout=[Console]::Out;foreach($item in Get-ChildItem -Force -LiteralPath .){$kind=if($item.PSIsContainer){'d'}else{'f'};$size=if($item.PSIsContainer){0}else{$item.Length};$stdout.Write($item.Name+[char]0+$kind+[char]0+$size+[char]0)}"
+                    .to_string(),
+            ],
+        )
+    } else {
+        (
+            "sh",
+            vec!["-c".to_string(), portable_project_files_listing_script()],
+        )
+    };
+    let output =
+        run_ssh_cwd_command(&transport, cwd, program, args, Duration::from_secs(10)).await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
@@ -2707,10 +2918,10 @@ async fn run_wsl_cwd_command(
         cmd.no_window();
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
-        return timeout(command_timeout, cmd.output())
+        timeout(command_timeout, cmd.output())
             .await
             .map_err(|_| format!("{} timed out after {:?}", program, command_timeout))?
-            .map_err(|e| format!("{} spawn failed: {}", program, e));
+            .map_err(|e| format!("{} spawn failed: {}", program, e))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -2720,10 +2931,16 @@ async fn run_wsl_cwd_command(
     }
 }
 
-async fn run_ssh_cwd_command(
-    host: &str,
+struct ProviderSshCommandTransport<'a> {
+    host: &'a str,
     port: Option<u16>,
-    ssh_key_vault_ref: Option<&str>,
+    key_vault_ref: Option<&'a str>,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    wsl_distro: Option<&'a str>,
+}
+
+async fn run_ssh_cwd_command(
+    transport: &ProviderSshCommandTransport<'_>,
     cwd: &str,
     program: &str,
     args: Vec<String>,
@@ -2731,38 +2948,54 @@ async fn run_ssh_cwd_command(
 ) -> Result<std::process::Output, String> {
     use crate::winproc::NoWindowExt as _;
 
-    let remote_args = args
-        .iter()
-        .map(|arg| crate::acp::shell_quote_for_remote(arg))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let remote = if remote_args.is_empty() {
-        format!(
-            "cd -- {} && {}",
-            crate::acp::shell_quote_for_remote(cwd),
-            crate::acp::shell_quote_for_remote(program),
-        )
+    let remote = if transport.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        let rendered_args = args
+            .iter()
+            .map(|arg| crate::acp::powershell_single_quote(arg))
+            .collect::<Vec<_>>()
+            .join(",");
+        let script = format!(
+            "{}$work={};if(-not(Test-Path -LiteralPath $work -PathType Container)){{throw ('provider cwd is not a directory: '+$work)}};Set-Location -LiteralPath $work;$args=@({rendered_args});& {} @args;exit $LASTEXITCODE",
+            crate::acp::windows_remote_shell_prelude(),
+            crate::acp::powershell_single_quote(cwd),
+            crate::acp::powershell_single_quote(program),
+        );
+        crate::acp::wrap_ssh_windows_command(&script)
     } else {
-        format!(
-            "cd -- {} && {} {}",
-            crate::acp::shell_quote_for_remote(cwd),
-            crate::acp::shell_quote_for_remote(program),
-            remote_args,
-        )
+        let remote_args = args
+            .iter()
+            .map(|arg| crate::acp::shell_quote_for_remote(arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let script = if remote_args.is_empty() {
+            format!(
+                "cd -- {} && {}",
+                crate::acp::shell_quote_for_remote(cwd),
+                crate::acp::shell_quote_for_remote(program),
+            )
+        } else {
+            format!(
+                "cd -- {} && {} {}",
+                crate::acp::shell_quote_for_remote(cwd),
+                crate::acp::shell_quote_for_remote(program),
+                remote_args,
+            )
+        };
+        crate::acp::wrap_ssh_posix_command(transport.remote_runtime, transport.wsl_distro, &script)?
     };
     let mut cmd = tokio::process::Command::new("ssh");
     cmd.arg("-o").arg("BatchMode=yes");
     cmd.arg("-o").arg("ConnectTimeout=5");
     cmd.arg("-T");
-    if let Some(p) = port {
+    if let Some(p) = transport.port {
         cmd.arg("-p").arg(p.to_string());
     }
     if let Some(key_path) =
-        crate::provider_adapters::resolve_provider_ssh_key_path(ssh_key_vault_ref).await?
+        crate::provider_adapters::resolve_provider_ssh_key_path(transport.key_vault_ref).await?
     {
         cmd.arg("-i").arg(key_path);
     }
-    cmd.arg("--").arg(host).arg(remote);
+    cmd.arg("--").arg(transport.host).arg(remote);
     cmd.no_window();
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -2821,6 +3054,54 @@ fn parse_remote_find_entries(stdout: &[u8], include_hidden: bool) -> Vec<FsEntry
 #[cfg(test)]
 mod file_listing_tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
+    async fn live_native_windows_ssh_listing_and_preview_read() {
+        let host =
+            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
+        let home =
+            std::env::var("SHELLX_WINDOWS_SSH_HOME").expect("SHELLX_WINDOWS_SSH_HOME is required");
+        let entries = list_provider_ssh_project_files(
+            Some(&host),
+            None,
+            None,
+            crate::acp::SshRemoteRuntime::Windows,
+            None,
+            home.clone(),
+            false,
+        )
+        .await
+        .expect("native Windows SSH file listing");
+        assert!(
+            entries.iter().any(|entry| entry.name == "AppData"),
+            "entries: {entries:?}"
+        );
+
+        let ssh = crate::acp::SshSpawnConfig {
+            host,
+            port: None,
+            key_vault_ref: None,
+            remote_grok_path: String::new(),
+            remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+            wsl_distro: None,
+        };
+        let preview_path = format!(
+            "{}\\AppData\\Local\\ShellX\\uninstall.exe",
+            home.trim_end_matches(['/', '\\'])
+        );
+        let resolved = ssh_realpath_for_preview(&ssh, &preview_path)
+            .await
+            .expect("native Windows preview realpath");
+        let size = ssh_preview_file_size(&ssh, &resolved)
+            .await
+            .expect("native Windows preview size");
+        assert!(size > 0 && size < 16 * 1024 * 1024);
+        let bytes = ssh_read_file_bytes_for_preview(&ssh, &resolved)
+            .await
+            .expect("native Windows preview read");
+        assert_eq!(bytes.len() as u64, size);
+    }
 
     #[test]
     fn remote_find_parser_skips_hidden_and_sorts_dirs_first() {
@@ -2935,7 +3216,7 @@ async fn append_session_log(session_id: String, line: String) -> Result<(), Stri
     let dir = std::path::PathBuf::from(&home)
         .join(".shellx")
         .join("sessions");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {}", e))?;
+    crate::session_git::ensure_strict_private_dir(&dir, "session log")?;
     let path = dir.join(format!("{}.jsonl", session_id));
     let _guard = session_log_append_lock()
         .lock()
@@ -3085,6 +3366,8 @@ fn ssh_config_from_provider_run(
         port: run.ssh_port,
         key_vault_ref: run.ssh_key_vault_ref.clone(),
         remote_grok_path: String::new(),
+        remote_runtime: run.ssh_remote_runtime,
+        wsl_distro: run.ssh_wsl_distro.clone(),
     })
 }
 
@@ -3889,30 +4172,38 @@ mod task_target_tests {
 #[cfg(unix)]
 fn pause_pid(pid: u32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
-    use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGSTOP)
-        .map_err(|e| format!("SIGSTOP {} failed: {}", pid, e))
+    kill(
+        crate::process_registry::checked_unix_process_id(pid)?,
+        Signal::SIGSTOP,
+    )
+    .map_err(|e| format!("SIGSTOP {} failed: {}", pid, e))
 }
 #[cfg(unix)]
 fn resume_pid(pid: u32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
-    use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGCONT)
-        .map_err(|e| format!("SIGCONT {} failed: {}", pid, e))
+    kill(
+        crate::process_registry::checked_unix_process_id(pid)?,
+        Signal::SIGCONT,
+    )
+    .map_err(|e| format!("SIGCONT {} failed: {}", pid, e))
 }
 #[cfg(unix)]
 fn term_pid(pid: u32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
-    use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
-        .map_err(|e| format!("SIGTERM {} failed: {}", pid, e))
+    kill(
+        crate::process_registry::checked_unix_process_id(pid)?,
+        Signal::SIGTERM,
+    )
+    .map_err(|e| format!("SIGTERM {} failed: {}", pid, e))
 }
 #[cfg(unix)]
 fn kill9_pid(pid: u32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
-    use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGKILL)
-        .map_err(|e| format!("SIGKILL {} failed: {}", pid, e))
+    kill(
+        crate::process_registry::checked_unix_process_id(pid)?,
+        Signal::SIGKILL,
+    )
+    .map_err(|e| format!("SIGKILL {} failed: {}", pid, e))
 }
 /// #365: Windows pause/resume via NtSuspendProcess / NtResumeProcess.
 /// These live in ntdll.dll and aren't part of the documented Win32 surface,
@@ -4063,7 +4354,7 @@ async fn cleanup_host_mcp_children_for_tab(
     let mut cleaned = 0usize;
     for task_id in task_ids {
         let pid = process_registry.pid_for(&task_id).await;
-        match process_registry.signal(&task_id, "SIGTERM").await {
+        match process_registry.signal_tree(&task_id, "SIGTERM").await {
             Ok(()) => {
                 cleaned += 1;
                 process_registry
@@ -4198,9 +4489,7 @@ async fn task_kill(
             .ok_or_else(|| format!("no terminal {}:{} found", tab_id, terminal_id))?;
         if let Some(pid) = row.pid {
             let _ = term_pid(pid);
-            if pid_is_alive(pid) {
-                kill9_pid(pid)?;
-            }
+            schedule_sigkill_escalation(pid, "task_kill_terminal");
         }
         terminal_registry.drop_record(tab_id, terminal_id).await;
         return Ok(());
@@ -4233,10 +4522,9 @@ async fn task_kill(
 #[cfg(unix)]
 fn pid_is_alive(pid: u32) -> bool {
     use nix::sys::signal::kill;
-    use nix::unistd::Pid;
     // Passing `None` for the signal sends no signal but still validates
     // permission + existence — exactly what we want.
-    kill(Pid::from_raw(pid as i32), None).is_ok()
+    crate::process_registry::checked_unix_process_id(pid).is_ok_and(|pid| kill(pid, None).is_ok())
 }
 #[cfg(not(unix))]
 fn pid_is_alive(pid: u32) -> bool {
@@ -4369,10 +4657,51 @@ fn get_debug_port() -> u16 {
     }
 }
 
-/// Resolve a pending Confirm-mode
-/// permission request. The frontend's PermissionModal calls this with
-/// the request_id it received via the `permission-request` event,
-/// plus `allow: bool` (true on Allow, false on Deny/Esc/outside-click).
+/// Read the Debug UI snapshot over Tauri IPC. External drivers still mutate
+/// this shared state through the authenticated loopback API; IPC gives packaged
+/// WebViews a transport-independent recovery path when loopback WS/fetch is
+/// unavailable on a platform.
+#[cfg(feature = "debug-api")]
+#[tauri::command]
+fn debug_ui_snapshot(hub: State<'_, Arc<DebugHub>>) -> crate::debug_api::UiState {
+    hub.ui_snapshot()
+}
+
+#[cfg(not(feature = "debug-api"))]
+#[tauri::command]
+fn debug_ui_snapshot() -> Result<serde_json::Value, String> {
+    Err("debug API is disabled in this build".to_string())
+}
+
+#[cfg(feature = "debug-api")]
+#[tauri::command]
+fn renderer_error(
+    hub: State<'_, Arc<DebugHub>>,
+    message: String,
+    stack: Option<String>,
+    component_stack: Option<String>,
+) {
+    fn bounded(value: Option<String>) -> Option<String> {
+        value.map(|text| text.chars().take(8_000).collect())
+    }
+    hub.record_raw_event(
+        "renderer-error",
+        serde_json::json!({
+            "message": message.chars().take(2_000).collect::<String>(),
+            "stack": bounded(stack),
+            "componentStack": bounded(component_stack),
+        }),
+    );
+}
+
+#[cfg(not(feature = "debug-api"))]
+#[tauri::command]
+fn renderer_error(_message: String, _stack: Option<String>, _component_stack: Option<String>) {}
+
+/// Resolve a pending permission request from either the Grok ACP path or a
+/// provider-native driver. The frontend calls this with the request id from the
+/// `permission-request` event plus `allow`; the optional decision preserves
+/// Allow once versus Allow always for providers with session-scoped approval.
 ///
 /// Returns `true` when a matching pending request was found and the
 /// decision was successfully delivered to the awaiting handler; `false`
@@ -4381,7 +4710,7 @@ fn get_debug_port() -> u16 {
 /// only for diagnostics — the modal closes either way once it has sent
 /// the decision.
 ///
-/// Security: the request_id is a uuid v4 generated server-side, so this
+/// Security: the request_id is generated server-side, so this
 /// command is only useful to a caller that received a fresh
 /// `permission-request` event. A malicious WebView page that guesses an
 /// id has the same effect as the user choosing — which is acceptable
@@ -4390,13 +4719,31 @@ fn get_debug_port() -> u16 {
 async fn resolve_permission_request(
     #[allow(non_snake_case)] request_id: String,
     allow: bool,
+    decision: Option<String>,
     registry: tauri::State<'_, Arc<PendingPermissionRegistry>>,
+    provider_registry: tauri::State<'_, Arc<provider_sessions::ProviderSessionRegistry>>,
 ) -> Result<bool, String> {
+    let provider_decision = if !allow {
+        provider_sessions::ProviderApprovalDecision::Deny
+    } else if decision
+        .as_deref()
+        .is_some_and(|decision| decision.eq_ignore_ascii_case("allow_always"))
+    {
+        provider_sessions::ProviderApprovalDecision::AllowForSession
+    } else {
+        provider_sessions::ProviderApprovalDecision::Allow
+    };
+    if provider_registry
+        .resolve_pending_approval(&request_id, provider_decision)
+        .await
+    {
+        return Ok(true);
+    }
     Ok(registry.resolve(&request_id, allow).await)
 }
 
-/// Status of the primary bundled shellx-host skill manifest at
-/// `~/.grok/skills/shellx-host/SKILL.md`.
+/// Status of the bundled shellx-host manifest in ShellX-owned agent docs at
+/// `~/.shellx/agent-docs/shellx-host/SKILL.md`.
 ///
 /// Reachable from the Settings UI so a "Host skill: installed / needs
 /// update / missing" badge can render without the renderer touching the
@@ -4421,34 +4768,6 @@ fn host_skill_status() -> skill_install::HostSkillStatus {
 #[tauri::command]
 fn workflow_skill_statuses() -> Vec<skill_install::WorkflowSkillStatus> {
     skill_install::workflow_skill_statuses()
-}
-
-// ──────────── Host MCP toggle ────────────
-//
-// PluginsModal now wires a real on/off switch for the
-// `[mcp_servers.grok-shell-host]` section in `~/.grok/config.toml`.
-// Disabling rewrites the sentinel-fenced block as comment lines so
-// grok-build skips it on next session spawn; re-enabling un-comments.
-// The toggle does not interact with any live grok session — the user
-// must restart the session for the change to take effect (UI hint).
-
-/// Read the current enable/disable state of the host MCP block in
-/// `~/.grok/config.toml`. Returns `Ok(true)` when present and
-/// uncommented, `Ok(false)` when present and commented out, `Err`
-/// when the config file or sentinel block is missing (renderer
-/// surfaces that as a "auto-installer hasn't run yet" hint).
-#[tauri::command]
-fn read_host_mcp_enabled() -> Result<bool, String> {
-    skill_install::read_host_mcp_enabled()
-}
-
-/// Set the enable/disable state of the host MCP block. Idempotent.
-/// Returns the resulting state (always equal to `enabled` on success).
-/// Does NOT signal live grok sessions — config.toml is read on
-/// session spawn only.
-#[tauri::command]
-fn set_host_mcp_enabled(enabled: bool) -> Result<bool, String> {
-    skill_install::set_host_mcp_enabled(enabled)
 }
 
 /// Read the current shellXagent bearer token.
@@ -4489,19 +4808,6 @@ pub(crate) struct SessionToolingSnapshot {
 #[tauri::command]
 async fn mcp_marketplace_list() -> Result<Vec<mcp_marketplace::McpEntryStatus>, String> {
     mcp_marketplace::list_marketplace().await
-}
-
-/// #322: per-tab marketplace launcher-health snapshot. PluginsModal
-/// polls this every 4s while open to render the live status pills
-/// (running / missing / failed / checking) on each MCP row.
-#[tauri::command]
-async fn mcp_marketplace_health(
-    #[allow(non_snake_case)] tab_id: String,
-    registry: State<'_, Arc<acp::SessionRegistry>>,
-) -> Result<Vec<mcp_health::MarketplaceHealthEntry>, String> {
-    let h = mcp_health::global();
-    ensure_marketplace_health_for_tab(&tab_id, &registry, h.clone(), None).await?;
-    Ok(h.get_for_tab(&tab_id).await)
 }
 
 /// Session-scoped tool snapshot for the right-rail Tooling tab.
@@ -4755,6 +5061,11 @@ async fn ensure_marketplace_health_for_tab(
     let probe_transport = mcp_health::ProbeTransport {
         wsl_distro: guard.wsl_distro().map(str::to_string),
         ssh_target: guard.ssh_config().map(|ssh| ssh.host.clone()),
+        ssh_remote_runtime: guard
+            .ssh_config()
+            .map(|ssh| ssh.remote_runtime)
+            .unwrap_or_default(),
+        ssh_wsl_distro: guard.ssh_config().and_then(|ssh| ssh.wsl_distro.clone()),
     };
     drop(guard);
     let current_transport_key = mcp_health::probe_transport_key(is_wsl, is_ssh, &probe_transport);
@@ -4899,6 +5210,14 @@ fn user_data_path() -> std::path::PathBuf {
 #[tauri::command]
 async fn read_user_data() -> Result<serde_json::Value, String> {
     let path = user_data_path();
+    if let Some(parent) = path.parent() {
+        let _ = crate::session_git::ensure_private_dir(parent, "user data");
+    }
+    #[cfg(unix)]
+    if path.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
     match std::fs::read_to_string(&path) {
         Ok(s) => serde_json::from_str(&s).or_else(|_| Ok(serde_json::json!({}))),
         Err(_) => Ok(serde_json::json!({})),
@@ -4912,16 +5231,9 @@ async fn read_user_data() -> Result<serde_json::Value, String> {
 #[tauri::command]
 async fn write_user_data(data: serde_json::Value) -> Result<(), String> {
     let path = user_data_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("write_user_data: mkdir failed: {}", e))?;
-    }
     let json =
         serde_json::to_string_pretty(&data).map_err(|e| format!("serialize failed: {}", e))?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| format!("write tmp failed: {}", e))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("rename failed: {}", e))?;
-    Ok(())
+    crate::session_git::atomic_write_private_file(&path, json, "write user data")
 }
 
 /// Remove a single section from user-data.json. Used by Settings →
@@ -4942,9 +5254,7 @@ async fn delete_user_data_section(key: String) -> Result<bool, String> {
     if removed {
         let json =
             serde_json::to_string_pretty(&blob).map_err(|e| format!("serialize failed: {}", e))?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(|e| format!("write tmp failed: {}", e))?;
-        std::fs::rename(&tmp, &path).map_err(|e| format!("rename failed: {}", e))?;
+        crate::session_git::atomic_write_private_file(&path, json, "delete user data section")?;
     }
     Ok(removed)
 }
@@ -5009,6 +5319,118 @@ async fn resume_goal(
 /// never arrives and the orchestrator's continuation hook never
 /// fires. After flipping the gate, send a one-shot "begin executing
 /// the approved plan" prompt directly so grok wakes up and starts.
+#[cfg(feature = "debug-api")]
+fn release_goal_provider_fixture_state(
+    state: Option<goal_orchestrator::GoalState>,
+    tab_id: &str,
+    action: &str,
+) -> Option<goal_orchestrator::GoalState> {
+    let expected_tab = match action {
+        "goal-approve" => "release-goal-plan-approve",
+        "goal-replan" => "release-goal-plan-replan",
+        _ => return None,
+    };
+    if !isolated_test_instance_requested() || tab_id != expected_tab {
+        return None;
+    }
+    let state = state?;
+    if !state.active
+        || !state.awaiting_approval
+        || !state.plan_turn_completed
+        || state.transport_kind != "local"
+        || state.ssh_config.is_some()
+        || state.objective != format!("Exercise isolated Goal Plan modal {action}")
+    {
+        return None;
+    }
+    let scratchboard_metadata = std::fs::symlink_metadata(&state.scratchboard_path).ok()?;
+    if !scratchboard_metadata.is_file() || scratchboard_metadata.file_type().is_symlink() {
+        return None;
+    }
+    let scratchboard = std::fs::canonicalize(&state.scratchboard_path).ok()?;
+    if scratchboard.file_name().and_then(|name| name.to_str()) != Some("goal.md") {
+        return None;
+    }
+    let cwd = scratchboard.parent()?;
+    let cwd_metadata = std::fs::symlink_metadata(cwd).ok()?;
+    if !cwd_metadata.is_dir() || cwd_metadata.file_type().is_symlink() {
+        return None;
+    }
+    let name = cwd.file_name()?.to_str()?;
+    if !name.starts_with(&format!("{tab_id}-"))
+        || name.len() > 128
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return None;
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)?;
+    let shellx_home = std::fs::canonicalize(home.join(".shellx")).ok()?;
+    if cwd.parent() != Some(shellx_home.as_path()) {
+        return None;
+    }
+    Some(state)
+}
+
+#[cfg(feature = "debug-api")]
+async fn start_release_goal_provider_fixture(
+    app: &tauri::AppHandle,
+    state: &goal_orchestrator::GoalState,
+    tab_id: &str,
+    prompt: String,
+    action: &str,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use tauri::Emitter as _;
+
+    let cwd = state
+        .scratchboard_path
+        .parent()
+        .ok_or_else(|| "release Goal scratchboard has no parent directory".to_string())?
+        .to_string_lossy()
+        .to_string();
+    let prompt_sha256 = format!("{:x}", Sha256::digest(prompt.as_bytes()));
+    let registry = app
+        .state::<Arc<provider_sessions::ProviderSessionRegistry>>()
+        .inner()
+        .clone();
+    let hub = app
+        .try_state::<Arc<DebugHub>>()
+        .map(|state| state.inner().clone());
+    let emitter = app.clone();
+    let emit: provider_sessions::ProviderSessionEmit = Arc::new(move |kind, payload| {
+        if let Some(hub) = &hub {
+            hub.record_raw_event(kind, payload.clone());
+        }
+        let _ = emitter.emit(kind, payload);
+    });
+    let run = provider_sessions::start_release_provider_action_fixture(
+        registry,
+        tab_id.to_string(),
+        cwd,
+        prompt,
+        action.to_string(),
+        prompt_sha256.clone(),
+        emit,
+    )
+    .await?;
+    let payload = serde_json::json!({
+        "kind": "release_fixture_provider_started",
+        "tabId": tab_id,
+        "runId": run.run_id,
+        "action": action,
+        "promptSha256": prompt_sha256,
+    });
+    if let Some(hub) = app.try_state::<Arc<DebugHub>>() {
+        hub.record_raw_event("goal-event", payload.clone());
+    }
+    let _ = app.emit("goal-event", payload);
+    Ok(())
+}
+
 #[tauri::command]
 async fn approve_goal_plan(
     #[allow(non_snake_case)] tab_id: String,
@@ -5016,36 +5438,58 @@ async fn approve_goal_plan(
     orch: State<'_, Arc<goal_orchestrator::GoalOrchestrator>>,
     reg: State<'_, Arc<crate::acp::SessionRegistry>>,
 ) -> Result<bool, String> {
-    let Some(sess_arc) = reg.get_existing(&tab_id).await else {
+    let sess_arc = reg.get_existing(&tab_id).await;
+    #[cfg(feature = "debug-api")]
+    let release_fixture = if sess_arc.is_none() {
+        release_goal_provider_fixture_state(orch.get_state(&tab_id).await, &tab_id, "goal-approve")
+    } else {
+        None
+    };
+    #[cfg(not(feature = "debug-api"))]
+    let release_fixture: Option<goal_orchestrator::GoalState> = None;
+    if sess_arc.is_none() && release_fixture.is_none() {
         return Err(
             "No live session for this tab; reconnect before approving the plan.".to_string(),
         );
-    };
+    }
     let flipped = orch.approve_plan(&tab_id).await?;
     if flipped {
         let active = orch.get_state(&tab_id).await;
         let prompt = goal_orchestrator::approval_kickoff_prompt(active.as_ref());
-        use std::time::Duration;
-        let attempt = async {
-            let mut sess = sess_arc.lock().await;
-            sess.initiate_and_send_prompt(&prompt).await
-        };
-        match tokio::time::timeout(Duration::from_secs(120), attempt).await {
-            Ok(Ok(_)) => {
-                use tauri::Emitter as _;
-                let payload = serde_json::json!({
-                    "kind": "approve_kickoff_injected",
-                    "tabId": tab_id,
-                });
-                let _ = app.emit("goal-event", payload);
+        if let Some(sess_arc) = sess_arc {
+            use std::time::Duration;
+            let attempt = async {
+                let mut sess = sess_arc.lock().await;
+                sess.initiate_and_send_prompt(&prompt).await
+            };
+            match tokio::time::timeout(Duration::from_secs(120), attempt).await {
+                Ok(Ok(_)) => {
+                    use tauri::Emitter as _;
+                    let payload = serde_json::json!({
+                        "kind": "approve_kickoff_injected",
+                        "tabId": tab_id,
+                    });
+                    let _ = app.emit("goal-event", payload);
+                }
+                Ok(Err(e)) => {
+                    let reason = format!("approve kickoff inject failed: {}", e);
+                    let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
+                    return Err(reason);
+                }
+                Err(_) => {
+                    let reason =
+                        "approve kickoff inject timed out while writing to grok".to_string();
+                    let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
+                    return Err(reason);
+                }
             }
-            Ok(Err(e)) => {
-                let reason = format!("approve kickoff inject failed: {}", e);
-                let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
-                return Err(reason);
-            }
-            Err(_) => {
-                let reason = "approve kickoff inject timed out while writing to grok".to_string();
+        } else if let Some(state) = release_fixture {
+            #[cfg(feature = "debug-api")]
+            if let Err(error) =
+                start_release_goal_provider_fixture(&app, &state, &tab_id, prompt, "goal-approve")
+                    .await
+            {
+                let reason = format!("release Goal approve fixture failed: {error}");
                 let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
                 return Err(reason);
             }
@@ -5082,11 +5526,20 @@ async fn request_goal_replan(
     if comment.is_empty() {
         return Err("Plan feedback is empty.".to_string());
     }
-    let Some(sess_arc) = reg.get_existing(&tab_id).await else {
+    let sess_arc = reg.get_existing(&tab_id).await;
+    #[cfg(feature = "debug-api")]
+    let release_fixture = if sess_arc.is_none() {
+        release_goal_provider_fixture_state(orch.get_state(&tab_id).await, &tab_id, "goal-replan")
+    } else {
+        None
+    };
+    #[cfg(not(feature = "debug-api"))]
+    let release_fixture: Option<goal_orchestrator::GoalState> = None;
+    if sess_arc.is_none() && release_fixture.is_none() {
         return Err(
             "No live session for this tab; reconnect before requesting plan edits.".to_string(),
         );
-    };
+    }
     let replanned = orch.request_replan(&tab_id).await;
     if !replanned {
         return Err("No active goal is awaiting plan feedback.".to_string());
@@ -5100,31 +5553,52 @@ async fn request_goal_replan(
         comment
     );
 
-    use std::time::Duration;
-    let attempt = async {
-        let mut sess = sess_arc.lock().await;
-        sess.initiate_and_send_prompt(&prompt).await
-    };
-    match tokio::time::timeout(Duration::from_secs(120), attempt).await {
-        Ok(Ok(_)) => {
-            use tauri::Emitter as _;
-            let payload = serde_json::json!({
-                "kind": "replan_injected",
-                "tabId": tab_id,
-            });
-            let _ = app.emit("goal-event", payload);
+    if let Some(sess_arc) = sess_arc {
+        use std::time::Duration;
+        let attempt = async {
+            let mut sess = sess_arc.lock().await;
+            sess.initiate_and_send_prompt(&prompt).await
+        };
+        match tokio::time::timeout(Duration::from_secs(120), attempt).await {
+            Ok(Ok(_)) => {
+                use tauri::Emitter as _;
+                let payload = serde_json::json!({
+                    "kind": "replan_injected",
+                    "tabId": tab_id,
+                });
+                let _ = app.emit("goal-event", payload);
+                Ok(true)
+            }
+            Ok(Err(e)) => {
+                let reason = format!("Plan revision prompt failed: {}", e);
+                let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
+                Err(reason)
+            }
+            Err(_) => {
+                let reason = "Plan revision prompt timed out while writing to grok.".to_string();
+                let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
+                Err(reason)
+            }
+        }
+    } else if let Some(state) = release_fixture {
+        #[cfg(feature = "debug-api")]
+        {
+            if let Err(error) =
+                start_release_goal_provider_fixture(&app, &state, &tab_id, prompt, "goal-replan")
+                    .await
+            {
+                let reason = format!("release Goal replan fixture failed: {error}");
+                let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
+                return Err(reason);
+            }
             Ok(true)
         }
-        Ok(Err(e)) => {
-            let reason = format!("Plan revision prompt failed: {}", e);
-            let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
-            Err(reason)
+        #[cfg(not(feature = "debug-api"))]
+        {
+            Err("release Goal replan fixture is unavailable".to_string())
         }
-        Err(_) => {
-            let reason = "Plan revision prompt timed out while writing to grok.".to_string();
-            let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
-            Err(reason)
-        }
+    } else {
+        Err("No live session for this tab; reconnect before requesting plan edits.".to_string())
     }
 }
 
@@ -5237,6 +5711,86 @@ fn build_approval_kickoff_prompt(state: Option<&build_types::BuildRunState>) -> 
     )
 }
 
+#[cfg(feature = "debug-api")]
+fn release_build_provider_fixture_state(
+    state: Option<build_types::BuildRunState>,
+    tab_id: &str,
+    action: &str,
+) -> Option<build_types::BuildRunState> {
+    if !isolated_test_instance_requested()
+        || !matches!(action, "build-approve" | "build-resume")
+        || tab_id != action.replacen("build-", "release-build-run-", 1)
+    {
+        return None;
+    }
+    let state = state?;
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)?;
+    let shellx_home = std::fs::canonicalize(home.join(".shellx")).ok()?;
+    let cwd = std::fs::canonicalize(&state.cwd).ok()?;
+    let name = cwd.file_name()?.to_str()?;
+    if cwd.parent() != Some(shellx_home.as_path())
+        || !name.starts_with(&format!("{tab_id}-"))
+        || std::fs::symlink_metadata(&state.cwd)
+            .ok()?
+            .file_type()
+            .is_symlink()
+    {
+        return None;
+    }
+    Some(state)
+}
+
+#[cfg(feature = "debug-api")]
+async fn start_release_build_provider_fixture(
+    app: &tauri::AppHandle,
+    state: &build_types::BuildRunState,
+    prompt: String,
+    action: &str,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use tauri::Emitter as _;
+
+    let prompt_sha256 = format!("{:x}", Sha256::digest(prompt.as_bytes()));
+    let registry = app
+        .state::<Arc<provider_sessions::ProviderSessionRegistry>>()
+        .inner()
+        .clone();
+    let hub = app
+        .try_state::<Arc<DebugHub>>()
+        .map(|state| state.inner().clone());
+    let emitter = app.clone();
+    let emit: provider_sessions::ProviderSessionEmit = Arc::new(move |kind, payload| {
+        if let Some(hub) = &hub {
+            hub.record_raw_event(kind, payload.clone());
+        }
+        let _ = emitter.emit(kind, payload);
+    });
+    let run = provider_sessions::start_release_provider_action_fixture(
+        registry,
+        state.tab_id.clone(),
+        state.cwd.clone(),
+        prompt,
+        action.to_string(),
+        prompt_sha256.clone(),
+        emit,
+    )
+    .await?;
+    let payload = serde_json::json!({
+        "kind": "release_fixture_provider_started",
+        "tabId": state.tab_id,
+        "runId": run.run_id,
+        "action": action,
+        "promptSha256": prompt_sha256,
+    });
+    if let Some(hub) = app.try_state::<Arc<DebugHub>>() {
+        hub.record_raw_event("build-event", payload.clone());
+    }
+    let _ = app.emit("build-event", payload);
+    Ok(())
+}
+
 #[tauri::command]
 async fn approve_build_plan(
     #[allow(non_snake_case)] tab_id: String,
@@ -5244,35 +5798,53 @@ async fn approve_build_plan(
     orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
     reg: State<'_, Arc<crate::acp::SessionRegistry>>,
 ) -> Result<bool, String> {
-    let Some(sess_arc) = reg.get_existing(&tab_id).await else {
+    let sess_arc = reg.get_existing(&tab_id).await;
+    #[cfg(feature = "debug-api")]
+    let release_fixture = if sess_arc.is_none() {
+        release_build_provider_fixture_state(
+            orch.get_state(&tab_id).await,
+            &tab_id,
+            "build-approve",
+        )
+    } else {
+        None
+    };
+    #[cfg(not(feature = "debug-api"))]
+    let release_fixture: Option<build_types::BuildRunState> = None;
+    if sess_arc.is_none() && release_fixture.is_none() {
         return Err(
             "No live session for this tab; reconnect before approving the build plan.".to_string(),
         );
-    };
+    }
     let flipped = orch.approve_plan(&tab_id).await?;
     if flipped {
         let active = orch.get_state(&tab_id).await;
         let prompt = build_approval_kickoff_prompt(active.as_ref());
-        use std::time::Duration;
-        let attempt = async {
-            let mut sess = sess_arc.lock().await;
-            sess.initiate_and_send_prompt(&prompt).await
-        };
-        match tokio::time::timeout(Duration::from_secs(120), attempt).await {
-            Ok(Ok(_)) => {
-                use tauri::Emitter as _;
-                let payload = serde_json::json!({
-                    "kind": "build_approve_kickoff_injected",
-                    "tabId": tab_id,
-                });
-                let _ = app.emit("build-event", payload);
+        if let Some(sess_arc) = sess_arc {
+            use std::time::Duration;
+            let attempt = async {
+                let mut sess = sess_arc.lock().await;
+                sess.initiate_and_send_prompt(&prompt).await
+            };
+            match tokio::time::timeout(Duration::from_secs(120), attempt).await {
+                Ok(Ok(_)) => {
+                    use tauri::Emitter as _;
+                    let payload = serde_json::json!({
+                        "kind": "build_approve_kickoff_injected",
+                        "tabId": tab_id,
+                    });
+                    let _ = app.emit("build-event", payload);
+                }
+                Ok(Err(e)) => return Err(format!("build approve kickoff inject failed: {}", e)),
+                Err(_) => {
+                    return Err(
+                        "build approve kickoff inject timed out while writing to grok".to_string(),
+                    )
+                }
             }
-            Ok(Err(e)) => return Err(format!("build approve kickoff inject failed: {}", e)),
-            Err(_) => {
-                return Err(
-                    "build approve kickoff inject timed out while writing to grok".to_string(),
-                )
-            }
+        } else if let Some(state) = release_fixture {
+            #[cfg(feature = "debug-api")]
+            start_release_build_provider_fixture(&app, &state, prompt, "build-approve").await?;
         }
     }
     Ok(flipped)
@@ -5283,7 +5855,11 @@ async fn reject_build_plan(
     #[allow(non_snake_case)] tab_id: String,
     orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
 ) -> Result<bool, String> {
-    orch.reject_plan(&tab_id).await
+    let rejected = orch.reject_plan(&tab_id).await?;
+    if rejected {
+        crate::tab_tasks::abort_kind(&tab_id, crate::tab_tasks::TabTaskKind::BuildResumeInject);
+    }
+    Ok(rejected)
 }
 
 #[tauri::command]
@@ -5291,7 +5867,11 @@ async fn pause_build(
     #[allow(non_snake_case)] tab_id: String,
     orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
 ) -> Result<bool, String> {
-    orch.pause(&tab_id).await
+    let paused = orch.pause(&tab_id).await?;
+    if paused {
+        crate::tab_tasks::abort_kind(&tab_id, crate::tab_tasks::TabTaskKind::BuildResumeInject);
+    }
+    Ok(paused)
 }
 
 #[tauri::command]
@@ -5301,16 +5881,44 @@ async fn resume_build(
     orch: State<'_, Arc<build_orchestrator::BuildOrchestrator>>,
 ) -> Result<bool, String> {
     let registry = app.state::<Arc<SessionRegistry>>();
-    if registry.get_existing(&tab_id).await.is_none() {
+    let has_session = registry.get_existing(&tab_id).await.is_some();
+    #[cfg(feature = "debug-api")]
+    let release_fixture = if !has_session {
+        release_build_provider_fixture_state(orch.get_state(&tab_id).await, &tab_id, "build-resume")
+    } else {
+        None
+    };
+    #[cfg(not(feature = "debug-api"))]
+    let release_fixture: Option<build_types::BuildRunState> = None;
+    if !has_session && release_fixture.is_none() {
         return Err("Connect this tab before resuming Build Mode.".to_string());
     }
     let resumed = orch.resume(&tab_id).await?;
     if resumed {
-        let tab_for_inject = tab_id.clone();
-        tokio::spawn(async move {
-            crate::acp::maybe_inject_build_continuation_for_tab(&app, &tab_for_inject, "end_turn")
-                .await;
-        });
+        if has_session {
+            let tab_for_inject = tab_id.clone();
+            crate::tab_tasks::spawn_replace(
+                &tab_id,
+                crate::tab_tasks::TabTaskKind::BuildResumeInject,
+                async move {
+                    crate::acp::maybe_inject_build_continuation_for_tab(
+                        &app,
+                        &tab_for_inject,
+                        "end_turn",
+                    )
+                    .await;
+                },
+            );
+        } else if let Some(state) = release_fixture {
+            #[cfg(feature = "debug-api")]
+            {
+                let prompt = orch
+                    .consider_continue(&tab_id, "end_turn")
+                    .await
+                    .ok_or_else(|| "isolated Build resume produced no continuation".to_string())?;
+                start_release_build_provider_fixture(&app, &state, prompt, "build-resume").await?;
+            }
+        }
     }
     Ok(resumed)
 }
@@ -5330,6 +5938,9 @@ async fn halt_build(
                 .unwrap_or("Stopped manually from shellX UI"),
         )
         .await?;
+    if halted {
+        crate::tab_tasks::abort_tab(&tab_id);
+    }
     let registry = app.state::<Arc<SessionRegistry>>();
     if let Err(e) =
         crate::acp::cancel_prompt_only_for_existing_tab(registry.inner().as_ref(), &tab_id).await
@@ -5604,11 +6215,11 @@ async fn vault_list_keys(
 
 /// Enumerate keys with per-entry metadata for the
 /// Settings vault viewer. VALUES NEVER RETURNED — only key names and
-/// the on-disk vault.enc mtime. Powers the new "Vault" section in the
+/// integrated-backend metadata. Powers the "Vault" section in the
 /// Settings dialog, which is intentionally directory-only: no reveal,
-/// no copy-to-clipboard, no display. Existence + last-modified + delete
-/// are the only surfaces. Master-key custody (OS keyring vs fallback
-/// keyfile) is shown via the existing vault_status command.
+/// no copy-to-clipboard, no display. Existence, metadata, and mediated
+/// actions are the only surfaces. Backend mode, lock state, and recovery
+/// posture are shown through the existing vault_status command.
 #[tauri::command]
 async fn vault_list_keys_with_meta(
     vault: State<'_, ShellxVaultState>,
@@ -5710,6 +6321,40 @@ async fn shellx_vault_revoke_grant(
     vault.revoke_grant(&grant_id).await
 }
 
+#[tauri::command]
+async fn shellx_vault_agent_request_center(
+    vault: State<'_, ShellxVaultState>,
+) -> Result<shellx_vault::AgentRequestCenterSnapshot, String> {
+    shellx_vault::agent_requests::request_center_snapshot(vault.inner().as_ref(), true).await
+}
+
+#[tauri::command]
+async fn shellx_vault_agent_request_approve(
+    vault: State<'_, ShellxVaultState>,
+    request_id: String,
+    expected_digest: String,
+) -> Result<shellx_vault::AgentInjectionRequest, String> {
+    shellx_vault::agent_requests::approve_request(
+        vault.inner().as_ref(),
+        &request_id,
+        &expected_digest,
+    )
+    .await
+}
+
+#[tauri::command]
+fn shellx_vault_agent_request_deny(
+    vault: State<'_, ShellxVaultState>,
+    request_id: String,
+    expected_digest: String,
+) -> Result<shellx_vault::AgentInjectionRequest, String> {
+    shellx_vault::agent_requests::deny_request(
+        vault.inner().as_ref(),
+        &request_id,
+        &expected_digest,
+    )
+}
+
 // ──────────── Connection-preset Tauri commands ────────────
 //
 // Saved connection presets. Same OnceLock pattern as the Vault — single
@@ -5717,7 +6362,7 @@ async fn shellx_vault_revoke_grant(
 // surface. The file at ~/.shellx/connections.json is the source of
 // truth; the in-memory Vec is the cache.
 
-use crate::connections::{ConnectionPreset, ConnectionProviderScanEntry, ConnectionStore};
+use crate::connections::{ConnectionPreset, ConnectionStore};
 
 static CONN_CELL: OnceLock<Arc<ConnectionStore>> = OnceLock::new();
 
@@ -5762,8 +6407,8 @@ async fn connections_test(id: String) -> Result<serde_json::Value, String> {
 #[tauri::command]
 async fn connection_provider_scan(
     preset: ConnectionPreset,
-) -> Result<Vec<ConnectionProviderScanEntry>, String> {
-    crate::connections::scan_connection_providers(&preset).await
+) -> Result<crate::connections::ConnectionProviderCapabilitySnapshot, String> {
+    crate::connections::scan_connection_provider_capabilities(&preset).await
 }
 
 #[tauri::command]
@@ -5779,7 +6424,7 @@ async fn agent_cli_setup_prepare_install(
     provider_id: String,
     method_id: Option<String>,
 ) -> Result<crate::agent_cli_setup::AgentCliInstallConfirmation, String> {
-    crate::agent_cli_setup::prepare_agent_cli_install(preset, provider_id, method_id)
+    crate::agent_cli_setup::prepare_agent_cli_install(preset, provider_id, method_id).await
 }
 
 #[tauri::command]
@@ -5787,6 +6432,11 @@ async fn agent_cli_setup_confirm_install(
     confirmation_id: String,
 ) -> Result<crate::agent_cli_setup::AgentCliInstallResult, String> {
     crate::agent_cli_setup::confirm_agent_cli_install(confirmation_id).await
+}
+
+#[tauri::command]
+async fn agent_cli_setup_cancel_install(confirmation_id: String) -> Result<bool, String> {
+    crate::agent_cli_setup::cancel_agent_cli_install(confirmation_id).await
 }
 
 #[tauri::command]
@@ -5856,6 +6506,203 @@ async fn outside_connectors_simulate(
 ) -> Result<OutsideConnectorEvent, String> {
     let s = get_or_open_outside_connectors()?;
     s.simulate_inbound(&id, input).await
+}
+
+fn isolated_test_instance_config_valid(
+    enabled: Option<&str>,
+    debug_port: Option<&str>,
+    mcp_port: Option<&str>,
+    home: Option<&std::path::Path>,
+    instance_id: Option<&str>,
+    final_profile_marker: Option<&serde_json::Value>,
+) -> bool {
+    if enabled != Some("1") {
+        return false;
+    }
+    let Some(debug_port) = debug_port
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port > 0)
+    else {
+        return false;
+    };
+    if !mcp_port
+        .and_then(|value| value.parse::<u16>().ok())
+        .is_some_and(|port| port > 0 && port != debug_port)
+    {
+        return false;
+    }
+    let Some(home) = home else {
+        return false;
+    };
+    let launch_path = home.to_string_lossy().replace('\\', "/");
+    let Some(name) = launch_path.rsplit('/').next() else {
+        return false;
+    };
+    let Some(run_id) = name.strip_prefix("shellx-final-webdriver-") else {
+        return false;
+    };
+    let expected_instance_id = format!("shellx-final-{run_id}");
+    if !(16..=64).contains(&run_id.len())
+        || !run_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || instance_id != Some(expected_instance_id.as_str())
+    {
+        return false;
+    }
+    let Some(marker) = final_profile_marker.and_then(serde_json::Value::as_object) else {
+        return false;
+    };
+    let expected_platform = if cfg!(target_os = "windows") {
+        "windows-installed"
+    } else if cfg!(target_os = "macos") {
+        "macos-installed"
+    } else {
+        "linux-installed"
+    };
+    marker.get("schema").and_then(serde_json::Value::as_str)
+        == Some("shellx/release-surface-run-profile@1")
+        && marker.get("platform").and_then(serde_json::Value::as_str) == Some(expected_platform)
+        && marker.get("runId").and_then(serde_json::Value::as_str) == Some(run_id)
+        && marker
+            .get("launchPath")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| {
+                let marker_path = value.replace('\\', "/");
+                if cfg!(target_os = "windows") {
+                    marker_path.eq_ignore_ascii_case(&launch_path)
+                } else {
+                    marker_path == launch_path
+                }
+            })
+}
+
+fn isolated_test_instance_home() -> Option<std::path::PathBuf> {
+    let enabled = std::env::var("SHELLX_TEST_INSTANCE").ok();
+    let debug_port = std::env::var("SHELLX_DEBUG_PORT").ok();
+    let mcp_port = std::env::var("SHELLX_MCP_PORT").ok();
+    let instance_id = std::env::var("SHELLX_TEST_INSTANCE_ID").ok();
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .map(std::path::PathBuf::from);
+    let final_profile_marker = home.as_ref().and_then(|path| {
+        std::fs::read_to_string(path.join("shellx-final-profile.json"))
+            .ok()
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+    });
+    isolated_test_instance_config_valid(
+        enabled.as_deref(),
+        debug_port.as_deref(),
+        mcp_port.as_deref(),
+        home.as_deref(),
+        instance_id.as_deref(),
+        final_profile_marker.as_ref(),
+    )
+    .then_some(home?)
+}
+
+fn isolated_test_instance_requested() -> bool {
+    isolated_test_instance_home().is_some()
+}
+
+#[cfg(test)]
+mod isolated_test_instance_tests {
+    use super::isolated_test_instance_config_valid;
+
+    #[test]
+    fn requires_all_isolation_markers() {
+        let home = std::path::Path::new(r"C:\Temp\shellx-test-harness-abc");
+        assert!(!isolated_test_instance_config_valid(
+            Some("1"),
+            Some("43210"),
+            Some("43211"),
+            Some(home),
+            Some("fixture-instance"),
+            None,
+        ));
+        assert!(!isolated_test_instance_config_valid(
+            None,
+            Some("43210"),
+            Some("43211"),
+            Some(home),
+            Some("fixture-instance"),
+            None,
+        ));
+        assert!(!isolated_test_instance_config_valid(
+            Some("1"),
+            None,
+            Some("43211"),
+            Some(home),
+            Some("fixture-instance"),
+            None,
+        ));
+        assert!(!isolated_test_instance_config_valid(
+            Some("1"),
+            Some("43210"),
+            Some("43210"),
+            Some(home),
+            Some("fixture-instance"),
+            None,
+        ));
+        assert!(!isolated_test_instance_config_valid(
+            Some("1"),
+            Some("43210"),
+            Some("43211"),
+            Some(std::path::Path::new(r"C:\Users\FixtureUser")),
+            Some("fixture-instance"),
+            None,
+        ));
+    }
+
+    #[test]
+    fn accepts_only_exact_final_release_profiles() {
+        let run_id = "0123456789abcdef";
+        let platform = if cfg!(target_os = "windows") {
+            "windows-installed"
+        } else if cfg!(target_os = "macos") {
+            "macos-installed"
+        } else {
+            "linux-installed"
+        };
+        let home_value = if cfg!(target_os = "windows") {
+            format!(r"C:\Temp\shellx-final-webdriver-{run_id}")
+        } else {
+            format!("/tmp/shellx-final-webdriver-{run_id}")
+        };
+        let home = std::path::Path::new(&home_value);
+        let marker = serde_json::json!({
+            "schema": "shellx/release-surface-run-profile@1",
+            "platform": platform,
+            "runId": run_id,
+            "nodePath": home_value,
+            "launchPath": home_value,
+        });
+        assert!(isolated_test_instance_config_valid(
+            Some("1"),
+            Some("43210"),
+            Some("43211"),
+            Some(home),
+            Some("shellx-final-0123456789abcdef"),
+            Some(&marker),
+        ));
+        assert!(!isolated_test_instance_config_valid(
+            Some("1"),
+            Some("43210"),
+            Some("43211"),
+            Some(home),
+            Some("shellx-final-wrong"),
+            Some(&marker),
+        ));
+        assert!(!isolated_test_instance_config_valid(
+            Some("1"),
+            Some("43210"),
+            Some("43211"),
+            Some(home),
+            Some("shellx-final-0123456789abcdef"),
+            None,
+        ));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -5940,6 +6787,29 @@ pub fn migrate_data_dir_if_needed() {
     }
 }
 
+fn updater_release_urls_match_version(current: &tauri_plugin_updater::RemoteRelease) -> bool {
+    let expected_path_prefix = format!(
+        "/martinsbrezauckis/shellx/releases/download/v{}/",
+        current.version
+    );
+    let matches_release = |url: &tauri::Url| {
+        url.scheme() == "https"
+            && url.host_str() == Some("github.com")
+            && url.path().starts_with(&expected_path_prefix)
+    };
+    match &current.data {
+        tauri_plugin_updater::RemoteReleaseInner::Dynamic(platform) => {
+            matches_release(&platform.url)
+        }
+        tauri_plugin_updater::RemoteReleaseInner::Static { platforms } => {
+            !platforms.is_empty()
+                && platforms
+                    .values()
+                    .all(|platform| matches_release(&platform.url))
+        }
+    }
+}
+
 pub fn run() {
     // Data-dir migration must run BEFORE any path resolution. No-op
     // when target ~/.shellx/ already exists.
@@ -5970,6 +6840,14 @@ pub fn run() {
         .init();
     info!("shellX Rust backend starting");
 
+    match crate::host_subagents::maintain_store(24 * 60 * 60 * 1000) {
+        Ok((reconciled, deleted)) => info!(
+            "subagent store maintenance complete: {} stale running row(s) reconciled, {} old row(s) removed",
+            reconciled, deleted
+        ),
+        Err(e) => warn!("subagent store maintenance failed (non-fatal): {}", e),
+    }
+
     #[cfg(feature = "debug-api")]
     let debug_hub: Arc<DebugHub> = Arc::new(DebugHub::new());
 
@@ -5990,20 +6868,42 @@ pub fn run() {
     // same bytes.
     let terminal_registry: Arc<TerminalRegistry> = Arc::new(TerminalRegistry::new());
     let session_registry: Arc<SessionRegistry> = Arc::new(SessionRegistry::new());
-    let provider_session_registry: Arc<provider_sessions::ProviderSessionRegistry> =
-        Arc::new(provider_sessions::ProviderSessionRegistry::new_persistent_default());
+    let provider_session_registry: Arc<provider_sessions::ProviderSessionRegistry> = Arc::new(
+        provider_sessions::ProviderSessionRegistry::new_persistent_default()
+            .with_process_registry(process_registry.clone()),
+    );
     let shellx_browser_registry: Arc<shellx_browser::ShellxBrowserRegistry> =
         Arc::new(shellx_browser::ShellxBrowserRegistry::new_persistent_default());
     let shellx_vault_backend: ShellxVaultState = shellx_vault::shared_backend();
 
-    let builder = tauri::Builder::default()
-        // Single-instance plugin. If a second app.exe launches (user
-        // double-clicks shortcut, installer relaunches
-        // after upgrade before old exits, etc.), this fires the handler in
-        // the EXISTING process and prevents the new one from spawning. The
-        // handler focuses the existing main window so it visually pops up.
-        // Pairs with retry-bind in debug_api / mcp_http.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+    let context = tauri::generate_context!();
+    #[cfg(target_os = "windows")]
+    let context = {
+        let mut context = context;
+        let main = context
+            .config_mut()
+            .app
+            .windows
+            .iter_mut()
+            .find(|window| window.label == "main")
+            .expect("tauri config must declare the main window");
+        // Tauri's relative dataDirectory resolution can fall back to WebView2's
+        // executable-adjacent default when Windows starts the process under an
+        // alternate user token. Defer only the Windows main window to setup,
+        // where an absolute per-user AppLocalData path can be supplied.
+        main.create = false;
+        context
+    };
+
+    let builder = tauri::Builder::default();
+    // Release evidence needs a second, disposable instance without changing
+    // or closing an operator-owned app. The opt-out is accepted only for a
+    // clearly named test home and an explicit Debug API port.
+    let builder = if isolated_test_instance_requested() {
+        info!("single-instance guard disabled for isolated test harness");
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             use tauri::Manager as _;
             let attached_paths = crate::desktop_integration::parse_external_attachment_args(
                 _argv.iter().map(String::as_str),
@@ -6021,6 +6921,8 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+    };
+    let builder = builder
         // We use tracing_subscriber for backend logs; tauri-plugin-log
         // conflicts because both register a global logger.
         // Dialog plugin powers Attach + workspace picker.
@@ -6035,7 +6937,13 @@ pub fn run() {
         // is required for `relaunch` after install. Configured for
         // self-hosted relaunch flow — no built-in dialog (we render our
         // own banner UI in React).
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_updater::Builder::new()
+                .default_version_comparator(|installed, release| {
+                    release.version > installed && updater_release_urls_match_version(&release)
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_process::init())
         // SessionRegistry replaces single Mutex<GrokAcpSession>.
         // Each tab gets its own slot keyed by tab_id; "default" is the
@@ -6047,10 +6955,9 @@ pub fn run() {
         .manage(terminal_registry.clone())
         .manage(shellx_browser_registry.clone())
         .manage(shellx_vault_backend.clone())
-        // Pending sync permission requests. Created at boot, looked up
-        // by acp::handle_terminal_create
-        // when entering Confirm mode and by resolve_permission_request
-        // when the modal answers. Single shared instance keyed by uuid.
+        // Pending defensive permission requests. Created at boot, looked up by
+        // acp::handle_terminal_create and resolve_permission_request. Normal
+        // ShellX sessions use provider-native Full Auto.
         .manage(Arc::new(PendingPermissionRegistry::new()))
         // Goal orchestrator. Per-tab Goal-mode state. Shared with
         // acp.rs (read_loop calls consider_continue on prompt-complete),
@@ -6076,6 +6983,17 @@ pub fn run() {
     #[cfg(feature = "debug-api")]
     let builder = builder.manage(debug_hub.clone());
 
+    #[cfg(feature = "debug-api")]
+    let builder = builder.manage(Arc::new(
+        debug_api_release_relay::ReleaseTauriInvokeRegistry::new(),
+    ));
+    let builder = builder.manage(Arc::new(
+        debug_api_release_clipboard::ReleaseClipboardRegistry::new(),
+    ));
+    let builder = builder.manage(Arc::new(
+        debug_api_release_native_picker::ReleaseNativePickerRegistry::new(),
+    ));
+
     builder
         .invoke_handler(tauri::generate_handler![
             read_user_data,
@@ -6083,12 +7001,13 @@ pub fn run() {
             delete_user_data_section,
             start_grok_session,
             send_prompt,
+            interject_prompt,
             abort_session,
             get_detected_max_tokens,
             set_permission_mode,
-            get_header_state,
             drop_tab_session,
             read_session_jsonl,
+            read_session_jsonl_tail,
             append_session_log,
             list_project_files,
             list_stored_sessions,
@@ -6156,6 +7075,9 @@ pub fn run() {
             shellx_vault_create_grant,
             shellx_vault_approve_grant,
             shellx_vault_revoke_grant,
+            shellx_vault_agent_request_center,
+            shellx_vault_agent_request_approve,
+            shellx_vault_agent_request_deny,
             // Connection presets
             connections_list,
             connections_save,
@@ -6165,6 +7087,7 @@ pub fn run() {
             agent_cli_setup_state,
             agent_cli_setup_prepare_install,
             agent_cli_setup_confirm_install,
+            agent_cli_setup_cancel_install,
             agent_cli_setup_recheck,
             // Outside connectors: Telegram + Discord bot presets.
             // Non-secret config is stored under ~/.shellx; provider
@@ -6192,18 +7115,12 @@ pub fn run() {
             // which key path (env / pass:...) resolves, never the value.
             crate::voice::transcribe_audio_blob,
             crate::voice::voice_credential_source,
-            // Host MCP toggle. Wires PluginsModal's grok-shell-host
-            // on/off switch to
-            // ~/.grok/config.toml. Read returns current state; set
-            // rewrites the sentinel-fenced [mcp_servers.grok-shell-host]
-            // block as commented-out (disable) or uncommented (enable).
-            read_host_mcp_enabled,
-            set_host_mcp_enabled,
             // "Download all session artifacts" — zip cwd + grok's
             // session scratch into one
             // .zip at a user-chosen save_path. Local + WSL transports
             // supported; SSH returns an explanatory error.
             crate::session_archive::archive_session_artifacts,
+            crate::debug_api_release_native_picker::release_test_take_native_picker,
             crate::session_activity::read_session_activity_source,
             // shellXagent token reveal + regenerate. Settings UI →
             // click to reveal current key,
@@ -6213,7 +7130,6 @@ pub fn run() {
             // MCP marketplace v1 — PluginsModal tier list,
             // install/uninstall, vault-aware availability.
             mcp_marketplace_list,
-            mcp_marketplace_health,
             session_tooling_snapshot,
             grok_environment_snapshot,
             grok_trace_export,
@@ -6251,13 +7167,21 @@ pub fn run() {
             halt_build,
             // #333 — bound-port surface for the UI footer/About.
             get_bound_ports,
+            debug_ui_snapshot,
+            renderer_error,
             // ShellX Browser — local browser window + runtime foundation
             // for agent-first web workflows.
             crate::shellx_browser::shellx_browser_open_window,
             crate::shellx_browser::shellx_browser_sync_engine,
             crate::shellx_browser::shellx_browser_clear_history,
             crate::shellx_browser::shellx_browser_state,
-            crate::shellx_browser::shellx_browser_update_task_autonomy,
+            crate::shellx_browser::shellx_browser_control_task,
+            crate::shellx_browser::shellx_browser_finish_task,
+            crate::shellx_browser_evidence::shellx_browser_operator_evidence_summary,
+            crate::shellx_browser_evidence::shellx_browser_operator_export_flight_recorder,
+            crate::shellx_browser_cowork::shellx_browser_claim_cowork_prompt,
+            crate::shellx_browser_cowork::shellx_browser_replay_cowork_prompt_notifications,
+            crate::shellx_browser_cowork::shellx_browser_send_cowork_prompt,
             crate::shellx_browser::shellx_browser_resolve_session_grant,
             crate::shellx_browser_vault::shellx_browser_open_vault_panel,
             crate::shellx_browser_vault::shellx_browser_fill_user_vault_secret,
@@ -6278,6 +7202,23 @@ pub fn run() {
             crate::shellx_browser_prompts::shellx_browser_resolve_permission,
         ])
         .setup(move |_app| {
+            #[cfg(target_os = "windows")]
+            {
+                let main = _app
+                    .config()
+                    .app
+                    .windows
+                    .iter()
+                    .find(|window| window.label == "main")
+                    .cloned()
+                    .ok_or_else(|| "tauri config must declare the main window".to_string())?;
+                let webview_data_dir =
+                    crate::webview_runtime_paths::app_webview_data_directory(_app.handle())?;
+                tauri::WebviewWindowBuilder::from_config(_app.handle(), &main)?
+                    .data_directory(webview_data_dir)
+                    .build()?;
+            }
+
             // (#350): spawn the goal-orchestrator watchdog now that
             // Tauri's tokio runtime is fully up. Calling tokio::spawn
             // from `.manage` panics (no current runtime context yet)
@@ -6286,22 +7227,52 @@ pub fn run() {
             // it always returns a State (or panics if unmanaged, but we
             // know the .manage above ran).
             use tauri::Manager;
+            if let Some(profile) = isolated_test_instance_home() {
+                if let Err(error) = _app.asset_protocol_scope().allow_directory(&profile, true) {
+                    return Err(format!(
+                        "failed to scope release-test assets to {}: {error}",
+                        profile.display()
+                    )
+                    .into());
+                }
+                info!(
+                    profile = %profile.display(),
+                    "release-test asset protocol scope bound to the exact isolated profile"
+                );
+            }
             let orch = _app.state::<Arc<goal_orchestrator::GoalOrchestrator>>();
             Arc::clone(&*orch).start_watchdog();
             info!("goal_orchestrator watchdog spawned");
 
-            // Install bundled shellx-host agent docs before the
-            // debug-api spawn. The hook writes the same binary-bundled
-            // SKILL.md to Grok, Codex, Claude, and ShellX-owned
-            // agent-docs locations. Non-fatal — a warning is logged
-            // but app boot proceeds either way.
-            match crate::skill_install::ensure_shellx_host_skill_installed() {
-                Ok(true) => info!("shellx-host skill manifest installed/updated"),
-                Ok(false) => info!("shellx-host skill manifest already up-to-date"),
+            // Migrate older global agent integrations before publishing
+            // the current ShellX-owned docs. Direct CLI agents must not
+            // discover ShellX skills, MCP servers, or account-wide rules;
+            // ShellX-launched sessions receive their host integration at
+            // process launch instead.
+            match crate::skill_install::cleanup_legacy_global_shellx_host_skills() {
+                Ok(0) => info!("legacy global shellx-host skills absent"),
+                Ok(n) => info!("legacy global shellx-host skills removed: {}", n),
                 Err(e) => warn!(
-                    "shellx-host skill manifest install failed (non-fatal): {}",
+                    "legacy global shellx-host skill cleanup failed (non-fatal): {}",
                     e
                 ),
+            }
+
+            match crate::skill_install::cleanup_global_grok_host_mcp_config() {
+                Ok(true) => info!("legacy global ShellX host MCP config removed"),
+                Ok(false) => info!("legacy global ShellX host MCP config absent"),
+                Err(e) => warn!(
+                    "legacy global ShellX host MCP cleanup failed (non-fatal): {}",
+                    e
+                ),
+            }
+
+            // Keep the full bundled manifest only in ShellX-owned docs.
+            // Non-fatal — a warning is logged but app boot proceeds.
+            match crate::skill_install::ensure_shellx_host_skill_installed() {
+                Ok(true) => info!("shellx-host agent docs installed/updated"),
+                Ok(false) => info!("shellx-host agent docs already up-to-date"),
+                Err(e) => warn!("shellx-host agent docs install failed (non-fatal): {}", e),
             }
 
             match crate::skill_install::cleanup_legacy_shellx_workflow_skills() {
@@ -6313,35 +7284,13 @@ pub fn run() {
                 ),
             }
 
-            // rewrite the shellX-managed section in ~/.grok/AGENTS.md
-            // so grok picks up current shellX runtime rules (MCP install
-            // nudge, voice-chat formatting, transport-aware fs rules) at
-            // every session start. grok-build doesn't reliably surface
-            // MCP serverInfo.instructions, so AGENTS.md is the durable
-            // delivery channel.
+            // Remove the account-wide Grok guidance written by older
+            // releases. Current Grok sessions get a compact --rules value
+            // only when ShellX launches the process.
             match crate::skill_install::ensure_user_agents_md_shellx_section() {
-                Ok(true) => info!("AGENTS.md shellX-managed section rewritten"),
-                Ok(false) => info!("AGENTS.md shellX-managed section already current"),
-                Err(e) => warn!(
-                    "AGENTS.md shellX-managed section write failed (non-fatal): {}",
-                    e
-                ),
-            }
-
-            // Write the [mcp_servers.grok-shell-host] section to
-            // ~/.grok/config.toml so grok-build initializes the host
-            // MCP server at session start. The session/new mcpServers
-            // field is ignored by grok-build for MCP setup per its docs.
-            if let Ok(exe) = std::env::current_exe() {
-                match crate::skill_install::ensure_grok_mcp_config_installed(&exe) {
-                    Ok(true) => {
-                        info!("grok config.toml updated with grok-shell-host MCP entry")
-                    }
-                    Ok(false) => {
-                        info!("grok config.toml grok-shell-host entry already up-to-date")
-                    }
-                    Err(e) => warn!("grok config.toml install failed (non-fatal): {}", e),
-                }
+                Ok(true) => info!("global AGENTS.md ShellX section removed"),
+                Ok(false) => info!("global AGENTS.md ShellX section absent"),
+                Err(e) => warn!("global AGENTS.md ShellX cleanup failed (non-fatal): {}", e),
             }
 
             // H2 token strategy migrator (2026-05-20): scan
@@ -6528,7 +7477,14 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .on_window_event(move |window, event| {
+            if window.label() == crate::shellx_browser::BROWSER_WINDOW_LABEL
+                && matches!(event, tauri::WindowEvent::Destroyed)
+            {
+                shellx_browser_registry.record_window_destroyed();
+            }
+        })
+        .run(context)
         .expect("error while running tauri application");
 }
 
@@ -6578,6 +7534,7 @@ mod migrate_data_dir_tests {
 
     #[test]
     fn migrate_data_dir_respects_flag_and_state() {
+        let _env_lock = crate::test_env_lock();
         let root = unique_root();
         fs::create_dir_all(&root).expect("mk root");
 
@@ -6586,10 +7543,8 @@ mod migrate_data_dir_tests {
         fs::create_dir_all(&legacy).expect("mk legacy");
         fs::write(legacy.join("marker.txt"), b"hello").expect("seed marker");
 
-        // Safe-set env vars: tests are isolated to this single test
-        // function and we restore at the end. set_var is unsafe in
-        // Rust 2024; we accept that because the harness is single-
-        // threaded within this test.
+        // SAFETY: test_env_lock serializes every ShellX test that mutates
+        // process-wide environment variables, and this test restores them.
         unsafe {
             std::env::set_var("SHELLX_MIGRATE_DATA_DIR", "0");
             std::env::set_var("SHELLX_HOME_OVERRIDE_FOR_TESTS", &root);
@@ -6607,6 +7562,7 @@ mod migrate_data_dir_tests {
         );
 
         // --- Phase 2: flag unset (default), legacy present, target absent → rename. ---
+        // SAFETY: the process-wide test env lock remains held.
         unsafe {
             std::env::remove_var("SHELLX_MIGRATE_DATA_DIR");
         }
@@ -6642,6 +7598,7 @@ mod migrate_data_dir_tests {
         );
 
         // Cleanup + restore env. Best-effort; tempdir leaks are harmless.
+        // SAFETY: the process-wide test env lock remains held.
         unsafe {
             std::env::remove_var("SHELLX_MIGRATE_DATA_DIR");
             std::env::remove_var("SHELLX_HOME_OVERRIDE_FOR_TESTS");
@@ -6702,7 +7659,12 @@ mod sensitive_path_tests {
 
     #[tokio::test]
     async fn attach_text_classifier_rejects_sensitive_paths_before_reading() {
-        let err = read_text_file_if_text("/home/x/.ssh/id_ed25519".to_string(), Some(64))
+        let path = if cfg!(target_os = "windows") {
+            r"C:\Users\x\.ssh\id_ed25519"
+        } else {
+            "/home/x/.ssh/id_ed25519"
+        };
+        let err = read_text_file_if_text(path.to_string(), Some(64))
             .await
             .expect_err("sensitive attach path must be rejected");
         assert!(
@@ -6872,7 +7834,7 @@ mod preview_scope_tests {
                 Some("deploy@example.test".to_string()),
                 Some(2222),
             )
-            .with_ssh_key_vault_ref(Some("connections/macmini-key".to_string())),
+            .with_ssh_key_vault_ref(Some("connections/remote-macos-key".to_string())),
         );
 
         let ctx =
@@ -6884,7 +7846,7 @@ mod preview_scope_tests {
         assert_eq!(ssh.port, Some(2222));
         assert_eq!(
             ssh.key_vault_ref.as_deref(),
-            Some("connections/macmini-key")
+            Some("connections/remote-macos-key")
         );
     }
 
@@ -6960,6 +7922,49 @@ mod preview_scope_tests {
             &p,
             Some(r"C:\Users\FixtureUser\project")
         ));
+    }
+}
+
+#[cfg(test)]
+mod updater_release_policy_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn release(version: &str, url: &str) -> tauri_plugin_updater::RemoteRelease {
+        tauri_plugin_updater::RemoteRelease {
+            version: version.parse().expect("test version"),
+            notes: None,
+            pub_date: None,
+            data: tauri_plugin_updater::RemoteReleaseInner::Static {
+                platforms: HashMap::from([(
+                    "windows-x86_64".to_string(),
+                    tauri_plugin_updater::ReleaseManifestPlatform {
+                        url: url.parse().expect("test URL"),
+                        signature: "fixture-signature".to_string(),
+                    },
+                )]),
+            },
+        }
+    }
+
+    #[test]
+    fn updater_release_url_must_bind_the_manifest_version() {
+        assert!(updater_release_urls_match_version(&release(
+            "0.3.5",
+            "https://github.com/martinsbrezauckis/shellx/releases/download/v0.3.5/shellX_0.3.5_x64-setup.exe",
+        )));
+        assert!(!updater_release_urls_match_version(&release(
+            "9.9.9",
+            "https://github.com/martinsbrezauckis/shellx/releases/download/v0.2.0/shellX_0.2.0_x64-setup.exe",
+        )));
+        assert!(!updater_release_urls_match_version(&release(
+            "0.3.5",
+            "https://evil.example/martinsbrezauckis/shellx/releases/download/v0.3.5/shellX_0.3.5_x64-setup.exe",
+        )));
+        assert!(!updater_release_urls_match_version(&release(
+            "0.3.5",
+            "https://github.com/other/shellx/releases/download/v0.3.5/shellX_0.3.5_x64-setup.exe",
+        )));
     }
 }
 

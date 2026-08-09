@@ -1278,8 +1278,8 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_error_updates_connector_health() {
-        let store =
-            OutsideConnectorStore::open_at(test_store_path("runtime-error")).expect("store");
+        let (_temp_dir, path) = test_store_path("runtime-error");
+        let store = OutsideConnectorStore::open_at(path).expect("store");
         let saved = store
             .save(sample_telegram_connector(vec!["123".into()]))
             .await
@@ -1303,7 +1303,7 @@ mod tests {
 
     #[tokio::test]
     async fn auto_prompt_connector_records_dispatch_event() {
-        let path = test_store_path("legacy-auto-prompt");
+        let (_temp_dir, path) = test_store_path("legacy-auto-prompt");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
         std::fs::write(
             &path,
@@ -1350,7 +1350,7 @@ mod tests {
 
     #[tokio::test]
     async fn auto_prompt_connector_with_required_approval_records_inbox_event() {
-        let path = test_store_path("auto-prompt-approval");
+        let (_temp_dir, path) = test_store_path("auto-prompt-approval");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
         std::fs::write(
             &path,
@@ -1407,7 +1407,8 @@ mod tests {
 
     #[tokio::test]
     async fn simulated_inbound_rejects_disallowed_sender() {
-        let store = OutsideConnectorStore::open_at(test_store_path("reject")).expect("store");
+        let (_temp_dir, path) = test_store_path("reject");
+        let store = OutsideConnectorStore::open_at(path).expect("store");
         let saved = store
             .save(sample_telegram_connector(vec!["123".into()]))
             .await
@@ -1432,7 +1433,8 @@ mod tests {
 
     #[tokio::test]
     async fn simulated_inbound_records_inbox_event() {
-        let store = OutsideConnectorStore::open_at(test_store_path("inbox")).expect("store");
+        let (_temp_dir, path) = test_store_path("inbox");
+        let store = OutsideConnectorStore::open_at(path).expect("store");
         let saved = store
             .save(sample_telegram_connector(vec!["123".into()]))
             .await
@@ -1457,7 +1459,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_skips_unsupported_provider_connectors() {
-        let path = test_store_path("unsupported-provider");
+        let (_temp_dir, path) = test_store_path("unsupported-provider");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
         std::fs::write(
             &path,
@@ -1504,7 +1506,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_quarantines_corrupt_event_lines_instead_of_failing_store() {
-        let path = test_store_path("corrupt-events");
+        let (_temp_dir, path) = test_store_path("corrupt-events");
         let events_path = path.with_file_name("outside-connector-events.jsonl");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
         std::fs::write(
@@ -1569,13 +1571,12 @@ mod tests {
         }
     }
 
-    fn test_store_path(name: &str) -> PathBuf {
-        std::env::temp_dir()
-            .join(format!(
-                "shellx-outside-connectors-{}-{}",
-                name,
-                uuid::Uuid::new_v4()
-            ))
-            .join("outside-connectors.json")
+    fn test_store_path(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("shellx-outside-connectors-{name}-"))
+            .tempdir()
+            .expect("create isolated connector store directory");
+        let path = dir.path().join("outside-connectors.json");
+        (dir, path)
     }
 }

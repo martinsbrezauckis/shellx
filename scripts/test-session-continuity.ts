@@ -147,6 +147,16 @@ assert(transcript.text.includes("Tool: fs_write_text_file [success]"), "resume t
 assert(transcript.text.includes("ShellX error: ✗ Build Transport failed"), "resume transcript keeps actionable errors");
 assert(!transcript.text.includes("→ connect"), "resume transcript drops low-signal connect noise");
 
+const boundedTranscript = buildSessionResumeTranscript(
+  [message("Newest bounded context.", 6)],
+  { omittedRawLines: 500 },
+);
+assert(boundedTranscript.rawLineCount === 501, "bounded log reads retain the full raw-line count");
+assert(
+  boundedTranscript.omittedLineCount >= 500,
+  "bounded log reads report older records omitted before normalization",
+);
+
 const loopLines: string[] = [
   ui("→ prompt: Continue the large build", 10),
   message("Entering verification cycle.", 11, "loop", 1),

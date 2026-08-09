@@ -1,61 +1,65 @@
-import { readFileSync } from "node:fs";
-
+import { readdirSync, statSync } from "node:fs";
+import { readRustModuleFamily } from "./read-rust-module-family";
+import { readNormalizedTextFileSync as readFileSync } from "./lib/text-content";
 let failures = 0;
 function assert(cond: boolean, label: string): void {
   console.log(`  ${cond ? "✓" : "✗"} ${label}`);
   if (!cond) failures += 1;
 }
-
-function readMaybe(path: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
+function readRequiredSource(path: string): string {
+  const stat = statSync(path);
+  return stat.isFile() ? readFileSync(path) : "";
 }
-
 console.log("\n=== shellx browser module ===");
-
-const rustBrowser = readFileSync("src-tauri/src/shellx_browser.rs", "utf8");
-const rustBrowserDestructiveActions = readFileSync("src-tauri/src/shellx_browser_destructive_actions.rs", "utf8");
-const rustBrowserDeveloperMode = readFileSync("src-tauri/src/shellx_browser_developer_mode.rs", "utf8");
-const rustBrowserPersonalLock = readMaybe("src-tauri/src/shellx_browser_personal_lock.rs");
-const rustBrowserPersistence = readMaybe("src-tauri/src/shellx_browser_persistence.rs");
-const rustBrowserModel = readMaybe("src-tauri/src/shellx_browser_model.rs");
-const browserActionResultsSource = readMaybe("src-tauri/src/shellx_browser_action_results.rs");
-const browserActionsSource = readMaybe("src-tauri/src/shellx_browser_actions.rs");
-const browserBookmarksSource = readMaybe("src-tauri/src/shellx_browser_bookmarks.rs");
-const browserCdpRuntimeSource = readMaybe("src-tauri/src/shellx_browser_cdp_runtime.rs");
-const browserEngineSource = readMaybe("src-tauri/src/shellx_browser_engine.rs");
-const browserEngineRuntimeSource = readMaybe("src-tauri/src/shellx_browser_engine_runtime.rs");
-const browserEngineStateSource = readMaybe("src-tauri/src/shellx_browser_engine_state.rs");
-const browserScriptsSource = readMaybe("src-tauri/src/shellx_browser_scripts.rs");
-const browserSecuritySource = readMaybe("src-tauri/src/shellx_browser_security.rs");
-const browserTabsSource = readMaybe("src-tauri/src/shellx_browser_tabs.rs");
-const browserProtectedValuesSource = readMaybe("src-tauri/src/shellx_browser_protected_values.rs");
-const browserProfilesSource = readMaybe("src-tauri/src/shellx_browser_profiles.rs");
-const browserTasksSource = readMaybe("src-tauri/src/shellx_browser_tasks.rs");
+const rustBrowserRoot = readFileSync("src-tauri/src/shellx_browser.rs");
+const rustBrowser = readRustModuleFamily("src-tauri/src/shellx_browser.rs") + readdirSync("src-tauri/src/shellx_browser_tests").sort().map((file) => readRequiredSource(`src-tauri/src/shellx_browser_tests/${file}`)).join("\n");
+const rustBrowserDestructiveActions = readFileSync("src-tauri/src/shellx_browser_destructive_actions.rs");
+const rustBrowserDeveloperMode = readFileSync("src-tauri/src/shellx_browser_developer_mode.rs");
+const rustBrowserPersonalLock = readRequiredSource("src-tauri/src/shellx_browser_personal_lock.rs");
+const rustBrowserPersistence = readRequiredSource("src-tauri/src/shellx_browser_persistence.rs");
+const rustBrowserModel = ["src-tauri/src/shellx_browser_model.rs", "src-tauri/src/shellx_browser_settings_model.rs", "src-tauri/src/shellx_browser_engine_model.rs", "src-tauri/src/shellx_browser_artifact_model.rs", "src-tauri/src/shellx_browser_observation_model.rs", "src-tauri/src/shellx_browser_task_model.rs"].map(readRequiredSource).join("\n");
+const browserActionResultsSource = readRequiredSource("src-tauri/src/shellx_browser_action_results.rs");
+const browserActionScriptSource = readRequiredSource("src-tauri/src/shellx_browser_action_script.rs");
+const browserCoordinateInputSource = readRequiredSource("src-tauri/src/shellx_browser_coordinate_input.rs");
+const browserActionsSource = readRequiredSource("src-tauri/src/shellx_browser_actions.rs");
+const browserObservationsSource = readRequiredSource("src-tauri/src/shellx_browser_observations.rs");
+const browserBookmarksSource = readRequiredSource("src-tauri/src/shellx_browser_bookmarks.rs");
+const browserCdpRuntimeSource = readRequiredSource("src-tauri/src/shellx_browser_cdp_runtime.rs");
+const browserEngineSource = readRequiredSource("src-tauri/src/shellx_browser_engine.rs");
+const browserEngineRuntimeSource = ["src-tauri/src/shellx_browser_engine_runtime.rs", "src-tauri/src/shellx_browser_initialization.rs", "src-tauri/src/shellx_browser_webview_runtime.rs"].map(readRequiredSource).join("\n");
+const browserRenderedCheckSource = readRequiredSource("src-tauri/src/shellx_browser_rendered_check.rs");
+const browserVaultRuntimeSource = readRequiredSource("src-tauri/src/shellx_browser_vault.rs");
+const browserWindowOpenRuntimeSource = readRequiredSource("src-tauri/src/shellx_browser_window_open_runtime.rs");
+const browserEngineStateSource = readRequiredSource("src-tauri/src/shellx_browser_engine_state.rs");
+const browserScriptsSource = readRequiredSource("src-tauri/src/shellx_browser_scripts.rs") + readRequiredSource("src-tauri/src/shellx_browser_dom_traversal.rs");
+const browserSecuritySource = readRequiredSource("src-tauri/src/shellx_browser_security.rs");
+const browserTabsSource = readRequiredSource("src-tauri/src/shellx_browser_tabs.rs");
+const browserProtectedValuesSource = readRequiredSource("src-tauri/src/shellx_browser_protected_values.rs");
+const browserProfilesSource = readRequiredSource("src-tauri/src/shellx_browser_profiles.rs");
+const browserTasksSource = readRequiredSource("src-tauri/src/shellx_browser_tasks.rs") + readRequiredSource("src-tauri/src/shellx_browser_task_control.rs") + readRequiredSource("src-tauri/src/shellx_browser_caller.rs");
 const rustBrowserPrivacy = readFileSync("src-tauri/src/shellx_browser_privacy.rs", "utf8");
 const rustBrowserPrompts = readFileSync("src-tauri/src/shellx_browser_prompts.rs", "utf8");
 const rustBrowserSessionGrants = readFileSync("src-tauri/src/shellx_browser_session_grants.rs", "utf8");
 const rustBrowserShields = readFileSync("src-tauri/src/shellx_browser_shields.rs", "utf8");
-const rustBrowserRobots = readMaybe("src-tauri/src/shellx_browser_robots.rs");
-const rustBrowserArtifacts = readMaybe("src-tauri/src/shellx_browser_artifacts.rs");
-const rustBrowserStorageState = readMaybe("src-tauri/src/shellx_browser_storage_state.rs");
-const rustBrowserState = readMaybe("src-tauri/src/shellx_browser_state.rs");
-const rustBrowserRecipes = readMaybe("src-tauri/src/shellx_browser_recipes.rs");
-const rustBrowserReports = readMaybe("src-tauri/src/shellx_browser_reports.rs");
-const rustBrowserDiagnostics = readMaybe("src-tauri/src/shellx_browser_diagnostics.rs");
+const rustBrowserRobots = readRequiredSource("src-tauri/src/shellx_browser_robots.rs");
+const rustBrowserArtifacts = readRequiredSource("src-tauri/src/shellx_browser_artifacts.rs");
+const rustBrowserStorageState = readRequiredSource("src-tauri/src/shellx_browser_storage_state.rs");
+const rustBrowserState = readRequiredSource("src-tauri/src/shellx_browser_state.rs");
+const rustBrowserRecipes = readRequiredSource("src-tauri/src/shellx_browser_recipes.rs") + readRequiredSource("src-tauri/src/shellx_browser_recipe_analysis.rs");
+const rustBrowserReports = readRequiredSource("src-tauri/src/shellx_browser_reports.rs");
+const rustBrowserDiagnostics = readRequiredSource("src-tauri/src/shellx_browser_diagnostics.rs");
 const rustBrowserTransfers = readFileSync("src-tauri/src/shellx_browser_transfers.rs", "utf8");
-const rustBrowserVault = readMaybe("src-tauri/src/shellx_browser_vault.rs");
-const rustBrowserIntegrationTests = readMaybe("src-tauri/tests/shellx_browser.rs");
+const rustBrowserIntegrationTests = readRequiredSource("src-tauri/tests/shellx_browser.rs");
 const rustLib = readFileSync("src-tauri/src/lib.rs", "utf8");
-const debugApi = readFileSync("src-tauri/src/debug_api.rs", "utf8");
-const debugApiBrowser = readMaybe("src-tauri/src/debug_api_browser.rs");
-const debugApiBrowserArtifactsSource = readMaybe("src-tauri/src/debug_api_browser_artifacts.rs");
-const debugApiBrowserSecuritySource = readMaybe("src-tauri/src/debug_api_browser_security.rs");
-const debugApiBrowserStateSource = readMaybe("src-tauri/src/debug_api_browser_state.rs");
-const debugApiBrowserSettingsSource = readMaybe("src-tauri/src/debug_api_browser_settings.rs");
+const rustBuildMetadata = readFileSync("src-tauri/src/build_metadata.rs", "utf8");
+const rustBuildScript = readFileSync("src-tauri/build.rs", "utf8");
+const debugApiRoot = readFileSync("src-tauri/src/debug_api.rs", "utf8");
+const debugApi = readRustModuleFamily("src-tauri/src/debug_api.rs");
+const debugApiBrowser = readRequiredSource("src-tauri/src/debug_api_browser.rs");
+const debugApiBrowserArtifactsSource = readRequiredSource("src-tauri/src/debug_api_browser_artifacts.rs") + readRequiredSource("src-tauri/src/debug_api_browser_recipe_replay.rs");
+const debugApiBrowserSecuritySource = readRequiredSource("src-tauri/src/debug_api_browser_security.rs");
+const debugApiBrowserStateSource = readRequiredSource("src-tauri/src/debug_api_browser_state.rs");
+const debugApiBrowserSettingsSource = readRequiredSource("src-tauri/src/debug_api_browser_settings.rs");
 const debugApiBrowserRouteSources = [
   debugApi,
   debugApiBrowser,
@@ -64,16 +68,18 @@ const debugApiBrowserRouteSources = [
   debugApiBrowserStateSource,
   debugApiBrowserSettingsSource,
 ];
-const hostMcp = readFileSync("src-tauri/src/host_mcp.rs", "utf8");
+const hostMcp = readFileSync("src-tauri/src/host_mcp.rs", "utf8") + readdirSync("src-tauri/src/host_mcp", { recursive: true }).sort().map((file) => readRequiredSource(`src-tauri/src/host_mcp/${file}`)).join("\n");
 const pluginsModalSource = readFileSync("src/components/PluginsModal.tsx", "utf8");
 const subagentSource = readFileSync("src-tauri/src/subagent.rs", "utf8");
-const packageJson = readFileSync("package.json", "utf8");
-const packageData = JSON.parse(packageJson) as { version: string; scripts?: Record<string, string> };
+const packageData = JSON.parse(readFileSync("package.json", "utf8")) as { version: string; scripts?: Record<string, string> };
+const testSuiteManifestSource = readFileSync("scripts/test-suite-manifest.mjs", "utf8");
 const cargoToml = readFileSync("src-tauri/Cargo.toml", "utf8");
 const tauriConf = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")) as { version: string };
 const tauriConfSource = readFileSync("src-tauri/tauri.conf.json", "utf8");
 const tauriCapabilitiesSource = readFileSync("src-tauri/capabilities/default.json", "utf8");
 const mainSource = readFileSync("src/main.tsx", "utf8");
+const browserMainSource = readFileSync("src/shellx-browser-main.tsx", "utf8");
+const browserHtmlSource = readFileSync("shellx-browser.html", "utf8");
 const appSource = readFileSync("src/App.tsx", "utf8");
 const uiSource = (() => {
   try {
@@ -82,23 +88,28 @@ const uiSource = (() => {
     return "";
   }
 })();
-const browserTypesSource = readMaybe("src/browser/types.ts");
-const browserDebugBridgeSource = readMaybe("src/browser/debugBridge.ts");
-const browserTaskIntentSource = readMaybe("src/browser/taskIntent.ts");
-const browserApiSource = readMaybe("src/browser/api.ts");
-const browserShieldsPanelSource = readMaybe("src/browser/components/BrowserShieldsPanel.tsx");
-const browserMenusSource = readMaybe("src/browser/components/BrowserMenus.tsx");
-const browserHistorySidecarSource = readMaybe("src/browser/components/BrowserHistorySidecar.tsx");
-const downloadSidecarSource = readMaybe("src/browser/components/DownloadSidecar.tsx");
-const bookmarkSidecarSource = readMaybe("src/browser/components/BookmarkSidecar.tsx");
-const browserChromeSource = readMaybe("src/browser/components/BrowserChrome.tsx");
-const settingsSource = readMaybe("src/components/Settings.tsx");
-const generalTabSource = readMaybe("src/components/settings/GeneralTab.tsx");
-const nativeEngineSyncSource = readMaybe("src/browser/hooks/useNativeEngineSync.ts");
-const browserStateHookSource = readMaybe("src/browser/hooks/useBrowserState.ts");
-const engineViewportSource = readMaybe("src/browser/components/EngineViewport.tsx");
-const agentSidebarSource = readMaybe("src/browser/components/AgentSidebar.tsx");
-const vaultPromptCardsSource = readMaybe("src/browser/components/VaultPromptCards.tsx");
+const browserTypesSource = readRequiredSource("src/browser/types.ts"), browserAppConstantsSource = readRequiredSource("src/browser/browserAppConstants.ts");
+const browserNativeSecurityNoticeSource = readRequiredSource("src/browser/components/BrowserNativeSecurityNotice.tsx");
+const browserPreferencesSource = readRequiredSource("src/browser/browserPreferences.ts");
+const browserPresentationSource = readRequiredSource("src/browser/browserPresentation.ts");
+const browserDebugBridgeSource = readRequiredSource("src/browser/debugBridge.ts");
+const browserTaskIntentSource = readRequiredSource("src/browser/taskIntent.ts");
+const browserApiSource = readRequiredSource("src/browser/api.ts");
+const browserVaultFillCandidateSource = readRequiredSource("src/browser/vaultFillCandidates.ts");
+const browserShieldsPanelSource = readRequiredSource("src/browser/components/BrowserShieldsPanel.tsx");
+const browserMenusSource = readRequiredSource("src/browser/components/BrowserMenus.tsx");
+const browserHistorySidecarSource = readRequiredSource("src/browser/components/BrowserHistorySidecar.tsx");
+const downloadSidecarSource = readRequiredSource("src/browser/components/DownloadSidecar.tsx"), bookmarkSidecarSource = readRequiredSource("src/browser/components/BookmarkSidecar.tsx"), bookmarkToolbarSource = readRequiredSource("src/browser/components/BookmarkToolbar.tsx");
+const browserChromeSource = readRequiredSource("src/browser/components/BrowserChrome.tsx");
+const settingsSource = readRequiredSource("src/components/Settings.tsx");
+const settingsModelSource = readRequiredSource("src/lib/settings.ts");
+const generalTabSource = readRequiredSource("src/components/settings/GeneralTab.tsx");
+const nativeEngineSyncSource = readRequiredSource("src/browser/hooks/useNativeEngineSync.ts");
+const browserStateHookSource = readRequiredSource("src/browser/hooks/useBrowserState.ts");
+const browserPageActionsSource = readRequiredSource("src/browser/hooks/useBrowserPageActions.ts"), browserBookmarkHookSource = readRequiredSource("src/browser/hooks/useBrowserBookmarks.ts"), browserPersonalLockSource = readRequiredSource("src/browser/hooks/useBrowserPersonalLock.ts"), browserVaultFillSource = readRequiredSource("src/browser/hooks/useBrowserVaultFill.ts"), browserVaultFillPanelSource = readRequiredSource("src/browser/components/BrowserVaultFillPanel.tsx"), browserTabsHookSource = readRequiredSource("src/browser/hooks/useBrowserTabs.ts"), browserTasksHookSource = readRequiredSource("src/browser/hooks/useBrowserTasks.ts"), browserShellEffectsSource = readRequiredSource("src/browser/hooks/useBrowserShellEffects.ts");
+const engineViewportSource = readRequiredSource("src/browser/components/EngineViewport.tsx");
+const agentSidebarSource = readRequiredSource("src/browser/components/AgentSidebar.tsx");
+const vaultPromptCardsSource = readRequiredSource("src/browser/components/VaultPromptCards.tsx");
 const uiSourceLower = uiSource.toLowerCase();
 const cssSource = readFileSync("src/App.css", "utf8");
 function cssBlock(selector: string): string {
@@ -116,19 +127,27 @@ const browserTabChromeCss = cssBlock(".shellx-browser-tab-chrome");
 const browserTabStripCss = cssBlock(".shellx-browser-tab-strip");
 const browserHeaderMenuWrapCss = cssBlock(".shellx-browser-header-menu-wrap");
 const browserHeaderPopoverCss = cssBlock(".shellx-browser-header-popover");
+const browserChromeShellCss = cssBlock(".shellx-browser-chrome-shell");
+const browserChromeMenuDockCss = cssBlock(".shellx-browser-chrome-menu-dock");
 const browserBookmarkToolbarCss = cssBlock(".shellx-browser-bookmark-toolbar");
 const browserBookmarkFolderMenuCss = cssBlock(".shellx-browser-bookmark-folder-menu");
 const browserExpandedAgentComposeCss = cssBlock(".shellx-browser-agent-panel.chat-expanded .shellx-browser-agent-compose");
-const apiDocs = readFileSync("docs/API.md", "utf8");
+const readme = readFileSync("README.md", "utf8");
+const apiDocs = readFileSync("docs/public/API.md", "utf8");
 const moduleReadme = readFileSync("shellx-browser/README.md", "utf8");
 const shellxHostSkill = readFileSync("skills/shellx-host/SKILL.md", "utf8");
 const changelog = readFileSync("CHANGELOG.md", "utf8");
 const liveSmokeSource = readFileSync("scripts/test-shellx-browser-debug-api.ts", "utf8");
 const fixtureServerSource = readFileSync("scripts/fixtures/vault-browser-site/server.mjs", "utf8");
-const everydayFixtureSource = readMaybe("scripts/fixtures/vault-browser-site/public/everyday-apps.html");
-const everydayAppsSmokeSource = readMaybe("scripts/test-shellx-browser-everyday-apps.ts");
-const adversarySmokeSource = readMaybe("scripts/test-shellx-vault-adversary.ts");
-const concurrencySmokeSource = readMaybe("scripts/test-shellx-browser-concurrency.ts");
+const everydayFixtureSource = readRequiredSource("scripts/fixtures/vault-browser-site/public/everyday-apps.html");
+const everydayAppsSmokeSource = readRequiredSource("scripts/test-shellx-browser-everyday-apps.ts");
+const adversarySmokeSource = readRequiredSource("scripts/test-shellx-vault-adversary.ts");
+const concurrencySmokeSource = readRequiredSource("scripts/test-shellx-browser-concurrency.ts");
+const batchTimingSmokeSource = readRequiredSource("scripts/test-shellx-browser-batch-timing.ts");
+const workflowMatrixSmokeSource = readRequiredSource("scripts/test-shellx-browser-workflow-matrix.ts");
+const browserTestCleanupSource = readRequiredSource("scripts/shellx-browser-test-cleanup.ts");
+const browserCleanupTestSource = readRequiredSource("scripts/test-shellx-browser-cleanup.ts");
+const debugPathHelperSource = readRequiredSource("scripts/shellx-debug-paths.ts");
 const uiDebugSmokeSource = (() => {
   try {
     return readFileSync("scripts/test-shellx-browser-ui-debug.ts", "utf8");
@@ -148,6 +167,12 @@ const skillInstallSource = readFileSync("src-tauri/src/skill_install.rs", "utf8"
 assert(rustBrowser.includes("ShellxBrowserRegistry"), "Rust browser registry exists");
 assert(rustLib.includes("shellx_browser_model"), "browser model module is registered");
 assert(rustBrowser.includes("pub use crate::shellx_browser_model"), "browser facade re-exports model types");
+assert(
+  rustLib.includes("shellx_browser_workflow_taxonomy") &&
+    !browserBookmarksSource.includes("fn workflow_slug(") &&
+    !hostMcp.includes("fn browser_workflow_filter_task_type("),
+  "Browser workflow taxonomy canonicalization lives in a shared module",
+);
 assert(rustBrowserModel.includes("pub enum BrowserAdMode"), "browser model owns Browser ad mode types");
 assert(rustBrowserModel.includes("pub struct BrowserPrivacySettings"), "browser model owns Browser privacy settings");
 assert(rustBrowserModel.includes("pub struct BrowserShieldSettings"), "browser model owns Browser Shields settings");
@@ -173,10 +198,10 @@ assert(
   "Browser profile defaults and storage roots live in a focused module",
 );
 assert(
-  !/fn default_profiles/.test(rustBrowser) &&
-    !/fn browser_profile_storage_root/.test(rustBrowser) &&
-    !/fn safe_storage_segment/.test(rustBrowser) &&
-    !/fn resolve_profile_id/.test(rustBrowser),
+  !/fn default_profiles/.test(rustBrowserRoot) &&
+    !/fn browser_profile_storage_root/.test(rustBrowserRoot) &&
+    !/fn safe_storage_segment/.test(rustBrowserRoot) &&
+    !/fn resolve_profile_id/.test(rustBrowserRoot),
   "Browser profile helpers are no longer embedded in shellx_browser.rs",
 );
 assert(rustBrowser.includes("engine_pool"), "Browser state carries the engine pool");
@@ -218,7 +243,7 @@ assert(rustBrowserModel.includes("BrowserTabOwnerKind"), "Browser tabs model use
 assert(rustBrowserModel.includes("BrowserPersonalLockSettings"), "Browser Personal Lock state is modeled");
 assert(rustBrowserPersonalLock.includes("browser_personal_lock_requires_operator"), "Personal Browser Lock mutations require the ShellX operator path");
 assert(rustBrowserPersistence.includes("browser-settings.json"), "Browser privacy, Shields, and Personal Lock settings persist to a dedicated local settings file");
-assert(rustBrowserPersistence.includes("SHELLX_BROWSER_SETTINGS_PATH"), "Browser settings persistence has an isolated test path override");
+assert(rustBrowserPersistence.includes("SHELLX_BROWSER_SETTINGS_PATH") && rustBrowserPersistence.includes("fn temp_settings_path(label: &str) -> (tempfile::TempDir, PathBuf)") && rustBrowserPersistence.includes(".tempdir()") && !rustBrowserPersistence.includes("std::fs::create_dir_all(&dir).expect(\"create isolated settings directory\")"), "Browser settings support an isolated override and tests retain an owned temporary-directory guard instead of leaking fixtures");
 assert(rustBrowserPersistence.includes("persistable_personal_lock") && rustBrowserPersistence.includes("copy.locked = false"), "Personal Browser Lock persistence does not trust runtime locked state from disk");
 assert(
   rustBrowserPersistence.includes("personalLockPinHash") &&
@@ -267,10 +292,10 @@ assert(
   "Browser CDP and performance runtime lives in a focused module",
 );
 assert(
-  !/pub async fn execute_browser_cdp_command\s*\(/.test(rustBrowser) &&
-    !/pub async fn export_browser_performance\s*\(/.test(rustBrowser) &&
-    !/fn browser_cdp_execution_script\s*\(/.test(rustBrowser) &&
-    !/fn browser_performance_capture_script\s*\(/.test(rustBrowser),
+  !/pub async fn execute_browser_cdp_command\s*\(/.test(rustBrowserRoot) &&
+    !/pub async fn export_browser_performance\s*\(/.test(rustBrowserRoot) &&
+    !/fn browser_cdp_execution_script\s*\(/.test(rustBrowserRoot) &&
+    !/fn browser_performance_capture_script\s*\(/.test(rustBrowserRoot),
   "Browser CDP and performance runtime is no longer embedded in shellx_browser.rs",
 );
 assert(rustBrowser.includes("BrowserHarExportRequest"), "Browser HAR export request is modeled");
@@ -282,19 +307,25 @@ assert(rustBrowserDiagnostics.includes("browserPerformanceExported"), "Browser p
 assert(rustBrowser.includes("BrowserRecipeExportRequest"), "Browser recorder recipe export request is modeled");
 assert(rustBrowser.includes("BrowserRecipeReplayRequest"), "Browser recipe replay request is modeled");
 assert(rustBrowser.includes("BrowserRecipeReplaySkippedStep"), "Browser recipe replay models skipped unsafe or unsupported steps");
+assert(rustBrowser.includes("BrowserRecipeReplayStepResult"), "Browser recipe replay models compact per-step results");
+assert(rustBrowserModel.includes("decision_points") && rustBrowserModel.includes('rename = "decisionPoints"'), "Browser recipe replay response includes decision points for dry-run recovery");
+assert(rustBrowserRecipes.includes('"decisionPoints": decision_points.clone()'), "Browser recipe replay receipts include decision points for trace review");
 assert(rustBrowserRecipes.includes('"schemaVersion": 2'), "Browser recipe exports use Action Recipe V2 manifests");
 assert(rustBrowserRecipes.includes("variableInputs") && rustBrowserRecipes.includes("decisionPoints") && rustBrowserRecipes.includes("sourceReceipts"), "Browser recipe exports include replay planning sections");
+assert(rustBrowserRecipes.includes("fresh-observation-after-redacted-text"), "Browser recipe decision points flag redacted text waits/searches that require fresh observation");
 assert(rustBrowserRecipes.includes("browser_recipe_replay_plan"), "Browser recipe replay builds an executable safe-step plan");
 assert(rustBrowserRecipes.includes("redactedInputRequiresBinding"), "Browser recipe replay skips redacted input steps until Vault/user bindings exist");
+assert(rustBrowserRecipes.includes("redactedTextRequiresFreshObservation"), "Browser recipe replay gives agents explicit recovery reason for redacted text-only wait/search steps");
 assert(rustBrowserRecipes.includes("\"clickRef\"") && rustBrowserRecipes.includes("\"waitFor\"") && rustBrowserRecipes.includes("\"select\"") && rustBrowserRecipes.includes("\"verify\""), "Browser recipe replay plans real route interaction steps, not only navigation");
 assert(rustBrowserRecipes.includes("liveVaultCaptureRequiresBinding"), "Browser recipe replay leaves Vault capture to live binding instead of replaying raw secrets");
 assert(rustBrowserRecipes.includes("browserRecipeExported"), "Browser recipe exports emit receipts");
-assert(rustBrowserRecipes.includes("browserRecipeReplayCompleted"), "Browser recipe replay emits completion receipts");
+assert(rustBrowserRecipes.includes("saved browser recipe") && rustBrowserRecipes.includes("does not match its export receipt") && rustBrowserRecipes.includes("MAX_BROWSER_RECIPE_ARTIFACT_BYTES"), "Saved Browser recipe replay is receipt-bound, byte-bounded, and fails closed on artifact drift");
+assert(rustBrowserRecipes.includes("browserRecipeReplayCompleted") && rustBrowserRecipes.includes("browserRecipeReplayIncomplete"), "Browser recipe replay emits truthful completion and incomplete receipts");
 assert(rustBrowserArtifacts.includes("timeoutMs") && rustBrowserArtifacts.includes("force") && rustBrowserArtifacts.includes("valueRedacted"), "Browser recipe export preserves replay metadata while redacting input values");
 assert(rustBrowser.includes("BrowserRobotScheduleRequest"), "Browser robot queue schedule request is modeled");
 assert(rustBrowser.includes("BrowserRobotJob"), "Browser robot queue jobs are modeled");
 assert(rustBrowserRobots.includes("browserRobotScheduled"), "Browser robot scheduling emits receipts");
-assert(rustBrowserRobots.includes("browserRobotRunCompleted"), "Browser robot runs emit completion receipts");
+assert(rustBrowserRobots.includes("browserRobotRunStarted") && rustBrowserRobots.includes("browserRobotRunCompleted") && rustBrowserRobots.includes("browserRobotRunIncomplete") && rustBrowserRobots.includes("browserRobotRunFailed") && rustBuildMetadata.includes("recipeBackedRobotRuns"), "Browser protocol and robots expose truthful recipe-backed execution lifecycle");
 assert(rustBrowserArtifacts.includes("redact_trace_receipt"), "Browser trace bundles redact raw receipt text");
 assert(rustBrowserDiagnostics.includes("diagnosticsSections"), "Browser trace bundles include diagnostics section metadata");
 assert(rustBrowserArtifacts.includes("browser_trace_string_redaction"), "Browser trace bundles redact credential-shaped strings");
@@ -338,10 +369,10 @@ assert(
   "Browser protected-value redaction lives in a focused module",
 );
 assert(
-  !/fn browser_should_track_protected_value/.test(rustBrowser) &&
-    !/fn redact_browser_observation/.test(rustBrowser) &&
-    !/fn redact_engine_control_result/.test(rustBrowser) &&
-    !/fn register_browser_protected_value_locked/.test(rustBrowser),
+  !/fn browser_should_track_protected_value/.test(rustBrowserRoot) &&
+    !/fn redact_browser_observation/.test(rustBrowserRoot) &&
+    !/fn redact_engine_control_result/.test(rustBrowserRoot) &&
+    !/fn register_browser_protected_value_locked/.test(rustBrowserRoot),
   "Browser protected-value redaction helpers are no longer embedded in shellx_browser.rs",
 );
 assert(rustBrowserModel.includes("screenshot_full_page"), "Browser action requests can ask for full-page screenshot capture");
@@ -353,6 +384,7 @@ assert(rustBrowser.includes("BrowserFindTextResult"), "Browser find-in-page resu
 assert(browserScriptsSource.includes("isSensitiveField"), "Browser observations classify password/token-like fields as sensitive");
 assert(rustBrowser.includes("domSummary"), "Browser observation JSON exposes domSummary");
 assert(rustBrowser.includes("formFields"), "Browser observation JSON exposes formFields");
+assert(rustBrowserModel.includes("formFieldGroups") && rustBrowserModel.includes("BrowserFormFieldGroup"), "Browser observation JSON exposes grouped form intelligence");
 assert(rustBrowserModel.includes("accessibilityTree"), "Browser observation JSON exposes accessibilityTree");
 assert(rustBrowserModel.includes("locatorSuggestions"), "Browser observation JSON exposes locatorSuggestions");
 assert(rustBrowserModel.includes("strictMatchCount"), "Browser observation refs expose strictMatchCount");
@@ -366,10 +398,20 @@ assert(browserActionsSource.includes("Input.dispatchMouseEvent"), "Browser click
 assert(browserActionsSource.includes("native_input_recommended.unwrap_or(true)"), "Browser click actions can skip native mouse fallback when JS activation is enough");
 assert(browserScriptsSource.includes("nativeInputRecommendedForClick") && browserScriptsSource.includes('element.closest?.("a[href],button,summary,label")'), "Browser click control script avoids double-activating normal anchors/buttons");
 assert(browserActionsSource.includes("Input.insertText"), "Browser fill/type actions dispatch native text input after actionability checks");
+assert(browserActionScriptSource.includes("__SHELLX_NATIVE_COORDINATE_INPUT__") && browserCoordinateInputSource.includes("viewport click applied through page fallback") && browserCoordinateInputSource.includes("viewport text inserted through page fallback"), "Browser coordinate actions use native Windows input and a checked WebKit page fallback instead of succeeding after a non-Windows no-op");
+assert(browserCoordinateInputSource.includes('if (element && !editable) failedChecks.push("editable")') && browserCoordinateInputSource.includes("insertTextAtSelection"), "Browser coordinate text insertion rejects non-editable targets and applies the exact inserted value");
 assert(browserActionResultsSource.includes("browserScreenshotCaptured"), "Browser screenshot capture produces a dedicated receipt");
 assert(browserActionsSource.includes("capture_window_label_png"), "Browser screenshot capture targets the Browser window label");
 assert(browserActionsSource.includes("Page.captureScreenshot"), "Browser full-page screenshot capture uses the native page capture path");
 assert(browserActionsSource.includes("captureBeyondViewport"), "Browser full-page screenshot capture can include content beyond the viewport");
+assert(browserActionsSource.includes("browser_page_capture_scroll_positions") && browserActionsSource.includes("capture_window_label_png(app, &window_label)") &&
+  browserActionsSource.includes("capture_linux_webkit_visible_png(app, engine_label)") && browserActionsSource.includes("snapshot_future(SnapshotRegion::Visible, SnapshotOptions::NONE)") && browserActionsSource.includes("window.scrollTo"),
+"Browser full-page screenshots stitch native page snapshots without compositor capture on Linux");
+assert(
+  browserActionsSource.includes("validate_browser_page_capture_pixels") &&
+    browserActionsSource.includes("32_000_000"),
+  "Browser full-page screenshot capture bounds non-Windows image allocation",
+);
 assert(
   browserActionsSource.includes("call_browser_engine_cdp_with_timeout") &&
     browserActionsSource.includes("std::time::Duration::from_secs(20)"),
@@ -384,11 +426,43 @@ assert(
 );
 assert(rustBrowser.includes("BrowserEngineBounds"), "Browser engine bounds are modeled");
 assert(rustBrowser.includes("shellx_browser_sync_engine"), "Browser engine sync command is registered");
-assert(browserEngineRuntimeSource.includes("focus_existing_browser_window"), "Browser window lifecycle can focus an existing chrome window before rebuilding it");
-assert(browserEngineRuntimeSource.includes("ensure_browser_window_for_engine"), "Browser engine sync has a non-focusing window ensure path");
+assert(browserWindowOpenRuntimeSource.includes("focus_existing_browser_window"), "Browser window lifecycle can focus an existing chrome window before rebuilding it");
 assert(
-  browserEngineRuntimeSource.includes("fn ensure_browser_window_for_engine(") &&
-    browserEngineRuntimeSource.includes("restore_visible_geometry: bool"),
+  browserWindowOpenRuntimeSource.includes("open_or_focus_browser_window_bounded") &&
+    browserWindowOpenRuntimeSource.includes("run_browser_window_open_operation") &&
+    browserWindowOpenRuntimeSource.includes("browser_window_open_timeout") &&
+    browserWindowOpenRuntimeSource.includes("try_lock_owned") &&
+    browserWindowOpenRuntimeSource.includes("spawn_blocking") &&
+    browserWindowOpenRuntimeSource.includes("environmentSpecific"),
+  "Browser window creation has a bounded circuit breaker with platform diagnostics",
+);
+assert(
+  browserWindowOpenRuntimeSource.includes("late_created_window_reconciles_before_circuit_breaker_releases") &&
+    browserWindowOpenRuntimeSource.includes("late_existing_window_records_presence_without_applying_start_url") &&
+    browserWindowOpenRuntimeSource.includes("window_open_failure_resets_provisional_state_and_records_diagnostics"),
+  "Browser window watchdog covers late creation, existing-window recovery, state responsiveness, and partial-state reset",
+);
+assert(
+  debugApiBrowserStateSource.includes("StatusCode::GATEWAY_TIMEOUT") &&
+    debugApiBrowserStateSource.includes("browser_window_open_in_progress") &&
+    debugApiBrowserStateSource.includes("failure.as_json()"),
+  "Browser Debug API returns structured timeout and circuit-open failures",
+);
+assert(
+  apiDocs.includes("browser_window_open_timeout") &&
+    apiDocs.includes("browser_window_open_in_progress") &&
+    moduleReadme.includes("bounded circuit breaker") &&
+    moduleReadme.includes("WSL/WSLg"),
+  "Browser docs describe bounded native window startup and environment classification",
+);
+assert(
+  browserEngineRuntimeSource.includes("ensure_browser_window_for_engine") &&
+    browserWindowOpenRuntimeSource.includes("ensure_browser_window_for_engine"),
+  "Browser engine sync has a non-focusing window ensure path",
+);
+assert(
+  browserWindowOpenRuntimeSource.includes("fn ensure_browser_window_for_engine(") &&
+    browserWindowOpenRuntimeSource.includes("restore_visible_geometry: bool"),
   "Browser engine sync can request non-focusing geometry restoration for visible tabs",
 );
 assert(
@@ -396,39 +470,40 @@ assert(
   "Browser engine sync restores visible parked chrome without focusing background tabs",
 );
 assert(
-  browserEngineRuntimeSource.includes("if restore_visible_geometry") &&
-    browserEngineRuntimeSource.includes("restore_browser_window_geometry(&window)"),
+  browserWindowOpenRuntimeSource.includes("if restore_visible_geometry") &&
+    browserWindowOpenRuntimeSource.includes("restore_browser_window_geometry(&window)"),
   "Browser engine ensure path restores existing minimized/offscreen Browser windows",
 );
 assert(rustBrowser.includes("engine_sync_lock"), "Browser engine sync serializes concurrent native webview mounts");
 assert(browserEngineRuntimeSource.includes("_engine_sync_guard"), "Browser engine sync holds the mount lock while touching native webviews");
-assert(browserEngineRuntimeSource.includes("wait_for_browser_engine_label_release"), "Browser engine sync waits for stale labels before remounting");
+assert(browserEngineRuntimeSource.includes("async fn wait_for_browser_engine_label_release") && browserEngineRuntimeSource.includes("BROWSER_ENGINE_WEBVIEW2_RELEASE_QUIESCENCE") && browserEngineRuntimeSource.includes("tokio::time::sleep(BROWSER_ENGINE_WEBVIEW2_RELEASE_QUIESCENCE).await") && browserEngineRuntimeSource.includes("tokio::time::sleep(Duration::from_millis(25)).await") && !browserEngineRuntimeSource.includes("std::thread::sleep"), "Browser engine sync waits asynchronously for stale labels and Windows WebView2 profile-runtime quiescence before remounting");
 assert(debugApi.includes("wait_for_engine_action_slot"), "debug API routes engine-backed browser actions through the waitlist");
 assert(rustBrowser.includes("browser_engine_webview_label"), "Browser engine webview labels are derived from engine ids");
 assert(browserCdpRuntimeSource.includes("eval_browser_engine_json(app, &engine_label"), "Browser engine eval routes through the target engine label");
 assert(uiSource.includes("activeBrowserTabId: activeBrowserTab?.browserTabId ?? null"), "Browser UI sends active tab id during native engine sync");
-assert(browserEngineRuntimeSource.includes("restore_browser_window_geometry"), "Browser window lifecycle restores minimized/offscreen existing windows");
-assert(browserEngineRuntimeSource.includes("window.unminimize"), "Browser window restore path unminimizes parked windows");
-assert(browserEngineRuntimeSource.includes("outer_position"), "Browser window restore path inspects existing window position");
-assert(browserEngineRuntimeSource.includes("set_position(Position::Logical(LogicalPosition::new(160.0, 120.0)))"), "Browser window restore path has a visible-position fallback");
+assert(browserWindowOpenRuntimeSource.includes("restore_browser_window_geometry"), "Browser window lifecycle restores minimized/offscreen existing windows");
+assert(browserWindowOpenRuntimeSource.includes("window.unminimize"), "Browser window restore path unminimizes parked windows");
+assert(browserWindowOpenRuntimeSource.includes("outer_position"), "Browser window restore path inspects existing window position");
+assert(browserWindowOpenRuntimeSource.includes("set_position(Position::Logical(LogicalPosition::new(160.0, 120.0)))"), "Browser window restore path has a visible-position fallback");
 assert(
-  browserEngineRuntimeSource.includes("pub fn open_or_focus_browser_window") &&
-    browserEngineRuntimeSource.includes("pub(crate) fn sync_native_browser_engine") &&
-    browserEngineRuntimeSource.includes("fn install_strict_browser_request_filter") &&
+  browserWindowOpenRuntimeSource.includes("pub async fn open_or_focus_browser_window_bounded") &&
+    browserEngineRuntimeSource.includes("pub(crate) async fn sync_native_browser_engine") &&
+    browserEngineRuntimeSource.includes("async fn install_strict_browser_request_filter") &&
     browserEngineRuntimeSource.includes("fn park_inactive_browser_engine_webviews") &&
     browserEngineRuntimeSource.includes("fn wait_for_browser_engine_label_release") &&
     browserEngineRuntimeSource.includes("fn engine_bounds_rect") &&
-    rustLib.includes("mod shellx_browser_engine_runtime;"),
-  "Browser native engine runtime lives in a focused module",
+    rustLib.includes("mod shellx_browser_engine_runtime;") &&
+    rustLib.includes("mod shellx_browser_window_open_runtime;"),
+  "Browser chrome lifecycle and native engine runtime live in focused modules",
 );
 assert(
-  !/pub fn open_or_focus_browser_window\s*\(/.test(rustBrowser) &&
-    !/fn ensure_browser_window_for_engine\s*\(/.test(rustBrowser) &&
-    !/fn sync_native_browser_engine\s*\(/.test(rustBrowser) &&
-    !/fn install_strict_browser_request_filter\s*\(/.test(rustBrowser) &&
-    !/fn park_inactive_browser_engine_webviews\s*\(/.test(rustBrowser) &&
-    !/fn wait_for_browser_engine_label_release\s*\(/.test(rustBrowser) &&
-    !/fn engine_bounds_rect\s*\(/.test(rustBrowser),
+  !/pub fn open_or_focus_browser_window\s*\(/.test(rustBrowserRoot) &&
+    !/fn ensure_browser_window_for_engine\s*\(/.test(rustBrowserRoot) &&
+    !/(?:async )?fn sync_native_browser_engine\s*\(/.test(rustBrowserRoot) &&
+    !/(?:async )?fn install_strict_browser_request_filter\s*\(/.test(rustBrowserRoot) &&
+    !/fn park_inactive_browser_engine_webviews\s*\(/.test(rustBrowserRoot) &&
+    !/fn wait_for_browser_engine_label_release\s*\(/.test(rustBrowserRoot) &&
+    !/fn engine_bounds_rect\s*\(/.test(rustBrowserRoot),
   "Browser native engine runtime helpers are no longer embedded in shellx_browser.rs",
 );
 assert(
@@ -440,23 +515,21 @@ assert(
   "Browser engine state lifecycle lives in a focused module",
 );
 assert(
-  !/pub fn record_engine_sync\s*\(/.test(rustBrowser) &&
-    !/pub fn record_engine_load_for_engine\s*\(/.test(rustBrowser) &&
-    !/pub fn record_engine_title_for_engine\s*\(/.test(rustBrowser) &&
-    !/pub fn record_engine_beforeunload_blocker\s*\(/.test(rustBrowser),
+  !/pub fn record_engine_sync\s*\(/.test(rustBrowserRoot) &&
+    !/pub fn record_engine_load_for_engine\s*\(/.test(rustBrowserRoot) &&
+    !/pub fn record_engine_title_for_engine\s*\(/.test(rustBrowserRoot) &&
+    !/pub fn record_engine_beforeunload_blocker\s*\(/.test(rustBrowserRoot),
   "Browser engine state lifecycle methods are no longer embedded in shellx_browser.rs",
 );
 assert(browserEngineRuntimeSource.includes("WebviewBuilder::new"), "Browser engine creates a native child webview");
 assert(browserEngineRuntimeSource.includes("add_child"), "Browser engine mounts inside the Browser chrome window");
 assert(browserEngineRuntimeSource.includes("set_bounds"), "Browser engine can resize to the viewport");
+const windowsWebviewArgs = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding";
 assert(
-  browserEngineRuntimeSource.includes("SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS") &&
-    browserEngineRuntimeSource.includes("additional_browser_args(SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS)") &&
-    browserEngineRuntimeSource.includes("--disable-background-timer-throttling") &&
-    browserEngineRuntimeSource.includes("--disable-backgrounding-occluded-windows") &&
-    browserEngineRuntimeSource.includes("--disable-renderer-backgrounding") &&
-    browserEngineRuntimeSource.includes("msWebOOUI,msPdfOOUI,msSmartScreenProtection"),
-  "Browser WebView2 engines opt out of occluded/background throttling while preserving Wry default UI/smartscreen flags",
+  [browserEngineRuntimeSource, browserWindowOpenRuntimeSource, browserRenderedCheckSource, browserVaultRuntimeSource].every((source) => source.includes("SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS")) &&
+    browserEngineRuntimeSource.includes("additional_browser_args(SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS)") && tauriConfSource.includes(`"additionalBrowserArgs": "${windowsWebviewArgs}"`) &&
+    windowsWebviewArgs.split(" ").every((argument) => browserEngineRuntimeSource.includes(argument)),
+  "every ShellX-owned Windows WebView uses one compatible WebView2 option set without process-environment inheritance",
 );
 assert(browserCdpRuntimeSource.includes("eval_with_callback"), "Browser engine can evaluate DOM extraction scripts");
 assert(rustBrowser.includes("try_apply_engine_action"), "Browser action path can use the native engine");
@@ -476,16 +549,23 @@ assert(
     debugApi.includes("tab_from_task.or(tab_from_active)"),
   "debug API navigate sync targets the response task tab before falling back to the active tab",
 );
-assert(debugApi.includes("sync_engine_to_tab(app, registry, &tab).map(|_| ())"), "debug API navigate sync remains non-preserving so explicit navigation drives the WebView");
+assert(debugApi.includes("sync_engine_to_tab(app, registry, &tab)") && debugApi.includes(".await") && debugApi.includes(".map(|_| ())"), "debug API navigate sync remains non-preserving so explicit navigation drives the WebView");
 assert(browserActionResultsSource.includes("browserEngineObserved"), "engine-backed page observations produce receipts");
 assert(browserApiSource.includes("preserveExistingPage?: boolean"), "Browser engine sync API can mark layout syncs as page-preserving");
 assert(rustBrowserModel.includes("preserve_existing_page"), "Browser engine sync model carries page-preservation intent");
 assert(nativeEngineSyncSource.includes("preserveExistingPage: true"), "Browser UI focus and resize syncs preserve the live page");
 assert(
   browserEngineRuntimeSource.includes("request.preserve_existing_page && same_browser_tab") &&
-    browserEngineRuntimeSource.includes("let should_navigate = !preserve_existing_page") &&
-    browserEngineRuntimeSource.includes("current_webview_url"),
-  "Browser native engine does not replay stale tab URLs and reports the live URL during same-tab preserving sync",
+    browserEngineRuntimeSource.includes("browser_webview_should_navigate(") &&
+    browserEngineRuntimeSource.includes("current_engine_url.as_deref()") &&
+    browserEngineRuntimeSource.includes("engine.url.clone()") &&
+    !browserEngineRuntimeSource.includes("webview.url()") &&
+    browserEngineRuntimeSource.includes("engine.pending_url.as_deref()"),
+  "Browser native engine does not replay stale or already-pending URLs and avoids the racy macOS native URL getter during same-tab preserving sync",
+);
+assert(
+  ["native.Navigate(&HSTRING::from(target_url))", "async fn with_windows_browser_webview", ".run_on_main_thread(move ||", "tokio::time::timeout(Duration::from_secs(15), result_rx)", "drop(result_tx)", '"starting Browser WebView2 navigation"', '"applying Browser credential controls"'].every((marker) => browserEngineRuntimeSource.includes(marker)),
+  "Windows Browser initialization acknowledges native credential controls and navigation instead of treating queued dispatch as completion",
 );
 assert(
   browserEngineStateSource.includes("let preserve_existing_page = request.preserve_existing_page") &&
@@ -494,57 +574,54 @@ assert(
   "Browser engine state commits live URLs without false navigation records during same-tab preserving sync",
 );
 assert(
-  uiSource.includes("const rawUrl = state?.engine?.url ?? activeBrowserTab.url ?? \"\""),
+  browserVaultFillSource.includes("const rawUrl = engineUrl ?? activeBrowserTab.url ?? \"\""),
   "browser Vault fill observation prefers the active engine URL when tab metadata is stale",
 );
 assert(rustBrowser.includes("selector"), "engine observations expose selectors for deterministic controls");
 assert(rustBrowserModel.includes("raw_selector"), "engine observations preserve internal raw selectors for ref replay");
 assert(
-  browserActionResultsSource.includes("preserve_raw_observation_selectors") &&
-    browserActionResultsSource.includes(".raw_selector") &&
-    browserActionResultsSource.includes("or_else(|| candidate.selector.clone())"),
+  browserObservationsSource.includes("preserve_raw_observation_selectors") &&
+    browserObservationsSource.includes("reference.raw_selector = reference.selector.clone()"),
   "Browser redacts visible selectors without breaking ref replay",
 );
 assert(browserScriptsSource.includes("BROWSER_ENGINE_CONTROL_SCRIPT"), "Browser engine has a deterministic control script");
 assert(
-  browserScriptsSource.includes("BROWSER_ENGINE_OBSERVE_SCRIPT") &&
+    browserScriptsSource.includes("BROWSER_ENGINE_OBSERVE_SCRIPT") &&
     browserScriptsSource.includes("BROWSER_ENGINE_CONTROL_SCRIPT") &&
-    browserScriptsSource.includes("xpathCount") &&
-    browserScriptsSource.includes("if (queryCount(cssSelector) === 1) return cssSelector;") &&
-    browserScriptsSource.includes("if (xpathCount(xpath) === 1) return xpath;") &&
-    browserScriptsSource.includes("return queryCount(cssSelector) > 0 ? cssSelector : xpath;") &&
-    browserScriptsSource.includes("document.evaluate(selector, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null)") &&
-    browserScriptsSource.includes('current !== document &&') &&
+    browserScriptsSource.includes("shellxPrimarySelectorFor") &&
+    browserScriptsSource.includes("shellxRootXpathMatches") &&
+    browserScriptsSource.includes("root.evaluate(selector, root") &&
+    browserScriptsSource.includes("shellxResolveDomLocator") &&
+    browserScriptsSource.includes('current !== root &&') &&
     browserScriptsSource.includes('`/${parts.join("/")}`') &&
     browserScriptsSource.includes("summary,output,[aria-live]") &&
     browserScriptsSource.includes("InputEvent(\"beforeinput\"") &&
     browserScriptsSource.includes("execCommand(\"insertText\"") &&
     rustLib.includes("mod shellx_browser_scripts;"),
-  "Browser native engine scripts live in a focused module and replay XPath when CSS selectors are not actionable",
+  "Browser native engine scripts live in focused modules and resolve scoped CSS or XPath locators",
 );
 assert(
-  !/const BROWSER_ENGINE_OBSERVE_SCRIPT/.test(rustBrowser) &&
-    !/const BROWSER_ENGINE_CONTROL_SCRIPT/.test(rustBrowser),
+  !/const BROWSER_ENGINE_OBSERVE_SCRIPT/.test(rustBrowserRoot) &&
+    !/const BROWSER_ENGINE_CONTROL_SCRIPT/.test(rustBrowserRoot),
   "Browser native engine scripts are no longer embedded in shellx_browser.rs",
 );
 assert(
   browserActionResultsSource.includes("pub fn record_engine_observation") &&
     browserActionResultsSource.includes("pub(crate) fn record_engine_control_result") &&
     browserActionResultsSource.includes("pub(crate) fn record_screenshot_result") &&
-    browserActionResultsSource.includes("pub fn resolve_engine_selector") &&
-    browserActionResultsSource.includes("browser_observation_refs_with_synthetic") &&
-    rustLib.includes("mod shellx_browser_action_results;"),
+    browserObservationsSource.includes("browser_observation_refs_with_synthetic") &&
+    rustLib.includes("mod shellx_browser_action_results;") &&
+    rustLib.includes("mod shellx_browser_observations;"),
   "Browser engine action result lifecycle lives in a focused module",
 );
 assert(
-  !/pub fn record_engine_observation\s*\(/.test(rustBrowser) &&
-    !/fn record_engine_control_result\s*\(/.test(rustBrowser) &&
-    !/fn record_screenshot_result\s*\(/.test(rustBrowser) &&
-    !/pub fn resolve_engine_selector\s*\(/.test(rustBrowser) &&
-    !/fn browser_observation_refs_with_synthetic\s*\(/.test(rustBrowser),
+  !/pub fn record_engine_observation\s*\(/.test(rustBrowserRoot) &&
+    !/fn record_engine_control_result\s*\(/.test(rustBrowserRoot) &&
+    !/fn record_screenshot_result\s*\(/.test(rustBrowserRoot) &&
+    !/pub fn resolve_engine_selector\s*\(/.test(rustBrowserRoot) &&
+    !/fn browser_observation_refs_with_synthetic\s*\(/.test(rustBrowserRoot),
   "Browser engine action result lifecycle methods are no longer embedded in shellx_browser.rs",
 );
-assert(browserActionResultsSource.includes("resolve_engine_selector"), "Browser engine resolves observation refs to selectors");
 assert(
   browserActionResultsSource.includes("record_taskless_engine_control_result_locked") &&
     browserActionResultsSource.includes("Browser user tab engine action") &&
@@ -558,7 +635,11 @@ assert(browserActionResultsSource.includes("browserVerificationPassed"), "Browse
 assert(browserActionResultsSource.includes("browserVerificationFailed"), "Browser verification failure receipts are modeled");
 assert(rustBrowserDiagnostics.includes("browserTraceBundleExported"), "Browser trace bundle export receipts are modeled");
 assert(rustBrowserStorageState.includes("browserStorageStateManifestExported"), "Browser storage-state export receipts are modeled");
-assert(rustBrowserSessionGrants.includes("browserSessionGrantApplied"), "Browser session grant application receipts are modeled");
+assert(
+  rustBrowserSessionGrants.includes("browser_session_grant_application_unavailable")
+    && !rustBrowserSessionGrants.includes("browserSessionGrantApplied"),
+  "Browser session grant application fails closed until real profile-state copying exists",
+);
 assert(rustBrowserPrompts.includes("browserDialogRecorded"), "Browser dialog record receipts are modeled");
 assert(rustBrowserPrompts.includes("browserDialogResolved"), "Browser dialog resolve receipts are modeled");
 assert(rustBrowserPrompts.includes("browserPermissionRequested"), "Browser page permission request receipts are modeled");
@@ -573,12 +654,14 @@ assert(rustBrowser.includes("browserNetworkObserved"), "Browser network metadata
 assert(rustBrowser.includes("findText"), "Browser engine can search text inside the current page");
 assert(browserScriptsSource.includes("summary,output,[aria-live]"), "Browser find-in-page can scroll common app status/output elements");
 assert(browserScriptsSource.includes("notActionable"), "Browser engine can return honest notActionable outcomes");
-assert(browserScriptsSource.includes("dispatchEvent(new Event(\"input\""), "engine-backed fill/type dispatches input events");
+assert(browserScriptsSource.includes("fieldIntentFor") && browserScriptsSource.includes("formFieldGroups"), "Browser engine classifies and groups form fields for agent planning");
+assert(browserScriptsSource.includes("dispatchEvent(new view.Event(\"input\""), "engine-backed fill/type dispatches input events in the target realm");
 assert(browserScriptsSource.includes("InputEvent(\"beforeinput\""), "engine-backed fill/type dispatches beforeinput events for rich editors");
 assert(browserScriptsSource.includes("execCommand(\"insertText\""), "engine-backed fill/type uses browser text insertion for contenteditable editors");
 assert(rustBrowser.includes("extractTable"), "Browser engine can extract table data deterministically");
 assert(liveSmokeSource.includes("domSummary"), "live Browser smoke checks DOM summary observations");
 assert(liveSmokeSource.includes("formFields"), "live Browser smoke checks form field observations");
+assert(liveSmokeSource.includes("formFieldGroups"), "live Browser smoke checks grouped form observations");
 assert(liveSmokeSource.includes("accessibilityTree"), "live Browser smoke checks accessibility control observations");
 assert(liveSmokeSource.includes("locatorSuggestions"), "live Browser smoke checks locator suggestions");
 assert(liveSmokeSource.includes("strictMatchCount"), "live Browser smoke checks strict match metadata");
@@ -599,13 +682,20 @@ assert(liveSmokeSource.includes("browser_prompt_resolution_requires_operator"), 
 assert(liveSmokeSource.includes("/browser/network"), "live Browser smoke checks network metadata route");
 assert(liveSmokeSource.includes("browserScreenshotCaptured"), "live Browser smoke checks screenshot capture receipts");
 assert(liveSmokeSource.includes("shellx-browser-screenshots"), "live Browser smoke checks Browser screenshot artifact path");
-assert(tauriConfSource.includes("\"$HOME/.grok/shellx-browser-screenshots/**\""), "Tauri asset protocol allows Browser screenshot artifacts");
-assert(tauriConfSource.includes("\"$HOME/.grok/shellx-browser-traces/**\""), "Tauri asset protocol allows Browser trace artifacts");
+assert(liveSmokeSource.includes("isShellxBrowserArtifactPath"), "live Browser smoke checks ShellX-owned Browser artifact roots");
+assert(tauriConfSource.includes("\"$HOME/.shellx/browser-artifacts/shellx-browser-screenshots/**\""), "Tauri asset protocol allows Browser screenshot artifacts");
+assert(tauriConfSource.includes("\"$HOME/.shellx/browser-artifacts/shellx-browser-traces/**\""), "Tauri asset protocol allows Browser trace artifacts");
 assert(rustBrowser.includes("browserBookmarkSaved"), "Browser can save the current page as a bookmark");
 assert(browserBookmarksSource.includes("browserHistoryCleared"), "Browser can clear local history from the user UI");
 assert(rustBrowser.includes("BrowserClearHistoryRequest"), "Browser clear-history operator request is modeled");
 assert(browserBookmarksSource.includes("shellx_browser_destructive_actions::browser_destructive_action_requires_operator"), "Browser clear-history registry mutation is operator-gated");
 assert(rustBrowserDestructiveActions.includes("BROWSER_DESTRUCTIVE_ACTION_OPERATOR_ERROR_CODE"), "Browser destructive action module defines the operator-gate error code");
+assert(rustBrowserModel.includes("pub clear_profile_ad_mode: bool"), "Browser privacy updates can explicitly restore a profile to the global ad mode");
+assert(
+  rustBrowserPrivacy.includes("request.clear_profile_ad_mode && request.profile_ad_mode.is_some()") &&
+    rustBrowserPrivacy.includes("retain(|item| item.profile_id != profile_id)"),
+  "Browser privacy rejects conflicting profile-mode updates and clears only the requested profile override",
+);
 assert(
   (rustBrowser.includes("browserTabLockDenied") || browserTabsSource.includes("browserTabLockDenied")) &&
     browserTabsSource.includes("tab_lock_denial_for_request"),
@@ -665,9 +755,9 @@ assert(
   "Browser Shields/ad-filter decisions live in shellx_browser_shields.rs",
 );
 assert(
-  !rustBrowser.includes("fn browser_ad_decision_for_url") &&
-    !rustBrowser.includes("fn browser_privacy_initialization_script") &&
-    !rustBrowser.includes("fn refresh_browser_tab_shields"),
+  !rustBrowserRoot.includes("fn browser_ad_decision_for_url") &&
+    !rustBrowserRoot.includes("fn browser_privacy_initialization_script") &&
+    !rustBrowserRoot.includes("fn refresh_browser_tab_shields"),
   "Browser Shields/ad-filter decisions are no longer embedded in shellx_browser.rs",
 );
 assert(rustBrowserShields.includes("__shellxPrivacyStats"), "Browser ad filter exposes local privacy stats for UI and tests");
@@ -717,6 +807,25 @@ assert(browserTasksSource.includes("browserTaskPaused"), "Browser task pause rec
 assert(browserTasksSource.includes("browserTaskResumed"), "Browser task resume receipts are modeled");
 assert(browserTasksSource.includes("browserTaskAborted"), "Browser task abort receipts are modeled");
 assert(browserTasksSource.includes("browserTaskUserTakeover"), "Browser task user-takeover receipts are modeled");
+assert(browserTasksSource.includes("BROWSER_TASK_OPERATOR_CONTROL_REQUIRED"), "Browser task takeover has a stable operator-required error code");
+assert(browserTasksSource.includes("BROWSER_TASK_OWNER_CONTROL_REQUIRED") && browserTasksSource.includes("ensure_browser_task_control_authority"), "Browser task mutations enforce the authenticated task owner principal");
+assert(rustBrowserModel.includes('rename = "ownerActorId"') && rustBrowserModel.includes('rename = "ownerSurface"'), "Browser task snapshots expose immutable owner principal metadata");
+assert(browserTypesSource.includes("ownerActorId: string") && browserTypesSource.includes("ownerSurface: string") && browserTypesSource.includes("ownerSessionId?: string | null"), "Browser frontend types carry task owner principal metadata");
+assert(browserTasksSource.includes("BrowserTaskControlAuthority::Agent") && browserTasksSource.includes("BrowserTaskControlAuthority::Operator"), "Browser task mutations derive authority from their authenticated surface");
+assert(browserTasksSource.includes('Self::Agent => "shellxDebugApiAgent"') && browserTasksSource.includes('Self::Operator => "shellxBrowserOperator"'), "Browser task receipts use fixed surface actor IDs");
+assert(debugApiBrowserStateSource.includes("StatusCode::FORBIDDEN") && debugApiBrowserStateSource.includes("browser_task_mutation_error_response"), "Debug API returns a machine-readable forbidden response for operator-only task controls");
+assert(rustLib.includes("shellx_browser_control_task") && rustLib.includes("shellx_browser_finish_task"), "Browser operator task commands are registered with Tauri");
+assert(browserApiSource.includes("controlBrowserTaskFromOperator") && browserApiSource.includes("finishBrowserTaskFromOperator"), "Browser frontend exposes task mutations through the Tauri operator path");
+assert(browserTasksHookSource.includes("isTrustedShellxUserEvent(event)") && browserTasksHookSource.includes("controlBrowserTaskFromOperator") && browserTasksHookSource.includes("finishBrowserTaskFromOperator"), "Browser task operator controls require trusted user events before Tauri invocation");
+assert(
+  browserTasksSource.includes("transition_task_status_locked") &&
+    browserTasksSource.includes("repair_browser_task_invariants_locked") &&
+    browserTasksSource.includes("BROWSER_TASK_TERMINAL_HISTORY_LIMIT") &&
+    browserTasksSource.includes("browserTaskHistoryPruned") &&
+    browserTabsSource.includes("lastTabClosed") &&
+    browserTypesSource.includes("statusReason"),
+  "Browser tasks centralize transitions, abort on final tab close, expose reasons, and bound terminal history",
+);
 assert(
   browserTasksSource.includes("pub fn start_task") &&
     browserTasksSource.includes("pub fn finish_task") &&
@@ -732,14 +841,14 @@ assert(
   "Browser task lifecycle lives in a focused module",
 );
 assert(
-  !/pub fn start_task\s*\(/.test(rustBrowser) &&
-    !/pub fn finish_task\s*\(/.test(rustBrowser) &&
-    !/pub fn control_task\s*\(/.test(rustBrowser) &&
-    !/pub fn task_control_block_for_action\s*\(/.test(rustBrowser) &&
-    !/fn task_control_blocked_response\s*\(/.test(rustBrowser) &&
-    !/pub\(crate\) fn resolve_task_id\s*\(/.test(rustBrowser) &&
-    !/pub\(crate\) fn find_task_index\s*\(/.test(rustBrowser) &&
-    !/pub\(crate\) fn browser_agent_step_summary_for_task\s*\(/.test(rustBrowser),
+  !/pub fn start_task\s*\(/.test(rustBrowserRoot) &&
+    !/pub fn finish_task\s*\(/.test(rustBrowserRoot) &&
+    !/pub fn control_task\s*\(/.test(rustBrowserRoot) &&
+    !/pub fn task_control_block_for_action\s*\(/.test(rustBrowserRoot) &&
+    !/fn task_control_blocked_response\s*\(/.test(rustBrowserRoot) &&
+    !/pub\(crate\) fn resolve_task_id\s*\(/.test(rustBrowserRoot) &&
+    !/pub\(crate\) fn find_task_index\s*\(/.test(rustBrowserRoot) &&
+    !/pub\(crate\) fn browser_agent_step_summary_for_task\s*\(/.test(rustBrowserRoot),
   "Browser task lifecycle helpers are no longer embedded in shellx_browser.rs",
 );
 assert(rustBrowser.includes("required_approval_for_action"), "sensitive browser actions are policy-gated");
@@ -781,7 +890,7 @@ assert(
     rustBrowserPrivacy.includes("pub fn update_privacy"),
   "Browser privacy registry mutation lives in shellx_browser_privacy.rs",
 );
-assert(!/pub fn update_privacy\(/.test(rustBrowser), "Browser privacy registry mutation is no longer embedded in shellx_browser.rs");
+assert(!/pub fn update_privacy\(/.test(rustBrowserRoot), "Browser privacy registry mutation is no longer embedded in shellx_browser.rs");
 assert(
   debugApi.includes("BROWSER_PRIVACY_OPERATOR_ERROR_CODE") ||
     debugApiBrowserSettingsSource.includes("BROWSER_PRIVACY_OPERATOR_ERROR_CODE"),
@@ -803,9 +912,9 @@ assert(
   "Browser Shields registry mutations live in shellx_browser_shields.rs",
 );
 assert(
-  !/pub fn update_shields\(/.test(rustBrowser) &&
-    !/pub fn update_site_shields\(/.test(rustBrowser) &&
-    !/pub fn remove_site_shields\(/.test(rustBrowser),
+  !/pub fn update_shields\(/.test(rustBrowserRoot) &&
+    !/pub fn update_site_shields\(/.test(rustBrowserRoot) &&
+    !/pub fn remove_site_shields\(/.test(rustBrowserRoot),
   "Browser Shields registry mutations are no longer embedded in shellx_browser.rs",
 );
 assert(
@@ -829,7 +938,9 @@ assert(
   "browser UI removes site Shields through the Tauri operator path",
 );
 for (const route of [
+  "/browser/summary", "/browser/check",
   "/browser/state",
+  "/browser/settle",
   "/browser/tabs",
   "/browser/tabs/open",
   "/browser/tabs/focus",
@@ -840,6 +951,8 @@ for (const route of [
   "/browser/tabs/unlock",
   "/browser/profiles",
   "/browser/tasks",
+  "/browser/history",
+  "/browser/requests",
   "/browser/task/autonomy",
   "/browser/bookmarks",
   "/browser/bookmarks/reorder",
@@ -892,6 +1005,106 @@ for (const route of [
 ]) {
 assert(debugApiBrowserRouteSources.some((source) => source.includes(route)), `debug API wires ${route}`);
 }
+const browserDebugApiRouteInventory = [
+  "/browser/summary", "/browser/check",
+  "/browser/state",
+  "/browser/settle",
+  "/browser/tabs",
+  "/browser/profiles",
+  "/browser/tasks",
+  "/browser/history",
+  "/browser/requests",
+  "/browser/bookmarks",
+  "/browser/receipts",
+  "/browser/privacy",
+  "/browser/personal-lock",
+  "/browser/engine-pool",
+  "/browser/shields",
+  "/browser/shields/site",
+  "/browser/shields/site/:host",
+  "/browser/developer-mode",
+  "/browser/developer-mode/approval",
+  "/browser/downloads",
+  "/browser/uploads",
+  "/browser/logs",
+  "/browser/storage-state",
+  "/browser/dialogs",
+  "/browser/permissions",
+  "/browser/popups",
+  "/browser/network",
+  "/browser/robots",
+  "/browser/open",
+  "/browser/tabs/open",
+  "/browser/tabs/focus",
+  "/browser/tabs/reorder",
+  "/browser/tabs/close",
+  "/browser/tabs/lock",
+  "/browser/tabs/heartbeat",
+  "/browser/tabs/unlock",
+  "/browser/task/start",
+  "/browser/task/autonomy",
+  "/browser/task/control",
+  "/browser/task/finish",
+  "/browser/action",
+  "/browser/bookmarks/reorder",
+  "/browser/bookmarks/:bookmark_id",
+  "/browser/downloads/request",
+  "/browser/downloads/complete",
+  "/browser/uploads/request",
+  "/browser/uploads/complete",
+  "/browser/cdp/execute",
+  "/browser/trace/export",
+  "/browser/har/export",
+  "/browser/performance/export",
+  "/browser/recipes/export",
+  "/browser/recipes/replay",
+  "/browser/robots/schedule",
+  "/browser/robots/run",
+  "/browser/robots/cancel",
+  "/browser/storage-state/export",
+  "/browser/dialogs/resolve",
+  "/browser/permissions/resolve",
+  "/browser/session-grants/request",
+  "/browser/session-grants/resolve",
+  "/browser/session-grants/apply",
+  "/browser/vault-deposits",
+  "/browser/vault/fill-receipt",
+  "/browser/vault/generate-receipt",
+  "/browser/report",
+];
+for (const route of browserDebugApiRouteInventory) {
+  assert(apiDocs.includes(route), `API docs document Browser Debug API route ${route}`);
+  assert(moduleReadme.includes(route), `Browser README documents Browser Debug API route ${route}`);
+  assert(shellxHostSkill.includes(route), `shellx-host skill documents Browser Debug API route ${route}`);
+}
+for (const doc of [
+  ["API docs", apiDocs],
+  ["Browser README", moduleReadme],
+  ["shellx-host skill", shellxHostSkill],
+] as const) {
+  const [label, source] = doc;
+  assert(
+    source.includes("HTTP Debug API Browser flow for outside drivers") &&
+      source.includes("Authorization: Bearer <token>") &&
+      source.includes("browser_navigate -> POST /browser/action") &&
+      source.includes('action: "navigate"') &&
+      source.includes("browser_fill_from_vault -> POST /browser/action") &&
+      source.includes('action: "fillFromVaultGrant"') &&
+      source.includes("browser_capture_secret_to_vault -> POST /browser/action") &&
+      source.includes('action: "capturePageSecretToVault"') &&
+      source.includes("browser_screenshot -> POST /browser/action") &&
+      source.includes('action: "captureScreenshot"'),
+    `${label} documents raw HTTP Browser Debug API flow and MCP-to-action mapping`,
+  );
+}
+assert(
+  readme.includes("Drive ShellX Browser without exposing its bearer credential") && readme.includes("pnpm shellx-browser tabs") &&
+    readme.includes("pnpm shellx-browser snapshot") &&
+    readme.includes("pnpm shellx-browser run-steps --steps-json") &&
+    readme.includes("private process-local integration") &&
+    !readme.includes('"profileId":"agent-work"') && !readme.includes("/browser/task/start"),
+  "README shellXagent quick-start uses the credential-safe ShellX Browser CLI for outside drivers",
+);
 assert(
   browserBookmarksSource.includes("pub(crate) fn default_bookmarks") &&
     browserBookmarksSource.includes("pub(crate) fn browser_bookmark_toolbar") &&
@@ -908,10 +1121,10 @@ assert(
   "Browser bookmark/history registry mutations live in shellx_browser_bookmarks.rs",
 );
 assert(
-  !/pub fn upsert_bookmark\(/.test(rustBrowser) &&
-    !/pub fn reorder_bookmarks\(/.test(rustBrowser) &&
-    !/pub fn delete_bookmark\(/.test(rustBrowser) &&
-    !/pub fn clear_history\(/.test(rustBrowser),
+  !/pub fn upsert_bookmark\(/.test(rustBrowserRoot) &&
+    !/pub fn reorder_bookmarks\(/.test(rustBrowserRoot) &&
+    !/pub fn delete_bookmark\(/.test(rustBrowserRoot) &&
+    !/pub fn clear_history\(/.test(rustBrowserRoot),
   "Browser bookmark/history registry mutations are no longer embedded in shellx_browser.rs",
 );
 assert(
@@ -926,7 +1139,7 @@ assert(
     browserEngineSource.includes("pub fn update_engine_pool"),
   "Browser engine-pool settings mutation lives in shellx_browser_engine.rs",
 );
-assert(!/pub fn update_engine_pool\(/.test(rustBrowser), "Browser engine-pool settings mutation is no longer embedded in shellx_browser.rs");
+assert(!/pub fn update_engine_pool\(/.test(rustBrowserRoot), "Browser engine-pool settings mutation is no longer embedded in shellx_browser.rs");
 assert(
   browserActionsSource.includes("pub(crate) async fn try_apply_engine_action") &&
     browserActionsSource.includes("pub(crate) async fn observe_browser_page") &&
@@ -947,9 +1160,9 @@ assert(
 );
 assert(
   rustBrowser.includes("crate::shellx_browser_tabs") &&
-    !/pub fn open_tab\(/.test(rustBrowser) &&
-    !/pub fn focus_tab\(/.test(rustBrowser) &&
-    !/pub fn lock_tab\(/.test(rustBrowser),
+    !/pub fn open_tab\(/.test(rustBrowserRoot) &&
+    !/pub fn focus_tab\(/.test(rustBrowserRoot) &&
+    !/pub fn lock_tab\(/.test(rustBrowserRoot),
   "Browser tab lifecycle methods are no longer embedded in shellx_browser.rs",
 );
 assert(
@@ -962,15 +1175,15 @@ assert(
 );
 assert(
   rustBrowser.includes("crate::shellx_browser_security") &&
-    !/fn classify_browser_page_security\(/.test(rustBrowser) &&
-    !/fn browser_url_uses_private_network\(/.test(rustBrowser) &&
-    !/fn insecure_credential_denial_for_request\(/.test(rustBrowser),
+    !/fn classify_browser_page_security\(/.test(rustBrowserRoot) &&
+    !/fn browser_url_uses_private_network\(/.test(rustBrowserRoot) &&
+    !/fn insecure_credential_denial_for_request\(/.test(rustBrowserRoot),
   "Browser page security helpers are no longer embedded in shellx_browser.rs",
 );
 assert(rustLib.includes("mod shellx_browser_robots;"), "browser robot queue module is registered");
 assert(
   rustBrowserRobots.includes("pub fn schedule_robot") &&
-    rustBrowserRobots.includes("pub fn run_robot") &&
+    rustBrowserRobots.includes("fn begin_robot_run") && rustBrowserRobots.includes("fn finish_robot_run") &&
     rustBrowserRobots.includes("pub fn cancel_robot") &&
     rustBrowserRobots.includes("browserRobotScheduled") &&
     rustBrowserRobots.includes("browserRobotRunCompleted") &&
@@ -978,24 +1191,30 @@ assert(
   "Browser robot queue behavior lives in shellx_browser_robots.rs",
 );
 assert(
-  !rustBrowser.includes("pub fn schedule_robot") &&
-    !rustBrowser.includes("pub fn run_robot") &&
-    !rustBrowser.includes("pub fn cancel_robot"),
+    !rustBrowserRoot.includes("pub fn schedule_robot") &&
+    !rustBrowserRoot.includes("fn begin_robot_run") && !rustBrowserRoot.includes("fn finish_robot_run") &&
+    !rustBrowserRoot.includes("pub fn cancel_robot"),
   "Browser robot queue methods are no longer embedded in shellx_browser.rs",
 );
 assert(rustLib.includes("mod shellx_browser_artifacts;"), "browser artifact helper module is registered");
 assert(
-  rustBrowserArtifacts.includes("pub(crate) fn redact_trace_value") &&
+    rustBrowserArtifacts.includes("pub(crate) fn redact_trace_value") &&
     rustBrowserArtifacts.includes("pub(crate) fn redact_trace_receipt") &&
-    rustBrowserArtifacts.includes("pub(crate) fn browser_recipe_step_from_receipt") &&
+    rustBrowserArtifacts.includes("pub(crate) fn browser_recipe_step_from_receipt_with_context") &&
     rustBrowserArtifacts.includes("pub(crate) fn write_browser_json_artifact"),
   "Browser artifact redaction and writer helpers live in shellx_browser_artifacts.rs",
 );
 assert(
-  !rustBrowser.includes("fn redact_trace_value") &&
-    !rustBrowser.includes("fn redact_trace_receipt") &&
-    !rustBrowser.includes("fn browser_recipe_step_from_receipt") &&
-    !rustBrowser.includes("fn write_browser_json_artifact"),
+  rustBrowserArtifacts.includes("join(\".shellx\")") &&
+    rustBrowserArtifacts.includes("join(\"browser-artifacts\")") &&
+    rustBrowserArtifacts.includes("browser_legacy_artifact_root"),
+  "Browser artifacts write to ShellX-owned storage while preserving legacy read compatibility",
+);
+assert(
+  !rustBrowserRoot.includes("fn redact_trace_value") &&
+    !rustBrowserRoot.includes("fn redact_trace_receipt") &&
+    !rustBrowserRoot.includes("fn browser_recipe_step_from_receipt") &&
+    !rustBrowserRoot.includes("fn write_browser_json_artifact"),
   "Browser artifact helper functions are no longer embedded in shellx_browser.rs",
 );
 assert(rustLib.includes("mod shellx_browser_storage_state;"), "browser storage-state module is registered");
@@ -1007,12 +1226,12 @@ assert(
   "Browser storage-state manifest and export behavior lives in shellx_browser_storage_state.rs",
 );
 assert(
-  !rustBrowser.includes("pub fn storage_state_manifests") &&
-    !rustBrowser.includes("pub fn export_storage_state_manifest") &&
-    !rustBrowser.includes("fn browser_storage_state_manifests"),
+  !rustBrowserRoot.includes("pub fn storage_state_manifests") &&
+    !rustBrowserRoot.includes("pub fn export_storage_state_manifest") &&
+    !rustBrowserRoot.includes("fn browser_storage_state_manifests"),
   "Browser storage-state manifest methods are no longer embedded in shellx_browser.rs",
 );
-assert(rustLib.includes("mod shellx_browser_recipes;"), "browser recipe module is registered");
+assert(rustLib.includes("mod shellx_browser_recipes;") && rustLib.includes("mod shellx_browser_recipe_analysis;"), "browser recipe and analysis modules are registered");
 assert(
   rustBrowserRecipes.includes("pub fn export_recipe") &&
     rustBrowserRecipes.includes("pub fn replay_recipe_record") &&
@@ -1021,8 +1240,8 @@ assert(
   "Browser recipe export and replay behavior lives in shellx_browser_recipes.rs",
 );
 assert(
-  !rustBrowser.includes("pub fn export_recipe") &&
-    !rustBrowser.includes("pub fn replay_recipe_record"),
+  !rustBrowserRoot.includes("pub fn export_recipe") &&
+    !rustBrowserRoot.includes("pub fn replay_recipe_record"),
   "Browser recipe export and replay methods are no longer embedded in shellx_browser.rs",
 );
 assert(rustLib.includes("mod shellx_browser_diagnostics;"), "browser diagnostics export module is registered");
@@ -1037,9 +1256,9 @@ assert(
   "Browser HAR, performance, and trace export behavior lives in shellx_browser_diagnostics.rs",
 );
 assert(
-  !rustBrowser.includes("pub fn export_har") &&
-    !rustBrowser.includes("pub fn export_performance_artifact") &&
-    !rustBrowser.includes("pub fn export_trace_bundle"),
+  !rustBrowserRoot.includes("pub fn export_har") &&
+    !rustBrowserRoot.includes("pub fn export_performance_artifact") &&
+    !rustBrowserRoot.includes("pub fn export_trace_bundle"),
   "Browser HAR, performance, and trace export methods are no longer embedded in shellx_browser.rs",
 );
 assert(
@@ -1063,14 +1282,14 @@ assert(
   "Browser transfer completion rejects forged approvals before filesystem path checks",
 );
 assert(
-  !rustBrowser.includes("pub fn request_download_intent") &&
-    !rustBrowser.includes("pub fn request_upload_intent") &&
-    !rustBrowser.includes("pub fn complete_download") &&
-    !rustBrowser.includes("pub fn complete_upload") &&
-    !rustBrowser.includes("pub fn grant_transfer_for_user") &&
-    !rustBrowser.includes("fn complete_transfer") &&
-    !rustBrowser.includes("fn validate_and_consume_transfer_approval") &&
-    !rustBrowser.includes("fn classify_transfer_content"),
+  !rustBrowserRoot.includes("pub fn request_download_intent") &&
+    !rustBrowserRoot.includes("pub fn request_upload_intent") &&
+    !rustBrowserRoot.includes("pub fn complete_download") &&
+    !rustBrowserRoot.includes("pub fn complete_upload") &&
+    !rustBrowserRoot.includes("pub fn grant_transfer_for_user") &&
+    !rustBrowserRoot.includes("fn complete_transfer") &&
+    !rustBrowserRoot.includes("fn validate_and_consume_transfer_approval") &&
+    !rustBrowserRoot.includes("fn classify_transfer_content"),
   "Browser transfer methods and transfer-specific helpers are no longer embedded in shellx_browser.rs",
 );
 assert(rustLib.includes("mod shellx_browser_reports;"), "browser report and console module is registered");
@@ -1087,17 +1306,22 @@ assert(
   "Browser report writing and console log behavior lives in shellx_browser_reports.rs",
 );
 assert(
-  !rustBrowser.includes("pub fn console_logs") &&
-    !rustBrowser.includes("pub fn record_console_log") &&
-    !rustBrowser.includes("pub fn write_report") &&
-    !rustBrowser.includes("fn normalize_console_level") &&
-    !rustBrowser.includes("fn sanitize_console_message") &&
-    !rustBrowser.includes("fn sanitize_console_details"),
+  !rustBrowserRoot.includes("pub fn console_logs") &&
+    !rustBrowserRoot.includes("pub fn record_console_log") &&
+    !rustBrowserRoot.includes("pub fn write_report") &&
+    !rustBrowserRoot.includes("fn normalize_console_level") &&
+    !rustBrowserRoot.includes("fn sanitize_console_message") &&
+    !rustBrowserRoot.includes("fn sanitize_console_details"),
   "Browser report and console methods/helpers are no longer embedded in shellx_browser.rs",
 );
 assert(rustLib.includes("mod shellx_browser_state;"), "browser read-only state module is registered");
 assert(
   rustBrowserState.includes("pub fn state") &&
+    rustBrowserState.includes("pub fn core_state") &&
+    rustBrowserState.includes("pub fn summary") &&
+    rustBrowserState.includes("pub fn settle_state") &&
+    rustBrowserState.includes("pub fn task_summaries") &&
+    rustBrowserState.includes("pub fn task_details") &&
     rustBrowserState.includes("pub fn profiles") &&
     rustBrowserState.includes("pub fn tabs") &&
     rustBrowserState.includes("pub fn privacy") &&
@@ -1114,26 +1338,26 @@ assert(
     rustBrowserState.includes("pub fn popups") &&
     rustBrowserState.includes("pub fn network_entries") &&
     rustBrowserState.includes("pub fn robots"),
-  "Browser read-only snapshot and list getters live in shellx_browser_state.rs",
+  "Browser full, core, summary, settle, and list getters live in shellx_browser_state.rs",
 );
 assert(
-  !rustBrowser.includes("pub fn state") &&
-    !rustBrowser.includes("pub fn profiles") &&
-    !rustBrowser.includes("pub fn tabs") &&
-    !rustBrowser.includes("pub fn privacy") &&
-    !rustBrowser.includes("pub fn shields") &&
-    !rustBrowser.includes("pub fn developer_mode") &&
-    !rustBrowser.includes("pub fn downloads") &&
-    !rustBrowser.includes("pub fn uploads") &&
-    !rustBrowser.includes("pub fn bookmarks") &&
-    !rustBrowser.includes("pub fn bookmark_toolbar") &&
-    !rustBrowser.includes("pub fn tasks") &&
-    !rustBrowser.includes("pub fn receipts") &&
-    !rustBrowser.includes("pub fn dialogs") &&
-    !rustBrowser.includes("pub fn permissions") &&
-    !rustBrowser.includes("pub fn popups") &&
-    !rustBrowser.includes("pub fn network_entries") &&
-    !rustBrowser.includes("pub fn robots"),
+  !rustBrowserRoot.includes("pub fn state") &&
+    !rustBrowserRoot.includes("pub fn profiles") &&
+    !rustBrowserRoot.includes("pub fn tabs") &&
+    !rustBrowserRoot.includes("pub fn privacy") &&
+    !rustBrowserRoot.includes("pub fn shields") &&
+    !rustBrowserRoot.includes("pub fn developer_mode") &&
+    !rustBrowserRoot.includes("pub fn downloads") &&
+    !rustBrowserRoot.includes("pub fn uploads") &&
+    !rustBrowserRoot.includes("pub fn bookmarks") &&
+    !rustBrowserRoot.includes("pub fn bookmark_toolbar") &&
+    !rustBrowserRoot.includes("pub fn tasks") &&
+    !rustBrowserRoot.includes("pub fn receipts") &&
+    !rustBrowserRoot.includes("pub fn dialogs") &&
+    !rustBrowserRoot.includes("pub fn permissions") &&
+    !rustBrowserRoot.includes("pub fn popups") &&
+    !rustBrowserRoot.includes("pub fn network_entries") &&
+    !rustBrowserRoot.includes("pub fn robots"),
   "Browser read-only snapshot and list getters are no longer embedded in shellx_browser.rs",
 );
 assert(
@@ -1153,12 +1377,12 @@ assert(
   "Browser Developer Mode mutation and CDP lifecycle behavior lives in shellx_browser_developer_mode.rs",
 );
 assert(
-  !rustBrowser.includes("pub fn update_developer_mode") &&
-    !rustBrowser.includes("pub fn approve_developer_mode_host") &&
-    !rustBrowser.includes("pub fn prepare_cdp_execute") &&
-    !rustBrowser.includes("pub fn record_cdp_execute_result") &&
-    !rustBrowser.includes("fn cdp_access_denial_for_request") &&
-    !rustBrowser.includes("fn developer_mode_host_from_request"),
+  !rustBrowserRoot.includes("pub fn update_developer_mode") &&
+    !rustBrowserRoot.includes("pub fn approve_developer_mode_host") &&
+    !rustBrowserRoot.includes("pub fn prepare_cdp_execute") &&
+    !rustBrowserRoot.includes("pub fn record_cdp_execute_result") &&
+    !rustBrowserRoot.includes("fn cdp_access_denial_for_request") &&
+    !rustBrowserRoot.includes("fn developer_mode_host_from_request"),
   "Browser Developer Mode mutation and CDP lifecycle methods are no longer embedded in shellx_browser.rs",
 );
 assert(
@@ -1177,13 +1401,13 @@ assert(
     rustBrowserSessionGrants.includes("pub fn apply_session_grant") &&
     rustBrowserSessionGrants.includes("browserSessionGrantRequested") &&
     rustBrowserSessionGrants.includes("browserSessionGrantGranted") &&
-    rustBrowserSessionGrants.includes("browserSessionGrantApplied"),
+    rustBrowserSessionGrants.includes("BROWSER_SESSION_GRANT_APPLICATION_UNAVAILABLE_CODE"),
   "Browser session grant request, resolution, and application behavior lives in shellx_browser_session_grants.rs",
 );
 assert(
-  !rustBrowser.includes("pub fn request_session_grant") &&
-    !rustBrowser.includes("pub fn resolve_session_grant") &&
-    !rustBrowser.includes("pub fn apply_session_grant"),
+  !rustBrowserRoot.includes("pub fn request_session_grant") &&
+    !rustBrowserRoot.includes("pub fn resolve_session_grant") &&
+    !rustBrowserRoot.includes("pub fn apply_session_grant"),
   "Browser session grant methods are no longer embedded in shellx_browser.rs",
 );
 assert(
@@ -1201,60 +1425,13 @@ assert(
   "Browser dialog, permission, popup, and network event lifecycle lives in shellx_browser_prompts.rs",
 );
 assert(
-  !rustBrowser.includes("pub fn record_dialog_event") &&
-    !rustBrowser.includes("pub fn resolve_dialog_event") &&
-    !rustBrowser.includes("pub fn record_permission_event") &&
-    !rustBrowser.includes("pub fn resolve_permission_event") &&
-    !rustBrowser.includes("pub fn record_popup_event") &&
-    !rustBrowser.includes("pub fn record_network_observed"),
+  !rustBrowserRoot.includes("pub fn record_dialog_event") &&
+    !rustBrowserRoot.includes("pub fn resolve_dialog_event") &&
+    !rustBrowserRoot.includes("pub fn record_permission_event") &&
+    !rustBrowserRoot.includes("pub fn resolve_permission_event") &&
+    !rustBrowserRoot.includes("pub fn record_popup_event") &&
+    !rustBrowserRoot.includes("pub fn record_network_observed"),
   "Browser dialog, permission, popup, and network event lifecycle methods are no longer embedded in shellx_browser.rs",
-);
-assert(rustLib.includes("mod shellx_browser_vault;"), "browser Vault mediation module is registered");
-assert(
-  rustBrowserVault.includes("pub fn create_vault_deposit") &&
-    browserActionsSource.includes("capture_browser_page_secret_value") &&
-    browserScriptsSource.includes("capturePageSecretToVault") &&
-    rustBrowserVault.includes("pub fn record_vault_fill_receipt") &&
-    rustBrowserVault.includes("pub fn record_profile_card_fill_receipt") &&
-    rustBrowserVault.includes("pub fn record_email_code_receipt") &&
-    rustBrowserVault.includes("pub fn record_agent_wallet_receipt") &&
-    rustBrowserVault.includes("pub fn record_agent_wallet_blocked_receipt") &&
-    rustBrowserVault.includes("pub fn record_vault_generate_receipt") &&
-    rustBrowserVault.includes("browserVaultDepositCreated") &&
-    rustBrowserVault.includes("browserVaultCredentialFilled") &&
-    rustBrowserVault.includes("browserVaultPasswordGenerated"),
-  "Browser Vault deposit and mediated credential receipt behavior lives in shellx_browser_vault.rs",
-);
-assert(
-  debugApi.includes("capturePageSecretToVault") &&
-    debugApi.includes("capture_browser_page_secret_value") &&
-    debugApi.includes("compat_set_with_description(&secret_ref") &&
-    debugApi.includes("\"secretExposed\": false"),
-  "Browser can capture page-visible generated secrets directly into Vault without returning raw secret text",
-);
-assert(
-  !rustBrowser.includes("pub fn create_vault_deposit") &&
-    !rustBrowser.includes("pub fn record_vault_fill_receipt") &&
-    !rustBrowser.includes("pub fn record_profile_card_fill_receipt") &&
-    !rustBrowser.includes("pub fn record_email_code_receipt") &&
-    !rustBrowser.includes("pub fn record_agent_wallet_receipt") &&
-    !rustBrowser.includes("pub fn record_agent_wallet_blocked_receipt") &&
-    !rustBrowser.includes("pub fn record_vault_generate_receipt") &&
-    !rustBrowser.includes("fn record_vault_credential_receipt"),
-  "Browser Vault deposit and credential receipt methods are no longer embedded in shellx_browser.rs",
-);
-assert(
-  rustBrowserVault.includes("pub async fn shellx_browser_open_vault_panel") &&
-    rustBrowserVault.includes("pub fn prepare_vault_grant_fill_action") &&
-    rustBrowserVault.includes("pub fn prepare_profile_card_fill_action") &&
-    rustBrowserVault.includes("SHELLX_OPEN_VAULT_PANEL_EVENT"),
-  "Browser Vault bridge helpers live in shellx_browser_vault.rs",
-);
-assert(
-  !/fn emit_open_vault_panel\s*\(/.test(rustBrowser) &&
-    !/pub fn prepare_vault_grant_fill_action\s*\(/.test(rustBrowser) &&
-    !/pub fn prepare_profile_card_fill_action\s*\(/.test(rustBrowser),
-  "Browser Vault bridge helpers are no longer embedded in shellx_browser.rs",
 );
 assert(debugApi.includes("\"browser-event\""), "debug API emits browser-event frames");
 assert(debugApi.includes("emit_browser_latest"), "taskless browser grant routes still emit latest receipts");
@@ -1276,9 +1453,9 @@ assert(
   "Browser Debug API state/tab/task handlers live in a focused route module",
 );
 assert(
-  !debugApi.includes("pub(crate) async fn browser_state_http") &&
-    !debugApi.includes("pub(crate) async fn browser_tab_open_http") &&
-    !debugApi.includes("pub(crate) async fn browser_task_start_http"),
+  !debugApiRoot.includes("pub(crate) async fn browser_state_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_tab_open_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_task_start_http"),
   "Browser Debug API state/tab/task handlers are no longer embedded in debug_api.rs",
 );
 assert(
@@ -1289,9 +1466,9 @@ assert(
   "Browser Debug API bookmarks/privacy/Shields/developer handlers live in a focused route module",
 );
 assert(
-  !debugApi.includes("pub(crate) async fn browser_bookmarks_http") &&
-    !debugApi.includes("pub(crate) async fn browser_shields_post_http") &&
-    !debugApi.includes("pub(crate) async fn browser_developer_mode_post_http"),
+  !debugApiRoot.includes("pub(crate) async fn browser_bookmarks_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_shields_post_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_developer_mode_post_http"),
   "Browser Debug API settings handlers are no longer embedded in debug_api.rs",
 );
 assert(
@@ -1303,10 +1480,10 @@ assert(
   "Browser Debug API artifact/devtools/robot/transfer handlers live in a focused route module",
 );
 assert(
-  !debugApi.includes("pub(crate) async fn browser_trace_export_http") &&
-    !debugApi.includes("pub(crate) async fn browser_cdp_execute_http") &&
-    !debugApi.includes("pub(crate) async fn browser_robot_schedule_http") &&
-    !debugApi.includes("pub(crate) async fn browser_download_request_http"),
+  !debugApiRoot.includes("pub(crate) async fn browser_trace_export_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_cdp_execute_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_robot_schedule_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_download_request_http"),
   "Browser Debug API artifact/devtools/robot/transfer handlers are no longer embedded in debug_api.rs",
 );
 assert(
@@ -1318,13 +1495,19 @@ assert(
   "Browser Debug API dialog/permission/Vault-grant handlers live in a focused route module",
 );
 assert(
-  !debugApi.includes("pub(crate) async fn browser_dialog_resolve_http") &&
-    !debugApi.includes("pub(crate) async fn browser_permission_resolve_http") &&
-    !debugApi.includes("pub(crate) async fn browser_session_grant_resolve_http") &&
-    !debugApi.includes("pub(crate) async fn browser_vault_deposit_http"),
+  !debugApiRoot.includes("pub(crate) async fn browser_dialog_resolve_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_permission_resolve_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_session_grant_resolve_http") &&
+    !debugApiRoot.includes("pub(crate) async fn browser_vault_deposit_http"),
   "Browser Debug API dialog/permission/Vault-grant handlers are no longer embedded in debug_api.rs",
 );
-assert(mainSource.includes("ShellxBrowserApp"), "renderer can boot the browser window app");
+assert(
+  !mainSource.includes("ShellxBrowserApp") &&
+    browserMainSource.includes("ShellxBrowserApp") &&
+    browserHtmlSource.includes("/src/shellx-browser-main.tsx") &&
+    browserWindowOpenRuntimeSource.includes('WebviewUrl::App("shellx-browser.html".into())'),
+  "Browser window uses a dedicated renderer entry instead of loading the main ShellX app",
+);
 assert(browserChromeSource.includes('ShellIcon name="browser-orbit" size={18}'), "browser chrome brand uses the Browser orbit glyph");
 assert(
   browserApiSource.includes("browserApiGet") &&
@@ -1374,9 +1557,9 @@ assert(
   "browser renderer can report visible chrome selectors through debug highlights",
 );
 assert(
-  uiSource.includes(".shellx-browser-left-sidecar") &&
-    uiSource.includes("shellx-browser-header-menu-wrap") &&
-    uiSource.includes("setHeaderMenu(null)"),
+  browserShellEffectsSource.includes(".shellx-browser-left-sidecar") &&
+    browserShellEffectsSource.includes("shellx-browser-header-menu-wrap") &&
+    browserShellEffectsSource.includes("setHeaderMenu(null)"),
   "browser left sidecars stay open while users click inside them",
 );
 assert(browserChromeSource.includes("<span>Agent</span>"), "browser chrome presents the window as Agent");
@@ -1386,8 +1569,8 @@ assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-address\""),
 assert(
   uiSource.includes("const addressSourceUrl =") &&
     uiSource.includes("state?.engine?.url?.trim()") &&
-    uiSource.includes("setAddress(addressSourceUrl)") &&
-    uiSource.includes("[addressSourceUrl, addressEditing]"),
+    browserShellEffectsSource.includes("setAddress(addressSourceUrl)") &&
+    browserShellEffectsSource.includes("[addressEditing, addressSourceUrl, setAddress]"),
   "browser address bar syncs to active engine/tab URL after native Browser navigation",
 );
 assert(
@@ -1404,18 +1587,29 @@ assert(
 assert(!uiSource.includes("data-debug-id=\"shellx-browser-go\""), "browser UI relies on Enter/navigation API instead of a visible Go button");
 assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-home\""), "browser UI exposes a homepage button before the address bar");
 assert(browserMenusSource.includes("data-debug-id=\"shellx-browser-homepage\""), "browser settings expose homepage configuration");
-assert(uiSource.includes("HOME_URL_STORAGE_KEY"), "browser homepage setting is persisted locally");
+assert(
+  browserMenusSource.includes('data-shellx-release-observe="value title"')
+    && browserMenusSource.includes("Browser homepage state: storage=")
+    && browserMenusSource.includes("Browser color state: applied="),
+  "browser preferences expose only bounded value and canonical persistence receipts",
+);
+assert(
+  browserShellEffectsSource.includes("persistBrowserHomeUrl(homeUrl)")
+    && browserPreferencesSource.includes("window.localStorage.removeItem(HOME_URL_STORAGE_KEY)")
+    && browserPreferencesSource.includes("window.localStorage.setItem(HOME_URL_STORAGE_KEY, normalized)"),
+  "browser homepage setting is persisted locally without retaining a redundant default",
+);
 assert(browserChromeSource.indexOf("data-debug-id=\"shellx-browser-home\"") < browserChromeSource.indexOf("data-debug-id=\"shellx-browser-address\""), "browser homepage button is before the address bar");
 assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-copy-address\""), "browser UI can copy the current address from the address bar");
 assert(browserChromeSource.includes("className=\"shellx-browser-address-copy\""), "browser UI styles address copy like an inline code action");
 assert(agentSidebarSource.includes("data-debug-id=\"shellx-browser-console\""), "browser UI exposes console log panel");
 assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-options\""), "browser UI exposes options panel toggle");
 assert(
-  uiSource.includes("shellx-browser-header-menu-wrap") &&
-    uiSource.includes("shellx-browser-options-wrap") &&
-    uiSource.includes("shellx-browser-chrome-menu-dock") &&
-    uiSource.includes("shellx-browser-left-sidecar") &&
-    uiSource.includes("shellx-browser-shields-wrap"),
+  browserShellEffectsSource.includes("shellx-browser-header-menu-wrap") &&
+    browserShellEffectsSource.includes("shellx-browser-options-wrap") &&
+    browserShellEffectsSource.includes("shellx-browser-chrome-menu-dock") &&
+    browserShellEffectsSource.includes("shellx-browser-left-sidecar") &&
+    browserShellEffectsSource.includes("shellx-browser-shields-wrap"),
   "browser menus stay open when interacting with Shields, docked chrome panels, and left sidecars",
 );
 assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-tab-strip\""), "browser UI exposes tab strip");
@@ -1438,6 +1632,8 @@ assert(browserChromeSource.includes('data-debug-id="shellx-browser-ad-filter"'),
 assert(browserMenusSource.includes('data-debug-id="shellx-browser-ad-mode-balanced"'), "browser ad filter menu exposes balanced mode");
 assert(browserMenusSource.includes('data-debug-id="shellx-browser-ad-mode-strict"'), "browser ad filter menu exposes strict mode");
 assert(browserMenusSource.includes('data-debug-id="shellx-browser-ad-mode-off"'), "browser ad filter menu exposes off mode");
+assert(browserMenusSource.includes('data-debug-id="shellx-browser-ad-mode-default"'), "browser ad filter menu can restore the profile global default");
+assert(uiSource.includes("clearProfileAdMode: true"), "browser UI sends an explicit profile ad-mode clear request");
 assert(!browserMenusSource.includes('data-debug-id="shellx-browser-ad-mode-visual-clean"'), "browser ad filter menu hides legacy visual clean mode");
 assert(browserTypesSource.includes("type BrowserVisibleAdMode = Exclude<BrowserAdMode, \"visualCleanCompatibility\">"), "browser UI normalizes legacy visual clean state into the three visible modes");
 assert(cssSource.includes(".shellx-browser-ad-popover .shellx-browser-menu-row small") && cssSource.includes("white-space: normal"), "browser ad filter descriptions wrap instead of clipping");
@@ -1457,39 +1653,61 @@ assert(
 );
 assert(browserChromeSource.includes("shellx-browser-personal-lock-btn") && browserChromeSource.includes("personalLockAttention"), "browser Personal Lock action has state styling and attention focus");
 assert(browserChromeSource.includes("Set up Personal Browser Lock"), "browser Personal Lock action opens setup when unconfigured");
-assert(uiSource.includes("showPersonalLockBlockedNotice") && uiSource.includes("shellx-browser-personal-lock-notice") && uiSource.includes("Personal Browser Lock is on."), "browser locked personal-tab actions show a structured unlock notice");
-assert(uiSource.includes("focusPersonalLockToggle") && uiSource.includes("document.querySelector<HTMLButtonElement>") && uiSource.includes("?.focus()"), "browser locked personal-tab actions focus the lock control");
-assert(uiSource.includes("vaultFillError") && uiSource.includes("shellx-browser-vault-fill-unavailable"), "browser Vault fill surfaces locked/unavailable Vault state instead of silently showing no matches");
-assert(uiSource.includes("window.setInterval(refreshVaultFillEntries, 8_000)"), "browser Vault fill periodically refreshes saved-secret metadata after Vault unlock");
+assert(browserPersonalLockSource.includes("showBlockedNotice") && uiSource.includes("shellx-browser-personal-lock-notice") && browserPersonalLockSource.includes("Personal Browser Lock is on."), "browser locked personal-tab actions show a structured unlock notice");
+assert(browserPersonalLockSource.includes("focusToggle") && browserPersonalLockSource.includes("document.querySelector<HTMLButtonElement>") && browserPersonalLockSource.includes("?.focus()"), "browser locked personal-tab actions focus the lock control");
+assert(browserVaultFillSource.includes("setVaultError") && browserVaultFillPanelSource.includes("shellx-browser-vault-fill-unavailable"), "browser Vault fill surfaces locked/unavailable Vault state instead of silently showing no matches");
+assert(browserVaultFillSource.includes("window.setInterval(refreshVaultFillEntries, 8_000)"), "browser Vault fill periodically refreshes saved-secret metadata after Vault unlock");
 assert(
-  uiSource.includes("pageEmailsForVaultFill") &&
-    uiSource.includes("pageContextTokensForVaultFill") &&
-    uiSource.includes("providerTokensForVaultFillText") &&
-    uiSource.includes("vaultFillAccountScore") &&
-    uiSource.includes("entry.resourceFields") &&
-    uiSource.includes("emailAddressesForVaultFill"),
-  "browser Vault fill matches saved email/password credentials by page account metadata, provider fields, page provider hints, and host hints",
+  browserVaultFillCandidateSource.includes("pageEmailsForVaultFill") &&
+    browserVaultFillCandidateSource.includes("browserVaultOriginContext") &&
+    browserVaultFillCandidateSource.includes("observedContext.origin !== pageContext.origin") &&
+    browserVaultFillCandidateSource.includes("vaultFillOriginScore") &&
+    browserVaultFillCandidateSource.includes("if (originScore <= 0) continue") &&
+    browserVaultFillCandidateSource.includes("vaultFillAccountScore") &&
+    browserVaultFillCandidateSource.includes("entry.resourceFields") &&
+    browserVaultFillCandidateSource.includes("emailAddressesForVaultFill") &&
+    browserVaultFillSource.includes("buildBrowserVaultFillCandidates"),
+  "browser Vault fill binds saved credentials to the current observed origin and Vault metadata",
 );
 assert(
-  uiSource.includes('part !== "www" && /[a-z]/.test(part)'),
-  "browser Vault fill ignores numeric host parts so localhost fixtures do not block provider-context password suggestions",
+  browserVaultFillCandidateSource.includes("browserVaultSiteDomain") && browserVaultFillCandidateSource.includes("VAULT_FILL_COMMON_SECOND_LEVEL_SUFFIXES") &&
+    browserVaultFillCandidateSource.includes('"ac", "co", "com", "edu", "gov", "mil", "net", "org", "sch"'),
+  "browser Vault fill does not treat common compound public suffixes as credential site domains",
 );
 assert(
-  uiSource.includes("vaultFillPasswordFallbackAllowed") &&
-    uiSource.includes("Possible Vault password") &&
-    uiSource.includes("fallbackCandidates") &&
-    uiSource.includes("candidates.length > 0 ? candidates : fallbackCandidates"),
-  "browser Vault fill falls back to generic non-token secrets for direct user password fills when metadata is sparse",
+  !browserVaultFillCandidateSource.includes("vaultFillPasswordFallbackAllowed") &&
+    !browserVaultFillCandidateSource.includes("Possible Vault password") &&
+    !browserVaultFillCandidateSource.includes("fallbackCandidates"),
+  "browser Vault fill never offers generic password fallbacks when origin metadata is absent",
 );
 assert(browserChromeSource.includes("shellx-browser-handoff-tab"), "browser UI exposes handoff-to-agent action");
 assert(browserChromeSource.includes("shellx-browser-take-back-tab"), "browser UI exposes takeback action for delegated tabs");
 assert(browserMenusSource.includes("shellx-browser-personal-lock-sleep"), "browser options expose lock-after-sleep control");
 assert(browserMenusSource.includes("shellx-browser-personal-lock-minimize"), "browser options expose lock-on-minimize control");
-assert(uiSource.includes("isMinimized()"), "browser personal lock can react to minimized desktop windows");
-assert(uiSource.includes("driftMs < 120_000"), "browser personal lock can react to resume-after-sleep timer drift");
+assert(browserPersonalLockSource.includes("isMinimized()"), "browser personal lock can react to minimized desktop windows");
+assert(browserPersonalLockSource.includes("driftMs < 120_000"), "browser personal lock can react to resume-after-sleep timer drift");
 assert(browserChromeSource.includes("shellx-browser-close-tab-"), "browser UI exposes per-tab close actions");
 assert(browserChromeSource.includes("className=\"shellx-browser-tab-close\""), "browser UI has a dedicated tab close hit target");
 assert(browserChromeSource.includes("shellx-browser-tab-profile-marker"), "browser tabs carry compact profile markers");
+assert(
+  browserChromeSource.includes("data-debug-id=\"shellx-browser-tab-ownership-banner\"") &&
+    browserChromeSource.includes("data-owner-kind={activeBrowserTab?.ownerKind ?? \"user\"}") &&
+    browserChromeSource.includes("data-profile-id={activeBrowserTab?.profileId ?? \"\"}"),
+  "browser chrome exposes active tab ownership from agent-visible tab metadata",
+);
+assert(
+  browserChromeSource.includes("Agent is using this tab") &&
+    browserChromeSource.includes("Delegated to agent") &&
+    browserChromeSource.includes("Personal tab") &&
+    browserChromeSource.includes("Disposable task tab"),
+  "browser chrome labels personal, agent, delegated, and disposable tab ownership",
+);
+assert(
+  browserChromeSource.includes("BrowserTabOwnershipStatus | null") &&
+    browserChromeSource.includes('tab.profileId === "personal" && !tab.lock') &&
+    browserChromeSource.includes("return null;"),
+  "browser chrome hides redundant ownership banner for normal unlocked personal tabs",
+);
 assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-trust-chip\""), "browser UI exposes a compact trust chip");
 assert(browserChromeSource.includes("browserTrustLabel(activeSecurityState)"), "browser trust chip renders the active security label");
 assert(
@@ -1546,8 +1764,8 @@ assert(
 );
 assert(
   bookmarkSidecarSource.includes("BookmarkSidecar") &&
-    bookmarkSidecarSource.includes("BookmarkToolbar") &&
-    bookmarkSidecarSource.includes('data-debug-id="shellx-browser-bookmark-toolbar"') &&
+    bookmarkToolbarSource.includes("BookmarkToolbar") &&
+    bookmarkToolbarSource.includes('data-debug-id="shellx-browser-bookmark-toolbar"') &&
     bookmarkSidecarSource.includes("shellx-browser-bookmark-sidecar") &&
     bookmarkSidecarSource.includes("shellx-browser-bookmark-drag-") &&
     uiSource.includes("<BookmarkSidecar") &&
@@ -1580,12 +1798,23 @@ assert(
   "browser native engine sync is isolated in a hook",
 );
 assert(
-  browserEngineRuntimeSource.includes("SetAreDefaultContextMenusEnabled(false)") &&
-    browserEngineRuntimeSource.includes("NewWindowRequestedEventHandler") &&
-    browserEngineRuntimeSource.includes("open_tab(") &&
-    browserEngineRuntimeSource.includes("BrowserTabOpenRequest") &&
+  browserEngineRuntimeSource.includes(".on_new_window(move |url, _features|") &&
+    browserEngineRuntimeSource.includes("NewWindowResponse::Deny") &&
+    browserEngineRuntimeSource.includes("record_popup_event") &&
+    browserEngineRuntimeSource.includes("requires_approval: true") &&
+    !browserEngineRuntimeSource.includes("fn install_browser_page_tab_behavior") &&
     browserEngineRuntimeSource.includes("browser_page_context_menu_initialization_script"),
-  "Browser native page context menu uses ShellX tab semantics instead of unsupported new-window behavior",
+  "Browser popups are denied and routed into ShellX approval semantics by the cross-platform native builder while the injected page context menu remains available",
+);
+assert(
+  rustBrowserModel.includes("BrowserNativeSecurityCapabilities") &&
+    rustBrowserModel.includes("full_native_protection: windows_native_hooks") &&
+    rustBrowserState.includes("BrowserNativeSecurityCapabilities::current()") &&
+    browserTypesSource.includes("nativeSecurity?: BrowserNativeSecurityCapabilities") &&
+    uiSource.includes("BrowserNativeSecurityNotice") &&
+    browserNativeSecurityNoticeSource.includes("shellx-browser-native-security-notice") &&
+    browserNativeSecurityNoticeSource.includes("capabilities.fullNativeProtection"),
+  "Browser state and UI expose native security-hook degradation instead of treating non-Windows stubs as installed protection",
 );
 assert(
   browserEngineRuntimeSource.includes("Open link in new tab") &&
@@ -1596,11 +1825,23 @@ assert(
 assert(
   browserStateHookSource.includes("useBrowserState") &&
     browserStateHookSource.includes("browserApiGet<BrowserState>") &&
+    browserStateHookSource.includes('"/browser/state?view=core"') &&
+    browserStateHookSource.includes('"/browser/summary"') &&
+    browserStateHookSource.includes('frame.kind !== "browser-event"') &&
+    browserStateHookSource.includes("15_000") &&
+    !browserStateHookSource.includes("setInterval") &&
     browserStateHookSource.includes("browserDebugApiBase") &&
     browserStateHookSource.includes("getBrowserDebugToken") &&
     browserStateHookSource.includes("debug-ui-state-patch") &&
     uiSource.includes("useBrowserState"),
-  "browser state polling and debug event hydration are isolated in a hook",
+  "browser state uses event revisions, visible slices, and compact disconnected fallback polling",
+);
+assert(
+  browserStateHookSource.includes('"/browser/history?limit=1000"') &&
+    browserStateHookSource.includes('"/browser/receipts?limit=200"') &&
+    browserStateHookSource.includes('"/browser/logs?limit=200"') &&
+    browserStateHookSource.includes('"/browser/requests"'),
+  "browser UI fetches heavy state only through bounded panel slices",
 );
 assert(
   engineViewportSource.includes("EngineViewport") &&
@@ -1612,20 +1853,18 @@ assert(
 );
 assert(
   agentSidebarSource.includes("AgentSidebar") &&
-    agentSidebarSource.includes('data-debug-id="shellx-browser-autonomy"') &&
+    !agentSidebarSource.includes('data-debug-id="shellx-browser-autonomy"') &&
     agentSidebarSource.includes('data-debug-id="shellx-browser-goal"') &&
     agentSidebarSource.includes('data-debug-id="shellx-browser-agent-pause"') &&
     agentSidebarSource.includes('data-debug-id="shellx-browser-agent-resume"') &&
     agentSidebarSource.includes('data-debug-id="shellx-browser-agent-abort"') &&
     agentSidebarSource.includes('data-debug-id="shellx-browser-agent-takeover"') &&
     uiSource.includes("<AgentSidebar"),
-  "browser Agent sidebar is extracted behind a stable component boundary",
+  "browser Agent sidebar is extracted without exposing a non-enforced autonomy selector",
 );
 assert(rustBrowserModel.includes("BrowserTaskAutonomyUpdateRequest"), "Browser models active task autonomy updates");
-assert(browserTasksSource.includes("update_task_autonomy") && browserTasksSource.includes("browserTaskAutonomyUpdated"), "Browser backend updates active task autonomy with a receipt");
-assert(debugApiBrowserStateSource.includes("/browser/task/autonomy"), "Debug API exposes Browser task autonomy updates");
-assert(browserApiSource.includes("shellx_browser_update_task_autonomy") && uiSource.includes("updateBrowserTaskAutonomy"), "Browser UI calls the active task autonomy update command");
-assert(uiSource.includes("const displayedAutonomy = activeTask?.autonomy ?? autonomy") && uiSource.includes("onAutonomyChange={setTaskAutonomy}"), "Browser autonomy selector reflects and mutates the active task when present");
+assert(!browserApiSource.includes("shellx_browser_update_task_autonomy") && !uiSource.includes("updateBrowserTaskAutonomy"), "Browser removes the unused frontend autonomy command until policy enforcement exists");
+assert(!uiSource.includes("displayedAutonomy") && !uiSource.includes("onAutonomyChange={setTaskAutonomy}"), "Browser UI does not present inert autonomy states");
 assert(
   vaultPromptCardsSource.includes("VaultPromptCards") &&
     vaultPromptCardsSource.includes('data-debug-id="shellx-browser-vault-prompt-stack"') &&
@@ -1640,10 +1879,10 @@ assert(browserChromeSource.includes("className=\"shellx-browser-address-actions\
 assert(agentSidebarSource.includes("data-debug-id=\"shellx-browser-downloads\""), "browser UI exposes downloads/uploads status");
 assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-bookmark-current\""), "browser UI exposes bookmark current page action");
 assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-bookmarks-menu\""), "browser UI exposes bookmarks from the compact header menu");
-assert(bookmarkSidecarSource.includes("data-debug-id=\"shellx-browser-bookmark-toolbar\""), "Browser renders a bookmark toolbar");
+assert(bookmarkToolbarSource.includes("data-debug-id=\"shellx-browser-bookmark-toolbar\""), "Browser renders a bookmark toolbar");
 assert(bookmarkSidecarSource.includes("data-debug-id=\"shellx-browser-bookmark-manager\""), "Browser exposes a bookmark manager");
 assert(bookmarkSidecarSource.includes("shellx-browser-bookmark-manager-dock"), "Browser bookmark manager lives outside native page overlay");
-assert(bookmarkSidecarSource.includes("shellx-browser-bookmark-folder-menu"), "Browser toolbar folders open as menus");
+assert(bookmarkToolbarSource.includes("shellx-browser-bookmark-folder-menu"), "Browser toolbar folders open as menus");
 assert(bookmarkSidecarSource.includes("data-debug-id=\"shellx-browser-bookmark-list\""), "browser UI opens bookmarks as a readable docked list");
 assert(bookmarkSidecarSource.includes("data-debug-id=\"shellx-browser-bookmark-list-mode\""), "browser UI exposes an explicit bookmark list tab");
 assert(bookmarkSidecarSource.includes("data-debug-id=\"shellx-browser-bookmark-manager-toggle\""), "browser UI exposes explicit bookmark list/manage modes");
@@ -1656,11 +1895,11 @@ assert(browserDebugBridgeSource.includes('new FocusEvent("focusout", { bubbles: 
 assert(!bookmarkSidecarSource.includes("data-debug-id=\"shellx-browser-bookmark-folder-root\""), "browser bookmark manager does not expose a fake Bookmarks root drop target");
 assert(!bookmarkSidecarSource.includes("shellx-browser-bookmark-folder-targets"), "browser bookmark manager does not duplicate folders in a separate target strip");
 assert(bookmarkSidecarSource.includes('data-bookmark-folder-target-id={bookmark.kind === "folder" ? bookmark.bookmarkId : undefined}'), "browser bookmark folder rows are direct drop targets");
-assert(uiSource.includes('parentId: bookmarkDraftParentId || null') && !uiSource.includes('kind: "folder",\n        toolbarPinned: true'), "browser new folders follow the selected location and do not auto-pin to the toolbar");
-assert(!uiSource.includes("toolbarPinned: !bookmarkDraftParentId"), "browser new links do not auto-pin to the toolbar");
+assert(browserBookmarkHookSource.includes("export function useBrowserBookmarks") && browserBookmarkHookSource.includes("parentId,") && !browserBookmarkHookSource.includes('kind: "folder",\n        toolbarPinned: true'), "browser bookmark management lives in a focused hook and new folders do not auto-pin to the toolbar");
+assert(!browserBookmarkHookSource.includes("toolbarPinned: !bookmarkDraftParentId"), "browser new links do not auto-pin to the toolbar");
 assert(bookmarkSidecarSource.includes("shellx-browser-bookmark-icon-action"), "browser bookmark manager uses compact icon actions");
 assert(bookmarkSidecarSource.includes("data-debug-id={`shellx-browser-bookmark-drag-${bookmark.bookmarkId}`}"), "browser bookmark manager exposes a dedicated drag handle per row");
-assert(uiSource.includes("startBookmarkPointerDrag"), "browser bookmark manager supports pointer drag sorting from the visible handle");
+assert(browserBookmarkHookSource.includes("startBookmarkPointerDrag"), "browser bookmark manager supports pointer drag sorting from the visible handle");
 assert(!uiSource.includes("window.prompt(\"Bookmark name\""), "browser bookmark manager does not use prompt-based rename");
 assert(!uiSource.includes("Toolbar/root"), "browser bookmark manager avoids unclear Toolbar/root folder labels");
 assert(
@@ -1680,10 +1919,17 @@ assert(
 assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-profile-marker\""), "browser UI leaves only a compact profile marker in the header");
 assert(!uiSource.includes("className=\"shellx-browser-profile-chip\""), "browser UI removes the visible header profile selector chip");
 assert(browserMenusSource.includes("data-debug-id=\"shellx-browser-color-mode\""), "browser UI exposes color mode option");
-assert(browserMenusSource.includes("data-debug-id=\"shellx-browser-engine-mode\""), "browser UI exposes engine mode option");
+assert(!browserMenusSource.includes("data-debug-id=\"shellx-browser-engine-mode\"") && !browserMenusSource.includes("Background only"), "browser UI hides background-only mode until a non-presentational engine exists");
 assert(browserMenusSource.includes("data-debug-id=\"shellx-browser-parallel-agents\""), "browser UI exposes parallel agent capacity option");
 assert(browserHistorySidecarSource.includes("data-debug-id=\"shellx-browser-clear-history\""), "browser UI exposes clear-history action");
-assert(uiSource.includes("shellx-browser-color-mode"), "browser UI stores local color mode preference");
+assert(
+  browserPreferencesSource.includes("COLOR_MODE_STORAGE_KEY") &&
+    browserShellEffectsSource.includes("persistBrowserColorMode(colorMode") &&
+    browserPreferencesSource.includes("window.localStorage.removeItem(COLOR_MODE_STORAGE_KEY)") &&
+    browserPreferencesSource.includes("window.localStorage.setItem(COLOR_MODE_STORAGE_KEY, value)") &&
+    browserMenusSource.includes("shellx-browser-color-mode"),
+  "browser UI stores local color mode preference",
+);
 assert(
   browserApiSource.includes("shellx_browser_clear_history") &&
     uiSource.includes("clearBrowserHistoryCommand"),
@@ -1695,9 +1941,9 @@ assert(uiSource.includes("historySidecarOpen") && cssSource.includes(".shellx-br
 assert(agentSidebarSource.includes("className=\"shellx-browser-panel-toggle shellx-browser-panel-toggle-right\""), "right sidebar hide control lives on the right panel edge");
 assert(
   agentSidebarSource.indexOf("data-debug-id=\"shellx-browser-toggle-right-sidebar-button\"") <
-    agentSidebarSource.indexOf("data-debug-id=\"shellx-browser-autonomy\"") &&
-    agentSidebarSource.indexOf("data-debug-id=\"shellx-browser-autonomy\"") < agentSidebarSource.indexOf("className=\"shellx-browser-right-tabs\""),
-  "browser autonomy control sits after the right-panel collapse button before panel tabs",
+    agentSidebarSource.indexOf("className=\"shellx-browser-right-tabs\"") &&
+    !agentSidebarSource.includes("shellx-browser-sidebar-autonomy"),
+  "browser panel tabs follow the collapse control without an inert autonomy row",
 );
 assert(
   browserChromeSource.includes("data-debug-id=\"shellx-browser-show-right-sidebar-button\"") &&
@@ -1724,23 +1970,22 @@ assert(!agentSidebarSource.includes("data-debug-id=\"shellx-browser-expand-chat\
 assert(!uiSource.includes("setChatExpanded"), "browser Agent chat does not keep obsolete expand state");
 assert(agentSidebarSource.includes("className=\"shellx-browser-agent-panel chat-expanded\""), "browser Agent chat stays expanded by default");
 assert(!agentSidebarSource.includes("className=\"shellx-browser-agent-autonomy\""), "browser Agent autonomy control is no longer inside chat chrome");
-assert(agentSidebarSource.includes("className=\"shellx-browser-sidebar-autonomy\""), "browser autonomy control lives in the sidebar chrome");
-assert(agentSidebarSource.indexOf("data-debug-id=\"shellx-browser-autonomy\"") < agentSidebarSource.indexOf("className=\"shellx-browser-agent-compose\""), "browser Agent autonomy control is not inside the message composer");
+assert(!agentSidebarSource.includes("className=\"shellx-browser-sidebar-autonomy\""), "browser removes the inert autonomy control from sidebar chrome");
 assert(uiSource.includes('const [profileId, setProfileId] = useState(USER_DEFAULT_PROFILE_ID)'), "browser user-opened tabs default to the personal profile");
-assert(uiSource.includes('const USER_DEFAULT_PROFILE_ID = "personal"'), "browser normal navigation has an explicit user-default profile");
-assert(uiSource.includes('const taskProfileId = profileId === USER_DEFAULT_PROFILE_ID ? AGENT_DEFAULT_PROFILE_ID : profileId'), "browser chat tasks switch personal selection to the agent profile");
+assert(browserAppConstantsSource.includes('USER_DEFAULT_PROFILE_ID = "personal"'), "browser normal navigation has an explicit user-default profile");
+assert(browserTasksHookSource.includes("const taskProfileId = profileId === userDefaultProfileId ? agentDefaultProfileId : profileId"), "browser chat tasks switch personal selection to the agent profile");
 assert(
   browserTaskIntentSource.includes("inferBrowserTaskStartUrl") &&
     browserTaskIntentSource.includes("https://www.google.com/search") &&
-    uiSource.includes("inferBrowserTaskStartUrl(taskGoal, address.trim())") &&
-    !uiSource.includes("startUrl: address.trim() || null"),
+    browserTasksHookSource.includes("inferBrowserTaskStartUrl(taskGoal, address.trim())") &&
+    !browserTasksHookSource.includes("startUrl: address.trim() || null"),
   "browser chat infers explicit open/search intents instead of cloning the current address",
 );
-assert(uiSource.includes('const newTab = (nextProfileId = USER_DEFAULT_PROFILE_ID)'), "browser normal new tabs default to user profile");
+assert(browserTabsHookSource.includes("export function useBrowserTabs") && browserTabsHookSource.includes("const newTab = (nextProfileId = userDefaultProfileId)"), "browser normal new tabs default to user profile");
 assert(
-  uiSource.includes('const newTabUrl = homeUrl.trim() || DEFAULT_HOME_URL') &&
-    uiSource.includes("url: newTabUrl") &&
-    !uiSource.includes("url: address.trim() || null"),
+  browserTabsHookSource.includes('const newTabUrl = homeUrl.trim() || DEFAULT_HOME_URL') &&
+    browserTabsHookSource.includes("url: newTabUrl") &&
+    !browserTabsHookSource.includes("url: address.trim() || null"),
   "browser new tabs open the configured new-tab/home URL instead of cloning the active page",
 );
 assert(
@@ -1768,9 +2013,13 @@ assert(
 );
 assert(uiSource.includes("browserChatMessages"), "browser Agent chat renders chat messages instead of raw receipt notifications");
 assert(!uiSource.includes("receipts.slice().reverse().slice(0, 5).map((receipt)"), "browser Agent chat is not a raw receipt notification feed");
-assert(uiSource.includes("function safeBrowserStatusUrl"), "browser UI has a safe URL formatter for agent-facing status text");
-assert(uiSource.includes("parsed.search = \"\"") && uiSource.includes("parsed.hash = \"\""), "browser UI strips query and fragment before rendering agent-facing status URLs");
-assert(uiSource.includes("safeBrowserStatusUrl(activeTask.currentUrl ?? state?.engine?.url ?? activeBrowserTab?.url ?? address.trim())"), "browser Agent chat uses safe current-page URLs");
+assert(
+  uiSource.includes("useBrowserCowork") &&
+    appSource.includes("useBrowserCoworkPromptBridge") && browserApiSource.includes("shellx_browser_send_cowork_prompt"),
+  "browser Chat routes through its attached real ShellX agent session",
+);
+assert(browserPresentationSource.includes("parsed.search = \"\"") && browserPresentationSource.includes("parsed.hash = \"\""), "browser UI strips query and fragment before rendering agent-facing status URLs");
+assert(!uiSource.includes("Task is ${activeTask.status"), "browser Agent chat does not synthesize status replies");
 assert(!agentSidebarSource.includes("data-debug-id=\"shellx-browser-start-task\""), "browser Agent sidebar removes the visible Start button");
 assert(!agentSidebarSource.includes("data-debug-id=\"shellx-browser-observe\""), "browser Agent sidebar removes the visible Observe button");
 assert(!agentSidebarSource.includes("data-debug-id=\"shellx-browser-extract\""), "browser page save moves out of the Agent sidebar");
@@ -1799,7 +2048,17 @@ assert(browserMenusSource.includes("shellx-browser-save-screenshot"), "browser p
 assert(browserMenusSource.includes("shellx-browser-save-markdown"), "browser page save menu includes local Markdown extraction");
 assert(browserMenusSource.includes("shellx-browser-save-links"), "browser page save menu includes local links extraction");
 assert(browserMenusSource.includes("shellx-browser-save-snapshot"), "browser page save menu includes local snapshot bundle");
-assert(browserMenusSource.includes("shellx-browser-explain-page"), "browser page save menu includes page explain action");
+assert(
+  !browserMenusSource.includes("shellx-browser-explain-page") &&
+    !browserMenusSource.includes("kind: \"explain\""),
+  "browser page save menu keeps agent explain action out of file-save actions",
+);
+assert(
+  agentSidebarSource.includes("data-debug-id=\"shellx-browser-chat-explain-page\"") &&
+    agentSidebarSource.includes("onExplainPage") &&
+    uiSource.includes("requestChatExplainPage"),
+  "browser chat sidebar exposes Explain page as an agent action",
+);
 assert(browserMenusSource.includes("shellx-browser-save-media"), "browser page save menu includes media save");
 assert(browserMenusSource.includes("shellx-browser-save-code"), "browser page save menu includes code save");
 assert(browserMenusSource.includes("shellx-browser-save-site"), "browser page save menu includes whole-site save intent");
@@ -1807,19 +2066,26 @@ assert(downloadSidecarSource.includes("data-debug-id=\"shellx-browser-download-s
 assert(downloadSidecarSource.includes("data-debug-id=\"shellx-browser-download-folder\""), "browser Downloads manager exposes default folder setting");
 assert(downloadSidecarSource.includes("data-debug-id=\"shellx-browser-download-list\""), "browser Downloads manager shows transfer rows");
 assert(downloadSidecarSource.includes("transferStatusLabel") && downloadSidecarSource.includes("\"Queued\"") && downloadSidecarSource.includes("\"Saved\""), "browser Downloads manager uses user-facing status labels");
-assert(settingsSource.includes("browserDownloadFolder") && generalTabSource.includes("settings-browser-download-folder"), "global Settings expose Browser default download folder");
+assert(settingsModelSource.includes("browserDownloadFolder") && generalTabSource.includes("settings-browser-download-folder"), "global Settings expose Browser default download folder");
 assert(generalTabSource.includes("onInput={(event) => patchBrowserDownloadFolder(event.currentTarget.value)}"), "global Settings Browser download folder works with debug input events");
 assert(debugApi.includes("\"browserDownloadFolder\""), "Debug API settings persist Browser default download folder");
-assert(uiSource.includes("readSettingsLocal") && uiSource.includes("persistSettings(next)") && uiSource.includes("browserDownloadFolder"), "browser Downloads sidecar uses the shared Settings download folder");
-assert(uiSource.includes("destinationDir: defaultDownloadFolder.trim()"), "browser page save carries the configured download folder");
-assert(uiSource.includes("grantBrowserTransfer") && uiSource.includes("/browser/downloads/complete"), "browser user-initiated local page saves complete download rows");
-assert(uiSource.includes("writeBrowserTextArtifact") && uiSource.includes("copyBrowserLocalArtifact"), "browser local page saves write artifacts through operator-owned Tauri commands");
 assert(
-  uiSource.includes("browserExplainGoal") &&
-    uiSource.includes("boundedBrowserExplainExcerpt") &&
-    uiSource.includes("requestExplainPage") &&
-    uiSource.includes("safeStartUrl.startsWith(\"about:\")") &&
-    uiSource.includes("setRightPanelTab(\"chat\")"),
+  browserPreferencesSource.includes("readSettingsLocal") &&
+    browserPreferencesSource.includes("persistSettings(next)") &&
+    browserPreferencesSource.includes("browserDownloadFolder") &&
+    browserShellEffectsSource.includes("persistBrowserDownloadFolder"),
+  "browser Downloads sidecar uses the shared Settings download folder",
+);
+assert(browserPageActionsSource.includes("destinationDir: defaultDownloadFolder.trim()"), "browser page save carries the configured download folder");
+assert(browserPageActionsSource.includes("grantBrowserTransfer") && browserPageActionsSource.includes("/browser/downloads/complete"), "browser user-initiated local page saves complete download rows");
+assert(browserPageActionsSource.includes("writeBrowserTextArtifact") && browserPageActionsSource.includes("copyBrowserLocalArtifact"), "browser local page saves write artifacts through operator-owned Tauri commands");
+assert(browserPageActionsSource.includes("export function useBrowserPageActions") && uiSource.includes("useBrowserPageActions({"), "browser page-save workflow lives in a focused hook");
+assert(
+  browserPageActionsSource.includes("browserExplainGoal") &&
+    browserPresentationSource.includes("boundedBrowserExplainExcerpt") &&
+    browserPageActionsSource.includes("requestExplainPage") &&
+    browserPageActionsSource.includes("safeStartUrl.startsWith(\"about:\")") &&
+    uiSource.includes("setRightPanelTab(CHAT_PANEL)") && browserAppConstantsSource.includes('CHAT_PANEL = "chat"'),
   "browser explain action starts a bounded sanitized Browser task in the chat panel",
 );
 assert(browserApiSource.includes("shellx_browser_write_text_artifact") && browserApiSource.includes("shellx_browser_copy_local_artifact"), "browser API exposes local artifact write/copy commands");
@@ -1828,10 +2094,10 @@ assert(rustLib.includes("shellx_browser_transfers::shellx_browser_copy_local_art
 assert(rustBrowserTransfers.includes("sanitized_download_file_name") && rustBrowserTransfers.includes("unique_destination_path"), "browser local artifact writes sanitize filenames and avoid collisions");
 assert(rustBrowserTransfers.includes("enforce_home_containment") && rustBrowserTransfers.includes("browser_download_destination"), "browser local artifact destinations use the shared host filesystem containment policy");
 assert(rustBrowserTransfers.includes("ensure_browser_local_artifact_source_allowed") && rustBrowserTransfers.includes("shellx-browser-screenshots"), "browser local artifact copy is limited to ShellX Browser generated artifact roots");
-assert(hostMcp.includes("/.shellx/browser-settings.json") && hostMcp.includes("/.grok/shellx-browser-screenshots/"), "host MCP fs denylist protects Browser settings and screenshot artifacts");
+assert(hostMcp.includes("/.shellx/browser-settings.json") && hostMcp.includes("/.shellx/browser-artifacts/shellx-browser-screenshots/"), "host MCP fs denylist protects Browser settings and screenshot artifacts");
 assert(browserActionResultsSource.includes("record_taskless_engine_observation_locked") && browserActionResultsSource.includes("record_taskless_screenshot_result_locked"), "browser local save actions work from taskless user tabs");
 assert(cssSource.includes(".shellx-browser-download-icon-status.pending .shellx-browser-download-badge"), "browser Downloads badge has explicit visible pending colors");
-assert(uiSource.includes("setHeaderMenu(\"downloads\")"), "browser page save opens the Downloads manager after saving or queuing");
+assert(uiSource.includes("setHeaderMenu(DOWNLOADS_MENU)") && browserAppConstantsSource.includes('DOWNLOADS_MENU = "downloads"'), "browser page save opens the Downloads manager after saving or queuing");
 assert(uiSource.includes("setRightPanelTab(\"actions\")"), "browser page save also surfaces the transfer log");
 for (const section of ["tasks", "console", "receipts"]) {
   assert(agentSidebarSource.includes(`data-debug-id=\"shellx-browser-collapse-${section}\"`), `browser UI can collapse ${section}`);
@@ -1843,7 +2109,14 @@ assert(
   "browser UI syncs the native engine",
 );
 assert(uiSource.includes("inTauri()"), "browser UI gates native engine sync when rendered in web-only visual QA");
-assert(browserChromeSource.includes("data-debug-id=\"shellx-browser-chrome-menu-dock\""), "browser small menus render in a docked chrome layer above the native WebView");
+assert(
+  browserChromeSource.includes("shellx-browser-chrome-shell") &&
+    browserChromeSource.includes("data-debug-id=\"shellx-browser-chrome-menu-dock\"") &&
+    browserChromeShellCss.includes("position: relative;") &&
+    browserChromeMenuDockCss.includes("position: absolute;") &&
+    browserChromeMenuDockCss.includes("top: 100%;"),
+  "browser small menus overlay below the toolbar without pushing the native WebView",
+);
 assert(
   uiSource.includes("setBookmarkManagerOpen(false);") &&
     uiSource.includes("setOpenToolbarFolderId(null);") &&
@@ -1883,6 +2156,7 @@ assert(cssSource.includes(".shellx-browser-personal-lock-btn.locked") && cssSour
 assert(cssSource.includes(".shellx-browser-lock-notice"), "browser Personal Lock structured notice has CSS");
 assert(cssSource.includes(".shellx-browser-actions-panel .shellx-browser-receipt small") && cssSource.includes("overflow-wrap: anywhere"), "browser Actions tab text wraps instead of squeezing");
 assert(cssSource.includes(".shellx-browser-profile-marker"), "browser compact profile marker has CSS");
+assert(cssSource.includes(".shellx-browser-ownership-banner"), "browser tab ownership banner has CSS");
 assert(cssSource.includes(".shellx-browser-trust-chip"), "browser trust chip has CSS");
 assert(cssSource.includes(".shellx-browser-trust-chip.insecureHttp"), "browser trust chip has an insecure HTTP state");
 assert(cssSource.includes(".shellx-browser-shields-panel"), "browser Shields panel has CSS");
@@ -1892,11 +2166,11 @@ assert(cssSource.includes(".shellx-browser-bookmark-manager-dock"), "browser boo
 assert(cssSource.includes(".shellx-browser-bookmark-sidecar"), "browser bookmark manager sidecar has CSS");
 assert(cssSource.includes(".shellx-browser-bookmark-folder-menu"), "browser bookmark folders have dropdown CSS");
 assert(uiSource.includes("openToolbarFolderId"), "browser toolbar folders are click-toggled instead of hover-only");
-assert(bookmarkSidecarSource.includes("data-debug-id={`shellx-browser-bookmark-folder-menu-${openToolbarFolder.bookmarkId}`}"), "browser toolbar folder menus expose debug ids");
-assert(bookmarkSidecarSource.includes("data-debug-id={`shellx-browser-bookmark-folder-child-${child.bookmarkId}`}"), "browser toolbar folder child rows expose debug ids");
+assert(bookmarkToolbarSource.includes("data-debug-id={`shellx-browser-bookmark-folder-menu-${openToolbarFolder.bookmarkId}`}"), "browser toolbar folder menus expose debug ids");
+assert(bookmarkToolbarSource.includes("data-debug-id={`shellx-browser-bookmark-folder-child-${child.bookmarkId}`}"), "browser toolbar folder child rows expose debug ids");
 assert(cssSource.includes(".shellx-browser-header-popover"), "browser compact header menus have CSS");
 assert(cssSource.includes(".shellx-browser-right-tabs"), "browser right panel tabs have CSS");
-assert(cssSource.includes("grid-template-columns: repeat(4") && cssSource.includes(".shellx-browser-tab-badge") && cssSource.includes(".shellx-browser-requests-panel"), "browser Requests tab has badge and panel CSS");
+assert(cssSource.includes("grid-template-columns: repeat(5") && cssSource.includes(".shellx-browser-tab-badge") && cssSource.includes(".shellx-browser-requests-panel"), "browser right panel fits Requests and Evidence tabs");
 assert(
   browserTopCss.includes("overflow: visible;") &&
     browserTabChromeCss.includes("overflow: visible;") &&
@@ -1921,7 +2195,7 @@ assert(
 );
 assert(cssSource.includes("grid-template-columns: 32px 32px 32px 32px minmax(160px, 1fr) max-content;"), "browser address row reserves a fixed home/action column");
 assert(cssSource.includes(".shellx-browser-right-controls"), "browser right sidebar control row has CSS");
-assert(cssSource.includes(".shellx-browser-sidebar-autonomy"), "browser sidebar autonomy control has CSS");
+assert(!cssSource.includes(".shellx-browser-sidebar-autonomy"), "browser removes stale autonomy control CSS");
 assert(cssSource.includes(".shellx-browser-agent-panel.chat-expanded .shellx-browser-agent-compose"), "browser expanded chat pins composer inside the panel");
 assert(
   browserExpandedAgentComposeCss.includes("padding-bottom:") &&
@@ -1984,6 +2258,8 @@ assert(bookmarkSidecarSource.includes("data-debug-id=\"shellx-browser-bookmark-l
 assert(bookmarkSidecarSource.includes("renderBookmarkManagerRow"), "browser bookmark manager renders sortable folder rows");
 assert(browserChromeSource.includes("draggable={!busy}") && bookmarkSidecarSource.includes("draggable={!busy}"), "browser tabs and bookmarks expose drag sorting hooks");
 assert(apiDocs.includes("/browser/state"), "API docs include browser state route");
+assert(apiDocs.includes("/browser/summary") && apiDocs.includes("/browser/check") && apiDocs.includes("under 16 KB") && apiDocs.includes("never creates a task"), "API docs describe bounded Browser summary and quiet-check contracts");
+assert(apiDocs.includes("/browser/settle") && apiDocs.includes("server waits internally"), "API docs describe compact Browser navigation settlement");
 assert(apiDocs.includes("/browser/tabs"), "API docs include browser tabs routes");
 assert(apiDocs.includes("/browser/tabs/reorder"), "API docs include browser tab reorder route");
 assert(apiDocs.includes("/browser/bookmarks/reorder"), "API docs include bookmark manager routes");
@@ -1999,7 +2275,7 @@ assert(apiDocs.includes("shellx_browser_delegate_tab_to_agent"), "API docs inclu
 assert(apiDocs.includes("/browser/action"), "API docs include browser actions");
 assert(apiDocs.includes("/browser/tabs/lock"), "API docs include browser tab lock route");
 assert(apiDocs.includes("/browser/personal-lock"), "API docs include personal lock read route");
-assert(apiDocs.includes("current route inventory refreshed 2026-06-30"), "API docs inventory date is current for 0.3.3");
+assert(apiDocs.includes("current route inventory refreshed 2026-08-03"), "API docs inventory date is current");
 assert(apiDocs.includes("clearSiteData") && apiDocs.includes("capturePageSecretToVault"), "API docs include current Browser action names");
 assert(uiSource.includes('data-debug-id="shellx-browser-personal-lock-overlay"'), "browser UI exposes personal lock overlay selector");
 assert(browserChromeSource.includes('data-debug-id="shellx-browser-tab-strip"'), "browser UI exposes Browser tab strip selector");
@@ -2013,6 +2289,7 @@ assert(moduleReadme.includes("browser_navigate"), "Browser README documents nati
 assert(moduleReadme.includes("browser_screenshot"), "Browser README documents full-page Browser screenshot evidence");
 assert(moduleReadme.includes("browser_capture_secret_to_vault"), "Browser README documents direct Vault capture");
 assert(moduleReadme.includes("browser_read_email_code"), "Browser README documents email-code grants");
+assert(moduleReadme.includes("formFieldGroups") && shellxHostSkill.includes("formFieldGroups"), "Browser docs teach grouped form intent metadata");
 assert(moduleReadme.includes("Only three modes are user-facing") && !moduleReadme.includes("Visual Clean Compatibility"), "Browser README documents the three user-facing ad modes");
 assert(moduleReadme.includes("does not run browser-owned ads"), "Browser README documents no browser-owned ads");
 assert(moduleReadme.includes("URL affiliate rewriting"), "Browser README documents no affiliate rewriting");
@@ -2027,7 +2304,7 @@ assert(
     moduleReadme.includes("browser_workflow_replay"),
   "Browser README documents workflow MCP wrappers",
 );
-assert(packageJson.includes("test-shellx-browser.ts"), "pnpm test includes shellx browser checks");
+assert(testSuiteManifestSource.includes('["tsx","scripts/test-shellx-browser.ts"]'), "pnpm test includes shellx browser checks");
 const releaseVersion = packageData.version;
 assert(/^\d+\.\d+\.\d+$/.test(releaseVersion), "package version is release semver");
 assert(cargoToml.includes(`version = "${releaseVersion}"`), "Cargo version matches package version");
@@ -2055,8 +2332,10 @@ assert(
     uiDebugSmokeSource.includes("Browser toolbar folder click shows included bookmarks") &&
     uiDebugSmokeSource.includes("browser-right-initial-show") &&
     uiDebugSmokeSource.includes("Native Browser engine sits to the right of collapsed-sidebar Browser settings sidecar") &&
-    uiDebugSmokeSource.includes("Native Browser engine yields to collapsed-sidebar save chrome dock") &&
-    uiDebugSmokeSource.includes("Native Browser engine sits to the right of the collapsed-sidebar bookmark sidecar"),
+    uiDebugSmokeSource.includes("Native Browser engine stays fixed while collapsed-sidebar save menu overlays") &&
+    uiDebugSmokeSource.includes("Collapsed-sidebar Browser save menu overlays the page instead of pushing it down") &&
+    uiDebugSmokeSource.includes("Native Browser engine sits to the right of the collapsed-sidebar bookmark sidecar") &&
+    uiDebugSmokeSource.includes("Browser normal personal tabs hide the redundant ownership banner"),
   "rendered UI smoke covers docked Browser menus and bookmark manager/toolbar interactions",
 );
 assert(
@@ -2076,13 +2355,6 @@ assert(
 assert(liveSmokeSource.includes("/browser/session-grants/request"), "live smoke covers browser session grants");
 assert(liveSmokeSource.includes("browser_session_grant_resolution_requires_operator"), "live smoke verifies Browser session grant resolution mutation gate");
 assert(liveSmokeSource.includes("/browser/vault-deposits"), "live smoke covers write-only Vault deposits");
-assert(rustBrowser.includes("fillProfileCardGrant"), "Browser backend exposes mediated profile-card fill action");
-assert(rustBrowser.includes("readEmailCodeGrant"), "Browser backend exposes mediated email-code read action");
-assert(rustBrowser.includes("useAgentWalletGrant"), "Browser backend exposes mediated agent-wallet checkout action");
-assert(rustBrowserVault.includes("browserProfileCardFilled"), "Browser backend receipts include profile-card fills");
-assert(rustBrowserVault.includes("browserEmailCodeRead"), "Browser backend receipts include email-code reads");
-assert(rustBrowserVault.includes("browserAgentWalletCheckoutPrepared"), "Browser backend receipts include prepared agent-wallet checkout");
-assert(rustBrowserVault.includes("browserAgentWalletCheckoutBlocked"), "Browser backend receipts include blocked agent-wallet checkout");
 assert(liveSmokeSource.includes("/browser/logs"), "live smoke covers Browser console logs");
 assert(liveSmokeSource.includes("bookmarkCurrent"), "live smoke covers Browser bookmark-current behavior");
 assert(liveSmokeSource.includes("clearHistory"), "live smoke covers blocked Browser history clearing");
@@ -2099,14 +2371,15 @@ assert(
 assert(
   rustBrowser.includes("tab_observations: BTreeMap<String, BrowserObservation>") &&
     browserActionResultsSource.includes("state.tab_observations.insert") &&
-    browserActionResultsSource.includes("selector_for_observation_ref") &&
     browserActionsSource.includes("request.browser_tab_id.clone()") &&
     browserTabsSource.includes("state.tab_observations.remove(&tab.browser_tab_id)"),
   "taskless user-tab observe caches selectors so refId Browser actions work without an active agent task",
 );
 assert(liveSmokeSource.includes("/browser/tabs/lock"), "live smoke covers Browser tab lock route");
 assert(liveSmokeSource.includes("tabLocked"), "live smoke covers Browser tab lock denial");
-assert(liveSmokeSource.includes("/browser/task/control"), "live smoke covers Browser task operator control route");
+assert(liveSmokeSource.includes("/browser/task/control"), "live smoke covers Browser task agent lifecycle control route");
+assert(liveSmokeSource.includes("browser_task_operator_control_required"), "live smoke verifies that Debug API cannot claim user takeover");
+assert(liveSmokeSource.includes("shellxDebugApiAgent"), "live smoke verifies receipt actor provenance for Debug API task controls");
 assert(liveSmokeSource.includes("browserTaskActionBlocked"), "live smoke covers Browser task action blocking after operator control");
 assert(liveSmokeSource.includes("action: \"scroll\""), "live smoke covers Browser scroll action");
 assert(liveSmokeSource.includes("/browser/privacy"), "live smoke covers Browser privacy route");
@@ -2121,6 +2394,10 @@ assert(liveSmokeSource.includes("/browser/performance/export"), "live smoke cove
 assert(liveSmokeSource.includes("/browser/recipes/export"), "live smoke covers Browser recipe export route");
 assert(liveSmokeSource.includes("/browser/recipes/replay"), "live smoke covers Browser recipe replay route");
 assert(debugApiBrowserArtifactsSource.includes("browser_recipe_replay_plan") && debugApiBrowserArtifactsSource.includes("try_apply_engine_action") && debugApiBrowserArtifactsSource.includes("skipped_steps") && rustBrowserRecipes.includes("stepsSkipped"), "Browser recipe replay route applies planned route steps and reports skipped steps");
+assert(debugApiBrowserArtifactsSource.includes("browser_recipe_replay_response_step_result") && rustBrowserRecipes.includes("stepResults"), "Browser recipe replay returns compact per-step execution summaries");
+assert(debugApiBrowserArtifactsSource.includes("begin_robot_run") && debugApiBrowserArtifactsSource.includes("execute_browser_recipe_replay") && debugApiBrowserArtifactsSource.includes("finish_robot_run"), "Browser robot run executes recipe replay before recording its terminal status");
+assert(liveSmokeSource.includes("recipeReplay.decisionPoints"), "live smoke checks Browser recipe replay decision points");
+assert(liveSmokeSource.includes("recipe replay rejects a changed saved artifact"), "live smoke proves changed saved Browser recipes fail closed");
 assert(liveSmokeSource.includes("/browser/robots/schedule"), "live smoke covers Browser robot schedule route");
 assert(liveSmokeSource.includes("/browser/robots/run"), "live smoke covers Browser robot run route");
 assert(liveSmokeSource.includes("/browser/downloads/request"), "live smoke covers Browser download intent route");
@@ -2167,27 +2444,71 @@ assert(adversarySmokeSource.includes("assertNoSentinel"), "adversary smoke scans
 assert(adversarySmokeSource.includes("valueHash"), "adversary smoke classifies page captures by hashed values");
 assert(adversarySmokeSource.includes("debug-api-fetch"), "adversary smoke checks hostile page Debug API probes");
 assert(adversarySmokeSource.includes("/browser/trace/export"), "adversary smoke exports and scans Browser traces");
+assert(
+  browserTestCleanupSource.includes("cleanupOwnedBrowserLifecycle") &&
+    browserTestCleanupSource.includes("/browser/task/finish") &&
+    browserTestCleanupSource.includes("/browser/tabs/unlock") &&
+    browserTestCleanupSource.includes("/browser/tabs/close"),
+  "Browser live gates share an owned task/tab lifecycle finalizer",
+);
+for (const [label, source] of [
+  ["Debug API", liveSmokeSource],
+  ["everyday apps", everydayAppsSmokeSource],
+  ["workflow matrix", workflowMatrixSmokeSource],
+  ["batch timing", batchTimingSmokeSource],
+  ["concurrency", concurrencySmokeSource],
+  ["Vault adversary", adversarySmokeSource],
+] as const) {
+  assert(source.includes("cleanupOwnedBrowserLifecycle"), `${label} smoke finalizes only owned Browser tasks and tabs`);
+}
+assert(
+  browserCleanupTestSource.includes("preserves an unrelated operator tab") &&
+    browserCleanupTestSource.includes("partial cleanup idempotent") &&
+    testSuiteManifestSource.includes('["tsx","scripts/test-shellx-browser-cleanup.ts"]'),
+  "Browser cleanup ownership and partial-failure behavior are covered in pnpm test",
+);
 assert(debugApi.includes("publish_shellxagent_descriptor"), "Debug API publishes shellxagent.json discovery descriptor");
 assert(debugApi.includes('"/shellxagent.json"') && debugApi.includes('"/.well-known/shellxagent.json"'), "Debug API serves shellxagent.json discovery descriptor from installed app");
 assert(debugApi.includes('"/agent-doc/manifest"') && debugApi.includes('"/agent-doc/skills/shellx-host/SKILL.md"'), "Debug API serves bundled agent docs from installed app");
 assert(debugApi.includes("\"browserAction\"") && debugApi.includes("/browser/action"), "shellxagent.json advertises the gated Browser action route");
 assert(debugApi.includes("\"rawCdpExposed\"") && debugApi.includes("false"), "shellxagent.json declares raw CDP unavailable");
 assert(debugApi.includes("rawCdpEndpoint") && debugApi.includes("serde_json::Value::Null"), "Debug API tests protect against raw CDP descriptor exposure");
+assert(rustBuildScript.includes("SHELLX_BUILD_COMMIT") && rustBuildScript.includes('git_stdout(&["rev-parse", "HEAD"])'), "build script embeds the exact source commit with an explicit override");
+assert(rustBuildMetadata.includes('BROWSER_PROTOCOL_VERSION: &str = "1.5.0"') && rustBuildMetadata.includes("BROWSER_SCHEMA_REVISION") && rustBuildMetadata.includes("browserCoworkSession"), "Browser protocol, schema, and cowork identity are centralized");
+assert(debugApi.includes("browserProtocolVersion") && debugApi.includes("browserSchemaRevision") && debugApi.includes("browserFeatureFlags"), "Debug API health and discovery expose Browser protocol identity");
+assert(hostMcp.includes("browserProtocolVersion") && hostMcp.includes("browserSchemaRevision") && hostMcp.includes("buildCommit"), "Host MCP initialize exposes matching Browser and build identity");
 assert(debugApi.includes("write_private_text_file") && debugApi.includes(".mode(0o600)"), "shellxagent.json is written as a private local descriptor on Unix");
 assert(apiDocs.includes("shellxagent.json") && apiDocs.includes("rawCdpExposed: false"), "API docs describe shellxagent.json without raw CDP");
-assert(apiDocs.includes("~/.codex/skills/shellx-host/SKILL.md") && apiDocs.includes("~/.shellx/agent-docs/shellx-host/SKILL.md"), "API docs describe fresh-install agent skill/docs locations");
-assert(skillInstallSource.includes('join(".codex")') && skillInstallSource.includes('join(".claude")') && skillInstallSource.includes('join("agent-docs")'), "Installer runtime writes shellx-host docs for Grok, Codex, Claude, and ShellX-owned docs");
+assert(apiDocs.includes("~/.shellx/agent-docs/shellx-host/SKILL.md") && apiDocs.includes("direct CLI sessions stay unchanged"), "API docs describe session-scoped host activation and product-owned docs");
+assert(skillInstallSource.includes('legacy_global_shellx_host_skill_targets_for_home') && skillInstallSource.includes('join("agent-docs")') && skillInstallSource.includes("SHELLX_SESSION_RULES"), "Installer runtime migrates global host skills and keeps the manifest in ShellX-owned docs");
 assert(packageData.scripts?.["shellx-browser"] === "tsx scripts/shellx-browser-cli.ts", "package exposes ShellX Browser CLI wrapper");
 assert(browserCliSource.includes("readDebugApiConnection"), "Browser CLI reads Debug API port/token from local ShellX files");
-assert(browserCliSource.includes("shellxagent.token"), "Browser CLI uses the installed-app Debug API token");
-assert(browserCliSource.includes("/browser/action"), "Browser CLI wraps Browser action route");
+assert(debugPathHelperSource.includes("shellxagent.token") && debugPathHelperSource.includes("debug.token"), "Browser CLI uses the installed-app Debug API token");
+assert(
+  debugPathHelperSource.includes("resolveShellxDebugApiConnection") &&
+    debugPathHelperSource.includes("debugApiConnectionCandidates") &&
+    debugPathHelperSource.includes("/browser/state") &&
+    browserCliSource.includes("resolveShellxDebugApiConnection") &&
+    workflowMatrixSmokeSource.includes("resolveShellxDebugApiConnection") &&
+    liveSmokeSource.includes("resolveShellxDebugApiConnection") &&
+    everydayAppsSmokeSource.includes("resolveShellxDebugApiConnection") &&
+    adversarySmokeSource.includes("resolveShellxDebugApiConnection") &&
+    concurrencySmokeSource.includes("resolveShellxDebugApiConnection"),
+  "Browser live gates pair and probe Debug API port/token candidates",
+);
+assert(browserCliSource.includes("/browser/action") && browserCliSource.includes("/browser/check") && browserCliSource.includes("/browser/settle?${query}"), "Browser CLI wraps action, quiet-check, and compact-settle routes");
 assert(browserCliSource.includes("/browser/tabs"), "Browser CLI wraps Browser tabs route");
 assert(browserCliSource.includes("\"navigate\""), "Browser CLI exposes native Browser navigation");
 assert(browserCliSource.includes("fill-from-vault"), "Browser CLI exposes Vault-mediated credential fill");
 assert(browserCliSource.includes("lockLeaseId"), "Browser CLI can pass tab lock leases to Browser actions");
 assert(browserCliSource.includes("/browser/trace/export"), "Browser CLI wraps Browser trace export route");
+assert(
+  browserCliSource.includes("SHELLX_HOST_MCP_TAB_ID")
+    && browserCliSource.includes('"x-shellx-mcp-caller-id"'),
+  "Browser CLI carries ShellX-owned caller identity into agent-scoped evidence routes",
+);
 for (const tool of [
-  "browser_state",
+  "browser_state", "browser_check", "browser_read", "browser_act",
   "browser_tabs",
   "browser_locks",
   "browser_navigate",
@@ -2206,11 +2527,11 @@ for (const tool of [
   "browser_screenshot",
   "browser_downloads",
   "browser_resolve_dialog",
-  "browser_trace_open",
+  "browser_trace_open", "browser_evidence", "browser_flight_recorder_export", "browser_evaluation_write",
 ]) {
   assert(hostMcp.includes(`"name": "${tool}"`), `Host MCP exposes ${tool}`);
 }
-assert(hostMcp.includes("tool_browser_action"), "Host MCP Browser action tools share one Debug API action wrapper");
+assert(hostMcp.includes("tool_browser_action") && hostMcp.includes("advertised_tool_specs") && hostMcp.includes("browser_entry_tool_specs()") && hostMcp.includes("specs.extend(browser_tool_specs())") && hostMcp.includes("DEFAULT_OBSERVE_STRUCTURED_BYTES") && hostMcp.includes("mcpSerializedBytes") && hostMcp.includes("mcpApproxTokens") && apiDocs.includes("32-tool, 82,893-byte") && apiDocs.includes("two-tool, 2,331-byte") && apiDocs.includes("3,000-byte") && moduleReadme.includes("32 compatibility schemas (82,893 bytes)") && !moduleReadme.includes("29 compatibility schemas"), "Host MCP Browser actions use one wrapper, advertise the compact gateway, retain all 32 searchable aliases, and enforce the measured observation budget");
 assert(hostMcp.includes("/browser/action"), "Host MCP Browser action tools call the Browser Debug API action route");
 assert(hostMcp.includes("browser_action_body"), "Host MCP maps MCP Browser tool arguments to the Debug API body");
 assert(hostMcp.includes("browserTabId must also pass the owning taskId"), "Host MCP Browser tools reject raw taskless browserTabId targeting");
@@ -2234,38 +2555,105 @@ assert(hostMcp.includes('"browser_resolve_dialog"'), "Host MCP exposes task-owne
 assert(hostMcp.includes("personal/delegated user tabs and page permissions still require the ShellX operator UI"), "Host MCP scopes Browser dialog resolution away from user-owned prompts");
 assert(hostMcp.includes('"browser_screenshot"'), "Host MCP capability summary includes Browser screenshots");
 assert(hostMcp.includes("Do not dump raw `/browser/state` or observation JSON into the current working directory or user folders"), "Host MCP warns agents not to dump raw Browser state/observe JSON into cwd/user folders");
+assert(hostMcp.includes('debug_api_get_json("/browser/summary", 10)') && hostMcp.includes('args.get("include")') && hostMcp.includes('debug_api_get_json(&path, timeout_secs)') && hostMcp.includes('"browser_check"'), "Host MCP exposes bounded browser_state and UI-silent browser_check paths");
+assert(hostMcp.includes("browser_mcp_settle_path") && !hostMcp.includes("Duration::from_millis(75)"), "Host MCP navigation uses the compact settle endpoint instead of 75 ms full-state polling");
+assert(shellxHostSkill.includes("prior observations") && shellxHostSkill.includes("opt-in slices"), "ShellX host skill teaches bounded Browser state orientation");
 assert(hostMcp.includes("Do not write raw observation dumps to the current working directory or user folders"), "Browser observe tool description points agents to trace artifacts instead of raw dumps");
 assert(hostMcp.includes("Do not copy the trace or raw Browser state into the current working directory or user folders"), "Browser trace tool description keeps diagnostics in ShellX trace storage by default");
 assert(pluginsModalSource.includes("Native Browser") && pluginsModalSource.includes("Vault Request Center"), "Plugins modal shellx-host row must mention Browser and Vault Request Center");
 assert(!pluginsModalSource.includes("Workflow skills"), "Plugins modal must not advertise retired workflow skills");
 assert(hostMcp.includes("Agent tool description must teach subagent Browser flow"), "Host MCP tests protect Agent Browser guidance");
 assert(hostMcp.includes("browser_workflows") && hostMcp.includes("browser_workflow_save") && hostMcp.includes("browser_workflow_replay"), "Host MCP exposes Agent workflow bookmark discovery, save, and replay");
+assert(hostMcp.includes("browser_extract_action_from_format") && hostMcp.includes("\"table\"") && apiDocs.includes("text/markdown/table") && shellxHostSkill.includes("format: table"), "Host MCP browser_extract exposes table extraction in source, docs, and bundled host skill");
+assert(hostMcp.includes("browser_run_steps"), "Host MCP exposes generic Browser batch control");
+assert(hostMcp.includes("tool_browser_run_steps"), "Host MCP implements Browser batch control as a focused wrapper");
+assert(hostMcp.includes("is_write_class_tool(\"browser_run_steps\")"), "Browser batch control is write-class gated");
+assert(hostMcp.includes("browser_run_steps_allowed_action") && hostMcp.includes("fillFromVaultGrant") && hostMcp.includes("unsupported sensitive Browser action"), "Browser batch control rejects unsupported or sensitive Browser actions");
+assert(hostMcp.includes("findText") && hostMcp.includes("extractTable") && apiDocs.includes("safe in-page `findText`") && shellxHostSkill.includes("findText -> extractTable"), "Browser batch control includes safe in-page search/table extraction in source, docs, and bundled host skill");
+assert(hostMcp.includes("\"scroll\" => Ok(\"scroll\")") && hostMcp.includes("\"goBack\" | \"back\"") && apiDocs.includes("ordinary `scroll`, `select`, `goBack`, `goForward`") && shellxHostSkill.includes("scroll -> select -> findText"), "Browser batch control includes generic scroll/select/history actions in source, docs, and bundled host skill");
+assert(hostMcp.includes("browser_run_steps_normalize_step_aliases") && hostMcp.includes("Convenience alias for findText") && apiDocs.includes("`findText` may use `query`") && shellxHostSkill.includes("batch steps may use `query`"), "Browser batch control maps findText query aliases in source, docs, and bundled host skill");
+assert(hostMcp.includes("browser_mcp_wait_for_navigation_settle") && hostMcp.includes("Browser navigation did not settle") && hostMcp.includes("goBack") && shellxHostSkill.includes("Navigate/history/"), "Host MCP Browser navigation/history/reload waits for page settle before follow-up actions");
+assert(hostMcp.includes("browser_mcp_force_click_recovery_body") && hostMcp.includes("browser_mcp_locator_candidate_recovery_body") && hostMcp.includes("mcpRecovery") && hostMcp.includes("receivesEvents") && hostMcp.includes("strictLocator"), "Host MCP Browser auto-recovery is limited to strict locator and receivesEvents force-click retries with evidence");
+assert(hostMcp.includes("browser_run_steps_result_entry") && hostMcp.includes("\"mcpRecovery\".to_string()"), "Host MCP Browser batch step rows carry structured recovery evidence");
+assert(hostMcp.includes("browser_run_steps_aggregate") && hostMcp.includes("continuedAfterFailure") && hostMcp.includes("failureSummary"), "Host MCP Browser batch aggregates continued failures truthfully");
+assert(browserCliSource.includes("runStepsAggregate") && browserCliSource.includes("stepsSucceeded") && browserCliSource.includes("process.exitCode = 1"), "Browser CLI reports failed batches and exits nonzero");
+assert(shellxHostSkill.includes("step row includes structured") && shellxHostSkill.includes("mcpRecovery"), "ShellX host skill teaches batch recovery evidence");
+assert(Boolean(packageData.scripts?.["test:shellx-browser-batch-timing"]), "package exposes live Browser batch timing smoke");
+assert(
+  batchTimingSmokeSource.includes("debugApiConnectionCandidates") &&
+    !batchTimingSmokeSource.includes("SHELLX_DEBUG_BASE requires SHELLX_DEBUG_SECRET"),
+  "Browser batch timing uses the shared paired Debug API candidate resolver",
+);
+assert(
+  batchTimingSmokeSource.includes("/mcp") &&
+    batchTimingSmokeSource.includes("browser_run_steps") &&
+    batchTimingSmokeSource.includes("browser_navigate") &&
+    batchTimingSmokeSource.includes("SHELLX_BATCH_TIMING_ITERATIONS") &&
+    batchTimingSmokeSource.includes("median"),
+  "Browser batch timing smoke compares Host MCP sequential calls against browser_run_steps",
+);
+assert(
+  batchTimingSmokeSource.includes("runStrictLocatorRecoverySmoke") &&
+    batchTimingSmokeSource.includes("strictLocator"),
+  "Browser batch timing smoke covers live strict locator recovery through MCP",
+);
+assert(
+  batchTimingSmokeSource.includes("runExpandedGenericBatchSmoke") &&
+    batchTimingSmokeSource.includes("action: \"select\"") &&
+    batchTimingSmokeSource.includes("action: \"extractTable\"") &&
+    batchTimingSmokeSource.includes("action: \"goForward\"") &&
+    batchTimingSmokeSource.includes("browser_run_steps expanded generic batch"),
+  "Browser batch timing smoke covers expanded generic browser_run_steps actions",
+);
+assert(
+  batchTimingSmokeSource.includes("runContinuedFailureContractSmoke") &&
+    batchTimingSmokeSource.includes("allowToolError") &&
+    batchTimingSmokeSource.includes("continuedAfterFailure"),
+  "Browser batch timing smoke covers continued-failure aggregate semantics through MCP",
+);
+assert(
+  apiDocs.includes("test:shellx-browser-batch-timing") &&
+    apiDocs.includes("browser_run_steps timing"),
+  "API docs keep the Browser batch timing checklist visible",
+);
 assert(hostMcp.includes("exported no replayable steps"), "Host MCP workflow save rejects empty recipes");
 assert(hostMcp.includes("browser_workflow_summaries_filter_by_taxonomy_and_aliases"), "Host MCP tests workflow bookmark taxonomy filtering");
 assert(hostMcp.includes("browser_workflow_apply_blocks_contract_drift"), "Host MCP blocks stale contract workflow apply");
+assert(hostMcp.includes("browser_workflow_apply_contract_guard_blocks_scope_mismatches") && hostMcp.includes("expectedDomains") && hostMcp.includes("allowedPermissions"), "Host MCP workflow replay has deterministic apply contract scope checks");
+assert(hostMcp.includes("stepResults") && hostMcp.includes("decisionPoints"), "Host MCP workflow replay tells agents to inspect compact replay step results and decision points");
+assert(hostMcp.includes("workflowMetadataUpdated") && hostMcp.includes("health/drift metadata"), "Host MCP workflow replay records bookmark health and drift after apply");
 assert(subagentSource.includes("native ShellX Browser"), "subagent runtime guard tells spawned agents the native Browser exists");
-assert(subagentSource.includes("browser_navigate"), "subagent runtime guard teaches Browser navigation");
-assert(subagentSource.includes("browser_observe"), "subagent runtime guard teaches Browser observation");
-assert(subagentSource.includes("browser_resolve_dialog"), "subagent runtime guard teaches task-owned Browser dialog resolution");
-assert(subagentSource.includes("Do not write raw Browser state or observe JSON into the current working directory or user folders"), "subagent runtime guard prevents raw Browser JSON dumps in cwd/user folders");
+assert(subagentSource.includes("browser_act action=navigate"), "subagent runtime guard teaches Browser navigation");
+assert(subagentSource.includes("browser_read action=observe"), "subagent runtime guard teaches Browser observation");
+assert(subagentSource.includes("Browser and Vault approval gates still apply"), "subagent runtime guard preserves Browser mutation gates");
+assert(subagentSource.includes("Do not write raw Browser state or observation JSON into the current working directory or user folders"), "subagent runtime guard prevents raw Browser JSON dumps in cwd/user folders");
 assert(shellxHostSkill.includes("Native ShellX Browser for agent web work"), "ShellX host skill documents native Browser existence");
-assert(shellxHostSkill.includes("browser_navigate"), "ShellX host skill teaches Browser navigation tool flow");
-assert(shellxHostSkill.includes("browser_resolve_dialog"), "ShellX host skill teaches task-owned beforeunload resolution");
-assert(shellxHostSkill.includes("MCP observe output is compact"), "ShellX host skill teaches compact Browser observe defaults");
+assert(shellxHostSkill.includes('browser_act { action: "navigate"'), "ShellX host skill teaches Browser navigation tool flow");
+assert(shellxHostSkill.includes("browser_act action=runSteps") && shellxHostSkill.includes("generic Browser action steps"), "ShellX host skill teaches generic Browser batch control without site hardcoding");
+assert(shellxHostSkill.includes("browser_act action=resolveDialog"), "ShellX host skill teaches task-owned beforeunload resolution");
+assert(shellxHostSkill.includes("3,000-byte serialized") && shellxHostSkill.includes("mcpApproxTokens"), "ShellX host skill teaches compact Browser observe defaults");
 assert(shellxHostSkill.includes("response message or receipt"), "ShellX host skill teaches direct beforeunload dialogId recovery");
-assert(shellxHostSkill.includes("Do not write raw `browser_state` or `browser_observe` JSON dumps into"), "ShellX host skill prevents raw Browser JSON dumps in cwd/user folders");
-assert(shellxHostSkill.includes("browser_capture_secret_to_vault"), "ShellX host skill teaches direct page-secret Vault capture");
-assert(shellxHostSkill.includes("browser_read_email_code"), "ShellX host skill teaches email-code grants");
-assert(shellxHostSkill.includes("browser_use_agent_wallet"), "ShellX host skill teaches agent-wallet grants");
-assert(shellxHostSkill.includes("browser_workflows") && shellxHostSkill.includes("browser_workflow_save") && shellxHostSkill.includes("browser_workflow_replay"), "ShellX host skill teaches reusable Browser workflow save/replay");
+assert(shellxHostSkill.includes("Do not write raw Browser state or observation JSON dumps into"), "ShellX host skill prevents raw Browser JSON dumps in cwd/user folders");
+assert(shellxHostSkill.includes("action=captureSecretToVault"), "ShellX host skill teaches direct page-secret Vault capture");
+assert(shellxHostSkill.includes("action=readEmailCode"), "ShellX host skill teaches email-code grants");
+assert(shellxHostSkill.includes("action=useAgentWallet"), "ShellX host skill teaches agent-wallet grants");
+assert(shellxHostSkill.includes("action=workflows") && shellxHostSkill.includes("action=workflowSave") && shellxHostSkill.includes("action=workflowReplay"), "ShellX host skill teaches reusable Browser workflow save/replay");
 assert(
   shellxHostSkill.includes("/agent-doc/manifest") &&
     shellxHostSkill.includes("/agent-doc/skills/shellx-host/SKILL.md") &&
     shellxHostSkill.includes("/browser/recipes/replay"),
   "ShellX host skill documents bundled agent-doc routes and Browser recipe replay",
 );
+assert(
+  shellxHostSkill.includes("pnpm shellx-browser run-steps") &&
+    shellxHostSkill.includes("agent-work") &&
+    shellxHostSkill.includes("--use-active-tab") &&
+    shellxHostSkill.includes("workflow-replay") &&
+    shellxHostSkill.includes("compact `summary`"),
+  "ShellX host skill teaches installed CLI fallback for Browser batches and workflow replay",
+);
 for (const command of [
-  "snapshot",
+  "check", "snapshot",
   "navigate",
   "observe",
   "click-ref",
@@ -2279,13 +2667,54 @@ for (const command of [
   "tabs",
   "locks",
   "trace-open",
+  "run-steps",
   "workflow-bookmarks",
   "workflow-save",
   "workflow-replay",
 ]) {
   assert(browserCliSource.includes(`"${command}"`), `Browser CLI exposes ${command}`);
 }
-assert(browserCliSource.includes("/browser/recipes/export") && browserCliSource.includes("/browser/recipes/replay") && browserCliSource.includes("agentWorkflow") && browserCliSource.includes("exported no replayable steps"), "Browser CLI exposes workflow bookmark save, discovery, and replay");
+assert(browserCliSource.includes("extractTable") && browserCliSource.includes("extract table"), "Browser CLI exposes table extraction");
+assert(
+  browserCliSource.includes("runSteps(") &&
+    browserCliSource.includes("ensureRunStepsTask") &&
+    browserCliSource.includes("/browser/task/start") && browserCliSource.includes("/browser/settle?${query}") && !browserCliSource.includes("setTimeout(resolve, 100)") &&
+    browserCliSource.includes("agent-work") &&
+    browserCliSource.includes("use-active-tab") &&
+    browserCliSource.includes("steps-json") &&
+    browserCliSource.includes("browser_run_steps style generic batch") &&
+    moduleReadme.includes("pnpm shellx-browser run-steps") &&
+    moduleReadme.includes("--use-active-tab") &&
+    apiDocs.includes("pnpm shellx-browser run-steps"),
+  "Browser CLI exposes generic Browser batch control",
+);
+assert(
+  browserCliSource.includes("/browser/recipes/export") &&
+    browserCliSource.includes("/browser/recipes/replay") &&
+    browserCliSource.includes("agentWorkflow") &&
+    browserCliSource.includes("exported no replayable steps") &&
+    browserCliSource.includes("workflowReplaySummary") &&
+    browserCliSource.includes("decisionPointCount") &&
+    moduleReadme.includes("`workflow-replay` returns a compact `summary`") &&
+    apiDocs.includes("`workflow-replay` returns a compact `summary`"),
+  "Browser CLI exposes workflow bookmark save, discovery, replay, and compact replay summaries",
+);
+assert(
+  browserCliSource.includes("workflowTaskType") &&
+    browserCliSource.includes('return "register"') &&
+    browserCliSource.includes('return "login"') &&
+    !browserCliSource.includes('slug(taskType).split("-")[0]'),
+  "Browser CLI canonicalizes multi-word workflow task types",
+);
+assert(
+  browserCliSource.includes('case "click-at"') &&
+    browserCliSource.includes('case "type-text"') &&
+    browserCliSource.includes('case "clear-site-data"') &&
+    moduleReadme.includes("pnpm shellx-browser click-at") &&
+    apiDocs.includes("pnpm shellx-browser click-at") &&
+    shellxHostSkill.includes("pnpm shellx-browser click-at"),
+  "Browser CLI exposes direct coordinate and site-data recovery fallbacks",
+);
 
 if (failures > 0) {
   console.error(`\n${failures} ShellX Browser check(s) failed.`);

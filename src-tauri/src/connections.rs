@@ -45,7 +45,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
+use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -53,6 +53,8 @@ use tracing::info;
 use crate::acp::{validate_ssh_destination_arg, Transport};
 
 const STORE_VERSION: u32 = 1;
+const PROVIDER_CAPABILITY_SCHEMA_VERSION: &str = "shellx.provider-capability-snapshot.v2";
+const PROVIDER_CAPABILITY_TTL_MS: i64 = 60_000;
 
 /// One saved connection. `id` is stable across the lifetime of the
 /// preset — clients reference by id so renames don't break wiring.
@@ -73,11 +75,60 @@ pub struct ConnectionPreset {
 pub struct ConnectionProviderScanEntry {
     pub provider_id: String,
     pub can_run: bool,
+    #[serde(default)]
+    pub status: ConnectionProviderScanStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub target_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     pub checked_at_ms: i64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectionProviderScanStatus {
+    Ready,
+    Missing,
+    VersionFailed,
+    IdentityFailed,
+    TargetUnavailable,
+    AuthNeeded,
+    CanaryFailed,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionProviderCapabilityTarget {
+    pub key: String,
+    pub transport: String,
+    pub runtime: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wsl_distro: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_port: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionProviderCapabilitySnapshot {
+    pub schema_version: String,
+    pub generated_at_ms: i64,
+    pub fresh_until_ms: i64,
+    pub target: ConnectionProviderCapabilityTarget,
+    pub providers: Vec<ConnectionProviderScanEntry>,
 }
 
 struct AgentScanSpec {
@@ -457,21 +508,45 @@ pub async fn scan_connection_providers(
     preset: &ConnectionPreset,
 ) -> Result<Vec<ConnectionProviderScanEntry>, String> {
     validate_transport(&preset.transport)?;
-    let checked_at_ms = now_ms();
+    if let Transport::Ssh {
+        host,
+        port,
+        key_vault_ref,
+        remote_runtime,
+        wsl_distro,
+        ..
+    } = &preset.transport
+    {
+        let key_path = resolve_ssh_key_path(key_vault_ref.as_deref()).await?;
+        let host = host.clone();
+        let port = *port;
+        let remote_runtime = *remote_runtime;
+        let wsl_distro = wsl_distro.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::acp::ensure_ssh_remote_runtime(
+                &host,
+                port,
+                key_path.as_deref(),
+                remote_runtime,
+                wsl_distro.as_deref(),
+            )
+        })
+        .await
+        .map_err(|error| format!("SSH platform probe join failed: {error}"))??;
+    }
+    let target = connection_provider_capability_target(preset);
     let mut out = Vec::with_capacity(AGENT_SCAN_SPECS.len());
     for spec in AGENT_SCAN_SPECS {
-        let (binary, version) = match &preset.transport {
-            Transport::Local { grok_path } => {
-                scan_local_agent(spec, grok_path.as_deref(), checked_at_ms).await
-            }
-            Transport::Wsl { distro, grok_path } => {
-                scan_wsl_agent(spec, distro, grok_path, checked_at_ms).await
-            }
+        let binary = match &preset.transport {
+            Transport::Local { grok_path } => scan_local_agent(spec, grok_path.as_deref()).await,
+            Transport::Wsl { distro, grok_path } => scan_wsl_agent(spec, distro, grok_path).await,
             Transport::Ssh {
                 host,
                 port,
                 key_vault_ref,
                 remote_grok_path,
+                remote_runtime,
+                wsl_distro,
             } => {
                 scan_ssh_agent(
                     spec,
@@ -479,71 +554,460 @@ pub async fn scan_connection_providers(
                     *port,
                     key_vault_ref.as_deref(),
                     remote_grok_path,
-                    checked_at_ms,
+                    *remote_runtime,
+                    wsl_distro.as_deref(),
                 )
                 .await
             }
             Transport::WsDirect { .. }
             | Transport::WsTunnel { .. }
-            | Transport::Tailscale { .. } => (None, None),
+            | Transport::Tailscale { .. } => None,
         };
+        let (version, binary_sha256, binary_bytes) = match binary.as_deref() {
+            Some(path) => {
+                let before = scan_agent_binary_identity(preset, path).await.ok();
+                let version = scan_agent_version(preset, path).await;
+                let after = scan_agent_binary_identity(preset, path).await.ok();
+                let stable = before.filter(|identity| Some(identity) == after.as_ref());
+                (
+                    version,
+                    stable.as_ref().map(|identity| identity.0.clone()),
+                    stable.map(|identity| identity.1),
+                )
+            }
+            None => (None, None, None),
+        };
+        let (status, detail) = connection_provider_scan_status(
+            binary.as_deref(),
+            version.as_deref(),
+            binary_sha256.as_deref(),
+            binary_bytes,
+        );
+        let checked_at_ms = now_ms();
         out.push(ConnectionProviderScanEntry {
             provider_id: spec.id.to_string(),
             can_run: binary.is_some(),
+            status,
             binary,
             version,
+            binary_sha256,
+            binary_bytes,
+            target_key: target.key.clone(),
+            detail,
             checked_at_ms,
         });
     }
     Ok(out)
 }
 
+pub async fn scan_connection_provider_capabilities(
+    preset: &ConnectionPreset,
+) -> Result<ConnectionProviderCapabilitySnapshot, String> {
+    let providers = match scan_connection_providers(preset).await {
+        Ok(providers) => providers,
+        Err(error) => {
+            let Some(status) = connection_provider_target_error_status(preset, &error) else {
+                return Err(error);
+            };
+            let checked_at_ms = now_ms();
+            let target_key = connection_provider_capability_target(preset).key;
+            let detail = error.chars().take(512).collect::<String>();
+            AGENT_SCAN_SPECS
+                .iter()
+                .map(|spec| ConnectionProviderScanEntry {
+                    provider_id: spec.id.to_string(),
+                    can_run: false,
+                    status,
+                    binary: None,
+                    version: None,
+                    binary_sha256: None,
+                    binary_bytes: None,
+                    target_key: target_key.clone(),
+                    detail: Some(detail.clone()),
+                    checked_at_ms,
+                })
+                .collect()
+        }
+    };
+    Ok(connection_provider_capability_snapshot_from_parts(
+        preset,
+        providers,
+        now_ms(),
+    ))
+}
+
+fn connection_provider_target_error_status(
+    preset: &ConnectionPreset,
+    error: &str,
+) -> Option<ConnectionProviderScanStatus> {
+    if !matches!(&preset.transport, Transport::Ssh { .. }) {
+        return None;
+    }
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("vault ref") {
+        return None;
+    }
+    if normalized.contains("permission denied")
+        || normalized.contains("publickey")
+        || normalized.contains("authentication failed")
+        || normalized.contains("host key verification failed")
+    {
+        return Some(ConnectionProviderScanStatus::AuthNeeded);
+    }
+    if normalized.contains("runtime probe")
+        || normalized.contains("did not expose the selected")
+        || normalized.contains("windows + wsl")
+        || normalized.contains("reverse host-mcp tunnel")
+    {
+        return Some(ConnectionProviderScanStatus::CanaryFailed);
+    }
+    Some(ConnectionProviderScanStatus::TargetUnavailable)
+}
+
+fn connection_provider_capability_snapshot_from_parts(
+    preset: &ConnectionPreset,
+    providers: Vec<ConnectionProviderScanEntry>,
+    generated_at_ms: i64,
+) -> ConnectionProviderCapabilitySnapshot {
+    ConnectionProviderCapabilitySnapshot {
+        schema_version: PROVIDER_CAPABILITY_SCHEMA_VERSION.to_string(),
+        generated_at_ms,
+        fresh_until_ms: generated_at_ms.saturating_add(PROVIDER_CAPABILITY_TTL_MS),
+        target: connection_provider_capability_target(preset),
+        providers,
+    }
+}
+
+fn connection_provider_scan_status(
+    binary: Option<&str>,
+    version: Option<&str>,
+    binary_sha256: Option<&str>,
+    binary_bytes: Option<u64>,
+) -> (ConnectionProviderScanStatus, Option<String>) {
+    match (binary, version, binary_sha256, binary_bytes) {
+        (None, _, _, _) => (
+            ConnectionProviderScanStatus::Missing,
+            Some("No supported CLI binary resolved on this exact target.".to_string()),
+        ),
+        (Some(_), None, _, _) => (
+            ConnectionProviderScanStatus::VersionFailed,
+            Some("CLI binary resolved, but its bounded --version probe failed.".to_string()),
+        ),
+        (Some(_), Some(_), Some(digest), Some(bytes)) if is_sha256_hex(digest) && bytes > 0 => {
+            (ConnectionProviderScanStatus::Ready, None)
+        }
+        (Some(_), Some(_), _, _) => (
+            ConnectionProviderScanStatus::IdentityFailed,
+            Some(
+                "CLI version passed, but its exact executable hash/size probe failed.".to_string(),
+            ),
+        ),
+    }
+}
+
+fn connection_provider_capability_target(
+    preset: &ConnectionPreset,
+) -> ConnectionProviderCapabilityTarget {
+    match &preset.transport {
+        Transport::Local { .. } => {
+            let platform = std::env::consts::OS.to_string();
+            ConnectionProviderCapabilityTarget {
+                key: format!("local:{platform}"),
+                transport: "local".to_string(),
+                runtime: if cfg!(target_os = "windows") {
+                    "windows".to_string()
+                } else {
+                    "posix".to_string()
+                },
+                label: format!("Local {platform}"),
+                wsl_distro: None,
+                ssh_host: None,
+                ssh_port: None,
+            }
+        }
+        Transport::Wsl { distro, .. } => {
+            let distro = distro.trim().to_string();
+            ConnectionProviderCapabilityTarget {
+                key: format!("wsl:{}", distro.to_ascii_lowercase()),
+                transport: "wsl".to_string(),
+                runtime: "posix".to_string(),
+                label: format!("WSL {distro}"),
+                wsl_distro: Some(distro),
+                ssh_host: None,
+                ssh_port: None,
+            }
+        }
+        Transport::Ssh {
+            host,
+            port,
+            remote_runtime,
+            wsl_distro,
+            ..
+        } => {
+            let host = host.trim().to_string();
+            let port = port.unwrap_or(22);
+            let (runtime, runtime_label, distro_key) = match remote_runtime {
+                crate::acp::SshRemoteRuntime::Posix => ("posix", "POSIX", None),
+                crate::acp::SshRemoteRuntime::Windows => ("windows", "Windows", None),
+                crate::acp::SshRemoteRuntime::WindowsWsl => (
+                    "windows_wsl",
+                    "Windows WSL",
+                    wsl_distro
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_ascii_lowercase),
+                ),
+            };
+            let mut key = format!(
+                "ssh:{runtime}:{}:{port}",
+                normalized_ssh_target_destination(&host)
+            );
+            if let Some(distro) = distro_key {
+                key.push_str(":wsl=");
+                key.push_str(&distro);
+            }
+            ConnectionProviderCapabilityTarget {
+                key,
+                transport: "ssh".to_string(),
+                runtime: runtime.to_string(),
+                label: format!("SSH {runtime_label} {host}:{port}"),
+                wsl_distro: wsl_distro
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string),
+                ssh_host: Some(host),
+                ssh_port: Some(port),
+            }
+        }
+        Transport::WsDirect { .. } => unsupported_provider_capability_target("ws_direct"),
+        Transport::WsTunnel { .. } => unsupported_provider_capability_target("ws_tunnel"),
+        Transport::Tailscale { .. } => unsupported_provider_capability_target("tailscale"),
+    }
+}
+
+fn normalized_ssh_target_destination(destination: &str) -> String {
+    match destination.rsplit_once('@') {
+        Some((user, host)) => format!("{user}@{}", host.to_ascii_lowercase()),
+        None => destination.to_ascii_lowercase(),
+    }
+}
+
+fn unsupported_provider_capability_target(kind: &str) -> ConnectionProviderCapabilityTarget {
+    ConnectionProviderCapabilityTarget {
+        key: format!("unsupported:{kind}"),
+        transport: kind.to_string(),
+        runtime: "unsupported".to_string(),
+        label: format!("Unsupported {kind}"),
+        wsl_distro: None,
+        ssh_host: None,
+        ssh_port: None,
+    }
+}
+
+async fn scan_agent_binary_identity(
+    preset: &ConnectionPreset,
+    binary: &str,
+) -> Result<(String, u64), String> {
+    let output = match &preset.transport {
+        Transport::Local { .. } => {
+            let path = std::path::PathBuf::from(binary);
+            return tokio::task::spawn_blocking(move || hash_local_provider_binary(&path))
+                .await
+                .map_err(|error| format!("provider identity probe join failed: {error}"))?;
+        }
+        Transport::Wsl { distro, .. } => {
+            run_wsl_script(distro.trim(), &posix_provider_identity_script(binary)).await?
+        }
+        Transport::Ssh {
+            host,
+            port,
+            key_vault_ref,
+            remote_runtime,
+            wsl_distro,
+            ..
+        } => {
+            let key_path = resolve_ssh_key_path(key_vault_ref.as_deref()).await?;
+            run_ssh_script(
+                host,
+                *port,
+                key_path.as_deref(),
+                *remote_runtime,
+                wsl_distro.as_deref(),
+                &posix_provider_identity_script(binary),
+                &windows_provider_identity_script(binary),
+            )
+            .await?
+        }
+        Transport::WsDirect { .. } | Transport::WsTunnel { .. } | Transport::Tailscale { .. } => {
+            return Err("provider identity is unavailable for this transport".to_string())
+        }
+    };
+    parse_provider_binary_identity(&output)
+}
+
+async fn scan_agent_version(preset: &ConnectionPreset, binary: &str) -> Option<String> {
+    match &preset.transport {
+        Transport::Local { .. } => {
+            run_capture(binary, &["--version"], None, Duration::from_secs(5))
+                .await
+                .ok()
+                .and_then(first_output_line)
+        }
+        Transport::Wsl { distro, .. } => {
+            let script = format!(
+                "{} {} --version",
+                remote_shell_prelude(),
+                crate::acp::shell_quote_for_remote(binary)
+            );
+            run_wsl_script(distro.trim(), &script)
+                .await
+                .ok()
+                .and_then(first_output_line)
+        }
+        Transport::Ssh {
+            host,
+            port,
+            key_vault_ref,
+            remote_runtime,
+            wsl_distro,
+            ..
+        } => {
+            let key_path = resolve_ssh_key_path(key_vault_ref.as_deref()).await.ok()?;
+            let posix_script = format!(
+                "{} {} --version",
+                remote_shell_prelude(),
+                crate::acp::shell_quote_for_remote(binary)
+            );
+            let windows_script = format!(
+                "{} & {} --version;exit $LASTEXITCODE",
+                crate::acp::windows_remote_shell_prelude(),
+                crate::acp::powershell_single_quote(binary),
+            );
+            run_ssh_script(
+                host,
+                *port,
+                key_path.as_deref(),
+                *remote_runtime,
+                wsl_distro.as_deref(),
+                &posix_script,
+                &windows_script,
+            )
+            .await
+            .ok()
+            .and_then(first_output_line)
+        }
+        Transport::WsDirect { .. } | Transport::WsTunnel { .. } | Transport::Tailscale { .. } => {
+            None
+        }
+    }
+}
+
+fn hash_local_provider_binary(path: &std::path::Path) -> Result<(String, u64), String> {
+    use std::io::Read as _;
+
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("open provider binary {}: {error}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("stat provider binary {}: {error}", path.display()))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(format!(
+            "provider binary is not a non-empty file: {}",
+            path.display()
+        ));
+    }
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("read provider binary {}: {error}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok((format!("{:x}", hasher.finalize()), metadata.len()))
+}
+
+fn posix_provider_identity_script(path: &str) -> String {
+    let path = crate::acp::shell_quote_for_remote(path);
+    format!(
+        "p={path};test -f \"$p\" || exit 1;if command -v sha256sum >/dev/null 2>&1;then set -- $(sha256sum -- \"$p\");h=$1;elif command -v shasum >/dev/null 2>&1;then set -- $(shasum -a 256 -- \"$p\");h=$1;else exit 1;fi;b=$(wc -c < \"$p\" | tr -d '[:space:]');printf '%s %s\\n' \"$h\" \"$b\""
+    )
+}
+
+fn windows_provider_identity_script(path: &str) -> String {
+    let path = crate::acp::powershell_single_quote(path);
+    format!(
+        "{} $p={path};$item=Get-Item -LiteralPath $p -ErrorAction Stop;if($item.PSIsContainer -or $item.Length -le 0){{exit 1}};$hash=(Get-FileHash -LiteralPath $p -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant();[Console]::Out.WriteLine($hash+' '+$item.Length);exit 0",
+        crate::acp::windows_remote_shell_prelude(),
+    )
+}
+
+fn parse_provider_binary_identity(output: &str) -> Result<(String, u64), String> {
+    let mut fields = output.split_whitespace();
+    let sha256 = fields
+        .next()
+        .filter(|value| is_sha256_hex(value))
+        .ok_or_else(|| "provider identity probe did not return a SHA-256 digest".to_string())?;
+    let bytes = fields
+        .next()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "provider identity probe did not return a positive byte size".to_string())?;
+    if fields.next().is_some() {
+        return Err("provider identity probe returned unexpected trailing fields".to_string());
+    }
+    Ok((sha256.to_ascii_lowercase(), bytes))
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 async fn scan_local_agent(
     spec: &AgentScanSpec,
     configured_grok_path: Option<&str>,
-    _checked_at_ms: i64,
-) -> (Option<String>, Option<String>) {
+) -> Option<String> {
     let binary = if spec.id == "grok" {
-        configured_grok_path
+        match configured_grok_path
             .map(str::trim)
             .filter(|path| !path.is_empty())
-            .filter(|path| std::path::Path::new(path).exists())
-            .map(str::to_string)
-            .or_else(|| resolve_local_binary(spec.binary_names))
-            .or_else(default_local_grok_candidate)
+        {
+            Some(path) => std::path::Path::new(path)
+                .is_file()
+                .then(|| path.to_string()),
+            None => resolve_local_binary(spec.binary_names).or_else(default_local_grok_candidate),
+        }
     } else {
         resolve_local_binary(spec.binary_names)
-    };
-    let version = match binary.as_deref() {
-        Some(path) => run_capture(path, &["--version"], None, Duration::from_secs(5))
-            .await
+    }
+    .and_then(|path| {
+        std::fs::canonicalize(&path)
             .ok()
-            .and_then(first_output_line),
-        None => None,
-    };
-    (binary, version)
+            .map(|canonical| canonical.to_string_lossy().to_string())
+    });
+    binary
 }
 
 async fn scan_wsl_agent(
     spec: &AgentScanSpec,
     distro: &str,
     configured_grok_path: &str,
-    _checked_at_ms: i64,
-) -> (Option<String>, Option<String>) {
+) -> Option<String> {
     let distro = distro.trim();
     if distro.is_empty() {
-        return (None, None);
+        return None;
     }
     let binary = if spec.id == "grok" {
         let configured = configured_grok_path.trim();
         let script = if configured.is_empty() {
             remote_command_find_binary(spec.binary_names)
         } else {
-            format!(
-                "if [ -x {path} ]; then printf '%s\\n' {path}; else {fallback}; fi",
-                path = crate::acp::shell_quote_for_remote(configured),
-                fallback = remote_command_find_binary(spec.binary_names),
-            )
+            remote_posix_command_find_configured_binary(configured)
         };
         run_wsl_script(distro, &script)
             .await
@@ -555,21 +1019,7 @@ async fn scan_wsl_agent(
             .ok()
             .and_then(first_output_line)
     };
-    let version = match binary.as_deref() {
-        Some(path) => {
-            let script = format!(
-                "{} {} --version",
-                remote_shell_prelude(),
-                crate::acp::shell_quote_for_remote(path)
-            );
-            run_wsl_script(distro, &script)
-                .await
-                .ok()
-                .and_then(first_output_line)
-        }
-        None => None,
-    };
-    (binary, version)
+    binary
 }
 
 async fn scan_ssh_agent(
@@ -578,56 +1028,83 @@ async fn scan_ssh_agent(
     port: Option<u16>,
     key_vault_ref: Option<&str>,
     remote_grok_path: &str,
-    _checked_at_ms: i64,
-) -> (Option<String>, Option<String>) {
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    wsl_distro: Option<&str>,
+) -> Option<String> {
     if validate_ssh_destination_arg(host).is_err() {
-        return (None, None);
+        return None;
     }
     let key_path = match resolve_ssh_key_path(key_vault_ref).await {
         Ok(path) => path,
-        Err(_) => return (None, None),
+        Err(_) => return None,
     };
+    let windows_find = remote_windows_command_find_binary(spec.binary_names);
     let binary = if spec.id == "grok" {
         let configured = remote_grok_path.trim();
         let script = if configured.is_empty() {
             remote_command_find_binary(spec.binary_names)
         } else {
-            format!(
-                "if command -v {path} >/dev/null 2>&1; then command -v {path}; elif [ -x {path} ]; then printf '%s\\n' {path}; else {fallback}; fi",
-                path = crate::acp::shell_quote_for_remote(configured),
-                fallback = remote_command_find_binary(spec.binary_names),
-            )
+            remote_posix_command_find_configured_binary(configured)
         };
-        run_ssh_script(host, port, key_path.as_deref(), &script)
-            .await
-            .ok()
-            .and_then(first_output_line)
+        let windows_script = if configured.is_empty() {
+            windows_find.clone()
+        } else {
+            remote_windows_command_find_configured_binary(configured)
+        };
+        run_ssh_script(
+            host,
+            port,
+            key_path.as_deref(),
+            remote_runtime,
+            wsl_distro,
+            &script,
+            &windows_script,
+        )
+        .await
+        .ok()
+        .and_then(first_output_line)
     } else {
         run_ssh_script(
             host,
             port,
             key_path.as_deref(),
+            remote_runtime,
+            wsl_distro,
             &remote_command_find_binary(spec.binary_names),
+            &windows_find,
         )
         .await
         .ok()
         .and_then(first_output_line)
     };
-    let version = match binary.as_deref() {
-        Some(path) => {
-            let script = format!(
-                "{} {} --version",
-                remote_shell_prelude(),
-                crate::acp::shell_quote_for_remote(path)
-            );
-            run_ssh_script(host, port, key_path.as_deref(), &script)
-                .await
-                .ok()
-                .and_then(first_output_line)
-        }
-        None => None,
-    };
-    (binary, version)
+    binary
+}
+
+fn remote_posix_command_find_configured_binary(path: &str) -> String {
+    let path = crate::acp::shell_quote_for_remote(path);
+    format!(
+        "if command -v {path} >/dev/null 2>&1; then command -v {path}; elif [ -x {path} ] && [ -f {path} ]; then printf '%s\\n' {path}; else exit 1; fi"
+    )
+}
+
+fn remote_windows_command_find_configured_binary(path: &str) -> String {
+    let path = crate::acp::powershell_single_quote(path);
+    format!(
+        "{} $p={path};$c=Get-Command -Name $p -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1;if($c){{[Console]::Out.WriteLine($c.Source);exit 0}};if(Test-Path -LiteralPath $p -PathType Leaf){{[Console]::Out.WriteLine((Resolve-Path -LiteralPath $p).Path);exit 0}};exit 1",
+        crate::acp::windows_remote_shell_prelude(),
+    )
+}
+
+fn remote_windows_command_find_binary(names: &[&str]) -> String {
+    let names = names
+        .iter()
+        .map(|name| crate::acp::powershell_single_quote(name))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{} foreach($n in @({names})){{$c=Get-Command -Name $n -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1;if($c){{[Console]::Out.WriteLine($c.Source);exit 0}}}};exit 1",
+        crate::acp::windows_remote_shell_prelude(),
+    )
 }
 
 fn remote_command_find_binary(names: &[&str]) -> String {
@@ -644,7 +1121,7 @@ fn remote_command_find_binary(names: &[&str]) -> String {
 }
 
 fn remote_shell_prelude() -> &'static str {
-    "export PATH=\"$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$HOME/.claude/bin:$HOME/.grok/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; if [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1; fi;"
+    crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE
 }
 
 async fn run_wsl_script(distro: &str, script: &str) -> Result<String, String> {
@@ -669,7 +1146,10 @@ async fn run_ssh_script(
     host: &str,
     port: Option<u16>,
     key_path: Option<&str>,
-    script: &str,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    wsl_distro: Option<&str>,
+    posix_script: &str,
+    windows_script: &str,
 ) -> Result<String, String> {
     let mut args = vec![
         "-o".to_string(),
@@ -688,10 +1168,16 @@ async fn run_ssh_script(
     }
     args.push("--".to_string());
     args.push(host.to_string());
-    args.push(format!(
-        "bash -lc {}",
-        crate::acp::shell_quote_for_remote(script)
-    ));
+    let remote_command = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        crate::acp::wrap_ssh_windows_command(windows_script)
+    } else {
+        let posix_command = format!(
+            "bash -lc {}",
+            crate::acp::shell_quote_for_remote(posix_script)
+        );
+        crate::acp::wrap_ssh_posix_command(remote_runtime, wsl_distro, &posix_command)?
+    };
+    args.push(remote_command);
     run_capture(
         "ssh",
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -705,10 +1191,8 @@ async fn resolve_ssh_key_path(key_vault_ref: Option<&str>) -> Result<Option<Stri
     let Some(key) = key_vault_ref.map(str::trim).filter(|key| !key.is_empty()) else {
         return Ok(None);
     };
-    let vault =
-        crate::vault::Vault::open().map_err(|e| format!("open vault for SSH key {key}: {e}"))?;
-    let value = vault
-        .get(key)
+    let backend = crate::shellx_vault::shared_backend();
+    let value = crate::shellx_vault::resolve_internal_secret(&backend, key)
         .await
         .map_err(|e| format!("read SSH key vault ref {key}: {e}"))?
         .ok_or_else(|| format!("SSH key vault ref {key} is not set"))?;
@@ -744,30 +1228,46 @@ async fn run_capture(
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();
     let stdout_task = tokio::spawn(async move {
-        let mut out = Vec::new();
-        if let Some(mut pipe) = stdout_pipe {
-            let _ = pipe.read_to_end(&mut out).await;
+        if let Some(pipe) = stdout_pipe {
+            crate::process_output::drain_stream_tail_bounded(
+                pipe,
+                crate::process_output::COMMAND_STREAM_CAPTURE_BYTES,
+            )
+            .await
+            .map(|capture| capture.into_lossy_string())
+        } else {
+            Ok(String::new())
         }
-        out
     });
     let stderr_task = tokio::spawn(async move {
-        let mut out = Vec::new();
-        if let Some(mut pipe) = stderr_pipe {
-            let _ = pipe.read_to_end(&mut out).await;
+        if let Some(pipe) = stderr_pipe {
+            crate::process_output::drain_stream_tail_bounded(
+                pipe,
+                crate::process_output::COMMAND_STREAM_CAPTURE_BYTES,
+            )
+            .await
+            .map(|capture| capture.into_lossy_string())
+        } else {
+            Ok(String::new())
         }
-        out
     });
     let status = tokio::select! {
         status = child.wait() => status.map_err(|e| format!("wait {program}: {e}"))?,
         _ = tokio::time::sleep(timeout) => {
             let _ = child.kill().await;
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
             return Err(format!("timeout running {program}"));
         }
     };
-    let stdout = stdout_task.await.unwrap_or_default();
-    let stderr = stderr_task.await.unwrap_or_default();
-    let stdout_text = String::from_utf8_lossy(&stdout).to_string();
-    let stderr_text = String::from_utf8_lossy(&stderr).to_string();
+    let stdout_text = stdout_task
+        .await
+        .map_err(|error| format!("join {program} stdout reader: {error}"))?
+        .map_err(|error| format!("read {program} stdout: {error}"))?;
+    let stderr_text = stderr_task
+        .await
+        .map_err(|error| format!("join {program} stderr reader: {error}"))?
+        .map_err(|error| format!("read {program} stderr: {error}"))?;
     if !status.success() {
         let err = stderr_text.trim().to_string();
         return Err(if err.is_empty() {
@@ -791,28 +1291,7 @@ fn first_output_line(output: String) -> Option<String> {
 }
 
 fn resolve_local_binary(names: &[&str]) -> Option<String> {
-    for name in names {
-        let raw = std::path::PathBuf::from(name);
-        if raw.components().count() > 1 && raw.exists() {
-            return Some(raw.to_string_lossy().to_string());
-        }
-        if let Some(path_var) = std::env::var_os("PATH") {
-            for dir in std::env::split_paths(&path_var) {
-                let candidate = dir.join(name);
-                if candidate.exists() {
-                    return Some(candidate.to_string_lossy().to_string());
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    let exe = dir.join(format!("{name}.exe"));
-                    if exe.exists() {
-                        return Some(exe.to_string_lossy().to_string());
-                    }
-                }
-            }
-        }
-    }
-    None
+    crate::provider_runtime::resolve_local_binary(names)
 }
 
 fn default_local_grok_candidate() -> Option<String> {
@@ -972,17 +1451,47 @@ fn validate_transport(transport: &Transport) -> Result<(), String> {
     if let Transport::Ssh {
         host,
         remote_grok_path,
+        remote_runtime,
+        wsl_distro,
         ..
     } = transport
     {
         validate_ssh_destination_arg(host).map_err(|e| format!("connections.save: {}", e))?;
-        validate_remote_grok_path_arg(remote_grok_path)
+        validate_remote_grok_path_arg(remote_grok_path, *remote_runtime)
             .map_err(|e| format!("connections.save: {}", e))?;
+        match remote_runtime {
+            crate::acp::SshRemoteRuntime::WindowsWsl => {
+                crate::acp::validate_ssh_wsl_distro_arg(wsl_distro.as_deref())
+                    .map_err(|e| format!("connections.save: {}", e))?;
+            }
+            crate::acp::SshRemoteRuntime::Windows
+                if wsl_distro
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty()) =>
+            {
+                return Err(
+                    "connections.save: wslDistro must be empty for native Windows SSH".to_string(),
+                );
+            }
+            crate::acp::SshRemoteRuntime::Posix
+                if wsl_distro
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty()) =>
+            {
+                return Err(
+                    "connections.save: wslDistro is only valid for Windows + WSL SSH".to_string(),
+                );
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
 
-fn validate_remote_grok_path_arg(remote_grok_path: &str) -> Result<(), String> {
+fn validate_remote_grok_path_arg(
+    remote_grok_path: &str,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+) -> Result<(), String> {
     let trimmed = remote_grok_path.trim();
     if trimmed.is_empty() {
         return Err("remote_grok_path cannot be empty".to_string());
@@ -999,7 +1508,34 @@ fn validate_remote_grok_path_arg(remote_grok_path: &str) -> Result<(), String> {
     {
         return Err("remote_grok_path cannot contain shell metacharacters".to_string());
     }
-    Ok(())
+    let bare_command = !trimmed.contains(['/', '\\', ':']);
+    if bare_command {
+        if trimmed.chars().any(char::is_whitespace) {
+            return Err("remote_grok_path command name cannot contain whitespace".to_string());
+        }
+        return Ok(());
+    }
+    let bytes = trimmed.as_bytes();
+    let windows_absolute = trimmed.starts_with("\\\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/'));
+    match remote_runtime {
+        crate::acp::SshRemoteRuntime::Windows if !windows_absolute => Err(
+            "remote_grok_path must be a bare command or absolute Windows path for native Windows SSH"
+                .to_string(),
+        ),
+        crate::acp::SshRemoteRuntime::Posix | crate::acp::SshRemoteRuntime::WindowsWsl
+            if !trimmed.starts_with('/') =>
+        {
+            Err(
+                "remote_grok_path must be a bare command or absolute POSIX path for POSIX/Windows + WSL SSH"
+                    .to_string(),
+            )
+        }
+        _ => Ok(()),
+    }
 }
 
 fn now_ms() -> i64 {
@@ -1019,14 +1555,31 @@ fn _unused_hashmap() -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ops::Deref;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     static COUNTER: AtomicU32 = AtomicU32::new(0);
 
+    struct TempConnectionStore(ConnectionStore);
+
+    impl Deref for TempConnectionStore {
+        type Target = ConnectionStore;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl Drop for TempConnectionStore {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0.path);
+        }
+    }
+
     /// Each test gets its own connections.json path so the global file
     /// in $HOME isn't touched. The Mutex around state is local to the
     /// instance, so concurrent tests are isolated.
-    fn temp_store() -> ConnectionStore {
+    fn temp_store() -> TempConnectionStore {
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
             "grok-shell-connections-test-{}-{}.json",
@@ -1034,10 +1587,10 @@ mod tests {
             n
         ));
         let _ = std::fs::remove_file(&path);
-        ConnectionStore {
+        TempConnectionStore(ConnectionStore {
             path,
             state: Mutex::new(vec![]),
-        }
+        })
     }
 
     fn temp_connections_root() -> std::path::PathBuf {
@@ -1164,6 +1717,8 @@ mod tests {
                 port: None,
                 key_vault_ref: None,
                 remote_grok_path: "grok".to_string(),
+                remote_runtime: crate::acp::SshRemoteRuntime::Posix,
+                wsl_distro: None,
             },
         );
         let err = store.save(p).await.expect_err("ssh option host rejected");
@@ -1180,6 +1735,8 @@ mod tests {
                 port: None,
                 key_vault_ref: None,
                 remote_grok_path: "-oProxyCommand=calc".to_string(),
+                remote_runtime: crate::acp::SshRemoteRuntime::Posix,
+                wsl_distro: None,
             },
         );
         let err = store
@@ -1190,6 +1747,417 @@ mod tests {
             err.contains("remote_grok_path") && err.contains("cannot start with '-'"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn save_rejects_wsl_distro_on_native_windows_runtime() {
+        let store = temp_store();
+        let p = ConnectionPreset::new(
+            "windows ssh".to_string(),
+            Transport::Ssh {
+                host: "user@windows-host".to_string(),
+                port: None,
+                key_vault_ref: None,
+                remote_grok_path: r"C:\Users\FixtureUser\.grok\bin\grok.exe".to_string(),
+                remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+                wsl_distro: Some("Ubuntu".to_string()),
+            },
+        );
+        let err = store
+            .save(p)
+            .await
+            .expect_err("native Windows runtime must reject a WSL distro");
+        assert!(err.contains("wslDistro must be empty"));
+    }
+
+    #[test]
+    fn native_windows_agent_discovery_uses_get_command_and_bounded_names() {
+        let script = remote_windows_command_find_binary(&["codex.exe", "codex"]);
+        assert!(script.contains("Get-Command"));
+        assert!(script.contains("'codex.exe','codex'"));
+        assert!(script.contains("$env:APPDATA"));
+        assert!(!script.contains("bash"));
+    }
+
+    #[test]
+    fn configured_grok_discovery_never_falls_back_to_another_binary() {
+        let windows =
+            remote_windows_command_find_configured_binary(r"C:\Users\Fixture\.grok\bin\grok.exe");
+        assert!(windows.contains(r"C:\Users\Fixture\.grok\bin\grok.exe"));
+        assert!(windows.ends_with("exit 1"));
+        assert_eq!(windows.matches("Get-Command").count(), 1);
+        assert!(!windows.contains("foreach($n"));
+
+        let posix = remote_posix_command_find_configured_binary("/home/fixture/.grok/bin/grok");
+        assert!(posix.contains("/home/fixture/.grok/bin/grok"));
+        assert!(posix.ends_with("exit 1; fi"));
+        assert!(!posix.contains("$HOME/.grok/bin"));
+    }
+
+    #[test]
+    fn remote_grok_path_must_match_the_explicit_ssh_runtime_frame() {
+        assert!(validate_remote_grok_path_arg(
+            r"C:\Users\Fixture\.grok\bin\grok.exe",
+            crate::acp::SshRemoteRuntime::Windows,
+        )
+        .is_ok());
+        assert!(validate_remote_grok_path_arg(
+            "/home/fixture/.grok/bin/grok",
+            crate::acp::SshRemoteRuntime::WindowsWsl,
+        )
+        .is_ok());
+        assert!(
+            validate_remote_grok_path_arg("grok", crate::acp::SshRemoteRuntime::Windows,).is_ok()
+        );
+        assert!(validate_remote_grok_path_arg(
+            "/home/fixture/.grok/bin/grok",
+            crate::acp::SshRemoteRuntime::Windows,
+        )
+        .unwrap_err()
+        .contains("absolute Windows"));
+        assert!(validate_remote_grok_path_arg(
+            r"C:\Users\Fixture\.grok\bin\grok.exe",
+            crate::acp::SshRemoteRuntime::WindowsWsl,
+        )
+        .unwrap_err()
+        .contains("absolute POSIX"));
+        assert!(validate_remote_grok_path_arg(
+            "relative/.grok/bin/grok",
+            crate::acp::SshRemoteRuntime::Posix,
+        )
+        .unwrap_err()
+        .contains("absolute POSIX"));
+    }
+
+    #[tokio::test]
+    async fn save_rejects_wsl_distro_on_posix_ssh_runtime() {
+        let store = temp_store();
+        let preset = ConnectionPreset::new(
+            "POSIX SSH".to_string(),
+            Transport::Ssh {
+                host: "user@example.test".to_string(),
+                port: None,
+                key_vault_ref: None,
+                remote_grok_path: "grok".to_string(),
+                remote_runtime: crate::acp::SshRemoteRuntime::Posix,
+                wsl_distro: Some("Ubuntu".to_string()),
+            },
+        );
+        let error = store
+            .save(preset)
+            .await
+            .expect_err("POSIX SSH must not retain a Windows WSL distro");
+        assert!(error.contains("only valid for Windows + WSL"));
+    }
+
+    #[test]
+    fn capability_target_keys_distinguish_native_windows_windows_wsl_and_posix_ssh() {
+        let make = |runtime, distro: Option<&str>| {
+            ConnectionPreset::new(
+                "target".to_string(),
+                Transport::Ssh {
+                    host: "User@Example.test".to_string(),
+                    port: Some(2222),
+                    key_vault_ref: Some("ssh/test".to_string()),
+                    remote_grok_path: "grok".to_string(),
+                    remote_runtime: runtime,
+                    wsl_distro: distro.map(str::to_string),
+                },
+            )
+        };
+        let posix =
+            connection_provider_capability_target(&make(crate::acp::SshRemoteRuntime::Posix, None));
+        let windows = connection_provider_capability_target(&make(
+            crate::acp::SshRemoteRuntime::Windows,
+            None,
+        ));
+        let windows_wsl = connection_provider_capability_target(&make(
+            crate::acp::SshRemoteRuntime::WindowsWsl,
+            Some("Ubuntu-24.04"),
+        ));
+
+        assert_eq!(posix.key, "ssh:posix:User@example.test:2222");
+        assert_eq!(windows.key, "ssh:windows:User@example.test:2222");
+        assert_eq!(
+            windows_wsl.key,
+            "ssh:windows_wsl:User@example.test:2222:wsl=ubuntu-24.04"
+        );
+        assert_eq!(windows.runtime, "windows");
+        assert_eq!(windows_wsl.runtime, "windows_wsl");
+        assert_ne!(posix.key, windows.key);
+        assert_ne!(windows.key, windows_wsl.key);
+        assert!(
+            !windows.key.contains("ssh/test"),
+            "target key must not expose the Vault key reference"
+        );
+    }
+
+    #[test]
+    fn capability_snapshot_reports_typed_probe_state_and_freshness() {
+        let preset =
+            ConnectionPreset::new("local".to_string(), Transport::Local { grok_path: None });
+        let (status, detail) =
+            connection_provider_scan_status(Some("/bin/codex"), None, None, None);
+        assert_eq!(status, ConnectionProviderScanStatus::VersionFailed);
+        assert!(detail
+            .as_deref()
+            .is_some_and(|value| value.contains("--version")));
+        let target = connection_provider_capability_target(&preset);
+        let snapshot = connection_provider_capability_snapshot_from_parts(
+            &preset,
+            vec![ConnectionProviderScanEntry {
+                provider_id: "codex-cli".to_string(),
+                can_run: true,
+                status,
+                binary: Some("/bin/codex".to_string()),
+                version: None,
+                binary_sha256: None,
+                binary_bytes: None,
+                target_key: target.key.clone(),
+                detail,
+                checked_at_ms: 1_780_000_030_000,
+            }],
+            1_780_000_040_000,
+        );
+
+        assert_eq!(snapshot.schema_version, PROVIDER_CAPABILITY_SCHEMA_VERSION);
+        assert_eq!(snapshot.generated_at_ms, 1_780_000_040_000);
+        assert_eq!(snapshot.fresh_until_ms, 1_780_000_100_000);
+        assert_eq!(snapshot.providers[0].target_key, snapshot.target.key);
+        assert_eq!(
+            snapshot.providers[0].status,
+            ConnectionProviderScanStatus::VersionFailed
+        );
+    }
+
+    #[test]
+    fn capability_scan_requires_exact_binary_identity_before_ready() {
+        let digest = "a".repeat(64);
+        let (ready, ready_detail) = connection_provider_scan_status(
+            Some("/bin/codex"),
+            Some("codex 1.2.3"),
+            Some(&digest),
+            Some(4096),
+        );
+        assert_eq!(ready, ConnectionProviderScanStatus::Ready);
+        assert!(ready_detail.is_none());
+
+        let (failed, detail) =
+            connection_provider_scan_status(Some("/bin/codex"), Some("codex 1.2.3"), None, None);
+        assert_eq!(failed, ConnectionProviderScanStatus::IdentityFailed);
+        assert!(detail
+            .as_deref()
+            .is_some_and(|value| value.contains("hash/size")));
+    }
+
+    #[test]
+    fn binary_identity_parser_rejects_partial_or_trailing_output() {
+        let digest = "b".repeat(64);
+        assert_eq!(
+            parse_provider_binary_identity(&format!("{digest} 123\n")),
+            Ok((digest.clone(), 123)),
+        );
+        assert!(parse_provider_binary_identity(&digest).is_err());
+        assert!(parse_provider_binary_identity(&format!("{digest} 0")).is_err());
+        assert!(parse_provider_binary_identity(&format!("{digest} 123 extra")).is_err());
+    }
+
+    #[test]
+    fn local_binary_identity_streams_exact_file_hash_and_size() {
+        let root = temp_connections_root();
+        std::fs::create_dir_all(&root).expect("create provider fixture root");
+        let path = root.join("provider-fixture.bin");
+        std::fs::write(&path, b"abc").expect("write provider fixture");
+        let identity = hash_local_provider_binary(&path).expect("hash provider fixture");
+        assert_eq!(
+            identity,
+            (
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_string(),
+                3,
+            )
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_capability_refresh_observes_replaced_version_and_identity() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = temp_connections_root();
+        std::fs::create_dir_all(&root).expect("create provider refresh fixture root");
+        let binary = root.join("grok");
+        let write_version = |version: &str| {
+            std::fs::write(
+                &binary,
+                format!("#!/bin/sh\n[ \"$1\" = \"--version\" ] || exit 64\nprintf '%s\\n' 'grok {version}'\n"),
+            )
+            .expect("write provider refresh fixture");
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))
+                .expect("make provider refresh fixture executable");
+        };
+        write_version("fixture-1.0.0");
+        let preset = ConnectionPreset::new(
+            "owned refresh".to_string(),
+            Transport::Local {
+                grok_path: Some(binary.to_string_lossy().to_string()),
+            },
+        );
+        let first = scan_connection_provider_capabilities(&preset)
+            .await
+            .expect("first exact-target capability scan");
+        write_version("fixture-2.0.0");
+        let second = scan_connection_provider_capabilities(&preset)
+            .await
+            .expect("second exact-target capability scan");
+        let first_grok = first
+            .providers
+            .iter()
+            .find(|row| row.provider_id == "grok")
+            .unwrap();
+        let second_grok = second
+            .providers
+            .iter()
+            .find(|row| row.provider_id == "grok")
+            .unwrap();
+        assert_eq!(first_grok.version.as_deref(), Some("grok fixture-1.0.0"));
+        assert_eq!(second_grok.version.as_deref(), Some("grok fixture-2.0.0"));
+        assert_eq!(second_grok.status, ConnectionProviderScanStatus::Ready);
+        assert_ne!(first_grok.binary_sha256, second_grok.binary_sha256);
+        assert!(first_grok.binary_bytes.is_some_and(|bytes| bytes > 0));
+        assert_eq!(first_grok.binary_bytes, second_grok.binary_bytes);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn capability_target_errors_distinguish_auth_runtime_and_reachability() {
+        let preset = ConnectionPreset::new(
+            "ssh".to_string(),
+            Transport::Ssh {
+                host: "host.example".to_string(),
+                port: None,
+                key_vault_ref: None,
+                remote_grok_path: "grok".to_string(),
+                remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+                wsl_distro: None,
+            },
+        );
+        assert_eq!(
+            connection_provider_target_error_status(&preset, "Permission denied (publickey)"),
+            Some(ConnectionProviderScanStatus::AuthNeeded)
+        );
+        assert_eq!(
+            connection_provider_target_error_status(
+                &preset,
+                "Native Windows SSH runtime probe failed"
+            ),
+            Some(ConnectionProviderScanStatus::CanaryFailed)
+        );
+        assert_eq!(
+            connection_provider_target_error_status(&preset, "connection timed out"),
+            Some(ConnectionProviderScanStatus::TargetUnavailable)
+        );
+        assert_eq!(
+            connection_provider_target_error_status(
+                &preset,
+                "SSH key Vault ref connections.key is not set"
+            ),
+            None
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST with Grok installed in the Windows user profile"]
+    async fn live_native_windows_provider_scan_resolves_user_bin_grok() {
+        let host =
+            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
+        let preset = ConnectionPreset::new(
+            "native Windows live scan".to_string(),
+            Transport::Ssh {
+                host,
+                port: None,
+                key_vault_ref: None,
+                remote_grok_path: "grok".to_string(),
+                remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+                wsl_distro: None,
+            },
+        );
+
+        let providers = scan_connection_providers(&preset)
+            .await
+            .expect("native Windows provider scan");
+        let grok = providers
+            .iter()
+            .find(|entry| entry.provider_id == "grok")
+            .expect("Grok scan entry");
+        let binary = grok.binary.as_deref().expect("native Windows Grok binary");
+        let normalized = binary.replace('/', "\\").to_ascii_lowercase();
+
+        assert!(grok.can_run, "{grok:?}");
+        assert_eq!(grok.status, ConnectionProviderScanStatus::Ready, "{grok:?}");
+        assert!(
+            normalized.ends_with(r"\.grok\bin\grok.exe"),
+            "unexpected Grok binary: {binary}"
+        );
+        assert!(
+            grok.version
+                .as_deref()
+                .is_some_and(|version| { version.to_ascii_lowercase().starts_with("grok ") }),
+            "{grok:?}"
+        );
+        assert!(
+            grok.binary_sha256.as_deref().is_some_and(is_sha256_hex),
+            "{grok:?}"
+        );
+        assert!(grok.binary_bytes.is_some_and(|bytes| bytes > 0), "{grok:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST, SHELLX_WINDOWS_SSH_WSL_DISTRO, and Windows/WSL loopback reachability"]
+    async fn live_windows_wsl_provider_scan_resolves_distro_grok() {
+        let host =
+            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
+        let distro = std::env::var("SHELLX_WINDOWS_SSH_WSL_DISTRO")
+            .expect("SHELLX_WINDOWS_SSH_WSL_DISTRO is required");
+        let preset = ConnectionPreset::new(
+            "Windows WSL live scan".to_string(),
+            Transport::Ssh {
+                host,
+                port: None,
+                key_vault_ref: None,
+                remote_grok_path: "grok".to_string(),
+                remote_runtime: crate::acp::SshRemoteRuntime::WindowsWsl,
+                wsl_distro: Some(distro.clone()),
+            },
+        );
+
+        let providers = scan_connection_providers(&preset)
+            .await
+            .expect("Windows WSL provider scan");
+        let grok = providers
+            .iter()
+            .find(|entry| entry.provider_id == "grok")
+            .expect("Grok scan entry");
+
+        assert_eq!(
+            connection_provider_capability_target(&preset).runtime,
+            "windows_wsl"
+        );
+        assert_eq!(
+            connection_provider_capability_target(&preset)
+                .wsl_distro
+                .as_deref(),
+            Some(distro.as_str())
+        );
+        assert_eq!(grok.status, ConnectionProviderScanStatus::Ready, "{grok:?}");
+        assert!(
+            grok.version
+                .as_deref()
+                .is_some_and(|version| version.to_ascii_lowercase().starts_with("grok ")),
+            "{grok:?}"
+        );
+        assert!(grok.binary_sha256.as_deref().is_some_and(is_sha256_hex));
+        assert!(grok.binary_bytes.is_some_and(|bytes| bytes > 0));
     }
 
     #[test]
@@ -1226,8 +2194,13 @@ mod tests {
         p.provider_scan.push(ConnectionProviderScanEntry {
             provider_id: "codex-cli".to_string(),
             can_run: true,
+            status: ConnectionProviderScanStatus::Ready,
             binary: Some("/usr/bin/codex".to_string()),
             version: Some("codex-cli 0.136.0".to_string()),
+            binary_sha256: Some("c".repeat(64)),
+            binary_bytes: Some(4096),
+            target_key: "local:linux".to_string(),
+            detail: None,
             checked_at_ms: 1_780_000_000_000,
         });
         let saved = store.save(p).await.expect("save ok");
@@ -1252,8 +2225,13 @@ mod tests {
                 vec![ConnectionProviderScanEntry {
                     provider_id: "claude-code".to_string(),
                     can_run: true,
+                    status: ConnectionProviderScanStatus::Ready,
                     binary: Some("/usr/bin/claude".to_string()),
                     version: Some("claude 2.1.162".to_string()),
+                    binary_sha256: Some("d".repeat(64)),
+                    binary_bytes: Some(8192),
+                    target_key: "local:linux".to_string(),
+                    detail: None,
                     checked_at_ms: 1_780_000_000_001,
                 }],
             )

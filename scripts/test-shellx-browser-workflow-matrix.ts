@@ -1,10 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { Socket } from "node:net";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { shellxDataPaths } from "./shellx-debug-paths";
+import { cleanupOwnedBrowserLifecycle } from "./shellx-browser-test-cleanup";
+import { resolveShellxDebugApiConnection } from "./shellx-debug-paths";
 
 type JsonObject = Record<string, unknown>;
 type AgentName = "codex" | "claude" | "grok";
@@ -37,6 +37,7 @@ interface BrowserState {
 interface BrowserActionResponse {
   ok: boolean;
   status: string;
+  requiredApproval?: string | null;
   message?: string | null;
   currentUrl?: string | null;
 }
@@ -123,33 +124,8 @@ function matrixAgents(): AgentName[] {
   return Array.from(new Set(agents));
 }
 
-function readFirst(paths: string[]): string | null {
-  for (const path of paths) {
-    if (!existsSync(path)) continue;
-    const value = readFileSync(path, "utf8").trim();
-    if (value) return value;
-  }
-  return null;
-}
-
-function debugBase(): DebugContext {
-  const explicitBase = process.env.SHELLX_DEBUG_BASE?.trim();
-  const port = process.env.SHELLX_DEBUG_PORT?.trim()
-    ?? readFirst(shellxDataPaths("debug-api.port"));
-  const token = process.env.SHELLX_DEBUG_SECRET?.trim()
-    ?? process.env.SHELLX_DEBUG_TOKEN?.trim()
-    ?? readFirst(shellxDataPaths("shellxagent.token"))
-    ?? readFirst(shellxDataPaths("debug.token"));
-  if (!explicitBase && !port) {
-    throw new Error("ShellX debug API port not found. Start ShellX or set SHELLX_DEBUG_BASE.");
-  }
-  if (!token) {
-    throw new Error("ShellX debug API token not found. Start ShellX or set SHELLX_DEBUG_SECRET.");
-  }
-  return {
-    base: explicitBase ?? `http://127.0.0.1:${port}`,
-    token,
-  };
+async function debugBase(): Promise<DebugContext> {
+  return resolveShellxDebugApiConnection();
 }
 
 function assert(cond: boolean, message: string): void {
@@ -220,13 +196,6 @@ async function api<T>(ctx: DebugContext, method: string, path: string, body?: un
   }
 }
 
-async function closeAllBrowserTabs(ctx: DebugContext): Promise<void> {
-  const state = await api<BrowserState>(ctx, "GET", "/browser/state").catch(() => null);
-  for (const tab of state?.tabs ?? []) {
-    await api<JsonObject>(ctx, "POST", "/browser/tabs/close", { browserTabId: tab.browserTabId }).catch(() => undefined);
-  }
-}
-
 async function closeServer(server: Server, sockets: Set<Socket>): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     for (const socket of sockets) socket.destroy();
@@ -290,7 +259,12 @@ async function waitForBrowserEngine(ctx: DebugContext, expectedUrl: string, task
   }, 20_000, 350);
 }
 
-async function startTask(ctx: DebugContext, fixture: Fixture, goal: string): Promise<BrowserTask> {
+async function startTask(
+  ctx: DebugContext,
+  fixture: Fixture,
+  goal: string,
+  taskIds: Set<string>,
+): Promise<BrowserTask> {
   const task = await api<BrowserTask>(ctx, "POST", "/browser/task/start", {
     goal,
     startUrl: fixture.blankUrl,
@@ -298,6 +272,7 @@ async function startTask(ctx: DebugContext, fixture: Fixture, goal: string): Pro
     autonomy: "assistedAutonomous",
     expectedDomains: ["127.0.0.1"],
   });
+  taskIds.add(task.taskId);
   await waitForBrowserEngine(ctx, fixture.blankUrl, task.taskId);
   return task;
 }
@@ -311,7 +286,10 @@ async function browserAction(ctx: DebugContext, taskId: string, body: JsonObject
 
 async function applied(ctx: DebugContext, taskId: string, body: JsonObject, label: string): Promise<void> {
   const result = await browserAction(ctx, taskId, body);
-  assert(result.status === "applied", label);
+  assert(
+    result.status === "applied",
+    `${label}: ${JSON.stringify({ status: result.status, requiredApproval: result.requiredApproval, message: result.message })}`,
+  );
   if (body.action === "navigate" && typeof body.url === "string") {
     await waitForBrowserEngine(ctx, body.url, taskId);
   }
@@ -347,9 +325,9 @@ async function recordOnboardingWorkflow(ctx: DebugContext, fixture: Fixture, tas
     [{ action: "fillRef", selector: "[data-testid=team-name]", value: "Claude Code" }, "agent fills team name"],
     [{ action: "fillRef", selector: "[data-testid=project-name]", value: "Workflow benchmark" }, "agent fills project name"],
     [{ action: "select", selector: "[data-testid=project-type]", value: "automation" }, "agent selects project type"],
-    [{ action: "clickRef", selector: "[data-testid=submit-onboarding]" }, "agent submits onboarding form"],
-    [{ action: "waitFor", value: "Onboarding submitted", timeoutMs: 5_000 }, "agent waits for onboarding submission"],
-    [{ action: "verify", key: "text", value: "Onboarding submitted" }, "agent verifies onboarding completion"],
+    [{ action: "clickRef", selector: "[data-testid=preview-onboarding]" }, "agent previews onboarding form"],
+    [{ action: "waitFor", value: "Onboarding preview ready", timeoutMs: 5_000 }, "agent waits for onboarding preview"],
+    [{ action: "verify", key: "text", value: "Onboarding preview ready" }, "agent verifies onboarding preview"],
   ];
   for (const [body, label] of actions) await applied(ctx, taskId, body, label);
   return actions.length;
@@ -382,8 +360,8 @@ async function completeReplayFollowUp(
       await applied(ctx, taskId, { action: "fillRef", selector: "[data-testid=team-name]", value: "Claude Code" }, "consumer binds skipped team name");
       await applied(ctx, taskId, { action: "fillRef", selector: "[data-testid=project-name]", value: "Workflow benchmark" }, "consumer binds skipped project name");
       await applied(ctx, taskId, { action: "select", selector: "[data-testid=project-type]", value: "automation" }, "consumer binds skipped project type");
-      await applied(ctx, taskId, { action: "clickRef", selector: "[data-testid=submit-onboarding]" }, "consumer submits form after live binding");
-      await verifyText(ctx, taskId, "Onboarding submitted", "consumer verifies onboarding after live binding");
+      await applied(ctx, taskId, { action: "clickRef", selector: "[data-testid=preview-onboarding]" }, "consumer previews form after live binding");
+      await verifyText(ctx, taskId, "Onboarding preview ready", "consumer verifies onboarding preview after live binding");
       return { completed: true, liveFollowUpMs: elapsedMs(start) };
     }
     if (scenario === "api-key") {
@@ -469,8 +447,9 @@ async function recordWorkflow(
   fixture: Fixture,
   recorder: AgentName,
   scenario: ScenarioName,
+  taskIds: Set<string>,
 ): Promise<SavedWorkflow> {
-  const task = await startTask(ctx, fixture, `Workflow matrix fresh ${scenario} recorded by ${recorder}`);
+  const task = await startTask(ctx, fixture, `Workflow matrix fresh ${scenario} recorded by ${recorder}`, taskIds);
   const start = performance.now();
   let actionCount = 0;
   if (scenario === "api-key") {
@@ -489,8 +468,9 @@ async function replayWorkflow(
   fixture: Fixture,
   workflow: SavedWorkflow,
   consumer: AgentName,
+  taskIds: Set<string>,
 ): Promise<ReplayOutcome> {
-  const task = await startTask(ctx, fixture, `Workflow matrix replay ${workflow.scenario}: ${consumer} consumes ${workflow.recorder}`);
+  const task = await startTask(ctx, fixture, `Workflow matrix replay ${workflow.scenario}: ${consumer} consumes ${workflow.recorder}`, taskIds);
   const start = performance.now();
   const replay = await api<BrowserRecipeReplayResponse>(ctx, "POST", "/browser/recipes/replay", {
     taskId: task.taskId,
@@ -499,7 +479,18 @@ async function replayWorkflow(
     reason: `Workflow matrix ${consumer} applies ${workflow.scenario} recipe recorded by ${workflow.recorder}`,
   });
   const replayMs = elapsedMs(start);
-  assert(replay.ok && replay.dryRun === false, `${consumer} applies ${workflow.recorder}/${workflow.scenario} workflow recipe`);
+  const replaySkippedReasons = Array.from(new Set((replay.skippedSteps ?? []).map((step) => step.reason))).sort();
+  const requiresLiveBinding = !replay.ok
+    && replay.status === "incomplete"
+    && replay.stepsApplied > 0
+    && replaySkippedReasons.includes("redactedInputRequiresBinding")
+    && replaySkippedReasons.includes("blockedByLiveBinding");
+  if (replay.dryRun !== false || (!replay.ok && !requiresLiveBinding)) {
+    throw new Error(
+      `${consumer} could not apply or safely pause ${workflow.recorder}/${workflow.scenario} workflow recipe: ${JSON.stringify(replay)}`,
+    );
+  }
+  assert(true, `${consumer} applies or safely pauses ${workflow.recorder}/${workflow.scenario} workflow recipe`);
   const followUp = await completeReplayFollowUp(ctx, workflow.scenario, task.taskId);
   return {
     recorder: workflow.recorder,
@@ -511,37 +502,37 @@ async function replayWorkflow(
     stepsPlanned: replay.stepsPlanned,
     stepsApplied: replay.stepsApplied,
     stepsSkipped: replay.stepsSkipped,
-    skippedReasons: Array.from(new Set((replay.skippedSteps ?? []).map((step) => step.reason))).sort(),
+    skippedReasons: replaySkippedReasons,
   };
 }
 
 async function main(): Promise<void> {
   console.log("\n=== ShellX Browser workflow matrix ===");
-  const ctx = debugBase();
+  const ctx = await debugBase();
   let fixture: Fixture | null = null;
   const saved: SavedWorkflow[] = [];
   const outcomes: ReplayOutcome[] = [];
+  const taskIds = new Set<string>();
   try {
     await api<JsonObject>(ctx, "GET", "/health");
     assert(true, "debug API health responds");
     fixture = await startWorkflowFixture();
     await api<JsonObject>(ctx, "POST", "/browser/open", { startUrl: fixture.blankUrl });
     assert(true, "Browser window opens for workflow matrix");
-    await closeAllBrowserTabs(ctx);
     const agents = matrixAgents();
     console.log(`Agents under test: ${agents.join(", ")}`);
 
     for (const recorder of agents) {
       for (const scenario of SCENARIOS) {
         console.log(`\n--- Record ${scenario} as ${recorder} ---`);
-        saved.push(await recordWorkflow(ctx, fixture, recorder, scenario));
+        saved.push(await recordWorkflow(ctx, fixture, recorder, scenario, taskIds));
       }
     }
 
     for (const workflow of saved) {
       for (const consumer of agents) {
         console.log(`\n--- Replay ${workflow.scenario}: ${consumer} consumes ${workflow.recorder} recipe ---`);
-        outcomes.push(await replayWorkflow(ctx, fixture, workflow, consumer));
+        outcomes.push(await replayWorkflow(ctx, fixture, workflow, consumer, taskIds));
       }
     }
 
@@ -583,8 +574,14 @@ async function main(): Promise<void> {
     console.log("\nScenario averages:");
     console.table(byScenario);
   } finally {
-    await closeAllBrowserTabs(ctx).catch(() => undefined);
-    if (fixture) await fixture.close().catch(() => undefined);
+    try {
+      await cleanupOwnedBrowserLifecycle(
+        (method, path, body) => api(ctx, method, path, body),
+        { taskIds, label: "workflow-matrix" },
+      );
+    } finally {
+      if (fixture) await fixture.close().catch(() => undefined);
+    }
   }
 }
 

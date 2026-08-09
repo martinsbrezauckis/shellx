@@ -1,9 +1,10 @@
-import type { JSX } from "react";
+import { useRef, type JSX } from "react";
 import type { ComposerAttachmentChip, ComposerAttachmentKind } from "./BottomPanel";
 import { SafeImg, SafeVideo } from "./MediaPreview";
 import { ShellIcon, type ShellIconName } from "./icons";
 import type { SessionAttachmentItem, SessionMediaItem } from "../lib/session-media";
 import type { SessionAssetItem } from "../lib/session-assets";
+import { useModalFocus } from "../lib/useModalFocus";
 
 interface AttachmentMediaBoardProps {
   open: boolean;
@@ -85,6 +86,8 @@ export function AttachmentMediaBoard({
   onAttachAsset,
   onInsertPrompt,
 }: AttachmentMediaBoardProps): JSX.Element | null {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(open, dialogRef, onClose);
   if (!open) return null;
 
   const mediaCount = images.length + videos.length;
@@ -99,8 +102,22 @@ export function AttachmentMediaBoard({
   };
 
   return (
-    <div className="pmodal-backdrop asset-board-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Attachment and media board">
-      <div className="pmodal asset-board-modal" onClick={(event) => event.stopPropagation()}>
+    <div
+      className="pmodal-backdrop asset-board-backdrop"
+      data-debug-id="attachment-media-board-backdrop"
+      onClick={onClose}
+    >
+      <div
+        ref={dialogRef}
+        data-debug-id="surface-components-attachmentmediaboard-2"
+        className="pmodal asset-board-modal"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Attachment and media board"
+        data-shellx-release-observe="title"
+        title={`Attachment board state: pending=${attachments.length}; session=${sessionAttachments.length}; assets=${sessionAssets.length}; images=${images.length}; videos=${videos.length}`}
+      >
         <header className="pmodal-hdr asset-board-head">
           <div className="asset-board-title">
             <ShellIcon name="paperclip" size={14} />
@@ -150,7 +167,8 @@ export function AttachmentMediaBoard({
                 {attachments.map((attachment) => (
                   <div key={attachment.id} className={`asset-board-row asset-board-row-${attachment.kind}`}>
                     <ShellIcon name={attachmentIcon(attachment.kind)} size={15} />
-                    <button
+                    <button data-debug-id="surface-components-attachmentmediaboard-9"
+                      data-shellx-release-observe="title"
                       type="button"
                       className="asset-board-row-main"
                       onClick={() => onPreviewFile(attachment.path)}
@@ -166,6 +184,7 @@ export function AttachmentMediaBoard({
                         className="settings-pill"
                         onClick={() => onPreviewFile(attachment.path)}
                         title="Preview file"
+                        aria-label="Preview file"
                       >
                         <ShellIcon name="external-link" size={12} />
                       </button>
@@ -174,6 +193,7 @@ export function AttachmentMediaBoard({
                         className="settings-pill settings-pill-danger"
                         onClick={() => onRemoveAttachment(attachment.id)}
                         title="Remove attachment"
+                        aria-label="Remove attachment"
                       >
                         <ShellIcon name="trash" size={12} />
                       </button>
@@ -198,7 +218,7 @@ export function AttachmentMediaBoard({
                 {sessionAttachments.map((attachment) => (
                   <div key={attachment.id} className={`asset-board-row asset-board-row-${attachment.kind}`}>
                     <ShellIcon name={attachmentIcon(attachment.kind)} size={15} />
-                    <button
+                    <button data-debug-id="surface-components-attachmentmediaboard-12"
                       type="button"
                       className="asset-board-row-main"
                       onClick={() => onPreviewFile(attachment.path)}
@@ -213,6 +233,7 @@ export function AttachmentMediaBoard({
                         className="settings-pill"
                         onClick={() => onPreviewFile(attachment.path)}
                         title="Preview file"
+                        aria-label="Preview file"
                       >
                         <ShellIcon name="external-link" size={12} />
                       </button>
@@ -237,7 +258,7 @@ export function AttachmentMediaBoard({
                 {sessionAssets.map((asset) => (
                   <div key={asset.assetId} className={`asset-board-row asset-board-row-${asset.kind}`}>
                     <ShellIcon name={asset.kind === "image" ? "image" : "video"} size={15} />
-                    <button
+                    <button data-debug-id="surface-components-attachmentmediaboard-14"
                       type="button"
                       className="asset-board-row-main"
                       onClick={() => onPreviewAsset ? onPreviewAsset(asset) : onPreviewFile(asset.path)}
@@ -297,7 +318,7 @@ export function AttachmentMediaBoard({
             ) : (
               <div className="asset-board-grid">
                 {images.map((item) => (
-                  <button
+                  <button data-debug-id="surface-components-attachmentmediaboard-18"
                     key={item.id}
                     type="button"
                     className="asset-board-media"
@@ -330,7 +351,7 @@ export function AttachmentMediaBoard({
             ) : (
               <div className="asset-board-grid">
                 {videos.map((item) => (
-                  <button
+                  <button data-debug-id="surface-components-attachmentmediaboard-19"
                     key={item.id}
                     type="button"
                     className="asset-board-media"
@@ -342,6 +363,7 @@ export function AttachmentMediaBoard({
                       title={item.title}
                       tabId={tabId ?? undefined}
                       sessionCwd={sessionCwd}
+                      controls={false}
                       className="asset-board-thumb"
                     />
                     <span>{item.title}</span>

@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from "react";
 
 import { syncBrowserEngine } from "../api";
+import { browserEngineSyncBoundsForRect } from "../browserEngineLayout";
 
 interface UseNativeEngineSyncInput {
   enabled: boolean;
@@ -36,19 +37,14 @@ export function useNativeEngineSync(input: UseNativeEngineSyncInput): void {
     const syncNativeEngine = () => {
       if (disposed) return;
       const rect = slot.getBoundingClientRect();
-      if (rect.width < 16 || rect.height < 16) return;
+      const bounds = browserEngineSyncBoundsForRect(rect);
       void syncBrowserEngine({
         engineId: activeEngineId,
         browserTabId: activeBrowserTabId,
         profileId,
         url,
         preserveExistingPage: true,
-        bounds: {
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height,
-        },
+        bounds,
       }).catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("retry sync shortly")) {

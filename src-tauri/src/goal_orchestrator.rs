@@ -83,6 +83,10 @@ pub struct GoalState {
     /// Path to `goal.md` (or `plan.md` if `goal.md` is absent — see
     /// `set_mode` for the fallback rule).
     pub scratchboard_path: PathBuf,
+    /// Session transport that owns `scratchboard_path`. Windows-local
+    /// sessions must stay on direct host paths; WSL path bridging is only
+    /// valid when this is explicitly `wsl`.
+    pub transport_kind: String,
     /// SSH transport context for remote scratchboards. Skipped in UI/API
     /// serialization because it may include vault reference names and is
     /// only needed by the in-process orchestrator.
@@ -388,6 +392,7 @@ impl GoalOrchestrator {
         ssh_config: Option<crate::acp::SshSpawnConfig>,
     ) {
         let scratchboard_path = pick_scratchboard_path(cwd);
+        let transport_kind_normalized = transport_kind.trim().to_ascii_lowercase();
         let now = now_ms();
         // audit (test agent): on `on=true`, eagerly stamp
         // an AWAITING_APPROVAL stub into goal.md so polls and the
@@ -404,63 +409,30 @@ impl GoalOrchestrator {
         // orchestrator stores the SSH context and reads/polls the
         // remote file through the transport-aware helper once grok
         // lands the file.
-        let skip_local_write_for_remote = transport_kind == "ssh" || ssh_config.is_some();
+        let skip_local_write_for_remote =
+            transport_kind_normalized == "ssh" || ssh_config.is_some();
         if on && !skip_local_write_for_remote {
             let obj_line = objective.as_deref().unwrap_or("(no objective)");
             let stub = format!(
                 "# Goal: {obj}\n\nStatus: AWAITING_APPROVAL\n\n_grok is drafting the plan…_\n",
                 obj = obj_line
             );
-            // #425/#429 fix — direct std::fs::write of a POSIX path on
-            // Windows silently fails because there's no `/home/...` on
-            // NTFS. The stale goal.md from a prior session then leaks
-            // into the new goal cycle, and the API returns `ok` while
-            // the on-disk content lies. For WSL paths, translate to a
-            // Windows-readable WSL UNC path first. For SSH
-            // paths, we can't reach the remote fs from the host — log a
-            // warning so callers know the stub didn't land (grok's
-            // first fs_write through the session will write the real
-            // plan and replace whatever was there).
-            let posix = scratchboard_path.to_string_lossy().starts_with('/');
-            let mut wrote = false;
-            #[cfg(target_os = "windows")]
+            if let Err(e) = write_scratchboard_text_for_transport(
+                &scratchboard_path,
+                &stub,
+                &transport_kind_normalized,
+                None,
+            )
+            .await
             {
-                if posix {
-                    let p_str = scratchboard_path.to_string_lossy().to_string();
-                    for distro in crate::host_mcp::wsl_running_distros().await {
-                        if let Some(unc) = crate::skill_install::wsl_path_to_unc(&distro, &p_str) {
-                            if std::fs::write(&unc, &stub).is_ok() {
-                                wrote = true;
-                                info!(
-                                    "goal_orchestrator set_mode: WSL stub via UNC distro='{}' path={}",
-                                    distro,
-                                    unc.display()
-                                );
-                                break;
-                            }
-                        }
-                    }
-                }
+                warn!(
+                    "goal_orchestrator set_mode: stub-write FAILED for tab='{}' transport='{}' path={} err={}",
+                    tab_id,
+                    transport_kind_normalized,
+                    scratchboard_path.display(),
+                    e
+                );
             }
-            if !wrote {
-                match std::fs::write(&scratchboard_path, &stub) {
-                    Ok(_) => {
-                        wrote = true;
-                    }
-                    Err(e) => {
-                        warn!(
-                            "goal_orchestrator set_mode: stub-write FAILED for tab='{}' path={} err={} \
-                             (SSH/remote transport — the grok-side fs_write will land the real plan)",
-                            tab_id,
-                            scratchboard_path.display(),
-                            e
-                        );
-                    }
-                }
-            }
-            // Suppress unused-mut warning on non-Windows builds where
-            // the WSL branch is gated out.
-            let _ = (wrote, posix);
         } else if on && skip_local_write_for_remote {
             info!(
                 "goal_orchestrator set_mode: SSH transport — skipping local stub-write for tab='{}' (#433); grok's plan turn will land goal.md remotely",
@@ -483,6 +455,7 @@ impl GoalOrchestrator {
             active: true,
             objective: objective.unwrap_or_default(),
             scratchboard_path: scratchboard_path.clone(),
+            transport_kind: transport_kind_normalized,
             ssh_config,
             last_continuation_at_ms: 0,
             continuations_total: 0,
@@ -547,9 +520,10 @@ impl GoalOrchestrator {
         validate_approval_ready(&board_text)?;
         let approved_objective = extract_goal_title(&board_text);
         let approved_board_text = mark_approved_plan_in_progress(&board_text)?;
-        write_scratchboard_text_for_path(
+        write_scratchboard_text_for_transport(
             &state.scratchboard_path,
             &approved_board_text,
+            &state.transport_kind,
             state.ssh_config.as_ref(),
         )
         .await
@@ -786,6 +760,7 @@ impl GoalOrchestrator {
         let (
             objective,
             board_path,
+            transport_kind,
             ssh_config,
             fingerprint_before,
             continuations_before,
@@ -810,6 +785,7 @@ impl GoalOrchestrator {
             (
                 st.objective.clone(),
                 st.scratchboard_path.clone(),
+                st.transport_kind.clone(),
                 st.ssh_config.clone(),
                 st.last_fingerprint.clone(),
                 st.continuations_total,
@@ -833,11 +809,12 @@ impl GoalOrchestrator {
         // EXCEPT when the file path itself is unset (shouldn't happen
         // — set_mode always picks one). Same behavior as the driver
         // script's "scratchboard missing — injecting anyway" branch.
-        // WSL/SSH-aware read — if the path is POSIX (`/home/...`)
-        // and we're on Windows, fall back to UNC translation so the
-        // host-side orchestrator can observe a WSL-resident scratchboard.
-        let board_text: String = match read_scratchboard_text_for_path(
+        // Transport-aware read: local tabs stay direct-only, WSL tabs may
+        // bridge POSIX paths through the Windows host, and SSH tabs read
+        // through their remote transport context.
+        let board_text: String = match read_scratchboard_text_for_transport(
             &board_path,
+            &transport_kind,
             ssh_config.as_ref(),
         )
         .await
@@ -1171,6 +1148,16 @@ impl GoalOrchestrator {
         }
     }
 
+    /// Remove one exact isolated release-test slot, including its clear
+    /// tombstone. Normal product flows retain tombstones for diagnostics;
+    /// only the guarded Debug API fixture calls this helper so its temporary
+    /// state cannot alter the operator baseline.
+    #[cfg(feature = "debug-api")]
+    pub async fn release_test_forget_slot(&self, tab_id: &str) {
+        self.states.write().await.remove(tab_id);
+        self.last_clear.write().await.remove(tab_id);
+    }
+
     /// #350/#458: Per-turn silence watchdog. Scans every state once; if
     /// a tab has injected at least one continuation but no prompt-complete
     /// has arrived for `per_turn_timeout_ms` since the last injection,
@@ -1290,24 +1277,36 @@ fn pick_scratchboard_path(cwd: &Path) -> PathBuf {
     goal
 }
 
-/// WSL-aware scratchboard read. On Windows hosts, a POSIX
-/// scratchboard path (`/home/<user>/...`) is unreadable via plain
-/// `std::fs::read_to_string` because the Windows fs has no `/home`
-/// mount. Translate to `\\wsl$\<distro>\home\<user>\...` against the
-/// running WSL distros and try each. Falls back to the direct path
-/// (works on Linux/macOS shellX builds and for legitimate Windows
-/// drive paths).
+/// Compatibility scratchboard read. New transport-aware callers should use
+/// `read_scratchboard_text_for_transport`; this older helper keeps the legacy
+/// broad WSL bridge for host-MCP paths that do not yet carry transport state.
 ///
 /// SSH transports are handled by `read_scratchboard_text_for_path`, which
 /// has access to the per-tab `SshSpawnConfig`.
 pub async fn read_scratchboard_text(path: &Path) -> Result<String, String> {
+    read_scratchboard_text_with_policy(path, true).await
+}
+
+async fn read_scratchboard_text_with_policy(
+    path: &Path,
+    allow_wsl_bridge: bool,
+) -> Result<String, String> {
     if let Ok(s) = std::fs::read_to_string(path) {
         return Ok(s);
     }
     let path_str = path.to_string_lossy().to_string();
     #[cfg(target_os = "windows")]
     {
-        if path_str.starts_with('/') {
+        if allow_wsl_bridge && path_str.starts_with('/') {
+            if let Some(windows_path) = wsl_drive_mount_to_windows_path(&path_str) {
+                if let Ok(s) = std::fs::read_to_string(&windows_path) {
+                    info!(
+                        "read_scratchboard_text: WSL drive mount hit path={}",
+                        windows_path.display()
+                    );
+                    return Ok(s);
+                }
+            }
             for distro in crate::host_mcp::wsl_running_distros().await {
                 if let Some(unc) = crate::skill_install::wsl_path_to_unc(&distro, &path_str) {
                     if let Ok(s) = std::fs::read_to_string(&unc) {
@@ -1322,14 +1321,24 @@ pub async fn read_scratchboard_text(path: &Path) -> Result<String, String> {
             }
         }
     }
+    let attempts = if allow_wsl_bridge {
+        "direct + WSL drive mount + WSL UNC"
+    } else {
+        "direct only"
+    };
     Err(format!(
-        "read_scratchboard_text: path {} not found (tried direct + WSL UNC)",
-        path_str
+        "read_scratchboard_text: path {} not found (tried {})",
+        path_str, attempts
     ))
 }
 
 async fn read_scratchboard_text_for_state(state: &GoalState) -> Result<String, String> {
-    read_scratchboard_text_for_path(&state.scratchboard_path, state.ssh_config.as_ref()).await
+    read_scratchboard_text_for_transport(
+        &state.scratchboard_path,
+        &state.transport_kind,
+        state.ssh_config.as_ref(),
+    )
+    .await
 }
 
 pub async fn read_scratchboard_text_for_path(
@@ -1345,19 +1354,47 @@ pub async fn read_scratchboard_text_for_path(
     read_scratchboard_text(path).await
 }
 
-/// WSL-aware scratchboard write companion to `read_scratchboard_text`.
-/// Direct writes cover native Linux/macOS builds and Windows-form local
-/// paths. On Windows, POSIX paths are retried through each running WSL
-/// distro's UNC mapping so `/home/.../goal.md` can be patched by the
-/// in-process app.
+pub async fn read_scratchboard_text_for_transport(
+    path: &Path,
+    transport_kind: &str,
+    ssh_config: Option<&crate::acp::SshSpawnConfig>,
+) -> Result<String, String> {
+    if let Some(ssh) = ssh_config {
+        let remote_path = path.to_string_lossy().to_string();
+        return crate::acp::ssh_read_file(ssh, &remote_path)
+            .await
+            .map_err(|e| format!("ssh read {}: {}", remote_path, e));
+    }
+    read_scratchboard_text_with_policy(path, transport_kind_allows_wsl_bridge(transport_kind)).await
+}
+
+/// Compatibility scratchboard write companion to `read_scratchboard_text`.
+/// New transport-aware callers should use `write_scratchboard_text_for_transport`.
 pub async fn write_scratchboard_text(path: &Path, text: &str) -> Result<(), String> {
+    write_scratchboard_text_with_policy(path, text, true).await
+}
+
+async fn write_scratchboard_text_with_policy(
+    path: &Path,
+    text: &str,
+    allow_wsl_bridge: bool,
+) -> Result<(), String> {
     if std::fs::write(path, text).is_ok() {
         return Ok(());
     }
     let path_str = path.to_string_lossy().to_string();
     #[cfg(target_os = "windows")]
     {
-        if path_str.starts_with('/') {
+        if allow_wsl_bridge && path_str.starts_with('/') {
+            if let Some(windows_path) = wsl_drive_mount_to_windows_path(&path_str) {
+                if std::fs::write(&windows_path, text).is_ok() {
+                    info!(
+                        "write_scratchboard_text: WSL drive mount hit path={}",
+                        windows_path.display()
+                    );
+                    return Ok(());
+                }
+            }
             for distro in crate::host_mcp::wsl_running_distros().await {
                 if let Some(unc) = crate::skill_install::wsl_path_to_unc(&distro, &path_str) {
                     if std::fs::write(&unc, text).is_ok() {
@@ -1372,10 +1409,40 @@ pub async fn write_scratchboard_text(path: &Path, text: &str) -> Result<(), Stri
             }
         }
     }
+    let attempts = if allow_wsl_bridge {
+        "direct + WSL drive mount + WSL UNC"
+    } else {
+        "direct only"
+    };
     Err(format!(
-        "write_scratchboard_text: path {} not writable (tried direct + WSL UNC)",
-        path_str
+        "write_scratchboard_text: path {} not writable (tried {})",
+        path_str, attempts
     ))
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn wsl_drive_mount_to_windows_path(path: &str) -> Option<PathBuf> {
+    let normalized = path.replace('\\', "/");
+    let rest = normalized.strip_prefix("/mnt/")?;
+    let mut chars = rest.chars();
+    let drive = chars.next()?;
+    if !drive.is_ascii_alphabetic() {
+        return None;
+    }
+    let tail = chars.as_str();
+    if !tail.is_empty() && !tail.starts_with('/') {
+        return None;
+    }
+    let drive = drive.to_ascii_uppercase();
+    let tail = tail.trim_start_matches('/');
+    if tail.is_empty() {
+        Some(PathBuf::from(format!("{drive}:\\")))
+    } else {
+        Some(PathBuf::from(format!(
+            "{drive}:\\{}",
+            tail.replace('/', "\\")
+        )))
+    }
 }
 
 pub async fn write_scratchboard_text_for_path(
@@ -1390,6 +1457,30 @@ pub async fn write_scratchboard_text_for_path(
             .map_err(|e| format!("ssh write {}: {}", remote_path, e));
     }
     write_scratchboard_text(path, text).await
+}
+
+pub async fn write_scratchboard_text_for_transport(
+    path: &Path,
+    text: &str,
+    transport_kind: &str,
+    ssh_config: Option<&crate::acp::SshSpawnConfig>,
+) -> Result<(), String> {
+    if let Some(ssh) = ssh_config {
+        let remote_path = path.to_string_lossy().to_string();
+        return crate::acp::ssh_write_file(ssh, &remote_path, text)
+            .await
+            .map_err(|e| format!("ssh write {}: {}", remote_path, e));
+    }
+    write_scratchboard_text_with_policy(
+        path,
+        text,
+        transport_kind_allows_wsl_bridge(transport_kind),
+    )
+    .await
+}
+
+fn transport_kind_allows_wsl_bridge(transport_kind: &str) -> bool {
+    transport_kind.trim().eq_ignore_ascii_case("wsl")
 }
 
 fn now_ms() -> u64 {
@@ -2231,10 +2322,76 @@ Status: DONE
         );
     }
 
+    #[test]
+    fn scratchboard_wsl_drive_mount_to_windows_path_normalizes_common_form() {
+        assert_eq!(
+            wsl_drive_mount_to_windows_path("/mnt/c/Users/User/project/build.tab.md")
+                .unwrap()
+                .to_string_lossy(),
+            "C:\\Users\\User\\project\\build.tab.md"
+        );
+        assert_eq!(
+            wsl_drive_mount_to_windows_path("/mnt/d")
+                .unwrap()
+                .to_string_lossy(),
+            "D:\\"
+        );
+    }
+
+    #[test]
+    fn scratchboard_wsl_drive_mount_to_windows_path_rejects_non_drive_mounts() {
+        assert!(wsl_drive_mount_to_windows_path("/home/user/goal.md").is_none());
+        assert!(wsl_drive_mount_to_windows_path("/mnt/share/project/goal.md").is_none());
+        assert!(wsl_drive_mount_to_windows_path("C:\\Users\\User\\goal.md").is_none());
+    }
+
+    #[tokio::test]
+    async fn scratchboard_transport_policy_keeps_local_sessions_direct_only() {
+        let path = Path::new("/mnt/c/__shellx_missing_scratchboard__/goal.md");
+        let local = read_scratchboard_text_for_transport(path, "local", None)
+            .await
+            .unwrap_err();
+        assert!(
+            local.contains("tried direct only"),
+            "local transport must not use WSL bridge: {}",
+            local
+        );
+
+        let wsl = read_scratchboard_text_for_transport(path, "wsl", None)
+            .await
+            .unwrap_err();
+        assert!(
+            wsl.contains("WSL drive mount + WSL UNC"),
+            "WSL transport should advertise WSL bridge attempts: {}",
+            wsl
+        );
+    }
+
     #[tokio::test]
     async fn consider_continue_inactive_returns_none() {
         let o = GoalOrchestrator::new();
         assert!(o.consider_continue("tab1", "end_turn").await.is_none());
+    }
+
+    #[cfg(feature = "debug-api")]
+    #[tokio::test]
+    async fn release_test_forget_slot_removes_state_and_tombstone() {
+        let tmp =
+            std::env::temp_dir().join(format!("shellx_release_goal_forget_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let o = GoalOrchestrator::new();
+        o.set_mode("release-tab", true, Some("owned".into()), &tmp, "local")
+            .await;
+        o.mark_complete("release-tab").await;
+        assert!(o.get_state("release-tab").await.is_some());
+        assert!(o.get_last_clear("release-tab").await.is_some());
+
+        o.release_test_forget_slot("release-tab").await;
+
+        assert!(o.get_state("release-tab").await.is_none());
+        assert!(o.get_last_clear("release-tab").await.is_none());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]

@@ -9,7 +9,7 @@
  * 404 falls back to the ChatHit's own .snippet.
  *
  * Keyboard:
- * ⌘K / ⌃K focus input
+ * Click or Tab focus the input; ⌘K / Ctrl+K belongs to the Command Palette.
  * ↑ / ↓ navigate
  * ⏎ open selected
  * Tab focus the Open button (preview pane)
@@ -166,18 +166,6 @@ export function FindPopover({
     [openTabHits, filteredDiskHits],
   );
 
- // ⌘K / ⌃K focuses the input from anywhere on the page.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        inputRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
  // Click-outside dismiss. Popover stays open while typing.
   useEffect(() => {
     if (!focused) return;
@@ -305,15 +293,13 @@ export function FindPopover({
  * grammar of allowed tags is fixed at one.
  */
   function escapeKeepMark(s: string): string {
- // Replace mark tags with sentinels, escape everything, then restore.
-    const OPEN = "MARK_OPEN";
-    const CLOSE = "MARK_CLOSE";
-    const t = s.replace(/<mark>/g, OPEN).replace(/<\/mark>/g, CLOSE);
-    const esc = t
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-    return esc.replace(new RegExp(OPEN, "g"), "<mark>").replace(new RegExp(CLOSE, "g"), "</mark>");
+    return s.split(/(<\/?mark>)/g).map((part) => {
+      if (part === "<mark>" || part === "</mark>") return part;
+      return part
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }).join("");
   }
 
  /** shared open action — clears state and fires the prop. */
@@ -363,7 +349,7 @@ export function FindPopover({
 
   return (
     <div className="find-wrap">
-      <div className="find-bar" onClick={() => inputRef.current?.focus()}>
+      <div data-debug-id="surface-components-findpopover-1" className="find-bar" onClick={() => inputRef.current?.focus()}>
         <span className="find-ic">
           <ShellIcon name="search" size={13} />
         </span>
@@ -371,17 +357,22 @@ export function FindPopover({
           ref={inputRef}
           type="text"
           data-debug-id="find-sessions-input"
+          data-shellx-release-observe="value"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onFocus={() => setFocused(true)}
           onKeyDown={handleKey}
           placeholder="Search…"
           aria-label="Search sessions"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={focused}
+          aria-controls="shellx-find-results"
+          aria-activedescendant={
+            focused && results[activeIdx] ? `shellx-find-option-${activeIdx}` : undefined
+          }
         />
- {/* drop the duplicate `⌘K` hint chip.
- * Was rendering as `⌘ <weird-glyph> K` because the keyboard
- * symbol got mojibake'd between font fallbacks. The Ctrl-K
- * binding still works (handleKey) — just no on-input chip. */}
+ {/* Search remains directly focusable without claiming the Command Palette shortcut. */}
       </div>
 
       {focused && (
@@ -393,7 +384,6 @@ export function FindPopover({
         <div
           ref={popoverRef}
           className={`find-popover ${selectedIdx != null ? "with-preview" : ""}`}
-          role="listbox"
         >
           <div className="find-pop-head">
             <span>{q.trim() ? "Chats matching" : "Recent chats"}</span>
@@ -406,7 +396,10 @@ export function FindPopover({
           <div className="find-pop-body">
  {/* List column */}
             <div
+              id="shellx-find-results"
               className="find-list-col"
+              role="listbox"
+              aria-label="Matching ShellX sessions"
               style={{ flex: selectedIdx != null ? "0 0 320px" : "1 1 auto" }}
             >
  {/* surface backend search errors so we never
@@ -444,7 +437,8 @@ export function FindPopover({
                 if (entry.kind === "open") {
                   const h = entry.hit;
                   return (
-                    <div
+                    <div data-debug-id="surface-components-findpopover-3"
+                      id={`shellx-find-option-${i}`}
                       key={`open-${h.id}`}
                       className={`find-row ${i === activeIdx ? "active" : ""} ${i === selectedIdx ? "selected" : ""}`}
                       onClick={onRowClick}
@@ -464,7 +458,8 @@ export function FindPopover({
                 }
                 const h = entry.hit;
                 return (
-                  <div
+                  <div data-debug-id="surface-components-findpopover-4"
+                    id={`shellx-find-option-${i}`}
                     key={`disk-${h.id}`}
                     className={`find-row ${i === activeIdx ? "active" : ""} ${i === selectedIdx ? "selected" : ""}`}
                     onClick={onRowClick}
@@ -521,7 +516,7 @@ export function FindPopover({
                     }}
                     style={{
                       background: "var(--orange)",
-                      color: "#000",
+                      color: "var(--ink-on-accent)",
                       border: "none",
                       borderRadius: 4,
                       padding: "4px 10px",

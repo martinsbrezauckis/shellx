@@ -1,0 +1,1195 @@
+{
+  "schema": "shellx.manual-content.v1",
+  "version": "0.3.5",
+  "revision": 31,
+  "updated": "2026-08-05",
+  "title": "ShellX Manual",
+  "eyebrow": "Agent workspace · Browser · Vault",
+  "intro": "ShellX is a desktop workspace for local and remote coding agents. It keeps conversations, project files, Browser tasks, Vault approvals, previews, Git state, and test evidence visible in one operator-controlled shell.",
+  "releaseNote": "This manual covers ShellX v0.3.5. Verify the installed version from Settings → About when comparing behavior with these instructions.",
+  "sections": [
+    {
+      "id": "start",
+      "title": "Start",
+      "summary": "Install ShellX, connect an agent, and begin in a project-scoped folder.",
+      "features": [
+        {
+          "id": "shellx.start.install",
+          "label": "Install and update",
+          "summary": "Use a signed installer for your platform. Settings → About checks the updater feed on Windows, macOS, and Linux AppImage installs; Linux deb and rpm packages update manually.",
+          "steps": [
+            "Download an installer from the ShellX GitHub releases page.",
+            "Download SHA256SUMS from the same release and verify the installer digest before launch; platform signing or notarization must pass separately.",
+            "Launch ShellX and open Settings → About to confirm the running version.",
+            "Treat a locally built candidate and the latest public release as different artifacts until their hashes and installed behavior are verified."
+          ]
+        },
+        {
+          "id": "shellx.start.first_session",
+          "label": "First session",
+          "summary": "Choose a project folder, connection, agent, and permission mode before sending the first prompt.",
+          "steps": [
+            "Create a tab and choose a project-scoped working folder with the folder pill.",
+            "Choose Local, WSL, or a saved SSH connection with the correct POSIX, native Windows, or Windows-plus-WSL runtime.",
+            "Choose Grok, Codex, Claude, or another available provider and send a focused prompt."
+          ],
+          "note": "Do not point a Full Auto agent at an entire home directory or an untrusted repository."
+        },
+        {
+          "id": "shellx.start.health",
+          "label": "Know what is actually ready",
+          "summary": "The Tools and Environment surfaces distinguish an installed CLI, a connected session, healthy host tooling, and a finished task.",
+          "steps": [
+            "Scan agent CLIs for the selected environment.",
+            "Open Tools to inspect provider, MCP, Preview, and environment readiness.",
+            "Use receipts and installed behavior—not a source build alone—as completion evidence."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace",
+      "title": "Workspace",
+      "summary": "Keep chat, project context, files, tasks, previews, and evidence attached to the correct tab.",
+      "features": [
+        {
+          "id": "shellx.workspace.tabs",
+          "label": "Tabs and session identity",
+          "summary": "Each tab owns its connection, working folder, agent session, permission mode, and recent activity.",
+          "steps": [
+            "Check the connection and folder pills before sensitive or destructive work.",
+            "Use a new tab when changing projects or authority boundaries.",
+            "Reopen saved conversations from history without assuming the old environment is still available."
+          ]
+        },
+        {
+          "id": "shellx.workspace.files_git",
+          "label": "Files and Git",
+          "summary": "Browse project files, preview common formats, inspect diffs, and create local checkpoints without leaving ShellX.",
+          "steps": [
+            "Use Files for the active project tree and safe previews.",
+            "Use Git for status, diffs, checkpoints, and worktree visibility.",
+            "Keep unrelated or other-agent changes out of a scoped commit."
+          ]
+        },
+        {
+          "id": "shellx.workspace.assets",
+          "label": "Attachments and media",
+          "summary": "Paste, drop, attach, or send files into a session, then review generated images and videos in the Assets board.",
+          "steps": [
+            "Add attachments as chips before sending the prompt.",
+            "Open Assets to review pending and generated media for the current session.",
+            "Use Preview Center for markdown, code, images, video, PDF, and generated web apps. Video previews keep native media controls and add a visible Play/Pause control whose state is exposed to assistive technology."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "connections",
+      "title": "Connections",
+      "summary": "Run agents locally, inside WSL, or through SSH to POSIX and native Windows targets without losing the active filesystem frame.",
+      "features": [
+        {
+          "id": "shellx.connections.local",
+          "label": "Local",
+          "summary": "Local sessions run the provider CLI on the same operating system as ShellX and use native paths.",
+          "steps": [
+            "Install and sign in to the provider CLI for the current OS user.",
+            "Scan CLIs in the connection editor.",
+            "Choose a project folder that the provider is allowed to modify."
+          ]
+        },
+        {
+          "id": "shellx.connections.wsl",
+          "label": "WSL",
+          "summary": "WSL sessions use wsl.exe, Linux paths, and the selected distribution's agent installations.",
+          "steps": [
+            "Add a WSL preset with the exact distribution name.",
+            "Install and authenticate the agent CLI inside that distribution.",
+            "Use the environment scan to confirm the Linux-side binary and version."
+          ]
+        },
+        {
+          "id": "shellx.connections.ssh_posix",
+          "label": "SSH to Linux, macOS, or WSL",
+          "summary": "Use the direct POSIX runtime for Linux, macOS, or an sshd running inside WSL. ShellX keeps POSIX paths and commands in that remote environment.",
+          "steps": [
+            "Complete host-key and key-agent setup in a normal terminal first; ShellX uses BatchMode.",
+            "Save the SSH host, optional port, and optional Vault reference to a private-key path.",
+            "Test the connection and scan remote CLIs before starting a session."
+          ]
+        },
+        {
+          "id": "shellx.connections.windows_native",
+          "label": "Native Windows OpenSSH",
+          "summary": "ShellX can run Windows-installed CLI agents directly through Windows OpenSSH with encoded PowerShell commands, streamed setup input, and Windows paths. WSL is not required.",
+          "steps": [
+            "Choose Windows OpenSSH, run Windows agents when the CLI and project live on Windows, then use a Windows absolute project path such as C:\\Users\\you\\project.",
+            "Test the connection and scan the destination. ShellX uses PowerShell-safe discovery and setup recipes for Windows Codex, Claude, Grok, and Antigravity installations; an explicit Grok path must be a bare command or absolute Windows path and never falls back to a different binary.",
+            "Start the provider normally. The Windows runtime supports native provider/Grok launch, stdin setup, cwd validation, ACP file reads and writes, Files, Preview Center reads, Git, session archives, activity evidence, vision reads, marketplace health checks, Work Preview servers and tunnels, and ShellX-managed Grok subagent launch."
+          ],
+          "note": "Test Connection verifies the transport; Scan CLIs refreshes the destination binary and version; starting a session verifies provider authentication and the live protocol path. A passing transport check alone does not prove that a provider is installed or signed in."
+        },
+        {
+          "id": "shellx.connections.windows_openssh",
+          "label": "Windows OpenSSH plus WSL",
+          "summary": "ShellX can connect through native Windows OpenSSH and run the tab inside an explicitly selected WSL distro.",
+          "steps": [
+            "Choose Windows OpenSSH, run agents in WSL as the SSH remote runtime and enter the exact distro name from wsl.exe -l -q.",
+            "Use Linux paths for the tab, including a bare command or absolute POSIX Grok path. WSL can reach Windows files under /mnt/c and can invoke Windows executables when interop is enabled, but ShellX rejects Windows paths in this runtime and never switches to another binary silently.",
+            "Enable mirrored WSL networking on the remote PC so the WSL agent can reach ShellX's reverse host-MCP tunnel on Windows localhost. Connection testing fails closed with setup guidance when this loopback path is unavailable."
+          ],
+          "note": "This optional runtime executes agents inside WSL. It does not replace the required native-Windows runtime for ordinary Windows PCs without WSL; using a WSL sshd endpoint is also supported."
+        }
+      ]
+    },
+    {
+      "id": "interface",
+      "title": "ShellX interface reference",
+      "summary": "Every persistent workspace control is documented as its own target instead of being collapsed into one generic menu description.",
+      "features": [
+        {
+          "id": "shellx.interface.header.about",
+          "label": "Header: About ShellX",
+          "summary": "Click the ShellX wordmark to open the canonical About surface with the running version, source link, update status, and diagnostics entry points."
+        },
+        {
+          "id": "shellx.interface.header.find",
+          "label": "Header: Find",
+          "summary": "Find searches the available conversation corpus and opens the selected chat without changing its project or connection identity."
+        },
+        {
+          "id": "shellx.interface.header.browser",
+          "label": "Header: Browser",
+          "summary": "Browser opens the separate ShellX Browser workspace; it does not silently create, focus, or navigate an agent task."
+        },
+        {
+          "id": "shellx.interface.header.requests",
+          "label": "Header: Vault Request Center",
+          "summary": "The request badge opens pending Browser, Vault, session, and client approval requests so the operator can inspect and decide each exact operation."
+        },
+        {
+          "id": "shellx.interface.header.inbox",
+          "label": "Header: Connector inbox",
+          "summary": "The connector inbox appears when configured Telegram or Discord events need attention and opens the recent inbound-event surface."
+        },
+        {
+          "id": "shellx.interface.header.plugins",
+          "label": "Header: Plugins",
+          "summary": "Plugins opens the global MCP server and connector catalog. Installation, enablement, required Vault keys, and current session health are separate states."
+        },
+        {
+          "id": "shellx.interface.header.theme",
+          "label": "Header: Theme",
+          "summary": "The moon or sun control switches between dark and bright ShellX themes and persists the chosen appearance."
+        },
+        {
+          "id": "shellx.interface.header.settings",
+          "label": "Header: Settings",
+          "summary": "Settings opens the tabbed application preferences dialog; changes save automatically and Escape closes it."
+        },
+        {
+          "id": "shellx.interface.left.projects",
+          "label": "Left rail: Projects",
+          "summary": "Projects groups open and stored chats under operator-named labels. The plus button creates a label; expanding a row reveals its filed chats."
+        },
+        {
+          "id": "shellx.interface.left.open_chats",
+          "label": "Left rail: Open chats",
+          "summary": "Open chats lists live tabs for quick focus, rename, move, or deletion without confusing a UI project label with a filesystem folder."
+        },
+        {
+          "id": "shellx.interface.left.past_chats",
+          "label": "Left rail: Past chats",
+          "summary": "Past chats lists closed on-disk sessions. Reopening restores conversation history but does not guarantee that the old connection or provider is still available."
+        },
+        {
+          "id": "shellx.interface.right.tasks",
+          "label": "Right rail: Tasks",
+          "summary": "Tasks shows running and recent background processes for the active session, including attribution when ShellX can identify the owning tab or agent.",
+          "steps": [
+            "Agent runs separates tab sessions, provider runs, ShellX host subagents, and provider-native subagents exposed by the provider stream.",
+            "A provider-native subagent row follows its structured child identity from active to terminal status and shows an exposed parent identity instead of duplicating each event.",
+            "Pause, Resume, and Kill act on the exact visible task row; use the disclosure arrow to inspect its bounded recent output before stopping it.",
+            "The red Host MCP cleanup control appears only when the active tab owns live Host MCP children. Click once to arm it, review the changed warning state, then click again within five seconds to clean only that tab's process trees.",
+            "When a provider does not expose native subagents, ShellX says not exposed rather than inferring hidden work."
+          ]
+        },
+        {
+          "id": "shellx.interface.right.tools",
+          "label": "Right rail: Tools",
+          "summary": "Tools reports the selected connection, provider CLI, ShellX host exposure, MCP configuration, environment checks, and capability health."
+        },
+        {
+          "id": "shellx.interface.right.git",
+          "label": "Right rail: Git",
+          "summary": "Git shows status, diffs, local checkpoints, branches, and worktrees for the active project-scoped working directory."
+        },
+        {
+          "id": "shellx.interface.right.preview",
+          "label": "Right rail: Preview",
+          "summary": "Preview starts and inspects supported local web work, including process output, loopback URL, screenshots, and Preview Doctor evidence."
+        },
+        {
+          "id": "shellx.interface.right.plan",
+          "label": "Right rail: Plan",
+          "summary": "Plan displays the active build or goal scratchboard and routes review actions to the current tab rather than treating a stale plan file as live state."
+        },
+        {
+          "id": "shellx.interface.right.files",
+          "label": "Right rail: Files",
+          "summary": "Files browses the active tab's project tree, opens supported previews, and lets files be attached to the current prompt."
+        },
+        {
+          "id": "shellx.interface.bottom.chat",
+          "label": "Bottom panel: Chat",
+          "summary": "Chat shows the streamed provider conversation and the composer for the active session tab."
+        },
+        {
+          "id": "shellx.interface.bottom.terminal",
+          "label": "Bottom panel: Terminal",
+          "summary": "Terminal provides the active tab's user shell plus visible agent-created ACP terminals when the provider exposes them."
+        },
+        {
+          "id": "shellx.interface.bottom.trace",
+          "label": "Bottom panel: Trace",
+          "summary": "Trace opens the session activity browser for recorded files, tools, commands, searches, and media references."
+        },
+        {
+          "id": "shellx.interface.trace.files",
+          "label": "Trace: Files",
+          "summary": "Files groups recorded activity into a searchable folder and file tree with read, write, delete, search, command, Git, and media counts."
+        },
+        {
+          "id": "shellx.interface.trace.graph",
+          "label": "Trace: Graph",
+          "summary": "Graph visualizes the session, action kinds, folders, and files as a movable evidence graph with weighted links and a selected-node detail panel."
+        },
+        {
+          "id": "shellx.interface.trace.evidence",
+          "label": "Trace: Evidence",
+          "summary": "Evidence separates changes, reads and searches, commands, and Git activity into resizable panes while preserving verified, observed, and inferred confidence."
+        },
+        {
+          "id": "shellx.interface.trace.timeline",
+          "label": "Trace: Timeline",
+          "summary": "Timeline orders the recorded session activity by time so file, command, search, Git, and media events can be correlated without implying missing telemetry never occurred."
+        },
+        {
+          "id": "shellx.interface.trace.summary",
+          "label": "Trace: Summary",
+          "summary": "Summary condenses source status, action totals, current build state, and recent build receipts for handoff or review."
+        },
+        {
+          "id": "shellx.interface.bottom.assets",
+          "label": "Bottom panel: Assets",
+          "summary": "Assets opens the full attachment and generated-media board for the active session rather than switching to one media-type tab."
+        },
+        {
+          "id": "shellx.interface.bottom.images",
+          "label": "Bottom panel: Images",
+          "summary": "Images opens the active session's image gallery even when it is empty, then collects generated or detected image artifacts for preview as they arrive."
+        },
+        {
+          "id": "shellx.interface.bottom.videos",
+          "label": "Bottom panel: Videos",
+          "summary": "Videos opens the active session's video gallery even when it is empty, then collects generated or detected video artifacts for preview as they arrive."
+        },
+        {
+          "id": "shellx.interface.bottom.logs",
+          "label": "Bottom panel: Logs",
+          "summary": "Logs shows the recent structured ACP and ShellX event stream for diagnosis; it is evidence, not a replacement for final output or Git state."
+        },
+        {
+          "id": "shellx.interface.bottom.stderr",
+          "label": "Bottom panel: Stderr",
+          "summary": "Stderr isolates recent provider and process error output so failures are not hidden inside normal chat rendering."
+        },
+        {
+          "id": "shellx.interface.composer.connection",
+          "label": "Composer: Connection",
+          "summary": "The connection pill selects Local, WSL, or a saved SSH environment for this tab and exposes connection testing and CLI scanning."
+        },
+        {
+          "id": "shellx.interface.composer.agent",
+          "label": "Composer: Agent",
+          "summary": "The agent picker selects the provider runtime installed in the tab's chosen environment; changing it does not migrate an existing provider process."
+        },
+        {
+          "id": "shellx.interface.composer.folder",
+          "label": "Composer: Working folder",
+          "summary": "The folder pill selects the tab's working directory. Confirm it before granting write authority or sending a destructive request."
+        },
+        {
+          "id": "shellx.interface.composer.branch",
+          "label": "Composer: Branch",
+          "summary": "The branch picker shows and changes Git branches for the active working directory while preserving the tab's connection frame."
+        },
+        {
+          "id": "shellx.interface.command.connect",
+          "label": "Command palette: Connect agent session",
+          "summary": "Connect starts the selected agent in this tab's current connection, working folder, and autonomy frame; confirm all three before running it."
+        },
+        {
+          "id": "shellx.interface.command.abort",
+          "label": "Command palette: Abort current session",
+          "summary": "Abort requests cancellation of the active provider startup or turn in this tab; startup cleanup may finish asynchronously, and it does not silently terminate unrelated tabs or background agents."
+        },
+        {
+          "id": "shellx.interface.command.new_session",
+          "label": "Command palette: New session tab",
+          "summary": "New session tab creates another ShellX tab while preserving existing sessions, so connection and provider choices remain independently reviewable."
+        },
+        {
+          "id": "shellx.interface.command.close_tab",
+          "label": "Command palette: Close current tab",
+          "summary": "Close current tab removes only the selected ShellX tab after the normal session-close path; it does not close the whole application."
+        },
+        {
+          "id": "shellx.interface.command.settings",
+          "label": "Command palette: Open settings",
+          "summary": "Open settings displays the complete tabbed Settings dialog, beginning on its current or General tab, without changing provider state by itself."
+        },
+        {
+          "id": "shellx.interface.command.desktop",
+          "label": "Command palette: Desktop integrations",
+          "summary": "Desktop integrations opens Settings directly on the Desktop tab, where file-send and operating-system integration status can be reviewed."
+        },
+        {
+          "id": "shellx.interface.command.attach",
+          "label": "Command palette: Attach file",
+          "summary": "Attach file opens the platform picker and adds the selected path as a visible composer chip; the file is not sent until the prompt is submitted."
+        },
+        {
+          "id": "shellx.interface.command.screenshot",
+          "label": "Command palette: Attach app screenshot",
+          "summary": "Attach app screenshot captures the current ShellX window into an owned image file and adds that exact image as a removable composer attachment."
+        },
+        {
+          "id": "shellx.interface.command.media_board",
+          "label": "Command palette: Attachment and media board",
+          "summary": "Attachment and media board opens the session's full attachment, image, and video workspace so generated and pending media can be inspected together."
+        },
+        {
+          "id": "shellx.interface.command.work_preview",
+          "label": "Command palette: Open Work Preview",
+          "summary": "Open Work Preview selects the Preview right rail and opens the Preview Center in work mode for the active tab's current preview state."
+        },
+        {
+          "id": "shellx.interface.command.preview_doctor",
+          "label": "Command palette: Preview Doctor",
+          "summary": "Ask active agent to fix current preview appears only after a preview URL exists or preview startup fails; it collects bounded diagnostics and sends the repair request to the active agent.",
+          "note": "This conditional action appears between Open Work Preview and Toggle Chat / Terminal. The highlighted image shows its Preview destination because the idle palette capture correctly omits unavailable actions."
+        },
+        {
+          "id": "shellx.interface.command.toggle_terminal",
+          "label": "Command palette: Toggle Chat / Terminal",
+          "summary": "Toggle Chat / Terminal switches the active bottom panel between the conversation and terminal views without changing any other session tab."
+        },
+        {
+          "id": "shellx.interface.command.pull_request",
+          "label": "Command palette: Create pull request",
+          "summary": "Create pull request opens the local review dialog for the active repository; opening the dialog does not publish or mutate a remote repository."
+        },
+        {
+          "id": "shellx.interface.command.vault",
+          "label": "Command palette: Open Vault",
+          "summary": "Open Vault displays the Vault workspace at its overview without reading or revealing secret values merely because the panel was opened."
+        },
+        {
+          "id": "shellx.interface.command.help",
+          "label": "Command palette: Keyboard shortcuts",
+          "summary": "Show keyboard shortcuts opens the full shortcut dialog, which is separate from the smaller composer help popover beside the prompt."
+        },
+        {
+          "id": "shellx.interface.command.autonomy_auto",
+          "label": "Command palette: Autonomy Auto",
+          "summary": "Autonomy Auto selects bypassPermissions for the active tab; use it only when the requested work and environment justify unattended actions."
+        },
+        {
+          "id": "shellx.interface.command.slash_commands",
+          "label": "Command palette: Agent slash commands",
+          "summary": "The Slash rows list commands actually advertised for the active agent and environment; choosing one inserts it into the composer rather than executing it immediately."
+        },
+        {
+          "id": "shellx.interface.composer.attach",
+          "label": "Composer: Attachments",
+          "summary": "Attach or drag files into the prompt as visible chips; inspect the paths and remove unintended files before sending."
+        },
+        {
+          "id": "shellx.interface.composer.screenshot",
+          "label": "Composer: ShellX screenshot",
+          "summary": "Captures the current ShellX window and adds it as a visible prompt attachment; it does not capture another desktop window."
+        },
+        {
+          "id": "shellx.interface.composer.voice",
+          "label": "Composer: Voice",
+          "summary": "Voice records speech for the active tab only, shows unavailable or credential states, and prevents a stale voice owner from leaking across tabs."
+        },
+        {
+          "id": "shellx.interface.composer.help",
+          "label": "Composer: Keyboard help",
+          "summary": "The inline help popover lists composer shortcuts and interaction hints without taking permanent space from the chat."
+        },
+        {
+          "id": "shellx.interface.composer.send",
+          "label": "Composer: Send or stop",
+          "summary": "Send submits the visible prompt and attachments to the active tab. While work is running, the same action surface exposes the applicable stop behavior."
+        },
+        {
+          "id": "shellx.interface.settings.general",
+          "label": "Settings: General",
+          "summary": "General controls model defaults, reasoning effort, typography, density, appearance, and other workspace-wide preferences."
+        },
+        {
+          "id": "shellx.interface.settings.vault",
+          "label": "Settings: Vault",
+          "summary": "Vault manages passwords and keys, typed resources, active grants, and profile setup through the current shared Vault backend."
+        },
+        {
+          "id": "shellx.interface.vault.workspace.passwords",
+          "label": "Vault: Passwords & keys",
+          "summary": "Passwords & keys opens the stored-resource list and editor area while keeping secret values hidden unless the operator explicitly reveals or copies one."
+        },
+        {
+          "id": "shellx.interface.vault.workspace.grants",
+          "label": "Vault: Active grants",
+          "summary": "Active grants lists current mediated permissions and lets the operator inspect or revoke access without exposing the underlying secret value."
+        },
+        {
+          "id": "shellx.interface.vault.workspace.setup",
+          "label": "Vault: Setup",
+          "summary": "Setup configures the shared Vault backend, unlock and recovery state, remembered-device behavior, and standalone Vault connection details."
+        },
+        {
+          "id": "shellx.interface.vault.resource.password_key",
+          "label": "Vault resource: Password/key",
+          "summary": "The Password/key editor stores a named secret with optional safe metadata, user-only visibility, and an integrated strong-password generator."
+        },
+        {
+          "id": "shellx.interface.vault.resource.profile",
+          "label": "Vault resource: Profile",
+          "summary": "The Profile editor groups contact and identity fields into a reusable profile card for approved, mediated form-filling workflows."
+        },
+        {
+          "id": "shellx.interface.vault.resource.agent_wallet",
+          "label": "Vault resource: Agent wallet",
+          "summary": "The Agent wallet editor stores reference-only Stripe configuration, budget constraints, allowed origins and categories, and an explicit operating status."
+        },
+        {
+          "id": "shellx.interface.settings.connections",
+          "label": "Settings: Connections",
+          "summary": "Connections reviews saved Local, WSL, and SSH presets; editing and environment-specific CLI scans remain available from the connection picker."
+        },
+        {
+          "id": "shellx.interface.settings.connectors",
+          "label": "Settings: Connectors",
+          "summary": "Connectors configures supported outside messaging surfaces and shows their availability and setup state.",
+          "steps": [
+            "For Telegram, allowlisting a group chat authorizes every participant in that group; keep per-message approval enabled or use a private chat when Session chat can dispatch agent work.",
+            "Discord Session chat accepts allowlisted direct-message user IDs rather than channel or guild IDs."
+          ]
+        },
+        {
+          "id": "shellx.interface.settings.desktop",
+          "label": "Settings: Desktop",
+          "summary": "Desktop controls host operating-system integrations and handoff behavior that do not belong to an individual agent tab."
+        },
+        {
+          "id": "shellx.interface.settings.shellxagent",
+          "label": "Settings: shellXagent",
+          "summary": "shellXagent configures the authenticated local API and agent-facing ShellX integration status; it does not globally enable the ShellX host skill."
+        },
+        {
+          "id": "shellx.interface.settings.data",
+          "label": "Settings: Data",
+          "summary": "Data shows storage and retention controls for local ShellX state and provides explicit maintenance actions."
+        },
+        {
+          "id": "shellx.interface.settings.about",
+          "label": "Settings: About",
+          "summary": "About shows the running version, source and issue links, update diagnostics, and release-readiness information."
+        }
+      ]
+    },
+    {
+      "id": "browser-interface",
+      "title": "Browser interface reference",
+      "summary": "Every Browser toolbar button, popover, and right-panel tab has its own explanation and deep link.",
+      "features": [
+        {
+          "id": "shellx.browser.ui.new_tab",
+          "label": "Browser tabs: New tab",
+          "summary": "Creates a normal tab in the currently selected Browser profile. The visible profile marker and ownership banner identify its authority."
+        },
+        {
+          "id": "shellx.browser.ui.disposable_tab",
+          "label": "Browser tabs: New disposable tab",
+          "summary": "Creates a task-disposable tab intended for bounded agent work and separate cleanup from personal browsing."
+        },
+        {
+          "id": "shellx.browser.ui.agent_lock",
+          "label": "Browser tabs: Agent tab lock",
+          "summary": "Locks or unlocks the active tab for the current agent lease so another actor cannot silently take control."
+        },
+        {
+          "id": "shellx.browser.ui.personal_lock",
+          "label": "Browser tabs: Personal Browser Lock",
+          "summary": "Locks personal Browser content immediately or opens lock setup when no personal lock has been configured."
+        },
+        {
+          "id": "shellx.browser.ui.handoff",
+          "label": "Browser tabs: Hand off",
+          "summary": "Hands the exact active tab to the active agent task while ownership remains visible in the banner."
+        },
+        {
+          "id": "shellx.browser.ui.take_back",
+          "label": "Browser tabs: Take back",
+          "summary": "Returns a delegated tab to the operator without changing its URL, profile, or task history."
+        },
+        {
+          "id": "shellx.browser.ui.right_panel_toggle",
+          "label": "Browser tabs: Show or hide right panel",
+          "summary": "Shows or hides the agent cowork panel without changing the Browser task, tab owner, or page."
+        },
+        {
+          "id": "shellx.browser.ui.back",
+          "label": "Browser toolbar: Back",
+          "summary": "Moves the active tab backward in its navigation history when a Browser tab is available."
+        },
+        {
+          "id": "shellx.browser.ui.forward",
+          "label": "Browser toolbar: Forward",
+          "summary": "Moves the active tab forward in its navigation history after a backward navigation."
+        },
+        {
+          "id": "shellx.browser.ui.reload",
+          "label": "Browser toolbar: Reload",
+          "summary": "Reloads the active page without changing the selected tab, profile, or ownership."
+        },
+        {
+          "id": "shellx.browser.ui.home",
+          "label": "Browser toolbar: Home",
+          "summary": "Navigates the active tab to the configured Browser homepage."
+        },
+        {
+          "id": "shellx.browser.ui.trust",
+          "label": "Browser toolbar: Trust and shields",
+          "summary": "Opens the current page security and shields summary so transport trust, filtering, and compatibility state are visible."
+        },
+        {
+          "id": "shellx.browser.ui.address",
+          "label": "Browser toolbar: Address",
+          "summary": "The address field navigates to a URL or search target in the active Browser tab."
+        },
+        {
+          "id": "shellx.browser.ui.copy_address",
+          "label": "Browser toolbar: Copy address",
+          "summary": "Copies the current page URL without copying page content or changing Browser state."
+        },
+        {
+          "id": "shellx.browser.ui.bookmark_current",
+          "label": "Browser toolbar: Bookmark current page",
+          "summary": "Adds the active page to Browser bookmarks using the current title and URL."
+        },
+        {
+          "id": "shellx.browser.ui.vault_fill",
+          "label": "Browser toolbar: Vault fill",
+          "summary": "Opens matching Vault fill candidates for the visible page; it stays disabled when no approved or eligible match exists."
+        },
+        {
+          "id": "shellx.browser.ui.downloads",
+          "label": "Browser toolbar: Downloads",
+          "summary": "Opens current and recorded transfer intents, completion state, final paths, and the default download folder control."
+        },
+        {
+          "id": "shellx.browser.ui.bookmarks",
+          "label": "Browser toolbar: Bookmarks",
+          "summary": "Opens the bookmark list or manager for navigation, folders, pinning, rename, URL editing, sorting, and deletion."
+        },
+        {
+          "id": "shellx.browser.ui.history",
+          "label": "Browser toolbar: History",
+          "summary": "Opens Browser history with separate User and Agent scopes, search, date filtering, and an explicit clear action."
+        },
+        {
+          "id": "shellx.browser.ui.save",
+          "label": "Browser toolbar: Save page",
+          "summary": "Opens local artifact and queued copy choices; each Save page item below is documented separately."
+        },
+        {
+          "id": "shellx.browser.ui.ads",
+          "label": "Browser toolbar: Ads filter",
+          "summary": "Opens the three visible ad-filter policies—Balanced, Strict, and Off—without exposing the legacy internal compatibility value."
+        },
+        {
+          "id": "shellx.browser.ui.options",
+          "label": "Browser toolbar: Browser settings",
+          "summary": "Opens Browser-specific appearance, homepage, profile, sidebar, personal-lock, and agent-engine preferences."
+        },
+        {
+          "id": "shellx.browser.save.full_page",
+          "label": "Save page: Full-page screenshot",
+          "summary": "Writes a PNG of the complete scrolling page to ShellX-owned Browser artifacts."
+        },
+        {
+          "id": "shellx.browser.save.window",
+          "label": "Save page: Window screenshot",
+          "summary": "Writes a PNG of the currently visible Browser window."
+        },
+        {
+          "id": "shellx.browser.save.markdown",
+          "label": "Save page: Markdown",
+          "summary": "Writes readable extracted page text as a local Markdown artifact."
+        },
+        {
+          "id": "shellx.browser.save.links",
+          "label": "Save page: Links JSON",
+          "summary": "Writes the visible rendered-page links as structured JSON."
+        },
+        {
+          "id": "shellx.browser.save.snapshot",
+          "label": "Save page: Snapshot bundle",
+          "summary": "Writes a bounded bundle of Markdown, links, and screenshot metadata for review."
+        },
+        {
+          "id": "shellx.browser.save.media",
+          "label": "Save page: Queue media copy",
+          "summary": "Queues a copy job for eligible images, video, and audio instead of pretending the material is already saved."
+        },
+        {
+          "id": "shellx.browser.save.code",
+          "label": "Save page: Queue code copy",
+          "summary": "Queues a copy job for eligible HTML, CSS, and script resources."
+        },
+        {
+          "id": "shellx.browser.save.site",
+          "label": "Save page: Queue site copy",
+          "summary": "Queues an offline-site copy job whose progress and final result must be reviewed."
+        },
+        {
+          "id": "shellx.browser.ads.balanced",
+          "label": "Ads filter: Balanced",
+          "summary": "Blocks common advertising noise while prioritizing site compatibility."
+        },
+        {
+          "id": "shellx.browser.ads.strict",
+          "label": "Ads filter: Strict",
+          "summary": "Blocks matching advertising and tracker requests before load, with a greater chance of site breakage."
+        },
+        {
+          "id": "shellx.browser.ads.off",
+          "label": "Ads filter: Off",
+          "summary": "Loads the page without ShellX ad filtering; normal Browser and network security boundaries still apply."
+        },
+        {
+          "id": "shellx.browser.options.color",
+          "label": "Browser settings: Color mode",
+          "summary": "Chooses System, Light, or Dark appearance for the Browser workspace."
+        },
+        {
+          "id": "shellx.browser.options.homepage",
+          "label": "Browser settings: Homepage",
+          "summary": "Sets the URL used by the Browser Home button for the active Browser profile."
+        },
+        {
+          "id": "shellx.browser.options.profile",
+          "label": "Browser settings: Default profile",
+          "summary": "Chooses the default Browser profile for new normal tabs; the visible profile marker confirms the active choice."
+        },
+        {
+          "id": "shellx.browser.options.sidebar",
+          "label": "Browser settings: Right sidebar",
+          "summary": "Controls whether the agent cowork sidebar is shown by default."
+        },
+        {
+          "id": "shellx.browser.options.personal_lock_enable",
+          "label": "Browser settings: Enable Personal Browser Lock",
+          "summary": "Enables or disables the personal-tab lock and exposes the immediate Lock or Unlock action."
+        },
+        {
+          "id": "shellx.browser.options.personal_lock_timeout",
+          "label": "Browser settings: Lock timeout",
+          "summary": "Chooses the inactivity period before personal Browser tabs lock."
+        },
+        {
+          "id": "shellx.browser.options.personal_lock_auth",
+          "label": "Browser settings: Unlock method",
+          "summary": "Chooses device authentication when available or a ShellX session PIN."
+        },
+        {
+          "id": "shellx.browser.options.personal_lock_pin",
+          "label": "Browser settings: Personal lock PIN",
+          "summary": "Sets or updates the session PIN used when PIN unlock is selected or device authentication is unavailable."
+        },
+        {
+          "id": "shellx.browser.options.personal_lock_cover",
+          "label": "Browser settings: Cover locked personal tabs",
+          "summary": "Covers locked personal-tab content so it is not left readable in the Browser workspace."
+        },
+        {
+          "id": "shellx.browser.options.personal_lock_pause",
+          "label": "Browser settings: Pause delegated tabs",
+          "summary": "Pauses delegated Browser tabs when Personal Browser Lock engages."
+        },
+        {
+          "id": "shellx.browser.options.personal_lock_sleep",
+          "label": "Browser settings: Lock after system sleep",
+          "summary": "Locks personal Browser tabs when the operating system resumes from sleep."
+        },
+        {
+          "id": "shellx.browser.options.personal_lock_minimize",
+          "label": "Browser settings: Lock when minimized",
+          "summary": "Optionally locks personal Browser tabs whenever the Browser window is minimized."
+        },
+        {
+          "id": "shellx.browser.options.parallel_agents",
+          "label": "Browser settings: Parallel agents",
+          "summary": "Chooses automatic or explicit Browser agent concurrency limits without granting additional tab ownership."
+        },
+        {
+          "id": "shellx.browser.panel.chat",
+          "label": "Browser right panel: Chat",
+          "summary": "Shows the human-agent Browser cowork conversation, task goal, and page-explanation prompt for the active task."
+        },
+        {
+          "id": "shellx.browser.panel.requests",
+          "label": "Browser right panel: Requests",
+          "summary": "Shows pending Vault and sensitive Browser prompts that require a direct operator decision."
+        },
+        {
+          "id": "shellx.browser.panel.actions",
+          "label": "Browser right panel: Actions",
+          "summary": "Shows current task controls, recent Browser actions, console information, and receipts in collapsible sections."
+        },
+        {
+          "id": "shellx.browser.panel.actions_tasks",
+          "label": "Browser Actions: Tasks section",
+          "summary": "Tasks expands or collapses the current Browser task controls and recent task state without changing task ownership or lifecycle by itself."
+        },
+        {
+          "id": "shellx.browser.panel.actions_receipts",
+          "label": "Browser Actions: Receipts section",
+          "summary": "Receipts expands or collapses the recent bounded Browser action receipts used to review what the active task actually attempted."
+        },
+        {
+          "id": "shellx.browser.panel.evidence",
+          "label": "Browser right panel: Evidence",
+          "summary": "Records a bounded, redacted attempt for the current Browser task and reviews Flight Recorder attempt and evaluation identities, exact hashes, completeness, and comparison counts without exposing private artifact paths or page content. Record attempt is disabled until a current task exists; Refresh reloads the bounded receipt list."
+        },
+        {
+          "id": "shellx.browser.panel.errors",
+          "label": "Browser right panel: Errors",
+          "summary": "Shows current Browser/runtime errors separately from normal action and chat history."
+        },
+        {
+          "id": "shellx.browser.panel.errors_console",
+          "label": "Browser Errors: Page errors section",
+          "summary": "Page errors expands or collapses the bounded page-console records, including level, message, time, and source location when available."
+        },
+        {
+          "id": "shellx.browser.sidecar.history_scopes",
+          "label": "History sidecar: User and Agent",
+          "summary": "Switches between personal browsing history and agent/task history so the two are not silently blended."
+        },
+        {
+          "id": "shellx.browser.sidecar.history_filters",
+          "label": "History sidecar: Search and date filter",
+          "summary": "Filters the selected history scope by text and date without deleting stored entries."
+        },
+        {
+          "id": "shellx.browser.sidecar.clear_history",
+          "label": "History sidecar: Clear history",
+          "summary": "Explicitly clears Browser history after an operator action; filtering alone never deletes it."
+        },
+        {
+          "id": "shellx.browser.sidecar.bookmark_list",
+          "label": "Bookmarks sidecar: List",
+          "summary": "Browses bookmarks and folders and opens the chosen saved URL."
+        },
+        {
+          "id": "shellx.browser.sidecar.bookmark_manager",
+          "label": "Bookmarks sidecar: Manage",
+          "summary": "Creates links and folders, renames labels, edits URLs, pins toolbar items, sorts by drag, and confirms deletion."
+        },
+        {
+          "id": "shellx.browser.sidecar.download_folder",
+          "label": "Downloads sidecar: Default folder",
+          "summary": "Shows and changes the default download folder before future transfers are accepted."
+        },
+        {
+          "id": "shellx.browser.sidecar.download_list",
+          "label": "Downloads sidecar: Transfer list",
+          "summary": "Shows pending, completed, and failed Browser transfers with truthful destination and status information."
+        }
+      ]
+    },
+    {
+      "id": "agents",
+      "title": "Agents and host tools",
+      "summary": "Provider-native tools remain primary; ShellX host capabilities are injected only into confirmed ShellX sessions.",
+      "features": [
+        {
+          "id": "shellx.agents.providers",
+          "label": "Provider sessions",
+          "summary": "ShellX can host Grok over ACP and run supported provider CLIs with streamed output and per-tab continuity.",
+          "steps": [
+            "Sign in to each provider in the target environment before selecting it.",
+            "Use the provider's native file, patch, terminal, and MCP tools for ordinary project work.",
+            "Use explicit ShellX handoffs when a workflow needs another provider or the desktop host."
+          ]
+        },
+        {
+          "id": "shellx.agents.cli_status",
+          "label": "Agent CLIs status",
+          "summary": "The right-rail Agent CLIs card scans the active local, WSL, or SSH target when the tab opens instead of trusting only the version saved by an older connection scan.",
+          "steps": [
+            "Read each provider row as target-specific: the Windows and WSL sides of one PC can have different binaries, versions, and sign-ins.",
+            "On Windows, ShellX scans the official OpenAI Codex install directory as well as the supported user-local Grok, Claude, Antigravity, Bun, Cargo, and npm roots before reporting readiness.",
+            "Use Refresh after installing or updating a CLI while ShellX is already open.",
+            "A saved scan is only a picker hint; the active-tab scan is the current binary readiness result. Provider authentication is negotiated when the session starts and may still require sign-in on that exact target."
+          ]
+        },
+        {
+          "id": "shellx.agents.session_capabilities",
+          "label": "Session capabilities",
+          "summary": "Session Tools derives readiness from the current agent's advertised catalog instead of assuming every provider has the same native features.",
+          "steps": [
+            "Search capabilities separately report native web search, native page fetch, and ShellX-hosted X search.",
+            "Advanced capabilities separately report provider-native image generation, Browser control, subagents, and code search, plus ShellX-hosted desktop and LSP tools.",
+            "Read NATIVE as functionality advertised by the selected CLI in this session; read HOST as a ShellX-hosted capability. A waiting row is not presented as working."
+          ]
+        },
+        {
+          "id": "shellx.agents.grok",
+          "label": "Grok CLI",
+          "summary": "Grok uses a persistent ACP session with native approvals, tools, images, MCP servers, and provider-native continuation where the installed CLI advertises them.",
+          "steps": [
+            "Use Grok-native tools for ordinary work and X search when the installed ACP capability handshake exposes it.",
+            "ShellX negotiates Grok ACP as initialize, headless authenticate, then session creation. It reuses an advertised cached login or API-key method and never strands the session in an interactive browser flow.",
+            "Run grok login in the target environment before connecting; for remote or headless targets use grok login --device-auth.",
+            "ShellX attaches its host MCP only to the launched session; legacy global ShellX Grok guidance and MCP registrations are removed on upgrade.",
+            "Treat the Windows host and a WSL Grok installation as separate connection targets.",
+            "On Windows, ShellX adds supported user-local CLI directories to its provider launches and terminal children without rewriting the account's persistent PATH."
+          ]
+        },
+        {
+          "id": "shellx.agents.codex",
+          "label": "Codex CLI",
+          "summary": "The Codex CLI uses structured JSON output with provider-native continuation, approvals, tools, and a per-process ShellX instruction/MCP override.",
+          "steps": [
+            "Sign in to Codex in the selected target environment.",
+            "ShellX passes compact session rules and a tab-bound MCP token only to the launched Codex process.",
+            "Use Codex-native project tools first and ShellX Browser, Vault, evidence, and handoff tools only when the task needs the desktop host."
+          ]
+        },
+        {
+          "id": "shellx.agents.claude",
+          "label": "Claude Code",
+          "summary": "Claude Code uses bidirectional stream-json with native tool events, continuation, permission modes, and a private ShellX MCP config for the selected tab.",
+          "steps": [
+            "Sign in with the installed Claude Code CLI; ShellX does not route subscription credentials through the Agent SDK.",
+            "ShellX adds its compact instruction only for the launched process and stores the tab-bound MCP file outside Claude's global discovery paths.",
+            "Use Claude-native tools for normal code work and verify final file and Git state before completion."
+          ]
+        },
+        {
+          "id": "shellx.agents.antigravity",
+          "label": "Antigravity CLI",
+          "summary": "Antigravity 1.1.8+ streams typed text, tool, subagent, conversation, and usage events while retaining its native Browser, web search, image generation, and coding tools.",
+          "steps": [
+            "Install and sign in to Antigravity in the selected environment.",
+            "ShellX attaches a unique private additional workspace and named agent only to this launched session; direct Antigravity sessions do not inherit ShellX activation.",
+            "Prefer native Antigravity tools, including generate_image when available. ShellX host MCP is disabled because 1.1.8 through 1.1.10 print-mode canaries never produced a real MCP tools/call; return to ShellX for host Vault, evidence, or handoff work."
+          ],
+          "note": "The 1.1.10 CLI discovered the exact canary schema but echoed the expected marker only after reading test files; the MCP server received no tools/call. Failed probes consumed 32k to 83k tokens, so ShellX does not advertise this as working functionality."
+        },
+        {
+          "id": "shellx.agents.host_skill",
+          "label": "Session-scoped ShellX host activation",
+          "summary": "ShellX host guidance and tools are injected only into agents launched by ShellX; direct CLI sessions do not inherit a global skill, MCP server, or instruction block.",
+          "steps": [
+            "ShellX passes compact runtime rules and a tab-bound, session-scoped host MCP configuration when it launches a provider.",
+            "The full reference remains in ShellX-owned agent docs and the authenticated Debug API, outside global provider skill discovery.",
+            "Upgrades remove exact legacy global ShellX skill leaves and ShellX-marked Grok config or AGENTS blocks while preserving unrelated user content."
+          ]
+        },
+        {
+          "id": "shellx.agents.permissions",
+          "label": "Provider execution authority",
+          "summary": "ShellX coding-agent sessions run in provider-native Full Auto.",
+          "steps": [
+            "Treat Full Auto as project-scoped trust, not blanket machine approval.",
+            "Operator-gated Browser and Vault actions remain separately gated even when the coding provider is automated.",
+            "Use a trusted project folder and environment because provider-native shell and file tools can execute without ShellX confirmation prompts."
+          ]
+        },
+        {
+          "id": "shellx.agents.mcp",
+          "label": "Host MCP",
+          "summary": "Confirmed ShellX sessions can receive tab-bound host tools for status, Browser, Vault, previews, processes, media, and provider handoffs.",
+          "steps": [
+            "Start with the compact capability summary when it is advertised.",
+            "Browser automation is advertised through two routed tools: browser_read for bounded observations and browser_act for permission-gated changes; verbose compatibility schemas remain on-demand instead of entering every prompt.",
+            "Browser observations default to a 3,000-byte structured-response budget and expose their serialized byte and approximate token counts; use extraction or an explicit larger/full request only when necessary.",
+            "Prefer provider-native file tools for the selected remote cwd; ShellX host file tools address the parent host filesystem.",
+            "Use mutating host tools only when the ShellX UI and active tab make the authority visible."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "browser",
+      "title": "Integrated Browser",
+      "summary": "A native Browser lets humans and agents share visible web state while protecting profiles, secrets, and sensitive actions.",
+      "features": [
+        {
+          "id": "shellx.browser.open",
+          "label": "Open the Browser workspace",
+          "summary": "Use the Browser header entry for human browsing or let a confirmed ShellX-hosted agent start a disposable task.",
+          "steps": [
+            "Use personal tabs for your own browsing and task-disposable tabs for agent work.",
+            "Check the visible profile, URL, task, and lock state before acting.",
+            "A background health check must not open, focus, navigate, or mutate Browser state."
+          ]
+        },
+        {
+          "id": "shellx.browser.cowork",
+          "label": "Human-agent cowork",
+          "summary": "A human can delegate an exact tab/task while ShellX keeps ownership, locks, prompts, and receipts visible.",
+          "steps": [
+            "Start or select a Browser task and choose the intended profile.",
+            "Delegate only the tab and scope needed for the current objective.",
+            "Resolve personal-tab permissions, dialogs, and sensitive decisions in the operator UI."
+          ]
+        },
+        {
+          "id": "shellx.browser.observe_act",
+          "label": "Observe and act with stable references",
+          "summary": "Agents observe bounded DOM/accessibility state, then act on stable references with stale-target and motion checks.",
+          "steps": [
+            "Observe the page and use returned refs instead of inventing selectors.",
+            "Re-observe after navigation or when a stale fingerprint blocks an action.",
+            "Use coordinate actions only for visual-only controls and never to bypass a Vault-mediated credential path."
+          ]
+        },
+        {
+          "id": "shellx.browser.sensitive",
+          "label": "Sensitive actions",
+          "summary": "Sign-ins, purchases, uploads, downloads, account changes, secret use, and other consequential actions remain explicit and reviewable.",
+          "steps": [
+            "Review the target site, exact operation, and data being submitted.",
+            "Approve or deny the corresponding Browser/Vault request in ShellX.",
+            "Inspect the redacted receipt and final page state before calling the task complete."
+          ]
+        },
+        {
+          "id": "shellx.browser.vault",
+          "label": "Fill from Vault",
+          "summary": "Browser fills use an approved Vault grant so durable secret values stay out of the agent transcript.",
+          "steps": [
+            "The agent lists safe Vault metadata and requests one exact use.",
+            "The operator approves a bounded grant in the Vault Request Center.",
+            "ShellX injects the value into the intended Browser field and returns redacted evidence."
+          ]
+        },
+        {
+          "id": "shellx.browser.workflows",
+          "label": "Downloads, workflows, and recovery",
+          "summary": "Downloads expose final paths, reusable workflows keep scope metadata, and failed actions retain truthful step results.",
+          "steps": [
+            "Review download path and completion state before consuming an artifact.",
+            "Save a workflow only when its replay steps, domain scope, and permission assumptions are clear.",
+            "On failure, inspect the stopped step, recovery evidence, page state, and receipt instead of treating continued execution as success."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vault",
+      "title": "Integrated Vault client",
+      "summary": "Operate the same local-first Vault authority from ShellX without giving agents a plaintext secret-reading API.",
+      "features": [
+        {
+          "id": "shellx.vault.create_connect",
+          "label": "Create or connect a Vault",
+          "summary": "ShellX resolves the canonical Vault profile, migrates legacy profile locations, and can connect to an existing standalone Vault profile.",
+          "steps": [
+            "Open Settings → Vault or the Vault header entry.",
+            "Create a local Vault or connect to the intended existing profile.",
+            "Save recovery material and verify the selected profile before importing secrets."
+          ]
+        },
+        {
+          "id": "shellx.vault.lock_recovery",
+          "label": "Lock, unlock, and recovery",
+          "summary": "Vault data is encrypted at rest; remembered-device unlock and recovery behavior belong to the Vault profile, not an agent session.",
+          "steps": [
+            "Unlock in the operator UI when a grant-backed operation requires it.",
+            "Lock manually before leaving the machine or changing operator context.",
+            "Test recovery material before depending on the Vault as the only copy of a credential."
+          ]
+        },
+        {
+          "id": "shellx.vault.resources",
+          "label": "Secrets and typed resources",
+          "summary": "Store API keys, logins, identities, cards, wallets, and other typed resources with descriptions and visibility policy.",
+          "steps": [
+            "Use a stable resource name and a description that is safe for an agent to see.",
+            "Choose user-only, ask-each-use, or policy-allowed behavior deliberately.",
+            "Avoid copying durable values through chat when the user can enter them directly in Vault."
+          ]
+        },
+        {
+          "id": "shellx.vault.single_backend",
+          "label": "One integrated Vault backend",
+          "summary": "ShellX sessions, SSH keys, subagents, marketplace connectors, diagnostics, and host tools resolve the same current Vault profile.",
+          "steps": [
+            "Add or update a resource in the integrated or compatible standalone Vault profile.",
+            "ShellX active consumers read and write through the shared backend rather than reopening legacy vault.enc storage.",
+            "Use legacy vault.enc only as an explicit import source; after migration, verify the current profile before deleting any old backup."
+          ]
+        },
+        {
+          "id": "shellx.vault.grants",
+          "label": "Agent grants and Request Center",
+          "summary": "An agent can request one mediated operation, but cannot approve its own grant or raw-reveal a Vault value.",
+          "steps": [
+            "Review the actor, resource, operation, destination, and expiration.",
+            "Approve once, deny, or revoke from the Request Center.",
+            "Verify that the resulting tool receipt is redacted and scoped to the approved operation."
+          ]
+        },
+        {
+          "id": "shellx.vault.executable_requests",
+          "label": "Run a command with Vault resources",
+          "summary": "An agent can queue one exact absolute executable with selected Vault resources injected as child-process environment variables, but only a trusted ShellX operator can run it.",
+          "steps": [
+            "The agent discovers vault_agent_request through a targeted Host MCP tool search, then chooses agent-visible resources, an absolute program on the ShellX desktop host, exact arguments, an optional absolute working directory, and safe environment names.",
+            "In the Request Center, review the actor, purpose, complete program, arguments, working directory, bindings, and expiry; Run and Deny require a real trusted user action.",
+            "On approval, ShellX rechecks the digest and current resource policy, clears the child environment, injects only the approved values, bounds runtime and output, and redacts exact secret values from the result."
+          ],
+          "note": "The command runs on the machine hosting the ShellX desktop app, not automatically inside the active WSL or SSH destination. Inline shell/interpreter evaluation, user-only resources, legacy pass-store refs, and loader-altering environment variables are refused. Review the complete request in ShellX, and verify redacted output and cleanup before treating the operation as complete."
+        },
+        {
+          "id": "shellx.vault.standalone",
+          "label": "Standalone Vault compatibility",
+          "summary": "The integrated client shares the current broker profile rules and compatibility resource schema with standalone ShellX Vault.",
+          "steps": [
+            "Close or lock one client before profile migration or recovery maintenance.",
+            "Use either owner UI for digest-bound executable requests, but approve only after checking that the displayed host path and environment bindings match the intended machine.",
+            "Do not run two incompatible versions against the same profile during a migration."
+          ],
+          "note": "Broker/profile parity includes the owner-approved executable-request flow. Compatibility does not make concurrent profile migration safe; use one current client as the migration owner and retain recovery material until the result is verified."
+        }
+      ]
+    },
+    {
+      "id": "build",
+      "title": "Build, preview, and evidence",
+      "summary": "Long-running work stays visible through plans, checkpoints, previews, agent runs, and verification receipts.",
+      "features": [
+        {
+          "id": "shellx.build.mode",
+          "label": "Build Mode",
+          "summary": "The /build command runs a long-horizon Grok workflow with an approved scratchboard, checkpoints, review, and completion gates.",
+          "steps": [
+            "Start /build with one concrete objective and review the scratchboard.",
+            "Use /pause, /resume, or /stop without discarding the current evidence.",
+            "Accept completion only after code, review, verification, and checkpoint receipts satisfy the plan."
+          ]
+        },
+        {
+          "id": "shellx.build.preview",
+          "label": "Work Preview and Preview Doctor",
+          "summary": "Run static sites and supported web apps on loopback, inspect logs and screenshots, and send failures back to the active agent.",
+          "steps": [
+            "Start Preview from the selected project and inspect the bound URL.",
+            "Run Preview Doctor for HTTP, process-log, browser-error, and screenshot evidence.",
+            "Exercise important in-app controls; a first-page screenshot alone is not a complete UI test."
+          ]
+        },
+        {
+          "id": "shellx.build.trace",
+          "label": "Trace and activity",
+          "summary": "Current Trace surfaces session file/search/write/delete activity, tools, commands, and generated-media references when providers expose them.",
+          "steps": [
+            "Use Trace to understand what changed and which provider/tool produced it.",
+            "Correlate activity with Git diffs, task state, and verification receipts.",
+            "Treat missing provider telemetry as unknown, not proof that no action occurred."
+          ]
+        },
+        {
+          "id": "shellx.build.flight_recorder",
+          "label": "Flight Recorder status",
+          "summary": "Bounded Flight Recorder export and evaluation route through the Browser Evidence panel, compact Browser gateway, and CLI. Attempts retain monotonic source sequence, explicit sanitizer/selection truncation and task-owned retention gaps, completeness, first-evidence/action/network timing, operation coverage, and task-local handoff lineage; HTTP path/query/fragment values are removed, while unknown duration and parent/child lineage stay visibly partial. The Evidence panel can record the current task directly and marks gapped attempts instead of presenting every export as complete.",
+          "steps": [
+            "Use current Browser receipts, Trace, and Debug API evidence for production decisions.",
+            "In ShellX Browser, select a current task, open Evidence, and choose Record attempt. ShellX writes the bounded redacted artifact, validates its identity response, refreshes the receipt list, and reports whether evidence gaps remain.",
+            "The authenticated development export is task-owner/session bound, keeps only bounded sanitized receipts and events, and returns the artifact byte count and SHA-256.",
+            "Start a fresh caller-owned Browser task for every baseline or candidate attempt, then use browser_act action=flightRecorderExport; one task cannot populate multiple comparison cohorts.",
+            "Use browser_act action=evaluationWrite with a fixed evaluatedAtMs and exact attempt identities; the artifact suite/group must match, task identities must be distinct, and missing or incomplete evidence and unsafe candidates fail closed. Treat submitted duration, step, and safety fields as evaluator declarations bound to verified attempt artifacts, not independently observed Browser facts.",
+            "Use browser_read action=evidence for caller-scoped recent receipts, or the flight-recorder-export and workflow-evaluate CLI fallbacks, then review the same bounded identities in the Browser Evidence panel."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "api-security",
+      "title": "API, data, and troubleshooting",
+      "summary": "Use loopback APIs and diagnostics without confusing source structure, app health, and installed behavior.",
+      "features": [
+        {
+          "id": "shellx.api.debug",
+          "label": "ShellXagent and Debug API",
+          "summary": "The installed app exposes authenticated loopback-only endpoints for sessions, prompts, screenshots, diagnostics, Browser, Vault, previews, and settings.",
+          "steps": [
+            "Use ShellX-owned clients or a private process-local credential integration; never hard-code or print bearer values.",
+            "Use health and bounded summary endpoints before broad state capture.",
+            "Keep tokens, raw Browser state, and Vault values out of logs and project folders."
+          ]
+        },
+        {
+          "id": "shellx.security.data",
+          "label": "Data and security boundaries",
+          "summary": "ShellX stores sessions and configuration under the active profile, binds services to loopback, and keeps Vault values encrypted and operator mediated.",
+          "steps": [
+            "Back up important project files and Vault recovery materials independently.",
+            "Review connection presets, provider permissions, Browser profiles, and pending Vault grants after environment changes.",
+            "Do not publish private evidence, tokens, hostnames, or machine paths with the public repository."
+          ]
+        },
+        {
+          "id": "shellx.troubleshooting.connections",
+          "label": "Connection failures",
+          "summary": "Separate network reachability, SSH shell compatibility, CLI installation, authentication, cwd, and host-tool health.",
+          "steps": [
+            "Run Test Connection and inspect the exact platform or authentication error.",
+            "Scan CLIs in the same Local, WSL, or SSH target used by the tab.",
+            "For a Windows PC, distinguish native port 22 from the WSL sshd port before changing provider settings."
+          ]
+        },
+        {
+          "id": "shellx.troubleshooting.browser_vault",
+          "label": "Browser or Vault failures",
+          "summary": "Check task ownership, tab/profile identity, locks, pending dialogs, grant state, Vault lock state, and final receipts in that order.",
+          "steps": [
+            "Use a bounded Browser state summary and confirm the intended task/tab.",
+            "Resolve operator prompts or unlock Vault rather than retrying the same blocked action.",
+            "Clean up only the task, profile, process, or test fixture owned by the current run."
+          ]
+        },
+        {
+          "id": "shellx.troubleshooting.release",
+          "label": "Release-grade verification",
+          "summary": "A release candidate needs source gates, exact artifact identity, a disposable installed profile, cross-host behavior, and fresh receipts.",
+          "steps": [
+            "Record source commit, app version, artifact hash, platform, and installed executable identity.",
+            "Run focused source tests before expensive native/installed matrices.",
+            "Test Windows, Linux, macOS, and remote flows that are actually claimed; label unavailable surfaces honestly."
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -59,6 +59,9 @@ export interface MicButtonProps {
   idleIcon?: string;
  /** Optional start gate. Return false to keep the mic idle. */
   onBeforeStart?: () => boolean;
+  /** Isolated final-candidate fixture: exercises the real cancel state
+   * transition without requesting an operator microphone. */
+  releaseTestRecording?: boolean;
 }
 
 /** imperative handle so BottomPanel's Send can
@@ -75,7 +78,7 @@ export interface MicButtonHandle {
 }
 
 export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function MicButton(
-  { onTranscript, disabled, onRecordingChange, mode = "talk", label, debugId, idleIcon, onBeforeStart }: MicButtonProps,
+  { onTranscript, disabled, onRecordingChange, mode = "talk", label, debugId, idleIcon, onBeforeStart, releaseTestRecording = false }: MicButtonProps,
   ref,
 ): JSX.Element {
   const [state, setState] = useState<MicState>("idle");
@@ -85,6 +88,10 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const tickerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (releaseTestRecording) setState("recording");
+    else if (recorderRef.current === null) setState("idle");
+  }, [releaseTestRecording]);
 
  // notify parent every time the recording flag flips
  // so the composer can re-label Send while we're hot.
@@ -190,7 +197,14 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
 
   function stop(): void {
     const rec = recorderRef.current;
-    if (!rec) return;
+    if (!rec) {
+      // The isolated final-candidate fixture deliberately has no browser
+      // MediaRecorder. Still traverse the production stop boundary so the
+      // native control can prove its recording-to-idle transition without
+      // requesting a device or invoking transcription.
+      if (releaseTestRecording) setState("idle");
+      return;
+    }
     if (rec.state !== "inactive") rec.stop();
     setState("transcribing");
   }
@@ -322,6 +336,7 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
       title={title}
       aria-label={title}
       data-debug-id={debugId}
+      data-release-control="composer-mic-button"
     >
       <span className="mic-ic"><ShellIcon name={iconName} size={14} /></span>
       {(label ?? modeLabel) && (

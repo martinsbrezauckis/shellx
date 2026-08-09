@@ -25,6 +25,7 @@ export interface PreviewQaCheck {
 
 export interface PreviewQaReceiptInput {
   generatedAt?: string;
+  sourceCommit?: string;
   target: PreviewQaTarget;
   diagnostic: WorkPreviewDiagnostic;
   flowChecks?: PreviewQaFlowCheck[];
@@ -33,6 +34,7 @@ export interface PreviewQaReceiptInput {
 export interface PreviewQaReceipt {
   schemaVersion: "shellx.preview.qa.v1";
   generatedAt: string;
+  sourceCommit?: string;
   target: PreviewQaTarget;
   status: PreviewQaStatus;
   summary: { pass: number; warn: number; fail: number };
@@ -96,6 +98,7 @@ export function buildPreviewQaReceipt(input: PreviewQaReceiptInput): PreviewQaRe
   return {
     schemaVersion: "shellx.preview.qa.v1",
     generatedAt: input.generatedAt ?? new Date().toISOString(),
+    sourceCommit: input.sourceCommit,
     target: {
       ...input.target,
       cwd: input.target.cwd ?? diagnostic.cwd,
@@ -113,6 +116,7 @@ export function renderPreviewQaReceiptMarkdown(receipt: PreviewQaReceipt): strin
     "",
     `Schema: ${receipt.schemaVersion}`,
     `Generated: ${receipt.generatedAt}`,
+    `Source commit: ${receipt.sourceCommit ?? "(unbound)"}`,
     `Target: ${receipt.target.label ?? receipt.target.tabId}`,
     `Cwd: ${receipt.target.cwd ?? "(unknown)"}`,
     `Url: ${receipt.target.url ?? "(none)"}`,

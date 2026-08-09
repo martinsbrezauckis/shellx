@@ -6,12 +6,17 @@
 
 use std::sync::{Arc, OnceLock};
 
+pub mod agent_requests;
 mod backend;
 pub mod grants;
 mod leak_guard;
 pub mod legacy_import;
 pub mod recovery;
 
+pub use agent_requests::{
+    AgentInjectionRequest, AgentInjectionSpec, AgentRequestCenterSnapshot, AgentRequestStatus,
+    AgentSecretBinding, AgentSubmitRequest,
+};
 pub use backend::{
     compat_key_to_item_id, SetupRequest, SetupTarget, ShellxVaultBackend, ShellxVaultKeyMeta,
     ShellxVaultMode, ShellxVaultStatus, UnlockRequest, VaultDebugAuditRecord,

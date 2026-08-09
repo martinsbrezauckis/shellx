@@ -28,6 +28,7 @@ pub(crate) fn browser_privacy_update_requires_operator(
 ) -> bool {
     request.global_ad_mode.is_some()
         || request.profile_ad_mode.is_some()
+        || request.clear_profile_ad_mode
         || request
             .profile_id
             .as_deref()
@@ -53,12 +54,22 @@ impl ShellxBrowserRegistry {
         if let Some(mode) = request.global_ad_mode {
             state.privacy.global_ad_mode = mode;
         }
-        if let Some(profile_id) = request
+        if request.clear_profile_ad_mode && request.profile_ad_mode.is_some() {
+            return Err(
+                "profileAdMode and clearProfileAdMode cannot be requested together".to_string(),
+            );
+        }
+        let profile_id = request
             .profile_id
             .as_deref()
             .map(clean_string)
-            .filter(|value| !value.is_empty())
+            .filter(|value| !value.is_empty());
+        if (request.profile_ad_mode.is_some() || request.clear_profile_ad_mode)
+            && profile_id.is_none()
         {
+            return Err("profileId is required for a profile ad-mode change".to_string());
+        }
+        if let Some(profile_id) = profile_id {
             if !state
                 .profiles
                 .iter()
@@ -66,7 +77,12 @@ impl ShellxBrowserRegistry {
             {
                 return Err(format!("unknown browser profile '{}'", profile_id));
             }
-            if let Some(mode) = request.profile_ad_mode {
+            if request.clear_profile_ad_mode {
+                state
+                    .privacy
+                    .profile_modes
+                    .retain(|item| item.profile_id != profile_id);
+            } else if let Some(mode) = request.profile_ad_mode {
                 if let Some(existing) = state
                     .privacy
                     .profile_modes

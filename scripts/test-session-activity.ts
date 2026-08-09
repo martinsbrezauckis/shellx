@@ -8,6 +8,7 @@ import {
   summarizeActivity,
 } from "../src/lib/session-activity";
 import { readFileSync } from "node:fs";
+import { readRustModuleFamily } from "./read-rust-module-family";
 
 let failures = 0;
 function assert(cond: boolean, label: string): void {
@@ -322,8 +323,8 @@ assert(filterActivityActions(combined.actions, "  ").length === combined.actions
 const activityModalSource = readFileSync(new URL("../src/components/ActivityBrowserModal.tsx", import.meta.url), "utf8");
 const appCssSource = readFileSync(new URL("../src/App.css", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const debugApiSource = readFileSync(new URL("../src-tauri/src/debug_api.rs", import.meta.url), "utf8");
-const debugApiDocs = readFileSync(new URL("../docs/API.md", import.meta.url), "utf8");
+const debugApiSource = readRustModuleFamily("src-tauri/src/debug_api.rs");
+const debugApiDocs = readFileSync(new URL("../docs/public/API.md", import.meta.url), "utf8");
 assert(activityModalSource.includes("activity-modal-resize-handle"), "activity browser exposes a modal resize handle");
 assert(activityModalSource.includes("activity-graph-detail-resizer"), "activity graph exposes a detail panel resize handle");
 assert(activityModalSource.includes('className="preview-actions activity-actions"'), "activity footer has trace-specific action styling");
@@ -337,6 +338,9 @@ assert(activityModalSource.includes('data-debug-id="activity-tab-graph"'), "acti
 assert(activityModalSource.includes('data-debug-id="activity-tab-evidence"'), "activity browser Evidence tab has a stable debug selector");
 assert(activityModalSource.includes('data-debug-id="activity-tab-timeline"'), "activity browser Timeline tab has a stable debug selector");
 assert(activityModalSource.includes('data-debug-id="activity-tab-summary"'), "activity browser Summary tab has a stable debug selector");
+assert(activityModalSource.includes('role="tab"') && activityModalSource.includes('aria-controls="activity-panel-files"'), "activity view buttons expose tab ownership semantics");
+assert(activityModalSource.includes('role="tabpanel"') && activityModalSource.includes('aria-labelledby={`activity-tab-${view}`}'), "activity body exposes the selected tabpanel owner");
+assert(activityModalSource.includes("ArrowRight") && activityModalSource.includes("ArrowLeft") && activityModalSource.includes("document.getElementById(`activity-tab-${next}`)?.focus()"), "activity tabs support roving keyboard navigation");
 assert(activityModalSource.includes('data-debug-id="activity-search"'), "activity browser search has a stable debug selector");
 assert(activityModalSource.includes("filterActivityActions"), "activity browser filters the condensed trace data");
 assert(activityModalSource.includes("ActivityEvidenceView"), "activity browser exposes a readable evidence view");
@@ -349,6 +353,9 @@ assert(activityModalSource.includes("activity-graph-legend"), "activity graph in
 assert(activityModalSource.includes("graphNodeIconName"), "activity graph nodes use explicit icons for kind/action");
 assert(activityModalSource.includes('preserveAspectRatio="none"'), "activity graph edges scale to the same canvas coordinates as nodes");
 assert(activityModalSource.includes("handleNodePointerMove"), "activity graph nodes can be repositioned with pointer drag");
+assert(activityModalSource.includes("handleNodeKeyDown") && activityModalSource.includes('event.key === "ArrowDown"'), "activity graph nodes can be repositioned with keyboard arrows");
+assert(activityModalSource.includes('data-shellx-release-observe="pressed focused"') && activityModalSource.includes("aria-pressed={selected?.id === node.id}"), "activity graph nodes expose accessible selection and focus state");
+assert(activityModalSource.includes('data-shellx-release-observe="expanded disabled"') && activityModalSource.includes("aria-expanded={canExpand ? isOpen : undefined}"), "activity tree twist controls expose accessible disclosure state");
 assert(appCssSource.includes(".activity-modal-resize-handle"), "activity browser resize handle is styled");
 assert(appCssSource.includes(".activity-graph-detail-resizer"), "activity graph detail resize handle is styled");
 assert(appCssSource.includes(".activity-graph-node-icon"), "activity graph node icons are styled");

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyUpdaterSignature } from "./lib/updater-signature-verifier";
 
 interface ManifestPlatform {
   signature: string;
@@ -15,7 +16,7 @@ interface UpdaterManifest {
   platforms: Record<string, ManifestPlatform>;
 }
 
-interface BuildOptions {
+export interface BuildOptions {
   version: string;
   artifactRoot: string;
   repo: string;
@@ -25,6 +26,8 @@ interface BuildOptions {
   output: string;
   pubDate: string;
   notes: string;
+  requiredPlatforms?: string[];
+  verifySignature?: (artifactPath: string, signaturePath: string) => void;
 }
 
 interface Candidate {
@@ -78,6 +81,27 @@ function artifactUrl(baseUrl: string, artifactPath: string): string {
   return `${baseUrl.replace(/\/$/, "")}/${encodeURIComponent(name)}`;
 }
 
+function validatedArtifactUrl(options: BuildOptions, baseUrl: string, artifactPath: string): string {
+  const raw = artifactUrl(baseUrl, artifactPath);
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`Updater artifact URL is invalid: ${raw}`);
+  }
+  const expectedPrefix = `/${options.repo}/releases/download/${options.tag}/`;
+  if (
+    parsed.protocol !== "https:"
+    || parsed.hostname !== "github.com"
+    || !parsed.pathname.startsWith(expectedPrefix)
+  ) {
+    throw new Error(
+      `Updater artifact URL must use https://github.com/${options.repo}/releases/download/${options.tag}/`,
+    );
+  }
+  return parsed.toString();
+}
+
 export function buildUpdaterManifest(options: BuildOptions): { manifest: UpdaterManifest; included: string[]; skipped: string[] } {
   const baseUrl = options.baseUrl ?? `https://github.com/${options.repo}/releases/download/${options.tag}`;
   const candidates: Candidate[] = [
@@ -107,6 +131,15 @@ export function buildUpdaterManifest(options: BuildOptions): { manifest: Updater
   const platforms: Record<string, ManifestPlatform> = {};
   const included: string[] = [];
   const skipped: string[] = [];
+  if (!options.verifySignature) {
+    throw new Error("Updater manifest generation requires cryptographic signature verification");
+  }
+  const candidatePlatforms = new Set(candidates.map((candidate) => candidate.platform));
+  const requiredPlatforms = options.requiredPlatforms ?? [...candidatePlatforms];
+  const unknownRequired = requiredPlatforms.filter((platform) => !candidatePlatforms.has(platform));
+  if (unknownRequired.length > 0) {
+    throw new Error(`Unknown required updater platform(s): ${unknownRequired.join(", ")}`);
+  }
 
   for (const candidate of candidates) {
     const artifact = firstExisting(options.artifactRoot, candidate.artifactNames);
@@ -119,15 +152,19 @@ export function buildUpdaterManifest(options: BuildOptions): { manifest: Updater
       skipped.push(`${candidate.platform}: missing ${signaturePath}`);
       continue;
     }
+    options.verifySignature(artifact, signaturePath);
     platforms[candidate.platform] = {
       signature: readFileSync(signaturePath, "utf8").trim(),
-      url: artifactUrl(baseUrl, artifact),
+      url: validatedArtifactUrl(options, baseUrl, artifact),
     };
     included.push(`${candidate.platform}: ${artifact.split(/[\\/]/).pop()}`);
   }
 
-  if (Object.keys(platforms).length === 0) {
-    throw new Error(`No updater-compatible artifacts with .sig found under ${options.artifactRoot}`);
+  const missingRequired = requiredPlatforms.filter((platform) => !platforms[platform]);
+  if (missingRequired.length > 0) {
+    throw new Error(
+      `Missing required verified updater platform(s): ${missingRequired.join(", ")}. ${skipped.join("; ")}`,
+    );
   }
 
   return {
@@ -160,12 +197,28 @@ export function optionsFromArgv(argv: string[]): BuildOptions {
     macPlatform: optString(parsed, "mac-platform") ?? process.env.SHELLX_UPDATER_MAC_PLATFORM ?? "darwin-aarch64",
     pubDate: optString(parsed, "pub-date") ?? new Date().toISOString(),
     notes: optString(parsed, "notes") ?? `See ShellX ${tag} release notes on GitHub.`,
+    requiredPlatforms: (optString(parsed, "platforms")
+      ?? `windows-x86_64,${optString(parsed, "mac-platform") ?? process.env.SHELLX_UPDATER_MAC_PLATFORM ?? "darwin-aarch64"},linux-x86_64`)
+      .split(",")
+      .map((platform) => platform.trim())
+      .filter(Boolean),
   };
 }
 
+export function buildVerifiedUpdaterManifestFromArgv(argv: string[]): {
+  options: BuildOptions;
+  result: ReturnType<typeof buildUpdaterManifest>;
+} {
+  const options = optionsFromArgv(argv);
+  options.verifySignature = (artifactPath, signaturePath) => {
+    verifyUpdaterSignature(artifactPath, signaturePath);
+  };
+  return { options, result: buildUpdaterManifest(options) };
+}
+
 function main(): void {
-  const options = optionsFromArgv(process.argv.slice(2));
-  const { manifest, included, skipped } = buildUpdaterManifest(options);
+  const { options, result } = buildVerifiedUpdaterManifestFromArgv(process.argv.slice(2));
+  const { manifest, included, skipped } = result;
   mkdirSync(dirname(options.output), { recursive: true });
   writeFileSync(options.output, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   console.log(`wrote ${options.output}`);

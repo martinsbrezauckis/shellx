@@ -115,7 +115,7 @@ fn profile_parity_platform_defaults_match_each_surface_without_touching_real_hom
 
     let windows = resolve_profile_dirs(ProfileDirInput {
         platform: ProfilePlatform::Windows,
-        home: Some(root.join("Users/martin")),
+        home: Some(root.join("Users/fixture")),
         xdg_config_home: None,
         appdata: Some(root.join("AppData/Roaming")),
         override_dir: None,
@@ -127,7 +127,7 @@ fn profile_parity_platform_defaults_match_each_surface_without_touching_real_hom
     );
     assert_eq!(
         windows.shellx_legacy_dir,
-        root.join("Users/martin/.shellx/shellx-vault")
+        root.join("Users/fixture/.shellx/shellx-vault")
     );
 }
 

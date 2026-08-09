@@ -1,5 +1,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { strict as assert } from "node:assert";
+import { readRustModuleFamily } from "./read-rust-module-family";
+import { buildBrowserVaultFillCandidates } from "../src/browser/vaultFillCandidates";
 
 const root = process.cwd();
 
@@ -9,13 +12,13 @@ const mustContain: Array<[string, string]> = [
   ["src-tauri/src/debug_api.rs", "/vault/remember-device"],
   ["src-tauri/src/debug_api.rs", "/vault/lock"],
   ["src-tauri/src/debug_api.rs", "vault_lock_http"],
-  ["src-tauri/src/debug_api.rs", "shellx:vault-status-invalidated"],
-  ["src-tauri/src/debug_api.rs", "import_legacy"],
+  ["src-tauri/src/debug_api_vault.rs", "shellx:vault-status-invalidated"],
+  ["src-tauri/src/debug_api_vault.rs", "import_legacy"],
   ["src-tauri/src/debug_api.rs", "/vault/grants"],
-  ["src-tauri/src/debug_api.rs", "raw_secret_reveal_denied"],
+  ["src-tauri/src/debug_api_preview_tools.rs", "raw_secret_reveal_denied"],
   ["src-tauri/src/debug_api.rs", "/vault/e2e/reset"],
-  ["src-tauri/src/debug_api.rs", "SHELLX_VAULT_E2E"],
-  ["src-tauri/src/debug_api.rs", "vault_e2e_profile_not_isolated"],
+  ["src-tauri/src/debug_api_vault.rs", "SHELLX_VAULT_E2E"],
+  ["src-tauri/src/debug_api_vault.rs", "vault_e2e_profile_not_isolated"],
   ["src-tauri/src/debug_api.rs", "/vault/e2e/probe-use"],
   ["src-tauri/src/debug_api.rs", "/vault/e2e/audit"],
   ["src-tauri/src/shellx_vault/grants.rs", "GrantActorContext"],
@@ -54,8 +57,9 @@ const mustContain: Array<[string, string]> = [
   ["src-tauri/src/shellx_vault/backend.rs", "user_only"],
   ["src-tauri/src/debug_api.rs", "/vault/resources"],
   ["src-tauri/src/debug_api.rs", "vault_resources_http"],
-  ["src-tauri/src/debug_api.rs", "\"entries\": entries"],
+  ["src-tauri/src/debug_api_vault.rs", "\"entries\": entries"],
   ["src-tauri/src/lib.rs", "vault_list_resources"],
+  ["src-tauri/src/lib.rs", "vault_update_resource_metadata"],
   ["src-tauri/src/lib.rs", "shellx_vault_begin_setup"],
   ["src-tauri/src/lib.rs", "shellx_vault_unlock"],
   ["src-tauri/src/lib.rs", "shellx_vault_lock"],
@@ -64,16 +68,20 @@ const mustContain: Array<[string, string]> = [
   ["src-tauri/src/lib.rs", "shellx_vault_approve_grant"],
   ["src-tauri/src/lib.rs", "description: Option<String>"],
   ["src-tauri/src/lib.rs", "vault_update_metadata"],
-  ["src-tauri/src/host_mcp.rs", "vault_generate"],
-  ["src-tauri/src/host_mcp.rs", "vault_deposit"],
-  ["src-tauri/src/host_mcp.rs", "The caller must POST the captured secretValue"],
-  ["src-tauri/src/host_mcp.rs", "browser_fill_from_vault"],
-  ["src-tauri/src/host_mcp.rs", "\"name\": \"vault_list\""],
-  ["src-tauri/src/host_mcp.rs", "\"name\": \"vault_list_grants\""],
-  ["src-tauri/src/host_mcp.rs", "\"name\": \"vault_request_grant\""],
-  ["src-tauri/src/host_mcp.rs", "pendingOperatorApproval"],
-  ["src-tauri/src/host_mcp.rs", "refuses rawReveal"],
-  ["src-tauri/src/host_mcp.rs", "agentVisibleOnly"],
+  ["src-tauri/src/host_mcp/vault_tools.rs", "vault_generate"],
+  ["src-tauri/src/host_mcp/vault_tools.rs", "generateAndStore"],
+  ["src-tauri/src/host_mcp/vault_tools.rs", "VAULT_GENERATE_ITEM_EXISTS"],
+  ["src-tauri/src/shellx_vault/backend.rs", "compat_create_with_description"],
+  ["src-tauri/src/host_mcp.rs", '"vault_generate"'],
+  ["src-tauri/src/host_mcp/vault_tools.rs", "vault_deposit"],
+  ["src-tauri/src/host_mcp/tool_specs_core.rs", "The caller must POST the captured secretValue"],
+  ["src-tauri/src/host_mcp/browser_specs.rs", "browser_fill_from_vault"],
+  ["src-tauri/src/host_mcp/tool_specs_core.rs", "\"name\": \"vault_list\""],
+  ["src-tauri/src/host_mcp/tool_specs_core.rs", "\"name\": \"vault_list_grants\""],
+  ["src-tauri/src/host_mcp/tool_specs_core.rs", "\"name\": \"vault_request_grant\""],
+  ["src-tauri/src/host_mcp/vault_tools.rs", "pendingOperatorApproval"],
+  ["src-tauri/src/host_mcp/vault_tools.rs", "refuses rawReveal"],
+  ["src-tauri/src/host_mcp/vault_tools.rs", "agentVisibleOnly"],
   ["src-tauri/src/shellx_browser_vault.rs", "browserVaultCredentialFilled"],
   ["src-tauri/src/shellx_browser_vault.rs", "shellx_browser_fill_user_vault_secret"],
   ["src-tauri/src/shellx_browser_vault.rs", "BrowserUserVaultFillRequest"],
@@ -82,24 +90,24 @@ const mustContain: Array<[string, string]> = [
   ["src/browser/api.ts", "fillUserVaultSecret"],
   ["src/browser/api.ts", "vault_list_keys_with_meta"],
   ["src/browser/components/BrowserChrome.tsx", "shellx-browser-vault-fill-menu"],
-  ["src/components/ShellxBrowserApp.tsx", "shellx-browser-vault-fill-suggestion"],
-  ["src/components/ShellxBrowserApp.tsx", "Vault fill requires a direct user click."],
-  ["src/components/ShellxBrowserApp.tsx", "buildBrowserVaultFillCandidates"],
-  ["src/components/ShellxBrowserApp.tsx", "vaultFillObservationRefresh"],
+  ["src/browser/components/BrowserVaultFillPanel.tsx", "shellx-browser-vault-fill-suggestion"],
+  ["src/browser/hooks/useBrowserVaultFill.ts", "Vault fill requires a direct user click."],
+  ["src/browser/vaultFillCandidates.ts", "buildBrowserVaultFillCandidates"],
+  ["src/browser/hooks/useBrowserVaultFill.ts", "observationRefresh"],
   ["scripts/test-shellx-browser-debug-api.ts", "Vault approved fill grant authorizes Browser agent actor"],
   ["scripts/test-shellx-browser-debug-api.ts", "approved Vault fill still blocks on local HTTP credential page"],
   ["scripts/test-shellx-browser-debug-api.ts", "Vault user-only secret refuses agent grant approval"],
-  ["src-tauri/src/shellx_browser.rs", "prepare_vault_grant_fill_action"],
-  ["src-tauri/src/debug_api.rs", "fillFromVaultGrant"],
-  ["src-tauri/src/debug_api.rs", "authorize_secret_use_for_actor"],
+  ["src-tauri/src/shellx_browser_vault.rs", "prepare_vault_grant_fill_action"],
+  ["src-tauri/src/debug_api_browser_action.rs", "fillFromVaultGrant"],
+  ["src-tauri/src/debug_api_browser_security.rs", "authorize_secret_use_for_actor"],
   ["src/components/VaultPanel.tsx", "vault-workspace-lock-status"],
   ["src/components/VaultPanel.tsx", "data-debug-id=\"vault-workspace-lock\""],
   ["src/components/VaultPanel.tsx", "vault-workspace-quick-unlock"],
   ["src/components/VaultPanel.tsx", "shellx_vault_lock"],
   ["src/components/VaultPanel.tsx", "shellx:vault-status-invalidated"],
-  ["src/components/Header.tsx", "vault-open"],
-  ["src/components/Header.tsx", "vault-closed"],
-  ["src/components/Header.tsx", "shellx:vault-status-invalidated"],
+  ["src/components/HeaderVaultRequestCenter.tsx", "vault-open"],
+  ["src/components/HeaderVaultRequestCenter.tsx", "vault-closed"],
+  ["src/components/HeaderVaultRequestCenter.tsx", "shellx:vault-status-invalidated"],
   ["src/components/VaultPasswordGenerator.tsx", "vault-password-generator"],
   ["src/lib/vault-password-generator.ts", "VAULT_PASSWORD_POCKET_TTL_MS"],
   ["src/components/settings/VaultTab.tsx", "data-debug-id=\"vault-description-input\""],
@@ -120,7 +128,8 @@ const mustContain: Array<[string, string]> = [
   ["src/components/settings/VaultSetupPanel.tsx", "passphrases do not match"],
   ["src/components/settings/VaultSetupPanel.tsx", "copyRecoveryKit"],
   ["src/components/settings/VaultSetupPanel.tsx", "handleKeyfileFile"],
-  ["src/components/settings/VaultSetupPanel.tsx", "data-debug-id=\"shellx-vault-keyfile-file\""],
+  ["src/components/settings/VaultSetupPanel.tsx", "data-debug-id=\"surface-components-settings-vaultsetuppanel-17\""],
+  ["src/components/settings/VaultSetupPanel.tsx", "Use existing keyfile"],
   ["src/components/settings/VaultSetupPanel.tsx", "type=\"file\""],
   ["src/components/settings/VaultSetupPanel.tsx", "data-debug-id=\"shellx-vault-recovery-copy\""],
   ["src/components/settings/VaultSetupPanel.tsx", "shellx-vault-recovery-confirm"],
@@ -135,15 +144,15 @@ const mustContain: Array<[string, string]> = [
   ["src/components/settings/VaultTab.tsx", "vault-resource-section-profile-cards"],
   ["src/components/settings/VaultTab.tsx", "vault-resource-section-agent-wallets"],
   ["src/components/settings/VaultTab.tsx", "useState<VaultResourceFormTab>(\"secret\")"],
-  ["src/components/settings/VaultTab.tsx", "id: \"secret\""],
-  ["src/components/settings/VaultTab.tsx", "Profile cards"],
-  ["src/components/settings/VaultTab.tsx", "Agent wallets"],
+  ["src/lib/vault-resource-model.ts", "id: \"secret\""],
+  ["src/lib/vault-resource-model.ts", "Profile cards"],
+  ["src/lib/vault-resource-model.ts", "Agent wallets"],
   ["src/components/settings/VaultTab.tsx", "Stripe API secret ref"],
   ["src/components/settings/VaultTab.tsx", "Webhook signing secret ref"],
-  ["src/components/settings/VaultTab.tsx", "User only"],
-  ["src/components/settings/VaultTab.tsx", "Visible / ask"],
-  ["src/components/settings/VaultTab.tsx", "Fill always"],
-  ["src/components/settings/VaultTab.tsx", "Tool use always"],
+  ["src/lib/vault-resource-model.ts", "User only"],
+  ["src/lib/vault-resource-model.ts", "Visible / ask"],
+  ["src/lib/vault-resource-model.ts", "Fill by site"],
+  ["src/lib/vault-resource-model.ts", "Tool use always"],
   ["src/components/settings/VaultGrantsPanel.tsx", "shellx-vault-grants"],
   ["src/components/settings/VaultGrantsPanel.tsx", "data-debug-id=\"shellx-vault-grant-row\""],
   ["src/lib/vault-request-center.ts", "approveVaultGrant"],
@@ -151,13 +160,13 @@ const mustContain: Array<[string, string]> = [
   ["src/App.tsx", "isTrustedShellxUserEvent"],
   ["src/components/ShellxBrowserApp.tsx", "isTrustedShellxUserEvent"],
   ["src/App.tsx", "shellx_vault_approve_grant"],
-  ["docs/API.md", "Vault Request Center"],
-  ["docs/API.md", "POST | `/vault/lock`"],
+  ["docs/public/API.md", "Vault Request Center"],
+  ["docs/public/API.md", "POST | `/vault/lock`"],
   ["skills/shellx-host/SKILL.md", "vault_request_grant"],
   ["src/browser/components/AgentSidebar.tsx", "data-debug-id=\"shellx-browser-vault-prompt\""],
   ["src/App.css", ".vault-setup-panel"],
-  ["docs/API.md", "/vault/setup/begin"],
-  ["docs/API.md", "raw_secret_reveal_denied"],
+  ["docs/public/API.md", "/vault/setup/begin"],
+  ["docs/public/API.md", "raw_secret_reveal_denied"],
   ["shellx-browser/README.md", "Vault credential"],
   ["src-tauri/Cargo.toml", "../vendor/shellx-vault/crates/vault-client"],
   ["src-tauri/Cargo.toml", "../vendor/shellx-vault/crates/vault-server"],
@@ -205,6 +214,17 @@ if (!/setRecoveryKit\(kit\);[\s\S]*?setPassphrase\(""\);[\s\S]*?setConfirmPassph
 if (vaultSetupPanel.includes("Existing keyfile JSON")) {
   throw new Error("Vault setup must use a file picker for existing keyfiles instead of asking users to paste raw JSON");
 }
+const keyfileInput = vaultSetupPanel.match(/<input[\s\S]*?\/>/g)
+  ?.find((input) => input.includes("ref={keyfileInputRef}"));
+if (!keyfileInput || !keyfileInput.includes("hidden") || keyfileInput.includes("data-debug-id")) {
+  throw new Error("Vault setup must keep the native keyfile input hidden and address the visible picker trigger instead");
+}
+if (!/async function chooseKeyfile\(\)[\s\S]*?takeShellxReleasePickerClaim\("file"\)[\s\S]*?if \(!claim\)[\s\S]*?keyfileInputRef\.current\?\.click\(\)/.test(vaultSetupPanel)) {
+  throw new Error("Vault setup must fall back from the isolated release lease to the hidden native keyfile picker");
+}
+if (!/data-debug-id="surface-components-settings-vaultsetuppanel-17"[\s\S]*?onClick=\{\(\) => void chooseKeyfile\(\)\}/.test(vaultSetupPanel)) {
+  throw new Error("Vault setup must expose a stable visible trigger wired to the guarded keyfile picker");
+}
 if (!vaultSetupPanel.includes("const [importLegacy, setImportLegacy] = useState(false);")) {
   throw new Error("Vault setup must require explicit opt-in before importing existing ShellX secrets");
 }
@@ -243,22 +263,29 @@ if (!/data-debug-id="shellx-vault-unlock-passphrase"[\s\S]*autoComplete="current
 }
 
 const vaultTab = readFileSync(join(root, "src/components/settings/VaultTab.tsx"), "utf8");
+const vaultResourceModel = readFileSync(join(root, "src/lib/vault-resource-model.ts"), "utf8");
 if (!vaultTab.includes("data-debug-id=\"vault-permission-bar\"")) {
   throw new Error("Vault key rows must expose a visible per-secret permission bar");
 }
 if (
-  !vaultTab.includes("type PermissionLevel") ||
-  !vaultTab.includes("Visible / ask") ||
-  !vaultTab.includes("Fill always") ||
-  !vaultTab.includes("Tool use always")
+  !vaultResourceModel.includes("type PermissionLevel") ||
+  !vaultResourceModel.includes("Visible / ask") ||
+  !vaultResourceModel.includes("Fill by site") ||
+  !vaultResourceModel.includes("Tool use always")
 ) {
-  throw new Error("Vault key rows must present understandable visibility and always-use choices");
+  throw new Error("Vault key rows must present understandable visibility, site-bound fill, and always-use choices");
 }
 if (!/handleSetPermission[\s\S]*?shellx_vault_create_grant/.test(vaultTab)) {
   throw new Error("Vault permission bar must create grants without requiring a manually typed secret reference");
 }
-if (!/desiredGrantOperationsForLevel[\s\S]*?browserFillAlways[\s\S]*?fill[\s\S]*?toolUseAlways[\s\S]*?providerUse/.test(vaultTab)) {
+if (!/desiredGrantOperationsForLevel[\s\S]*?browserFillAlways[\s\S]*?fill[\s\S]*?toolUseAlways[\s\S]*?providerUse/.test(vaultResourceModel)) {
   throw new Error("Vault always-use choices must map to mediated grant operations");
+}
+if (!/browserFillAlways[\s\S]*?window\.prompt[\s\S]*?normalizeBrowserGrantOriginInput[\s\S]*?origin: isBrowserGrantOperation/.test(vaultTab)) {
+  throw new Error("Vault browser-fill grants must collect, validate, and submit an exact website origin");
+}
+if (/case "toolUseAlways":[\s\S]*?return \["fill", "providerUse"\]/.test(vaultResourceModel)) {
+  throw new Error("Vault generic tool-use permission must not silently create an originless browser-fill grant");
 }
 if (vaultTab.includes("user_only:")) {
   throw new Error("VaultTab must send Tauri boolean command args as userOnly so the user-only checkbox works");
@@ -307,6 +334,9 @@ if (vaultGrantsPanel.includes("grants.map((grant)")) {
 }
 
 const vaultPanelSource = readFileSync(join(root, "src/components/VaultPanel.tsx"), "utf8");
+if (!vaultPanelSource.includes("rememberDevice: false") || vaultPanelSource.includes("rememberDevice: true")) {
+  throw new Error("Vault workspace quick unlock must not silently persist a remembered-device credential");
+}
 if (vaultPanelSource.includes("user_only:")) {
   throw new Error("VaultPanel must send Tauri boolean command args as userOnly so user-only add works");
 }
@@ -409,33 +439,94 @@ if (!/shellx_browser_fill_user_vault_secret[\s\S]*lock_denial_for_action[\s\S]*B
 if (!/shellx_browser_fill_user_vault_secret[\s\S]*try_apply_engine_action[\s\S]*record_vault_fill_receipt/.test(browserVaultBackend)) {
   throw new Error("Manual Browser Vault fills must use the native engine fill path and record a redacted Vault fill receipt");
 }
+if (!/expected_origin[\s\S]*browser_origin_for_url[\s\S]*eq_ignore_ascii_case\(&expected_origin\)[\s\S]*compat_get/.test(browserVaultBackend)) {
+  throw new Error("Manual Browser Vault fills must reject a page-origin change before reading the Vault value");
+}
+const browserEngineScripts = readFileSync(join(root, "src-tauri/src/shellx_browser_scripts.rs"), "utf8");
+const browserActionability = readFileSync(join(root, "src-tauri/src/shellx_browser_actionability.rs"), "utf8");
+if (!/expectedOrigin[\s\S]*shellxPageOriginMatches[\s\S]*originChanged/.test(browserEngineScripts) || !/shellxPageOriginMatches[\s\S]*location\.origin/.test(browserActionability) || !/expected_origin: Some\(expected_origin\.clone\(\)\)/.test(browserVaultBackend)) {
+  throw new Error("Manual Browser Vault fills must recheck the expected origin inside the exact page execution context");
+}
+const browserEngineRuntime = readFileSync(join(root, "src-tauri/src/shellx_browser_engine_runtime.rs"), "utf8");
+if (!/browser_engine_webview_builder[\s\S]*general_autofill_enabled\(false\)/.test(browserEngineRuntime)) {
+  throw new Error("ShellX Browser must disable native WebView form autofill because ShellX Vault owns credential suggestions");
+}
+if (!/install_browser_native_credential_controls[\s\S]*SetIsGeneralAutofillEnabled\(false\)[\s\S]*SetIsPasswordAutosaveEnabled\(false\)/.test(browserEngineRuntime)) {
+  throw new Error("Windows ShellX Browser must disable both WebView2 autofill and password autosave");
+}
 const browserAppSource = readFileSync(join(root, "src/components/ShellxBrowserApp.tsx"), "utf8");
-if (!/menu === "vaultFill"[\s\S]*setVaultFillObservationRefresh\(\(current\) => current \+ 1\)/.test(browserAppSource)) {
+const browserVaultFillCandidates = readFileSync(join(root, "src/browser/vaultFillCandidates.ts"), "utf8");
+const browserVaultFillHook = readFileSync(join(root, "src/browser/hooks/useBrowserVaultFill.ts"), "utf8");
+if (!/menu === VAULT_FILL_MENU[\s\S]*browserVaultFill\.requestObservationRefresh\(\)/.test(browserAppSource)) {
   throw new Error("Manual Browser Vault fill menu must refresh observation when opened so dynamic login forms can offer saved credentials");
 }
-if (!/handleVaultFillCandidate[\s\S]*fillUserVaultSecret[\s\S]*setVaultFillObservation\(null\)[\s\S]*setVaultFillObservationRefresh\(\(current\) => current \+ 1\)/.test(browserAppSource)) {
+if (!/fillCandidate[\s\S]*fillUserVaultSecret[\s\S]*setObservation\(null\)[\s\S]*setObservationRefresh\(\(current\) => current \+ 1\)/.test(browserVaultFillHook)) {
   throw new Error("Manual Browser Vault fill must refresh observation after a successful fill so the same login can be detected again");
 }
-if (!/handleVaultFillCandidate[\s\S]*isTrustedShellxUserEvent[\s\S]*fillUserVaultSecret/.test(browserAppSource)) {
+if (!/fillCandidate[\s\S]*isTrustedShellxUserEvent[\s\S]*fillUserVaultSecret/.test(browserVaultFillHook)) {
   throw new Error("Manual Browser Vault fill UI must require a trusted user click before invoking the Tauri fill command");
 }
-if (!/bestByTarget[\s\S]*candidate\.key[\s\S]*candidate\.refId/.test(browserAppSource)) {
+if (!/bestByTarget[\s\S]*candidate\.key[\s\S]*candidate\.refId/.test(browserVaultFillCandidates)) {
   throw new Error("Manual Browser Vault fill suggestions must de-duplicate duplicate matches for the same key and field");
 }
 const appCssSource = readFileSync(join(root, "src/App.css"), "utf8");
 if (!/\.shellx-browser-vault-fill-main strong[\s\S]*overflow-wrap: anywhere[\s\S]*white-space: normal/.test(appCssSource)) {
   throw new Error("Manual Browser Vault fill suggestions must show readable full key names instead of hiding them behind ellipses");
 }
-if (!/passwordContextAvailable[\s\S]*contextScore[\s\S]*passwordContextAvailable && contextScore <= 0[\s\S]*continue/.test(browserAppSource)) {
-  throw new Error("Manual Browser Vault fill must not offer unrelated password secrets on contextual login pages");
+if (!/observedContext\.origin !== pageContext\.origin[\s\S]*originScore[\s\S]*originScore <= 0[\s\S]*continue/.test(browserVaultFillCandidates)) {
+  throw new Error("Manual Browser Vault fill must reject stale observations and secrets not bound to the current origin");
 }
+if (!/expectedOrigin: candidate\.origin/.test(browserVaultFillHook)) {
+  throw new Error("Manual Browser Vault fill must bind the native fill request to the observed candidate origin");
+}
+
+const bdaObservation = {
+  url: "https://ekursi.bda.lv/login/index.php",
+  title: "Pieslegties saja vietne | BDA e-kursi",
+  refs: [{
+    refId: "ref-password",
+    role: "password",
+    label: "Parole",
+    selector: "#password",
+    action: "fillRef",
+    visible: true,
+    editable: true,
+  }],
+};
+const bdaCandidates = buildBrowserVaultFillCandidates({
+  url: bdaObservation.url,
+  observation: bdaObservation,
+  entries: [
+    { key: "unrelated.example/login", description: "Password for unrelated.example" },
+    { key: "bda.lv/login", description: "BDA e-kursi password" },
+  ],
+});
+assert.deepEqual(bdaCandidates.map((candidate) => candidate.key), ["bda.lv/login"], "BDA login offers only a credential explicitly associated with bda.lv");
+assert.equal(buildBrowserVaultFillCandidates({
+  url: bdaObservation.url,
+  observation: { ...bdaObservation, url: "https://unrelated.example/login" },
+  entries: [{ key: "bda.lv/login", description: "BDA e-kursi password" }],
+}).length, 0, "a stale cross-origin observation cannot produce a Vault suggestion");
+assert.equal(buildBrowserVaultFillCandidates({
+  url: "https://phishing.example/login",
+  observation: { ...bdaObservation, url: "https://phishing.example/login", title: "Google sign in" },
+  entries: [{ key: "google/password", description: "Gmail password" }],
+}).length, 0, "page text cannot make a credential eligible on an unrelated origin");
+assert.deepEqual(buildBrowserVaultFillCandidates({
+  url: "https://accounts.example.co.uk/login",
+  observation: { ...bdaObservation, url: "https://accounts.example.co.uk/login" },
+  entries: [
+    { key: "co.uk/login", description: "Unrelated compound suffix credential" },
+    { key: "example.co.uk/login", description: "Example UK account password" },
+  ],
+}).map((candidate) => candidate.key), ["example.co.uk/login"], "compound public suffixes are not treated as credential site domains");
 if (!/loadSecretForUser[\s\S]*isTrustedShellxUserEvent[\s\S]*invoke<string \| null>\("vault_get"/.test(vaultTab)) {
   throw new Error("Vault tab user copy/reveal must require a trusted user click before invoking vault_get");
 }
 if (!/handleCopyValue[\s\S]*navigator\.clipboard\.writeText/.test(vaultTab) || !/handleRevealValue[\s\S]*revealValue/.test(vaultTab)) {
   throw new Error("Vault tab must support user copy-without-display and explicit reveal flows");
 }
-const debugApi = readFileSync(join(root, "src-tauri/src/debug_api.rs"), "utf8");
+const debugApi = readRustModuleFamily(join(root, "src-tauri/src/debug_api.rs"));
 const debugApiBrowserSecurity = readFileSync(join(root, "src-tauri/src/debug_api_browser_security.rs"), "utf8");
 if (!/vault_resources_http[\s\S]*compat_list_agent_visible_resources_with_meta[\s\S]*secretExposed[\s\S]*false/.test(debugApi)) {
   throw new Error("Debug API /vault/resources must return only redacted agent-visible Vault resources");
@@ -458,7 +549,7 @@ if (!/fn vault_raw_reveal_denied_response[\s\S]*RAW_SECRET_REVEAL_DENIED/.test(d
 if (!/fn legacy_pass_reveal_denied_response[\s\S]*LEGACY_PASS_REVEAL_DENIED/.test(debugApi)) {
   throw new Error("Debug API secret_get must deny legacy pass-store reveal with a structured code");
 }
-const apiDocs = readFileSync(join(root, "docs/API.md"), "utf8");
+const apiDocs = readFileSync(join(root, "docs/public/API.md"), "utf8");
 const secretGetDocs = apiDocs.match(/### 12\.6 `POST \/tools\/secret_get`[\s\S]*?(?=\n### |\n## |$)/)?.[0] ?? "";
 if (!/RAW_SECRET_REVEAL_DENIED/.test(secretGetDocs) || !/LEGACY_PASS_REVEAL_DENIED/.test(secretGetDocs) || !/mediated fill\/injection/.test(secretGetDocs)) {
   throw new Error("API docs must document Vault and legacy pass raw reveal denial for /tools/secret_get");
@@ -470,7 +561,13 @@ if (!/async fn resolve_xai_key[\s\S]*crate::shellx_vault::shared_backend\(\)[\s\
 if (!/pub async fn voice_credential_source[\s\S]*crate::shellx_vault::shared_backend\(\)[\s\S]*compat_get\("xai\/api-key"\)/.test(voiceBackend)) {
   throw new Error("Voice credential source must report ShellX Vault-backed xai/api-key");
 }
-const hostMcp = readFileSync(join(root, "src-tauri/src/host_mcp.rs"), "utf8");
+const hostMcp =
+  readFileSync(join(root, "src-tauri/src/host_mcp.rs"), "utf8") +
+  readdirSync(join(root, "src-tauri/src/host_mcp"), { recursive: true, encoding: "utf8" })
+    .filter((file) => file.endsWith(".rs"))
+    .sort()
+    .map((file) => readFileSync(join(root, "src-tauri/src/host_mcp", file), "utf8"))
+    .join("\n");
 if (!/browser_fill_from_vault[\s\S]*?secret value is injected by ShellX and is never returned/.test(hostMcp)) {
   throw new Error("Host MCP must expose an agent-discoverable Vault-mediated browser fill tool");
 }
@@ -486,15 +583,21 @@ if (!/type VaultStatus[\s\S]*lastError\?: string \| null/.test(vaultSetupPanelCo
   throw new Error("Vault setup UI must show backend profile collision/status errors");
 }
 
-const standaloneBroker = join(root, "..", "shellx-vault", "crates", "vault-broker");
-const vendoredBroker = join(root, "vendor", "shellx-vault", "crates", "vault-broker");
-if (existsSync(standaloneBroker)) {
-  assertTreesEqual(standaloneBroker, vendoredBroker, "vendored vault-broker");
+if (
+  !/import \{ inTauri \} from "\.\.\/\.\.\/lib\/tauri-bridge"/.test(vaultTab) ||
+  !/const desktopVaultAvailable = clipboardFixtureActive \|\| inTauri\(\)/.test(vaultTab) ||
+  !/if \(!desktopVaultAvailable\) return;[\s\S]*invoke<VaultKeyMeta\[\]>\("vault_list_keys_with_meta"\)/.test(vaultTab) ||
+  !/role="status"[\s\S]*Desktop Vault is unavailable in browser preview/.test(vaultTab)
+) {
+  throw new Error("Vault settings must fail closed to a deliberate unavailable state outside Tauri");
 }
-const standaloneClientExport = join(root, "..", "shellx-vault", "crates", "vault-client", "src", "export.rs");
-const vendoredClientExport = join(root, "vendor", "shellx-vault", "crates", "vault-client", "src", "export.rs");
-if (existsSync(standaloneClientExport)) {
-  assertFileEqual(standaloneClientExport, vendoredClientExport, "vendored vault-client export.rs");
+
+for (const crate of ["vault-broker", "vault-client", "vault-core", "vault-server"]) {
+  const standaloneCrate = join(root, "..", "shellx-vault", "crates", crate);
+  const vendoredCrate = join(root, "vendor", "shellx-vault", "crates", crate);
+  if (existsSync(standaloneCrate)) {
+    assertTreesEqual(standaloneCrate, vendoredCrate, `vendored ${crate}`);
+  }
 }
 
 const vaultPanel = vaultPanelSource;
@@ -547,25 +650,14 @@ function assertTreesEqual(left: string, right: string, label: string): void {
   const leftEntries = listFiles(left).sort();
   const rightEntries = listFiles(right).sort();
   if (leftEntries.join("\n") !== rightEntries.join("\n")) {
-    throw new Error(`${label} file list is out of sync with standalone Vault broker`);
+    throw new Error(`${label} file list is out of sync with standalone Vault`);
   }
   for (const entry of leftEntries) {
     const leftBody = readFileSync(join(left, entry), "utf8");
     const rightBody = readFileSync(join(right, entry), "utf8");
     if (leftBody !== rightBody) {
-      throw new Error(`${label} file ${entry} is out of sync with standalone Vault broker`);
+      throw new Error(`${label} file ${entry} is out of sync with standalone Vault`);
     }
-  }
-}
-
-function assertFileEqual(left: string, right: string, label: string): void {
-  if (!existsSync(right)) {
-    throw new Error(`${label} is missing from the ShellX vendored Vault workspace`);
-  }
-  const leftBody = readFileSync(left, "utf8");
-  const rightBody = readFileSync(right, "utf8");
-  if (leftBody !== rightBody) {
-    throw new Error(`${label} is out of sync with standalone Vault`);
   }
 }
 

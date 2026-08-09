@@ -39,9 +39,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lz4_flex = "0.13"
 hex = "0.4"
+base64 = "0.22"
+png = "0.17"
 
 # server + client
 axum = "0.8.9"
+tower-http = { version = "0.6", features = ["timeout"] }
 # reqwest 0.13: rustls default; `json` and `stream` are opt-in features now
 reqwest = { version = "0.13", features = ["json"] }
 walkdir = "2.5"
@@ -56,6 +59,7 @@ clap = { version = "4.6", features = ["derive"] }
 memory-serve = "2.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+fs2 = "0.4"
 
 # misc
 thiserror = "2"

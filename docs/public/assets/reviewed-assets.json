@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "shellx.public-marketing-assets.v2",
+  "reviewedAt": "2026-08-09T08:37:54Z",
+  "revalidation": {
+    "status": "reviewed",
+    "sourceCommit": "952fee78aa7730d24ffc7a6b0e375b4ceda3cbdd",
+    "productSourceSha256": "c071ab1518d5b405a5780478c07ccbd39b81509ea2890f59dabf29a4fa424a63",
+    "reviewedAt": "2026-08-09T10:05:52Z",
+    "evidenceSha256": "a750171374f6b9cf573e15454879e33bdaaeebacd374ccb2b891744a648bad97"
+  },
+  "generation": {
+    "mode": "gpt-image-background-plus-reviewed-product-composite",
+    "prompt": "Create a premium, restrained 16:9 marketing background plate for ShellX desktop software screenshots. Deep near-black navy base, subtle indigo and electric-blue edge glow, one very restrained warm copper accent, elegant flowing contour lines that frame an empty central presentation area. High-end developer-tool aesthetic, crisp but quiet, ample negative space in the center. Absolutely no application UI, no browser chrome, no windows, no devices, no text, no letters, no logos, no icons, no badges, no mock interface elements. This image will only sit behind pixel-exact real product screenshots.",
+    "backgroundSha256": "b15775e38cc7250b511aee76c7e6ba5201f0b33a9a1a0ab27f75ad57d32304a4",
+    "content": {
+      "mode": "gpt-image-rendered-inside-installed-shellx-preview-center",
+      "prompt": "Create a visually arresting cinematic concept image of a colossal futuristic observatory built into a black volcanic cliff above a stormy ocean, with one luminous copper-orange energy ring cutting through the architecture and electric cyan light reflecting across rain and mist. Image content only; no application interface, text, logos, badges, or watermark.",
+      "sha256": "ffd76166a7d84380651ecf21bfaaf1b2389801bb4d418b3e18c8792d2d682f0d"
+    },
+    "uiPolicy": "Generated pixels are restricted to the outer presentation backdrop and the image visibly opened as user content inside the real installed ShellX Preview Center. No generated or retouched pixels replace ShellX controls, chrome, labels, or layout.",
+    "compositionPolicy": "Product sources are uniformly resized to 1280x800 and placed at +128+16 on the 1536x864 background. The Browser source uses exact installed chrome plus a live same-URL page viewport at the installed engine bounds because Linux WebDriver omits the separately composited native child WebView."
+  },
+  "assets": [
+    {
+      "file": "shellx-desktop-0.3.5.png",
+      "status": "reviewed",
+      "review": "Accepted populated ShellX 0.3.5 work session with the real Preview Center open on a high-contrast generated observatory image, the installed workspace visible behind it, and no private profile data.",
+      "sha256": "9be7c143363c1ad30acd79010c279badaa8078776c1f6593598275212d6b9248",
+      "source": "../marketing-sources/shellx-workspace-preview.png",
+      "sourceSha256": "1aa65bda2d6b6761a4ab4c8f7fa852a4a0fa2a980d2065bafb6cc8013ea3bfa2",
+      "sourceReview": {
+        "status": "reviewed",
+        "kind": "installed-candidate",
+        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
+        "productSourceSha256": "c071ab1518d5b405a5780478c07ccbd39b81509ea2890f59dabf29a4fa424a63",
+        "appVersion": "0.3.5",
+        "platform": "linux-installed",
+        "sha256": "1aa65bda2d6b6761a4ab4c8f7fa852a4a0fa2a980d2065bafb6cc8013ea3bfa2",
+        "reviewedAt": "2026-08-05T08:24:34Z",
+        "evidenceSha256": "34e7c3398ae6b34cd22ba1416c3a59949c2c23b90c35db1efdd0413b77985704"
+      }
+    },
+    {
+      "file": "shellx-browser-0.3.5.png",
+      "status": "reviewed",
+      "review": "Accepted ShellX Browser 0.3.5 with installed native chrome, secure Personal profile state, https://theshellx.com in the address bar, the live public homepage rendered in the exact page bounds, and the bounded Chat sidebar visible.",
+      "sha256": "217bba7a5c1da64677232ab89d96cc7fe50335d120eedab04e7763ddd5fcdecb",
+      "source": "../marketing-sources/shellx-browser-theshellx.png",
+      "sourceSha256": "b21417397f9de6e2b9af2016f49b73c6e56eaaceb7487230ec1d0d1e7b2e7cec",
+      "sourceReview": {
+        "status": "reviewed",
+        "kind": "installed-browser-live-site-composite",
+        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
+        "productSourceSha256": "c071ab1518d5b405a5780478c07ccbd39b81509ea2890f59dabf29a4fa424a63",
+        "appVersion": "0.3.5",
+        "platform": "linux-installed",
+        "sha256": "b21417397f9de6e2b9af2016f49b73c6e56eaaceb7487230ec1d0d1e7b2e7cec",
+        "reviewedAt": "2026-08-05T08:24:34Z",
+        "liveUrl": "https://theshellx.com/",
+        "liveTitle": "shellX — One desktop app for Grok, Claude Code & Codex",
+        "composition": "The live 1239x858 page viewport was placed at +0+142 inside the installed 1600x1000 Browser chrome capture, matching the installed engine bounds and verified URL, title, secure state, and DOM observation.",
+        "components": [
+          {
+            "role": "installed-browser-chrome",
+            "sha256": "27b70e89b3e4b1bf466fbc923adb0ae0642c6d6b4480dd6294cb2882db5a8296"
+          },
+          {
+            "role": "live-page-viewport",
+            "sha256": "b2d721ea261317e4e9645ea5848e2cad9b96966469f3d14f27f469c1a0ab9bd8"
+          }
+        ],
+        "evidenceSha256": "34e7c3398ae6b34cd22ba1416c3a59949c2c23b90c35db1efdd0413b77985704",
+        "observationTextSha256": "67c475bf14659d7e6e21ef8647a2fd09298435d9bd36284e868e4a80f336503e"
+      }
+    },
+    {
+      "file": "shellx-vault-0.3.5.png",
+      "status": "reviewed",
+      "review": "Accepted current ShellX 0.3.5 Vault settings with an empty disposable profile and the password, profile-card, and agent-wallet tabs visible.",
+      "sha256": "87deb7456f32c9cc88ed436d62a5449f1d7e023bae2fc9e08f9037688767c805",
+      "source": "../manual/shellx/assets/settings-vault.png",
+      "sourceSha256": "971f25c37ef8dfd0d5cdf3c68381a978818ac64447947a1ce94eba2ffb36bf2e"
+    }
+  ]
+}

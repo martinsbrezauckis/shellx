@@ -1,4 +1,4 @@
-//! Live gate for `vault_client::items`.
+//! Live gate for `vault_client::items` — exercised by scripts/e2e.sh
 //! against a real vault-server. NOT an installed command (the CLI
 //! deliberately has no vault-read surface); a dev example only.
 //!
@@ -20,8 +20,11 @@ async fn main() -> Result<()> {
         bail!("usage: items_smoke <server> <repo> <token> <keyfile.json>");
     };
     let passphrase = std::env::var("SXVAULT_PASSPHRASE").context("SXVAULT_PASSPHRASE not set")?;
-    let keyfile: vault_core::Keyfile =
-        serde_json::from_str(&std::fs::read_to_string(keyfile_path)?)?;
+    let keyfile_json = vault_client::config::read_string_limited(
+        std::path::Path::new(keyfile_path),
+        vault_client::config::MAX_PRIVATE_CONFIG_BYTES,
+    )?;
+    let keyfile: vault_core::Keyfile = serde_json::from_str(&keyfile_json)?;
     let master = keyfile
         .unlock(&passphrase)
         .map_err(|e| anyhow::anyhow!("unlock: {e}"))?;

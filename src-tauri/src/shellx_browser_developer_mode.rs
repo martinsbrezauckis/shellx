@@ -12,6 +12,9 @@ use crate::shellx_browser::{
     BrowserDeveloperModeUpdateRequest, BrowserState, ShellxBrowserRegistry,
 };
 use crate::shellx_browser_artifacts::redact_trace_value;
+use crate::shellx_browser_caller::{
+    ensure_browser_task_control_authority, BrowserTaskControlAuthority,
+};
 use crate::shellx_browser_protected_values::{
     browser_protected_values_for_task, redact_browser_json_value, redact_browser_option,
 };
@@ -77,6 +80,21 @@ pub(crate) fn mark_browser_developer_mode_approval_operator_approved(
 }
 
 impl ShellxBrowserRegistry {
+    pub(crate) fn ensure_agent_owns_cdp_target(
+        &self,
+        request: &BrowserCdpExecuteRequest,
+        caller_session_id: Option<&str>,
+    ) -> Result<(), String> {
+        let state = lock_or_recover(&self.state);
+        let task_id = resolve_task_id(&state, request.task_id.clone())?;
+        let task_idx = find_task_index(&state, &task_id)?;
+        ensure_browser_task_control_authority(
+            &state.tasks[task_idx],
+            BrowserTaskControlAuthority::Agent,
+            caller_session_id,
+        )
+    }
+
     pub fn update_developer_mode(
         &self,
         request: BrowserDeveloperModeUpdateRequest,
@@ -559,5 +577,39 @@ mod tests {
         let receipts = serde_json::to_string(&state.receipts).expect("serialize receipts");
         assert!(!receipts.contains(secret));
         assert!(receipts.contains(BROWSER_SECRET_REDACTION_PLACEHOLDER));
+    }
+
+    #[test]
+    fn cdp_target_requires_the_owning_agent_session() {
+        let registry = ShellxBrowserRegistry::default();
+        let task = registry
+            .start_task_for_agent_session(
+                StartBrowserTaskRequest {
+                    goal: "Inspect an owned Browser task".to_string(),
+                    start_url: Some("https://dev.example.test".to_string()),
+                    profile_id: Some("agent-work".to_string()),
+                    ..StartBrowserTaskRequest::default()
+                },
+                Some("session-a"),
+            )
+            .expect("task starts");
+        let request = BrowserCdpExecuteRequest {
+            task_id: Some(task.task_id),
+            method: "Runtime.evaluate".to_string(),
+            expression: Some("document.title".to_string()),
+            ..BrowserCdpExecuteRequest::default()
+        };
+
+        registry
+            .ensure_agent_owns_cdp_target(&request, Some("session-a"))
+            .expect("owner session may target its task");
+        for caller in [None, Some("session-b")] {
+            let error = registry
+                .ensure_agent_owns_cdp_target(&request, caller)
+                .expect_err("missing or mismatched caller must be rejected");
+            assert!(
+                error.contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED)
+            );
+        }
     }
 }

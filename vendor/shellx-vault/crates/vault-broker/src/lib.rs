@@ -1,6 +1,8 @@
 //! Shared Vault product broker.
 
+pub mod activity;
 pub mod actors;
+pub mod agent_requests;
 pub mod agent_surface;
 pub mod backup;
 pub mod debug;
@@ -13,6 +15,8 @@ pub mod receipts;
 pub mod resources;
 pub mod safe_folder;
 pub mod safe_folder_virtual;
+pub mod safe_preview;
+pub mod safe_render;
 pub mod session;
 pub mod sync_sets;
 
@@ -159,6 +163,10 @@ impl VaultBroker {
         self.project_capsules = CapsuleRegistry::from_snapshot(bundle.project_capsules);
         self.safe_folder = SafeFolder::from_snapshot(bundle.safe_folder)?;
         Ok(preview)
+    }
+
+    pub fn activity_snapshot(&self, now_ms: i64) -> Vec<activity::VaultActivityEntry> {
+        activity::activity_snapshot_from_receipts(self.grant_policy.receipts(), now_ms)
     }
 
     fn resource_ids(&self) -> impl Iterator<Item = String> + '_ {

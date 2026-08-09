@@ -54,13 +54,17 @@ fn in_flight_archives() -> &'static Mutex<HashMap<String, u32>> {
     MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn lock_in_flight_archives() -> std::sync::MutexGuard<'static, HashMap<String, u32>> {
+    in_flight_archives()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Register a PID as the active archive for `tab_key`. Replaces any
 /// prior entry (caller is expected to wait for the previous archive
 /// to finish, but if it's stuck we kill the old one too).
 pub fn register_in_flight_archive(tab_key: &str, pid: u32) {
-    let mut m = in_flight_archives()
-        .lock()
-        .expect("archive registry poisoned");
+    let mut m = lock_in_flight_archives();
     if let Some(prev_pid) = m.insert(tab_key.to_string(), pid) {
         warn!("archive registry: tab '{}' had previous PID {} still registered when new PID {} arrived", tab_key, prev_pid, pid);
     }
@@ -68,9 +72,7 @@ pub fn register_in_flight_archive(tab_key: &str, pid: u32) {
 
 /// Unregister on archive completion (success or failure). Idempotent.
 pub fn unregister_in_flight_archive(tab_key: &str) {
-    let mut m = in_flight_archives()
-        .lock()
-        .expect("archive registry poisoned");
+    let mut m = lock_in_flight_archives();
     m.remove(tab_key);
 }
 
@@ -79,9 +81,7 @@ pub fn unregister_in_flight_archive(tab_key: &str) {
 /// /abort HTTP handler.
 pub fn abort_in_flight_archive(tab_key: &str) -> bool {
     let pid = {
-        let mut m = in_flight_archives()
-            .lock()
-            .expect("archive registry poisoned");
+        let mut m = lock_in_flight_archives();
         m.remove(tab_key)
     };
     let Some(pid) = pid else { return false };
@@ -103,6 +103,10 @@ pub fn abort_in_flight_archive(tab_key: &str) -> bool {
     }
     #[cfg(unix)]
     {
+        if crate::process_registry::checked_unix_process_id(pid).is_err() {
+            warn!("abort archive: refusing unsafe PID {}", pid);
+            return false;
+        }
         let status = std::process::Command::new("kill")
             .args(["-TERM", &pid.to_string()])
             .output();
@@ -229,7 +233,10 @@ pub async fn archive_session_artifacts_inner(
     registry: Arc<SessionRegistry>,
 ) -> Result<ArchiveSummary, String> {
     let tab_key = crate::acp::tab_id_or_default(tab_id.clone());
-    let arc = registry.get_or_create(&tab_key).await;
+    let arc = registry
+        .get_existing(&tab_key)
+        .await
+        .ok_or_else(|| format!("archive_session_artifacts: unknown tab '{}'", tab_key))?;
     let guard = arc.lock().await;
     let info_val = guard.get_debug_session_info();
     drop(guard);
@@ -272,8 +279,22 @@ pub async fn archive_session_artifacts_inner(
             .clone()
             .ok_or("archive_session_artifacts: SSH session has no sessionId yet")?;
         let urlenc = urlencoded_cwd(&cwd);
+        let remote_runtime = match info_val.get("sshRemoteRuntime").and_then(|v| v.as_str()) {
+            Some("windows") => crate::acp::SshRemoteRuntime::Windows,
+            Some("windows_wsl") => crate::acp::SshRemoteRuntime::WindowsWsl,
+            _ => crate::acp::SshRemoteRuntime::Posix,
+        };
+        let ssh_wsl_distro = info_val
+            .get("sshWslDistro")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let transport = SshArchiveTransport {
+            host: &host,
+            remote_runtime,
+            wsl_distro: ssh_wsl_distro.as_deref(),
+        };
         return archive_ssh_session(
-            &host,
+            &transport,
             &cwd,
             &urlenc,
             &session_id_s,
@@ -535,14 +556,54 @@ fn urlencoded_cwd(cwd: &str) -> String {
 /// Roots packed remotely: `<cwd>` AND `~/.grok/sessions/<urlenc>/<sid>/`.
 /// Both relative to the remote $HOME so the tar entries unpack into a
 /// sensible local layout regardless of the user's home prefix.
+struct SshArchiveTransport<'a> {
+    host: &'a str,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    wsl_distro: Option<&'a str>,
+}
+
+fn windows_ssh_archive_command(cwd: &str, urlenc: &str, session_id: &str) -> String {
+    let cwd = crate::acp::powershell_single_quote(cwd);
+    let scratch = crate::acp::powershell_single_quote(&format!(
+        ".grok\\sessions\\{}\\{}",
+        urlenc, session_id
+    ));
+    let excludes = [
+        "--exclude=.env",
+        "--exclude=.env*",
+        "--exclude=.git/config",
+        "--exclude=*/.git/config",
+        "--exclude=.ssh/*",
+        "--exclude=*/.ssh/*",
+        "--exclude=.netrc",
+        "--exclude=*/.netrc",
+        "--exclude=id_rsa*",
+        "--exclude=id_ed25519*",
+        "--exclude=*.pem",
+        "--exclude=*.token",
+    ]
+    .iter()
+    .map(|value| crate::acp::powershell_single_quote(value))
+    .collect::<Vec<_>>()
+    .join(",");
+    format!(
+        "{prelude}$userHome=$env:USERPROFILE;$cwd={cwd};$scratch={scratch};$inputs=[Collections.Generic.List[string]]::new();if(Test-Path -LiteralPath (Join-Path $userHome $scratch)){{$inputs.Add($scratch)}};$homeFull=[IO.Path]::GetFullPath($userHome).TrimEnd('\\');$cwdFull=[IO.Path]::GetFullPath($cwd).TrimEnd('\\');if(-not $cwdFull.Equals($homeFull,[StringComparison]::OrdinalIgnoreCase)-and(Test-Path -LiteralPath $cwdFull -PathType Container)){{$inputs.Add($cwdFull)}};if($inputs.Count -eq 0){{throw 'ShellX archive has no existing session or workspace input'}};$tmp=Join-Path ([IO.Path]::GetTempPath()) ('shellx-archive-'+[Guid]::NewGuid().ToString('N')+'.tar.gz');try{{$tarArgs=@({excludes},'-czf',$tmp,'-C',$userHome);$tarArgs+=@($inputs);& tar.exe @tarArgs;if($LASTEXITCODE -ne 0){{throw ('tar.exe failed with exit code '+$LASTEXITCODE)}};$stream=[IO.File]::OpenRead($tmp);$stdout=[Console]::OpenStandardOutput();try{{$stream.CopyTo($stdout);$stdout.Flush()}}finally{{$stream.Dispose()}}}}finally{{if(Test-Path -LiteralPath $tmp){{Remove-Item -LiteralPath $tmp -Force}}}}",
+        prelude = crate::acp::windows_remote_shell_prelude(),
+        cwd = cwd,
+        scratch = scratch,
+        excludes = excludes,
+    )
+}
+
 async fn archive_ssh_session(
-    host: &str,
+    transport: &SshArchiveTransport<'_>,
     cwd: &str,
     urlenc: &str,
     session_id: &str,
     save_path: &str,
     tab_id: Option<&str>,
 ) -> Result<ArchiveSummary, String> {
+    let host = transport.host;
     crate::acp::validate_ssh_destination_arg(host)
         .map_err(|e| format!("archive_ssh_session: {}", e))?;
     validate_remote_path_component("session_id", session_id)?;
@@ -601,17 +662,21 @@ async fn archive_ssh_session(
         --exclude='.netrc' --exclude='*/.netrc' \
         --exclude='id_rsa*' --exclude='id_ed25519*' \
         --exclude='*.pem' --exclude='*.token'";
-    let remote_cmd = format!(
-        "if [ \"$HOME\" = '{cwd_t}' ] || [ \"$(realpath -- '{cwd_t}' 2>/dev/null)\" = \"$HOME\" ]; then \
-            tar --ignore-failed-read {excludes} -czf - -C \"$HOME\" {scratch} 2>/dev/null; \
-         else \
-            tar --ignore-failed-read {excludes} -czf - -C \"$HOME\" {scratch} {cwd} 2>/dev/null; \
-         fi",
-        cwd_t = cwd_for_test,
-        excludes = REMOTE_TAR_SECRET_EXCLUDES,
-        scratch = scratch_quoted,
-        cwd = cwd_quoted,
-    );
+    let remote_cmd = if transport.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        windows_ssh_archive_command(cwd, urlenc, session_id)
+    } else {
+        format!(
+            "if [ \"$HOME\" = '{cwd_t}' ] || [ \"$(realpath -- '{cwd_t}' 2>/dev/null)\" = \"$HOME\" ]; then \
+                tar --ignore-failed-read {excludes} -czf - -C \"$HOME\" {scratch} 2>/dev/null; \
+             else \
+                tar --ignore-failed-read {excludes} -czf - -C \"$HOME\" {scratch} {cwd} 2>/dev/null; \
+             fi",
+            cwd_t = cwd_for_test,
+            excludes = REMOTE_TAR_SECRET_EXCLUDES,
+            scratch = scratch_quoted,
+            cwd = cwd_quoted,
+        )
+    };
 
     use crate::winproc::NoWindowExt as _;
     let mut cmd = std::process::Command::new("ssh");
@@ -621,8 +686,17 @@ async fn archive_ssh_session(
         .arg("-o")
         .arg("ConnectTimeout=10")
         .arg("--")
-        .arg(host)
-        .arg(&remote_cmd);
+        .arg(host);
+    let remote_cmd = if transport.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        crate::acp::wrap_ssh_windows_command(&remote_cmd)
+    } else {
+        crate::acp::wrap_ssh_posix_command(
+            transport.remote_runtime,
+            transport.wsl_distro,
+            &remote_cmd,
+        )?
+    };
+    cmd.arg(remote_cmd);
     cmd.no_window();
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -742,6 +816,107 @@ fn validate_remote_path_component(label: &str, value: &str) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn archive_rejects_an_unknown_tab_without_creating_a_ghost_session() {
+        let registry = Arc::new(SessionRegistry::new());
+        let tab_id = format!("missing-{}", uuid::Uuid::new_v4());
+        let save_path = std::env::temp_dir().join(format!("{tab_id}.zip"));
+
+        let result = archive_session_artifacts_inner(
+            Some(tab_id.clone()),
+            save_path.to_string_lossy().to_string(),
+            registry.clone(),
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("an unknown tab must not be archived"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("unknown tab"));
+        assert!(registry.get_existing(&tab_id).await.is_none());
+        assert!(!save_path.exists());
+    }
+
+    #[test]
+    fn native_windows_archive_uses_bounded_temp_tar_and_secret_excludes() {
+        let command = windows_ssh_archive_command(
+            r"C:\Users\alice\project",
+            "C%3A%5CUsers%5Calice%5Cproject",
+            "session-1",
+        );
+        assert!(command.contains("tar.exe"));
+        assert!(command.contains("OpenStandardOutput"));
+        assert!(command.contains("Remove-Item -LiteralPath $tmp"));
+        assert!(command.contains("--exclude=.env"));
+        assert!(command.contains("--exclude=*/.ssh/*"));
+        assert!(command.contains(r"C:\Users\alice\project"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
+    async fn live_native_windows_ssh_archive_roundtrip() {
+        let host =
+            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
+        let home =
+            std::env::var("SHELLX_WINDOWS_SSH_HOME").expect("SHELLX_WINDOWS_SSH_HOME is required");
+        let fixture_id = uuid::Uuid::new_v4().simple().to_string();
+        let fixture_dir = format!(
+            "{}\\.shellx\\archive-fixture-{}",
+            home.trim_end_matches(['/', '\\']),
+            fixture_id
+        );
+        let fixture_file = format!("{}\\proof.txt", fixture_dir);
+        let ssh = crate::acp::SshSpawnConfig {
+            host: host.clone(),
+            port: None,
+            key_vault_ref: None,
+            remote_grok_path: String::new(),
+            remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+            wsl_distro: None,
+        };
+        crate::acp::ssh_write_file(&ssh, &fixture_file, "archive proof\n")
+            .await
+            .expect("create native Windows archive fixture");
+
+        let save_path = std::env::temp_dir().join(format!(
+            "shellx-native-windows-archive-{}.tar.gz",
+            fixture_id
+        ));
+        let transport = SshArchiveTransport {
+            host: &host,
+            remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+            wsl_distro: None,
+        };
+        let archive = archive_ssh_session(
+            &transport,
+            &fixture_dir,
+            &urlencoded_cwd(&fixture_dir),
+            &fixture_id,
+            &save_path.to_string_lossy(),
+            Some("native-windows-archive-live"),
+        )
+        .await;
+
+        let mut cleanup = tokio::process::Command::new("ssh");
+        cleanup
+            .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-T", "--"])
+            .arg(&host)
+            .arg(crate::acp::wrap_ssh_windows_command(&format!(
+                "{}$path={};if(Test-Path -LiteralPath $path){{Remove-Item -LiteralPath $path -Recurse -Force}}",
+                crate::acp::windows_remote_shell_prelude(),
+                crate::acp::powershell_single_quote(&fixture_dir)
+            )));
+        let cleanup_status = cleanup.status().await.expect("spawn remote cleanup");
+
+        let summary = archive.expect("native Windows SSH archive");
+        let bytes = std::fs::read(&save_path).expect("read local archive fixture");
+        let _ = std::fs::remove_file(&save_path);
+        assert!(cleanup_status.success(), "remote fixture cleanup failed");
+        assert!(summary.bytes_out > 0);
+        assert!(bytes.starts_with(&[0x1f, 0x8b]), "archive is not gzip");
+    }
 
     #[test]
     fn urlencode_matches_grok_scheme_for_typical_cwds() {

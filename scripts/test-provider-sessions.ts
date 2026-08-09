@@ -8,6 +8,7 @@ import {
   providerAdaptersStatePath,
   providerPermissionModeLabel,
   providerPermissionModeOptions,
+  providerExecutionTargetLabel,
   providerRunDetail,
   providerRunPhaseLabel,
   providerSessionStatePath,
@@ -32,6 +33,24 @@ const textEvent: RawEventFrame = {
   },
 };
 
+assert.equal(
+  providerExecutionTargetLabel({
+    transport: "ssh",
+    sshHost: "fixture@windows-host",
+    sshRemoteRuntime: "windows",
+  }),
+  "native Windows over SSH fixture@windows-host",
+);
+assert.equal(
+  providerExecutionTargetLabel({
+    transport: "ssh",
+    sshHost: "fixture@windows-host",
+    sshRemoteRuntime: "windows_wsl",
+    sshWslDistro: "Ubuntu-24.04",
+  }),
+  "WSL Ubuntu-24.04 via Windows OpenSSH fixture@windows-host",
+);
+
 assert.equal(isProviderSessionFrame(textEvent), true);
 assert.equal(providerSessionDisplayText(textEvent.payload), "hello");
 
@@ -49,6 +68,55 @@ const commandEvent: RawEventFrame = {
 
 assert.equal(providerSessionLabel(commandEvent.payload), "Claude Code command");
 assert.equal(providerSessionToolStatus(commandEvent.payload), "running");
+
+const normalizedSubagentEvent: RawEventFrame = {
+  t: 1001.25,
+  kind: "provider-session-event",
+  payload: {
+    schemaVersion: 1,
+    eventId: "provider-event-fixture",
+    sequence: 4,
+    occurredAtMs: 1001,
+    tabId: "tab-a",
+    runId: "run-1",
+    providerId: "claude-code",
+    kind: "subagent",
+    status: "waitingForApproval",
+    toolCallId: "task-2",
+    toolName: "Task",
+    subagentId: "agent-2",
+    target: {
+      transport: "ssh",
+      transportKey: "ssh:user@windows-host",
+      sshHost: "user@windows-host",
+      sshRemoteRuntime: "windows",
+    },
+  },
+};
+
+assert.equal(isProviderSessionFrame(normalizedSubagentEvent), true);
+assert.equal(providerSessionLabel(normalizedSubagentEvent.payload), "Claude Code subagent");
+assert.equal(providerSessionToolStatus(normalizedSubagentEvent.payload), "waiting");
+assert.deepEqual(providerSessionGroupShape(normalizedSubagentEvent.payload), {
+  kind: "tool",
+  label: "Claude Code subagent",
+  detail: "Task",
+  status: "waiting",
+});
+
+const thinkingMarker: RawEventFrame = {
+  t: 1001.3,
+  kind: "provider-session-event",
+  payload: {
+    tabId: "tab-a",
+    runId: "run-1",
+    providerId: "antigravity-cli",
+    kind: "thinking",
+    status: "inProgress",
+  },
+};
+assert.equal(providerSessionLabel(thinkingMarker.payload), "Antigravity thinking");
+assert.equal(providerSessionGroupShape(thinkingMarker.payload), null);
 
 const codexCommandDoneEvent: RawEventFrame = {
   t: 1001.5,
@@ -426,9 +494,11 @@ assert.equal(
     transport: "ssh",
     sshHost: " deploy@example.test ",
     sshPort: 2222,
-    sshKeyVaultRef: " connections/macmini-key ",
+    sshKeyVaultRef: " connections/remote-macos-key ",
+    sshRemoteRuntime: "windows_wsl",
+    sshWslDistro: " Ubuntu-24.04 ",
   }),
-  "/provider-adapters/state?transport=ssh&sshHost=deploy%40example.test&sshPort=2222&sshKeyVaultRef=connections%2Fmacmini-key",
+  "/provider-adapters/state?transport=ssh&sshHost=deploy%40example.test&sshPort=2222&sshKeyVaultRef=connections%2Fremote-macos-key&sshRemoteRuntime=windows_wsl&sshWslDistro=Ubuntu-24.04",
 );
 assert.equal(
   providerSessionStatePath("tab A/#1"),
@@ -447,9 +517,11 @@ assert.equal(
     transport: "ssh",
     sshHost: "deploy@example.test",
     sshPort: 2222,
-    sshKeyVaultRef: "connections/macmini-key",
+    sshKeyVaultRef: "connections/remote-macos-key",
+    sshRemoteRuntime: "windows_wsl",
+    sshWslDistro: "Ubuntu-24.04",
   }),
-  "/provider-sessions/state?tabId=tab+A%2F%231&transport=ssh&sshHost=deploy%40example.test&sshPort=2222&sshKeyVaultRef=connections%2Fmacmini-key",
+  "/provider-sessions/state?tabId=tab+A%2F%231&transport=ssh&sshHost=deploy%40example.test&sshPort=2222&sshKeyVaultRef=connections%2Fremote-macos-key&sshRemoteRuntime=windows_wsl&sshWslDistro=Ubuntu-24.04",
 );
 
 assert.deepEqual(
@@ -487,6 +559,7 @@ assert.deepEqual(
     providerId: "codex-cli",
     cwd: "/tmp/project",
     prompt: "use normal bridge",
+    codexDriver: "appServer",
     shellxToolExposure: "nativeFirst",
   }),
   {
@@ -494,6 +567,7 @@ assert.deepEqual(
     providerId: "codex-cli",
     cwd: "/tmp/project",
     prompt: "use normal bridge",
+    codexDriver: "appServer",
     shellxToolExposure: "nativeFirst",
     includeShellxTooling: true,
   },
@@ -532,7 +606,9 @@ assert.deepEqual(
     transport: "ssh",
     sshHost: " deploy@example.test ",
     sshPort: 2222,
-    sshKeyVaultRef: " connections/macmini-key ",
+    sshKeyVaultRef: " connections/remote-macos-key ",
+    sshRemoteRuntime: "windows_wsl",
+    sshWslDistro: " Ubuntu-24.04 ",
   }),
   {
     tabId: "tab-a",
@@ -540,7 +616,9 @@ assert.deepEqual(
     transport: "ssh",
     sshHost: "deploy@example.test",
     sshPort: 2222,
-    sshKeyVaultRef: "connections/macmini-key",
+    sshKeyVaultRef: "connections/remote-macos-key",
+    sshRemoteRuntime: "windows_wsl",
+    sshWslDistro: "Ubuntu-24.04",
   },
 );
 
@@ -634,52 +712,75 @@ assert(
 );
 
 const rightRailSource = readFileSync(new URL("../src/components/RightRail.tsx", import.meta.url), "utf8");
+const agentCliStatusCardSource = readFileSync(new URL("../src/components/AgentCliStatusCard.tsx", import.meta.url), "utf8");
 assert(
-  rightRailSource.includes("ProviderEnvironmentCard") &&
-    rightRailSource.includes("Agent CLIs") &&
-    rightRailSource.includes("Grok Build CLI"),
+  rightRailSource.includes("AgentCliStatusCard") &&
+    !rightRailSource.includes("ProviderEnvironmentCard") &&
+    agentCliStatusCardSource.includes("Agent CLIs") &&
+    agentCliStatusCardSource.includes("Grok Build CLI"),
   "RightRail Tools tab must expose provider-neutral Agent CLI health",
 );
 assert(
-  rightRailSource.includes("getProviderAdapterState(providerExecution)") &&
-    !rightRailSource.includes("getProviderSessionState(activeTabId, providerExecution)") &&
-    !rightRailSource.includes("providerRunDetail(recentRun)") &&
-    !rightRailSource.includes("providerRunDetail(activeRun)"),
-  "Agent CLI health must refresh adapter state for the active transport without mixing in provider run history",
+  agentCliStatusCardSource.includes("providerStreamKind(id)") &&
+    !agentCliStatusCardSource.includes("getProviderAdapterState(providerExecution)") &&
+    !agentCliStatusCardSource.includes("setInterval(") &&
+    agentCliStatusCardSource.includes("scanConnectionProviderCapabilities(preset)") &&
+    agentCliStatusCardSource.includes("providerScanStatus(scan)") &&
+    !agentCliStatusCardSource.includes("getProviderSessionState(activeTabId, providerExecution)") &&
+    !agentCliStatusCardSource.includes("providerRunDetail(recentRun)") &&
+    !agentCliStatusCardSource.includes("providerRunDetail(activeRun)"),
+  "Agent CLI health must use the exact-target capability snapshot and static adapter stream metadata without probe polling",
 );
 assert(
-  rightRailSource.includes("providerExecutionForSession") &&
-    rightRailSource.includes("agentScanPresetForSession"),
+  agentCliStatusCardSource.includes("providerExecutionForSession") &&
+    agentCliStatusCardSource.includes("agentScanPresetForSession") &&
+    agentCliStatusCardSource.includes("connectionPreset?.id !== connectionId"),
   "Agent CLI health must derive provider execution and scan target from the active ShellX session",
 );
 assert(
   rightRailSource.includes("agentCwd?: string | null") &&
-    rightRailSource.includes("hasSessionContext") &&
-    rightRailSource.includes("sessionInfo?.hasProviderContext === true") &&
-    rightRailSource.includes("sessionInfo?.transport === \"wsl\" && hasSessionContext"),
+    agentCliStatusCardSource.includes("hasSessionContext") &&
+    agentCliStatusCardSource.includes("sessionInfo?.hasProviderContext === true") &&
+    agentCliStatusCardSource.includes("sessionInfo?.transport === \"wsl\" && hasSessionContext"),
   "Agent CLI health must preserve the active WSL session target instead of falling back to host-local state",
 );
 assert(
   rightRailSource.includes("connections_list") &&
-    rightRailSource.includes("connectionPreset?.transport.kind === \"wsl\""),
+    agentCliStatusCardSource.includes("connectionPreset?.transport.kind === \"wsl\""),
   "Agent CLI health must resolve saved WSL presets when no live session snapshot exists",
 );
 assert(
-  rightRailSource.includes("connectionPreset?.transport.kind === \"ssh\"") &&
-    rightRailSource.includes("getProviderAdapterState(providerExecution)") &&
-    rightRailSource.includes("sshHost: connectionPreset.transport.host?.trim() || null") &&
-    rightRailSource.includes("sshKeyVaultRef: connectionPreset.transport.keyVaultRef ?? null") &&
-    rightRailSource.includes("execution.sshHost") &&
-    rightRailSource.includes("execution.sshKeyVaultRef ?? undefined") &&
-    rightRailSource.includes("agent CLI checks support local, WSL, and SSH targets"),
+  agentCliStatusCardSource.includes("connectionPreset?.transport.kind === \"ssh\"") &&
+    agentCliStatusCardSource.includes("scanConnectionProviderCapabilities(preset)") &&
+    agentCliStatusCardSource.includes("connectionProviderScanRequestKey(scanPreset)") &&
+    agentCliStatusCardSource.includes("sshHost: connectionPreset.transport.host?.trim() || null") &&
+    agentCliStatusCardSource.includes("sshKeyVaultRef: connectionPreset.transport.keyVaultRef ?? null") &&
+    agentCliStatusCardSource.includes("execution.sshHost") &&
+    agentCliStatusCardSource.includes("execution.sshKeyVaultRef ?? undefined") &&
+    agentCliStatusCardSource.includes("agent CLI checks support local, WSL, and SSH targets"),
   "Agent CLI health must live-probe saved SSH provider targets instead of falling back to local",
 );
 
 const rustLibSource = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+const permissionPillSource = readFileSync(
+  new URL("../src/components/PermissionPill.tsx", import.meta.url),
+  "utf8",
+);
 assert(
   rustLibSource.includes("\"sshPort\": run.ssh_port") &&
     rustLibSource.includes("\"sshKeyVaultRef\": run.ssh_key_vault_ref"),
   "session tooling snapshots must preserve SSH port and key ref for provider sessions",
+);
+assert(
+  permissionPillSource.includes("requestId: g.requestId") &&
+    permissionPillSource.includes("allow,") &&
+    permissionPillSource.includes("decision,"),
+  "permission rows must send the exact allow-once/allow-always/deny decision to provider approval routing",
+);
+assert(
+  rustLibSource.includes("ProviderApprovalDecision::AllowForSession") &&
+    rustLibSource.includes("resolve_pending_approval"),
+  "the shared permission command must route session-scoped provider decisions before the ACP fallback",
 );
 
 console.log("test-provider-sessions ok");

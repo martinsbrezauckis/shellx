@@ -54,14 +54,6 @@ const BOUND_PORT_WAIT_MS = 1_500;
 
 let cachedBaseUrl: string | null = null;
 let pendingBaseUrlFetch: Promise<string> | null = null;
-let cachedPort: number | null = null;
-
-/** exposes the resolved debug-api port for callers that
- * want to display it (e.g. footer debug endpoint). Returns the cached
- * value if `getBaseUrl` has run; otherwise DEFAULT_PORT. */
-export function getDebugPortSync(): number {
-  return cachedPort ?? DEFAULT_PORT;
-}
 
 /** Shape of the `get_bound_ports` Tauri command. Each field is the
  * port the corresponding server actually bound to, or null when the
@@ -112,7 +104,6 @@ async function getBaseUrl(): Promise<string> {
   if (pendingBaseUrlFetch) return pendingBaseUrlFetch;
   pendingBaseUrlFetch = (async () => {
     const p = await resolveDebugPort();
-    cachedPort = p;
     cachedBaseUrl = `http://127.0.0.1:${p}`;
     return cachedBaseUrl;
   })();
@@ -122,7 +113,6 @@ async function getBaseUrl(): Promise<string> {
 function invalidateDebugApiBase(): void {
   cachedBaseUrl = null;
   pendingBaseUrlFetch = null;
-  cachedPort = null;
 }
 
 let cachedToken: string | null = null;
@@ -159,16 +149,6 @@ export async function getDebugToken(): Promise<string> {
     return cachedToken;
   })();
   return pendingTokenFetch;
-}
-
-/**
- * Force-refresh the cached token. Call this if the user rotates
- * ~/.shellx/shellxagent.token externally and the app needs to pick
- * up the new value without a window reload.
- */
-export function invalidateDebugToken(): void {
-  cachedToken = null;
-  pendingTokenFetch = null;
 }
 
 /**

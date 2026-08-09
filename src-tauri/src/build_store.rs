@@ -10,6 +10,65 @@ use std::path::{Path, PathBuf};
 
 use crate::build_types::{BuildReceipt, BuildRunState};
 
+const MAX_BUILD_RECEIPT_LINE_BYTES: usize = 256 * 1024;
+const MAX_BUILD_RECEIPTS_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
+fn ensure_private_build_dir(path: &Path) -> Result<(), String> {
+    crate::session_git::ensure_private_dir(path, "build store")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("build store chmod {} failed: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn prepare_private_run_dir(base: &Path, tab_id: &str, run_id: &str) -> Result<PathBuf, String> {
+    ensure_private_build_dir(base)?;
+    let tab_dir = base.join(sanitize_build_slug(tab_id));
+    ensure_private_build_dir(&tab_dir)?;
+    let run_dir = tab_dir.join(sanitize_build_slug(run_id));
+    ensure_private_build_dir(&run_dir)?;
+    Ok(run_dir)
+}
+
+fn write_private_synced(path: &Path, bytes: &[u8], label: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| format!("{label} open {} failed: {e}", path.display()))?
+    };
+    #[cfg(not(unix))]
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("{label} open {} failed: {e}", path.display()))?;
+    file.write_all(bytes)
+        .map_err(|e| format!("{label} write {} failed: {e}", path.display()))?;
+    file.sync_all()
+        .map_err(|e| format!("{label} sync {} failed: {e}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn enforce_private_file(path: &Path, label: &str) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("{label} chmod {} failed: {e}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn enforce_private_file(_path: &Path, _label: &str) -> Result<(), String> {
+    Ok(())
+}
+
 fn sanitize_build_slug(input: &str) -> String {
     let slug = crate::session_git::sanitize_worktree_slug(input).replace('.', "-");
     let slug = slug
@@ -29,15 +88,36 @@ pub fn build_run_dir(base: &Path, tab_id: &str, run_id: &str) -> PathBuf {
         .join(sanitize_build_slug(run_id))
 }
 
+#[cfg(feature = "debug-api")]
+pub fn remove_release_test_tab(base: &Path, tab_id: &str) -> Result<(), String> {
+    let tab_dir = base.join(sanitize_build_slug(tab_id));
+    if !tab_dir.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(&tab_dir).map_err(|error| {
+        format!(
+            "build release-test cleanup {} failed: {error}",
+            tab_dir.display()
+        )
+    })
+}
+
 pub fn write_state(base: &Path, state: &BuildRunState) -> Result<(), String> {
-    let dir = build_run_dir(base, &state.tab_id, &state.run_id);
-    fs::create_dir_all(&dir).map_err(|e| format!("build state mkdir failed: {}", e))?;
+    let dir = prepare_private_run_dir(base, &state.tab_id, &state.run_id)?;
     let path = dir.join("state.json");
-    let tmp = dir.join("state.json.tmp");
+    let tmp = dir.join(format!(
+        ".state.json.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
     let body = serde_json::to_string_pretty(state)
         .map_err(|e| format!("build state serialize failed: {}", e))?;
-    fs::write(&tmp, body).map_err(|e| format!("build state temp write failed: {}", e))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("build state rename failed: {}", e))?;
+    write_private_synced(&tmp, body.as_bytes(), "build state temp")?;
+    if let Err(error) = fs::rename(&tmp, &path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("build state rename failed: {error}"));
+    }
+    enforce_private_file(&path, "build state")?;
     Ok(())
 }
 
@@ -100,18 +180,42 @@ pub fn read_latest_state_for_tab(
 }
 
 pub fn append_receipt(base: &Path, receipt: &BuildReceipt) -> Result<(), String> {
-    let dir = build_run_dir(base, &receipt.tab_id, &receipt.run_id);
-    fs::create_dir_all(&dir).map_err(|e| format!("build receipt mkdir failed: {}", e))?;
+    let dir = prepare_private_run_dir(base, &receipt.tab_id, &receipt.run_id)?;
     let path = dir.join("receipts.jsonl");
-    let line = serde_json::to_string(receipt)
+    let mut line = serde_json::to_vec(receipt)
         .map_err(|e| format!("build receipt serialize failed: {}", e))?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("build receipt open {} failed: {}", path.display(), e))?;
-    writeln!(file, "{}", line)
-        .map_err(|e| format!("build receipt append {} failed: {}", path.display(), e))
+    line.push(b'\n');
+    if line.len() > MAX_BUILD_RECEIPT_LINE_BYTES {
+        return Err(format!(
+            "build receipt exceeds {} byte per-entry cap",
+            MAX_BUILD_RECEIPT_LINE_BYTES
+        ));
+    }
+    let current_bytes = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+    if current_bytes.saturating_add(line.len() as u64) > MAX_BUILD_RECEIPTS_FILE_BYTES {
+        return Err(format!(
+            "build receipts file exceeds {} byte per-run cap",
+            MAX_BUILD_RECEIPTS_FILE_BYTES
+        ));
+    }
+    #[cfg(unix)]
+    let file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&path)
+    };
+    #[cfg(not(unix))]
+    let file = OpenOptions::new().create(true).append(true).open(&path);
+    let mut file =
+        file.map_err(|e| format!("build receipt open {} failed: {e}", path.display()))?;
+    enforce_private_file(&path, "build receipt")?;
+    file.write_all(&line)
+        .map_err(|e| format!("build receipt append {} failed: {e}", path.display()))?;
+    file.sync_data()
+        .map_err(|e| format!("build receipt sync {} failed: {e}", path.display()))
 }
 
 pub fn read_receipts(base: &Path, tab_id: &str, run_id: &str) -> Result<Vec<BuildReceipt>, String> {
@@ -221,6 +325,37 @@ mod tests {
         let _ = fs::remove_dir_all(&base);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn build_store_uses_user_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = temp_base("permissions");
+        let state = sample_state();
+        write_state(&base, &state).unwrap();
+        append_receipt(&base, &sample_receipt("r1")).unwrap();
+        let run_dir = build_run_dir(&base, &state.tab_id, &state.run_id);
+
+        for dir in [&base, &base.join("tab-1"), &run_dir] {
+            assert_eq!(
+                fs::metadata(dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        for file in [run_dir.join("state.json"), run_dir.join("receipts.jsonl")] {
+            assert_eq!(
+                fs::metadata(file).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        assert!(fs::read_dir(&run_dir).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")));
+        let _ = fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn build_store_appends_receipts_jsonl() {
         let base = temp_base("receipts");
@@ -230,6 +365,17 @@ mod tests {
         assert_eq!(receipts.len(), 2);
         assert_eq!(receipts[0].receipt_id, "r1");
         assert_eq!(receipts[1].receipt_id, "r2");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn build_store_rejects_oversized_receipt_entries() {
+        let base = temp_base("oversized-receipt");
+        let mut receipt = sample_receipt("too-large");
+        receipt.data = json!({ "payload": "x".repeat(MAX_BUILD_RECEIPT_LINE_BYTES) });
+        let error = append_receipt(&base, &receipt)
+            .expect_err("oversized receipt must not grow the append-only store");
+        assert!(error.contains("per-entry cap"));
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -263,6 +409,28 @@ mod tests {
 
         let latest = read_latest_state_for_tab(&base, "tab-1").unwrap().unwrap();
         assert_eq!(latest.run_id, "run-new");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[cfg(feature = "debug-api")]
+    #[test]
+    fn release_test_cleanup_removes_only_the_exact_tab_namespace() {
+        let base = temp_base("release-cleanup");
+        let mut owned = sample_state();
+        owned.tab_id = "release-build-run-owned".into();
+        write_state(&base, &owned).unwrap();
+        let mut sibling = sample_state();
+        sibling.tab_id = "release-build-run-sibling".into();
+        write_state(&base, &sibling).unwrap();
+
+        remove_release_test_tab(&base, &owned.tab_id).unwrap();
+
+        assert!(read_latest_state_for_tab(&base, &owned.tab_id)
+            .unwrap()
+            .is_none());
+        assert!(read_latest_state_for_tab(&base, &sibling.tab_id)
+            .unwrap()
+            .is_some());
         let _ = fs::remove_dir_all(&base);
     }
 }

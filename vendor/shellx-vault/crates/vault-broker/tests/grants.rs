@@ -287,6 +287,62 @@ fn grants_enforce_origin_path_max_use_and_bulk_revocation_constraints() {
 }
 
 #[test]
+fn grants_enforce_path_prefix_component_boundaries() {
+    let mut policy = GrantPolicy::default();
+    policy.register_actor(actor("agent-1", ActorKind::McpAgent));
+    policy.set_resource_permission("sync:docs", ResourcePermission::VisibleAsk);
+
+    let grant = policy
+        .create_grant(GrantRequest {
+            actor_id: "agent-1".to_string(),
+            resource_id: "sync:docs".to_string(),
+            action: GrantAction::ReadFile,
+            constraints: GrantConstraints {
+                path_prefix: Some("docs".to_string()),
+                ..GrantConstraints::default()
+            },
+            created_at_ms: 30,
+        })
+        .unwrap();
+    policy.approve_grant(&grant.grant_id, 31).unwrap();
+
+    assert_allowed(policy.authorize(GrantUseRequest {
+        grant_id: grant.grant_id.clone(),
+        actor_id: "agent-1".to_string(),
+        resource_id: "sync:docs".to_string(),
+        action: GrantAction::ReadFile,
+        origin: None,
+        path: Some("docs/readme.md".to_string()),
+        now_ms: 32,
+    }));
+    assert_denied(
+        policy.authorize(GrantUseRequest {
+            grant_id: grant.grant_id.clone(),
+            actor_id: "agent-1".to_string(),
+            resource_id: "sync:docs".to_string(),
+            action: GrantAction::ReadFile,
+            origin: None,
+            path: Some("docs-secret/readme.md".to_string()),
+            now_ms: 33,
+        }),
+        GrantDenyReason::PathMismatch,
+    );
+    assert_eq!(
+        policy.revoke_grants_for_path_actions("docs-secret/readme.md", [GrantAction::ReadFile], 34),
+        0
+    );
+    assert_allowed(policy.authorize(GrantUseRequest {
+        grant_id: grant.grant_id,
+        actor_id: "agent-1".to_string(),
+        resource_id: "sync:docs".to_string(),
+        action: GrantAction::ReadFile,
+        origin: None,
+        path: Some("docs/index.md".to_string()),
+        now_ms: 35,
+    }));
+}
+
+#[test]
 fn grants_snapshot_survives_restart_and_legacy_shellx_grants_import_pending() {
     let mut policy = GrantPolicy::default();
     policy.register_actor(actor("agent-1", ActorKind::McpAgent));

@@ -248,6 +248,7 @@ fn browser_secret_token_separator(ch: char) -> bool {
                 | '}'
                 | '<'
                 | '>'
+                | '#'
         )
 }
 
@@ -267,6 +268,21 @@ fn push_redacted_browser_token(redacted: &mut String, token: &mut String) {
 
 fn browser_looks_like_hex_secret_token(token: &str) -> bool {
     let token = token.trim();
+    if browser_is_hex_secret_sequence(token) {
+        return true;
+    }
+    let Some(separator) = token.rfind(['-', '_']) else {
+        return false;
+    };
+    let prefix = token[..separator].to_ascii_lowercase();
+    let suffix = &token[separator + 1..];
+    matches!(
+        prefix.as_str(),
+        "key" | "api-key" | "apikey" | "token" | "secret" | "credential" | "auth-key"
+    ) && browser_is_hex_secret_sequence(suffix)
+}
+
+fn browser_is_hex_secret_sequence(token: &str) -> bool {
     if !(32..=128).contains(&token.len()) {
         return false;
     }
@@ -324,14 +340,32 @@ pub(crate) fn redact_browser_observation(
         reference.label = redact_browser_text(&reference.label, protected_values);
         redact_browser_option(&mut reference.name, protected_values);
         redact_browser_option(&mut reference.selector, protected_values);
+        redact_browser_option(&mut reference.dom_path, protected_values);
+        redact_browser_option(&mut reference.frame_url, protected_values);
         redact_browser_option(&mut reference.value, protected_values);
+        for path in &mut reference.shadow_path {
+            *path = redact_browser_text(path, protected_values);
+        }
+        for value in &mut reference.option_values {
+            *value = redact_browser_text(value, protected_values);
+        }
         for locator in &mut reference.locator_suggestions {
             locator.value = redact_browser_text(&locator.value, protected_values);
         }
     }
     for field in &mut observation.form_fields {
         field.label = redact_browser_text(&field.label, protected_values);
+        redact_browser_option(&mut field.selector, protected_values);
         redact_browser_option(&mut field.value, protected_values);
+        redact_browser_option(&mut field.form_action, protected_values);
+    }
+    for group in &mut observation.form_field_groups {
+        group.label = redact_browser_text(&group.label, protected_values);
+        redact_browser_option(&mut group.form_action, protected_values);
+        for field in &mut group.fields {
+            field.label = redact_browser_text(&field.label, protected_values);
+            redact_browser_option(&mut field.selector, protected_values);
+        }
     }
     for node in &mut observation.accessibility_tree {
         node.label = redact_browser_text(&node.label, protected_values);
@@ -500,14 +534,17 @@ mod tests {
     use crate::shellx_browser::{
         BrowserDomSummary, BrowserObservationRef, BrowserVerificationResult,
     };
-    use crate::shellx_browser_model::BrowserAccessibilityNode;
+    use crate::shellx_browser_model::{
+        BrowserAccessibilityNode, BrowserFormFieldGroup, BrowserFormFieldGroupField,
+    };
 
     #[test]
     fn protected_value_redaction_covers_observation_urls() {
-        let secret = "SXLEAK-Durable-Pw-7f3a9c2b".to_string();
+        let secret = "SXLEAK-Durable-Pw-7f3a9c2b".to_string(); // gitleaks:allow -- synthetic redaction vector
         let mut observation = BrowserObservation {
             task_id: "browser-task-redaction".to_string(),
             snapshot_id: String::new(),
+            delta: None,
             url: Some(format!("https://example.test/get?token={secret}")),
             title: "Token page".to_string(),
             text: format!("body contains {secret}"),
@@ -515,6 +552,7 @@ mod tests {
             refs: Vec::new(),
             dom_summary: BrowserDomSummary::default(),
             form_fields: Vec::new(),
+            form_field_groups: Vec::new(),
             accessibility_tree: Vec::new(),
             privacy_stats: None,
             untrusted_input: true,
@@ -540,6 +578,7 @@ mod tests {
         let mut observation = BrowserObservation {
             task_id: "browser-task-api-key-redaction".to_string(),
             snapshot_id: String::new(),
+            delta: None,
             url: Some("https://example.test/dashboard/activation".to_string()),
             title: "Activation".to_string(),
             text: format!("Here is your API Key {api_key} Start building {confirmation_url}"),
@@ -553,6 +592,12 @@ mod tests {
                     test_id: None,
                     selector: Some(format!("button[aria-label=\"{api_key}\"]")),
                     raw_selector: None,
+                    raw_locator: None,
+                    fingerprint: Some("fp-redacted-button".to_string()),
+                    dom_path: Some(format!("body > button#{api_key}")),
+                    frame_url: Some(format!("https://example.test/?token={api_key}")),
+                    shadow_path: vec![format!("body > div#key-{api_key}")],
+                    option_values: vec![api_key.to_string()],
                     value: Some(api_key.to_string()),
                     action: Some("clickRef".to_string()),
                     locator_suggestions: Vec::new(),
@@ -571,6 +616,12 @@ mod tests {
                     test_id: None,
                     selector: Some(format!("a[href=\"{confirmation_url}\"]")),
                     raw_selector: None,
+                    raw_locator: None,
+                    fingerprint: Some("fp-redacted-link".to_string()),
+                    dom_path: Some(format!("body > a[href=\"{confirmation_url}\"]")),
+                    frame_url: Some(confirmation_url.to_string()),
+                    shadow_path: Vec::new(),
+                    option_values: Vec::new(),
                     value: Some(confirmation_url.to_string()),
                     action: Some("clickRef".to_string()),
                     locator_suggestions: Vec::new(),
@@ -584,6 +635,24 @@ mod tests {
             ],
             dom_summary: BrowserDomSummary::default(),
             form_fields: Vec::new(),
+            form_field_groups: vec![BrowserFormFieldGroup {
+                group_id: "group-api-key".to_string(),
+                group_kind: "apiKey".to_string(),
+                label: format!("API key form {api_key}"),
+                form_action: Some(format!("https://example.test/save?token={api_key}")),
+                field_intents: vec!["apiKey".to_string()],
+                fields: vec![BrowserFormFieldGroupField {
+                    ref_id: Some("dom-3".to_string()),
+                    selector: Some(format!("input[value=\"{api_key}\"]")),
+                    label: api_key.to_string(),
+                    field_kind: "text".to_string(),
+                    intent: "apiKey".to_string(),
+                    required: false,
+                    disabled: false,
+                    sensitive: true,
+                }],
+                sensitive: true,
+            }],
             accessibility_tree: vec![BrowserAccessibilityNode {
                 ref_id: Some("dom-3".to_string()),
                 role: "button".to_string(),
@@ -628,10 +697,11 @@ mod tests {
 
     #[test]
     fn credential_pattern_redaction_covers_firecrawl_page_keys() {
-        let firecrawl_key = "fc-4e324f02a08c4bb9a9cbb3a955bf8592";
+        let firecrawl_key = "fc-4e324f02a08c4bb9a9cbb3a955bf8592"; // gitleaks:allow -- synthetic redaction vector
         let mut observation = BrowserObservation {
             task_id: "browser-task-firecrawl-key-redaction".to_string(),
             snapshot_id: String::new(),
+            delta: None,
             url: Some("https://www.firecrawl.dev/app/api-keys".to_string()),
             title: "API Keys | Firecrawl".to_string(),
             text: format!("Claude Code {firecrawl_key} Hide Copy"),
@@ -644,6 +714,12 @@ mod tests {
                 test_id: None,
                 selector: Some(format!("button[aria-label=\"Copy {firecrawl_key}\"]")),
                 raw_selector: None,
+                raw_locator: None,
+                fingerprint: Some("fp-firecrawl-copy".to_string()),
+                dom_path: Some(format!("body > button#{firecrawl_key}")),
+                frame_url: Some("https://www.firecrawl.dev/app/api-keys".to_string()),
+                shadow_path: Vec::new(),
+                option_values: Vec::new(),
                 value: Some(firecrawl_key.to_string()),
                 action: Some("clickRef".to_string()),
                 locator_suggestions: Vec::new(),
@@ -656,6 +732,7 @@ mod tests {
             }],
             dom_summary: BrowserDomSummary::default(),
             form_fields: Vec::new(),
+            form_field_groups: Vec::new(),
             accessibility_tree: vec![BrowserAccessibilityNode {
                 ref_id: Some("dom-30".to_string()),
                 role: "button".to_string(),
@@ -683,7 +760,7 @@ mod tests {
 
     #[test]
     fn protected_value_redaction_covers_engine_result_urls() {
-        let secret = "SXLEAK-Durable-Pw-7f3a9c2b".to_string();
+        let secret = "SXLEAK-Durable-Pw-7f3a9c2b".to_string(); // gitleaks:allow -- synthetic redaction vector
         let mut result = EngineControlResult {
             ok: true,
             status: "verified".to_string(),
@@ -692,6 +769,11 @@ mod tests {
                 attached: true,
                 visible: true,
                 stable: true,
+                stability_ms: 120,
+                stability_samples: 3,
+                expected_fingerprint: Some("fp-expected".to_string()),
+                actual_fingerprint: Some("fp-actual".to_string()),
+                fingerprint_matches: Some(false),
                 enabled: true,
                 editable: false,
                 in_viewport: true,

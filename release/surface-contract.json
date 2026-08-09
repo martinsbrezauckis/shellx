@@ -1,0 +1,141 @@
+{
+  "schema": "shellx/final-surface-contract@4",
+  "purpose": "Final frozen-candidate acceptance only; not an after-every-change test.",
+  "mode": "final-frozen-candidate",
+  "candidateStage": "signed-and-frozen",
+  "executionWindow": "immediately-before-publish",
+  "routineTestUsage": "forbidden",
+  "invalidatedBy": [
+    "source-change",
+    "artifact-change",
+    "signature-change",
+    "inventory-change"
+  ],
+  "updater": {
+    "requiredPlatforms": [
+      "windows-x86_64",
+      "darwin-aarch64",
+      "linux-x86_64"
+    ],
+    "requiredChecks": [
+      "artifact-minisign-verified-against-embedded-pubkey",
+      "all-required-platforms-present",
+      "release-url-version-bound"
+    ]
+  },
+  "platforms": {
+    "windows-installed": {
+      "signatureStatus": "verified",
+      "requiredSignatureChecks": [
+        "authenticode-valid",
+        "publisher-identity",
+        "timestamp-valid"
+      ],
+      "requiredTransports": [
+        "local-native",
+        "local-wsl",
+        "ssh-posix-native",
+        "ssh-windows-native",
+        "ssh-windows-wsl"
+      ],
+      "requiredProviderRoutes": [
+        { "providerId": "grok", "transportId": "local-native" },
+        { "providerId": "codex-cli", "transportId": "local-native" },
+        { "providerId": "claude-code", "transportId": "local-native" },
+        { "providerId": "antigravity-cli", "transportId": "local-native" },
+        { "providerId": "grok", "transportId": "local-wsl" },
+        { "providerId": "codex-cli", "transportId": "local-wsl" },
+        { "providerId": "claude-code", "transportId": "local-wsl" },
+        { "providerId": "antigravity-cli", "transportId": "local-wsl" },
+        { "providerId": "grok", "transportId": "ssh-posix-native" },
+        { "providerId": "codex-cli", "transportId": "ssh-posix-native" },
+        { "providerId": "claude-code", "transportId": "ssh-posix-native" },
+        { "providerId": "antigravity-cli", "transportId": "ssh-posix-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-wsl" }
+      ],
+      "requiredLiveProviderRoutes": [
+        { "providerId": "grok", "transportId": "local-native" },
+        { "providerId": "grok", "transportId": "local-wsl" },
+        { "providerId": "claude-code", "transportId": "ssh-posix-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-wsl" }
+      ]
+    },
+    "macos-installed": {
+      "signatureStatus": "verified",
+      "requiredSignatureChecks": [
+        "codesign-deep-strict",
+        "gatekeeper-assess",
+        "notary-staple"
+      ],
+      "requiredTransports": [
+        "local-native",
+        "ssh-posix-native",
+        "ssh-windows-native",
+        "ssh-windows-wsl"
+      ],
+      "requiredProviderRoutes": [
+        { "providerId": "grok", "transportId": "local-native" },
+        { "providerId": "codex-cli", "transportId": "local-native" },
+        { "providerId": "grok", "transportId": "ssh-posix-native" },
+        { "providerId": "codex-cli", "transportId": "ssh-posix-native" },
+        { "providerId": "claude-code", "transportId": "ssh-posix-native" },
+        { "providerId": "antigravity-cli", "transportId": "ssh-posix-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-wsl" }
+      ],
+      "requiredLiveProviderRoutes": [
+        { "providerId": "grok", "transportId": "local-native" },
+        { "providerId": "antigravity-cli", "transportId": "ssh-posix-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-wsl" }
+      ]
+    },
+    "linux-installed": {
+      "signatureStatus": "digest-verified",
+      "requiredSignatureChecks": [
+        "artifact-sha256-recomputed"
+      ],
+      "requiredTransports": [
+        "local-native",
+        "ssh-posix-native",
+        "ssh-windows-native",
+        "ssh-windows-wsl"
+      ],
+      "requiredProviderRoutes": [
+        { "providerId": "grok", "transportId": "local-native" },
+        { "providerId": "codex-cli", "transportId": "local-native" },
+        { "providerId": "claude-code", "transportId": "local-native" },
+        { "providerId": "antigravity-cli", "transportId": "local-native" },
+        { "providerId": "grok", "transportId": "ssh-posix-native" },
+        { "providerId": "codex-cli", "transportId": "ssh-posix-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-wsl" }
+      ],
+      "requiredLiveProviderRoutes": [
+        { "providerId": "codex-cli", "transportId": "local-native" },
+        { "providerId": "grok", "transportId": "ssh-posix-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-native" },
+        { "providerId": "grok", "transportId": "ssh-windows-wsl" }
+      ]
+    }
+  },
+  "requiredProviders": [
+    "grok",
+    "codex-cli",
+    "claude-code",
+    "antigravity-cli"
+  ],
+  "providerRoutePolicy": "exact-identity-routes-with-minimal-live-canaries",
+  "requiredOutcomeVerdicts": [
+    "present",
+    "invoke",
+    "effect",
+    "cleanup"
+  ],
+  "zeroSilentSkips": true,
+  "requireHealthyStartupAndShutdown": true,
+  "requireZeroBrokenLinks": true,
+  "requireZeroUnexpectedConsoleErrors": true
+}

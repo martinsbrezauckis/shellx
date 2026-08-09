@@ -230,14 +230,16 @@ fn local_probe_command(launcher: &str) -> Command {
 
 fn wsl_launcher_probe_script(launcher: &str) -> String {
     format!(
-        "export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.npm-global/bin:$PATH\"; exec {} --version",
+        "{} exec {} --version",
+        crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
         crate::acp::shell_quote_for_remote(launcher)
     )
 }
 
 fn ssh_launcher_probe_script(launcher: &str) -> String {
     format!(
-        "export PATH=\"$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$HOME/.claude/bin:$HOME/.grok/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; if [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1; fi; exec {} --version",
+        "{} exec {} --version",
+        crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
         crate::acp::shell_quote_for_remote(launcher)
     )
 }
@@ -282,7 +284,12 @@ async fn probe_launcher_wsl(distro: &str, launcher: &str) -> (i32, String) {
 /// SSH probe: `ssh -o BatchMode=yes -o ConnectTimeout=5 -- <ssh_target> '<launcher> --version'`.
 /// `ssh_target` is typically `user@host`. BatchMode=yes refuses any
 /// interactive prompt so we fail fast on missing keys.
-async fn probe_launcher_ssh(ssh_target: &str, launcher: &str) -> (i32, String) {
+async fn probe_launcher_ssh(
+    ssh_target: &str,
+    launcher: &str,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<&str>,
+) -> (i32, String) {
     if launcher.is_empty() {
         return (-4, "empty launcher (HTTP-only entry, skip)".to_string());
     }
@@ -291,6 +298,21 @@ async fn probe_launcher_ssh(ssh_target: &str, launcher: &str) -> (i32, String) {
     }
     let fut = async {
         use crate::winproc::NoWindowExt as _;
+        let remote_command = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+            let args = vec!["--version".to_string()];
+            crate::acp::wrap_ssh_windows_command(&crate::acp::windows_native_process_script(
+                None, launcher, &args,
+            ))
+        } else {
+            match crate::acp::wrap_ssh_posix_command(
+                remote_runtime,
+                ssh_wsl_distro,
+                &ssh_launcher_probe_script(launcher),
+            ) {
+                Ok(command) => command,
+                Err(error) => return (-5, error),
+            }
+        };
         let mut cmd = Command::new("ssh");
         cmd.arg("-o")
             .arg("BatchMode=yes")
@@ -300,7 +322,7 @@ async fn probe_launcher_ssh(ssh_target: &str, launcher: &str) -> (i32, String) {
             .arg("StrictHostKeyChecking=accept-new")
             .arg("--")
             .arg(ssh_target)
-            .arg(ssh_launcher_probe_script(launcher))
+            .arg(remote_command)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null())
@@ -372,6 +394,8 @@ fn classify(
 pub struct ProbeTransport {
     pub wsl_distro: Option<String>,
     pub ssh_target: Option<String>, // e.g. "user@host"
+    pub ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    pub ssh_wsl_distro: Option<String>,
 }
 
 pub fn probe_transport_key(is_wsl: bool, is_ssh: bool, transport: &ProbeTransport) -> String {
@@ -383,8 +407,14 @@ pub fn probe_transport_key(is_wsl: bool, is_ssh: bool, transport: &ProbeTranspor
     }
     if is_ssh {
         return format!(
-            "ssh:{}",
-            transport.ssh_target.as_deref().unwrap_or("<unknown>")
+            "ssh:{}:{}:{}",
+            transport.ssh_target.as_deref().unwrap_or("<unknown>"),
+            match transport.ssh_remote_runtime {
+                crate::acp::SshRemoteRuntime::Posix => "posix",
+                crate::acp::SshRemoteRuntime::Windows => "windows",
+                crate::acp::SshRemoteRuntime::WindowsWsl => "windows_wsl",
+            },
+            transport.ssh_wsl_distro.as_deref().unwrap_or(""),
         );
     }
     "local".to_string()
@@ -471,6 +501,8 @@ pub fn schedule_probes_for_tab_with_hint(
                 let tab_id = tab_id.clone();
                 let sem = Arc::clone(&sem);
                 let target = target_label.clone();
+                let ssh_remote_runtime = transport.ssh_remote_runtime;
+                let ssh_wsl_distro = transport.ssh_wsl_distro.clone();
                 let launcher = crate::mcp_marketplace::CATALOG
                     .iter()
                     .find(|c| c.id == e.id)
@@ -497,7 +529,13 @@ pub fn schedule_probes_for_tab_with_hint(
                     let (exit, stderr) = if is_wsl {
                         probe_launcher_wsl(&target, &launcher).await
                     } else {
-                        probe_launcher_ssh(&target, &launcher).await
+                        probe_launcher_ssh(
+                            &target,
+                            &launcher,
+                            ssh_remote_runtime,
+                            ssh_wsl_distro.as_deref(),
+                        )
+                        .await
                     };
                     let target_kind = if is_wsl {
                         ProbeTarget::Wsl

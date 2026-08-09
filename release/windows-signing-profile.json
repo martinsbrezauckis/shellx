@@ -1,0 +1,10 @@
+{
+  "schema": "shellx/windows-signing-profile@2",
+  "publisher": {
+    "commonName": "U1C",
+    "organization": "U1C",
+    "country": "LV"
+  },
+  "issuerOrganization": "Microsoft Corporation",
+  "timestampIssuerOrganization": "Microsoft Corporation"
+}

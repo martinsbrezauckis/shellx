@@ -14,6 +14,9 @@ use crate::shellx_browser::{
     BrowserTransferApprovalRequest, BrowserTransferCompleteRequest, BrowserUploadRequest,
     ShellxBrowserRegistry,
 };
+use crate::shellx_browser_transfer_privacy::{
+    browser_download_destination_dir, browser_upload_display_name, public_upload_transfer_entry,
+};
 
 pub(crate) const BROWSER_TRANSFER_OPERATOR_ERROR_CODE: &str = "browser_transfer_requires_operator";
 pub(crate) const BROWSER_TRANSFER_OPERATOR_ERROR_MESSAGE: &str =
@@ -315,12 +318,11 @@ impl ShellxBrowserRegistry {
         let display_name = request
             .display_name
             .as_deref()
-            .map(clean_string)
+            .map(browser_upload_display_name)
             .filter(|value| !value.is_empty())
             .or_else(|| {
-                std::path::Path::new(&file_path)
-                    .file_name()
-                    .map(|value| value.to_string_lossy().into_owned())
+                let value = browser_upload_display_name(&file_path);
+                (!value.is_empty()).then_some(value)
             });
         let destination_origin = request
             .destination_origin
@@ -379,7 +381,7 @@ impl ShellxBrowserRegistry {
         };
         state.uploads.push(entry.clone());
         state.uploads.truncate(200);
-        Ok(entry)
+        Ok(public_upload_transfer_entry(entry))
     }
 
     pub fn complete_download(
@@ -702,7 +704,7 @@ impl ShellxBrowserRegistry {
                 "transferId": completed.transfer_id,
                 "browserTabId": completed.browser_tab_id,
                 "direction": completed.direction,
-                "finalPath": completed.final_path,
+                "finalPath": if direction == "upload" { completed.display_name.clone() } else { completed.final_path.clone() },
                 "mimeType": completed.mime_type,
                 "contentKind": completed.content_kind,
                 "bytes": completed.bytes,
@@ -736,21 +738,12 @@ impl ShellxBrowserRegistry {
             }
             _ => {}
         }
-        Ok(completed)
+        Ok(if direction == "upload" {
+            public_upload_transfer_entry(completed)
+        } else {
+            completed
+        })
     }
-}
-
-fn browser_download_destination_dir(value: Option<&str>) -> Result<std::path::PathBuf, String> {
-    let path = if let Some(path) = value.map(clean_string).filter(|path| !path.is_empty()) {
-        std::path::PathBuf::from(path)
-    } else {
-        let home = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .map_err(|_| "USERPROFILE/HOME is not set".to_string())?;
-        std::path::PathBuf::from(home).join("Downloads")
-    };
-    enforce_home_containment("browser_download_destination", &path, FsAccessKind::Write)?;
-    Ok(path)
 }
 
 fn sanitized_download_file_name(value: Option<&str>, fallback: &str) -> String {
@@ -820,18 +813,26 @@ fn browser_local_artifact_roots() -> Result<Vec<std::path::PathBuf>, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
-    let root = std::path::PathBuf::from(home).join(".grok");
-    Ok([
-        "shellx-browser-screenshots",
-        "shellx-browser-har",
-        "shellx-browser-performance",
-        "shellx-browser-traces",
-        "shellx-browser-recipes",
-        "shellx-browser-storage-state",
-    ]
-    .into_iter()
-    .map(|folder| root.join(folder))
-    .collect())
+    let home = std::path::PathBuf::from(home);
+    let roots = [
+        home.join(".shellx").join("browser-artifacts"),
+        home.join(".grok"),
+    ];
+    Ok(roots
+        .into_iter()
+        .flat_map(|root| {
+            [
+                "shellx-browser-screenshots",
+                "shellx-browser-har",
+                "shellx-browser-performance",
+                "shellx-browser-traces",
+                "shellx-browser-recipes",
+                "shellx-browser-storage-state",
+            ]
+            .into_iter()
+            .map(move |folder| root.join(folder))
+        })
+        .collect())
 }
 
 fn file_artifact_metadata(path: &str) -> Result<Option<(u64, String)>, String> {
@@ -993,24 +994,5 @@ fn classify_transfer_content(mime_type: Option<&str>, path: &str) -> String {
         infer_mime_type_from_path(path)
             .map(|inferred| classify_transfer_content(Some(&inferred), path))
             .unwrap_or_else(|| "binary".to_string())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn browser_download_destination_rejects_sensitive_home_paths() {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .expect("HOME/USERPROFILE exists for tests");
-        let sensitive = std::path::PathBuf::from(home).join(".ssh");
-        let err = browser_download_destination_dir(Some(&sensitive.to_string_lossy()))
-            .expect_err("Browser downloads must not write to sensitive home paths");
-        assert!(
-            err.contains("sensitive") || err.contains("denylist"),
-            "expected sensitive path denial, got: {err}"
-        );
     }
 }

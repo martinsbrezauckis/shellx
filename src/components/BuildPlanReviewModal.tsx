@@ -19,6 +19,7 @@ import {
   type BuildRunState,
 } from "../lib/build-run";
 import { ShellIcon } from "./icons";
+import { useModalFocus } from "../lib/useModalFocus";
 
 interface BuildPlanReviewModalProps {
   activeTabId?: string | null;
@@ -26,9 +27,52 @@ interface BuildPlanReviewModalProps {
   eventsLen: number;
   openRequestSeq?: number;
   closeRequestSeq?: number;
+  /** Fixed renderer-only plan used by installed release verification. No
+   * Build state, provider, project, clipboard, or navigation path is active. */
+  debugFixture?: "owned-ready" | null;
   onPreviewFile: (path: string) => void;
   onAccepted: () => void;
   onReviewLater: () => void;
+}
+
+const OWNED_DEBUG_PLAN_TEXT = `# Build: Release-owned inert review
+
+Status: AWAITING_APPROVAL
+
+## Phase 1 — Verify the inert review lifecycle
+
+- [ ] Verify UI wiring without provider work, build execution, fake success, placeholder behavior, or AI slop.
+`;
+
+function ownedDebugBuildState(tabId: string): BuildRunState {
+  return {
+    runId: "release-owned-inert-build-plan",
+    tabId,
+    objective: "Verify the inert Build plan review lifecycle",
+    cwd: "/release-owned/inert-build-plan",
+    transportKind: "release-fixture",
+    scratchboardPath: "/release-owned/inert-build-plan/build.md",
+    status: "awaitingApproval",
+    approvedPlanHash: null,
+    currentPhaseId: null,
+    continuationsTotal: 0,
+    noProgressCycles: 0,
+    createdAtMs: 0,
+    updatedAtMs: 0,
+    approvedAtMs: null,
+    lastContinuationAtMs: null,
+    checkpointId: null,
+    codeChanged: false,
+    reviewRequired: false,
+    reviewSatisfied: false,
+    verificationRequired: false,
+    verificationSatisfied: false,
+    previewRequired: false,
+    previewSatisfied: false,
+    openBlocker: null,
+    pendingOperatorNotes: [],
+    lastReceiptId: null,
+  };
 }
 
 function cleanPlanTitle(raw: string): string {
@@ -63,6 +107,7 @@ export function BuildPlanReviewModal({
   eventsLen,
   openRequestSeq,
   closeRequestSeq,
+  debugFixture,
   onPreviewFile,
   onAccepted,
   onReviewLater,
@@ -72,10 +117,21 @@ export function BuildPlanReviewModal({
   const [readError, setReadError] = useState<string | null>(null);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   const [busy, setBusy] = useState<"approve" | "reject" | null>(null);
+  const [rejectArmed, setRejectArmed] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const lastCloseRequestSeq = useRef(closeRequestSeq);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const debugState = useMemo(
+    () => debugFixture === "owned-ready" && activeTabId
+      ? ownedDebugBuildState(activeTabId)
+      : null,
+    [activeTabId, debugFixture],
+  );
+  const effectiveState = debugState ?? state;
+  const effectivePlanText = debugState ? OWNED_DEBUG_PLAN_TEXT : planText;
 
   useEffect(() => {
+    if (debugFixture === "owned-ready") return;
     if (!activeTabId || !inTauri()) {
       setState(null);
       return;
@@ -93,10 +149,14 @@ export function BuildPlanReviewModal({
     fetchState();
     const id = window.setInterval(fetchState, 2500);
     return () => { cancelled = true; window.clearInterval(id); };
-  }, [activeTabId, eventsLen]);
+  }, [activeTabId, eventsLen, debugFixture]);
 
-  const scratchboardPath = state?.scratchboardPath ?? "";
+  const scratchboardPath = effectiveState?.scratchboardPath ?? "";
   useEffect(() => {
+    if (debugFixture === "owned-ready") {
+      setReadError(null);
+      return;
+    }
     if (!activeTabId || !scratchboardPath) {
       setPlanText("");
       setReadError(null);
@@ -123,22 +183,24 @@ export function BuildPlanReviewModal({
         .catch((e) => { if (!cancelled) setReadError(String(e)); });
     }
     return () => { cancelled = true; };
-  }, [activeTabId, sessionCwd, scratchboardPath, state?.status, eventsLen]);
+  }, [activeTabId, sessionCwd, scratchboardPath, effectiveState?.status, eventsLen, debugFixture]);
 
-  const approvalReadiness = buildApprovalReadinessFromText(planText);
-  const ready = Boolean(state && state.status === "awaitingApproval" && approvalReadiness.ready);
+  const approvalReadiness = buildApprovalReadinessFromText(effectivePlanText);
+  const ready = Boolean(effectiveState && effectiveState.status === "awaitingApproval" && approvalReadiness.ready);
   const planKey = useMemo(
     () => activeTabId && scratchboardPath
-      ? `${activeTabId}:${scratchboardPath}:${state?.runId ?? ""}`
+      ? `${activeTabId}:${scratchboardPath}:${effectiveState?.runId ?? ""}`
       : null,
-    [activeTabId, scratchboardPath, state?.runId],
+    [activeTabId, scratchboardPath, effectiveState?.runId],
   );
   const open = ready && planKey !== null && dismissedKey !== planKey;
+  useModalFocus(open, dialogRef, dismissToRail);
 
   useEffect(() => {
     if (openRequestSeq === undefined) return;
     setDismissedKey(null);
     setActionError(null);
+    setRejectArmed(false);
   }, [openRequestSeq]);
 
   useEffect(() => {
@@ -148,47 +210,40 @@ export function BuildPlanReviewModal({
     if (planKey) {
       setDismissedKey(planKey);
       setActionError(null);
+      setRejectArmed(false);
     }
   }, [closeRequestSeq, planKey]);
 
   useEffect(() => {
-    if (state?.status !== "awaitingApproval") {
+    if (effectiveState?.status !== "awaitingApproval") {
       setBusy(null);
       setActionError(null);
+      setRejectArmed(false);
     }
-  }, [state?.status]);
+  }, [effectiveState?.status]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      dismissToRail();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, planKey]);
+  if (!open || !effectiveState || !activeTabId) return null;
 
-  if (!open || !state || !activeTabId) return null;
-
-  const lineCount = planText ? planText.split("\n").length : 0;
-  const phaseCount = (planText.match(/^##\s+Phase\b/gim) ?? []).length;
-  const planTitle = extractPlanTitle(planText, state.objective);
-  const planStatus = extractPlanStatus(planText, state);
-  const displayPlanText = stripLeadingPlanTitle(planText);
-  const markdownText = displayPlanText.trim() ? displayPlanText : planText;
-  const objectiveText = state.objective.trim();
+  const lineCount = effectivePlanText ? effectivePlanText.split("\n").length : 0;
+  const phaseCount = (effectivePlanText.match(/^##\s+Phase\b/gim) ?? []).length;
+  const planTitle = extractPlanTitle(effectivePlanText, effectiveState.objective);
+  const planStatus = extractPlanStatus(effectivePlanText, effectiveState);
+  const displayPlanText = stripLeadingPlanTitle(effectivePlanText);
+  const markdownText = displayPlanText.trim() ? displayPlanText : effectivePlanText;
+  const objectiveText = effectiveState.objective.trim();
   const showObjective =
     objectiveText.length > 0 &&
     !planTextsAreEquivalent(objectiveText, planTitle);
 
   function dismissToRail(): void {
     if (planKey) setDismissedKey(planKey);
+    setRejectArmed(false);
     onReviewLater();
   }
 
   function approve(): void {
-    if (busy || !inTauri()) return;
+    if (busy || debugFixture === "owned-ready" || !inTauri()) return;
+    setRejectArmed(false);
     setBusy("approve");
     setActionError(null);
     void invoke<boolean>("approve_build_plan", { tabId: activeTabId })
@@ -205,9 +260,14 @@ export function BuildPlanReviewModal({
   }
 
   function reject(): void {
-    if (busy || !inTauri()) return;
-    if (!window.confirm("Reject this Build Mode plan and halt the run?")) return;
+    if (busy || debugFixture === "owned-ready" || !inTauri()) return;
+    if (!rejectArmed) {
+      setRejectArmed(true);
+      setActionError("Click Confirm reject to halt this Build Mode run.");
+      return;
+    }
     setBusy("reject");
+    setRejectArmed(false);
     setActionError(null);
     void invoke<boolean>("reject_build_plan", { tabId: activeTabId })
       .then((rejected) => {
@@ -223,8 +283,11 @@ export function BuildPlanReviewModal({
   }
 
   return (
-    <div className="preview-backdrop" role="dialog" aria-modal="true" aria-label={`Review build plan: ${planTitle}`}>
-      <div className="preview-modal plan-review-modal" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="preview-backdrop"
+      data-build-plan-debug-fixture={debugFixture === "owned-ready" ? "owned-ready" : undefined}
+    >
+      <div ref={dialogRef} data-debug-id="surface-components-buildplanreviewmodal-1" className="preview-modal plan-review-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Review build plan: ${planTitle}`}>
         <div className="plan-review-shell">
           <div className="plan-review-topbar">
             <div className="plan-review-kicker">Build plan review</div>
@@ -293,18 +356,22 @@ export function BuildPlanReviewModal({
             </button>
             {actionError && <span className="goal-status-meta" title={actionError}>{actionError}</span>}
             <div className="plan-review-action-spacer" />
-            <button
+            <button data-debug-id="surface-components-buildplanreviewmodal-4"
               type="button"
               className="pact plan-action plan-action-danger"
-              disabled={busy !== null}
+              data-shellx-release-observe="title disabled"
+              title={rejectArmed
+                ? "Confirm rejection and halt this Build Mode run"
+                : "Reject this Build Mode plan"}
+              disabled={busy !== null || debugFixture === "owned-ready"}
               onClick={reject}
             >
-              {busy === "reject" ? "Rejecting..." : "Reject"}
+              {busy === "reject" ? "Rejecting..." : rejectArmed ? "Confirm reject" : "Reject"}
             </button>
-            <button
+            <button data-debug-id="surface-components-buildplanreviewmodal-5"
               type="button"
               className="pact plan-action plan-action-primary"
-              disabled={busy !== null}
+              disabled={busy !== null || debugFixture === "owned-ready"}
               onClick={approve}
             >
               {busy === "approve" ? "Approving..." : "Accept plan"}

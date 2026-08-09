@@ -1,6 +1,6 @@
 import type { RawEventFrame } from "../types/acp";
 import { groupEvents } from "./grouping";
-import { extractSessionMedia, type SessionMediaItem, type SessionMediaKind } from "./session-media";
+import { extractSessionMedia, type SessionMediaItem } from "./session-media";
 
 export interface SessionAssetSourceTab {
   tabId: string;
@@ -117,8 +117,4 @@ export function splitAssetsByActiveTab(
     else other.push(asset);
   }
   return { current, other };
-}
-
-export function mediaKindLabel(kind: SessionMediaKind): string {
-  return kind === "image" ? "Image" : "Video";
 }

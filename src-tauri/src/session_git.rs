@@ -193,6 +193,8 @@ pub(crate) struct GitProviderContext {
     ssh_host: Option<String>,
     ssh_port: Option<u16>,
     ssh_key_vault_ref: Option<String>,
+    ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<String>,
 }
 
 impl GitProviderContext {
@@ -211,6 +213,8 @@ impl GitProviderContext {
             ssh_host,
             ssh_port,
             ssh_key_vault_ref,
+            ssh_remote_runtime: crate::acp::SshRemoteRuntime::Posix,
+            ssh_wsl_distro: None,
         }
     }
 }
@@ -553,6 +557,8 @@ pub(crate) fn git_provider_context_for_tab(
             ssh_host: run.ssh_host.clone(),
             ssh_port: run.ssh_port,
             ssh_key_vault_ref: run.ssh_key_vault_ref.clone(),
+            ssh_remote_runtime: run.ssh_remote_runtime,
+            ssh_wsl_distro: run.ssh_wsl_distro.clone(),
         })
 }
 
@@ -636,6 +642,8 @@ async fn command_context_with_provider(
                             port: provider.ssh_port,
                             key_vault_ref: provider.ssh_key_vault_ref,
                             remote_grok_path: String::new(),
+                            remote_runtime: provider.ssh_remote_runtime,
+                            wsl_distro: provider.ssh_wsl_distro,
                         });
                     }
                 }
@@ -675,18 +683,37 @@ async fn git_output(
     use crate::winproc::NoWindowExt as _;
     let mut cmd = if let Some(ssh) = &ctx.ssh_config {
         crate::acp::validate_ssh_destination_arg(&ssh.host)?;
-        let remote_args = quoted_hardened_git_args(&args);
-        let remote = if remote_args.is_empty() {
-            format!(
-                "cd -- {} && GIT_TERMINAL_PROMPT=0 git",
-                crate::acp::shell_quote_for_remote(cwd),
-            )
+        let remote = if ssh.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+            let git_args = hardened_git_args(&args)
+                .iter()
+                .map(|arg| crate::acp::powershell_single_quote(arg))
+                .collect::<Vec<_>>()
+                .join(",");
+            let script = format!(
+                "{}$env:GIT_TERMINAL_PROMPT='0';$work={};if(-not(Test-Path -LiteralPath $work -PathType Container)){{throw ('git cwd is not a directory: '+$work)}};Set-Location -LiteralPath $work;$args=@({git_args});& git @args;exit $LASTEXITCODE",
+                crate::acp::windows_remote_shell_prelude(),
+                crate::acp::powershell_single_quote(cwd),
+            );
+            crate::acp::wrap_ssh_windows_command(&script)
         } else {
-            format!(
-                "cd -- {} && GIT_TERMINAL_PROMPT=0 git {}",
-                crate::acp::shell_quote_for_remote(cwd),
-                remote_args,
-            )
+            let remote_args = quoted_hardened_git_args(&args);
+            let script = if remote_args.is_empty() {
+                format!(
+                    "cd -- {} && GIT_TERMINAL_PROMPT=0 git",
+                    crate::acp::shell_quote_for_remote(cwd),
+                )
+            } else {
+                format!(
+                    "cd -- {} && GIT_TERMINAL_PROMPT=0 git {}",
+                    crate::acp::shell_quote_for_remote(cwd),
+                    remote_args,
+                )
+            };
+            crate::acp::wrap_ssh_posix_command(
+                ssh.remote_runtime,
+                ssh.wsl_distro.as_deref(),
+                &script,
+            )?
         };
         let mut c = tokio::process::Command::new("ssh");
         c.arg("-o").arg("BatchMode=yes");
@@ -694,6 +721,12 @@ async fn git_output(
         c.arg("-T");
         if let Some(p) = ssh.port {
             c.arg("-p").arg(p.to_string());
+        }
+        if let Some(key_path) =
+            crate::provider_adapters::resolve_provider_ssh_key_path(ssh.key_vault_ref.as_deref())
+                .await?
+        {
+            c.arg("-i").arg(key_path);
         }
         c.arg("--").arg(&ssh.host).arg(remote);
         c
@@ -882,6 +915,17 @@ pub(crate) fn ensure_private_dir(path: &Path, label: &str) -> Result<(), String>
     Ok(())
 }
 
+pub(crate) fn ensure_strict_private_dir(path: &Path, label: &str) -> Result<(), String> {
+    std::fs::create_dir_all(path).map_err(|e| format!("{label} mkdir failed: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("{label} chmod failed: {e}"))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn write_private_file<P, B>(path: P, bytes: B, label: &str) -> Result<(), String>
 where
     P: AsRef<Path>,
@@ -909,8 +953,43 @@ where
         .write(true)
         .open(path)
         .map_err(|e| format!("{label} write failed: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("{label} chmod failed: {e}"))?;
+    }
     file.write_all(bytes.as_ref())
         .map_err(|e| format!("{label} write failed: {e}"))?;
+    Ok(())
+}
+
+pub(crate) fn atomic_write_private_file<P, B>(path: P, bytes: B, label: &str) -> Result<(), String>
+where
+    P: AsRef<Path>,
+    B: AsRef<[u8]>,
+{
+    let path = path.as_ref();
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{label} path has no parent"))?;
+    ensure_strict_private_dir(parent, label)?;
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("state");
+    let tmp = parent.join(format!(".{file_name}.shellx-tmp-{}", uuid::Uuid::new_v4()));
+    write_private_file(&tmp, bytes, label)?;
+    if let Err(error) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("{label} rename failed: {error}"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("{label} chmod failed: {error}"))?;
+    }
     Ok(())
 }
 
@@ -1497,19 +1576,21 @@ fn list_checkpoints(repo_root: &str, tab_id: &str) -> Vec<GitCheckpointSummary> 
 fn target_worktree_path(repo_root: &str, branch: &str) -> String {
     let trimmed = repo_root.trim_end_matches(['/', '\\']);
     let sep = if trimmed.contains('\\') { "\\" } else { "/" };
-    let split = trimmed
-        .rfind(['/', '\\'])
-        .map(|idx| (&trimmed[..idx], &trimmed[idx + 1..]));
-    let Some((parent, name)) = split else {
-        return format!("{}-{}", trimmed, sanitize_worktree_slug(branch));
-    };
     format!(
-        "{}{}{}-{}",
-        parent,
+        "{}{}.worktrees{}{}",
+        trimmed,
         sep,
-        name,
+        sep,
         sanitize_worktree_slug(branch)
     )
+}
+
+fn primary_worktree_root<'a>(repo_root: &'a str, worktrees: &'a [GitWorktreeSummary]) -> &'a str {
+    worktrees
+        .iter()
+        .find(|worktree| !worktree.bare)
+        .map(|worktree| worktree.path.as_str())
+        .unwrap_or(repo_root)
 }
 
 #[allow(dead_code)]
@@ -2090,7 +2171,10 @@ pub async fn git_session_create_worktree_for_tab_with_provider(
             last_error: Some(e),
         });
     }
-    let target = target_worktree_path(&repo_root, &branch);
+    let target = target_worktree_path(
+        primary_worktree_root(&repo_root, &status.worktrees),
+        &branch,
+    );
     let ctx = command_context_with_provider(&registry, tab_id, cwd, provider_context).await;
     let args = if unborn_branch {
         worktree_add_orphan_args(&branch, &target)
@@ -2150,6 +2234,90 @@ pub async fn git_session_create_worktree(
 mod tests {
     use super::*;
 
+    #[test]
+    fn atomic_private_writer_replaces_content_without_leaving_temp_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let private_dir = dir.path().join("state");
+        std::fs::create_dir_all(&private_dir).expect("create state dir");
+        let path = private_dir.join("settings.json");
+        std::fs::write(&path, b"old").expect("seed existing file");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&private_dir, std::fs::Permissions::from_mode(0o755))
+                .expect("seed public dir mode");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+                .expect("seed public file mode");
+        }
+
+        atomic_write_private_file(&path, b"new", "test private state")
+            .expect("replace private file");
+        assert_eq!(std::fs::read(&path).expect("read replaced file"), b"new");
+        let leftovers = std::fs::read_dir(&private_dir)
+            .expect("read state dir")
+            .flatten()
+            .filter(|entry| entry.file_name() != "settings.json")
+            .collect::<Vec<_>>();
+        assert!(leftovers.is_empty(), "temporary files should be cleaned");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&private_dir)
+                    .expect("state dir metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            assert_eq!(
+                std::fs::metadata(&path)
+                    .expect("state file metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
+    async fn live_native_windows_ssh_git_version() {
+        let host =
+            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
+        let cwd =
+            std::env::var("SHELLX_WINDOWS_SSH_HOME").expect("SHELLX_WINDOWS_SSH_HOME is required");
+        let context = GitCommandContext {
+            tab_id: "native-windows-live".to_string(),
+            transport: "ssh".to_string(),
+            cwd: cwd.clone(),
+            wsl_distro: None,
+            ssh_config: Some(crate::acp::SshSpawnConfig {
+                host,
+                port: None,
+                key_vault_ref: None,
+                remote_grok_path: String::new(),
+                remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+                wsl_distro: None,
+            }),
+            has_cwd: true,
+        };
+        let output = git_output(
+            Arc::new(SessionRegistry::new()),
+            &context,
+            &cwd,
+            vec!["--version".to_string()],
+            10,
+        )
+        .await
+        .expect("native Windows SSH git command");
+        assert!(output.status.success(), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("git version"));
+    }
+
     fn temp_base(name: &str) -> PathBuf {
         let mut path = std::env::temp_dir();
         path.push(format!(
@@ -2202,6 +2370,8 @@ mod tests {
             ssh_host: None,
             ssh_port: None,
             ssh_key_vault_ref: None,
+            ssh_remote_runtime: crate::acp::SshRemoteRuntime::Posix,
+            ssh_wsl_distro: None,
         };
 
         let ctx = command_context_with_provider(
@@ -2228,6 +2398,8 @@ mod tests {
             ssh_host: Some("deploy@example.test".to_string()),
             ssh_port: Some(22),
             ssh_key_vault_ref: None,
+            ssh_remote_runtime: crate::acp::SshRemoteRuntime::Posix,
+            ssh_wsl_distro: None,
         };
 
         let ctx = command_context_with_provider(
@@ -2450,14 +2622,46 @@ mod tests {
     }
 
     #[test]
-    fn target_worktree_path_uses_sibling_folder() {
+    fn target_worktree_path_uses_canonical_repo_container() {
         assert_eq!(
             target_worktree_path("/home/user/app", "shellx/feature-demo-1"),
-            "/home/user/app-shellx-feature-demo-1",
+            "/home/user/app/.worktrees/shellx-feature-demo-1",
         );
         assert_eq!(
             target_worktree_path("C:\\Users\\FixtureUser\\app", "shellx/feature-demo-1"),
-            "C:\\Users\\FixtureUser\\app-shellx-feature-demo-1",
+            "C:\\Users\\FixtureUser\\app\\.worktrees\\shellx-feature-demo-1",
+        );
+    }
+
+    #[test]
+    fn primary_worktree_root_keeps_nested_lane_creation_in_canonical_container() {
+        let worktrees = vec![
+            GitWorktreeSummary {
+                path: "/home/user/app".into(),
+                head: Some("abc123".into()),
+                branch: Some("main".into()),
+                detached: false,
+                bare: false,
+            },
+            GitWorktreeSummary {
+                path: "/home/user/app/.worktrees/current-lane".into(),
+                head: Some("def456".into()),
+                branch: Some("current-lane".into()),
+                detached: false,
+                bare: false,
+            },
+        ];
+
+        assert_eq!(
+            primary_worktree_root("/home/user/app/.worktrees/current-lane", &worktrees),
+            "/home/user/app",
+        );
+        assert_eq!(
+            target_worktree_path(
+                primary_worktree_root("/home/user/app/.worktrees/current-lane", &worktrees),
+                "shellx/next-lane",
+            ),
+            "/home/user/app/.worktrees/shellx-next-lane",
         );
     }
 

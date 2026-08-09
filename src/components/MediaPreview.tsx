@@ -1,9 +1,9 @@
 import {
   useEffect,
+  useRef,
   useState,
   type ImgHTMLAttributes,
   type JSX,
-  type MouseEventHandler,
   type VideoHTMLAttributes,
 } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -57,7 +57,6 @@ export function SafeVideo({
   controls = true,
   className = "md-video",
   preload = "metadata",
-  onClick,
 }: {
   src?: string;
   title: string;
@@ -66,11 +65,13 @@ export function SafeVideo({
   controls?: boolean;
   className?: string;
   preload?: VideoHTMLAttributes<HTMLVideoElement>["preload"];
-  onClick?: MouseEventHandler<HTMLVideoElement>;
 }): JSX.Element {
   const [fallback, setFallback] = useState<{ src: string; dataUrl: string } | null>(null);
+  const [playbackState, setPlaybackState] = useState<"idle" | "loading" | "playing" | "paused" | "ended" | "error">("idle");
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     setFallback(null);
+    setPlaybackState("idle");
   }, [src]);
   if (!src) return <span className="img-broken">[video: {title}]</span>;
   const requestPath = normalizeRendererFilePath(src);
@@ -83,20 +84,69 @@ export function SafeVideo({
       try { resolved = convertFileSrc(requestPath, "asset"); } catch { /* fall through */ }
     }
   }
-  return (
+  async function togglePlayback(): Promise<void> {
+    const video = videoRef.current;
+    if (!video) return;
+    if (!video.paused && !video.ended) {
+      video.pause();
+      setPlaybackState("paused");
+      return;
+    }
+    setPlaybackState("loading");
+    try {
+      await video.play();
+      setPlaybackState("playing");
+    } catch {
+      setPlaybackState("error");
+    }
+  }
+  const video = (
     <video
+      ref={videoRef}
       src={resolved}
       controls={controls}
       preload={preload}
       className={className}
       title={title}
-      onClick={onClick}
+      onCanPlay={() => setPlaybackState((current) => current === "loading" ? "idle" : current)}
+      onPlaying={() => setPlaybackState("playing")}
+      onPause={() => setPlaybackState((current) => current === "idle" ? current : "paused")}
+      onEnded={() => setPlaybackState("ended")}
       onError={() => {
-        if (dataUrl || !inTauri()) return;
+        if (dataUrl || !inTauri()) {
+          setPlaybackState("error");
+          return;
+        }
+        setPlaybackState("loading");
         void invoke<string>("read_image_as_data_url", { path: requestPath, tabId, sessionCwd })
-          .then((url) => { if (url) setFallback({ src: requestPath, dataUrl: url }); })
-          .catch(() => { /* leave broken */ });
+          .then((url) => {
+            if (url) setFallback({ src: requestPath, dataUrl: url });
+            else setPlaybackState("error");
+          })
+          .catch(() => setPlaybackState("error"));
       }}
     />
+  );
+  if (!controls) return video;
+
+  const playing = playbackState === "playing";
+  const loading = playbackState === "loading";
+  return (
+    <div className="safe-video-frame">
+      {video}
+      <button
+        data-debug-id="surface-components-mediapreview-1"
+        data-shellx-release-observe="pressed title"
+        type="button"
+        className="safe-video-playback-toggle"
+        aria-label={loading ? "Starting video preview" : playing ? "Pause video preview" : "Play video preview"}
+        aria-pressed={playing}
+        disabled={loading}
+        title={`Video playback · state=${playbackState}`}
+        onClick={() => void togglePlayback()}
+      >
+        {loading ? "Starting…" : playing ? "Pause" : "Play"}
+      </button>
+    </div>
   );
 }

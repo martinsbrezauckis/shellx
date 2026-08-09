@@ -12,6 +12,10 @@ pub(crate) const BROWSER_SESSION_GRANT_OPERATOR_ERROR_CODE: &str =
     "browser_session_grant_resolution_requires_operator";
 pub(crate) const BROWSER_SESSION_GRANT_OPERATOR_ERROR_MESSAGE: &str =
     "Browser session grant decisions must be performed by the ShellX operator UI";
+pub(crate) const BROWSER_SESSION_GRANT_APPLICATION_UNAVAILABLE_CODE: &str =
+    "browser_session_grant_application_unavailable";
+pub(crate) const BROWSER_SESSION_GRANT_APPLICATION_UNAVAILABLE_MESSAGE: &str =
+    "Browser session transfer is not available until the Vault/session bridge can copy state into the exact approved profile";
 
 pub(crate) fn browser_session_grant_resolution_requires_operator(
     _request: &BrowserSessionGrantResolveRequest,
@@ -120,7 +124,7 @@ impl ShellxBrowserRegistry {
         if grant_id.is_empty() {
             return Err("grantId is required".to_string());
         }
-        let mut state = lock_or_recover(&self.state);
+        let state = lock_or_recover(&self.state);
         let idx = state
             .session_grants
             .iter()
@@ -132,38 +136,10 @@ impl ShellxBrowserRegistry {
                 state.session_grants[idx].grant_id
             ));
         }
-        if state.session_grants[idx].applied_at_ms.is_none() {
-            state.session_grants[idx].applied_at_ms = Some(now_ms());
-        }
-        let grant = state.session_grants[idx].clone();
-        let task_id = request.task_id.or_else(|| grant.task_id.clone());
-        let receipt = push_receipt(
-            &mut state,
-            "browserSessionGrantApplied",
-            task_id,
-            Some(grant.to_profile_id.clone()),
-            format!(
-                "Session state from {} made available to {}",
-                grant.from_profile_id, grant.to_profile_id
-            ),
-            json!({
-                "grantId": grant.grant_id,
-                "fromProfileId": grant.from_profile_id,
-                "toProfileId": grant.to_profile_id,
-                "sessionStateAvailable": true,
-                "cookieValuesExposed": false,
-                "localStorageValuesExposed": false,
-                "actualCookieCopy": false,
-                "note": "Real cookie/session copying is reserved for the ShellX Vault/session bridge."
-            }),
-        );
-        Ok(BrowserSessionGrantApplicationResponse {
-            ok: true,
-            session_state_available: true,
-            cookie_values_exposed: false,
-            local_storage_values_exposed: false,
-            grant,
-            receipt,
-        })
+        Err(format!(
+            "{}: {}",
+            BROWSER_SESSION_GRANT_APPLICATION_UNAVAILABLE_CODE,
+            BROWSER_SESSION_GRANT_APPLICATION_UNAVAILABLE_MESSAGE
+        ))
     }
 }

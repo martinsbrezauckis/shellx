@@ -3,7 +3,8 @@ param(
   [string[]] $Artifacts,
   [string] $MetadataPath = $env:SHELLX_WINDOWS_SIGNING_METADATA_PATH,
   [string] $SignToolPath = $env:SHELLX_WINDOWS_SIGNTOOL_PATH,
-  [string] $DlibPath = $env:SHELLX_WINDOWS_SIGNING_DLIB_PATH
+  [string] $DlibPath = $env:SHELLX_WINDOWS_SIGNING_DLIB_PATH,
+  [switch] $VerifyOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,12 +54,15 @@ foreach ($Artifact in $Artifacts) {
     continue
   }
 
-  Write-Host "Authenticode signing $Artifact"
-  & $SignToolPath sign /v /fd SHA256 /tr "http://timestamp.acs.microsoft.com" /td SHA256 /dlib $DlibPath /dmdf $MetadataPath $Artifact
-  if ($LASTEXITCODE -ne 0) {
-    throw "signtool sign failed for $Artifact"
+  if (-not $VerifyOnly) {
+    Write-Host "Authenticode signing $Artifact"
+    & $SignToolPath sign /v /fd SHA256 /tr "http://timestamp.acs.microsoft.com" /td SHA256 /dlib $DlibPath /dmdf $MetadataPath $Artifact
+    if ($LASTEXITCODE -ne 0) {
+      throw "signtool sign failed for $Artifact"
+    }
   }
 
+  Write-Host "Authenticode verifying $Artifact"
   & $SignToolPath verify /pa /v $Artifact
   if ($LASTEXITCODE -ne 0) {
     throw "signtool verify failed for $Artifact"

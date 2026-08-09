@@ -1,22 +1,31 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+#[cfg(windows)]
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
-use tokio::time::{sleep, Duration, Instant};
+#[cfg(not(windows))]
+use tokio::time::{sleep, Duration};
 
 use crate::shellx_browser::{
-    clean_string, eval_browser_engine_json, now_ms, required_approval_for_action,
-    BrowserAccessibilityNode, BrowserActionRequest, BrowserActionResponse,
-    BrowserActionabilityCheck, BrowserDomSummary, BrowserFindTextResult, BrowserFormField,
-    BrowserObservation, BrowserObservationRef, BrowserPermissionRecordRequest, BrowserPrivacyStats,
-    BrowserScreenshotArtifact, BrowserVerificationResult, ShellxBrowserRegistry,
-    BROWSER_ENGINE_EVAL_TIMEOUT, BROWSER_WINDOW_LABEL,
+    clean_string, eval_browser_engine_json, now_ms, BrowserAccessibilityNode, BrowserActionRequest,
+    BrowserActionResponse, BrowserActionabilityCheck, BrowserDomSummary, BrowserFindTextResult,
+    BrowserFormField, BrowserObservation, BrowserObservationRef, BrowserPermissionRecordRequest,
+    BrowserPrivacyStats, BrowserScreenshotArtifact, BrowserVerificationResult,
+    ShellxBrowserRegistry, BROWSER_ENGINE_EVAL_TIMEOUT, BROWSER_WINDOW_LABEL,
 };
+use crate::shellx_browser_action_execution::{
+    eval_browser_engine_action_result, EngineControlEvalOutcome,
+};
+use crate::shellx_browser_action_script::{
+    browser_engine_control_script, browser_engine_observe_script, EngineControlPayload,
+};
+use crate::shellx_browser_artifacts::browser_artifact_root;
 use crate::shellx_browser_engine::{
     browser_action_uses_native_engine, browser_engine_webview_label,
 };
-use crate::shellx_browser_scripts::{BROWSER_ENGINE_CONTROL_SCRIPT, BROWSER_ENGINE_OBSERVE_SCRIPT};
+use crate::shellx_browser_model::BrowserFormFieldGroup;
+use crate::shellx_browser_site_data::clear_browser_site_data;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,28 +56,12 @@ struct EngineObservationResult {
     dom_summary: BrowserDomSummary,
     #[serde(rename = "formFields", default)]
     form_fields: Vec<BrowserFormField>,
+    #[serde(rename = "formFieldGroups", default)]
+    form_field_groups: Vec<BrowserFormFieldGroup>,
     #[serde(rename = "accessibilityTree", default)]
     accessibility_tree: Vec<BrowserAccessibilityNode>,
     #[serde(rename = "privacyStats", default)]
     privacy_stats: Option<BrowserPrivacyStats>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EngineControlPayload {
-    action: String,
-    #[serde(default)]
-    selector: Option<String>,
-    #[serde(default)]
-    value: Option<String>,
-    #[serde(default)]
-    key: Option<String>,
-    #[serde(default)]
-    x: Option<f64>,
-    #[serde(default)]
-    y: Option<f64>,
-    #[serde(default)]
-    force: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -106,44 +99,6 @@ pub(crate) struct BrowserPageSecretCapture {
     pub(crate) source_url: Option<String>,
 }
 
-fn read_host_clipboard_text() -> Result<Option<String>, String> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| {
-        format!(
-            "host clipboard unavailable for Browser Vault capture: {}",
-            e
-        )
-    })?;
-    match clipboard.get_text() {
-        Ok(value) => Ok(Some(value.trim().to_string()).filter(|value| !value.is_empty())),
-        Err(arboard::Error::ContentNotAvailable) => Ok(None),
-        Err(e) => Err(format!(
-            "host clipboard read failed during Browser Vault capture: {}",
-            e
-        )),
-    }
-}
-
-async fn wait_for_host_clipboard_after_secret_copy(
-    before: Option<String>,
-) -> Result<String, String> {
-    let deadline = Instant::now() + Duration::from_millis(2_000);
-    loop {
-        if let Some(after) = read_host_clipboard_text()? {
-            let changed = before.as_deref() != Some(after.as_str());
-            if changed {
-                return Ok(after);
-            }
-        }
-        if Instant::now() >= deadline {
-            return Err(
-                "Browser page copy control did not update the host clipboard for Vault capture"
-                    .to_string(),
-            );
-        }
-        sleep(Duration::from_millis(80)).await;
-    }
-}
-
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EngineControlResult {
@@ -154,17 +109,13 @@ pub(crate) struct EngineControlResult {
     pub(crate) ok: bool,
     #[serde(default)]
     pub(crate) status: String,
-    #[serde(default)]
     pub(crate) message: Option<String>,
     #[serde(default)]
     pub(crate) url: Option<String>,
-    #[serde(default)]
     pub(crate) title: Option<String>,
     #[serde(rename = "extractedText", default)]
     pub(crate) extracted_text: Option<String>,
-    #[serde(default)]
     pub(crate) actionability: Option<BrowserActionabilityCheck>,
-    #[serde(default)]
     pub(crate) verification: Option<BrowserVerificationResult>,
     #[serde(rename = "findResult", default)]
     pub(crate) find_result: Option<BrowserFindTextResult>,
@@ -207,7 +158,8 @@ pub(crate) async fn observe_browser_page(
     engine_label: &str,
     task_id: Option<String>,
 ) -> Result<BrowserObservation, String> {
-    let result = eval_browser_engine_json(app, engine_label, BROWSER_ENGINE_OBSERVE_SCRIPT).await?;
+    let result =
+        eval_browser_engine_json(app, engine_label, browser_engine_observe_script()).await?;
     let observed: EngineObservationResult = serde_json::from_value(result)
         .map_err(|e| format!("Browser engine observation parse failed: {}", e))?;
     let title = clean_string(observed.title);
@@ -220,6 +172,7 @@ pub(crate) async fn observe_browser_page(
     Ok(BrowserObservation {
         task_id: task_id.unwrap_or_default(),
         snapshot_id: String::new(),
+        delta: None,
         url: observed
             .url
             .map(clean_string)
@@ -242,6 +195,7 @@ pub(crate) async fn observe_browser_page(
         refs: observed.refs.into_iter().take(200).collect(),
         dom_summary,
         form_fields: observed.form_fields.into_iter().take(200).collect(),
+        form_field_groups: observed.form_field_groups.into_iter().take(80).collect(),
         accessibility_tree: observed.accessibility_tree.into_iter().take(240).collect(),
         privacy_stats: observed.privacy_stats,
         untrusted_input: true,
@@ -262,7 +216,10 @@ pub(crate) async fn try_apply_engine_action(
     if let Some(response) = registry.lock_denial_for_action(&request, &action)? {
         return Ok(Some(response));
     }
-    if required_approval_for_action(&action, request.sensitive_kind.as_deref()).is_some() {
+    if registry
+        .required_approval_for_engine_request(&request, &action)
+        .is_some()
+    {
         return Ok(None);
     }
     let engine_label =
@@ -303,7 +260,7 @@ pub(crate) async fn try_apply_engine_action(
         action.as_str(),
         "observe" | "extractText" | "extractMarkdown"
     ) {
-        let selector = registry.resolve_engine_selector(
+        let target = registry.resolve_engine_target(
             request.browser_tab_id.clone(),
             request.task_id.clone(),
             request.ref_id.clone(),
@@ -311,7 +268,10 @@ pub(crate) async fn try_apply_engine_action(
         )?;
         let payload = EngineControlPayload {
             action: action.clone(),
-            selector,
+            selector: target.selector,
+            expected_fingerprint: target.expected_fingerprint,
+            expected_origin: request.expected_origin.clone(),
+            locator: target.locator,
             value: request.value.clone(),
             key: request.key.clone(),
             x: request.x,
@@ -319,27 +279,16 @@ pub(crate) async fn try_apply_engine_action(
             force: request.force,
         };
         let script = browser_engine_control_script(&payload)?;
-        let mut result = match if action == "waitFor" {
-            eval_browser_engine_wait_for_result(
-                app,
-                registry,
-                &request,
-                &action,
-                &engine_label,
-                &script,
-            )
-            .await?
-        } else {
-            eval_browser_engine_control_result(
-                app,
-                registry,
-                &request,
-                &action,
-                &engine_label,
-                &script,
-            )
-            .await?
-        } {
+        let mut result = match eval_browser_engine_action_result(
+            app,
+            registry,
+            &request,
+            &action,
+            &engine_label,
+            &script,
+        )
+        .await?
+        {
             EngineControlEvalOutcome::Result(result) => *result,
             EngineControlEvalOutcome::Response(response) => return Ok(Some(*response)),
         };
@@ -419,129 +368,6 @@ pub(crate) async fn try_apply_engine_action(
         .map(Some)
 }
 
-enum EngineControlEvalOutcome {
-    Result(Box<EngineControlResult>),
-    Response(Box<BrowserActionResponse>),
-}
-
-async fn clear_browser_site_data(
-    app: &AppHandle,
-    engine_label: &str,
-) -> Result<EngineControlResult, String> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct PageOriginInfo {
-        origin: String,
-        url: Option<String>,
-        title: Option<String>,
-    }
-
-    let info = eval_browser_engine_json(
-        app,
-        engine_label,
-        r#"
-(() => ({
-  origin: location.origin,
-  url: location.href,
-  title: document.title || location.href
-}))()
-"#,
-    )
-    .await?;
-    let info: PageOriginInfo = serde_json::from_value(info)
-        .map_err(|e| format!("Browser clear-site origin parse failed: {}", e))?;
-    let origin = clean_string(info.origin);
-    if !origin.starts_with("https://") && !origin.starts_with("http://") {
-        return Err("Browser clear-site data requires an http/https origin".to_string());
-    }
-    let mut recovery_steps = Vec::new();
-    match call_browser_engine_cdp(app, engine_label, "Network.clearBrowserCache", json!({})) {
-        Ok(_) => recovery_steps.push("browser cache cleared".to_string()),
-        Err(err) => recovery_steps.push(format!("browser cache clear skipped: {}", err)),
-    }
-    call_browser_engine_cdp(
-        app,
-        engine_label,
-        "Storage.clearDataForOrigin",
-        json!({
-            "origin": origin,
-            "storageTypes": "appcache,cache_storage,file_systems,indexeddb,local_storage,service_workers,shader_cache,websql"
-        }),
-    )?;
-    recovery_steps.push("non-cookie origin storage cleared".to_string());
-    call_browser_engine_cdp(
-        app,
-        engine_label,
-        "Page.reload",
-        json!({ "ignoreCache": true }),
-    )?;
-    recovery_steps.push("page reloaded ignoring cache".to_string());
-    Ok(EngineControlResult {
-        ok: true,
-        status: "applied".to_string(),
-        message: Some(format!(
-            "site application data recovery applied: {}",
-            recovery_steps.join("; ")
-        )),
-        url: info.url,
-        title: info.title,
-        ..EngineControlResult::default()
-    })
-}
-
-async fn eval_browser_engine_control_result(
-    app: &AppHandle,
-    registry: &Arc<ShellxBrowserRegistry>,
-    request: &BrowserActionRequest,
-    action: &str,
-    engine_label: &str,
-    script: &str,
-) -> Result<EngineControlEvalOutcome, String> {
-    let result = match eval_browser_engine_json(app, engine_label, script.to_string()).await {
-        Ok(result) => result,
-        Err(err) if err == BROWSER_ENGINE_EVAL_TIMEOUT => {
-            if let Some(response) = registry.record_engine_beforeunload_blocker(request, action)? {
-                return Ok(EngineControlEvalOutcome::Response(Box::new(response)));
-            }
-            return Err(err);
-        }
-        Err(err) => return Err(err),
-    };
-    let result = serde_json::from_value(result)
-        .map_err(|e| format!("Browser engine action parse failed: {}", e))?;
-    Ok(EngineControlEvalOutcome::Result(Box::new(result)))
-}
-
-async fn eval_browser_engine_wait_for_result(
-    app: &AppHandle,
-    registry: &Arc<ShellxBrowserRegistry>,
-    request: &BrowserActionRequest,
-    action: &str,
-    engine_label: &str,
-    script: &str,
-) -> Result<EngineControlEvalOutcome, String> {
-    let timeout_ms = request.timeout_ms.unwrap_or(5_000).clamp(250, 15_000);
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    loop {
-        let result = eval_browser_engine_control_result(
-            app,
-            registry,
-            request,
-            action,
-            engine_label,
-            script,
-        )
-        .await?;
-        let EngineControlEvalOutcome::Result(result) = result else {
-            return Ok(result);
-        };
-        if result.ok || result.status != "notFound" || Instant::now() >= deadline {
-            return Ok(EngineControlEvalOutcome::Result(result));
-        }
-        sleep(Duration::from_millis(200)).await;
-    }
-}
-
 pub(crate) async fn capture_browser_page_secret_value(
     app: &AppHandle,
     registry: &Arc<ShellxBrowserRegistry>,
@@ -564,26 +390,29 @@ pub(crate) async fn capture_browser_page_secret_value(
     if !registry.engine_action_targets_active_context(&request)? {
         return Err("Browser Vault deposit target is not the active page engine".to_string());
     }
-    let selector = registry
-        .resolve_engine_selector(
-            request.browser_tab_id.clone(),
-            request.task_id.clone(),
-            request.ref_id.clone(),
-            request.selector.clone(),
-        )?
+    let target = registry.resolve_engine_target(
+        request.browser_tab_id.clone(),
+        request.task_id.clone(),
+        request.ref_id.clone(),
+        request.selector.clone(),
+    )?;
+    let selector = target
+        .selector
         .map(clean_string)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "capturePageSecretToVault requires refId or selector".to_string())?;
     let payload = EngineControlPayload {
         action,
         selector: Some(selector),
+        expected_fingerprint: target.expected_fingerprint,
+        expected_origin: request.expected_origin.clone(),
+        locator: target.locator,
         value: None,
         key: request.key.clone(),
         x: None,
         y: None,
         force: false,
     };
-    let clipboard_before = read_host_clipboard_text().ok().flatten();
     let script = browser_engine_control_script(&payload)?;
     let result = eval_browser_engine_json(app, &engine_label, script).await?;
     let result: EngineControlResult = serde_json::from_value(result)
@@ -593,17 +422,19 @@ pub(crate) async fn capture_browser_page_secret_value(
             .message
             .unwrap_or_else(|| "Browser page secret capture failed".to_string()));
     }
-    let secret_value = if result.status == "clipboardRequired" {
-        wait_for_host_clipboard_after_secret_copy(clipboard_before).await?
-    } else {
-        result
-            .extracted_text
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "Browser page secret capture returned an empty value".to_string())?
-            .to_string()
-    };
+    if result.status == "operatorClipboardRequired" {
+        return Err(
+            "Browser copy-only secret capture requires an explicit operator clipboard transfer; ShellX did not click the page control or read the host clipboard"
+                .to_string(),
+        );
+    }
+    let secret_value = result
+        .extracted_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Browser page secret capture returned an empty value".to_string())?
+        .to_string();
     if secret_value.len() > 4096 {
         return Err("Browser page secret capture exceeded the 4096 byte limit".to_string());
     }
@@ -742,12 +573,7 @@ async fn persist_browser_screenshot_artifact(
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let sha256 = format!("{:x}", hasher.finalize());
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
-    let dir = std::path::PathBuf::from(home)
-        .join(".grok")
-        .join("shellx-browser-screenshots");
+    let dir = browser_artifact_root("shellx-browser-screenshots")?;
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("create {} failed: {}", dir.display(), e))?;
@@ -772,6 +598,7 @@ async fn persist_browser_screenshot_artifact(
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(windows)]
 struct BrowserCdpContentSize {
     #[serde(default)]
     width: f64,
@@ -781,6 +608,7 @@ struct BrowserCdpContentSize {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(windows)]
 struct BrowserCdpLayoutMetrics {
     #[serde(default)]
     css_content_size: Option<BrowserCdpContentSize>,
@@ -789,11 +617,13 @@ struct BrowserCdpLayoutMetrics {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[cfg(windows)]
 struct BrowserCdpScreenshotResponse {
     #[serde(default)]
     data: String,
 }
 
+#[cfg(windows)]
 async fn capture_browser_full_page_png(
     app: &AppHandle,
     engine_label: &str,
@@ -841,6 +671,243 @@ async fn capture_browser_full_page_png(
         .decode(capture.data.trim())
         .map_err(|e| format!("Browser full-page screenshot base64 decode failed: {}", e))?;
     Ok((bytes, page_width, page_height))
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg(not(windows))]
+struct BrowserPageMetrics {
+    page_width: f64,
+    page_height: f64,
+    viewport_width: f64,
+    viewport_height: f64,
+    scroll_x: f64,
+    scroll_y: f64,
+}
+
+#[cfg(not(windows))]
+async fn capture_browser_full_page_png(
+    app: &AppHandle,
+    engine_label: &str,
+) -> Result<(Vec<u8>, u32, u32), String> {
+    use xcap::image::{imageops, GenericImage, ImageFormat, RgbaImage};
+
+    let metrics: BrowserPageMetrics = serde_json::from_value(
+        eval_browser_engine_json(
+            app,
+            engine_label,
+            r#"(() => ({
+              pageWidth: Math.max(document.documentElement?.scrollWidth || 0, document.body?.scrollWidth || 0),
+              pageHeight: Math.max(document.documentElement?.scrollHeight || 0, document.body?.scrollHeight || 0),
+              viewportWidth: window.innerWidth || document.documentElement?.clientWidth || 0,
+              viewportHeight: window.innerHeight || document.documentElement?.clientHeight || 0,
+              scrollX: window.scrollX || 0,
+              scrollY: window.scrollY || 0
+            }))()"#,
+        )
+        .await?,
+    )
+    .map_err(|e| format!("Browser full-page metrics parse failed: {}", e))?;
+    let page_width = browser_page_capture_dimension(metrics.page_width, "width")?;
+    let page_height = browser_page_capture_dimension(metrics.page_height, "height")?;
+    let viewport_width = browser_page_capture_dimension(metrics.viewport_width, "viewport width")?;
+    let viewport_height =
+        browser_page_capture_dimension(metrics.viewport_height, "viewport height")?;
+    validate_browser_page_capture_pixels(page_width, page_height)?;
+
+    #[cfg(not(target_os = "linux"))]
+    let (webview_size, outer_size, window_label, inset_x, inset_y) = {
+        let webview = app
+            .get_webview(engine_label)
+            .ok_or_else(|| format!("Browser engine webview '{}' is not mounted", engine_label))?;
+        let webview_position = webview
+            .position()
+            .map_err(|e| format!("Browser engine position unavailable: {}", e))?;
+        let webview_size = webview
+            .size()
+            .map_err(|e| format!("Browser engine size unavailable: {}", e))?;
+        let window = webview.window();
+        let outer_position = window
+            .outer_position()
+            .map_err(|e| format!("Browser window outer position unavailable: {}", e))?;
+        let inner_position = window
+            .inner_position()
+            .map_err(|e| format!("Browser window inner position unavailable: {}", e))?;
+        let outer_size = window
+            .outer_size()
+            .map_err(|e| format!("Browser window outer size unavailable: {}", e))?;
+        let window_label = window.label().to_string();
+        let inset_x = (inner_position.x - outer_position.x + webview_position.x).max(0) as u32;
+        let inset_y = (inner_position.y - outer_position.y + webview_position.y).max(0) as u32;
+        (webview_size, outer_size, window_label, inset_x, inset_y)
+    };
+    let mut output = RgbaImage::new(page_width, page_height);
+    let scroll_positions = browser_page_capture_scroll_positions(page_height, viewport_height);
+
+    let capture_result = async {
+        for scroll_y in scroll_positions {
+            eval_browser_engine_json(
+                app,
+                engine_label,
+                format!(
+                    "(() => {{ window.scrollTo(0, {}); return {{ x: window.scrollX, y: window.scrollY }}; }})()",
+                    scroll_y
+                ),
+            )
+            .await?;
+            sleep(Duration::from_millis(120)).await;
+
+            #[cfg(target_os = "linux")]
+            let png = capture_linux_webkit_visible_png(app, engine_label).await?;
+            #[cfg(not(target_os = "linux"))]
+            let png = crate::debug_api::capture_window_label_png(app, &window_label).await?;
+            let captured = xcap::image::load_from_memory_with_format(&png, ImageFormat::Png)
+                .map_err(|e| format!("decode Browser window capture: {}", e))?
+                .to_rgba8();
+            #[cfg(target_os = "linux")]
+            let viewport = imageops::resize(
+                &captured,
+                viewport_width,
+                viewport_height,
+                imageops::FilterType::Lanczos3,
+            );
+            #[cfg(not(target_os = "linux"))]
+            let viewport = {
+            let scale_x = captured.width() as f64 / outer_size.width.max(1) as f64;
+            let scale_y = captured.height() as f64 / outer_size.height.max(1) as f64;
+            let crop_x = (inset_x as f64 * scale_x).round() as u32;
+            let crop_y = (inset_y as f64 * scale_y).round() as u32;
+            let crop_width = (webview_size.width as f64 * scale_x).round() as u32;
+            let crop_height = (webview_size.height as f64 * scale_y).round() as u32;
+            if crop_width == 0
+                || crop_height == 0
+                || crop_x.saturating_add(crop_width) > captured.width()
+                || crop_y.saturating_add(crop_height) > captured.height()
+            {
+                return Err(format!(
+                    "Browser page crop {}x{}+{},{} exceeds captured window {}x{}",
+                    crop_width,
+                    crop_height,
+                    crop_x,
+                    crop_y,
+                    captured.width(),
+                    captured.height()
+                ));
+            }
+            let viewport = imageops::crop_imm(
+                &captured,
+                crop_x,
+                crop_y,
+                crop_width,
+                crop_height,
+            )
+            .to_image();
+            imageops::resize(
+                &viewport,
+                viewport_width,
+                viewport_height,
+                imageops::FilterType::Lanczos3,
+            )
+            };
+            let remaining_height = page_height.saturating_sub(scroll_y);
+            let copy_height = remaining_height.min(viewport.height());
+            let copy_width = page_width.min(viewport.width());
+            output
+                .copy_from(
+                    &imageops::crop_imm(&viewport, 0, 0, copy_width, copy_height).to_image(),
+                    0,
+                    scroll_y,
+                )
+                .map_err(|e| format!("stitch Browser page capture: {}", e))?;
+
+        }
+        let mut bytes = Vec::new();
+        output
+            .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)
+            .map_err(|e| format!("encode Browser full-page png: {}", e))?;
+        Ok::<Vec<u8>, String>(bytes)
+    }
+    .await;
+
+    let _ = eval_browser_engine_json(
+        app,
+        engine_label,
+        format!(
+            "(() => {{ window.scrollTo({}, {}); return true; }})()",
+            metrics.scroll_x, metrics.scroll_y
+        ),
+    )
+    .await;
+    capture_result.map(|bytes| (bytes, page_width, page_height))
+}
+
+#[cfg(target_os = "linux")]
+async fn capture_linux_webkit_visible_png(
+    app: &AppHandle,
+    engine_label: &str,
+) -> Result<Vec<u8>, String> {
+    use webkit2gtk::{SnapshotOptions, SnapshotRegion, WebViewExt as _};
+
+    let webview = app
+        .get_webview(engine_label)
+        .ok_or_else(|| format!("Browser engine webview '{}' is not mounted", engine_label))?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    webview
+        .with_webview(move |platform_webview| {
+            let native = platform_webview.inner().clone();
+            webkit2gtk::glib::MainContext::default().spawn_local(async move {
+                let result = match native
+                    .snapshot_future(SnapshotRegion::Visible, SnapshotOptions::NONE)
+                    .await
+                {
+                    Ok(surface) => {
+                        let mut bytes = Vec::new();
+                        surface
+                            .write_to_png(&mut bytes)
+                            .map(|_| bytes)
+                            .map_err(|error| format!("encode WebKitGTK snapshot png: {}", error))
+                    }
+                    Err(error) => Err(format!("capture WebKitGTK visible snapshot: {}", error)),
+                };
+                let _ = tx.send(result);
+            });
+        })
+        .map_err(|error| format!("bind Browser WebKitGTK snapshot: {}", error))?;
+    tokio::time::timeout(Duration::from_secs(10), rx)
+        .await
+        .map_err(|_| "Browser WebKitGTK snapshot timed out".to_string())?
+        .map_err(|_| "Browser WebKitGTK snapshot channel closed".to_string())?
+}
+
+#[cfg(not(windows))]
+fn validate_browser_page_capture_pixels(page_width: u32, page_height: u32) -> Result<(), String> {
+    let pixels = (page_width as u64) * (page_height as u64);
+    if pixels > 32_000_000 {
+        return Err(format!(
+            "Browser full-page screenshot is too large ({}x{}, {} pixels)",
+            page_width, page_height, pixels
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn browser_page_capture_scroll_positions(page_height: u32, viewport_height: u32) -> Vec<u32> {
+    let max_scroll_y = page_height.saturating_sub(viewport_height);
+    let mut positions = vec![0];
+    while positions.last().copied().unwrap_or(0) < max_scroll_y {
+        let next = positions
+            .last()
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(viewport_height)
+            .min(max_scroll_y);
+        if next == positions.last().copied().unwrap_or(0) {
+            break;
+        }
+        positions.push(next);
+    }
+    positions
 }
 
 fn browser_page_capture_dimension(value: f64, label: &str) -> Result<u32, String> {
@@ -1026,7 +1093,7 @@ fn dispatch_browser_engine_text_insert(
 }
 
 #[cfg(windows)]
-fn call_browser_engine_cdp(
+pub(crate) fn call_browser_engine_cdp(
     app: &AppHandle,
     engine_label: &str,
     method: &str,
@@ -1042,7 +1109,7 @@ fn call_browser_engine_cdp(
 }
 
 #[cfg(windows)]
-fn call_browser_engine_cdp_with_timeout(
+pub(crate) fn call_browser_engine_cdp_with_timeout(
     app: &AppHandle,
     engine_label: &str,
     method: &str,
@@ -1111,30 +1178,6 @@ fn call_browser_engine_cdp_with_timeout(
     })
 }
 
-#[cfg(not(windows))]
-fn call_browser_engine_cdp(
-    _app: &AppHandle,
-    _engine_label: &str,
-    _method: &str,
-    _params: serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    Err(
-        "Browser full-page screenshot capture is only implemented for WebView2 on Windows"
-            .to_string(),
-    )
-}
-
-#[cfg(not(windows))]
-fn call_browser_engine_cdp_with_timeout(
-    app: &AppHandle,
-    engine_label: &str,
-    method: &str,
-    params: serde_json::Value,
-    _timeout: std::time::Duration,
-) -> Result<serde_json::Value, String> {
-    call_browser_engine_cdp(app, engine_label, method, params)
-}
-
 fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
     if bytes.len() < 24 || &bytes[..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
@@ -1143,12 +1186,6 @@ fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
     let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
     Some((width, height))
-}
-
-fn browser_engine_control_script(payload: &EngineControlPayload) -> Result<String, String> {
-    let payload = serde_json::to_string(payload)
-        .map_err(|e| format!("failed to serialize Browser engine action: {}", e))?;
-    Ok(BROWSER_ENGINE_CONTROL_SCRIPT.replace("__SHELLX_BROWSER_REQUEST__", &payload))
 }
 
 #[cfg(test)]
@@ -1195,6 +1232,24 @@ mod tests {
                 "autocomplete": { "value": "email" },
                 "formAction": { "href": "/signup" }
             }],
+            "formFieldGroups": [{
+                "groupId": { "id": "group-1" },
+                "groupKind": { "kind": "signup" },
+                "label": { "text": "Signup form" },
+                "formAction": { "href": "/signup" },
+                "fieldIntents": ["email", "newPassword"],
+                "fields": [{
+                    "refId": { "id": "field-1" },
+                    "selector": { "css": "input[name=email]" },
+                    "label": { "text": "Email" },
+                    "fieldKind": ["email"],
+                    "intent": { "kind": "email" },
+                    "required": true,
+                    "disabled": false,
+                    "sensitive": "false"
+                }],
+                "sensitive": "true"
+            }],
             "accessibilityTree": [{
                 "refId": { "id": 1 },
                 "role": ["button"],
@@ -1209,8 +1264,32 @@ mod tests {
         assert!(observed.refs[0].label.contains("Continue"));
         assert_eq!(observed.form_fields.len(), 1);
         assert!(observed.form_fields[0].label.contains("Email"));
+        assert_eq!(observed.form_field_groups.len(), 1);
+        assert!(observed.form_field_groups[0].group_kind.contains("signup"));
+        assert_eq!(
+            observed.form_field_groups[0].field_intents,
+            vec!["email".to_string(), "newPassword".to_string()]
+        );
+        assert_eq!(observed.form_field_groups[0].fields.len(), 1);
         assert_eq!(observed.accessibility_tree.len(), 1);
         assert!(observed.accessibility_tree[0].label.contains("Continue"));
         assert!(observed.title.contains("Signup"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn full_page_scroll_positions_cover_last_viewport_without_overshoot() {
+        assert_eq!(
+            browser_page_capture_scroll_positions(1_829, 700),
+            vec![0, 700, 1_129]
+        );
+        assert_eq!(browser_page_capture_scroll_positions(600, 700), vec![0]);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn full_page_capture_rejects_excessive_pixel_allocation() {
+        assert!(validate_browser_page_capture_pixels(4_000, 8_000).is_ok());
+        assert!(validate_browser_page_capture_pixels(4_001, 8_000).is_err());
     }
 }

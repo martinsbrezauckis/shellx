@@ -7,6 +7,46 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
+## [0.3.5] - 2026-08-09
+
+### Added
+
+- Native Windows OpenSSH connections can run Windows-installed Grok, Codex,
+  Claude, and Antigravity CLIs with Windows paths and PowerShell-safe command
+  transport; WSL is no longer required on the destination PC. A separate
+  Windows OpenSSH + WSL runtime keeps agents and project commands inside an
+  explicitly selected distro when that is the intended environment.
+- ShellX Browser Flight Recorder can create bounded, redacted task-attempt
+  evidence, show attempt/evaluation identities in the Evidence panel, and
+  compare exact attempts without presenting incomplete or gapped evidence as a
+  complete result.
+- Provider Browser access now uses a compact two-tool gateway with bounded
+  observations, explicit extraction, and batched page actions for lower
+  context and round-trip cost.
+- ShellX-launched agents receive session-scoped host guidance and only the
+  bridge capabilities selected for that tab; direct CLI sessions remain
+  independent of the ShellX skill and host MCP.
+- Target-keyed provider inventory distinguishes local, WSL, SSH POSIX, native
+  Windows, and Windows-to-WSL installations, including native Windows Grok and
+  fresh pre-launch CLI versions.
+- The integrated Vault client follows the current shared broker contracts and
+  can queue exact operator-reviewed executable requests with selected Vault
+  resources injected into the approved process environment.
+- Agent runs can report provider timing, completed actions, token usage, and
+  structured provider-native subagent identities when the provider exposes
+  them; Session Tools separates provider-native capabilities from ShellX-hosted
+  tools.
+- Large application surfaces load on demand, and parent-host text reads are
+  compact and pageable with exact continuation offsets.
+- The synchronized ShellX manual now documents each persistent header, rail,
+  Settings, bottom-panel, Command Palette action, Browser menu, and Browser
+  side-panel surface separately, with an interactive highlight that switches
+  to the corresponding open UI state.
+
+### Fixed
+
+- Bugfixes.
+
 ## [0.3.4] - 2026-06-30
 
 ### Fixed

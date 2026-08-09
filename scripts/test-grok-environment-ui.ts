@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
 const rightRail = readFileSync("src/components/RightRail.tsx", "utf8");
-const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts?: Record<string, string> };
+const testSuiteManifest = readFileSync("scripts/test-suite-manifest.mjs", "utf8");
 
 let failures = 0;
 function assert(cond: boolean, label: string): void {
@@ -25,7 +25,7 @@ assert(rightRail.includes("Feature readiness:"), "Environment card renders featu
 assert(rightRail.includes("Feature readiness needing attention:"), "Agent-facing environment prompt includes readiness failures");
 assert(rightRail.includes("readiness_checks_needing_attention:"), "Copied environment report includes readiness failures");
 assert(
-  pkg.scripts?.test?.includes("tsx scripts/test-grok-environment-ui.ts") === true,
+  testSuiteManifest.includes('["tsx","scripts/test-grok-environment-ui.ts"]'),
   "Grok environment UI test is wired into pnpm test",
 );
 

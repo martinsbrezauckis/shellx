@@ -227,6 +227,32 @@ pub fn apply_pdeathsig_preexec(cmd: &mut tokio::process::Command) -> &mut tokio:
     cmd
 }
 
+/// Start a child as a new Unix session/process-group leader so task-scoped
+/// tree termination can address `-pid` without touching ShellX's own group.
+/// Windows already uses `taskkill /T` and therefore needs no pre-exec hook.
+#[cfg(unix)]
+pub fn apply_new_session_preexec(
+    cmd: &mut tokio::process::Command,
+) -> &mut tokio::process::Command {
+    use nix::libc;
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd
+}
+
+#[cfg(not(unix))]
+pub fn apply_new_session_preexec(
+    cmd: &mut tokio::process::Command,
+) -> &mut tokio::process::Command {
+    cmd
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // taskkill exit-code triage.
 //
@@ -264,4 +290,137 @@ pub fn taskkill_is_already_gone(code: Option<i32>) -> bool {
 #[cfg(not(target_os = "windows"))]
 pub fn taskkill_is_already_gone(_code: Option<i32>) -> bool {
     false
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn taskkill_tree_args(pid: u32) -> [String; 4] {
+    [
+        "/PID".to_string(),
+        pid.to_string(),
+        "/T".to_string(),
+        "/F".to_string(),
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn system_taskkill_path() -> Result<std::path::PathBuf, String> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt as _;
+    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+
+    // Windows documents 32,767 UTF-16 code units as the extended path bound.
+    // Resolving taskkill through Kernel32 avoids current-directory and PATH
+    // executable search when ShellX is launched inside an untrusted project.
+    let mut buffer = vec![0_u16; 32_768];
+    let buffer_len = u32::try_from(buffer.len())
+        .map_err(|_| "Windows system directory buffer exceeded u32".to_string())?;
+    // The bounded buffer remains owned for the duration of this call.
+    // SAFETY: GetSystemDirectoryW writes at most `buffer_len` UTF-16 units and
+    // does not retain the pointer after returning.
+    let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer_len) };
+    if length == 0 {
+        return Err(format!(
+            "GetSystemDirectoryW failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let length = usize::try_from(length)
+        .map_err(|_| "Windows system directory length exceeded usize".to_string())?;
+    if length >= buffer.len() {
+        return Err("Windows system directory exceeded the bounded path buffer".to_string());
+    }
+    let mut path = std::path::PathBuf::from(OsString::from_wide(&buffer[..length]));
+    path.push("taskkill.exe");
+    Ok(path)
+}
+
+/// Terminate and reap one exact child owned by ShellX.
+///
+/// `tokio::process::Child::kill` terminates only the immediate Windows
+/// process. Provider CLIs may spawn descendants which keep the session cwd or
+/// stdio handles open after that root exits. Windows therefore uses
+/// `taskkill /T /F` against the still-live owned PID; Unix keeps Tokio's
+/// direct child termination because its provider launchers do not use the
+/// Windows descendant model.
+#[cfg(target_os = "windows")]
+pub async fn terminate_owned_tokio_child_tree(
+    child: &mut tokio::process::Child,
+) -> Result<(), String> {
+    if child
+        .try_wait()
+        .map_err(|error| format!("owned child status check failed: {error}"))?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let pid = child
+        .id()
+        .ok_or_else(|| "owned child has no process id".to_string())?;
+    let mut command = tokio::process::Command::new(system_taskkill_path()?);
+    command
+        .args(taskkill_tree_args(pid))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    command.no_window();
+    let status = tokio::time::timeout(std::time::Duration::from_secs(15), command.status())
+        .await
+        .map_err(|_| format!("taskkill timed out for owned child PID {pid}"))?
+        .map_err(|error| format!("taskkill spawn failed for owned child PID {pid}: {error}"))?;
+    if !status.success() && !taskkill_is_already_gone(status.code()) {
+        return Err(format!(
+            "taskkill failed for owned child PID {pid}: exit={:?}",
+            status.code()
+        ));
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(10), child.wait())
+        .await
+        .map_err(|_| format!("owned child PID {pid} was not reaped after taskkill"))?
+        .map_err(|error| format!("owned child PID {pid} reap failed: {error}"))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub async fn terminate_owned_tokio_child_tree(
+    child: &mut tokio::process::Child,
+) -> Result<(), String> {
+    if child
+        .try_wait()
+        .map_err(|error| format!("owned child status check failed: {error}"))?
+        .is_some()
+    {
+        return Ok(());
+    }
+    child
+        .kill()
+        .await
+        .map_err(|error| format!("owned child termination failed: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::taskkill_tree_args;
+
+    #[cfg(target_os = "windows")]
+    use super::system_taskkill_path;
+
+    #[test]
+    fn owned_windows_child_tree_uses_exact_pid_and_descendant_force_flags() {
+        assert_eq!(
+            taskkill_tree_args(4242),
+            ["/PID", "4242", "/T", "/F"].map(str::to_string)
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn owned_windows_child_tree_resolves_the_kernel32_system_taskkill() {
+        let path = system_taskkill_path().expect("resolve the trusted taskkill executable");
+        assert!(path.is_absolute());
+        assert!(path.is_file());
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("taskkill.exe")
+        );
+    }
 }

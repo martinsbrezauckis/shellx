@@ -1,9 +1,10 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { shellxHomeCandidates } from "./shellx-debug-paths";
+import { cleanupOwnedBrowserLifecycle } from "./shellx-browser-test-cleanup";
+import { resolveShellxDebugApiConnection } from "./shellx-debug-paths";
 
 type Json = Record<string, unknown>;
 
@@ -150,22 +151,6 @@ function assert(condition: unknown, message: string): void {
   if (!condition) failures += 1;
 }
 
-function readTrim(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8").trim();
-  } catch {
-    return null;
-  }
-}
-
-function findShellxHome(): string {
-  const candidates = shellxHomeCandidates();
-  for (const dir of candidates) {
-    if (readTrim(join(dir, "debug-api.port")) || readTrim(join(dir, "shellxagent.token"))) return dir;
-  }
-  return candidates[0] ?? ".shellx";
-}
-
 async function request(base: string, token: string, path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${token}`);
@@ -193,19 +178,6 @@ async function api<T>(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function closeAllBrowserTabs(base: string, token: string): Promise<void> {
-  const state = await api<BrowserState>(base, token, "GET", "/browser/state").catch(() => null);
-  for (const tab of state?.tabs ?? []) {
-    await api<BrowserTabResponse>(base, token, "POST", "/browser/tabs/close", {
-      browserTabId: tab.browserTabId,
-    }).catch(() => undefined);
-  }
-  await waitFor("Browser tab cleanup", async () => {
-    const next = await api<BrowserState>(base, token, "GET", "/browser/state");
-    return (next.tabs?.length ?? 0) === 0 ? next : null;
-  }, 8_000, 250).catch(() => undefined);
 }
 
 async function waitFor<T>(
@@ -316,7 +288,14 @@ async function waitForRunEngineReady(base: string, token: string, run: AgentRunS
   }, 20_000, 250);
 }
 
-async function startAgentTask(base: string, token: string, fixtureBaseUrl: string, target: AgentTarget): Promise<AgentRunState> {
+async function startAgentTask(
+  base: string,
+  token: string,
+  fixtureBaseUrl: string,
+  target: AgentTarget,
+  taskIds: Set<string>,
+  tabIds: Set<string>,
+): Promise<AgentRunState> {
   const task = await api<BrowserTask>(base, token, "POST", "/browser/task/start", {
     goal: `ShellX Browser three-agent concurrency smoke: ${target.label}`,
     startUrl: `${fixtureBaseUrl}${target.route}`,
@@ -324,7 +303,9 @@ async function startAgentTask(base: string, token: string, fixtureBaseUrl: strin
     autonomy: "assistedAutonomous",
     expectedDomains: ["127.0.0.1"],
   });
+  taskIds.add(task.taskId);
   const tab = await waitForTaskTab(base, token, task.taskId);
+  tabIds.add(tab.browserTabId);
   const locked = await api<BrowserTabResponse>(base, token, "POST", "/browser/tabs/lock", {
     browserTabId: tab.browserTabId,
     ownerAgentId: target.agentId,
@@ -386,25 +367,8 @@ async function assertNoCrossTaskReceipts(base: string, token: string, runs: Agen
   return checked;
 }
 
-async function closeRunTab(base: string, token: string, run: AgentRunState): Promise<void> {
-  await api<BrowserTabResponse>(base, token, "POST", "/browser/tabs/unlock", {
-    browserTabId: run.tab.browserTabId,
-    leaseId: run.lock.leaseId,
-    ownerAgentId: run.agentId,
-    ownerRunId: run.runId,
-  }).catch(() => undefined);
-  await api<BrowserTabResponse>(base, token, "POST", "/browser/tabs/close", {
-    browserTabId: run.tab.browserTabId,
-  }).catch(() => undefined);
-}
-
 async function main(): Promise<void> {
-  const shellxHome = findShellxHome();
-  const port = process.env.SHELLX_DEBUG_PORT ?? readTrim(join(shellxHome, "debug-api.port"));
-  const token = process.env.SHELLX_DEBUG_TOKEN ?? readTrim(join(shellxHome, "shellxagent.token"));
-  if (!port) throw new Error(`debug-api.port not found under ${shellxHome}`);
-  if (!token) throw new Error(`shellxagent.token not found under ${shellxHome}`);
-  const base = process.env.SHELLX_DEBUG_BASE ?? `http://127.0.0.1:${port}`;
+  const { base, token } = await resolveShellxDebugApiConnection();
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const outDir = process.env.SHELLX_BROWSER_CONCURRENCY_OUT ?? join(EVIDENCE_OUT, stamp);
   mkdirSync(outDir, { recursive: true });
@@ -412,16 +376,19 @@ async function main(): Promise<void> {
   console.log("\n=== ShellX Browser three-agent concurrency smoke ===");
   const fixture = await startFixtureServer();
   const runs: AgentRunState[] = [];
+  const taskIds = new Set<string>();
+  const tabIds = new Set<string>();
   try {
     await api<Json>(base, token, "GET", "/health");
     assert(true, "debug API health responds");
-    await closeAllBrowserTabs(base, token);
     const health = await fetch(`${fixture.baseUrl}/health`).then((res) => res.json()) as Json;
     assert(health.ok === true, "local three-agent fixture responds");
 
     await api<Json>(base, token, "POST", "/browser/open", { startUrl: "about:blank" });
     const started = await Promise.all(
-      AGENT_TARGETS.map((target) => startAgentTask(base, token, fixture.baseUrl, target)),
+      AGENT_TARGETS.map((target) =>
+        startAgentTask(base, token, fixture.baseUrl, target, taskIds, tabIds)
+      ),
     );
     runs.push(...started);
     assert(runs.length === 3, "three agent tasks start concurrently");
@@ -504,9 +471,19 @@ async function main(): Promise<void> {
     writeFileSync(join(outDir, "report.json"), JSON.stringify(report, null, 2));
     console.log(`\nThree-agent Browser concurrency evidence: ${outDir}`);
   } finally {
-    await Promise.all(runs.map((run) => closeRunTab(base, token, run)));
-    fixture.closeAll();
-    await new Promise<void>((resolve) => fixture.server.close(() => resolve()));
+    try {
+      await cleanupOwnedBrowserLifecycle(
+        (method, path, body) => api(base, token, method, path, body),
+        {
+          taskIds,
+          tabIds,
+          label: "browser-concurrency",
+        },
+      );
+    } finally {
+      fixture.closeAll();
+      await new Promise<void>((resolve) => fixture.server.close(() => resolve()));
+    }
   }
 
   if (failures > 0) {

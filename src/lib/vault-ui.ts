@@ -1,1 +1,1 @@
-export type VaultPanelIntent = "overview" | "newSecret" | "generatePassword";
+export type VaultPanelIntent = "overview" | "newSecret" | "generatePassword" | "setup";

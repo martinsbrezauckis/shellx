@@ -268,7 +268,7 @@ impl ShellxBrowserRegistry {
                 }),
             );
         }
-        if snapshot.pending_url.is_some() {
+        if navigation_requested {
             let active_task_id = state.active_task_id.clone();
             if let Some(url) = snapshot
                 .pending_url
@@ -356,16 +356,22 @@ impl ShellxBrowserRegistry {
                 });
                 state.engine_pool.engines.len() - 1
             });
-        let committed_url = state.engine_pool.engines[engine_idx]
+        let committed_url = if let Some(pending) = state.engine_pool.engines[engine_idx]
             .pending_url
             .as_deref()
             .map(clean_string)
-            .filter(|pending| {
-                pending == &url
-                    || browser_urls_match_without_query_or_fragment(pending, &url)
-                    || browser_engine_load_matches_pending_redirect(&state, pending, &url)
-            })
-            .unwrap_or_else(|| url.clone());
+            .filter(|value| !value.is_empty())
+        {
+            if pending == url || browser_urls_match_without_query_or_fragment(&pending, &url) {
+                pending
+            } else if browser_engine_load_matches_pending_redirect(&state, &pending, &url) {
+                url.clone()
+            } else {
+                return state.engine_pool.engines[engine_idx].clone();
+            }
+        } else {
+            url.clone()
+        };
         let load_status = match event {
             PageLoadEvent::Started => "loading",
             PageLoadEvent::Finished => "loaded",
@@ -601,6 +607,13 @@ impl ShellxBrowserRegistry {
                 });
                 state.engine_pool.engines.len() - 1
             });
+        // A reused native webview can deliver the previous document's title
+        // after the next navigation has already been assigned. Keep the title
+        // callback from contaminating that pending navigation; the current
+        // document will emit its own title after its URL commits.
+        if state.engine_pool.engines[engine_idx].pending_url.is_some() {
+            return state.engine_pool.engines[engine_idx].clone();
+        }
         state.engine_pool.engines[engine_idx].mounted = true;
         state.engine_pool.engines[engine_idx].title =
             Some(title.trim().chars().take(180).collect());

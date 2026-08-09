@@ -6,6 +6,12 @@ cd "$repo_root"
 
 mode="${1:-release}"
 target="x86_64-pc-windows-msvc"
+signing_required="${SHELLX_WINDOWS_SIGNING_REQUIRED:-1}"
+updater_required="${SHELLX_WINDOWS_UPDATER_REQUIRED:-1}"
+if [[ ! "$signing_required" =~ ^[01]$ || ! "$updater_required" =~ ^[01]$ ]]; then
+  echo "SHELLX_WINDOWS_SIGNING_REQUIRED and SHELLX_WINDOWS_UPDATER_REQUIRED must be 0 or 1" >&2
+  exit 2
+fi
 case "$mode" in
   debug) tauri_mode=(--debug) ;;
   release) tauri_mode=() ;;
@@ -64,9 +70,6 @@ else
 fi
 
 updater_key_path="${SHELLX_WINDOWS_UPDATER_KEY_PATH:-}"
-if [[ -z "$updater_key_path" && -f "$HOME/.shellx-keys/updater.key" ]]; then
-  updater_key_path="$HOME/.shellx-keys/updater.key"
-fi
 if [[ -n "$updater_key_path" ]]; then
   updater_key_path="$(to_wsl_path "$updater_key_path")"
 fi
@@ -74,6 +77,14 @@ fi
 metadata_path="${SHELLX_WINDOWS_SIGNING_METADATA_PATH:-}"
 if [[ -n "$metadata_path" ]]; then
   metadata_path="$(to_wsl_path "$metadata_path")"
+  if [[ ! -f "$metadata_path" ]]; then
+    echo "FAIL: signing metadata file does not exist: $metadata_path" >&2
+    exit 1
+  fi
+  export SHELLX_WINDOWS_SIGNING_METADATA_PATH="$metadata_path"
+elif [[ "$signing_required" == "1" ]]; then
+  echo "FAIL: SHELLX_WINDOWS_SIGNING_REQUIRED=1 but SHELLX_WINDOWS_SIGNING_METADATA_PATH is not set" >&2
+  exit 1
 fi
 
 echo "[build-windows] installing JavaScript dependencies"
@@ -82,21 +93,53 @@ pnpm install --frozen-lockfile
 echo "[build-windows] removing stale Windows bundle output"
 rm -rf "$bundle_dir"
 
-tauri_args=(tauri build "${tauri_mode[@]}" --runner cargo-xwin --target "$target" --ci)
-tauri_args+=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+tauri_config='{"bundle":{"createUpdaterArtifacts":false}}'
+if [[ -n "$metadata_path" ]]; then
+  sign_command="$repo_root/scripts/windows-artifact-sign-command.sh"
+  if [[ ! -x "$sign_command" ]]; then
+    echo "FAIL: Windows signing command is not executable: $sign_command" >&2
+    exit 1
+  fi
+  export SHELLX_SIGN_COMMAND_PATH="$sign_command"
+  tauri_config="$(node -e 'process.stdout.write(JSON.stringify({bundle:{createUpdaterArtifacts:false,windows:{signCommand:{cmd:process.env.SHELLX_SIGN_COMMAND_PATH,args:["%1"]}}}}))')"
+fi
+
+tauri_args=(tauri build "${tauri_mode[@]}" --runner cargo-xwin --target "$target" --bundles nsis --ci)
+tauri_args+=(--config "$tauri_config")
 if [[ -n "${SHELLX_TAURI_FEATURES:-}" ]]; then
   tauri_args+=(--features "$SHELLX_TAURI_FEATURES")
 fi
 
 echo "[build-windows] building shellX $version for $target ($mode)"
 build_log="$(mktemp)"
+cleanup_build_log() {
+  if [[ -n "${build_log:-}" && -f "$build_log" ]]; then
+    rm -f -- "$build_log"
+  fi
+}
+trap cleanup_build_log EXIT
 if ! pnpm "${tauri_args[@]}" 2>&1 | tee "$build_log"; then
-  echo "FAIL: Tauri Windows build failed; log: $build_log" >&2
+  echo "FAIL: Tauri Windows build failed; full output is shown above" >&2
   exit 1
 fi
 
 if [[ ! -f "$exe" ]]; then
   echo "FAIL: Windows app exe was not produced: $exe" >&2
+  exit 1
+fi
+if grep -Fq "Failed to add bundler type" "$build_log"; then
+  echo "FAIL: Tauri could not bind the requested bundle type to the desktop executable" >&2
+  exit 1
+fi
+if ! grep -Eq 'Built application at: .*/shellx\.exe$' "$build_log"; then
+  echo "FAIL: Tauri did not report shellx.exe as the built desktop application" >&2
+  exit 1
+fi
+exe_win="$(wslpath -w "$exe")"
+exe_win_ps="${exe_win//\'/\'\'}"
+echo "[verify] Windows desktop executable MCP EOF smoke"
+if ! powershell.exe -NoProfile -Command "\$null | & '$exe_win_ps' --mcp-server; exit \$LASTEXITCODE"; then
+  echo "FAIL: Windows desktop executable did not pass the MCP EOF smoke: $exe" >&2
   exit 1
 fi
 if [[ ! -f "$nsis" ]]; then
@@ -118,6 +161,9 @@ if grep -q "Compiling " "$build_log"; then
 else
   echo "[verify] Windows exe reused from cache:"
 fi
+cleanup_build_log
+build_log=""
+trap - EXIT
 ls -lh "$exe"
 sha256sum "$exe"
 
@@ -145,42 +191,42 @@ else
 fi
 
 if [[ -n "$metadata_path" ]]; then
-  if [[ ! -f "$metadata_path" ]]; then
-    echo "FAIL: signing metadata file does not exist: $metadata_path" >&2
-    exit 1
-  fi
   sign_script="$repo_root/scripts/windows-artifact-sign.ps1"
   artifacts_win=("$(wslpath -w "$dest_nsis")")
   if [[ -n "$dest_msi" ]]; then
     artifacts_win+=("$(wslpath -w "$dest_msi")")
   fi
-  echo "[build-windows] Authenticode signing copied final artifacts"
+  echo "[build-windows] Authenticode verifying copied final artifacts"
   powershell.exe -NoProfile -ExecutionPolicy Bypass \
     -File "$(wslpath -w "$sign_script")" \
     -MetadataPath "$(wslpath -w "$metadata_path")" \
+    -VerifyOnly \
     -Artifacts "${artifacts_win[@]}"
-elif [[ "${SHELLX_WINDOWS_SIGNING_REQUIRED:-0}" == "1" ]]; then
-  echo "FAIL: SHELLX_WINDOWS_SIGNING_REQUIRED=1 but SHELLX_WINDOWS_SIGNING_METADATA_PATH is not set" >&2
-  exit 1
 else
-  echo "[build-windows] Authenticode signing skipped; set SHELLX_WINDOWS_SIGNING_METADATA_PATH to sign."
+  echo "[build-windows] Authenticode signing skipped by explicit SHELLX_WINDOWS_SIGNING_REQUIRED=0 development opt-out."
 fi
 
-if [[ -n "$updater_key_path" ]]; then
+if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  echo "[build-windows] creating Tauri updater signature from the process environment"
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+    env -u TAURI_SIGNING_PRIVATE_KEY_PATH \
+    pnpm exec tauri signer sign "$dest_nsis" >/dev/null
+elif [[ -n "$updater_key_path" ]]; then
   if [[ ! -f "$updater_key_path" ]]; then
     echo "FAIL: updater key path does not exist: $updater_key_path" >&2
     exit 1
   fi
-  echo "[build-windows] creating Tauri updater signature for final installer"
-  pnpm exec tauri signer sign \
+  echo "[build-windows] creating Tauri updater signature from the configured key file"
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+    env -u TAURI_SIGNING_PRIVATE_KEY -u TAURI_SIGNING_PRIVATE_KEY_PATH \
+    pnpm exec tauri signer sign \
     --private-key-path "$updater_key_path" \
-    --password="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
     "$dest_nsis" >/dev/null
-elif [[ "${SHELLX_WINDOWS_UPDATER_REQUIRED:-0}" == "1" ]]; then
-  echo "FAIL: SHELLX_WINDOWS_UPDATER_REQUIRED=1 but no updater key path was found" >&2
+elif [[ "$updater_required" == "1" ]]; then
+  echo "FAIL: SHELLX_WINDOWS_UPDATER_REQUIRED=1 but SHELLX_WINDOWS_UPDATER_KEY_PATH is not set" >&2
   exit 1
 else
-  echo "[build-windows] updater .sig skipped; set SHELLX_WINDOWS_UPDATER_KEY_PATH or ~/.shellx-keys/updater.key."
+  echo "[build-windows] updater .sig skipped by explicit SHELLX_WINDOWS_UPDATER_REQUIRED=0 development opt-out."
 fi
 
 echo "[build-windows] final Windows artifacts:"

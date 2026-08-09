@@ -1,23 +1,34 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { readRustModuleFamily } from "./read-rust-module-family";
 
 const files = {
   app: readFileSync("src/App.tsx", "utf8"),
   bottomPanel: readFileSync("src/components/BottomPanel.tsx", "utf8"),
+  uiNavigation: readFileSync("src/lib/ui-navigation.ts", "utf8"),
   header: readFileSync("src/components/Header.tsx", "utf8"),
   rightRail: readFileSync("src/components/RightRail.tsx", "utf8"),
-  settings: readFileSync("src/components/Settings.tsx", "utf8"),
+  filesPane: readFileSync("src/components/FilesPane.tsx", "utf8"),
+  folderPath: readFileSync("src/lib/folder-path.ts", "utf8"),
+  settings: readFileSync("src/lib/settings.ts", "utf8"),
   connectors: readFileSync("src/components/settings/ConnectorsTab.tsx", "utf8"),
   connectionEditor: readFileSync("src/components/ConnectionEditor.tsx", "utf8"),
   connectionsTab: readFileSync("src/components/settings/ConnectionsTab.tsx", "utf8"),
+  shellxagentTab: readFileSync("src/components/settings/ShellxagentTab.tsx", "utf8"),
   permissionModal: readFileSync("src/components/PermissionModal.tsx", "utf8"),
   tasksPanel: readFileSync("src/components/TasksPanel.tsx", "utf8"),
   workPreview: readFileSync("src/components/WorkPreviewPanel.tsx", "utf8"),
   builtinDocs: readFileSync("src/lib/builtin-docs.ts", "utf8"),
   userStore: readFileSync("src/lib/userStore.ts", "utf8"),
-  apiDocs: readFileSync("docs/API.md", "utf8"),
-  debugApi: readFileSync("src-tauri/src/debug_api.rs", "utf8"),
-  hostMcp: readFileSync("src-tauri/src/host_mcp.rs", "utf8"),
+  apiDocs: readFileSync("docs/public/API.md", "utf8"),
+  debugApi: readRustModuleFamily("src-tauri/src/debug_api.rs"),
+  hostMcp:
+    readFileSync("src-tauri/src/host_mcp.rs", "utf8") +
+    readdirSync("src-tauri/src/host_mcp", { recursive: true, encoding: "utf8" })
+      .filter((file) => file.endsWith(".rs"))
+      .sort()
+      .map((file) => readFileSync(`src-tauri/src/host_mcp/${file}`, "utf8"))
+      .join("\n"),
   subagent: readFileSync("src-tauri/src/subagent.rs", "utf8"),
   backend: readFileSync("src-tauri/src/lib.rs", "utf8"),
   debugSurfaceTest: readFileSync("scripts/test-debug-ui-surfaces.ts", "utf8"),
@@ -49,6 +60,27 @@ assert(
 );
 assert(files.connectors.includes("send to session"));
 assert(files.connectors.includes("returns the active session reply"));
+assert(
+  files.connectors.includes("const desktopConnectorsAvailable = inTauri()") &&
+    files.connectors.includes("This connector editor is a visual preview") &&
+    files.connectors.includes("disabled={busy || !desktopConnectorsAvailable || debugFixtureActive}") &&
+    files.connectors.includes("const canSave = !debugFixtureActive") &&
+    files.connectors.includes("const canSimulate = !debugFixtureActive"),
+  "browser preview must disclose unavailable connector IPC and disable persistence actions",
+);
+assert(
+  files.connectionsTab.includes("const desktopConnectionsAvailable = inTauri()") &&
+    files.connectionsTab.includes("disabled={busy || !desktopConnectionsAvailable}") &&
+    files.connectionsTab.includes('role={desktopConnectionsAvailable ? "alert" : "status"}'),
+  "browser preview must disclose unavailable connection IPC and disable refresh actions",
+);
+assert(
+  files.shellxagentTab.includes('import { inTauri } from "../../lib/tauri-bridge"') &&
+    files.shellxagentTab.includes("const desktopAgentAvailable = fixtureActive || inTauri()") &&
+    files.shellxagentTab.includes("shellXagent token and bound-port controls are unavailable") &&
+    files.shellxagentTab.includes("disabled={loading || !desktopAgentAvailable || fixtureActive}"),
+  "browser preview must disclose unavailable shellXagent IPC and disable token rotation",
+);
 assert(files.permissionModal.includes("Agent wants to run a shell command"));
 assert(files.tasksPanel.includes("Ask the active agent to inspect"));
 assert(
@@ -58,6 +90,12 @@ assert(
 );
 assert(files.workPreview.includes("ask the active agent to fix"));
 assert(files.builtinDocs.includes("return the active session reply"));
+assert(
+  files.builtinDocs.includes("Windows OpenSSH, run Windows agents") &&
+    files.builtinDocs.includes("WSL is not required") &&
+    !files.builtinDocs.includes("native PowerShell agent execution remains a separate future runtime"),
+  "in-app connection docs must describe the shipped native Windows OpenSSH runtime",
+);
 assert(files.apiDocs.includes("target ShellX session"));
 
 function functionBody(source: string, name: string): string {
@@ -88,7 +126,7 @@ assert(
   "fresh unselected tabs must not render Grok context-window token copy",
 );
 assert(
-  files.app.includes('if (agentId !== "grok") return null;') &&
+  files.app.includes('if (agentId !== "grok" && !releaseTestBoundary) return null;') &&
     !files.app.includes("Grok artifact archive is only available on Grok tabs"),
   "Grok artifact archive control must not render as disabled Grok copy on provider tabs",
 );
@@ -109,9 +147,11 @@ assert(
   "selecting a connection must trigger an agent CLI scan without auto-connecting",
 );
 assert(
-  !files.app.includes("if (!activeTabId || activeTab?.firstMessageMs) return;") &&
-    !files.app.includes("const preset = activeConnectionPreset ?? currentLocalConnectionPreset();\n    scanConnectionProvidersForPreset(preset);"),
-  "new tabs must not auto-scan agent CLIs just because they became active",
+  files.app.includes("const preset = activeConnectionPreset ?? currentLocalConnectionPreset();")
+    && files.app.includes("scanConnectionProvidersForPreset(preset);")
+    && files.app.includes('window.addEventListener("focus", refreshWhenVisible)')
+    && files.app.includes('document.addEventListener("visibilitychange", refreshWhenVisible)'),
+  "agent CLI versions must refresh before launch and when ShellX regains visibility",
 );
 assert(
   !files.rightRail.includes("completedAutoScanKeys") &&
@@ -142,7 +182,8 @@ assert(
     files.app.includes('invoke<RemoteFolderEntry[]>("list_project_files"') &&
     files.app.includes('if (pickerTransport !== "local")') &&
     files.app.includes("disabled={!canUsePath}") &&
-    files.app.includes("wslUnc") &&
+    files.folderPath.includes("wslUnc") &&
+    files.app.includes("normalizeRemoteFolderPath") &&
     files.app.includes('data-debug-id="remote-cwd-input"') &&
     files.app.includes('data-debug-id="remote-cwd-go"') &&
     files.app.includes('data-debug-id="remote-cwd-use"') &&
@@ -166,7 +207,9 @@ assert(
     files.app.includes("const openModalPatch = normalizeDebugModal(p.openModal)") &&
     files.app.includes("const composerMenuPatch = normalizeComposerDebugMenu(p.composerMenu)") &&
     files.app.includes("runDebugClickSelector(debugClickPatch)") &&
-    files.bottomPanel.includes("export type ComposerDebugMenu") &&
+    files.bottomPanel.includes('export type { BottomTab, ComposerDebugMenu } from "../lib/ui-navigation"') &&
+    files.uiNavigation.includes("export type ComposerDebugMenu") &&
+    files.uiNavigation.includes("export const DEBUG_MODAL_IDS") &&
     files.bottomPanel.includes("debugOpenMenu === \"connection\"") &&
     files.debugApi.includes("pub composer_menu: Option<String>") &&
     files.debugApi.includes("pub open_modal: Option<String>") &&
@@ -185,6 +228,10 @@ assert(
     files.apiDocs.includes("debugClick?: string") &&
     files.apiDocs.includes("debugInput?:"),
   "debug API must be able to open user-facing UI surfaces for screenshot-driven QA",
+);
+assert(
+  !files.app.includes("lastDebugUiPatchMs = Math.max(lastDebugUiPatchMs, state.lastUiPatchMs)"),
+  "state polling must not advance the debug UI event cursor past transient click/input commands",
 );
 assert(
     files.debugSurfaceTest.includes('{ name: "right-tasks", body: { rightTab: "Tasks" } }') &&
@@ -217,7 +264,7 @@ assert(
 assert(
   files.debugSurfaceTest.includes('composerMenu: "connection"') &&
     files.debugSurfaceTest.includes('composerMenu: "close"') &&
-    files.debugSurfaceTest.includes('openModal: "settings"') &&
+    files.debugSurfaceTest.includes('debugClick: "button.preview-center-close"') &&
     files.debugSurfaceTest.includes('debugClick') &&
     files.debugSurfaceTest.includes('debugInput'),
   "runtime debug UI surface test must preserve stable screenshot-driven commands",
@@ -235,7 +282,7 @@ assert(
     files.backend.includes("return list_local_project_files(&pb, &path, include_hidden);") &&
     files.backend.includes("list_provider_wsl_project_files") &&
     files.backend.includes("list_provider_ssh_project_files") &&
-    files.rightRail.includes("connectionId: connectionId ?? undefined") &&
+    files.filesPane.includes("connectionId: connectionId ?? undefined") &&
     files.app.includes("connectionId: request.connectionId ?? undefined"),
   "Files panel backend must use provider-session or selected connection transport context for WSL/SSH tabs",
 );
@@ -256,8 +303,8 @@ assert(
   "generic Connect must not silently start Grok on unselected or provider tabs",
 );
 assert(
-  files.app.includes("function normalizeRightTabPatch") &&
-    files.app.includes("function normalizeBottomTabPatch") &&
+  files.uiNavigation.includes("function normalizeRightTabPatch") &&
+    files.uiNavigation.includes("function normalizeBottomTabPatch") &&
     files.app.includes("normalizeRightTabPatch(p.rightTab)") &&
     files.app.includes("normalizeBottomTabPatch(p.bottomTab)"),
   "debug API UI tab patches must accept lowercase/canonical tab names before driving renderer state",

@@ -281,7 +281,14 @@ async fn run_audits(
                 "pnpm audit",
                 root,
                 "pnpm",
-                &["audit", "--json", "--prod"],
+                &[
+                    "audit",
+                    "--json",
+                    "--prod",
+                    "--config.ignore-scripts=true",
+                    "--config.ignore-pnpmfile=true",
+                    "--registry=https://registry.npmjs.org",
+                ],
                 timeout_duration,
             )
             .await,
@@ -292,7 +299,13 @@ async fn run_audits(
                 "npm audit",
                 root,
                 "npm",
-                &["audit", "--json", "--omit=dev"],
+                &[
+                    "audit",
+                    "--json",
+                    "--omit=dev",
+                    "--ignore-scripts",
+                    "--registry=https://registry.npmjs.org",
+                ],
                 timeout_duration,
             )
             .await,
@@ -305,7 +318,7 @@ async fn run_audits(
             run_fixed_command(
                 "cargo audit",
                 cwd,
-                "cargo",
+                "cargo-audit",
                 &["audit", "--json"],
                 timeout_duration,
             )

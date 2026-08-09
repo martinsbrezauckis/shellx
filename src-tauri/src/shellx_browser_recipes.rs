@@ -1,20 +1,29 @@
-use std::path::Path;
+use std::{collections::BTreeSet, io::Read, path::Path};
 
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use crate::shellx_browser::{
     browser_id, clean_string, lock_or_recover, now_ms, profile_id_for_task_or_tab, push_receipt,
     validate_optional_task_and_tab, write_browser_json_artifact, BrowserActionRequest,
     BrowserRecipeArtifact, BrowserRecipeExportRequest, BrowserRecipeReplayRequest,
-    BrowserRecipeReplayResponse, BrowserRecipeReplaySkippedStep, ShellxBrowserRegistry,
+    BrowserRecipeReplayResponse, BrowserRecipeReplaySkippedStep, BrowserRecipeReplayStepResult,
+    ShellxBrowserRegistry,
 };
-use crate::shellx_browser_artifacts::{browser_artifact_root, browser_recipe_step_from_receipt};
+use crate::shellx_browser_artifacts::{
+    browser_artifact_read_roots, browser_recipe_raw_input_value_from_receipt,
+    browser_recipe_receipt_has_redacted_input, browser_recipe_step_from_receipt_with_context,
+};
+use crate::shellx_browser_recipe_analysis::{
+    recipe_assertions, recipe_decision_points, recipe_variable_inputs,
+};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BrowserRecipeReplayPlan {
     pub(crate) steps_planned: usize,
     pub(crate) actions: Vec<BrowserRecipeReplayAction>,
     pub(crate) skipped_steps: Vec<BrowserRecipeReplaySkippedStep>,
+    pub(crate) decision_points: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug)]
@@ -93,9 +102,24 @@ impl ShellxBrowserRegistry {
                     task_matches && tab_matches
                 })
                 .collect::<Vec<_>>();
+            let raw_input_values = matching_receipts
+                .iter()
+                .filter_map(|receipt| browser_recipe_raw_input_value_from_receipt(receipt))
+                .collect::<BTreeSet<_>>();
+            let mut redact_free_text_literals = false;
             let steps = matching_receipts
                 .iter()
-                .filter_map(|receipt| browser_recipe_step_from_receipt(receipt))
+                .filter_map(|receipt| {
+                    let step = browser_recipe_step_from_receipt_with_context(
+                        receipt,
+                        &raw_input_values,
+                        redact_free_text_literals,
+                    );
+                    if browser_recipe_receipt_has_redacted_input(receipt) {
+                        redact_free_text_literals = true;
+                    }
+                    step
+                })
                 .collect::<Vec<_>>();
             let source_receipts = matching_receipts
                 .iter()
@@ -197,6 +221,8 @@ impl ShellxBrowserRegistry {
         steps_planned: usize,
         steps_applied: usize,
         skipped_steps: Vec<BrowserRecipeReplaySkippedStep>,
+        step_results: Vec<BrowserRecipeReplayStepResult>,
+        decision_points: Vec<serde_json::Value>,
     ) -> Result<BrowserRecipeReplayResponse, String> {
         let dry_run = request.dry_run.unwrap_or(true);
         let requested_task_id = request
@@ -215,15 +241,18 @@ impl ShellxBrowserRegistry {
         validate_optional_task_and_tab(&state, task_id.as_deref(), browser_tab_id.as_deref())?;
         let profile_id =
             profile_id_for_task_or_tab(&state, task_id.as_deref(), browser_tab_id.as_deref());
-        let status = if dry_run {
-            "dryRunCompleted"
-        } else {
-            "completed"
-        };
         let steps_skipped = skipped_steps.len();
+        let incomplete = !dry_run && steps_skipped > 0;
+        let (ok, status, receipt_kind) = if dry_run {
+            (true, "dryRunCompleted", "browserRecipeReplayCompleted")
+        } else if incomplete {
+            (false, "incomplete", "browserRecipeReplayIncomplete")
+        } else {
+            (true, "completed", "browserRecipeReplayCompleted")
+        };
         let receipt = push_receipt(
             &mut state,
-            "browserRecipeReplayCompleted",
+            receipt_kind,
             task_id.clone(),
             profile_id,
             format!("Browser recipe replay {}", status),
@@ -235,10 +264,12 @@ impl ShellxBrowserRegistry {
                 "stepsApplied": steps_applied,
                 "stepsSkipped": steps_skipped,
                 "skippedSteps": skipped_steps.clone(),
+                "stepResults": step_results.clone(),
+                "decisionPoints": decision_points.clone(),
             }),
         );
         Ok(BrowserRecipeReplayResponse {
-            ok: true,
+            ok,
             status: status.to_string(),
             task_id,
             browser_tab_id,
@@ -246,25 +277,47 @@ impl ShellxBrowserRegistry {
             steps_applied,
             steps_skipped,
             skipped_steps,
+            step_results,
+            decision_points,
             dry_run,
             receipt,
         })
     }
+
+    pub(crate) fn browser_recipe_replay_plan(
+        &self,
+        request: &BrowserRecipeReplayRequest,
+    ) -> Result<BrowserRecipeReplayPlan, String> {
+        let receipts = self.state().receipts;
+        let recipe = browser_recipe_value_from_request_with_receipts(request, &receipts)?;
+        browser_recipe_replay_plan_from_value(request, recipe)
+    }
 }
 
+#[cfg(test)]
 pub(crate) fn browser_recipe_replay_plan(
     request: &BrowserRecipeReplayRequest,
 ) -> Result<BrowserRecipeReplayPlan, String> {
-    let Some(recipe) = browser_recipe_value_from_request(request)? else {
-        return Ok(BrowserRecipeReplayPlan::default());
-    };
+    let recipe = browser_recipe_value_from_request(request)?;
+    browser_recipe_replay_plan_from_value(request, recipe)
+}
+
+fn browser_recipe_replay_plan_from_value(
+    request: &BrowserRecipeReplayRequest,
+    recipe: serde_json::Value,
+) -> Result<BrowserRecipeReplayPlan, String> {
     let steps = recipe
         .get("steps")
         .and_then(|value| value.as_array())
         .cloned()
         .unwrap_or_default();
+    if steps.is_empty() {
+        return Err("browser recipe must contain at least one replayable step".to_string());
+    }
+    let decision_points = recipe_decision_points(&steps);
     let mut plan = BrowserRecipeReplayPlan {
         steps_planned: steps.len(),
+        decision_points,
         ..BrowserRecipeReplayPlan::default()
     };
     let mut blocked_by_live_binding = false;
@@ -294,35 +347,230 @@ pub(crate) fn browser_recipe_replay_plan(
     Ok(plan)
 }
 
+pub(crate) fn browser_recipe_replay_planned_step_results(
+    plan: &BrowserRecipeReplayPlan,
+) -> Vec<BrowserRecipeReplayStepResult> {
+    let mut results = plan
+        .actions
+        .iter()
+        .map(|action| BrowserRecipeReplayStepResult {
+            index: action.index,
+            action: Some(action.request.action.clone()),
+            ok: true,
+            status: "planned".to_string(),
+            ..BrowserRecipeReplayStepResult::default()
+        })
+        .collect::<Vec<_>>();
+    results.extend(
+        plan.skipped_steps
+            .iter()
+            .map(browser_recipe_replay_skipped_step_result),
+    );
+    results.sort_by_key(|result| result.index);
+    results
+}
+
+pub(crate) fn browser_recipe_replay_skipped_step_result(
+    skipped: &BrowserRecipeReplaySkippedStep,
+) -> BrowserRecipeReplayStepResult {
+    BrowserRecipeReplayStepResult {
+        index: skipped.index,
+        action: skipped.action.clone(),
+        ok: false,
+        status: "skipped".to_string(),
+        reason: Some(skipped.reason.clone()),
+        ..BrowserRecipeReplayStepResult::default()
+    }
+}
+
+pub(crate) fn browser_recipe_replay_failed_step_result(
+    index: usize,
+    action: String,
+    reason: &str,
+) -> BrowserRecipeReplayStepResult {
+    BrowserRecipeReplayStepResult {
+        index,
+        action: Some(action),
+        ok: false,
+        status: "skipped".to_string(),
+        reason: Some(reason.to_string()),
+        ..BrowserRecipeReplayStepResult::default()
+    }
+}
+
+pub(crate) fn browser_recipe_replay_response_step_result(
+    index: usize,
+    requested_action: String,
+    response: &crate::shellx_browser::BrowserActionResponse,
+) -> BrowserRecipeReplayStepResult {
+    let applied = response.ok && response.status == "applied";
+    BrowserRecipeReplayStepResult {
+        index,
+        action: Some(requested_action),
+        ok: applied,
+        status: response.status.clone(),
+        reason: if applied {
+            None
+        } else {
+            response
+                .message
+                .clone()
+                .filter(|message| !message.trim().is_empty())
+                .or_else(|| Some("actionNotApplied".to_string()))
+        },
+        task_id: response.task_id.clone(),
+        current_url: response.current_url.clone(),
+        step_summary: response.step_summary.clone(),
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn browser_recipe_value_from_request(
     request: &BrowserRecipeReplayRequest,
-) -> Result<Option<serde_json::Value>, String> {
-    if let Some(recipe) = request.recipe.as_ref() {
-        return Ok(Some(recipe.clone()));
-    }
-    let Some(path) = request
+) -> Result<serde_json::Value, String> {
+    let inline_recipe = request.recipe.as_ref();
+    let recipe_path = request
         .recipe_path
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(None);
-    };
+        .filter(|value| !value.is_empty());
+    if inline_recipe.is_some() && recipe_path.is_some() {
+        return Err(
+            "browser recipe replay accepts either recipe or recipePath, never both".to_string(),
+        );
+    }
+    if let Some(recipe) = inline_recipe {
+        return Ok(recipe.clone());
+    }
+    let path = recipe_path
+        .ok_or_else(|| "browser recipe replay requires recipe or recipePath".to_string())?;
     let text = read_browser_recipe_artifact(path)?;
     serde_json::from_str::<serde_json::Value>(&text)
-        .map(Some)
         .map_err(|e| format!("parse browser recipe {} failed: {}", path, e))
 }
 
-fn read_browser_recipe_artifact(path: &str) -> Result<String, String> {
-    let root = browser_artifact_root("shellx-browser-recipes")?;
-    let root = root.canonicalize().map_err(|e| {
+fn browser_recipe_value_from_request_with_receipts(
+    request: &BrowserRecipeReplayRequest,
+    receipts: &[crate::shellx_browser::BrowserReceipt],
+) -> Result<serde_json::Value, String> {
+    let inline_recipe = request.recipe.as_ref();
+    let recipe_path = request
+        .recipe_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if inline_recipe.is_some() && recipe_path.is_some() {
+        return Err(
+            "browser recipe replay accepts either recipe or recipePath, never both".to_string(),
+        );
+    }
+    if let Some(recipe) = inline_recipe {
+        return Ok(recipe.clone());
+    }
+    let path = recipe_path
+        .ok_or_else(|| "browser recipe replay requires recipe or recipePath".to_string())?;
+    read_receipt_bound_browser_recipe_artifact(path, receipts)
+}
+
+const MAX_BROWSER_RECIPE_ARTIFACT_BYTES: u64 = 8 * 1024 * 1024;
+
+fn read_receipt_bound_browser_recipe_artifact(
+    path: &str,
+    receipts: &[crate::shellx_browser::BrowserReceipt],
+) -> Result<serde_json::Value, String> {
+    let canonical = canonical_browser_recipe_artifact_path(path)?;
+    let metadata = std::fs::metadata(&canonical).map_err(|e| {
         format!(
-            "resolve browser recipe root {} failed: {}",
-            root.display(),
+            "read browser recipe {} metadata failed: {}",
+            canonical.display(),
             e
         )
     })?;
+    if !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > MAX_BROWSER_RECIPE_ARTIFACT_BYTES
+    {
+        return Err(
+            "browser recipe artifact is empty or exceeds the replay byte budget".to_string(),
+        );
+    }
+    let file = std::fs::File::open(&canonical)
+        .map_err(|e| format!("open browser recipe {} failed: {}", canonical.display(), e))?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_BROWSER_RECIPE_ARTIFACT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("read browser recipe {} failed: {}", canonical.display(), e))?;
+    if bytes.len() as u64 != metadata.len() {
+        return Err("browser recipe artifact changed while it was being read".to_string());
+    }
+    let recipe: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("parse browser recipe {} failed: {}", canonical.display(), e))?;
+    let recipe_id = recipe
+        .get("recipeId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "saved browser recipe is missing recipeId".to_string())?;
+    if recipe
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(2)
+        || recipe.get("source").and_then(serde_json::Value::as_str)
+            != Some("shellx-browser-recorder")
+    {
+        return Err("saved browser recipe has an unsupported artifact identity".to_string());
+    }
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let matching_receipt = receipts.iter().rev().find(|receipt| {
+        receipt.kind == "browserRecipeExported"
+            && receipt
+                .evidence
+                .get("recipeId")
+                .and_then(serde_json::Value::as_str)
+                == Some(recipe_id)
+    });
+    let receipt = matching_receipt.ok_or_else(|| {
+        format!("saved browser recipe {recipe_id} has no matching export receipt")
+    })?;
+    let receipt_path = receipt
+        .evidence
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("saved browser recipe {recipe_id} export receipt has no path"))?;
+    let receipt_canonical = canonical_browser_recipe_artifact_path(receipt_path)?;
+    let receipt_bytes = receipt
+        .evidence
+        .get("bytes")
+        .and_then(serde_json::Value::as_u64);
+    let receipt_sha256 = receipt
+        .evidence
+        .get("sha256")
+        .and_then(serde_json::Value::as_str);
+    let receipt_source = receipt
+        .evidence
+        .get("source")
+        .and_then(serde_json::Value::as_str);
+    let artifact_task_id = recipe.get("taskId").and_then(serde_json::Value::as_str);
+    if receipt_canonical != canonical
+        || receipt_bytes != Some(bytes.len() as u64)
+        || !receipt_sha256.is_some_and(|value| value.eq_ignore_ascii_case(&sha256))
+        || receipt_source != Some("shellx-browser-recipes")
+        || receipt.task_id.as_deref() != artifact_task_id
+    {
+        return Err(format!(
+            "saved browser recipe {recipe_id} does not match its export receipt"
+        ));
+    }
+    Ok(recipe)
+}
+
+#[cfg(test)]
+fn read_browser_recipe_artifact(path: &str) -> Result<String, String> {
+    let canonical = canonical_browser_recipe_artifact_path(path)?;
+    std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("read browser recipe {} failed: {}", canonical.display(), e))
+}
+
+fn canonical_browser_recipe_artifact_path(path: &str) -> Result<std::path::PathBuf, String> {
     let candidate = Path::new(path);
     if !candidate.is_absolute() {
         return Err("browser recipe path must be absolute".to_string());
@@ -330,14 +578,20 @@ fn read_browser_recipe_artifact(path: &str) -> Result<String, String> {
     let canonical = candidate
         .canonicalize()
         .map_err(|e| format!("resolve browser recipe {} failed: {}", path, e))?;
-    if !canonical.starts_with(&root) {
+    let allowed = browser_artifact_read_roots("shellx-browser-recipes")?
+        .into_iter()
+        .any(|root| {
+            root.canonicalize()
+                .map(|root| canonical.starts_with(root))
+                .unwrap_or(false)
+        });
+    if !allowed {
         return Err(format!(
             "browser recipe path {} is outside ShellX Browser recipe artifacts",
             path
         ));
     }
-    std::fs::read_to_string(&canonical)
-        .map_err(|e| format!("read browser recipe {} failed: {}", canonical.display(), e))
+    Ok(canonical)
 }
 
 fn browser_recipe_action_from_step(
@@ -394,8 +648,8 @@ fn browser_recipe_action_from_step(
         "click" | "clickRef" | "waitFor" | "scroll" | "extractTable" => {
             let selector = recipe_step_string(step, "selector");
             let ref_id = recipe_step_string(step, "refId");
-            let value = recipe_step_string(step, "value")
-                .filter(|_| !recipe_step_bool(step, "valueRedacted").unwrap_or(false));
+            let value_redacted = recipe_step_bool(step, "valueRedacted").unwrap_or(false);
+            let value = recipe_step_string(step, "value").filter(|_| !value_redacted);
             if matches!(action.as_str(), "click" | "clickRef")
                 && selector.is_none()
                 && ref_id.is_none()
@@ -403,6 +657,13 @@ fn browser_recipe_action_from_step(
                 return Err(skipped_recipe_step(index, Some(action), "missingTarget"));
             }
             if action == "waitFor" && selector.is_none() && value.is_none() {
+                if value_redacted {
+                    return Err(skipped_recipe_step(
+                        index,
+                        Some(action),
+                        "redactedTextRequiresFreshObservation",
+                    ));
+                }
                 return Err(skipped_recipe_step(index, Some(action), "missingTarget"));
             }
             Ok(Some(BrowserActionRequest {
@@ -505,7 +766,7 @@ fn browser_recipe_action_from_step(
                     return Err(skipped_recipe_step(
                         index,
                         Some(action),
-                        "redactedQueryRequiresBinding",
+                        "redactedTextRequiresFreshObservation",
                     ));
                 }
             }
@@ -544,7 +805,7 @@ fn recipe_skip_requires_live_binding(reason: &str) -> bool {
     matches!(
         reason,
         "redactedInputRequiresBinding"
-            | "redactedQueryRequiresBinding"
+            | "redactedTextRequiresFreshObservation"
             | "liveVaultCaptureRequiresBinding"
             | "liveGrantActionRequiresBinding"
     )
@@ -581,283 +842,10 @@ fn skipped_recipe_step(
     }
 }
 
-fn recipe_variable_inputs(steps: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    steps
-        .iter()
-        .filter(|step| {
-            step.get("valueRedacted")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false)
-        })
-        .enumerate()
-        .map(|(index, step)| {
-            json!({
-                "inputId": format!("input-{}", index + 1),
-                "sourceStepId": step.get("stepId").cloned().unwrap_or(serde_json::Value::Null),
-                "action": step.get("action").cloned().unwrap_or(serde_json::Value::Null),
-                "valueRef": "user-or-vault-supplied",
-                "required": true,
-                "rawValueStored": false,
-            })
-        })
-        .collect()
-}
-
-fn recipe_assertions(steps: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    let mut assertions = steps
-        .iter()
-        .filter(|step| step.get("action").and_then(|value| value.as_str()) == Some("verify"))
-        .map(|step| {
-            json!({
-                "assertionId": format!(
-                    "assert-{}",
-                    step.get("stepId")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("verification")
-                ),
-                "sourceStepId": step.get("stepId").cloned().unwrap_or(serde_json::Value::Null),
-                "expectationType": step.get("expectationType").cloned().unwrap_or(serde_json::Value::Null),
-                "selector": step.get("selector").cloned().unwrap_or(serde_json::Value::Null),
-                "checkedTextRedacted": true,
-            })
-        })
-        .collect::<Vec<_>>();
-    if assertions.is_empty() {
-        assertions.push(json!({
-            "assertionId": "assert-final-observe-or-verify",
-            "expectationType": "manualVerificationRequired",
-            "description": "Replay should finish by observing or verifying the current page state.",
-        }));
-    }
-    assertions
-}
-
-fn recipe_decision_points(steps: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    let mut points = Vec::new();
-    if steps
-        .iter()
-        .any(|step| step.get("action").and_then(|value| value.as_str()) == Some("navigate"))
-    {
-        points.push(json!({
-            "decisionId": "domain-or-redirect-variant",
-            "description": "If the destination redirects to login, consent, or a different app domain, observe and continue from the new page state instead of replaying stale selectors.",
-        }));
-    }
-    if steps.iter().any(|step| {
-        matches!(
-            step.get("action").and_then(|value| value.as_str()),
-            Some("fillRef" | "type" | "select" | "press")
-        )
-    }) {
-        points.push(json!({
-            "decisionId": "input-source-selection",
-            "description": "Resolve redacted inputs from Vault grants or explicit user input before replaying typed steps.",
-        }));
-    }
-    points
-}
+#[cfg(test)]
+#[path = "shellx_browser_recipes_tests.rs"]
+mod tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recipe_path_reads_are_constrained_to_recipe_artifacts() {
-        let root = browser_artifact_root("shellx-browser-recipes").expect("recipe root resolves");
-        std::fs::create_dir_all(&root).expect("recipe root can be created for test");
-        let outside = tempfile::NamedTempFile::new().expect("outside temp recipe");
-        std::fs::write(outside.path(), r#"{"schemaVersion":2,"steps":[]}"#)
-            .expect("outside temp recipe can be written");
-        let request = BrowserRecipeReplayRequest {
-            recipe_path: Some(outside.path().to_string_lossy().into_owned()),
-            ..BrowserRecipeReplayRequest::default()
-        };
-
-        let error = browser_recipe_value_from_request(&request).expect_err("outside path rejected");
-
-        assert!(
-            error.contains("outside ShellX Browser recipe artifacts"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn recipe_replay_plan_converts_safe_steps_and_skips_redacted_inputs() {
-        let request = BrowserRecipeReplayRequest {
-            task_id: Some("browser-task-current".to_string()),
-            browser_tab_id: Some("browser-tab-current".to_string()),
-            recipe: Some(json!({
-                "schemaVersion": 2,
-                "steps": [
-                    {
-                        "action": "navigate",
-                        "url": "https://example.com/",
-                        "browserTabId": "browser-tab-old"
-                    },
-                    {
-                        "action": "clickRef",
-                        "refId": "settings",
-                        "selector": "button[data-testid='settings']",
-                        "force": true,
-                        "browserTabId": "browser-tab-old"
-                    },
-                    {
-                        "action": "waitFor",
-                        "selector": "[data-testid='api-keys']",
-                        "timeoutMs": 9000,
-                        "browserTabId": "browser-tab-old"
-                    },
-                    {
-                        "action": "fillRef",
-                        "refId": "email",
-                        "selector": "#email",
-                        "browserTabId": "browser-tab-old",
-                        "valueRedacted": true
-                    },
-                    {
-                        "action": "select",
-                        "selector": "#region",
-                        "value": "eu",
-                        "valueRedacted": false
-                    },
-                    {
-                        "action": "press",
-                        "selector": "#search",
-                        "key": "Enter",
-                        "valueRedacted": false
-                    },
-                    {
-                        "action": "verify",
-                        "key": "element",
-                        "selector": "[data-testid='api-keys']"
-                    },
-                    {
-                        "action": "capturePageSecretToVault",
-                        "selector": "[data-testid='secret']"
-                    },
-                    {
-                        "action": "findText",
-                        "query": "Example Domain",
-                        "queryRedacted": false
-                    }
-                ]
-            })),
-            dry_run: Some(false),
-            ..BrowserRecipeReplayRequest::default()
-        };
-
-        let plan = browser_recipe_replay_plan(&request).expect("recipe plan builds");
-
-        assert_eq!(plan.steps_planned, 9);
-        assert_eq!(plan.actions.len(), 3);
-        assert_eq!(plan.skipped_steps.len(), 6);
-        assert_eq!(plan.actions[0].request.action, "navigate");
-        assert_eq!(
-            plan.actions[0].request.task_id.as_deref(),
-            Some("browser-task-current")
-        );
-        assert_eq!(
-            plan.actions[0].request.browser_tab_id.as_deref(),
-            Some("browser-tab-current")
-        );
-        assert_eq!(
-            plan.actions[0].request.url.as_deref(),
-            Some("https://example.com/")
-        );
-        assert_eq!(plan.actions[1].request.action, "clickRef");
-        assert_eq!(plan.actions[1].request.ref_id.as_deref(), Some("settings"));
-        assert_eq!(
-            plan.actions[1].request.selector.as_deref(),
-            Some("button[data-testid='settings']")
-        );
-        assert!(plan.actions[1].request.force);
-        assert_eq!(plan.actions[2].request.action, "waitFor");
-        assert_eq!(
-            plan.actions[2].request.selector.as_deref(),
-            Some("[data-testid='api-keys']")
-        );
-        assert_eq!(plan.actions[2].request.timeout_ms, Some(9000));
-        assert_eq!(plan.skipped_steps[0].action.as_deref(), Some("fillRef"));
-        assert_eq!(plan.skipped_steps[0].reason, "redactedInputRequiresBinding");
-        assert_eq!(plan.skipped_steps[1].action.as_deref(), Some("select"));
-        assert_eq!(plan.skipped_steps[1].reason, "blockedByLiveBinding");
-        assert_eq!(plan.skipped_steps[2].action.as_deref(), Some("press"));
-        assert_eq!(plan.skipped_steps[2].reason, "blockedByLiveBinding");
-        assert_eq!(plan.skipped_steps[3].action.as_deref(), Some("verify"));
-        assert_eq!(plan.skipped_steps[3].reason, "blockedByLiveBinding");
-        assert_eq!(
-            plan.skipped_steps[4].action.as_deref(),
-            Some("capturePageSecretToVault")
-        );
-        assert_eq!(plan.skipped_steps[4].reason, "blockedByLiveBinding");
-        assert_eq!(plan.skipped_steps[5].action.as_deref(), Some("findText"));
-        assert_eq!(plan.skipped_steps[5].reason, "blockedByLiveBinding");
-    }
-
-    #[test]
-    fn recipe_replay_plan_marks_live_vault_capture_as_binding_point() {
-        let request = BrowserRecipeReplayRequest {
-            recipe: Some(json!({
-                "schemaVersion": 2,
-                "steps": [
-                    {
-                        "action": "navigate",
-                        "url": "https://example.com/"
-                    },
-                    {
-                        "action": "capturePageSecretToVault",
-                        "selector": "[data-testid='secret']"
-                    },
-                    {
-                        "action": "clickRef",
-                        "selector": "[data-testid='continue']"
-                    }
-                ]
-            })),
-            dry_run: Some(false),
-            ..BrowserRecipeReplayRequest::default()
-        };
-
-        let plan = browser_recipe_replay_plan(&request).expect("recipe plan builds");
-
-        assert_eq!(plan.steps_planned, 3);
-        assert_eq!(plan.actions.len(), 1);
-        assert_eq!(plan.actions[0].request.action, "navigate");
-        assert_eq!(plan.skipped_steps.len(), 2);
-        assert_eq!(
-            plan.skipped_steps[0].action.as_deref(),
-            Some("capturePageSecretToVault")
-        );
-        assert_eq!(
-            plan.skipped_steps[0].reason,
-            "liveVaultCaptureRequiresBinding"
-        );
-        assert_eq!(plan.skipped_steps[1].action.as_deref(), Some("clickRef"));
-        assert_eq!(plan.skipped_steps[1].reason, "blockedByLiveBinding");
-    }
-
-    #[test]
-    fn recipe_replay_plan_skips_incomplete_wait_steps() {
-        let request = BrowserRecipeReplayRequest {
-            recipe: Some(json!({
-                "schemaVersion": 2,
-                "steps": [
-                    {
-                        "action": "waitFor",
-                        "valueRedacted": true
-                    }
-                ]
-            })),
-            dry_run: Some(false),
-            ..BrowserRecipeReplayRequest::default()
-        };
-
-        let plan = browser_recipe_replay_plan(&request).expect("recipe plan builds");
-
-        assert_eq!(plan.steps_planned, 1);
-        assert!(plan.actions.is_empty());
-        assert_eq!(plan.skipped_steps.len(), 1);
-        assert_eq!(plan.skipped_steps[0].action.as_deref(), Some("waitFor"));
-        assert_eq!(plan.skipped_steps[0].reason, "missingTarget");
-    }
-}
+#[path = "shellx_browser_recipes_fixture_tests.rs"]
+mod fixture_tests;

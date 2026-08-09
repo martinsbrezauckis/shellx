@@ -15,19 +15,6 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { ShellIcon } from "./icons";
 
-export interface BranchInfo {
- /** Short name. "master", "feature/foo", "origin/main" etc. */
-  name: string;
- /** True for the currently-checked-out branch. */
-  current: boolean;
- /** True for remote branches (origin/, upstream/, ...). Used for grouping. */
-  remote: boolean;
- /** Commits ahead of the tracked upstream. Undefined when unknown. */
-  ahead?: number;
- /** Commits behind the tracked upstream. Undefined when unknown. */
-  behind?: number;
-}
-
 export function BranchPicker({
   open,
   onClose,
@@ -177,14 +164,14 @@ export function BranchPicker({
       </div>
       <div className="bp-section" style={{ maxHeight: 320, overflowY: "auto", padding: 4 }}>
         {loading && <div style={{ padding: 12, opacity: 0.6 }}>Loading…</div>}
-        {error && <div style={{ padding: 12, color: "#d97757", fontSize: 12 }}>{error}</div>}
+        {error && <div style={{ padding: 12, color: "var(--warn)", fontSize: 12 }}>{error}</div>}
         {!loading && !error && branches.length === 0 && (
           <div style={{ padding: 12, opacity: 0.7, fontStyle: "italic" }}>
             No branches found in <code>{cwd ?? "."}</code>.
           </div>
         )}
         {!loading && !error && branches.map((b, index) => (
-          <button
+          <button data-debug-id="surface-components-branchpicker-1"
             key={b.name}
             type="button"
             role="option"

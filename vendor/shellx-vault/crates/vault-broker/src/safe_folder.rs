@@ -20,6 +20,9 @@ const SAFE_FOLDER_HASH_CONTEXT: &str = "shellx vault safe folder content hash v1
 pub enum SafeFolderAction {
     Imported,
     Previewed,
+    RevealedText,
+    SavedText,
+    DiscardedText,
     Searched,
     CopiedText,
     ExportedToSync,
@@ -31,6 +34,12 @@ pub enum SafeFolderAction {
 #[serde(rename_all = "camelCase")]
 pub struct SafeFolderEntry {
     pub safe_id: String,
+    #[serde(default)]
+    pub document_id: String,
+    #[serde(default)]
+    pub version_id: String,
+    #[serde(default)]
+    pub revision: u64,
     pub manifest_path: String,
     pub media_type: String,
     pub byte_len: u64,
@@ -64,6 +73,15 @@ pub struct SafeFolderMoveInOutcome {
     pub revoked_grants: usize,
 }
 
+struct SafeFolderSealRevisionRequest {
+    document_id: String,
+    display_name: String,
+    media_type: String,
+    plaintext: Vec<u8>,
+    revision: u64,
+    now_ms: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafeFolderExportRequest {
     pub safe_id: String,
@@ -81,6 +99,7 @@ pub struct SafeFolderExport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafeFolderSearchResult {
     pub safe_id: String,
+    pub document_id: String,
     pub display_name: String,
     pub media_type: String,
     pub byte_len: u64,
@@ -138,10 +157,46 @@ pub struct SafeFolderDebugState {
 #[serde(rename_all = "camelCase")]
 pub struct SafeFolderDebugEntry {
     pub safe_id: String,
+    pub document_id: String,
+    pub version_id: String,
+    pub revision: u64,
     pub manifest_path: String,
     pub media_type: String,
     pub byte_len: u64,
     pub content_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SafeFolderPreviewMode {
+    Raster,
+    TextEditable,
+    MetadataOnly,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SafeFolderOwnerDocument {
+    pub document_id: String,
+    pub safe_id: String,
+    pub version_id: String,
+    pub revision: u64,
+    pub display_name: String,
+    pub media_type: String,
+    pub byte_len: u64,
+    pub updated_at_ms: i64,
+    pub content_hash: String,
+    pub preview_mode: SafeFolderPreviewMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SafeFolderOwnerPlaintext {
+    pub document_id: String,
+    pub display_name: String,
+    pub media_type: String,
+    pub content_hash: String,
+    pub plaintext: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -161,6 +216,12 @@ pub struct SafeFolderSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct SafeFolderBackupEntry {
     pub safe_id: String,
+    #[serde(default)]
+    pub document_id: String,
+    #[serde(default)]
+    pub version_id: String,
+    #[serde(default)]
+    pub revision: u64,
     pub manifest_path: String,
     pub media_type: String,
     pub byte_len: u64,
@@ -282,6 +343,7 @@ impl SafeFolder {
             if payload.display_name.to_lowercase().contains(&query) || text.contains(&query) {
                 results.push(SafeFolderSearchResult {
                     safe_id: entry.safe_id.clone(),
+                    document_id: entry.document_id.clone(),
                     display_name: payload.display_name,
                     media_type: entry.media_type.clone(),
                     byte_len: entry.byte_len,
@@ -344,6 +406,123 @@ impl SafeFolder {
         })
     }
 
+    pub fn list_owner_documents(&self, master: &MasterKey) -> Result<Vec<SafeFolderOwnerDocument>> {
+        self.entries
+            .values()
+            .map(|entry| {
+                let payload = open_entry(master, entry)?;
+                Ok(SafeFolderOwnerDocument {
+                    document_id: entry.document_id.clone(),
+                    safe_id: entry.safe_id.clone(),
+                    version_id: entry.version_id.clone(),
+                    revision: entry.revision,
+                    display_name: payload.display_name,
+                    media_type: entry.media_type.clone(),
+                    byte_len: entry.byte_len,
+                    updated_at_ms: entry.imported_at_ms,
+                    content_hash: entry.content_hash.clone(),
+                    preview_mode: preview_mode_for_entry(entry),
+                })
+            })
+            .collect()
+    }
+
+    pub fn open_plaintext_for_owner(
+        &mut self,
+        master: &MasterKey,
+        document_id: &str,
+        now_ms: i64,
+    ) -> Result<SafeFolderOwnerPlaintext> {
+        let entry = self
+            .entries
+            .get(document_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("safe folder entry not found"))?;
+        let payload = open_entry(master, &entry)?;
+        self.push_receipt(SafeFolderAction::Previewed, &entry, None, None, now_ms);
+        Ok(SafeFolderOwnerPlaintext {
+            document_id: entry.document_id.clone(),
+            display_name: payload.display_name,
+            media_type: entry.media_type.clone(),
+            content_hash: entry.content_hash.clone(),
+            plaintext: payload.plaintext,
+        })
+    }
+
+    pub fn reveal_text_for_owner(
+        &mut self,
+        master: &MasterKey,
+        document_id: &str,
+        now_ms: i64,
+    ) -> Result<SafeFolderOwnerPlaintext> {
+        let entry = self
+            .entries
+            .get(document_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("safe folder entry not found"))?;
+        if !is_text_editable(&entry.media_type) {
+            bail!("safe folder document is not editable text");
+        }
+        let payload = open_entry(master, &entry)?;
+        self.push_receipt(SafeFolderAction::RevealedText, &entry, None, None, now_ms);
+        Ok(SafeFolderOwnerPlaintext {
+            document_id: entry.document_id.clone(),
+            display_name: payload.display_name,
+            media_type: entry.media_type.clone(),
+            content_hash: entry.content_hash.clone(),
+            plaintext: payload.plaintext,
+        })
+    }
+
+    pub fn save_text_revision(
+        &mut self,
+        master: &MasterKey,
+        document_id: &str,
+        next_text: String,
+        expected_content_hash: String,
+        now_ms: i64,
+    ) -> Result<SafeFolderEntry> {
+        let current = self
+            .entries
+            .get(document_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("safe folder entry not found"))?;
+        if !is_text_editable(&current.media_type) {
+            bail!("safe folder document is not editable text");
+        }
+        if current.content_hash != expected_content_hash {
+            bail!("safe folder document changed; reload before saving");
+        }
+        let payload = open_entry(master, &current)?;
+        let next = self.seal_revision(
+            master,
+            SafeFolderSealRevisionRequest {
+                document_id: current.document_id.clone(),
+                display_name: payload.display_name,
+                media_type: current.media_type.clone(),
+                plaintext: next_text.into_bytes(),
+                revision: current.revision + 1,
+                now_ms,
+            },
+        )?;
+        self.push_receipt(SafeFolderAction::SavedText, &next, None, None, now_ms);
+        self.entries.insert(next.document_id.clone(), next.clone());
+        Ok(next)
+    }
+
+    pub fn record_text_discard(
+        &mut self,
+        document_id: &str,
+        now_ms: i64,
+    ) -> Result<SafeFolderReceipt> {
+        let entry = self
+            .entries
+            .get(document_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("safe folder entry not found"))?;
+        Ok(self.push_receipt(SafeFolderAction::DiscardedText, &entry, None, None, now_ms))
+    }
+
     pub fn agent_visible_files(&self) -> impl Iterator<Item = &SafeFolderEntry> {
         std::iter::empty()
     }
@@ -360,6 +539,9 @@ impl SafeFolder {
                 .values()
                 .map(|entry| SafeFolderDebugEntry {
                     safe_id: entry.safe_id.clone(),
+                    document_id: entry.document_id.clone(),
+                    version_id: entry.version_id.clone(),
+                    revision: entry.revision,
                     manifest_path: entry.manifest_path.clone(),
                     media_type: entry.media_type.clone(),
                     byte_len: entry.byte_len,
@@ -378,6 +560,9 @@ impl SafeFolder {
                 .values()
                 .map(|entry| SafeFolderBackupEntry {
                     safe_id: entry.safe_id.clone(),
+                    document_id: entry.document_id.clone(),
+                    version_id: entry.version_id.clone(),
+                    revision: entry.revision,
                     manifest_path: entry.manifest_path.clone(),
                     media_type: entry.media_type.clone(),
                     byte_len: entry.byte_len,
@@ -395,10 +580,28 @@ impl SafeFolder {
         for entry in snapshot.entries {
             let sealed_bytes = hex::decode(&entry.sealed_hex)
                 .with_context(|| format!("corrupted safe folder object {}", entry.safe_id))?;
+            let document_id = if entry.document_id.is_empty() {
+                entry.safe_id.clone()
+            } else {
+                entry.document_id
+            };
+            let revision = if entry.revision == 0 {
+                1
+            } else {
+                entry.revision
+            };
+            let version_id = if entry.version_id.is_empty() {
+                version_id(&document_id, &entry.content_hash, revision)
+            } else {
+                entry.version_id
+            };
             entries.insert(
-                entry.safe_id.clone(),
+                document_id.clone(),
                 SafeFolderEntry {
                     safe_id: entry.safe_id,
+                    document_id,
+                    version_id,
+                    revision,
                     manifest_path: entry.manifest_path,
                     media_type: entry.media_type,
                     byte_len: entry.byte_len,
@@ -419,13 +622,33 @@ impl SafeFolder {
         master: &MasterKey,
         request: SafeFolderImportRequest,
     ) -> Result<SafeFolderEntry> {
+        let document_id = document_id(&request.display_name, request.now_ms);
+        self.seal_revision(
+            master,
+            SafeFolderSealRevisionRequest {
+                document_id,
+                display_name: request.display_name,
+                media_type: request.media_type,
+                plaintext: request.plaintext,
+                revision: 1,
+                now_ms: request.now_ms,
+            },
+        )
+    }
+
+    fn seal_revision(
+        &self,
+        master: &MasterKey,
+        request: SafeFolderSealRevisionRequest,
+    ) -> Result<SafeFolderEntry> {
         validate_display_name(&request.display_name)?;
         if request.plaintext.is_empty() {
             bail!("safe folder entry cannot be empty");
         }
         let content_hash = content_hash(master, &request.plaintext);
-        let safe_id = safe_id(&request.display_name, &content_hash, request.now_ms);
-        let manifest_path = format!("{SAFE_FOLDER_MANIFEST_PREFIX}{safe_id}.safe");
+        let safe_id = request.document_id.clone();
+        let version_id = version_id(&request.document_id, &content_hash, request.revision);
+        let manifest_path = format!("{SAFE_FOLDER_MANIFEST_PREFIX}{}.safe", request.document_id);
         let payload = SafeFolderSealedPayload {
             display_name: request.display_name.trim().to_string(),
             plaintext: request.plaintext.clone(),
@@ -439,6 +662,9 @@ impl SafeFolder {
         );
         Ok(SafeFolderEntry {
             safe_id,
+            document_id: request.document_id,
+            version_id,
+            revision: request.revision,
             manifest_path,
             media_type: normalize_media_type(&request.media_type),
             byte_len: request.plaintext.len() as u64,
@@ -563,10 +789,16 @@ fn redacted_path_hash(master: &MasterKey, path: &str) -> String {
         .to_string()
 }
 
-fn safe_id(display_name: &str, content_hash: &str, now_ms: i64) -> String {
-    let material = format!("{display_name}\0{content_hash}\0{now_ms}");
+fn document_id(display_name: &str, now_ms: i64) -> String {
+    let material = format!("{display_name}\0{now_ms}\0shellx-vault-safe-document-v1");
     let hash = blake3::hash(material.as_bytes()).to_hex().to_string();
-    format!("safe-{}", &hash[..32])
+    format!("safe-doc-{}", &hash[..32])
+}
+
+fn version_id(document_id: &str, content_hash: &str, revision: u64) -> String {
+    let material = format!("{document_id}\0{content_hash}\0{revision}");
+    let hash = blake3::hash(material.as_bytes()).to_hex().to_string();
+    format!("safe-ver-{}", &hash[..32])
 }
 
 fn entry_aad(safe_id: &str) -> String {
@@ -591,6 +823,36 @@ fn normalize_media_type(media_type: &str) -> String {
     } else {
         trimmed.to_ascii_lowercase()
     }
+}
+
+fn is_text_editable(media_type: &str) -> bool {
+    media_type.starts_with("text/")
+        || media_type == "application/json"
+        || media_type.ends_with("+json")
+}
+
+fn preview_mode_for_entry(entry: &SafeFolderEntry) -> SafeFolderPreviewMode {
+    if is_text_editable(&entry.media_type) {
+        SafeFolderPreviewMode::TextEditable
+    } else if entry.media_type == "application/pdf"
+        || entry.media_type.starts_with("image/")
+        || is_office_like(&entry.media_type, &entry.manifest_path)
+    {
+        SafeFolderPreviewMode::MetadataOnly
+    } else {
+        SafeFolderPreviewMode::Unsupported
+    }
+}
+
+fn is_office_like(media_type: &str, manifest_path: &str) -> bool {
+    matches!(
+        media_type,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    ) || [".docx", ".xlsx", ".pptx"]
+        .iter()
+        .any(|suffix| manifest_path.to_ascii_lowercase().ends_with(suffix))
 }
 
 fn preview_for_payload(

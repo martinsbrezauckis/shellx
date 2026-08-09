@@ -1,11 +1,11 @@
 use app_lib::provider_adapters::{
     apply_provider_adapter_run_health, build_provider_command, build_provider_command_for_cwd,
     build_provider_command_with_options, extract_provider_conversation_id,
-    normalize_provider_cwd_for_execution, parse_antigravity_text, parse_claude_stream_json,
-    parse_codex_jsonl, validate_provider_command_cwd, ProviderAdapterRunHealth,
-    ProviderAdapterState, ProviderAdapterSummary, ProviderCommandOptions,
-    ProviderExecutionTransport, ProviderId, ProviderPermissionMode, ProviderResumeMode,
-    ProviderShellxTooling,
+    normalize_provider_cwd_for_execution, parse_antigravity_stream_json, parse_claude_stream_json,
+    parse_codex_jsonl, run_provider_adapter, validate_provider_command_cwd,
+    ProviderAdapterRunHealth, ProviderAdapterRunRequest, ProviderAdapterState,
+    ProviderAdapterSummary, ProviderCommandOptions, ProviderExecutionTransport, ProviderId,
+    ProviderPermissionMode, ProviderResumeMode, ProviderShellxTooling,
 };
 
 #[test]
@@ -30,6 +30,33 @@ fn provider_execution_transport_uses_ssh_wire_name() {
         serde_json::to_string(&ProviderExecutionTransport::Ssh).unwrap(),
         "\"ssh\""
     );
+}
+
+#[tokio::test]
+#[ignore = "requires SHELLX_WINDOWS_SSH_HOST and a Windows-native codex fixture or installation"]
+async fn live_native_windows_ssh_codex_provider_session() {
+    let host = std::env::var("SHELLX_WINDOWS_SSH_HOST")
+        .expect("SHELLX_WINDOWS_SSH_HOST is required for this ignored live test");
+    let request: ProviderAdapterRunRequest = serde_json::from_value(serde_json::json!({
+        "providerId": "codex-cli",
+        "cwd": "/home/local-shellx-path",
+        "prompt": "Return the ShellX provider probe marker.",
+        "includeShellxTooling": false,
+        "permissionMode": "readOnly",
+        "transport": "ssh",
+        "sshHost": host,
+        "sshRemoteRuntime": "windows",
+        "timeoutMs": 20_000,
+    }))
+    .expect("deserialize live native Windows request");
+
+    let response = run_provider_adapter(request)
+        .await
+        .expect("native Windows SSH provider run");
+    assert_eq!(response.exit_code, Some(0), "{response:#?}");
+    assert!(response.error.is_none(), "{response:#?}");
+    assert!(response.parsed.final_marker_seen, "{response:#?}");
+    assert!(response.cwd.contains(":\\"), "{response:#?}");
 }
 
 #[test]
@@ -114,6 +141,8 @@ fn codex_command_injects_shellx_host_mcp_without_serializing_token() {
                 token: "SECRET_TOKEN_SHOULD_NOT_SERIALIZE".to_string(),
                 tab_id: "tab-7".to_string(),
                 claude_config_path: None,
+                antigravity_workspace_path: None,
+                antigravity_agent_name: None,
             }),
             ..ProviderCommandOptions::default()
         },
@@ -147,6 +176,8 @@ fn codex_shellx_host_mcp_url_preserves_encoded_tab_identity() {
                 token: "SECRET_TOKEN".to_string(),
                 tab_id: "tab A/#1".to_string(),
                 claude_config_path: None,
+                antigravity_workspace_path: None,
+                antigravity_agent_name: None,
             }),
             ..ProviderCommandOptions::default()
         },
@@ -170,6 +201,8 @@ fn claude_command_injects_shellx_host_mcp_config_path() {
                 token: "SECRET_TOKEN".to_string(),
                 tab_id: "tab-7".to_string(),
                 claude_config_path: Some("/tmp/shellx-claude-mcp.json".to_string()),
+                antigravity_workspace_path: None,
+                antigravity_agent_name: None,
             }),
             ..ProviderCommandOptions::default()
         },
@@ -344,6 +377,8 @@ fn claude_ssh_command_wraps_remote_cli_with_host_port_cwd_and_mcp_forward() {
                 token: "SECRET_TOKEN".to_string(),
                 tab_id: "tab-ssh".to_string(),
                 claude_config_path: Some("/Users/dev/.shellx/provider-mcp/claude.json".to_string()),
+                antigravity_workspace_path: None,
+                antigravity_agent_name: None,
             }),
             ..ProviderCommandOptions::default()
         },
@@ -487,7 +522,7 @@ fn antigravity_resume_command_uses_conversation_id() {
 }
 
 #[test]
-fn antigravity_command_keeps_print_prompt_last() {
+fn antigravity_command_keeps_prompt_bound_to_print_before_stream_format() {
     let spec = build_provider_command(
         ProviderId::AntigravityCli,
         "Implement the task",
@@ -502,10 +537,11 @@ fn antigravity_command_keeps_print_prompt_last() {
         .args
         .windows(2)
         .any(|pair| pair == ["--print", "Implement the task"]));
-    assert_eq!(
-        spec.args.last().map(String::as_str),
-        Some("Implement the task")
-    );
+    assert!(spec
+        .args
+        .windows(2)
+        .any(|pair| pair == ["--output-format", "stream-json"]));
+    assert_eq!(spec.args.last().map(String::as_str), Some("stream-json"));
 }
 
 #[test]
@@ -527,10 +563,10 @@ fn antigravity_cwd_command_adds_dir_before_print() {
     let print_pos = spec.args.iter().position(|arg| arg == "--print").unwrap();
     let add_dir_pos = spec.args.iter().position(|arg| arg == "--add-dir").unwrap();
     assert!(add_dir_pos < print_pos);
-    assert_eq!(
-        spec.args.last().map(String::as_str),
-        Some("Implement the task")
-    );
+    assert!(spec
+        .args
+        .windows(2)
+        .any(|pair| pair == ["--output-format", "stream-json"]));
 }
 
 #[test]
@@ -605,13 +641,17 @@ fn claude_stream_json_parser_normalizes_deltas_tools_and_marker() {
 }
 
 #[test]
-fn antigravity_parser_reports_plain_text_only() {
-    let parsed = parse_antigravity_text("Done\nSHELLX_PROVIDER_PROBE_DONE antigravity-cli\n");
+fn antigravity_parser_requires_and_reports_typed_stream_events() {
+    let stdout = concat!(
+        "{\"event\":\"step_update\",\"step_update\":{\"step_type\":\"agent_response\",\"text_delta\":\"Done\\n\"}}\n",
+        "{\"event\":\"result\",\"result\":{\"status\":\"SUCCESS\",\"response\":\"Done\\nSHELLX_PROVIDER_PROBE_DONE antigravity-cli\"}}\n",
+    );
+    let parsed = parse_antigravity_stream_json(stdout).expect("typed Antigravity stream");
 
     assert!(parsed.stream_text);
     assert!(parsed.final_marker_seen);
-    assert_eq!(parsed.valid_json_lines, 0);
-    assert_eq!(parsed.observed_event_types, vec!["plain-text"]);
+    assert_eq!(parsed.valid_json_lines, 2);
+    assert_eq!(parsed.observed_event_types, vec!["step_update", "result"]);
     assert_eq!(
         parsed.final_text.as_deref(),
         Some("Done\nSHELLX_PROVIDER_PROBE_DONE antigravity-cli")

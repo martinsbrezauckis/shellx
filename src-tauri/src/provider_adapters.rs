@@ -3,11 +3,12 @@
 //! This provides a debug API surface to discover, probe, and run those CLIs. It operates alongside the native Grok ACP session path (it does not replace it).
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::time::{Duration, Instant};
-use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::winproc::NoWindowExt as _;
@@ -16,7 +17,7 @@ const CODEX_FINAL_MARKER: &str = "SHELLX_PROVIDER_PROBE_DONE codex-cli";
 const CLAUDE_FINAL_MARKER: &str = "SHELLX_PROVIDER_PROBE_DONE claude-code";
 const ANTIGRAVITY_FINAL_MARKER: &str = "SHELLX_PROVIDER_PROBE_DONE antigravity-cli";
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
-const PROVIDER_REMOTE_SHELL_PRELUDE: &str = "export PATH=\"$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$HOME/.claude/bin:$HOME/.grok/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; if [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1; fi;";
+const PROVIDER_REMOTE_SHELL_PRELUDE: &str = crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
@@ -63,7 +64,7 @@ impl ProviderId {
         match self {
             ProviderId::CodexCli => "jsonl",
             ProviderId::ClaudeCode => "stream-json",
-            ProviderId::AntigravityCli => "plain-text",
+            ProviderId::AntigravityCli => "stream-json",
         }
     }
 }
@@ -84,7 +85,36 @@ pub struct ProviderCommandSpec {
     pub ssh_host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub ssh_port: Option<u16>,
+    #[serde(default)]
+    pub ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ssh_wsl_distro: Option<String>,
     pub notes: Vec<String>,
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub setup_stdin: ProviderSetupStdin,
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct ProviderSetupStdin(Vec<u8>);
+
+impl ProviderSetupStdin {
+    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ProviderSetupStdin {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProviderSetupStdin")
+            .field("byte_len", &self.0.len())
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -113,6 +143,14 @@ pub enum ProviderPermissionMode {
     #[serde(alias = "auto")]
     BypassPermissions,
     ReadOnly,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderCodexDriver {
+    #[default]
+    ExecJson,
+    AppServer,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,12 +196,15 @@ pub struct ProviderCommandOptions {
     pub persist_session: bool,
     pub resume: ProviderResumeMode,
     pub permission_mode: ProviderPermissionMode,
+    pub codex_driver: ProviderCodexDriver,
     pub execution: ProviderExecutionTransport,
     pub wsl_distro: Option<String>,
     pub ssh_host: Option<String>,
     pub ssh_port: Option<u16>,
     pub ssh_key_vault_ref: Option<String>,
     pub ssh_key_path: Option<String>,
+    pub ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    pub ssh_wsl_distro: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -175,6 +216,8 @@ pub struct ProviderShellxTooling {
     pub token: String,
     pub tab_id: String,
     pub claude_config_path: Option<String>,
+    pub antigravity_workspace_path: Option<String>,
+    pub antigravity_agent_name: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -185,6 +228,8 @@ pub struct ProviderExecutionTargetRef<'a> {
     pub ssh_port: Option<u16>,
     pub ssh_key_vault_ref: Option<&'a str>,
     pub ssh_key_path: Option<&'a str>,
+    pub ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    pub ssh_wsl_distro: Option<&'a str>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -204,12 +249,15 @@ impl Default for ProviderCommandOptions {
             persist_session: true,
             resume: ProviderResumeMode::Fresh,
             permission_mode: ProviderPermissionMode::default(),
+            codex_driver: ProviderCodexDriver::default(),
             execution: ProviderExecutionTransport::Local,
             wsl_distro: None,
             ssh_host: None,
             ssh_port: None,
             ssh_key_vault_ref: None,
             ssh_key_path: None,
+            ssh_remote_runtime: crate::acp::SshRemoteRuntime::Posix,
+            ssh_wsl_distro: None,
         }
     }
 }
@@ -311,6 +359,10 @@ pub struct ProviderAdapterRunRequest {
     pub ssh_port: Option<u16>,
     #[serde(rename = "sshKeyVaultRef", alias = "ssh_key_vault_ref", default)]
     pub ssh_key_vault_ref: Option<String>,
+    #[serde(rename = "sshRemoteRuntime", alias = "ssh_remote_runtime", default)]
+    pub ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    #[serde(rename = "sshWslDistro", alias = "ssh_wsl_distro", default)]
+    pub ssh_wsl_distro: Option<String>,
     /// Defaults true. When false, the debug API returns the run result without
     /// adding provider-adapter events to the ShellX debug event ring.
     #[serde(default)]
@@ -386,6 +438,16 @@ pub fn build_provider_command_with_options(
     if prompt.trim().is_empty() {
         return Err("prompt is empty".to_string());
     }
+    if options.codex_driver == ProviderCodexDriver::AppServer {
+        if provider_id != ProviderId::CodexCli {
+            return Err("appServer is only valid for Codex CLI".to_string());
+        }
+        if matches!(options.resume, ProviderResumeMode::Last) {
+            return Err(
+                "Codex app-server resume requires an explicit provider conversation id".to_string(),
+            );
+        }
+    }
 
     let mut notes = Vec::<String>::new();
     let mut env = Vec::<ProviderCommandEnvVar>::new();
@@ -414,47 +476,62 @@ pub fn build_provider_command_with_options(
                 &mut notes,
                 options.shellx_tooling.as_ref(),
             );
-            match &options.resume {
-                ProviderResumeMode::Fresh => {
-                    push_codex_root_permission(&mut args, &options.permission_mode);
-                    args.push("exec".to_string());
-                    args.push("--json".to_string());
-                    if !options.persist_session {
-                        args.push("--ephemeral".to_string());
+            if options.codex_driver == ProviderCodexDriver::AppServer {
+                push_codex_mcp_probe_args(
+                    &mut args,
+                    &mut notes,
+                    options.mcp_path.as_deref(),
+                    options.include_mcp_probe,
+                );
+                args.push("app-server".to_string());
+                notes.push(
+                    "Codex app-server uses bidirectional JSONL with native threads, turns, typed items, and explicit approval requests."
+                        .to_string(),
+                );
+                ("codex".to_string(), args)
+            } else {
+                match &options.resume {
+                    ProviderResumeMode::Fresh => {
+                        push_codex_root_permission(&mut args, &options.permission_mode);
+                        args.push("exec".to_string());
+                        args.push("--json".to_string());
+                        if !options.persist_session {
+                            args.push("--ephemeral".to_string());
+                        }
+                        args.push("--skip-git-repo-check".to_string());
+                        push_codex_mcp_probe_args(
+                            &mut args,
+                            &mut notes,
+                            options.mcp_path.as_deref(),
+                            options.include_mcp_probe,
+                        );
+                        args.push("--".to_string());
+                        args.push(prompt.to_string());
                     }
-                    args.push("--skip-git-repo-check".to_string());
-                    push_codex_mcp_probe_args(
-                        &mut args,
-                        &mut notes,
-                        options.mcp_path.as_deref(),
-                        options.include_mcp_probe,
-                    );
-                    args.push("--".to_string());
-                    args.push(prompt.to_string());
+                    ProviderResumeMode::Last => {
+                        push_codex_root_permission(&mut args, &options.permission_mode);
+                        args.push("exec".to_string());
+                        args.push("resume".to_string());
+                        args.push("--last".to_string());
+                        args.push("--json".to_string());
+                        args.push("--skip-git-repo-check".to_string());
+                        args.push("--".to_string());
+                        args.push(prompt.to_string());
+                    }
+                    ProviderResumeMode::ConversationId(conversation_id) => {
+                        let conversation_id = validate_provider_conversation_id(conversation_id)?;
+                        push_codex_root_permission(&mut args, &options.permission_mode);
+                        args.push("exec".to_string());
+                        args.push("resume".to_string());
+                        args.push("--json".to_string());
+                        args.push("--skip-git-repo-check".to_string());
+                        args.push("--".to_string());
+                        args.push(conversation_id.to_string());
+                        args.push(prompt.to_string());
+                    }
                 }
-                ProviderResumeMode::Last => {
-                    push_codex_root_permission(&mut args, &options.permission_mode);
-                    args.push("exec".to_string());
-                    args.push("resume".to_string());
-                    args.push("--last".to_string());
-                    args.push("--json".to_string());
-                    args.push("--skip-git-repo-check".to_string());
-                    args.push("--".to_string());
-                    args.push(prompt.to_string());
-                }
-                ProviderResumeMode::ConversationId(conversation_id) => {
-                    let conversation_id = validate_provider_conversation_id(conversation_id)?;
-                    push_codex_root_permission(&mut args, &options.permission_mode);
-                    args.push("exec".to_string());
-                    args.push("resume".to_string());
-                    args.push("--json".to_string());
-                    args.push("--skip-git-repo-check".to_string());
-                    args.push("--".to_string());
-                    args.push(conversation_id.to_string());
-                    args.push(prompt.to_string());
-                }
+                ("codex".to_string(), args)
             }
-            ("codex".to_string(), args)
         }
         ProviderId::ClaudeCode => {
             let mut args = vec![
@@ -510,6 +587,26 @@ pub fn build_provider_command_with_options(
                 args.push("--add-dir".to_string());
                 args.push(cwd.to_string());
             }
+            if let Some(tooling) = options.shellx_tooling.as_ref() {
+                if let (Some(workspace), Some(agent_name)) = (
+                    tooling.antigravity_workspace_path.as_deref(),
+                    tooling.antigravity_agent_name.as_deref(),
+                ) {
+                    args.push("--add-dir".to_string());
+                    args.push(workspace.to_string());
+                    args.push("--agent".to_string());
+                    args.push(agent_name.to_string());
+                    notes.push(
+                        "ShellX session rules are isolated in a private Antigravity additional workspace selected only for this run. Antigravity 1.1.8 through 1.1.10 advertises call_mcp_tool but fails to execute the discovered MCP tool, so ShellX host MCP remains disabled for this provider."
+                            .to_string(),
+                    );
+                } else {
+                    notes.push(
+                        "ShellX session activation was requested for Antigravity, but its isolated customization was not prepared."
+                            .to_string(),
+                    );
+                }
+            }
             match &options.resume {
                 ProviderResumeMode::Fresh => {}
                 ProviderResumeMode::Last => args.push("--continue".to_string()),
@@ -521,16 +618,12 @@ pub fn build_provider_command_with_options(
             }
             args.push("--print".to_string());
             args.push(prompt.to_string());
+            args.push("--output-format".to_string());
+            args.push("stream-json".to_string());
             notes.push(
-                "Antigravity --print returns plain text; tool calls are not visible on stdout."
+                "Antigravity 1.1.8+ emits typed init, step_update, and result NDJSON events."
                     .to_string(),
             );
-            if options.shellx_tooling.is_some() {
-                notes.push(
-                    "ShellX host MCP tooling is not injected for Antigravity because the current agy --print surface does not expose MCP configuration."
-                        .to_string(),
-                );
-            }
             if !options.persist_session {
                 notes.push(
                     "Antigravity print mode does not expose a no-persistence flag; ShellX records only provider-native conversation ids it can observe."
@@ -546,12 +639,21 @@ pub fn build_provider_command_with_options(
         program,
         args,
         env,
-        stream_kind: provider_id.stream_kind().to_string(),
+        stream_kind: if provider_id == ProviderId::CodexCli
+            && options.codex_driver == ProviderCodexDriver::AppServer
+        {
+            "app-server-jsonrpc".to_string()
+        } else {
+            provider_id.stream_kind().to_string()
+        },
         execution: ProviderExecutionTransport::Local,
         wsl_distro: None,
         ssh_host: None,
         ssh_port: None,
+        ssh_remote_runtime: crate::acp::SshRemoteRuntime::Posix,
+        ssh_wsl_distro: None,
         notes,
+        setup_stdin: ProviderSetupStdin::default(),
     };
     apply_provider_execution(
         &mut spec,
@@ -563,6 +665,8 @@ pub fn build_provider_command_with_options(
                 ssh_port: options.ssh_port,
                 ssh_key_vault_ref: options.ssh_key_vault_ref.as_deref(),
                 ssh_key_path: options.ssh_key_path.as_deref(),
+                ssh_remote_runtime: options.ssh_remote_runtime,
+                ssh_wsl_distro: options.ssh_wsl_distro.as_deref(),
             },
             cwd: command_cwd.as_deref(),
             shellx_tooling: options.shellx_tooling.as_ref(),
@@ -592,6 +696,8 @@ pub fn normalize_provider_ssh_cwd_for_target(
     ssh_host: Option<&str>,
     ssh_port: Option<u16>,
     ssh_key_path: Option<&str>,
+    ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<&str>,
     cwd: &str,
 ) -> Result<String, String> {
     let trimmed = cwd.trim();
@@ -602,11 +708,47 @@ pub fn normalize_provider_ssh_cwd_for_target(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "sshHost is required when transport is ssh".to_string())?;
+    crate::acp::ensure_ssh_remote_runtime(
+        host,
+        ssh_port,
+        ssh_key_path,
+        ssh_remote_runtime,
+        ssh_wsl_distro,
+    )?;
+    if ssh_remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        let remote_home = ssh_remote_home(
+            host,
+            ssh_port,
+            ssh_key_path,
+            ssh_remote_runtime,
+            ssh_wsl_distro,
+        )?;
+        return Ok(normalize_ssh_windows_cwd_with_remote_home(
+            trimmed,
+            &remote_home,
+        ));
+    }
     if !ssh_provider_cwd_needs_home_probe(host, trimmed) {
         return Ok(trimmed.to_string());
     }
-    let remote_home = ssh_remote_home(host, ssh_port, ssh_key_path)?;
+    let remote_home = ssh_remote_home(
+        host,
+        ssh_port,
+        ssh_key_path,
+        ssh_remote_runtime,
+        ssh_wsl_distro,
+    )?;
     Ok(normalize_ssh_cwd_with_remote_home(trimmed, &remote_home))
+}
+
+fn normalize_ssh_windows_cwd_with_remote_home(cwd: &str, remote_home: &str) -> String {
+    if cwd == "~" {
+        return remote_home.to_string();
+    }
+    if looks_like_windows_path(cwd) {
+        return cwd.replace('/', "\\");
+    }
+    remote_home.to_string()
 }
 
 fn ssh_provider_cwd_needs_home_probe(host: &str, cwd: &str) -> bool {
@@ -779,6 +921,27 @@ fn apply_provider_execution(
             Ok(())
         }
         ProviderExecutionTransport::Ssh => {
+            let configured_wsl_distro = context
+                .target
+                .ssh_wsl_distro
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            match context.target.ssh_remote_runtime {
+                crate::acp::SshRemoteRuntime::WindowsWsl if configured_wsl_distro.is_none() => {
+                    return Err(
+                        "sshWslDistro is required when sshRemoteRuntime is windowsWsl".to_string(),
+                    );
+                }
+                crate::acp::SshRemoteRuntime::Posix | crate::acp::SshRemoteRuntime::Windows
+                    if configured_wsl_distro.is_some() =>
+                {
+                    return Err(
+                        "sshWslDistro is only valid when sshRemoteRuntime is windowsWsl"
+                            .to_string(),
+                    );
+                }
+                _ => {}
+            }
             let host = context
                 .target
                 .ssh_host
@@ -807,51 +970,122 @@ fn apply_provider_execution(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| "cwd is required when transport is ssh".to_string())?;
-            let env_source = if spec.env.is_empty() {
-                String::new()
-            } else {
-                let env_script_path = write_ssh_provider_env_file(
-                    host,
-                    context.target.ssh_port,
-                    context.target.ssh_key_path,
-                    &spec.env,
-                )?;
-                spec.notes.push(format!(
-                    "Provider environment variables were staged in a private remote file under {env_script_path} and removed before provider exec."
-                ));
-                spec.env.clear();
-                let quoted_path = crate::acp::shell_quote_for_remote(&env_script_path);
-                format!("if [ -f {quoted_path} ]; then . {quoted_path}; rm -f {quoted_path}; fi; ")
-            };
             let native_program = std::mem::take(&mut spec.program);
             let native_args = std::mem::take(&mut spec.args);
-            let mut remote_parts = Vec::with_capacity(native_args.len() + 1);
-            remote_parts.push(crate::acp::shell_quote_for_remote(&native_program));
-            remote_parts.extend(
-                native_args
-                    .iter()
-                    .map(|arg| crate::acp::shell_quote_for_remote(arg)),
-            );
-            let remote_command = format!(
-                "{} {}cd {} && exec {}",
-                PROVIDER_REMOTE_SHELL_PRELUDE,
-                env_source,
-                crate::acp::shell_quote_for_remote(cwd),
-                remote_parts.join(" "),
-            );
+            let native_windows =
+                context.target.ssh_remote_runtime == crate::acp::SshRemoteRuntime::Windows;
+            let remote_command = if native_windows {
+                if spec.stream_kind == "app-server-jsonrpc" {
+                    let env_script_path = if spec.env.is_empty() {
+                        None
+                    } else {
+                        let path = write_ssh_provider_env_file(
+                            host,
+                            context.target.ssh_port,
+                            context.target.ssh_key_path,
+                            context.target.ssh_remote_runtime,
+                            context.target.ssh_wsl_distro,
+                            &spec.env,
+                        )?;
+                        spec.notes.push(format!(
+                            "Provider environment variables were staged in a private remote file under {path}, loaded, and removed before Codex app-server started."
+                        ));
+                        Some(path)
+                    };
+                    spec.env.clear();
+                    spec.notes.push(
+                        "Native Windows Codex app-server bootstrap is encoded entirely in the SSH command so stdin remains dedicated to bidirectional JSONL; the prompt is sent only in turn/start."
+                            .to_string(),
+                    );
+                    crate::acp::wrap_ssh_windows_command(
+                        &crate::acp::windows_native_process_script_with_env_file(
+                            Some(cwd),
+                            &native_program,
+                            &native_args,
+                            env_script_path.as_deref(),
+                        ),
+                    )
+                } else {
+                    spec.setup_stdin = windows_provider_setup_stdin(
+                        cwd,
+                        &native_program,
+                        &native_args,
+                        &spec.env,
+                    )?;
+                    spec.env.clear();
+                    spec.notes.push(
+                        "Native Windows provider setup is streamed through SSH stdin; the bootstrap, prompt, and environment values are not placed in the remote command line."
+                            .to_string(),
+                    );
+                    crate::acp::wrap_ssh_windows_command(
+                        &crate::acp::windows_native_ssh_dispatch_command(),
+                    )
+                }
+            } else {
+                let env_source = if spec.env.is_empty() {
+                    String::new()
+                } else {
+                    let env_script_path = write_ssh_provider_env_file(
+                        host,
+                        context.target.ssh_port,
+                        context.target.ssh_key_path,
+                        context.target.ssh_remote_runtime,
+                        context.target.ssh_wsl_distro,
+                        &spec.env,
+                    )?;
+                    spec.notes.push(format!(
+                        "Provider environment variables were staged in a private remote file under {env_script_path} and removed before provider exec."
+                    ));
+                    spec.env.clear();
+                    let quoted_path = crate::acp::shell_quote_for_remote(&env_script_path);
+                    format!(
+                        "if [ -f {quoted_path} ]; then . {quoted_path}; rm -f {quoted_path}; fi; "
+                    )
+                };
+                let mut remote_parts = Vec::with_capacity(native_args.len() + 1);
+                remote_parts.push(crate::acp::shell_quote_for_remote(&native_program));
+                remote_parts.extend(
+                    native_args
+                        .iter()
+                        .map(|arg| crate::acp::shell_quote_for_remote(arg)),
+                );
+                let command = format!(
+                    "{} {}cd {} && exec {}",
+                    PROVIDER_REMOTE_SHELL_PRELUDE,
+                    env_source,
+                    crate::acp::shell_quote_for_remote(cwd),
+                    remote_parts.join(" "),
+                );
+                crate::acp::wrap_ssh_posix_command(
+                    context.target.ssh_remote_runtime,
+                    context.target.ssh_wsl_distro,
+                    &command,
+                )?
+            };
+            let close_stdin = !native_windows && spec.stream_kind != "app-server-jsonrpc";
             let mut wrapped = ssh_base_args(
                 host,
                 context.target.ssh_port,
-                true,
+                close_stdin,
                 context.target.ssh_key_path,
             );
-            if let Some(tooling) = context.shellx_tooling {
-                wrapped.push("-R".to_string());
-                wrapped.push(format!("{}:127.0.0.1:{}", tooling.port, tooling.host_port));
-                spec.notes.push(format!(
-                    "Provider runs through SSH host {host}; ShellX reverse-forwards host MCP HTTP port {} to remote port {} for remote Claude/Codex tooling.",
-                    tooling.host_port, tooling.port
-                ));
+            if matches!(
+                spec.provider_id,
+                ProviderId::CodexCli | ProviderId::ClaudeCode
+            ) {
+                if let Some(tooling) = context.shellx_tooling {
+                    wrapped.extend(
+                        crate::acp::SSH_FORWARD_REQUIRED_ARGS
+                            .iter()
+                            .map(|arg| (*arg).to_string()),
+                    );
+                    wrapped.push("-R".to_string());
+                    wrapped.push(format!("{}:127.0.0.1:{}", tooling.port, tooling.host_port));
+                    spec.notes.push(format!(
+                        "Provider runs through SSH host {host}; ShellX reverse-forwards host MCP HTTP port {} to remote port {} for provider tooling.",
+                        tooling.host_port, tooling.port
+                    ));
+                }
             }
             wrapped.push("--".to_string());
             wrapped.push(host.to_string());
@@ -861,6 +1095,8 @@ fn apply_provider_execution(
             spec.execution = ProviderExecutionTransport::Ssh;
             spec.ssh_host = Some(host.to_string());
             spec.ssh_port = context.target.ssh_port;
+            spec.ssh_remote_runtime = context.target.ssh_remote_runtime;
+            spec.ssh_wsl_distro = context.target.ssh_wsl_distro.map(str::to_string);
             Ok(())
         }
     }
@@ -988,12 +1224,20 @@ fn write_claude_shellx_mcp_config(
                     .to_string(),
             );
         }
-        let home = ssh_remote_home(host, target.ssh_port, target.ssh_key_path)?;
-        let provider_path = format!("{home}/.shellx/provider-mcp/{file_name}");
+        let home = ssh_remote_home(
+            host,
+            target.ssh_port,
+            target.ssh_key_path,
+            target.ssh_remote_runtime,
+            target.ssh_wsl_distro,
+        )?;
+        let provider_path = ssh_remote_provider_path(&home, &file_name, target.ssh_remote_runtime);
         write_ssh_remote_file(
             host,
             target.ssh_port,
             target.ssh_key_path,
+            target.ssh_remote_runtime,
+            target.ssh_wsl_distro,
             &provider_path,
             rendered.as_bytes(),
         )?;
@@ -1012,6 +1256,168 @@ fn write_claude_shellx_mcp_config(
         let _ = std::fs::set_permissions(&host_path, std::fs::Permissions::from_mode(0o600));
     }
     Ok(provider_path)
+}
+
+fn write_antigravity_shellx_agent(
+    target: ProviderExecutionTargetRef<'_>,
+    cwd: &str,
+    tooling: &ProviderShellxTooling,
+) -> Result<(String, String), String> {
+    let tab_id = provider_tooling_tab_value(&tooling.tab_id);
+    let agent_name = antigravity_agent_name(&tab_id);
+    let workspace_name = format!("{agent_name}-workspace");
+    let agent_rendered = format!(
+        "---\nname: {agent_name}\ndescription: ShellX session-scoped activation.\nmainAgent: true\nsubagent: false\n---\n\n# ShellX session\n\n{}\n\nAntigravity 1.1.8 through 1.1.10 advertises `call_mcp_tool` but fails to execute the discovered MCP tool. Do not search for, invoke, or claim ShellX host tools in this provider session; return control to ShellX for host-only operations.\n",
+        crate::skill_install::SHELLX_SESSION_RULES
+    );
+
+    if matches!(target.execution, ProviderExecutionTransport::Ssh) {
+        let host = target
+            .ssh_host
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "sshHost is required for SSH Antigravity ShellX tooling".to_string())?;
+        crate::acp::validate_ssh_destination_arg(host)?;
+        let key_ref_requested = target
+            .ssh_key_vault_ref
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        let key_path_missing = target
+            .ssh_key_path
+            .map(str::trim)
+            .map_or(true, |value| value.is_empty());
+        if key_ref_requested && key_path_missing {
+            return Err(
+                "SSH Antigravity ShellX tooling received sshKeyVaultRef but no resolved key path."
+                    .to_string(),
+            );
+        }
+        let home = ssh_remote_home(
+            host,
+            target.ssh_port,
+            target.ssh_key_path,
+            target.ssh_remote_runtime,
+            target.ssh_wsl_distro,
+        )?;
+        let workspace =
+            antigravity_ssh_workspace_path(&home, &workspace_name, target.ssh_remote_runtime);
+        let separator = if target.ssh_remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+            "\\"
+        } else {
+            "/"
+        };
+        let customization_dir = format!("{workspace}{separator}.agents");
+        let agent_path = format!("{customization_dir}{separator}agents{separator}{agent_name}.md");
+        write_ssh_remote_file(
+            host,
+            target.ssh_port,
+            target.ssh_key_path,
+            target.ssh_remote_runtime,
+            target.ssh_wsl_distro,
+            &agent_path,
+            agent_rendered.as_bytes(),
+        )?;
+        return Ok((workspace, agent_name));
+    }
+
+    let (host_workspace, provider_workspace) = antigravity_local_workspace_paths(
+        target.execution,
+        target.wsl_distro,
+        cwd,
+        &workspace_name,
+    )?;
+    let host_customization_dir = host_workspace.join(".agents");
+    let host_agent_dir = host_customization_dir.join("agents");
+    std::fs::create_dir_all(&host_agent_dir)
+        .map_err(|e| format!("mkdir {}: {e}", host_agent_dir.display()))?;
+    write_private_provider_file(
+        &host_agent_dir.join(format!("{agent_name}.md")),
+        agent_rendered.as_bytes(),
+    )?;
+    Ok((provider_workspace, agent_name))
+}
+
+fn antigravity_agent_name(tab_id: &str) -> String {
+    let mut slug = String::with_capacity(48);
+    for ch in tab_id.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' {
+            slug.push(ch.to_ascii_lowercase());
+        } else {
+            slug.push('-');
+        }
+        if slug.len() >= 48 {
+            break;
+        }
+    }
+    let slug = slug.trim_matches('-');
+    if slug.is_empty() {
+        "shellx-session-default".to_string()
+    } else {
+        format!("shellx-session-{slug}")
+    }
+}
+
+fn antigravity_local_workspace_paths(
+    execution: &ProviderExecutionTransport,
+    wsl_distro: Option<&str>,
+    cwd: &str,
+    workspace_name: &str,
+) -> Result<(PathBuf, String), String> {
+    match execution {
+        ProviderExecutionTransport::Local => {
+            let workspace = provider_shellx_home()?
+                .join(".shellx")
+                .join("provider-mcp")
+                .join(workspace_name);
+            Ok((workspace.clone(), workspace.to_string_lossy().to_string()))
+        }
+        ProviderExecutionTransport::Wsl => {
+            let distro = wsl_distro
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "wslDistro is required for WSL ShellX tooling".to_string())?;
+            let home = wsl_home_from_cwd(cwd).or_else(|| probe_wsl_home(distro)).ok_or_else(|| {
+                "WSL ShellX tooling for Antigravity could not resolve the WSL user home for private customization placement".to_string()
+            })?;
+            let provider_workspace = format!("{home}/.shellx/provider-mcp/{workspace_name}");
+            let host_workspace = crate::skill_install::wsl_path_to_unc(distro, &provider_workspace)
+                .ok_or_else(|| {
+                    format!("cannot translate WSL path for distro {distro}: {provider_workspace}")
+                })?;
+            Ok((host_workspace, provider_workspace))
+        }
+        ProviderExecutionTransport::Ssh => {
+            Err("SSH Antigravity tooling paths are written directly on the remote host".to_string())
+        }
+    }
+}
+
+fn antigravity_ssh_workspace_path(
+    home: &str,
+    workspace_name: &str,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+) -> String {
+    if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        format!(
+            "{}\\.shellx\\provider-mcp\\{workspace_name}",
+            home.trim_end_matches(['/', '\\'])
+        )
+    } else {
+        format!(
+            "{}/.shellx/provider-mcp/{workspace_name}",
+            home.trim_end_matches('/')
+        )
+    }
+}
+
+fn write_private_provider_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    std::fs::write(path, bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 fn provider_tooling_config_path(
@@ -1061,6 +1467,11 @@ fn ssh_base_args(
         "ConnectTimeout=8".to_string(),
         "-T".to_string(),
     ];
+    args.extend(
+        crate::acp::SSH_SESSION_KEEPALIVE_ARGS
+            .iter()
+            .map(|arg| (*arg).to_string()),
+    );
     if close_stdin {
         args.push("-n".to_string());
     }
@@ -1082,11 +1493,22 @@ fn ssh_remote_home(
     host: &str,
     port: Option<u16>,
     key_path: Option<&str>,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<&str>,
 ) -> Result<String, String> {
     let mut args = ssh_base_args(host, port, false, key_path);
     args.push("--".to_string());
     args.push(host.to_string());
-    args.push("printf '%s\\n' \"$HOME\"".to_string());
+    let home_command = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        crate::acp::wrap_ssh_windows_command("[Console]::Out.WriteLine($env:USERPROFILE)")
+    } else {
+        crate::acp::wrap_ssh_posix_command(
+            remote_runtime,
+            ssh_wsl_distro,
+            "printf '%s\\n' \"$HOME\"",
+        )?
+    };
+    args.push(home_command);
     let mut cmd = StdCommand::new("ssh");
     let output = cmd
         .args(&args)
@@ -1106,31 +1528,66 @@ fn ssh_remote_home(
         .find(|line| !line.is_empty())
         .ok_or_else(|| "ssh remote HOME probe returned no path".to_string())?
         .to_string();
-    if !home.starts_with('/') {
+    let absolute = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        looks_like_windows_path(&home)
+    } else {
+        home.starts_with('/')
+    };
+    if !absolute {
         return Err(format!("ssh remote HOME is not absolute: {home}"));
     }
     Ok(home)
+}
+
+fn ssh_remote_provider_path(
+    home: &str,
+    file_name: &str,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+) -> String {
+    if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        format!(
+            "{}\\.shellx\\provider-mcp\\{file_name}",
+            home.trim_end_matches(['/', '\\'])
+        )
+    } else {
+        format!(
+            "{}/.shellx/provider-mcp/{file_name}",
+            home.trim_end_matches('/')
+        )
+    }
 }
 
 fn write_ssh_remote_file(
     host: &str,
     port: Option<u16>,
     key_path: Option<&str>,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<&str>,
     remote_path: &str,
     bytes: &[u8],
 ) -> Result<(), String> {
-    let (remote_dir, _) = remote_path
-        .rsplit_once('/')
-        .ok_or_else(|| format!("remote path has no parent directory: {remote_path}"))?;
-    let script = format!(
-        "umask 077; mkdir -p {dir} && cat > {path}",
-        dir = crate::acp::shell_quote_for_remote(remote_dir),
-        path = crate::acp::shell_quote_for_remote(remote_path),
-    );
+    let remote_command = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        let path = crate::acp::powershell_single_quote(remote_path);
+        let script = format!(
+            "{prelude}$path={path};$dir=Split-Path -Parent $path;if([string]::IsNullOrWhiteSpace($dir)){{throw 'remote path has no parent directory'}};New-Item -ItemType Directory -Force -Path $dir|Out-Null;$stdinStream=[Console]::OpenStandardInput();$output=[IO.File]::Open($path,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None);try{{$stdinStream.CopyTo($output)}}finally{{$output.Dispose()}};$identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name;& icacls.exe $path '/inheritance:r' '/grant:r' \"${{identity}}:(F)\"|Out-Null;if($LASTEXITCODE -ne 0){{throw 'failed to apply private ACL to ShellX provider file'}}",
+            prelude = crate::acp::windows_remote_shell_prelude(),
+        );
+        crate::acp::wrap_ssh_windows_command(&script)
+    } else {
+        let (remote_dir, _) = remote_path
+            .rsplit_once('/')
+            .ok_or_else(|| format!("remote path has no parent directory: {remote_path}"))?;
+        let script = format!(
+            "umask 077; mkdir -p {dir} && cat > {path}",
+            dir = crate::acp::shell_quote_for_remote(remote_dir),
+            path = crate::acp::shell_quote_for_remote(remote_path),
+        );
+        crate::acp::wrap_ssh_posix_command(remote_runtime, ssh_wsl_distro, &script)?
+    };
     let mut args = ssh_base_args(host, port, false, key_path);
     args.push("--".to_string());
     args.push(host.to_string());
-    args.push(script);
+    args.push(remote_command);
     let mut cmd = StdCommand::new("ssh");
     let mut child = cmd
         .args(&args)
@@ -1162,27 +1619,49 @@ fn write_ssh_provider_env_file(
     host: &str,
     port: Option<u16>,
     key_path: Option<&str>,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<&str>,
     env: &[ProviderCommandEnvVar],
 ) -> Result<String, String> {
-    let home = ssh_remote_home(host, port, key_path)?;
+    let home = ssh_remote_home(host, port, key_path, remote_runtime, ssh_wsl_distro)?;
     let unique = format!(
-        "provider-env-{}-{}.sh",
+        "provider-env-{}-{}.{}",
         std::process::id(),
-        now_millis_for_path()
+        now_millis_for_path(),
+        if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+            "ps1"
+        } else {
+            "sh"
+        }
     );
-    let remote_path = format!("{home}/.shellx/provider-mcp/{unique}");
+    let remote_path = ssh_remote_provider_path(&home, &unique, remote_runtime);
     let mut rendered = String::from("# shellx provider session env\n");
     for item in env {
         if !is_safe_provider_env_name(&item.name) {
             return Err(format!("unsafe provider env var name: {}", item.name));
         }
-        rendered.push_str("export ");
-        rendered.push_str(&item.name);
-        rendered.push('=');
-        rendered.push_str(&crate::acp::shell_quote_for_remote(&item.value));
+        if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+            rendered.push_str("$env:");
+            rendered.push_str(&item.name);
+            rendered.push('=');
+            rendered.push_str(&crate::acp::powershell_single_quote(&item.value));
+        } else {
+            rendered.push_str("export ");
+            rendered.push_str(&item.name);
+            rendered.push('=');
+            rendered.push_str(&crate::acp::shell_quote_for_remote(&item.value));
+        }
         rendered.push('\n');
     }
-    write_ssh_remote_file(host, port, key_path, &remote_path, rendered.as_bytes())?;
+    write_ssh_remote_file(
+        host,
+        port,
+        key_path,
+        remote_runtime,
+        ssh_wsl_distro,
+        &remote_path,
+        rendered.as_bytes(),
+    )?;
     Ok(remote_path)
 }
 
@@ -1277,6 +1756,11 @@ fn push_codex_shellx_tooling_args(
         "mcp_servers.shellx-host-http.bearer_token_env_var=\"{}\"",
         crate::mcp_http::MCP_TOKEN_ENV_VAR
     ));
+    args.push("-c".to_string());
+    args.push(format!(
+        "developer_instructions=\"{}\"",
+        toml_escape_path(crate::skill_install::SHELLX_SESSION_RULES)
+    ));
     env.push(ProviderCommandEnvVar {
         name: crate::mcp_http::MCP_TOKEN_ENV_VAR.to_string(),
         value: tooling.token.clone(),
@@ -1302,6 +1786,8 @@ fn push_claude_shellx_tooling_args(
     {
         args.push("--mcp-config".to_string());
         args.push(config_path.to_string());
+        args.push("--append-system-prompt".to_string());
+        args.push(crate::skill_install::SHELLX_SESSION_RULES.to_string());
         notes.push(
             "ShellX host MCP tooling is injected as Claude HTTP MCP server shellx-host-http."
                 .to_string(),
@@ -1448,27 +1934,91 @@ pub fn parse_claude_stream_json(stdout: &str) -> Result<ParsedProviderEvents, St
     Ok(ev)
 }
 
-pub fn parse_antigravity_text(stdout: &str) -> ParsedProviderEvents {
-    let total_lines = stdout.lines().filter(|l| !l.trim().is_empty()).count();
-    let trimmed = stdout.trim();
-    let has_text = !trimmed.is_empty();
-    ParsedProviderEvents {
-        total_lines,
-        stream_text: has_text,
-        final_marker_seen: stdout.contains(ANTIGRAVITY_FINAL_MARKER),
-        observed_event_types: if has_text {
-            vec!["plain-text".to_string()]
-        } else {
-            Vec::new()
-        },
-        final_text: has_text.then(|| trimmed.to_string()),
-        ..Default::default()
+pub fn parse_antigravity_stream_json(stdout: &str) -> Result<ParsedProviderEvents, String> {
+    let mut parsed = ParsedProviderEvents::default();
+    let mut accumulated_text = String::new();
+
+    for raw_line in stdout.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        parsed.total_lines += 1;
+        let value: serde_json::Value = match serde_json::from_str(line) {
+            Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
+            _ => continue,
+        };
+        parsed.valid_json_lines += 1;
+        let Some(event_type) = value.get("event").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        push_distinct(&mut parsed.observed_event_types, event_type);
+        match event_type {
+            "step_update" => {
+                let update = value.get("step_update").unwrap_or(&value);
+                if let Some(text) = update.get("text_delta").and_then(|value| value.as_str()) {
+                    parsed.stream_text = true;
+                    parsed.partial_text_seen = true;
+                    accumulated_text.push_str(text);
+                }
+                if let Some(tool) = update.get("tool_info") {
+                    parsed.stream_tool_calls = true;
+                    classify_antigravity_tool_name(
+                        &mut parsed,
+                        tool.get("name")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or(""),
+                    );
+                }
+            }
+            "result" => {
+                if let Some(result) = value.get("result") {
+                    if let Some(text) = result.get("response").and_then(|value| value.as_str()) {
+                        parsed.final_text = Some(text.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if parsed.valid_json_lines == 0 && !stdout.trim().is_empty() {
+        return Err("Antigravity stdout contained no stream-json objects".to_string());
+    }
+    if parsed.final_text.is_none() && !accumulated_text.is_empty() {
+        parsed.final_text = Some(accumulated_text.clone());
+    }
+    parsed.final_marker_seen = accumulated_text.contains(ANTIGRAVITY_FINAL_MARKER)
+        || parsed
+            .final_text
+            .as_deref()
+            .is_some_and(|text| text.contains(ANTIGRAVITY_FINAL_MARKER));
+    Ok(parsed)
+}
+
+fn classify_antigravity_tool_name(parsed: &mut ParsedProviderEvents, name: &str) {
+    match name {
+        "run_command" | "send_command_input" | "command_status" => parsed.shell_command_seen = true,
+        "write_to_file"
+        | "replace_file_content"
+        | "multi_replace_file_content"
+        | "notebook_edit" => parsed.file_change_seen = true,
+        "call_mcp_tool" => parsed.mcp_tool_call_seen = true,
+        _ => {}
     }
 }
 
 pub async fn provider_adapter_state() -> ProviderAdapterState {
-    provider_adapter_state_for_execution(ProviderExecutionTransport::Local, None, None, None, None)
-        .await
+    provider_adapter_state_for_execution(
+        ProviderExecutionTransport::Local,
+        None,
+        None,
+        None,
+        None,
+        crate::acp::SshRemoteRuntime::Posix,
+        None,
+    )
+    .await
 }
 
 pub async fn provider_adapter_state_for_execution(
@@ -1477,34 +2027,29 @@ pub async fn provider_adapter_state_for_execution(
     ssh_host: Option<String>,
     ssh_port: Option<u16>,
     ssh_key_path: Option<&str>,
+    ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<String>,
 ) -> ProviderAdapterState {
+    let probe = ProviderProbeContext {
+        execution: &execution,
+        wsl_distro: wsl_distro.as_deref(),
+        ssh_host: ssh_host.as_deref(),
+        ssh_port,
+        ssh_key_path,
+        ssh_remote_runtime,
+        ssh_wsl_distro: ssh_wsl_distro.as_deref(),
+    };
     let mut providers = Vec::new();
     for provider_id in ProviderId::all() {
-        let binary = resolve_provider_binary(
-            provider_id,
-            &execution,
-            wsl_distro.as_deref(),
-            ssh_host.as_deref(),
-            ssh_port,
-            ssh_key_path,
-        )
-        .await;
+        let binary = resolve_provider_binary(provider_id, &probe).await;
         let installed = binary.is_some();
         let version = if let Some(bin) = binary.as_deref() {
-            detect_provider_version(
-                bin,
-                &execution,
-                wsl_distro.as_deref(),
-                ssh_host.as_deref(),
-                ssh_port,
-                ssh_key_path,
-            )
-            .await
+            detect_provider_version(bin, &probe).await
         } else {
             None
         };
         let mut notes = provider_notes(provider_id);
-        match execution {
+        match &execution {
             ProviderExecutionTransport::Local => {}
             ProviderExecutionTransport::Wsl => {
                 if let Some(distro) = wsl_distro.as_deref() {
@@ -1515,9 +2060,15 @@ pub async fn provider_adapter_state_for_execution(
             }
             ProviderExecutionTransport::Ssh => {
                 if let Some(host) = ssh_host.as_deref() {
-                    notes.push(format!(
-                        "Adapter availability was probed on SSH host {host} with batch-mode ssh plus ShellX's user-bin/NVM prelude."
-                    ));
+                    if ssh_remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+                        notes.push(format!(
+                            "Adapter availability was probed on native Windows SSH host {host} with PowerShell Get-Command and the Windows user-bin PATH prelude."
+                        ));
+                    } else {
+                        notes.push(format!(
+                            "Adapter availability was probed on SSH host {host} with batch-mode ssh plus ShellX's user-bin/NVM prelude."
+                        ));
+                    }
                 }
             }
         }
@@ -1567,10 +2118,6 @@ pub fn prepare_provider_shellx_tooling(
     cwd: &str,
     tab_id: &str,
 ) -> Result<Option<ProviderShellxTooling>, String> {
-    if provider_id == ProviderId::AntigravityCli {
-        return Ok(None);
-    }
-
     let host_port = crate::mcp_http::effective_mcp_port();
     let tab_id = provider_tooling_tab_value(tab_id);
     let token = crate::mcp_http::tab_bound_mcp_token(&tab_id);
@@ -1585,11 +2132,18 @@ pub fn prepare_provider_shellx_tooling(
         token,
         tab_id,
         claude_config_path: None,
+        antigravity_workspace_path: None,
+        antigravity_agent_name: None,
     };
 
     if provider_id == ProviderId::ClaudeCode {
         let config_path = write_claude_shellx_mcp_config(target, cwd, &tooling)?;
         tooling.claude_config_path = Some(config_path);
+    }
+    if provider_id == ProviderId::AntigravityCli {
+        let (workspace_path, agent_name) = write_antigravity_shellx_agent(target, cwd, &tooling)?;
+        tooling.antigravity_workspace_path = Some(workspace_path);
+        tooling.antigravity_agent_name = Some(agent_name);
     }
 
     Ok(Some(tooling))
@@ -1615,6 +2169,18 @@ pub async fn run_provider_adapter(
         &request.cwd,
     )?;
     let ssh_key_path = resolve_provider_ssh_key_path(request.ssh_key_vault_ref.as_deref()).await?;
+    let provider_cwd = if execution == ProviderExecutionTransport::Ssh {
+        normalize_provider_ssh_cwd_for_target(
+            request.ssh_host.as_deref(),
+            request.ssh_port,
+            ssh_key_path.as_deref(),
+            request.ssh_remote_runtime,
+            request.ssh_wsl_distro.as_deref(),
+            &provider_cwd,
+        )?
+    } else {
+        provider_cwd
+    };
     let shellx_tool_exposure = ProviderShellxToolExposure::from_request(
         request.shellx_tool_exposure,
         request.include_shellx_tooling,
@@ -1629,6 +2195,8 @@ pub async fn run_provider_adapter(
                 ssh_port: request.ssh_port,
                 ssh_key_vault_ref: request.ssh_key_vault_ref.as_deref(),
                 ssh_key_path: ssh_key_path.as_deref(),
+                ssh_remote_runtime: request.ssh_remote_runtime,
+                ssh_wsl_distro: request.ssh_wsl_distro.as_deref(),
             },
             &provider_cwd,
             "provider-adapter",
@@ -1647,24 +2215,28 @@ pub async fn run_provider_adapter(
             persist_session: request.persist_session.unwrap_or(true) || is_resume,
             resume,
             permission_mode: request.permission_mode.clone().unwrap_or_default(),
+            codex_driver: ProviderCodexDriver::ExecJson,
             execution,
             wsl_distro: request.wsl_distro.clone(),
             ssh_host: request.ssh_host.clone(),
             ssh_port: request.ssh_port,
             ssh_key_vault_ref: request.ssh_key_vault_ref.clone(),
             ssh_key_path,
+            ssh_remote_runtime: request.ssh_remote_runtime,
+            ssh_wsl_distro: request.ssh_wsl_distro.clone(),
         },
     )?;
     let command_cwd = validate_provider_command_cwd(&command, &provider_cwd)?;
     let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).max(1));
     let run_id = format!("provider-adapter-{}", uuid::Uuid::new_v4());
 
-    let output = run_command_capture(
+    let output = run_command_capture_with_setup_stdin(
         &command.program,
         &command.args,
         command_cwd.as_deref(),
         timeout,
         &command.env,
+        command.setup_stdin.as_slice(),
     )
     .await;
     let (stdout, stderr, exit_code, duration_ms, error) = match output {
@@ -1700,13 +2272,13 @@ fn parse_provider_output(
     match provider_id {
         ProviderId::CodexCli => parse_codex_jsonl(stdout),
         ProviderId::ClaudeCode => parse_claude_stream_json(stdout),
-        ProviderId::AntigravityCli => Ok(parse_antigravity_text(stdout)),
+        ProviderId::AntigravityCli => parse_antigravity_stream_json(stdout),
     }
 }
 
 pub fn extract_provider_conversation_id(provider_id: ProviderId, line: &str) -> Option<String> {
     match provider_id {
-        ProviderId::CodexCli | ProviderId::ClaudeCode => {
+        ProviderId::CodexCli | ProviderId::ClaudeCode | ProviderId::AntigravityCli => {
             let value = parse_json_object_for_id(line)?;
             for key in [
                 "thread_id",
@@ -1723,7 +2295,7 @@ pub fn extract_provider_conversation_id(provider_id: ProviderId, line: &str) -> 
                     }
                 }
             }
-            value
+            let nested = value
                 .get("message")
                 .and_then(|v| v.as_object())
                 .and_then(|message| {
@@ -1737,9 +2309,24 @@ pub fn extract_provider_conversation_id(provider_id: ProviderId, line: &str) -> 
                     .find_map(|key| message.get(key).and_then(|v| v.as_str()))
                 })
                 .and_then(|id| validate_provider_conversation_id(id).ok())
-                .map(str::to_string)
+                .map(str::to_string);
+            nested.or_else(|| {
+                ["init", "step_update", "result"]
+                    .into_iter()
+                    .find_map(|key| {
+                        value
+                            .get(key)
+                            .and_then(|nested| {
+                                nested
+                                    .get("conversation_id")
+                                    .or_else(|| nested.get("conversationId"))
+                            })
+                            .and_then(|id| id.as_str())
+                            .and_then(|id| validate_provider_conversation_id(id).ok())
+                            .map(str::to_string)
+                    })
+            })
         }
-        ProviderId::AntigravityCli => None,
     }
 }
 
@@ -1941,8 +2528,9 @@ fn provider_notes(provider_id: ProviderId) -> Vec<String> {
             "MCP probe uses --mcp-config plus --strict-mcp-config.".to_string(),
         ],
         ProviderId::AntigravityCli => vec![
-            "Noninteractive surface: agy --print.".to_string(),
-            "Output is final plain text; use filesystem/process observation for tools.".to_string(),
+            "Noninteractive surface: agy --print --output-format stream-json (1.1.8+).".to_string(),
+            "Typed output includes init, step_update, result, tool/subagent details, and usage."
+                .to_string(),
         ],
     }
 }
@@ -1970,18 +2558,73 @@ fn with_wsl_provider_shell_prelude(command: &str) -> String {
     format!("{PROVIDER_REMOTE_SHELL_PRELUDE} {command}")
 }
 
-async fn detect_provider_version(
-    binary: &str,
-    execution: &ProviderExecutionTransport,
-    wsl_distro: Option<&str>,
-    ssh_host: Option<&str>,
+fn windows_provider_setup_stdin(
+    cwd: &str,
+    program: &str,
+    args: &[String],
+    env: &[ProviderCommandEnvVar],
+) -> Result<ProviderSetupStdin, String> {
+    use base64::Engine as _;
+
+    let mut env_reads = String::new();
+    for item in env {
+        if !is_safe_provider_env_name(&item.name) {
+            return Err(format!("unsafe provider env var name: {}", item.name));
+        }
+        let missing = crate::acp::powershell_single_quote(&format!(
+            "missing ShellX provider environment value for {}",
+            item.name
+        ));
+        let name = crate::acp::powershell_single_quote(&item.name);
+        env_reads.push_str(&format!(
+            "$valueB64=[Console]::In.ReadLine();if($null -eq $valueB64){{throw {missing}}};$value=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($valueB64));[Environment]::SetEnvironmentVariable({name},$value,'Process');"
+        ));
+    }
+
+    let rendered_args = args
+        .iter()
+        .map(|arg| crate::acp::powershell_single_quote(arg))
+        .collect::<Vec<_>>()
+        .join(",");
+    let script = format!(
+        "{prelude}$work={cwd};if(-not(Test-Path -LiteralPath $work -PathType Container)){{throw ('ShellX Windows SSH cwd is not a directory: '+$work)}};{env_reads}Set-Location -LiteralPath $work;$a=@({args});& {program} @a;exit $LASTEXITCODE",
+        prelude = crate::acp::windows_remote_shell_prelude(),
+        cwd = crate::acp::powershell_single_quote(cwd),
+        env_reads = env_reads,
+        args = rendered_args,
+        program = crate::acp::powershell_single_quote(program),
+    );
+
+    let mut payload = base64::engine::general_purpose::STANDARD
+        .encode(script.as_bytes())
+        .into_bytes();
+    payload.push(b'\n');
+    for item in env {
+        payload.extend_from_slice(
+            base64::engine::general_purpose::STANDARD
+                .encode(item.value.as_bytes())
+                .as_bytes(),
+        );
+        payload.push(b'\n');
+    }
+    Ok(ProviderSetupStdin::from_bytes(payload))
+}
+
+struct ProviderProbeContext<'a> {
+    execution: &'a ProviderExecutionTransport,
+    wsl_distro: Option<&'a str>,
+    ssh_host: Option<&'a str>,
     ssh_port: Option<u16>,
-    ssh_key_path: Option<&str>,
-) -> Option<String> {
-    match execution {
+    ssh_key_path: Option<&'a str>,
+    ssh_remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<&'a str>,
+}
+
+async fn detect_provider_version(binary: &str, probe: &ProviderProbeContext<'_>) -> Option<String> {
+    match probe.execution {
         ProviderExecutionTransport::Local => detect_version(binary).await,
         ProviderExecutionTransport::Wsl => {
-            let distro = wsl_distro?.trim();
+            let distro = probe.wsl_distro?.trim();
             if distro.is_empty() {
                 return None;
             }
@@ -2008,15 +2651,24 @@ async fn detect_provider_version(
                 .map(str::to_string)
         }
         ProviderExecutionTransport::Ssh => {
-            let host = normalized_ssh_host(ssh_host?)?;
-            let command = with_ssh_provider_shell_prelude(&format!(
-                "{} --version",
-                crate::acp::shell_quote_for_remote(binary)
-            ));
+            let host = normalized_ssh_host(probe.ssh_host?)?;
+            let command = if probe.ssh_remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+                with_windows_provider_shell_prelude(&format!(
+                    "& {} '--version';exit $LASTEXITCODE",
+                    crate::acp::powershell_single_quote(binary)
+                ))
+            } else {
+                with_ssh_provider_shell_prelude(&format!(
+                    "{} --version",
+                    crate::acp::shell_quote_for_remote(binary)
+                ))
+            };
             let out = run_ssh_probe_command(
                 &host,
-                ssh_port,
-                ssh_key_path,
+                probe.ssh_port,
+                probe.ssh_key_path,
+                probe.ssh_remote_runtime,
+                probe.ssh_wsl_distro,
                 command,
                 Duration::from_secs(8),
             )
@@ -2029,16 +2681,12 @@ async fn detect_provider_version(
 
 async fn resolve_provider_binary(
     provider_id: ProviderId,
-    execution: &ProviderExecutionTransport,
-    wsl_distro: Option<&str>,
-    ssh_host: Option<&str>,
-    ssh_port: Option<u16>,
-    ssh_key_path: Option<&str>,
+    probe: &ProviderProbeContext<'_>,
 ) -> Option<String> {
-    match execution {
+    match probe.execution {
         ProviderExecutionTransport::Local => resolve_binary(provider_id.binary_names()),
         ProviderExecutionTransport::Wsl => {
-            let distro = wsl_distro?.trim();
+            let distro = probe.wsl_distro?.trim();
             if distro.is_empty() {
                 return None;
             }
@@ -2066,16 +2714,25 @@ async fn resolve_provider_binary(
             None
         }
         ProviderExecutionTransport::Ssh => {
-            let host = normalized_ssh_host(ssh_host?)?;
+            let host = normalized_ssh_host(probe.ssh_host?)?;
             for name in provider_id.binary_names() {
-                let command = with_ssh_provider_shell_prelude(&format!(
-                    "command -v {} 2>/dev/null",
-                    crate::acp::shell_quote_for_remote(name)
-                ));
+                let command = if probe.ssh_remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+                    with_windows_provider_shell_prelude(&format!(
+                        "$command=Get-Command {} -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1;if($null -ne $command){{[Console]::Out.WriteLine($command.Source)}}",
+                        crate::acp::powershell_single_quote(name)
+                    ))
+                } else {
+                    with_ssh_provider_shell_prelude(&format!(
+                        "command -v {} 2>/dev/null",
+                        crate::acp::shell_quote_for_remote(name)
+                    ))
+                };
                 let out = run_ssh_probe_command(
                     &host,
-                    ssh_port,
-                    ssh_key_path,
+                    probe.ssh_port,
+                    probe.ssh_key_path,
+                    probe.ssh_remote_runtime,
+                    probe.ssh_wsl_distro,
                     command,
                     Duration::from_secs(8),
                 )
@@ -2102,16 +2759,27 @@ fn with_ssh_provider_shell_prelude(command: &str) -> String {
     format!("{PROVIDER_REMOTE_SHELL_PRELUDE} {command}")
 }
 
+fn with_windows_provider_shell_prelude(command: &str) -> String {
+    format!("{}{}", crate::acp::windows_remote_shell_prelude(), command)
+}
+
 fn ssh_probe_args(
     host: &str,
     port: Option<u16>,
     key_path: Option<&str>,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<&str>,
     remote_command: String,
 ) -> Result<Vec<String>, String> {
     crate::acp::validate_ssh_destination_arg(host)?;
     let mut args = ssh_base_args(host, port, true, key_path);
     args.push("--".to_string());
     args.push(host.to_string());
+    let remote_command = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        crate::acp::wrap_ssh_windows_command(&remote_command)
+    } else {
+        crate::acp::wrap_ssh_posix_command(remote_runtime, ssh_wsl_distro, &remote_command)?
+    };
     args.push(remote_command);
     Ok(args)
 }
@@ -2120,10 +2788,19 @@ async fn run_ssh_probe_command(
     host: &str,
     port: Option<u16>,
     key_path: Option<&str>,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    ssh_wsl_distro: Option<&str>,
     remote_command: String,
     timeout: Duration,
 ) -> Result<CommandRunOutput, String> {
-    let args = ssh_probe_args(host, port, key_path, remote_command)?;
+    let args = ssh_probe_args(
+        host,
+        port,
+        key_path,
+        remote_runtime,
+        ssh_wsl_distro,
+        remote_command,
+    )?;
     run_command_capture("ssh", &args, None, timeout, &[]).await
 }
 
@@ -2141,11 +2818,26 @@ async fn run_command_capture(
     timeout: Duration,
     env: &[ProviderCommandEnvVar],
 ) -> Result<CommandRunOutput, String> {
+    run_command_capture_with_setup_stdin(program, args, cwd, timeout, env, &[]).await
+}
+
+async fn run_command_capture_with_setup_stdin(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    timeout: Duration,
+    env: &[ProviderCommandEnvVar],
+    setup_stdin: &[u8],
+) -> Result<CommandRunOutput, String> {
     let started = Instant::now();
     let (spawn_program, spawn_args) = provider_spawn_command_parts(program, args);
     let mut cmd = Command::new(&spawn_program);
     cmd.args(&spawn_args)
-        .stdin(Stdio::null())
+        .stdin(if setup_stdin.is_empty() {
+            Stdio::null()
+        } else {
+            Stdio::piped()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .no_window()
@@ -2162,22 +2854,46 @@ async fn run_command_capture(
     if let Some(pid) = child.id() {
         crate::winproc::tie_to_parent_lifetime(pid);
     }
+    if !setup_stdin.is_empty() {
+        let Some(mut stdin) = child.stdin.take() else {
+            let _ = child.kill().await;
+            return Err(format!("spawn {program} did not provide setup stdin"));
+        };
+        if let Err(error) = stdin.write_all(setup_stdin).await {
+            let _ = child.kill().await;
+            return Err(format!("write setup stdin for {program} failed: {error}"));
+        }
+        if let Err(error) = stdin.shutdown().await {
+            let _ = child.kill().await;
+            return Err(format!("close setup stdin for {program} failed: {error}"));
+        }
+    }
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();
 
     let stdout_task = tokio::spawn(async move {
-        let mut out = Vec::new();
-        if let Some(mut stdout) = stdout_pipe {
-            let _ = stdout.read_to_end(&mut out).await;
+        if let Some(stdout) = stdout_pipe {
+            crate::process_output::drain_stream_tail_bounded(
+                stdout,
+                crate::process_output::COMMAND_STREAM_CAPTURE_BYTES,
+            )
+            .await
+            .map(|capture| capture.into_lossy_string())
+        } else {
+            Ok(String::new())
         }
-        out
     });
     let stderr_task = tokio::spawn(async move {
-        let mut err = Vec::new();
-        if let Some(mut stderr) = stderr_pipe {
-            let _ = stderr.read_to_end(&mut err).await;
+        if let Some(stderr) = stderr_pipe {
+            crate::process_output::drain_stream_tail_bounded(
+                stderr,
+                crate::process_output::COMMAND_STREAM_CAPTURE_BYTES,
+            )
+            .await
+            .map(|capture| capture.into_lossy_string())
+        } else {
+            Ok(String::new())
         }
-        err
     });
 
     let status = tokio::select! {
@@ -2192,11 +2908,17 @@ async fn run_command_capture(
         }
     };
 
-    let stdout = stdout_task.await.unwrap_or_default();
-    let stderr = stderr_task.await.unwrap_or_default();
+    let stdout = stdout_task
+        .await
+        .map_err(|error| format!("join {program} stdout reader failed: {error}"))?
+        .map_err(|error| format!("read {program} stdout failed: {error}"))?;
+    let stderr = stderr_task
+        .await
+        .map_err(|error| format!("join {program} stderr reader failed: {error}"))?
+        .map_err(|error| format!("read {program} stderr failed: {error}"))?;
     Ok(CommandRunOutput {
-        stdout: String::from_utf8_lossy(&stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        stdout,
+        stderr,
         exit_code: status.code(),
         duration_ms: started.elapsed().as_millis() as u64,
     })
@@ -2350,31 +3072,7 @@ pub async fn resolve_provider_ssh_key_path(
 }
 
 fn path_candidates(name: &str) -> Vec<PathBuf> {
-    let raw = PathBuf::from(name);
-    if raw.components().count() > 1 {
-        return vec![raw];
-    }
-
-    let Some(path_var) = std::env::var_os("PATH") else {
-        return vec![raw];
-    };
-    let mut out = Vec::new();
-    for dir in std::env::split_paths(&path_var) {
-        let base = dir.join(name);
-        out.push(base.clone());
-        #[cfg(windows)]
-        {
-            let has_ext = Path::new(name).extension().is_some();
-            if !has_ext {
-                let pathext =
-                    std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
-                for ext in pathext.split(';').filter(|ext| !ext.trim().is_empty()) {
-                    out.push(dir.join(format!("{name}{ext}")));
-                }
-            }
-        }
-    }
-    out
+    crate::provider_runtime::local_binary_candidates(&[name])
 }
 
 fn toml_escape_path(path: &str) -> String {
@@ -2392,6 +3090,7 @@ fn tail_chars(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
 
     #[test]
     fn empty_prompt_is_rejected() {
@@ -2403,6 +3102,31 @@ mod tests {
     fn claude_parser_errors_on_non_json_stdout() {
         let err = parse_claude_stream_json("Error: not logged in").unwrap_err();
         assert!(err.contains("stream-json"));
+    }
+
+    #[test]
+    fn antigravity_stream_parser_tracks_text_tools_and_result() {
+        let stdout = concat!(
+            "{\"event\":\"init\",\"conversation_id\":\"conv-1\",\"init\":{\"tools\":[\"run_command\"]}}\n",
+            "{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"conv-1\",\"step_type\":\"tool\",\"tool_info\":{\"name\":\"run_command\",\"parameters\":{}}}}\n",
+            "{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"conv-1\",\"step_type\":\"agent_response\",\"text_delta\":\"hello\"}}\n",
+            "{\"event\":\"result\",\"result\":{\"conversation_id\":\"conv-1\",\"status\":\"SUCCESS\",\"response\":\"hello\"}}\n",
+        );
+
+        let parsed = parse_antigravity_stream_json(stdout).expect("Antigravity stream");
+        assert_eq!(parsed.valid_json_lines, 4);
+        assert!(parsed.stream_text);
+        assert!(parsed.stream_tool_calls);
+        assert!(parsed.shell_command_seen);
+        assert_eq!(parsed.final_text.as_deref(), Some("hello"));
+        assert_eq!(
+            extract_provider_conversation_id(
+                ProviderId::AntigravityCli,
+                stdout.lines().next().unwrap()
+            )
+            .as_deref(),
+            Some("conv-1")
+        );
     }
 
     #[cfg(windows)]
@@ -2509,6 +3233,110 @@ mod tests {
     }
 
     #[test]
+    fn codex_app_server_command_keeps_prompt_off_argv() {
+        let prompt = "inspect the app-server protocol";
+        let spec = build_provider_command_with_options(
+            ProviderId::CodexCli,
+            prompt,
+            ProviderCommandOptions {
+                cwd: Some("/workspace/project".to_string()),
+                codex_driver: ProviderCodexDriver::AppServer,
+                permission_mode: ProviderPermissionMode::ReadOnly,
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect("build Codex app-server command");
+        assert_eq!(spec.program, "codex");
+        assert_eq!(spec.stream_kind, "app-server-jsonrpc");
+        assert!(spec.args.ends_with(&["app-server".to_string()]));
+        assert!(!spec.args.iter().any(|arg| arg == prompt));
+        assert!(!spec.args.iter().any(|arg| arg == "exec"));
+        assert!(!spec.args.iter().any(|arg| arg == "--json"));
+    }
+
+    #[test]
+    fn codex_app_server_frames_posix_and_native_windows_ssh_routes() {
+        let posix_ssh = build_provider_command_with_options(
+            ProviderId::CodexCli,
+            "inspect",
+            ProviderCommandOptions {
+                cwd: Some("/workspace/project".to_string()),
+                codex_driver: ProviderCodexDriver::AppServer,
+                execution: ProviderExecutionTransport::Ssh,
+                ssh_host: Some("fixture@example.test".to_string()),
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect("build POSIX SSH app-server command");
+        assert_eq!(posix_ssh.program, "ssh");
+        assert!(!posix_ssh.args.iter().any(|arg| arg == "-n"));
+
+        let native_windows = build_provider_command_with_options(
+            ProviderId::CodexCli,
+            "inspect without leaking this prompt",
+            ProviderCommandOptions {
+                cwd: Some(r"C:\Users\Fixture\Project".to_string()),
+                codex_driver: ProviderCodexDriver::AppServer,
+                execution: ProviderExecutionTransport::Ssh,
+                ssh_host: Some("fixture@203.0.113.20".to_string()),
+                ssh_remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect("build native Windows SSH app-server command");
+        assert_eq!(native_windows.program, "ssh");
+        assert_eq!(native_windows.stream_kind, "app-server-jsonrpc");
+        assert!(!native_windows.args.iter().any(|arg| arg == "-n"));
+        assert!(native_windows.setup_stdin.as_slice().is_empty());
+        assert!(!native_windows
+            .args
+            .iter()
+            .any(|arg| arg.contains("inspect without leaking this prompt")));
+        let remote = native_windows.args.last().expect("remote command");
+        assert!(remote.starts_with("powershell.exe "));
+        let encoded = remote
+            .split_whitespace()
+            .last()
+            .expect("encoded PowerShell payload");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("decode PowerShell payload");
+        let utf16 = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        let powershell = String::from_utf16(&utf16).expect("PowerShell UTF-16LE");
+        assert!(powershell.contains(r"C:\Users\Fixture\Project"));
+        assert!(powershell.contains("'codex'"));
+        assert!(powershell.contains("'app-server'"));
+        assert!(!powershell.contains("[Console]::In.ReadLine"));
+        assert!(!powershell.contains("inspect without leaking this prompt"));
+
+        let resume_last = build_provider_command_with_options(
+            ProviderId::CodexCli,
+            "continue",
+            ProviderCommandOptions {
+                codex_driver: ProviderCodexDriver::AppServer,
+                resume: ProviderResumeMode::Last,
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert!(resume_last.contains("explicit provider conversation id"));
+
+        let wrong_provider = build_provider_command_with_options(
+            ProviderId::ClaudeCode,
+            "inspect",
+            ProviderCommandOptions {
+                codex_driver: ProviderCodexDriver::AppServer,
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert!(wrong_provider.contains("only valid for Codex CLI"));
+    }
+
+    #[test]
     fn claude_prompt_is_separated_from_flags() {
         let spec = build_provider_command_with_options(
             ProviderId::ClaudeCode,
@@ -2551,12 +3379,100 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_command_requests_typed_stream_output() {
+        let spec = build_provider_command_with_options(
+            ProviderId::AntigravityCli,
+            "hello",
+            ProviderCommandOptions::default(),
+        )
+        .expect("build Antigravity command");
+
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--output-format", "stream-json"]));
+        assert_eq!(ProviderId::AntigravityCli.stream_kind(), "stream-json");
+    }
+
+    #[test]
+    fn shellx_tooling_adds_provider_native_session_instructions() {
+        let tooling = ProviderShellxTooling {
+            port: 3030,
+            host_port: 3030,
+            token: "sx_test".to_string(),
+            tab_id: "tab-test".to_string(),
+            claude_config_path: Some("/tmp/shellx-claude-mcp.json".to_string()),
+            antigravity_workspace_path: None,
+            antigravity_agent_name: None,
+        };
+        let codex = build_provider_command_with_options(
+            ProviderId::CodexCli,
+            "hello",
+            ProviderCommandOptions {
+                shellx_tooling: Some(tooling.clone()),
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect("build Codex command");
+        assert!(codex.args.iter().any(|arg| {
+            arg.starts_with("developer_instructions=")
+                && arg.contains("This agent session is running inside ShellX")
+        }));
+
+        let claude = build_provider_command_with_options(
+            ProviderId::ClaudeCode,
+            "hello",
+            ProviderCommandOptions {
+                shellx_tooling: Some(tooling.clone()),
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect("build Claude command");
+        assert!(claude.args.windows(2).any(|pair| {
+            pair[0] == "--append-system-prompt"
+                && pair[1].contains("This agent session is running inside ShellX")
+        }));
+
+        let antigravity = build_provider_command_with_options(
+            ProviderId::AntigravityCli,
+            "hello",
+            ProviderCommandOptions {
+                shellx_tooling: Some(ProviderShellxTooling {
+                    antigravity_workspace_path: Some("/tmp/shellx-antigravity-session".to_string()),
+                    antigravity_agent_name: Some("shellx-session-tab-test".to_string()),
+                    ..tooling
+                }),
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect("build Antigravity command");
+        assert!(antigravity
+            .args
+            .windows(2)
+            .any(|pair| { pair == ["--add-dir", "/tmp/shellx-antigravity-session"] }));
+        assert!(antigravity
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--agent", "shellx-session-tab-test"]));
+        assert!(antigravity.notes.iter().any(|note| {
+            note.contains("call_mcp_tool") && note.contains("host MCP remains disabled")
+        }));
+        let sanitized = antigravity_agent_name("Tab One/../../Unsafe");
+        assert!(sanitized.starts_with("shellx-session-tab-one-"));
+        assert!(sanitized
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-'));
+    }
+
+    #[test]
     fn ssh_provider_probe_args_use_batch_mode_host_port_and_prelude() {
         let remote_command = with_ssh_provider_shell_prelude("command -v 'codex' 2>/dev/null");
         let args = ssh_probe_args(
             "deploy@203.0.113.10",
             Some(2222),
             Some("/home/user/.ssh/id_ed25519"),
+            crate::acp::SshRemoteRuntime::Posix,
+            None,
             remote_command,
         )
         .expect("ssh probe args");
@@ -2582,10 +3498,277 @@ mod tests {
             "-oProxyCommand=bad",
             None,
             None,
+            crate::acp::SshRemoteRuntime::Posix,
+            None,
             "command -v codex".to_string(),
         )
         .unwrap_err();
         assert!(err.contains("cannot start with '-'"));
+    }
+
+    #[test]
+    fn native_windows_provider_uses_streamed_bootstrap_and_redacts_setup() {
+        let token = "sx_tab_fixture_secret";
+        let prompt = "inspect the Windows project without changing it";
+        let spec = build_provider_command_with_options(
+            ProviderId::CodexCli,
+            prompt,
+            ProviderCommandOptions {
+                cwd: Some(r"C:\Users\Fixture\Project".to_string()),
+                shellx_tooling: Some(ProviderShellxTooling {
+                    port: 50123,
+                    host_port: 43117,
+                    token: token.to_string(),
+                    tab_id: "windows-fixture".to_string(),
+                    claude_config_path: None,
+                    antigravity_workspace_path: None,
+                    antigravity_agent_name: None,
+                }),
+                execution: ProviderExecutionTransport::Ssh,
+                ssh_host: Some("fixture@203.0.113.20".to_string()),
+                ssh_remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect("build native Windows provider command");
+
+        assert_eq!(spec.program, "ssh");
+        assert!(!spec.args.iter().any(|arg| arg == "-n"));
+        assert!(spec.args.iter().any(|arg| arg == "-R"));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|pair| pair == ["-o", "ExitOnForwardFailure=yes"]));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|pair| pair == ["-o", "ServerAliveInterval=15"]));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|pair| pair == ["-o", "ServerAliveCountMax=3"]));
+        assert!(spec.env.is_empty());
+        let remote_command = spec.args.last().expect("remote command");
+        assert!(remote_command.starts_with("powershell.exe "));
+        assert!(!remote_command.contains(prompt));
+        assert!(!remote_command.contains(token));
+
+        let setup = std::str::from_utf8(spec.setup_stdin.as_slice()).expect("UTF-8 setup");
+        let mut lines = setup.lines();
+        let bootstrap = base64::engine::general_purpose::STANDARD
+            .decode(lines.next().expect("bootstrap line"))
+            .expect("decode bootstrap");
+        let bootstrap = String::from_utf8(bootstrap).expect("bootstrap UTF-8");
+        assert!(bootstrap.contains(r"C:\Users\Fixture\Project"));
+        assert!(bootstrap.contains(prompt));
+        assert!(bootstrap.contains(crate::mcp_http::MCP_TOKEN_ENV_VAR));
+        assert!(!bootstrap.contains(token));
+        let streamed_token = base64::engine::general_purpose::STANDARD
+            .decode(lines.next().expect("token line"))
+            .expect("decode token");
+        assert_eq!(streamed_token, token.as_bytes());
+
+        let serialized = serde_json::to_string(&spec).expect("serialize command");
+        assert!(!serialized.contains(token));
+        assert!(!serialized.contains(prompt));
+        assert!(!format!("{spec:?}").contains(token));
+    }
+
+    #[test]
+    fn every_external_provider_has_distinct_native_windows_and_windows_wsl_ssh_commands() {
+        for provider_id in ProviderId::all() {
+            let native = build_provider_command_with_options(
+                provider_id,
+                "inspect the destination without changing it",
+                ProviderCommandOptions {
+                    cwd: Some(r"C:\Users\Fixture\Project".to_string()),
+                    permission_mode: ProviderPermissionMode::ReadOnly,
+                    execution: ProviderExecutionTransport::Ssh,
+                    ssh_host: Some("fixture@windows.example.test".to_string()),
+                    ssh_remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+                    ..ProviderCommandOptions::default()
+                },
+            )
+            .expect("build native Windows provider command");
+            assert_eq!(native.program, "ssh", "{provider_id:?}");
+            assert_eq!(
+                native.ssh_remote_runtime,
+                crate::acp::SshRemoteRuntime::Windows,
+                "{provider_id:?}"
+            );
+            assert_eq!(native.ssh_wsl_distro, None, "{provider_id:?}");
+            assert!(
+                !native.args.iter().any(|arg| arg == "-n"),
+                "native Windows must retain stdin for its streamed PowerShell bootstrap: {provider_id:?}"
+            );
+            assert!(
+                native
+                    .args
+                    .last()
+                    .is_some_and(|command| command.starts_with("powershell.exe ")),
+                "{provider_id:?}"
+            );
+            let setup = std::str::from_utf8(native.setup_stdin.as_slice())
+                .expect("native Windows setup is UTF-8");
+            let bootstrap = base64::engine::general_purpose::STANDARD
+                .decode(setup.lines().next().expect("native bootstrap line"))
+                .expect("decode native bootstrap");
+            let bootstrap = String::from_utf8(bootstrap).expect("native bootstrap text");
+            let provider_program = match provider_id {
+                ProviderId::CodexCli => "codex",
+                ProviderId::ClaudeCode => "claude",
+                ProviderId::AntigravityCli => "agy",
+            };
+            assert!(bootstrap.contains(provider_program), "{provider_id:?}");
+            assert!(!bootstrap.contains("wsl.exe"), "{provider_id:?}");
+
+            let windows_wsl = build_provider_command_with_options(
+                provider_id,
+                "inspect the destination without changing it",
+                ProviderCommandOptions {
+                    cwd: Some("/home/fixture/project".to_string()),
+                    permission_mode: ProviderPermissionMode::ReadOnly,
+                    execution: ProviderExecutionTransport::Ssh,
+                    ssh_host: Some("fixture@windows.example.test".to_string()),
+                    ssh_remote_runtime: crate::acp::SshRemoteRuntime::WindowsWsl,
+                    ssh_wsl_distro: Some("Ubuntu-24.04".to_string()),
+                    ..ProviderCommandOptions::default()
+                },
+            )
+            .expect("build Windows WSL provider command");
+            assert_eq!(windows_wsl.program, "ssh", "{provider_id:?}");
+            assert_eq!(
+                windows_wsl.ssh_remote_runtime,
+                crate::acp::SshRemoteRuntime::WindowsWsl,
+                "{provider_id:?}"
+            );
+            assert_eq!(
+                windows_wsl.ssh_wsl_distro.as_deref(),
+                Some("Ubuntu-24.04"),
+                "{provider_id:?}"
+            );
+            assert!(
+                windows_wsl.args.iter().any(|arg| arg == "-n"),
+                "noninteractive Windows WSL provider should close SSH stdin: {provider_id:?}"
+            );
+            assert!(
+                windows_wsl.setup_stdin.as_slice().is_empty(),
+                "{provider_id:?}"
+            );
+            let remote = windows_wsl.args.last().expect("Windows WSL remote command");
+            let encoded = remote
+                .split_whitespace()
+                .last()
+                .expect("encoded Windows WSL PowerShell payload");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .expect("decode Windows WSL PowerShell payload");
+            let utf16 = bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>();
+            let powershell = String::from_utf16(&utf16).expect("Windows WSL PowerShell UTF-16LE");
+            assert!(powershell.contains("wsl.exe"), "{provider_id:?}");
+            assert!(powershell.contains("Ubuntu-24.04"), "{provider_id:?}");
+        }
+    }
+
+    #[test]
+    fn ssh_wsl_distro_is_rejected_unless_windows_wsl_runtime_is_explicit() {
+        let missing_distro = build_provider_command_with_options(
+            ProviderId::ClaudeCode,
+            "inspect",
+            ProviderCommandOptions {
+                cwd: Some("/home/fixture/project".to_string()),
+                execution: ProviderExecutionTransport::Ssh,
+                ssh_host: Some("fixture@windows.example.test".to_string()),
+                ssh_remote_runtime: crate::acp::SshRemoteRuntime::WindowsWsl,
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect_err("Windows WSL requires an explicit distro");
+        assert!(missing_distro.contains("sshWslDistro is required"));
+
+        let native_with_distro = build_provider_command_with_options(
+            ProviderId::ClaudeCode,
+            "inspect",
+            ProviderCommandOptions {
+                cwd: Some(r"C:\Users\Fixture\Project".to_string()),
+                execution: ProviderExecutionTransport::Ssh,
+                ssh_host: Some("fixture@windows.example.test".to_string()),
+                ssh_remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+                ssh_wsl_distro: Some("Ubuntu-24.04".to_string()),
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect_err("native Windows must not silently route through WSL");
+        assert!(native_with_distro.contains("only valid"));
+    }
+
+    #[test]
+    fn native_windows_antigravity_keeps_broken_host_mcp_fail_closed() {
+        let spec = build_provider_command_with_options(
+            ProviderId::AntigravityCli,
+            "inspect the Windows project",
+            ProviderCommandOptions {
+                cwd: Some(r"C:\Users\Fixture\Project".to_string()),
+                shellx_tooling: Some(ProviderShellxTooling {
+                    port: 50123,
+                    host_port: 43117,
+                    token: "antigravity-host-token".to_string(),
+                    tab_id: "windows-antigravity".to_string(),
+                    claude_config_path: None,
+                    antigravity_workspace_path: Some(
+                        r"C:\Users\Fixture\.shellx\provider-mcp\shellx-session-windows-antigravity-workspace"
+                            .to_string(),
+                    ),
+                    antigravity_agent_name: Some(
+                        "shellx-session-windows-antigravity".to_string(),
+                    ),
+                }),
+                execution: ProviderExecutionTransport::Ssh,
+                ssh_host: Some("fixture@203.0.113.20".to_string()),
+                ssh_remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+                ..ProviderCommandOptions::default()
+            },
+        )
+        .expect("build native Windows Antigravity command");
+
+        assert_eq!(spec.program, "ssh");
+        assert!(!spec.args.iter().any(|arg| arg == "-R"));
+        assert!(!spec
+            .notes
+            .iter()
+            .any(|note| note.contains("reverse-forwards host MCP")));
+        let setup = std::str::from_utf8(spec.setup_stdin.as_slice()).expect("UTF-8 setup");
+        let bootstrap = base64::engine::general_purpose::STANDARD
+            .decode(setup.lines().next().expect("bootstrap line"))
+            .expect("decode bootstrap");
+        let bootstrap = String::from_utf8(bootstrap).expect("bootstrap UTF-8");
+        assert!(bootstrap.contains("shellx-session-windows-antigravity"));
+        assert!(!bootstrap.contains(crate::mcp_http::MCP_TOKEN_ENV_VAR));
+        assert!(!bootstrap.contains("antigravity-host-token"));
+    }
+
+    #[test]
+    fn native_windows_provider_probe_uses_encoded_powershell() {
+        let command = with_windows_provider_shell_prelude(
+            "$command=Get-Command 'codex' -CommandType Application",
+        );
+        let args = ssh_probe_args(
+            "fixture@203.0.113.20",
+            None,
+            None,
+            crate::acp::SshRemoteRuntime::Windows,
+            None,
+            command,
+        )
+        .expect("native Windows probe args");
+
+        assert!(args.iter().any(|arg| arg == "-n"));
+        let remote = args.last().expect("remote command");
+        assert!(remote.starts_with("powershell.exe "));
+        assert!(!remote.contains("Get-Command"));
     }
 
     #[test]
@@ -2621,6 +3804,26 @@ mod tests {
         assert_eq!(
             normalize_ssh_cwd_with_remote_home("/home/dev/project", "/home/dev"),
             "/home/dev/project"
+        );
+        assert_eq!(
+            normalize_ssh_windows_cwd_with_remote_home(r"C:/Users/dev/project", r"C:\Users\dev"),
+            r"C:\Users\dev\project"
+        );
+        assert_eq!(
+            normalize_ssh_windows_cwd_with_remote_home("/home/local/project", r"C:\Users\dev"),
+            r"C:\Users\dev"
+        );
+        assert_eq!(
+            normalize_ssh_windows_cwd_with_remote_home("~", r"C:\Users\dev"),
+            r"C:\Users\dev"
+        );
+        assert_eq!(
+            ssh_remote_provider_path(
+                r"C:\Users\dev\",
+                "config.json",
+                crate::acp::SshRemoteRuntime::Windows,
+            ),
+            r"C:\Users\dev\.shellx\provider-mcp\config.json"
         );
     }
 

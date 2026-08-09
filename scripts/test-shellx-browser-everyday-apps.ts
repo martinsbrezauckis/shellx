@@ -1,9 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { join } from "node:path";
-import { shellxDataPaths } from "./shellx-debug-paths";
+import { cleanupOwnedBrowserLifecycle } from "./shellx-browser-test-cleanup";
+import { resolveShellxDebugApiConnection } from "./shellx-debug-paths";
 
 type JsonObject = Record<string, unknown>;
 
@@ -113,35 +113,6 @@ interface BrowserPermissionEvent {
   receipt: { kind: string };
 }
 
-function readFirst(paths: string[]): string | null {
-  for (const path of paths) {
-    if (!existsSync(path)) continue;
-    const value = readFileSync(path, "utf8").trim();
-    if (value) return value;
-  }
-  return null;
-}
-
-function debugBase(): { base: string; token: string } {
-  const explicitBase = process.env.SHELLX_DEBUG_BASE?.trim();
-  const port = process.env.SHELLX_DEBUG_PORT?.trim()
-    ?? readFirst(shellxDataPaths("debug-api.port"));
-  const token = process.env.SHELLX_DEBUG_SECRET?.trim()
-    ?? process.env.SHELLX_DEBUG_TOKEN?.trim()
-    ?? readFirst(shellxDataPaths("shellxagent.token"))
-    ?? readFirst(shellxDataPaths("debug.token"));
-  if (!explicitBase && !port) {
-    throw new Error("ShellX debug API port not found. Start the installed app or set SHELLX_DEBUG_BASE.");
-  }
-  if (!token) {
-    throw new Error("ShellX debug API token not found. Set SHELLX_DEBUG_SECRET or start the installed app.");
-  }
-  return {
-    base: explicitBase ?? `http://127.0.0.1:${port}`,
-    token,
-  };
-}
-
 function assert(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
   console.log(`  ✓ ${message}`);
@@ -225,17 +196,6 @@ async function waitFor<T>(
   throw new Error(`${label} timed out${lastError ? `: ${lastError instanceof Error ? lastError.message : String(lastError)}` : ""}`);
 }
 
-async function closeAllBrowserTabs(ctx: { base: string; token: string }): Promise<void> {
-  const state = await api<BrowserState>(ctx, "GET", "/browser/state").catch(() => null);
-  for (const tab of state?.tabs ?? []) {
-    await api<JsonObject>(ctx, "POST", "/browser/tabs/close", { browserTabId: tab.browserTabId }).catch(() => undefined);
-  }
-  await waitFor("Browser tab cleanup", async () => {
-    const next = await api<BrowserState>(ctx, "GET", "/browser/state");
-    return (next.tabs?.length ?? 0) === 0 ? next : null;
-  }, 8_000, 250).catch(() => undefined);
-}
-
 async function startEverydayFixture(): Promise<{ baseUrl: string; routeUrl: string; close: () => Promise<void> }> {
   const fixturePath = join(process.cwd(), "scripts", "fixtures", "vault-browser-site", "public", "everyday-apps.html");
   const sockets = new Set<Socket>();
@@ -302,7 +262,29 @@ async function clickSelector(ctx: { base: string; token: string }, taskId: strin
     action: "clickRef",
     selector,
   });
-  assert(result.status === "applied", label);
+  assert(
+    result.status === "applied",
+    `${label}: ${JSON.stringify({ status: result.status, requiredApproval: result.requiredApproval, message: result.message })}`,
+  );
+}
+
+async function expectApprovalBlocked(
+  ctx: { base: string; token: string },
+  taskId: string,
+  selector: string,
+  requiredApproval: string,
+  label: string,
+  sensitiveKind?: string,
+): Promise<void> {
+  const result = await browserAction(ctx, taskId, {
+    action: "clickRef",
+    selector,
+    ...(sensitiveKind ? { sensitiveKind } : {}),
+  });
+  assert(
+    result.status === "blocked" && result.requiredApproval === requiredApproval,
+    `${label}: ${JSON.stringify({ status: result.status, requiredApproval: result.requiredApproval, message: result.message })}`,
+  );
 }
 
 async function fillSelector(ctx: { base: string; token: string }, taskId: string, selector: string, value: string, label: string): Promise<void> {
@@ -369,9 +351,11 @@ async function assertBeforeUnloadFeedback(ctx: { base: string; token: string }, 
 
 async function main(): Promise<void> {
   console.log("\n=== ShellX Browser everyday-app smoke ===");
-  const ctx = debugBase();
+  const ctx = await resolveShellxDebugApiConnection();
   let fixture: { baseUrl: string; routeUrl: string; close: () => Promise<void> } | null = null;
   let tabId: string | null = null;
+  const taskIds = new Set<string>();
+  const tabIds = new Set<string>();
 
   try {
     fixture = await startEverydayFixture();
@@ -389,9 +373,11 @@ async function main(): Promise<void> {
       autonomy: "assistedAutonomous",
       expectedDomains: ["127.0.0.1"],
     });
+    taskIds.add(task.taskId);
     assert(task.taskId.startsWith("browser-task-"), "everyday app Browser task starts");
     const loaded = await waitForBrowserEngine(ctx, fixture.routeUrl, task.taskId);
     tabId = loaded.tabs?.find((tab) => tab.browserTabId === loaded.activeBrowserTabId)?.browserTabId ?? null;
+    if (tabId) tabIds.add(tabId);
     assert(Boolean(tabId), "everyday task has an active Browser tab");
 
     const observe = await browserAction(ctx, task.taskId, { action: "observe" });
@@ -413,7 +399,7 @@ async function main(): Promise<void> {
     assert(true, "balanced ad filter cleans fixture elements, ad interstitials, and tab shield count");
 
     await fillSelector(ctx, task.taskId, "[data-testid=mail-search]", "invoice", "agent fills mail search");
-    await clickSelector(ctx, task.taskId, "[data-app-shell='mail'] button[type='submit']", "agent submits mail search");
+    await clickSelector(ctx, task.taskId, "[data-testid=mail-search-run]", "agent runs mail search");
     await verifyText(ctx, task.taskId, "Mail search complete: 1 result", "mail search workflow verifies result");
     const findMail = await browserAction(ctx, task.taskId, {
       action: "findText",
@@ -438,8 +424,9 @@ async function main(): Promise<void> {
       value: "11:30",
     });
     assert(calendarSelect.status === "applied", "agent selects calendar time");
-    await clickSelector(ctx, task.taskId, "[data-testid=calendar-form] button[type='submit']", "agent creates calendar event");
-    await verifyText(ctx, task.taskId, "Calendar event created: Vault release review", "calendar workflow verifies result");
+    await expectApprovalBlocked(ctx, task.taskId, "[data-testid=calendar-submit]", "finalActionApproval", "calendar creation remains operator-gated");
+    await clickSelector(ctx, task.taskId, "[data-testid=calendar-preview]", "agent previews calendar event");
+    await verifyText(ctx, task.taskId, "Calendar event preview: Vault release review", "calendar preview workflow verifies result");
 
     await activateSection(ctx, task.taskId, "sheets");
     await observeVisibleSelector(ctx, task.taskId, "[data-testid=sheet-budget]", "observation exposes sheet cell input after opening sheets");
@@ -461,8 +448,9 @@ async function main(): Promise<void> {
     await observeVisibleSelector(ctx, task.taskId, "[data-testid=checkout-email]", "observation exposes checkout field after opening checkout");
     await fillSelector(ctx, task.taskId, "[data-testid=checkout-email]", "agent@example.test", "agent fills checkout email");
     await fillSelector(ctx, task.taskId, "[data-testid=checkout-note]", "Hold for Browser smoke pickup", "agent fills checkout note");
-    await clickSelector(ctx, task.taskId, "[data-testid=checkout-submit]", "agent submits checkout-style form");
-    await verifyText(ctx, task.taskId, "Order submitted for agent@example.test", "checkout workflow verifies result");
+    await expectApprovalBlocked(ctx, task.taskId, "[data-testid=checkout-submit]", "finalActionApproval", "checkout submission remains operator-gated");
+    await clickSelector(ctx, task.taskId, "[data-testid=checkout-review]", "agent prepares checkout review");
+    await verifyText(ctx, task.taskId, "Order review ready for agent@example.test", "checkout review workflow verifies result");
 
     await activateSection(ctx, task.taskId, "profile-card");
     await observeVisibleSelector(ctx, task.taskId, "[data-testid=profile-email]", "observation exposes profile-card email field");
@@ -470,20 +458,30 @@ async function main(): Promise<void> {
     await fillSelector(ctx, task.taskId, "[data-testid=profile-email]", "agent@example.test", "agent fills profile-card email");
     await fillSelector(ctx, task.taskId, "[data-testid=profile-company]", "ShellX", "agent fills profile-card company");
     await fillSelector(ctx, task.taskId, "[data-testid=profile-city]", "Riga", "agent fills profile-card city");
-    await clickSelector(ctx, task.taskId, "[data-testid=profile-card-submit]", "agent submits profile-card form");
-    await verifyText(ctx, task.taskId, "Profile created for agent@example.test at ShellX", "profile-card workflow verifies result");
+    await expectApprovalBlocked(ctx, task.taskId, "[data-testid=profile-card-submit]", "finalActionApproval", "profile creation remains operator-gated");
+    await clickSelector(ctx, task.taskId, "[data-testid=profile-card-preview]", "agent previews profile card");
+    await verifyText(ctx, task.taskId, "Profile preview for agent@example.test at ShellX", "profile-card preview verifies result");
 
     await activateSection(ctx, task.taskId, "email-code");
     await observeVisibleSelector(ctx, task.taskId, "[data-testid=email-code-input]", "observation exposes email-code input");
     await fillSelector(ctx, task.taskId, "[data-testid=email-code-input]", "739214", "agent fills email-code input");
-    await clickSelector(ctx, task.taskId, "[data-testid=email-code-submit]", "agent submits email code");
-    await verifyText(ctx, task.taskId, "Email code accepted", "email-code workflow verifies result");
+    await expectApprovalBlocked(ctx, task.taskId, "[data-testid=email-code-submit]", "finalActionApproval", "email-code submission remains operator-gated");
+    await clickSelector(ctx, task.taskId, "[data-testid=email-code-check]", "agent checks email code locally");
+    await verifyText(ctx, task.taskId, "Email code locally valid", "email-code local check verifies result");
 
     await activateSection(ctx, task.taskId, "agent-wallet");
     await observeVisibleSelector(ctx, task.taskId, "[data-testid=agent-wallet-email]", "observation exposes agent-wallet checkout email");
     await fillSelector(ctx, task.taskId, "[data-testid=agent-wallet-email]", "agent@example.test", "agent fills wallet checkout email");
     await clickSelector(ctx, task.taskId, "[data-testid=agent-wallet-terms]", "agent checks subscription approval box");
-    await clickSelector(ctx, task.taskId, "[data-testid=agent-wallet-submit]", "agent submits wallet checkout dry run");
+    await expectApprovalBlocked(
+      ctx,
+      task.taskId,
+      "[data-testid=agent-wallet-submit]",
+      "agentWalletApproval",
+      "wallet subscription remains operator-gated",
+      "payment",
+    );
+    await clickSelector(ctx, task.taskId, "[data-testid=agent-wallet-dry-run]", "agent prepares wallet checkout dry run");
     await verifyText(ctx, task.taskId, "Subscription dry-run prepared for agent@example.test", "agent-wallet workflow verifies result");
     assert(MEDIATED_VAULT_RESOURCE_ACTIONS.length === 3, "everyday app smoke tracks mediated Vault resource actions");
 
@@ -530,8 +528,14 @@ async function main(): Promise<void> {
 
     console.log("ShellX Browser everyday-app smoke passed");
   } finally {
-    await closeAllBrowserTabs(ctx);
-    if (fixture) await fixture.close();
+    try {
+      await cleanupOwnedBrowserLifecycle(
+        (method, path, body) => api(ctx, method, path, body),
+        { taskIds, tabIds, label: "browser-everyday-apps" },
+      );
+    } finally {
+      if (fixture) await fixture.close();
+    }
   }
 }
 

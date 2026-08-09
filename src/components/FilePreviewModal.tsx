@@ -14,8 +14,8 @@
  * Content fetched via `read_text_file_for_path` (handles WSL UNC
  * translation). Images skip the read — asset:// renders directly.
  *
- * View-only by design. Bottom-bar actions: Close · Copy path · Copy
- * @mention for the composer.
+ * View-only by design and mounted only inside Preview Center. Bottom-bar
+ * actions: Close · Copy path · Copy @mention for the composer.
  */
 import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
@@ -34,20 +34,16 @@ import {
 } from "../lib/file-preview-types";
 
 export function FilePreviewModal({
-  open,
   path,
   tabId,
   sessionCwd,
-  embedded = false,
   onClose,
   onPreviewFile,
   onRunWorkPreview,
 }: {
-  open: boolean;
-  path: string | null;
+  path: string;
   tabId?: string | null;
   sessionCwd?: string | null;
-  embedded?: boolean;
   onClose: () => void;
   onPreviewFile?: (path: string) => void;
   onRunWorkPreview?: (path: string) => void;
@@ -57,31 +53,15 @@ export function FilePreviewModal({
   const [err, setErr] = useState<string | null>(null);
   const [htmlMode, setHtmlMode] = useState<"code" | "preview">("code");
 
-  const kind = useMemo<PreviewKind>(() => (path ? previewKindForPath(path) : "unknown"), [path]);
+  const kind = useMemo<PreviewKind>(() => previewKindForPath(path), [path]);
 
   useEffect(() => {
     setHtmlMode("code");
   }, [path]);
 
- // Esc closes. Click on backdrop closes. The modal body stops propagation.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
  // Fetch text content only for known text-like kinds. Binary or
  // unsupported formats must not be lossy-decoded into visual garbage.
   useEffect(() => {
-    if (!open || !path) {
-      setText("");
-      setErr(null);
-      setLoading(false);
-      return;
-    }
     if (!shouldReadTextForPreviewKind(kind)) {
       setText("");
       setErr(null);
@@ -119,10 +99,9 @@ export function FilePreviewModal({
         .finally(() => { if (!cancelled) setLoading(false); });
     }
     return () => { cancelled = true; };
-  }, [open, path, kind, tabId, sessionCwd]);
+  }, [path, kind, tabId, sessionCwd]);
 
   const onCopyPath = useCallback(() => {
-    if (!path) return;
     try { void navigator.clipboard.writeText(path); } catch { /* no-op */ }
   }, [path]);
 
@@ -134,22 +113,26 @@ export function FilePreviewModal({
  // so the user pastes it into the composer with their own question.
   const [copied, setCopied] = useState(false);
   const onCopyMention = useCallback(() => {
-    if (!path) return;
     try { void navigator.clipboard.writeText(`@${path} `); } catch { /* no-op */ }
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, [path]);
 
-  if (!open || !path) return null;
-
  // Filename for the header (basename only).
   const fname = path.split(/[\\/]/).pop() || path;
   const lineCount = text ? text.split("\n").length : 0;
   const canRunWorkPreview = kind === "html" && typeof onRunWorkPreview === "function";
+  const previewReceiptTitle = loading
+    ? "File preview loading"
+    : err
+      ? "File preview failed"
+      : `File preview ready · ${fname} · ${kind} · ${text.length} characters`;
 
   const frame = (
-      <div
-        className={`preview-modal${embedded ? " preview-modal-embedded" : ""}`}
+      <div data-debug-id="surface-components-filepreviewmodal-1"
+        className="preview-modal preview-modal-embedded"
+        title={previewReceiptTitle}
+        data-shellx-release-observe="title"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="preview-head">
@@ -160,6 +143,8 @@ export function FilePreviewModal({
             <div className="preview-mode-toggle" role="tablist" aria-label="HTML preview mode">
               <button
                 type="button"
+                id="file-preview-mode-code"
+                data-shellx-release-observe="selected"
                 className={htmlMode === "code" ? "active" : ""}
                 onClick={() => setHtmlMode("code")}
                 aria-selected={htmlMode === "code"}
@@ -168,6 +153,8 @@ export function FilePreviewModal({
               </button>
               <button
                 type="button"
+                id="file-preview-mode-safe-render"
+                data-shellx-release-observe="selected"
                 className={htmlMode === "preview" ? "active" : ""}
                 onClick={() => setHtmlMode("preview")}
                 aria-selected={htmlMode === "preview"}
@@ -176,20 +163,16 @@ export function FilePreviewModal({
               </button>
             </div>
           )}
-          {!embedded && (
-            <button
-              type="button"
-              className="preview-close"
-              onClick={onClose}
-              aria-label="Close (Esc)"
-              title="Close (Esc)"
-            >
-              <ShellIcon name="close" size={14} />
-            </button>
-          )}
         </div>
 
-        <div className={`preview-body preview-body-${kind}`} onMouseUp={onMouseUpAutoCopy}>
+        <div
+          className={`preview-body preview-body-${kind}`}
+          onMouseUp={onMouseUpAutoCopy}
+          {...(kind === "html" ? {
+            "data-shellx-release-observe": "title",
+            title: `File preview HTML state: mode=${htmlMode === "preview" ? "safe" : "code"}; load=${loading ? "loading" : err ? "error" : "ready"}; content=${!loading && !err && text.length > 0 ? "present" : "absent"}; frame=${!loading && !err && htmlMode === "preview" ? "present" : "absent"}`,
+          } : {})}
+        >
           {err && <div className="preview-err">{err}</div>}
           {loading && !err && <div className="preview-loading">Loading…</div>}
 
@@ -292,6 +275,7 @@ export function FilePreviewModal({
         <div className="preview-actions">
           {canRunWorkPreview && (
             <button
+              id="file-preview-run-work"
               type="button"
               className="pact pact-edit"
               onClick={() => onRunWorkPreview?.(path)}
@@ -331,31 +315,28 @@ export function FilePreviewModal({
       </div>
   );
 
-  if (embedded) return frame;
-
-  return (
-    <div
-      className="preview-backdrop"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Preview ${fname}`}
-    >
-      {frame}
-    </div>
-  );
+  return frame;
 }
 
 function HtmlPreview({ html, title }: { html: string; title: string }): JSX.Element {
   const srcDoc = useMemo(() => buildSafeHtmlPreviewDocument(html), [html]);
+  const cspLocked = ["script-src 'none'", "connect-src 'none'", "form-action 'none'"]
+    .every((directive) => srcDoc.includes(directive));
+  const scriptsStripped = !/<script\b/i.test(srcDoc);
   return (
-    <iframe
-      srcDoc={srcDoc}
-      title={`Rendered HTML preview: ${title}`}
-      className="preview-html-iframe"
-      sandbox=""
-      referrerPolicy="no-referrer"
-    />
+    <div
+      className="preview-html-safe-state"
+      data-shellx-release-observe="title"
+      title={`Safe HTML render: content=${html.length > 0 ? "present" : "absent"}; sandbox=locked; referrer=no-referrer; csp=${cspLocked ? "locked" : "missing"}; scripts=${scriptsStripped ? "stripped" : "present"}`}
+    >
+      <iframe
+        srcDoc={srcDoc}
+        title={`Rendered HTML preview: ${title}`}
+        className="preview-html-iframe"
+        sandbox=""
+        referrerPolicy="no-referrer"
+      />
+    </div>
   );
 }
 

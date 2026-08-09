@@ -13,8 +13,9 @@ import { inTauri } from "../lib/tauri-bridge";
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import { fileDisplayName, SafeMarkdownLink } from "../lib/markdown-links";
 import { ShellIcon } from "./icons";
+import { useModalFocus } from "../lib/useModalFocus";
 
-interface GoalState {
+export interface GoalState {
   active: boolean;
   objective: string;
   scratchboardPath?: string;
@@ -27,10 +28,19 @@ interface GoalState {
   approvalStatus?: { ready: boolean; reason?: string | null };
 }
 
+export interface GoalPlanReviewFixture {
+  tabId: string;
+  goal: GoalState;
+  planText: string;
+  editing?: boolean;
+  editComment?: string;
+}
+
 interface GoalPlanReviewModalProps {
   activeTabId?: string | null;
   eventsLen: number;
   openRequestSeq?: number;
+  fixture?: GoalPlanReviewFixture;
   onPreviewFile: (path: string) => void;
   onAccepted: () => void;
   onReviewLater: () => void;
@@ -95,29 +105,38 @@ export function GoalPlanReviewModal({
   activeTabId,
   eventsLen,
   openRequestSeq,
+  fixture,
   onPreviewFile,
   onAccepted,
   onReviewLater,
 }: GoalPlanReviewModalProps): JSX.Element | null {
-  const [goal, setGoal] = useState<GoalState | null>(null);
-  const [planText, setPlanText] = useState("");
+  const [goal, setGoal] = useState<GoalState | null>(() => fixture?.goal ?? null);
+  const [planText, setPlanText] = useState(() => fixture?.planText ?? "");
   const [readError, setReadError] = useState<string | null>(null);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [editComment, setEditComment] = useState("");
+  const [rejectArmed, setRejectArmed] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [editing, setEditing] = useState(() => Boolean(fixture?.editing));
+  const [editComment, setEditComment] = useState(() => fixture?.editComment ?? "");
   const [replanning, setReplanning] = useState(false);
   const editRef = useRef<HTMLTextAreaElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const effectiveTabId = fixture?.tabId ?? activeTabId;
 
   useEffect(() => {
-    if (!activeTabId || !inTauri()) {
+    if (fixture) {
+      setGoal(fixture.goal);
+      return;
+    }
+    if (!effectiveTabId || !inTauri()) {
       setGoal(null);
       return;
     }
     let cancelled = false;
     const fetchState = () => {
-      void invoke<unknown>("get_goal_state", { tabId: activeTabId })
+      void invoke<unknown>("get_goal_state", { tabId: effectiveTabId })
         .then((s) => {
           if (cancelled) return;
           if (!s || typeof s !== "object") {
@@ -131,11 +150,16 @@ export function GoalPlanReviewModal({
     fetchState();
     const id = window.setInterval(fetchState, 2500);
     return () => { cancelled = true; window.clearInterval(id); };
-  }, [activeTabId, eventsLen]);
+  }, [effectiveTabId, eventsLen, fixture]);
 
   const scratchboardPath = goal?.scratchboardPath ?? "";
   useEffect(() => {
-    if (!activeTabId || !scratchboardPath || !goal?.awaitingApproval) {
+    if (fixture) {
+      setReadError(null);
+      setPlanText(fixture.planText);
+      return;
+    }
+    if (!effectiveTabId || !scratchboardPath || !goal?.awaitingApproval) {
       setPlanText("");
       setReadError(null);
       return;
@@ -149,7 +173,7 @@ export function GoalPlanReviewModal({
     if (inTauri()) {
       void invoke<string>("read_text_file_for_path", {
         path: scratchboardPath,
-        tabId: activeTabId,
+        tabId: effectiveTabId,
       }).then(setText).catch((e) => {
         if (!cancelled) setReadError(String(e));
       });
@@ -160,13 +184,27 @@ export function GoalPlanReviewModal({
         .catch((e) => { if (!cancelled) setReadError(String(e)); });
     }
     return () => { cancelled = true; };
-  }, [activeTabId, scratchboardPath, goal?.awaitingApproval, goal?.approvalStatus?.ready, eventsLen]);
+  }, [effectiveTabId, scratchboardPath, goal?.awaitingApproval, goal?.approvalStatus?.ready, eventsLen, fixture]);
+
+  useEffect(() => {
+    if (!fixture) return;
+    setEditing(Boolean(fixture.editing));
+    setEditComment(fixture.editComment ?? "");
+    setApproving(false);
+    setRejecting(false);
+    setRejectArmed(false);
+    setActionMessage(null);
+    setReplanning(false);
+    setDismissedKey(null);
+  }, [fixture]);
 
   useEffect(() => {
     if (!goal?.awaitingApproval) {
       setDismissedKey(null);
       setApproving(false);
       setRejecting(false);
+      setRejectArmed(false);
+      setActionMessage(null);
       setEditing(false);
       setEditComment("");
       setReplanning(false);
@@ -177,35 +215,29 @@ export function GoalPlanReviewModal({
 
   const ready = Boolean(goal?.active && goal.awaitingApproval && goal.approvalStatus?.ready);
   const planKey = useMemo(
-    () => activeTabId && scratchboardPath
-      ? `${activeTabId}:${scratchboardPath}:${planFingerprint(planText)}`
+    () => effectiveTabId && scratchboardPath
+      ? `${effectiveTabId}:${scratchboardPath}:${planFingerprint(planText)}`
       : null,
-    [activeTabId, scratchboardPath, planText],
+    [effectiveTabId, scratchboardPath, planText],
   );
   const open = ready && planKey !== null && dismissedKey !== planKey;
+  useModalFocus(open, dialogRef, () => {
+    if (editing) {
+      setEditing(false);
+      return;
+    }
+    if (planKey) setDismissedKey(planKey);
+    onReviewLater();
+  });
 
   useEffect(() => {
     if (openRequestSeq === undefined) return;
     setDismissedKey(null);
+    setRejectArmed(false);
+    setActionMessage(null);
   }, [openRequestSeq]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      if (editing) {
-        setEditing(false);
-        return;
-      }
-      if (planKey) setDismissedKey(planKey);
-      onReviewLater();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, editing, planKey, onReviewLater]);
-
-  if (!open || !goal || !activeTabId) return null;
+  if (!open || !goal || !effectiveTabId) return null;
 
   const lineCount = planText ? planText.split("\n").length : 0;
   const phaseCount = (planText.match(/^##\s+Phase\b/gim) ?? []).length;
@@ -225,32 +257,40 @@ export function GoalPlanReviewModal({
 
   const dismissToRail = (): void => {
     if (planKey) setDismissedKey(planKey);
+    setRejectArmed(false);
+    setActionMessage(null);
     onReviewLater();
   };
 
   const approve = (): void => {
-    if (approving || rejecting || !inTauri()) return;
+    if (fixture || approving || rejecting || !inTauri()) return;
+    setRejectArmed(false);
+    setActionMessage(null);
     setApproving(true);
-    void invoke<boolean>("approve_goal_plan", { tabId: activeTabId })
+    void invoke<boolean>("approve_goal_plan", { tabId: effectiveTabId })
       .then((flipped) => {
         if (flipped) {
           if (planKey) setDismissedKey(planKey);
           onAccepted();
         } else {
+          setActionMessage("The plan is no longer awaiting approval. Refresh the Goal state and try again.");
           setApproving(false);
         }
       })
       .catch((err) => {
         try { console.warn("approve_goal_plan failed:", err); } catch { /* noop */ }
+        setActionMessage(String(err));
         setApproving(false);
       });
   };
 
   const requestEdit = (): void => {
     const comment = editComment.trim();
-    if (!comment || replanning || !inTauri()) return;
+    if (fixture || !comment || replanning || !inTauri()) return;
+    setRejectArmed(false);
+    setActionMessage(null);
     setReplanning(true);
-    void invoke<boolean>("request_goal_replan", { tabId: activeTabId, comment })
+    void invoke<boolean>("request_goal_replan", { tabId: effectiveTabId, comment })
       .then((ok) => {
         if (ok) {
           if (planKey) setDismissedKey(planKey);
@@ -258,32 +298,41 @@ export function GoalPlanReviewModal({
           setEditComment("");
           onReviewLater();
         } else {
+          setActionMessage("The active Goal is no longer waiting for plan feedback.");
           setReplanning(false);
         }
       })
       .catch((err) => {
         try { console.warn("request_goal_replan failed:", err); } catch { /* noop */ }
+        setActionMessage(String(err));
         setReplanning(false);
       });
   };
 
   const reject = (): void => {
-    if (rejecting || !inTauri()) return;
-    if (!window.confirm("Reject the proposed plan and clear Build Mode?")) return;
+    if (fixture || rejecting || !inTauri()) return;
+    if (!rejectArmed) {
+      setRejectArmed(true);
+      setActionMessage("Click Confirm reject to clear this Goal and its proposed plan.");
+      return;
+    }
     setRejecting(true);
-    void invoke("reject_goal_plan", { tabId: activeTabId })
+    setRejectArmed(false);
+    setActionMessage(null);
+    void invoke("reject_goal_plan", { tabId: effectiveTabId })
       .then(() => {
         if (planKey) setDismissedKey(planKey);
       })
       .catch((err) => {
         try { console.warn("reject_goal_plan failed:", err); } catch { /* noop */ }
+        setActionMessage(String(err));
         setRejecting(false);
       });
   };
 
   return (
-    <div className="preview-backdrop" role="dialog" aria-modal="true" aria-label={`Review plan: ${planTitle}`}>
-      <div className="preview-modal plan-review-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="preview-backdrop">
+      <div ref={dialogRef} data-debug-id="surface-components-goalplanreviewmodal-1" className="preview-modal plan-review-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Review plan: ${planTitle}`}>
         <div className="plan-review-shell">
           <div className="plan-review-topbar">
             <div className="plan-review-kicker">Plan review</div>
@@ -312,7 +361,10 @@ export function GoalPlanReviewModal({
               </div>
             )}
           </div>
-          <div className="preview-body preview-body-markdown plan-review-body" onMouseUp={onMouseUpAutoCopy}>
+          <div
+            className="preview-body preview-body-markdown plan-review-body"
+            onMouseUp={fixture ? undefined : onMouseUpAutoCopy}
+          >
             {readError ? (
               <div className="preview-err">{readError}</div>
             ) : planText.trim() ? (
@@ -349,6 +401,7 @@ export function GoalPlanReviewModal({
               <textarea
                 ref={editRef}
                 className="plan-edit-input"
+                data-shellx-release-observe="value"
                 value={editComment}
                 onChange={(e) => setEditComment(e.target.value)}
                 placeholder="What should Grok change about this plan? (Ctrl+Enter to submit)"
@@ -365,10 +418,10 @@ export function GoalPlanReviewModal({
                 }}
               />
               <div className="plan-edit-actions">
-                <button
+                <button data-debug-id="surface-components-goalplanreviewmodal-4"
                   type="button"
                   className="pact plan-action plan-action-primary"
-                  disabled={!editComment.trim() || replanning}
+                  disabled={Boolean(fixture) || !editComment.trim() || replanning}
                   onClick={requestEdit}
                 >
                   {replanning ? "Sending…" : "Send feedback"}
@@ -377,7 +430,11 @@ export function GoalPlanReviewModal({
                   type="button"
                   className="pact plan-action plan-action-quiet"
                   disabled={replanning}
-                  onClick={() => { setEditing(false); setEditComment(""); }}
+                  onClick={() => {
+                    setEditing(false);
+                    setEditComment("");
+                    setActionMessage(null);
+                  }}
                 >
                   Cancel
                 </button>
@@ -393,27 +450,38 @@ export function GoalPlanReviewModal({
             >
               Review later
             </button>
+            {actionMessage && (
+              <span className="goal-status-meta" role="status" title={actionMessage}>{actionMessage}</span>
+            )}
             <div className="plan-review-action-spacer" />
-            <button
+            <button data-debug-id="surface-components-goalplanreviewmodal-7"
               type="button"
               className="pact plan-action plan-action-danger"
-              disabled={approving || rejecting || replanning}
+              data-shellx-release-observe="title disabled"
+              title={rejectArmed
+                ? "Confirm rejection and clear this Goal plan"
+                : "Reject this Goal plan"}
+              disabled={Boolean(fixture) || approving || rejecting || replanning}
               onClick={reject}
             >
-              {rejecting ? "Rejecting…" : "Reject"}
+              {rejecting ? "Rejecting…" : rejectArmed ? "Confirm reject" : "Reject"}
             </button>
             <button
               type="button"
               className={`pact plan-action plan-action-secondary ${editing ? "active" : ""}`}
               disabled={approving || rejecting || replanning}
-              onClick={() => setEditing((v) => !v)}
+              onClick={() => {
+                setRejectArmed(false);
+                setActionMessage(null);
+                setEditing((v) => !v);
+              }}
             >
               Request changes
             </button>
-            <button
+            <button data-debug-id="surface-components-goalplanreviewmodal-9"
               type="button"
               className="pact plan-action plan-action-primary"
-              disabled={approving || rejecting || replanning}
+              disabled={Boolean(fixture) || approving || rejecting || replanning}
               onClick={approve}
             >
               {approving ? "Approving…" : "Accept plan"}

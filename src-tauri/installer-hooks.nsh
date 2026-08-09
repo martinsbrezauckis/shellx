@@ -50,11 +50,28 @@
   nsExec::ExecToLog 'taskkill /F /IM app.exe /T'
   Pop $0
   Sleep 500
+
+  ; Explorer handoff can be enabled from Settings after installation. Remove
+  ; it before the payload disappears so an interrupted or partially completed
+  ; uninstall cannot leave dead shellX verbs behind. Preserve the user's
+  ; opt-in across updater-driven replacement uninstalls.
+  ${If} $UpdateMode <> 1
+    SetShellVarContext current
+    DeleteRegKey HKCU "Software\Classes\*\shell\shellX"
+    DeleteRegKey HKCU "Software\Classes\Directory\shell\shellX"
+    Delete "$SENDTO\shellX.lnk"
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  DetailPrint "shellX: removing Windows Explorer file handoff..."
-  DeleteRegKey HKCU "Software\Classes\*\shell\shellX"
-  DeleteRegKey HKCU "Software\Classes\Directory\shell\shellX"
-  Delete "$SENDTO\shellX.lnk"
+  ; Repeat the idempotent cleanup after Tauri's uninstall section as a final
+  ; lifecycle assertion. Update-mode uninstalls intentionally keep the
+  ; integration, whose command continues to target the same install path.
+  ${If} $UpdateMode <> 1
+    DetailPrint "shellX: removing Windows Explorer file handoff..."
+    SetShellVarContext current
+    DeleteRegKey HKCU "Software\Classes\*\shell\shellX"
+    DeleteRegKey HKCU "Software\Classes\Directory\shell\shellX"
+    Delete "$SENDTO\shellX.lnk"
+  ${EndIf}
 !macroend

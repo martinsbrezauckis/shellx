@@ -1,109 +1,13 @@
 pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
 (() => {
+  __SHELLX_ELEMENT_IDENTITY__
+  __SHELLX_DOM_TRAVERSAL__
   const clip = (value, max) => String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
-  const escapeCss = (value) => {
-    if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(String(value));
-    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
-  };
-  const escapeAttr = (value) => String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const selectorFor = (element) => {
-    if (!element || !element.localName) return "";
-    const uniqueSelector = (selector) => {
-      if (!selector) return "";
-      try { return document.querySelectorAll(selector).length === 1 ? selector : ""; } catch (_) { return ""; }
-    };
-    if (element.id) {
-      const byId = uniqueSelector(`#${escapeCss(element.id)}`);
-      if (byId) return byId;
-    }
-    const tagName = element.localName.toLowerCase();
-    const testId = element.getAttribute("data-testid") || element.getAttribute("data-test-id");
-    if (testId) {
-      const byTestId = uniqueSelector(`${tagName}[data-testid="${escapeAttr(testId)}"]`) || uniqueSelector(`[data-testid="${escapeAttr(testId)}"]`);
-      if (byTestId) return byTestId;
-    }
-    const candidateAttrs = [];
-    const name = element.getAttribute("name");
-    const type = element.getAttribute("type");
-    const autocomplete = element.getAttribute("autocomplete");
-    const placeholder = element.getAttribute("placeholder");
-    const ariaLabel = element.getAttribute("aria-label");
-    if (["input", "textarea", "select"].includes(tagName)) {
-      if (name && type) candidateAttrs.push(`${tagName}[type="${escapeAttr(type)}"][name="${escapeAttr(name)}"]`);
-      if (name) candidateAttrs.push(`${tagName}[name="${escapeAttr(name)}"]`);
-      if (autocomplete) candidateAttrs.push(`${tagName}[autocomplete="${escapeAttr(autocomplete)}"]`);
-      if (placeholder) candidateAttrs.push(`${tagName}[placeholder="${escapeAttr(placeholder)}"]`);
-      if (ariaLabel) candidateAttrs.push(`${tagName}[aria-label="${escapeAttr(ariaLabel)}"]`);
-    } else if (ariaLabel) {
-      candidateAttrs.push(`${tagName}[aria-label="${escapeAttr(ariaLabel)}"]`);
-    }
-    for (const candidate of candidateAttrs) {
-      const unique = uniqueSelector(candidate);
-      if (unique) return unique;
-    }
-    const parts = [];
-    let current = element;
-    while (current && current.nodeType === 1 && current !== document.documentElement && parts.length < 6) {
-      let part = current.localName.toLowerCase();
-      const currentTestId = current.getAttribute("data-testid") || current.getAttribute("data-test-id");
-      if (currentTestId) {
-        part += `[data-testid="${escapeAttr(currentTestId)}"]`;
-        parts.unshift(part);
-        break;
-      }
-      const parent = current.parentElement;
-      if (parent) {
-        const same = Array.from(parent.children).filter((child) => child.localName === current.localName);
-        if (same.length > 1) part += `:nth-of-type(${same.indexOf(current) + 1})`;
-      }
-      parts.unshift(part);
-      current = parent;
-    }
-    return parts.join(" > ");
-  };
-  const xpathFor = (element) => {
-    if (!element || !element.localName) return "";
-    if (element.id) return `//*[@id="${String(element.id).replace(/"/g, '\\"')}"]`;
-    const parts = [];
-    let current = element;
-    while (current && current.nodeType === 1 && current !== document && parts.length < 16) {
-      const tag = current.localName.toLowerCase();
-      const parent = current.parentElement;
-      const same = parent ? Array.from(parent.children).filter((child) => child.localName === current.localName) : [];
-      const index = same.length > 1 ? `[${same.indexOf(current) + 1}]` : "";
-      parts.unshift(`${tag}${index}`);
-      current = parent;
-    }
-    return parts.length ? `/${parts.join("/")}` : "";
-  };
-  const looksLikeXpath = (selector) => /^(\.?\/\/|\/)/.test(String(selector || "").trim());
-  const xpathMatches = (selector) => {
-    if (!selector) return [];
-    try {
-      const snapshot = document.evaluate(selector, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-      const matches = [];
-      for (let index = 0; index < snapshot.snapshotLength; index += 1) {
-        const item = snapshot.snapshotItem(index);
-        if (item && item.nodeType === 1) matches.push(item);
-      }
-      return matches;
-    } catch (_) {
-      return [];
-    }
-  };
-  const xpathCount = (selector) => xpathMatches(selector).length;
-  const queryCount = (selector) => {
-    if (!selector) return 0;
-    if (looksLikeXpath(selector)) return xpathCount(selector);
-    try { return document.querySelectorAll(selector).length; } catch (_) { return 0; }
-  };
-  const primarySelectorFor = (element) => {
-    const cssSelector = selectorFor(element);
-    if (queryCount(cssSelector) === 1) return cssSelector;
-    const xpath = xpathFor(element);
-    if (xpathCount(xpath) === 1) return xpath;
-    return queryCount(cssSelector) > 0 ? cssSelector : xpath;
-  };
+  const selectorFor = shellxLocalSelectorFor;
+  const xpathFor = shellxLocalXpathFor;
+  const looksLikeXpath = shellxLooksLikeXpath;
+  const queryCount = (selector, element) => shellxRootSelectorMatches(element ? shellxElementQueryRoot(element) : document, selector).length;
+  const primarySelectorFor = shellxPrimarySelectorFor;
   const roleFor = (element) => {
     const tag = (element.localName || "").toLowerCase();
     const explicit = element.getAttribute("role");
@@ -124,7 +28,7 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
   };
   const isSensitiveField = (element) => {
     try {
-      if (window.__shellxTaintedControls?.has?.(element)) return true;
+      if (shellxElementWindow(element).__shellxTaintedControls?.has?.(element)) return true;
     } catch (_) {}
     const tag = (element.localName || "").toLowerCase();
     const type = (element.getAttribute("type") || "").toLowerCase();
@@ -144,7 +48,7 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
     if (aria) return clip(aria, 160);
     const id = element.getAttribute("id");
     if (id) {
-      const label = document.querySelector(`label[for="${String(id).replace(/"/g, '\\"')}"]`);
+      const label = shellxElementQueryRoot(element).querySelector(`label[for="${String(id).replace(/"/g, '\\"')}"]`);
       if (label) return clip(label.innerText || label.textContent, 160);
     }
     if (isSensitiveField(element)) return clip(element.localName || "field", 160);
@@ -169,8 +73,82 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
     if (element.isContentEditable) return "contenteditable";
     return (element.getAttribute("type") || "text").toLowerCase();
   };
+  const fieldIntentFor = (element) => {
+    const kind = fieldKindFor(element);
+    const label = labelFor(element);
+    const meta = [
+      kind,
+      element.getAttribute("autocomplete") || "",
+      element.getAttribute("name") || "",
+      element.getAttribute("id") || "",
+      element.getAttribute("aria-label") || "",
+      element.getAttribute("placeholder") || "",
+      label || ""
+    ].join(" ").toLowerCase();
+    if (/\b(one-time-code|otp|mfa|2fa|verification code|security code)\b/.test(meta)) return "otp";
+    if (/\b(api[-_ ]?key|access token|auth token|bearer|client secret|secret key)\b/.test(meta)) return "apiKey";
+    if (/\bnew-password\b/.test(meta) || /\b(new|create|choose).{0,20}password\b/.test(meta)) return "newPassword";
+    if (/\b(confirm|repeat|verify).{0,20}password\b/.test(meta)) return "confirmPassword";
+    if (kind === "password" || /\bcurrent-password\b/.test(meta) || /\bpassword\b/.test(meta)) return "password";
+    if (kind === "email" || /\bemail\b/.test(meta)) return "email";
+    if (/\b(user(name)?|login)\b/.test(meta)) return "username";
+    if (/\b(given-name|first name|forename)\b/.test(meta)) return "firstName";
+    if (/\b(family-name|last name|surname)\b/.test(meta)) return "lastName";
+    if (/\b(full name|display name|contact name)\b/.test(meta)) return "fullName";
+    if (/\b(organi[sz]ation|company|workspace|team)\b/.test(meta)) return "organization";
+    if (/\b(address-line2|address 2|suite|apartment|unit)\b/.test(meta)) return "addressLine2";
+    if (/\b(address-line1|address 1|street|address)\b/.test(meta)) return "addressLine1";
+    if (/\b(city|locality)\b/.test(meta)) return "city";
+    if (/\b(postal|zip)\b/.test(meta)) return "postalCode";
+    if (/\b(country|country-name)\b/.test(meta)) return "country";
+    if (/\b(tel|phone|mobile)\b/.test(meta)) return "phone";
+    if (/\b(url|website|homepage)\b/.test(meta)) return "url";
+    if (/\b(cc-number|card number|credit card|payment card)\b/.test(meta)) return "paymentCard";
+    if (kind === "search" || /\b(search|query)\b/.test(meta)) return "search";
+    if (kind === "checkbox") return "checkbox";
+    if (kind === "radio") return "radio";
+    if (kind.startsWith("select")) return "choice";
+    return "generic";
+  };
+  const formKeyFor = (element, index) => {
+    const form = element.form;
+    if (form) {
+      return shellxDomLocatorFor(form) || form.action || `form-${index}`;
+    }
+    const container = element.closest?.("[role='form'],form,section,main,article,[data-testid],[data-test-id]");
+    if (container) {
+      const locator = shellxDomLocatorFor(container);
+      if (locator) return locator;
+    }
+    return "page";
+  };
+  const groupKindFor = (fields) => {
+    const intents = new Set(fields.map((field) => field.intent));
+    if (intents.has("apiKey")) return "apiKey";
+    if (intents.has("otp")) return "verification";
+    if (intents.has("paymentCard")) return "payment";
+    if (intents.has("password") && (intents.has("email") || intents.has("username"))) return "login";
+    if (intents.has("newPassword") || intents.has("confirmPassword")) return "signup";
+    if (["addressLine1", "city", "postalCode", "country"].some((intent) => intents.has(intent))) return "address";
+    if (["firstName", "lastName", "fullName", "organization", "phone", "url"].some((intent) => intents.has(intent))) return "profile";
+    if (intents.has("search")) return "search";
+    return "generic";
+  };
+  const formFieldGroupLabel = (groupKind) => {
+    switch (groupKind) {
+      case "apiKey": return "API key or token form";
+      case "verification": return "Verification code form";
+      case "payment": return "Payment form";
+      case "login": return "Login form";
+      case "signup": return "Signup form";
+      case "address": return "Address form";
+      case "profile": return "Profile form";
+      case "search": return "Search form";
+      default: return "Form fields";
+    }
+  };
   const boundsFor = (element) => {
-    const rect = element.getBoundingClientRect();
+    const rect = shellxGlobalRectFor(element);
     return {
       x: Math.round(rect.x * 100) / 100,
       y: Math.round(rect.y * 100) / 100,
@@ -180,7 +158,7 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
   };
   const isVisible = (element) => {
     const rect = element.getBoundingClientRect();
-    const style = window.getComputedStyle(element);
+    const style = shellxElementWindow(element).getComputedStyle(element);
     return Boolean(rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity || 1) > 0);
   };
   const isEnabled = (element) => !Boolean(element.disabled || element.getAttribute("aria-disabled") === "true");
@@ -193,6 +171,7 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
     return !["button", "submit", "reset", "checkbox", "radio", "file", "hidden"].includes(type) && isEnabled(element) && !element.readOnly;
   };
   const locatorSuggestionsFor = (element, selector, role, name) => {
+    const root = shellxElementQueryRoot(element);
     const suggestions = [];
     const push = (kind, value, strict = true, matchCount = 1) => {
       const clean = clip(value, 240);
@@ -200,17 +179,17 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
       suggestions.push({ kind, value: clean, strict, matchCount });
     };
     const testId = element.getAttribute("data-testid") || element.getAttribute("data-test-id");
-    if (testId) push("testId", testId, queryCount(`[data-testid="${String(testId).replace(/"/g, '\\"')}"]`) === 1, queryCount(`[data-testid="${String(testId).replace(/"/g, '\\"')}"]`));
+    if (testId) push("testId", testId, queryCount(`[data-testid="${String(testId).replace(/"/g, '\\"')}"]`, element) === 1, queryCount(`[data-testid="${String(testId).replace(/"/g, '\\"')}"]`, element));
     if (role && name) push("role", `${role}:${name}`, true, 1);
     const id = element.getAttribute("id");
     if (id) {
-      const label = document.querySelector(`label[for="${String(id).replace(/"/g, '\\"')}"]`);
+      const label = root.querySelector(`label[for="${String(id).replace(/"/g, '\\"')}"]`);
       if (label) push("label", clip(label.innerText || label.textContent, 160), true, 1);
     }
     const placeholder = element.getAttribute("placeholder");
     if (placeholder) push("placeholder", placeholder, true, 1);
     if (name && !["textbox", "password", "combobox"].includes(role)) push("text", name, false, 1);
-    if (selector) push(looksLikeXpath(selector) ? "xpath" : "css", selector, queryCount(selector) === 1, queryCount(selector));
+    if (selector) push(looksLikeXpath(selector) ? "xpath" : "css", selector, queryCount(selector, element) === 1, queryCount(selector, element));
     const xpath = xpathFor(element);
     if (xpath) push("xpath", xpath, false, 1);
     return suggestions.slice(0, 8);
@@ -221,20 +200,22 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
     } catch (_) {}
     return String(value || "").length;
   };
-  const controls = Array.from(document.querySelectorAll(
+  const controls = shellxDeepQueryAll(
     "a,button,input,textarea,select,[role='button'],[role='link'],[role='radio'],[role='checkbox'],[role='option'],[role='tab'],[role='menuitem'],[role='switch'],[tabindex]:not([tabindex='-1']),[contenteditable='true']"
-  ));
+  , 500);
   const refs = controls.slice(0, 200).map((element, index) => {
     const role = roleFor(element);
     const selector = primarySelectorFor(element);
     const name = labelFor(element) || `${role} ${index + 1}`;
     return {
-      refId: `dom-${index + 1}`,
+      refId: shellxElementStableRefId(element) || `dom-${index + 1}`,
       role,
       label: name,
       name,
       testId: element.getAttribute("data-testid") || element.getAttribute("data-test-id") || null,
       selector,
+      locator: shellxDomLocatorFor(element),
+      ...shellxElementIdentityMetadata(element),
       value: valueFor(element),
       action: actionFor(role),
       locatorSuggestions: locatorSuggestionsFor(element, selector, role, name),
@@ -242,8 +223,8 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
       visible: isVisible(element),
       enabled: isEnabled(element),
       editable: isEditable(element),
-      frameId: "main",
-      strictMatchCount: queryCount(selector)
+      frameId: shellxElementFrameId(element),
+      strictMatchCount: queryCount(selector, element)
     };
   }).filter((ref) => ref.selector);
   const directTextForSecretCandidate = (element) => {
@@ -302,26 +283,27 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
   };
   const secretTextNodeElements = () => {
     const elements = [];
-    try {
-      const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
-      while (elements.length < 40) {
-        const node = walker.nextNode();
-        if (!node) break;
-        const candidate = String(node.textContent || "").replace(/\s+/g, " ").trim();
-        if (!looksLikeSecretCandidate(candidate)) continue;
-        const element = node.parentElement;
-        if (!element || !isVisible(element)) continue;
-        const context = surroundingSecretContext(element);
-        if (!/\b(api[-_ ]?key|secret|token|credential|auth key)\b/.test(context)) continue;
-        elements.push(element);
-      }
-    } catch (_) {}
+    for (const contextRoot of shellxOpenDom().contexts.map((context) => context.root)) {
+      try {
+        const ownerDocument = contextRoot.nodeType === 9 ? contextRoot : contextRoot.ownerDocument;
+        const walker = ownerDocument.createTreeWalker(contextRoot, 4);
+        while (elements.length < 40) {
+          const node = walker.nextNode();
+          if (!node) break;
+          const candidate = String(node.textContent || "").replace(/\s+/g, " ").trim();
+          if (!looksLikeSecretCandidate(candidate)) continue;
+          const element = node.parentElement;
+          if (!element || !isVisible(element)) continue;
+          const secretContext = surroundingSecretContext(element);
+          if (/\b(api[-_ ]?key|secret|token|credential|auth key)\b/.test(secretContext)) elements.push(element);
+        }
+      } catch (_) {}
+      if (elements.length >= 40) break;
+    }
     return elements;
   };
   const secretCandidateElements = [
-    ...Array.from(document.querySelectorAll(
-    "input,textarea,code,pre,kbd,samp,span,p,dd,td,div,[role='textbox']"
-    )),
+    ...shellxDeepQueryAll("input,textarea,code,pre,kbd,samp,span,p,dd,td,div,[role='textbox']", 1000),
     ...secretTextNodeElements()
   ];
   const secretCandidateRefs = secretCandidateElements
@@ -336,15 +318,15 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
       const context = surroundingSecretContext(element);
       if (!/\b(api[-_ ]?key|secret|token|credential|auth key)\b/.test(context)) return null;
       const cssSelector = selectorFor(element);
-      const selector = queryCount(cssSelector) === 1 ? cssSelector : xpathFor(element);
+      const selector = queryCount(cssSelector, element) === 1 ? cssSelector : xpathFor(element);
       if (!selector) return null;
-      return { element, selector };
+      return { element, selector, locator: shellxDomLocatorFor(element) };
     })
     .filter(Boolean)
-    .filter((candidate, index, all) => all.findIndex((item) => item.selector === candidate.selector) === index)
+    .filter((candidate, index, all) => all.findIndex((item) => item.locator === candidate.locator) === index)
     .slice(0, 20)
     .map((candidate, index) => {
-      const strictMatchCount = queryCount(candidate.selector);
+      const strictMatchCount = queryCount(candidate.selector, candidate.element);
       return {
         refId: `secret-${index + 1}`,
         role: "secret",
@@ -352,6 +334,8 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
         name: "Capturable secret value",
         testId: candidate.element.getAttribute("data-testid") || candidate.element.getAttribute("data-test-id") || null,
         selector: candidate.selector,
+        locator: candidate.locator,
+        ...shellxElementIdentityMetadata(candidate.element),
         value: null,
         action: "capturePageSecretToVault",
         locatorSuggestions: locatorSuggestionsFor(candidate.element, candidate.selector, "secret", "Capturable secret value"),
@@ -359,23 +343,23 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
         visible: true,
         enabled: true,
         editable: false,
-        frameId: "main",
+        frameId: shellxElementFrameId(candidate.element),
         strictMatchCount
       };
     });
-  const secretCopyControlRefs = Array.from(document.querySelectorAll("button,a,[role='button'],[role='menuitem']"))
+  const secretCopyControlRefs = shellxDeepQueryAll("button,a,[role='button'],[role='menuitem']", 1000)
     .filter((element) => isSecretCopyControl(element))
     .map((element) => {
       const cssSelector = selectorFor(element);
-      const selector = queryCount(cssSelector) === 1 ? cssSelector : xpathFor(element);
+      const selector = queryCount(cssSelector, element) === 1 ? cssSelector : xpathFor(element);
       if (!selector) return null;
-      return { element, selector };
+      return { element, selector, locator: shellxDomLocatorFor(element) };
     })
     .filter(Boolean)
-    .filter((candidate, index, all) => all.findIndex((item) => item.selector === candidate.selector) === index)
+    .filter((candidate, index, all) => all.findIndex((item) => item.locator === candidate.locator) === index)
     .slice(0, 20)
     .map((candidate, index) => {
-      const strictMatchCount = queryCount(candidate.selector);
+      const strictMatchCount = queryCount(candidate.selector, candidate.element);
       return {
         refId: `secret-${secretCandidateRefs.length + index + 1}`,
         role: "secret",
@@ -383,6 +367,8 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
         name: "Capturable secret copy control",
         testId: candidate.element.getAttribute("data-testid") || candidate.element.getAttribute("data-test-id") || null,
         selector: candidate.selector,
+        locator: candidate.locator,
+        ...shellxElementIdentityMetadata(candidate.element),
         value: null,
         action: "capturePageSecretToVault",
         locatorSuggestions: locatorSuggestionsFor(candidate.element, candidate.selector, "secret", "Capturable secret copy control"),
@@ -390,30 +376,35 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
         visible: true,
         enabled: !candidate.element.disabled,
         editable: false,
-        frameId: "main",
+        frameId: shellxElementFrameId(candidate.element),
         strictMatchCount
       };
     });
   const prioritizedSecretRefs = [...secretCopyControlRefs, ...secretCandidateRefs]
     .map((candidate, index) => ({ ...candidate, refId: `secret-${index + 1}` }));
-  refs.push(...prioritizedSecretRefs.filter((candidate) => !refs.some((ref) => ref.selector === candidate.selector && ref.action === candidate.action)));
-  const rawText = document.body?.innerText || document.documentElement?.innerText || "";
-  const text = rawText.trim().slice(0, 20000);
+  refs.push(...prioritizedSecretRefs.filter((candidate) => !refs.some((ref) => ref.locator === candidate.locator && ref.action === candidate.action)));
+  const text = shellxDeepVisibleText(20000).trim();
   const title = document.title || location.href || "Untitled browser page";
+  const traversal = shellxOpenDom();
   const domSummary = {
-    links: document.querySelectorAll("a[href]").length,
-    buttons: document.querySelectorAll("button,input[type='button'],input[type='submit'],input[type='reset'],[role='button']").length,
-    inputs: document.querySelectorAll("input,textarea,select,[contenteditable='true']").length,
-    forms: document.querySelectorAll("form").length,
-    tables: document.querySelectorAll("table").length,
-    headings: document.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']").length,
-    textBytes: byteLength(text)
+    links: shellxDeepQueryCount("a[href]"),
+    buttons: shellxDeepQueryCount("button,input[type='button'],input[type='submit'],input[type='reset'],[role='button']"),
+    inputs: shellxDeepQueryCount("input,textarea,select,[contenteditable='true']"),
+    forms: shellxDeepQueryCount("form"),
+    tables: shellxDeepQueryCount("table"),
+    headings: shellxDeepQueryCount("h1,h2,h3,h4,h5,h6,[role='heading']"),
+    textBytes: byteLength(text),
+    sameOriginFrames: traversal.sameOriginFrames,
+    crossOriginFrames: traversal.crossOriginFrames,
+    openShadowRoots: traversal.openShadowRoots,
+    traversalTruncated: traversal.traversalTruncated
   };
-  const formFields = Array.from(document.querySelectorAll("input,textarea,select,[contenteditable='true']")).slice(0, 200).map((element) => {
+  const formControlRecords = shellxDeepQueryAll("input,textarea,select,[contenteditable='true']", 200).map((element, index) => {
     const selector = primarySelectorFor(element);
     if (!selector) return null;
-    const ref = refs.find((item) => item.selector === selector);
-    return {
+    const locator = shellxDomLocatorFor(element);
+    const ref = refs.find((item) => item.locator === locator);
+    const field = {
       refId: ref?.refId || null,
       selector,
       label: labelFor(element) || fieldKindFor(element),
@@ -422,9 +413,50 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
       required: Boolean(element.required || element.getAttribute("aria-required") === "true"),
       disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
       autocomplete: element.getAttribute("autocomplete") || null,
-      formAction: element.form?.action || null
+      formAction: element.form?.action || null,
+      intent: fieldIntentFor(element),
+      sensitive: isSensitiveField(element)
     };
+    return { element, field, formKey: formKeyFor(element, index) };
   }).filter(Boolean);
+  const formFields = formControlRecords.map((record) => ({
+    refId: record.field.refId,
+    selector: record.field.selector,
+    label: record.field.label,
+    fieldKind: record.field.fieldKind,
+    value: record.field.value,
+    required: record.field.required,
+    disabled: record.field.disabled,
+    autocomplete: record.field.autocomplete,
+    formAction: record.field.formAction
+  }));
+  const formFieldGroups = Array.from(formControlRecords.reduce((groups, record) => {
+    const key = record.formKey || "page";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(record.field);
+    return groups;
+  }, new Map()).entries()).slice(0, 80).map(([key, fields], index) => {
+    const fieldIntents = Array.from(new Set(fields.map((field) => field.intent).filter((intent) => intent && intent !== "generic")));
+    const groupKind = groupKindFor(fields);
+    return {
+      groupId: `form-group-${index + 1}`,
+      groupKind,
+      label: formFieldGroupLabel(groupKind),
+      formAction: fields.find((field) => field.formAction)?.formAction || null,
+      fieldIntents,
+      fields: fields.slice(0, 40).map((field) => ({
+        refId: field.refId,
+        selector: field.selector,
+        label: field.label,
+        fieldKind: field.fieldKind,
+        intent: field.intent,
+        required: field.required,
+        disabled: field.disabled,
+        sensitive: field.sensitive
+      })),
+      sensitive: fields.some((field) => field.sensitive)
+    };
+  });
   const accessibilityTree = refs.slice(0, 200).map((ref) => ({
     refId: ref.refId,
     role: ref.role,
@@ -440,6 +472,7 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
     refs,
     domSummary,
     formFields,
+    formFieldGroups,
     accessibilityTree,
     privacyStats: window.__shellxPrivacyStats || null
   };
@@ -449,6 +482,8 @@ pub(crate) const BROWSER_ENGINE_OBSERVE_SCRIPT: &str = r#"
 pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
 (() => {
   const request = __SHELLX_BROWSER_REQUEST__;
+  __SHELLX_ELEMENT_IDENTITY__
+  __SHELLX_DOM_TRAVERSAL__
   const clip = (value, max) => String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
   const result = (ok, status, message, extra = {}) => ({
     ok,
@@ -525,52 +560,33 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
       }
     } catch (_) {}
   };
-  const looksLikeXpath = (selector) => /^(\.?\/\/|\/)/.test(String(selector || "").trim());
-  const xpathMatches = (selector) => {
-    if (!selector) return [];
-    try {
-      const snapshot = document.evaluate(selector, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-      const matches = [];
-      for (let index = 0; index < snapshot.snapshotLength; index += 1) {
-        const item = snapshot.snapshotItem(index);
-        if (item && item.nodeType === 1) matches.push(item);
-      }
-      return matches;
-    } catch (_) {
-      return [];
-    }
-  };
   const target = () => {
+    if (request.locator) return shellxResolveDomLocator(request.locator);
     if (!request.selector) return { element: null, strictMatchCount: 0 };
-    if (looksLikeXpath(request.selector)) {
-      const matches = xpathMatches(request.selector);
-      return { element: matches[0] || null, strictMatchCount: matches.length };
-    }
-    try {
-      const matches = Array.from(document.querySelectorAll(request.selector));
-      return { element: matches[0] || null, strictMatchCount: matches.length };
-    } catch (_) {
-      return { element: null, strictMatchCount: 0 };
-    }
+    const matches = shellxRootSelectorMatches(document, request.selector);
+    return { element: matches[0] || null, strictMatchCount: matches.length };
   };
   const dispatchTextEvents = (element, value, inputType = "insertText") => {
+    const view = shellxElementWindow(element);
     try {
-      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType, data: value }));
+      element.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType, data: value }));
     } catch (_) {
-      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new view.Event("input", { bubbles: true }));
     }
-    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.dispatchEvent(new view.Event("change", { bubbles: true }));
   };
   const dispatchBeforeTextInput = (element, value, inputType = "insertText") => {
+    const view = shellxElementWindow(element);
     try {
-      return element.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType, data: value }));
+      return element.dispatchEvent(new view.InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType, data: value }));
     } catch (_) {
-      return element.dispatchEvent(new Event("beforeinput", { bubbles: true, cancelable: true }));
+      return element.dispatchEvent(new view.Event("beforeinput", { bubbles: true, cancelable: true }));
     }
   };
   const setNativeValue = (element, value) => {
     const tag = (element.localName || "").toLowerCase();
-    const prototype = tag === "textarea" ? window.HTMLTextAreaElement?.prototype : window.HTMLInputElement?.prototype;
+    const view = shellxElementWindow(element);
+    const prototype = tag === "textarea" ? view.HTMLTextAreaElement?.prototype : view.HTMLInputElement?.prototype;
     const setter = prototype && Object.getOwnPropertyDescriptor(prototype, "value")?.set;
     if (setter) {
       setter.call(element, value);
@@ -579,18 +595,20 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
     }
   };
   const replaceContentEditableText = (element, value) => {
+    const ownerDocument = element.ownerDocument || document;
+    const view = ownerDocument.defaultView || window;
     element.focus?.();
     if (dispatchBeforeTextInput(element, value) === false) return false;
     try {
-      const selection = window.getSelection?.();
-      const range = document.createRange();
+      const selection = view.getSelection?.();
+      const range = ownerDocument.createRange();
       range.selectNodeContents(element);
       selection?.removeAllRanges();
       selection?.addRange(range);
     } catch (_) {}
     let inserted = false;
     try {
-      inserted = document.execCommand("insertText", false, value);
+      inserted = ownerDocument.execCommand("insertText", false, value);
     } catch (_) {
       inserted = false;
     }
@@ -602,11 +620,12 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
     const kind = String(request.sensitiveKind || "").toLowerCase();
     if (!["vaulttainted", "credentialuse", "profilecard"].includes(kind)) return;
     try {
-      if (!window.__shellxTaintedControls) window.__shellxTaintedControls = new WeakSet();
-      window.__shellxTaintedControls.add(element);
+      const view = shellxElementWindow(element);
+      if (!view.__shellxTaintedControls) view.__shellxTaintedControls = new WeakSet();
+      view.__shellxTaintedControls.add(element);
     } catch (_) {}
   };
-  const visibleText = () => String(document.body?.innerText || document.documentElement?.innerText || "");
+  const visibleText = () => shellxDeepVisibleText(20000);
   const secretCopyContext = (element) => {
     const parts = [labelFor(element), element?.getAttribute?.("title") || "", element?.getAttribute?.("data-testid") || "", element?.getAttribute?.("data-test-id") || ""];
     let current = element;
@@ -645,7 +664,7 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
   };
   const boundsFor = (element) => {
     if (!element || !element.getBoundingClientRect) return null;
-    const rect = element.getBoundingClientRect();
+    const rect = shellxGlobalRectFor(element);
     return {
       x: Math.round(rect.x * 100) / 100,
       y: Math.round(rect.y * 100) / 100,
@@ -653,50 +672,7 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
       height: Math.round(rect.height * 100) / 100
     };
   };
-  const escapeCss = (value) => {
-    if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(String(value));
-    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
-  };
-  const escapeAttr = (value) => String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const selectorFor = (element) => {
-    if (!element || !element.localName) return "";
-    const uniqueSelector = (selector) => {
-      if (!selector) return "";
-      try { return document.querySelectorAll(selector).length === 1 ? selector : ""; } catch (_) { return ""; }
-    };
-    if (element.id) {
-      const byId = uniqueSelector(`#${escapeCss(element.id)}`);
-      if (byId) return byId;
-    }
-    const tagName = element.localName.toLowerCase();
-    const testId = element.getAttribute("data-testid") || element.getAttribute("data-test-id");
-    if (testId) {
-      return uniqueSelector(`${tagName}[data-testid="${escapeAttr(testId)}"]`) || uniqueSelector(`[data-testid="${escapeAttr(testId)}"]`);
-    }
-    const name = element.getAttribute("name");
-    if (name) {
-      const byName = uniqueSelector(`${tagName}[name="${escapeAttr(name)}"]`);
-      if (byName) return byName;
-    }
-    const ariaLabel = element.getAttribute("aria-label");
-    if (ariaLabel) {
-      const byAria = uniqueSelector(`${tagName}[aria-label="${escapeAttr(ariaLabel)}"]`);
-      if (byAria) return byAria;
-    }
-    const parts = [];
-    let current = element;
-    while (current && current.nodeType === 1 && current !== document.documentElement && parts.length < 5) {
-      let part = current.localName.toLowerCase();
-      const parent = current.parentElement;
-      if (parent) {
-        const same = Array.from(parent.children).filter((child) => child.localName === current.localName);
-        if (same.length > 1) part += `:nth-of-type(${same.indexOf(current) + 1})`;
-      }
-      parts.unshift(part);
-      current = parent;
-    }
-    return parts.join(" > ");
-  };
+  const selectorFor = shellxLocalSelectorFor;
   const roleFor = (element) => {
     const tag = (element?.localName || "").toLowerCase();
     const explicit = element?.getAttribute?.("role");
@@ -721,9 +697,10 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
     if (aria) return clip(aria, 120);
     const labelledBy = element.getAttribute?.("aria-labelledby");
     if (labelledBy) {
+      const root = shellxElementQueryRoot(element);
       const value = labelledBy
         .split(/\s+/)
-        .map((id) => document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || "")
+        .map((id) => shellxRootById(root, id)?.innerText || shellxRootById(root, id)?.textContent || "")
         .join(" ");
       if (value.trim()) return clip(value, 120);
     }
@@ -750,87 +727,8 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
     }
     return true;
   };
-  const coordinateActionability = (action) => {
-    const x = Number(request.x);
-    const y = Number(request.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      return { error: "viewport coordinates x and y are required" };
-    }
-    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
-      return { error: "viewport coordinates are outside the visible page" };
-    }
-    const element = document.elementFromPoint(x, y);
-    const selector = selectorFor(element) || null;
-    return {
-      actionability: {
-        attached: Boolean(element),
-        visible: true,
-        stable: true,
-        enabled: true,
-        editable: action === "typeText",
-        inViewport: true,
-        receivesEvents: true,
-        strictMatchCount: 1,
-        selector,
-        bounds: { x, y, width: 1, height: 1 },
-        coveringElement: element ? {
-          selector,
-          role: roleFor(element) || null,
-          label: labelFor(element) || null,
-          bounds: boundsFor(element)
-        } : null,
-        failedChecks: element ? [] : ["attached"]
-      }
-    };
-  };
-  const actionabilityFor = (element, selector, strictMatchCount, action) => {
-    const attached = Boolean(element && document.documentElement.contains(element));
-    const rect = attached ? element.getBoundingClientRect() : { x: 0, y: 0, width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 };
-    const style = attached ? window.getComputedStyle(element) : null;
-    const visible = Boolean(attached && rect.width > 0 && rect.height > 0 && style?.display !== "none" && style?.visibility !== "hidden" && Number(style?.opacity || 1) > 0);
-    const enabled = attached ? isEnabled(element) : false;
-    const editable = attached ? isEditable(element) : false;
-    const inViewport = Boolean(visible && rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth);
-    let receivesEvents = false;
-    let coveringElement = null;
-    if (inViewport) {
-      const x = Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max(window.innerWidth - 1, 0));
-      const y = Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max(window.innerHeight - 1, 0));
-      const hit = document.elementFromPoint(x, y);
-      receivesEvents = Boolean(hit && (hit === element || element.contains(hit) || hit.contains(element)));
-      if (hit && !receivesEvents) {
-        coveringElement = {
-          selector: selectorFor(hit) || null,
-          role: roleFor(hit) || null,
-          label: labelFor(hit) || null,
-          bounds: boundsFor(hit)
-        };
-      }
-    }
-    const check = {
-      attached,
-      visible,
-      stable: visible,
-      enabled,
-      editable,
-      inViewport,
-      receivesEvents,
-      strictMatchCount,
-      selector: selector || null,
-      bounds: attached ? boundsFor(element) : null,
-      coveringElement,
-      failedChecks: []
-    };
-    const needsEditable = action === "fillRef" || action === "type";
-    if (!attached) check.failedChecks.push("attached");
-    if (strictMatchCount !== 1 && selector) check.failedChecks.push("strict");
-    if (!visible && action !== "scroll") check.failedChecks.push("visible");
-    if (!enabled && ["click", "clickRef", "fillRef", "type", "select", "press"].includes(action)) check.failedChecks.push("enabled");
-    if (needsEditable && !editable) check.failedChecks.push("editable");
-    if (!inViewport && action !== "scroll") check.failedChecks.push("inViewport");
-    if (!receivesEvents && ["click", "clickRef"].includes(action)) check.failedChecks.push("receivesEvents");
-    return check;
-  };
+  __SHELLX_COORDINATE_INPUT__
+  __SHELLX_ELEMENT_ACTIONABILITY__
   const verifyExpectation = () => {
     const expectationType = String(request.key || "text");
     const value = String(request.value || "");
@@ -847,7 +745,7 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
       passed = Boolean(info.element && actionability.visible);
       if (!passed) failures.push("element");
     } else if (expectationType === "table") {
-      const table = info.element?.matches?.("table") ? info.element : (info.element?.querySelector?.("table") || document.querySelector("table"));
+      const table = info.element?.matches?.("table") ? info.element : (info.element?.querySelector?.("table") || shellxDeepQueryAll("table", 1)[0]);
       checkedText = table ? String(table.innerText || table.textContent || "") : "";
       passed = Boolean(table) && (!value || checkedText.includes(value));
       if (!passed) failures.push("table");
@@ -885,10 +783,11 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
     };
   };
   const isVisibleTextElement = (element) => {
-    if (!(element instanceof HTMLElement)) return false;
+    const view = shellxElementWindow(element);
+    if (!element || !(element instanceof view.HTMLElement)) return false;
     const rect = element.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return false;
-    const style = window.getComputedStyle(element);
+    const style = view.getComputedStyle(element);
     return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0;
   };
   const snippetAround = (text, index, length) => {
@@ -923,16 +822,16 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
       if (matchCount >= 1000) break;
     }
     let scrolled = false;
-    if (matchCount > 0 && document.body) {
+    if (matchCount > 0) {
       const selectors = "h1,h2,h3,h4,p,li,td,th,a,button,label,summary,output,[aria-live],span,div,article,section,[role='button'],[role='link'],[role='status']";
-      const elements = Array.from(document.body.querySelectorAll(selectors)).slice(0, 5000);
+      const elements = shellxDeepQueryAll(selectors, 5000);
       const first = elements.find((element) => {
         if (!isVisibleTextElement(element)) return false;
         const text = String(element.innerText || element.textContent || "");
         return (caseSensitive ? text : text.toLocaleLowerCase()).includes(needle);
       });
       if (first) {
-        first.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+        shellxScrollElementIntoView(first);
         scrolled = true;
       }
     }
@@ -946,7 +845,7 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
       caseSensitive
     };
   };
-  try {
+  try { if (request.expectedOrigin && !shellxPageOriginMatches(request.expectedOrigin)) return result(false, "originChanged", "page origin changed before Browser action");
     if (request.action === "goBack") {
       history.back();
       return result(true, "applied", "history.back requested");
@@ -962,8 +861,9 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
     if (request.action === "scroll") {
       const { element, strictMatchCount } = target();
       const actionability = actionabilityFor(element, request.selector, strictMatchCount, request.action);
+      if (actionability.fingerprintMatches === false) return staleRefResult(actionability);
       if (element) {
-        element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+        shellxScrollElementIntoView(element);
       } else {
         const delta = Number(request.value || 600);
         window.scrollBy(0, Number.isFinite(delta) ? delta : 600);
@@ -973,21 +873,35 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
     if (request.action === "waitFor") {
       const { element, strictMatchCount } = target();
       const needle = String(request.value || "");
-      const found = Boolean(element) || (needle && visibleText().includes(needle));
       const actionability = actionabilityFor(element, request.selector, strictMatchCount, request.action);
-      return result(found, found ? "applied" : "notFound", found ? "waitFor matched" : "waitFor target not found", { actionability });
+      const staleRef = actionability.fingerprintMatches === false;
+      const selectorWait = Boolean(request.selector), found = !staleRef && (selectorWait ? Boolean(element && actionability.visible && actionability.stable) : Boolean(needle && visibleText().includes(needle)));
+      if (staleRef) return staleRefResult(actionability);
+      return result(found, found ? "applied" : "notFound", found ? "waitFor matched" : selectorWait && element && !actionability.stable ? "waitFor target is not stable" : "waitFor target not found", selectorWait ? { actionability } : {});
     }
     if (request.action === "extractTable") {
       const { element, strictMatchCount } = target();
-      const table = element?.matches?.("table") ? element : (element?.querySelector?.("table") || document.querySelector("table"));
+      const targetActionability = actionabilityFor(element, request.selector, strictMatchCount, request.action);
+      if (targetActionability.fingerprintMatches === false) return staleRefResult(targetActionability);
+      const table = element?.matches?.("table") ? element : (element?.querySelector?.("table") || shellxDeepQueryAll("table", 1)[0]);
       if (!table) return result(false, "notFound", "table not found");
-      const actionability = actionabilityFor(table, request.selector, strictMatchCount || 1, request.action);
+      const actionability = actionabilityFor(table, request.selector, strictMatchCount || 1, request.action, null);
+      if (targetActionability.expectedFingerprint) {
+        actionability.expectedFingerprint = targetActionability.expectedFingerprint;
+        actionability.actualFingerprint = targetActionability.actualFingerprint;
+        actionability.fingerprintMatches = targetActionability.fingerprintMatches;
+      }
       const rows = Array.from(table.querySelectorAll("tr")).slice(0, 200).map((row) =>
         Array.from(row.querySelectorAll("th,td")).slice(0, 50).map((cell) => String(cell.innerText || cell.textContent || "").trim())
       );
       return result(true, "applied", "table extracted", { actionability, extractedText: JSON.stringify(rows) });
     }
     if (request.action === "verify") {
+      if (request.expectedFingerprint) {
+        const { element, strictMatchCount } = target();
+        const verifyActionability = actionabilityFor(element, request.selector, strictMatchCount, request.action);
+        if (verifyActionability.fingerprintMatches === false) return staleRefResult(verifyActionability);
+      }
       const verification = verifyExpectation();
       return result(verification.passed, verification.passed ? "applied" : "failed", verification.passed ? "verification passed" : "verification failed", { verification });
     }
@@ -997,25 +911,16 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
       return result(found, found ? "applied" : "notFound", found ? "text found" : "text not found", { findResult });
     }
     if (request.action === "clickAt" || request.action === "typeText") {
-      const coordinate = coordinateActionability(request.action);
-      if (coordinate.error) return result(false, "invalid", coordinate.error);
-      if (coordinate.actionability.failedChecks.length > 0) {
-        return result(false, "notActionable", "viewport coordinate did not resolve to a page element", { actionability: coordinate.actionability });
-      }
-      return result(true, "applied", request.action === "typeText" ? "viewport text target prepared" : "viewport click target prepared", {
-        actionability: coordinate.actionability,
-        nativeInputRecommended: true
-      });
+      return applyShellxCoordinateAction();
     }
     const { element, strictMatchCount } = target();
     if (!element) return result(false, "notFound", "target selector not found");
-    element.scrollIntoView?.({ block: "center", inline: "center", behavior: "instant" });
+    shellxScrollElementIntoView(element);
     const actionability = actionabilityFor(element, request.selector, strictMatchCount, request.action);
     if (actionability.failedChecks.length > 0) {
-      const forceClick = Boolean(request.force)
-        && (request.action === "click" || request.action === "clickRef")
-        && actionability.failedChecks.every((check) => check === "receivesEvents");
+      const forceClick = Boolean(request.force) && (request.action === "click" || request.action === "clickRef") && actionability.failedChecks.every((check) => check === "receivesEvents");
       if (!forceClick) {
+        if (actionability.failedChecks.includes("fingerprint")) return staleRefResult(actionability);
         return result(false, "notActionable", "target failed actionability checks", { actionability });
       }
       actionability.failedChecks = [];
@@ -1034,9 +939,7 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
         return result(true, "applied", "page secret captured for Vault deposit", { actionability, extractedText: captured });
       }
       if (isTrustedSecretCopyControl(element)) {
-        ensureShellxPermissionReporter();
-        element.click();
-        return result(true, "clipboardRequired", "secret copy control invoked for Vault deposit", { actionability });
+        return result(true, "operatorClipboardRequired", "copy-only secret controls require an explicit operator clipboard transfer", { actionability });
       }
       if (!captured) return result(false, "empty", "target did not contain a capturable value", { actionability });
       return result(true, "applied", "page secret captured for Vault deposit", { actionability, extractedText: captured });
@@ -1070,9 +973,10 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
     }
     if (request.action === "press") {
       const key = String(request.key || request.value || "Enter");
+      const view = shellxElementWindow(element);
       element.focus?.();
-      element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-      element.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+      element.dispatchEvent(new view.KeyboardEvent("keydown", { key, bubbles: true }));
+      element.dispatchEvent(new view.KeyboardEvent("keyup", { key, bubbles: true }));
       return result(true, "applied", `key ${key} dispatched`, { actionability });
     }
     return result(false, "unsupported", `unsupported action ${request.action}`);
@@ -1083,17 +987,5 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
 "#;
 
 #[cfg(test)]
-mod tests {
-    use super::BROWSER_ENGINE_OBSERVE_SCRIPT;
-
-    #[test]
-    fn observe_script_exposes_redacted_secret_capture_refs() {
-        assert!(BROWSER_ENGINE_OBSERVE_SCRIPT.contains("secretCandidateRefs"));
-        assert!(BROWSER_ENGINE_OBSERVE_SCRIPT.contains("secretCopyControlRefs"));
-        assert!(BROWSER_ENGINE_OBSERVE_SCRIPT.contains("capturePageSecretToVault"));
-        assert!(BROWSER_ENGINE_OBSERVE_SCRIPT.contains("Capturable secret value"));
-        assert!(BROWSER_ENGINE_OBSERVE_SCRIPT.contains("Capturable secret copy control"));
-        assert!(super::BROWSER_ENGINE_CONTROL_SCRIPT.contains("clipboardRequired"));
-        assert!(!BROWSER_ENGINE_OBSERVE_SCRIPT.contains("AQ.example-secret"));
-    }
-}
+#[path = "shellx_browser_scripts_tests.rs"]
+mod tests;

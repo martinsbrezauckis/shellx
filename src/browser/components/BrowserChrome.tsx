@@ -62,6 +62,52 @@ interface BrowserChromeProps {
   onToggleOptions: () => void;
 }
 
+type BrowserTabOwnershipStatus = {
+  label: string;
+  detail: string;
+  tone: "personal" | "agent" | "delegated" | "disposable";
+};
+
+function browserTabOwnershipStatus(
+  tab: BrowserTab,
+  profileLabel: (profileId: string) => string,
+): BrowserTabOwnershipStatus | null {
+  const profile = profileLabel(tab.profileId);
+  const detail = (showProfile: boolean) => [
+    showProfile ? `${profile} profile` : "",
+    tab.lock ? "locked" : "",
+  ].filter(Boolean).join(" · ");
+  if (tab.ownerKind === "delegatedToAgent") {
+    return {
+      label: "Delegated to agent",
+      detail: detail(true),
+      tone: "delegated",
+    };
+  }
+  if (tab.ownerKind === "agent") {
+    return {
+      label: "Agent is using this tab",
+      detail: detail(tab.profileId !== "agent-work"),
+      tone: "agent",
+    };
+  }
+  if (tab.profileId === "task-disposable") {
+    return {
+      label: "Disposable task tab",
+      detail: detail(false),
+      tone: "disposable",
+    };
+  }
+  if (tab.profileId === "personal" && !tab.lock) {
+    return null;
+  }
+  return {
+    label: "Personal tab",
+    detail: detail(tab.profileId !== "personal"),
+    tone: "personal",
+  };
+}
+
 export function BrowserChrome({
   tabs,
   activeBrowserTab,
@@ -124,9 +170,12 @@ export function BrowserChrome({
   const personalLockEnabled = personalLock?.enabled === true;
   const personalLockLocked = personalLockEnabled && personalLock?.locked === true;
   const personalLockState = !personalLockEnabled ? "unconfigured" : personalLockLocked ? "locked" : "unlocked";
+  const ownershipStatus = activeBrowserTab
+    ? browserTabOwnershipStatus(activeBrowserTab, browserProfileShortLabel)
+    : null;
 
   return (
-    <>
+    <div className="shellx-browser-chrome-shell">
       <header className="shellx-browser-top">
         <div className="shellx-browser-tab-chrome">
           <div className="shellx-browser-brand">
@@ -194,6 +243,7 @@ export function BrowserChrome({
                 disabled={busy}
                 data-debug-id="shellx-browser-new-tab"
                 title="New tab"
+                aria-label="New tab"
               >
                 <ShellIcon name="plus" size={15} />
               </button>
@@ -204,6 +254,7 @@ export function BrowserChrome({
                 disabled={busy}
                 data-debug-id="shellx-browser-new-disposable-tab"
                 title="New disposable tab"
+                aria-label="New disposable tab"
               >
                 <ShellIcon name="circle-x" size={15} />
               </button>
@@ -214,6 +265,7 @@ export function BrowserChrome({
                 disabled={!activeBrowserTab || busy}
                 data-debug-id="shellx-browser-lock-tab"
                 title={activeBrowserTab?.lock ? "Unlock tab for this agent" : "Lock tab for this agent"}
+                aria-label={activeBrowserTab?.lock ? "Unlock tab for this agent" : "Lock tab for this agent"}
               >
                 <ShellIcon name={activeBrowserTab?.lock ? "lock" : "shield-alert"} size={15} />
               </button>
@@ -243,6 +295,7 @@ export function BrowserChrome({
                   disabled={busy}
                   data-debug-id="shellx-browser-handoff-tab"
                   title="Hand off this tab to the active agent task"
+                  aria-label="Hand off this tab to the active agent task"
                 >
                   <ShellIcon name="play" size={15} />
                 </button>
@@ -255,6 +308,7 @@ export function BrowserChrome({
                   disabled={busy}
                   data-debug-id="shellx-browser-take-back-tab"
                   title="Take back this tab from the agent"
+                  aria-label="Take back this tab from the agent"
                 >
                   <ShellIcon name="user" size={15} />
                 </button>
@@ -266,6 +320,8 @@ export function BrowserChrome({
                   onClick={onShowRightSidebar}
                   data-debug-id="shellx-browser-show-right-sidebar-button"
                   title="Show right panel"
+                  aria-label="Show right panel"
+                  data-shellx-release-observe="title"
                 >
                   <ShellIcon name="chevrons-left" size={15} />
                 </button>
@@ -273,6 +329,17 @@ export function BrowserChrome({
             </div>
           </section>
         </div>
+        {ownershipStatus && (
+          <div
+            className={`shellx-browser-ownership-banner ${ownershipStatus.tone}`}
+            data-debug-id="shellx-browser-tab-ownership-banner"
+            data-owner-kind={activeBrowserTab?.ownerKind ?? "user"}
+            data-profile-id={activeBrowserTab?.profileId ?? ""}
+          >
+            <span>{ownershipStatus.label}</span>
+            {ownershipStatus.detail && <small>{ownershipStatus.detail}</small>}
+          </div>
+        )}
         <form className="shellx-browser-address-row" onSubmit={onSubmitAddress}>
           <button
             type="button"
@@ -281,6 +348,7 @@ export function BrowserChrome({
             disabled={!canUseHistoryControls || busy}
             data-debug-id="shellx-browser-back"
             title="Back"
+            aria-label="Back"
           >
             <ShellIcon name="chevron-left" size={15} />
           </button>
@@ -291,6 +359,7 @@ export function BrowserChrome({
             disabled={!canUseHistoryControls || busy}
             data-debug-id="shellx-browser-forward"
             title="Forward"
+            aria-label="Forward"
           >
             <ShellIcon name="chevron-right" size={15} />
           </button>
@@ -301,6 +370,7 @@ export function BrowserChrome({
             disabled={!canUseHistoryControls || busy}
             data-debug-id="shellx-browser-reload"
             title="Reload"
+            aria-label="Reload"
           >
             <ShellIcon name="refresh" size={15} />
           </button>
@@ -311,6 +381,7 @@ export function BrowserChrome({
             disabled={busy}
             data-debug-id="shellx-browser-home"
             title="Home"
+            aria-label="Home"
           >
             <ShellIcon name="home" size={15} />
           </button>
@@ -318,11 +389,13 @@ export function BrowserChrome({
             <div className="shellx-browser-shields-wrap">
               <button
                 type="button"
+                id="shellx-browser-trust-chip"
                 className={`shellx-browser-trust-chip ${activeSecurityState.level}`}
                 onClick={() => onToggleHeaderMenu("shields")}
                 data-debug-id="shellx-browser-trust-chip"
                 data-security-level={activeSecurityState.level}
                 aria-expanded={headerMenu === "shields"}
+                aria-controls="shellx-browser-shields-panel"
                 title={activeSecurityState.summary}
               >
                 <ShellIcon name={browserTrustIcon(activeSecurityState)} size={12} />
@@ -337,6 +410,7 @@ export function BrowserChrome({
               onChange={(event) => onAddressChange(event.target.value)}
               placeholder="https://example.com"
               data-debug-id="shellx-browser-address"
+              data-shellx-release-observe="value"
               aria-label="Browser address"
             />
             <button
@@ -346,6 +420,7 @@ export function BrowserChrome({
               disabled={!canUseCurrentPage}
               data-debug-id="shellx-browser-copy-address"
               title="Copy address"
+              aria-label="Copy address"
             >
               <ShellIcon name={addressCopied ? "check" : "copy"} size={13} />
             </button>
@@ -365,18 +440,22 @@ export function BrowserChrome({
               disabled={busy || !canUseCurrentPage}
               data-debug-id="shellx-browser-bookmark-current"
               title="Bookmark current page"
+              aria-label="Bookmark current page"
             >
               <ShellIcon name="star" size={15} />
             </button>
             <div className="shellx-browser-header-menu-wrap">
               <button
                 type="button"
+                id="shellx-browser-vault-fill-menu"
                 className={`shellx-browser-icon-btn shellx-browser-vault-fill-status ${hasVaultFillSuggestions ? "available" : ""}`}
                 onClick={() => onToggleHeaderMenu("vaultFill")}
                 disabled={busy || !canUseCurrentPage || !hasVaultFillSuggestions}
                 data-debug-id="shellx-browser-vault-fill-menu"
                 aria-expanded={headerMenu === "vaultFill"}
+                aria-controls="shellx-browser-vault-fill-panel"
                 title={hasVaultFillSuggestions ? `${vaultFillCount} Vault fill suggestion${vaultFillCount === 1 ? "" : "s"}` : "No matching Vault fill"}
+                aria-label={hasVaultFillSuggestions ? `${vaultFillCount} Vault fill suggestion${vaultFillCount === 1 ? "" : "s"}` : "No matching Vault fill"}
               >
                 <ShellIcon name="lock" size={15} />
                 {hasVaultFillSuggestions && (
@@ -389,11 +468,14 @@ export function BrowserChrome({
             <div className="shellx-browser-header-menu-wrap">
               <button
                 type="button"
+                id="shellx-browser-downloads-menu"
                 className={`shellx-browser-icon-btn shellx-browser-download-icon-status ${activeTransferCount > 0 ? "pending" : hasTransfers ? "done" : ""}`}
                 onClick={() => onToggleHeaderMenu("downloads")}
                 data-debug-id="shellx-browser-downloads-menu"
                 aria-expanded={headerMenu === "downloads"}
+                aria-controls="shellx-browser-download-sidecar"
                 title={hasTransfers ? `Downloads: ${transferBadgeLabel}` : "Downloads"}
+                aria-label={hasTransfers ? `Downloads: ${transferBadgeLabel}` : "Downloads"}
               >
                 <ShellIcon name="download" size={15} />
                 {hasTransfers && (
@@ -406,11 +488,14 @@ export function BrowserChrome({
             <div className="shellx-browser-header-menu-wrap">
               <button
                 type="button"
+                id="shellx-browser-bookmarks-menu"
                 className="shellx-browser-icon-btn"
                 onClick={onToggleBookmarksPanel}
                 data-debug-id="shellx-browser-bookmarks-menu"
                 aria-expanded={bookmarkManagerOpen}
+                aria-controls="shellx-browser-bookmark-manager-dock"
                 title="Bookmarks"
+                aria-label="Bookmarks"
               >
                 <ShellIcon name="bookmark" size={15} />
               </button>
@@ -418,11 +503,14 @@ export function BrowserChrome({
             <div className="shellx-browser-header-menu-wrap">
               <button
                 type="button"
+                id="shellx-browser-history-menu"
                 className="shellx-browser-icon-btn"
                 onClick={() => onToggleHeaderMenu("history")}
                 data-debug-id="shellx-browser-history-menu"
                 aria-expanded={headerMenu === "history"}
+                aria-controls="shellx-browser-history-sidecar"
                 title="History"
+                aria-label="History"
               >
                 <ShellIcon name="history" size={15} />
               </button>
@@ -430,11 +518,14 @@ export function BrowserChrome({
             <div className="shellx-browser-header-menu-wrap">
               <button
                 type="button"
+                id="shellx-browser-save-page"
                 className="shellx-browser-icon-btn"
                 onClick={() => onToggleHeaderMenu("save")}
                 data-debug-id="shellx-browser-save-page"
                 aria-expanded={headerMenu === "save"}
+                aria-controls="shellx-browser-save-menu"
                 title="Save page"
+                aria-label="Save page"
               >
                 <ShellIcon name="file" size={15} />
               </button>
@@ -442,11 +533,14 @@ export function BrowserChrome({
             <div className="shellx-browser-header-menu-wrap">
               <button
                 type="button"
+                id="shellx-browser-ad-filter"
                 className="shellx-browser-icon-btn"
                 onClick={() => onToggleHeaderMenu("ads")}
                 data-debug-id="shellx-browser-ad-filter"
                 aria-expanded={headerMenu === "ads"}
+                aria-controls="shellx-browser-ad-filter-menu"
                 title="Ads filter"
+                aria-label="Ads filter"
               >
                 <ShellIcon name="ban" size={15} />
               </button>
@@ -454,11 +548,14 @@ export function BrowserChrome({
             <div className="shellx-browser-options-wrap">
               <button
                 type="button"
+                id="shellx-browser-options"
                 className="shellx-browser-icon-btn"
                 onClick={onToggleOptions}
                 data-debug-id="shellx-browser-options"
                 aria-expanded={optionsOpen}
+                aria-controls="shellx-browser-options-sidecar"
                 title="Browser options"
+                aria-label="Browser options"
               >
                 <ShellIcon name="settings" size={15} />
               </button>
@@ -472,6 +569,6 @@ export function BrowserChrome({
           {dockedChromeMenuPanel}
         </section>
       )}
-    </>
+    </div>
   );
 }

@@ -8,7 +8,7 @@
 //
 // Role
 // Owns the lifecycle of every PTY the host has spawned on behalf of
-// either the bottom-panel <TerminalTab> React component (origin =
+// either the bottom-panel `TerminalView` React component (origin =
 // `User`) or grok-side `terminal/create` ACP requests (origin = `Acp`).
 // Each PTY is keyed by (tab_id, terminal_id). For ACP-origin records
 // the `tab_id` is the session's tab_id passed by `read_loop`; for
@@ -40,8 +40,8 @@
 //
 // Callers
 // `lib.rs` registers the `pty_*` Tauri commands defined at the bottom
-// of this file. The frontend `TerminalTab.tsx`/`TerminalView.tsx` is the
-// user-side consumer. `acp.rs` (Phase B) calls the `acp_*` helpers
+// of this file. The frontend `TerminalView.tsx`, mounted by `BottomPanel`, is
+// the user-side consumer. `acp.rs` (Phase B) calls the `acp_*` helpers
 // directly to service grok ACP `terminal/*` requests.
 //
 // Concurrency
@@ -67,7 +67,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{broadcast, Mutex, Notify};
@@ -87,6 +87,11 @@ const RING_BYTES_DEFAULT_ACP: usize = 1024 * 1024;
 /// error and can resync from the ring buffer on next attach.
 const BROADCAST_CAPACITY: usize = 256;
 
+/// Bound the blocking PTY reader's handoff to the async renderer/event
+/// consumer. At 8 KiB per read this caps in-flight output at roughly 512 KiB
+/// and applies backpressure instead of allowing noisy commands to grow RSS.
+const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+
 /// Default initial size when the frontend hasn't measured a real width
 /// yet. ResizeObserver + FitAddon overwrite this within ~one frame.
 pub const DEFAULT_COLS: u16 = 80;
@@ -96,6 +101,12 @@ pub const DEFAULT_ROWS: u16 = 24;
 /// global timeout. Long-running builds that exceed this surface as a
 /// JSON-RPC error to grok; grok can re-poll via `terminal/output`.
 const WAIT_FOR_EXIT_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Terminal teardown is a synchronous contract: when kill/release returns, the
+/// child and the reader/consumer tasks must no longer be live. Five seconds is
+/// deliberately generous for ConPTY/HPCON shutdown while still bounding a UI
+/// tab close if an OS primitive misbehaves.
+const KILL_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Origin of a terminal record. Drives lifetime semantics on child exit.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,11 +151,16 @@ pub struct TerminalKey {
 /// reader-loop thread and the write/resize Tauri commands.
 pub struct TerminalRecord {
     /// PTY master handle — owns the master FD/HPCON.
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
 
     /// Sync writer for stdin. xterm.js sends per-keystroke bytes; we
     /// take the lock, write, drop.
-    writer: Mutex<Box<dyn Write + Send>>,
+    writer: Mutex<Option<Box<dyn Write + Send>>>,
+
+    /// Independent termination handle cloned before the child is moved into
+    /// its blocking waiter. Registry removal alone cannot stop that waiter or
+    /// the PTY reader, so every teardown path must consume this handle first.
+    child_killer: Mutex<Option<Box<dyn ChildKiller + Send + Sync>>>,
 
     /// Ring buffer of recent output bytes. Capped at `output_byte_limit`.
     /// Returned by `terminal/output` (ACP) and replayed on late xterm.js
@@ -395,12 +411,18 @@ impl TerminalRegistry {
         for (k, rec) in inner.iter() {
             let ring_bytes = rec.ring.lock().await.len();
             let exited = matches!(*rec.lifecycle.lock().await, LifecycleState::Exited { .. });
-            let size = rec.master.lock().await.get_size().unwrap_or(PtySize {
-                cols: DEFAULT_COLS,
-                rows: DEFAULT_ROWS,
-                pixel_width: 0,
-                pixel_height: 0,
-            });
+            let size = rec
+                .master
+                .lock()
+                .await
+                .as_ref()
+                .and_then(|master| master.get_size().ok())
+                .unwrap_or(PtySize {
+                    cols: DEFAULT_COLS,
+                    rows: DEFAULT_ROWS,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                });
             out.push(TerminalSnapshot {
                 tab_id: k.tab_id.clone(),
                 terminal_id: k.terminal_id.clone(),
@@ -438,6 +460,43 @@ fn default_shell() -> String {
             "cmd.exe".to_string()
         }
     }
+}
+
+#[cfg(any(windows, test))]
+fn windows_user_bin_path_candidates(
+    user_profile: &str,
+    app_data: &str,
+    local_app_data: &str,
+) -> Vec<String> {
+    crate::provider_runtime::windows_user_bin_paths(user_profile, app_data, local_app_data)
+}
+
+/// ShellX knows how to find provider CLIs in their user-local install
+/// directories even when an installer did not update the Windows user PATH.
+/// Give child terminals the same convenience without mutating the account's
+/// persistent environment or changing command resolution outside ShellX.
+#[cfg(windows)]
+fn windows_terminal_path() -> Option<std::ffi::OsString> {
+    let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
+    let app_data = std::env::var("APPDATA").unwrap_or_default();
+    let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let mut paths = windows_user_bin_path_candidates(&user_profile, &app_data, &local_app_data)
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    if let Some(inherited) = std::env::var_os("PATH") {
+        for path in std::env::split_paths(&inherited) {
+            let candidate = path.to_string_lossy();
+            if !paths.iter().any(|existing| {
+                existing
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(candidate.as_ref())
+            }) {
+                paths.push(path);
+            }
+        }
+    }
+    std::env::join_paths(paths).ok()
 }
 
 #[cfg(windows)]
@@ -520,6 +579,10 @@ async fn spawn_pty(
     cmd.env("TERM", "xterm-256color");
     // COLORTERM lets `ls --color=auto` and friends emit 24-bit ANSI.
     cmd.env("COLORTERM", "truecolor");
+    #[cfg(windows)]
+    if let Some(path) = windows_terminal_path() {
+        cmd.env("PATH", path);
+    }
     for (k, v) in &cfg.env {
         cmd.env(k, v);
     }
@@ -560,6 +623,7 @@ async fn spawn_pty(
     // some Windows ConPTY edge cases — accept None and rely on UI to
     // dim controls when pid is missing.
     let pid = child.process_id();
+    let child_killer = child.clone_killer();
     let cmd_display = std::iter::once(program.clone())
         .chain(cfg.args.iter().cloned())
         .collect::<Vec<_>>()
@@ -571,8 +635,9 @@ async fn spawn_pty(
 
     let (tx, _rx0) = broadcast::channel::<Bytes>(BROADCAST_CAPACITY);
     let rec = Arc::new(TerminalRecord {
-        master: Mutex::new(pair.master),
-        writer: Mutex::new(writer),
+        master: Mutex::new(Some(pair.master)),
+        writer: Mutex::new(Some(writer)),
+        child_killer: Mutex::new(Some(child_killer)),
         ring: Mutex::new(VecDeque::with_capacity(output_byte_limit.min(64 * 1024))),
         output_byte_limit,
         total_written: Mutex::new(0),
@@ -599,7 +664,7 @@ async fn spawn_pty(
     let rec_clone = rec.clone();
     let registry_clone = registry.clone();
     let origin_for_task = cfg.origin.clone();
-    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Bytes>(OUTPUT_CHANNEL_CAPACITY);
 
     // Async consumer — owns the per-chunk emit + ring push + broadcast.
     let app_for_consumer = app.clone();
@@ -620,19 +685,22 @@ async fn spawn_pty(
         }
     });
 
-    // Producer — the blocking read loop owns `child` so wait can run
-    // after the reader EOFs.
+    // Producer — run the blocking reader and child waiter concurrently.
+    // Waiting for reader EOF before calling child.wait() used to leave zombie
+    // children and permanently blocked ConPTY readers. Once the child exits,
+    // dropping the stored master/writer closes HPCON (Windows) and releases
+    // the reader before we flush the consumer.
     tauri::async_runtime::spawn(async move {
         let mut child = child;
         let key_for_blocking = key_clone.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        let reader_task = tokio::task::spawn_blocking(move || {
             let mut buf = [0u8; 8192];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break, // EOF — child exited / slave closed
                     Ok(n) => {
                         let chunk = Bytes::copy_from_slice(&buf[..n]);
-                        if chunk_tx.send(chunk).is_err() {
+                        if chunk_tx.blocking_send(chunk).is_err() {
                             // Consumer task gone — bail.
                             break;
                         }
@@ -646,15 +714,33 @@ async fn spawn_pty(
                     }
                 }
             }
-        })
-        .await;
+        });
+
+        let wait_task = tokio::task::spawn_blocking(move || child.wait());
+        let wait_status = match wait_task.await {
+            Ok(status) => status,
+            Err(error) => {
+                warn!(
+                    "terminal: child waiter join failed tab_id={} terminal_id={} err={}",
+                    key_clone.tab_id, key_clone.terminal_id, error
+                );
+                Err(std::io::Error::other(error.to_string()))
+            }
+        };
+
+        // The child is gone. Release the input/master handles and the cloned
+        // process handle before waiting for the reader. On ConPTY, closing the
+        // master is what reliably releases a pipe read after fast child exit.
+        rec_clone.writer.lock().await.take();
+        rec_clone.master.lock().await.take();
+        rec_clone.child_killer.lock().await.take();
+
+        let _ = reader_task.await;
 
         // Wait for the consumer to flush remaining chunks before we
         // emit the exit event and drop / retain the record.
         let _ = consumer_task.await;
 
-        // Reap the child. portable-pty's ExitStatus carries the OS code.
-        let wait_status = child.wait();
         // portable-pty 0.8 exposes `exit_code` returning u32. Map
         // to i32 (matching tokio::process semantics + grok's wire).
         let exit_code = wait_status.as_ref().ok().map(|s| s.exit_code() as i32);
@@ -918,6 +1004,154 @@ fn pid_is_alive(pid: u32) -> bool {
     sys.process(Pid::from_u32(pid)).is_some()
 }
 
+/// Wait without the `Notify::notify_waiters` lost-wakeup race. Registering the
+/// notification future before checking lifecycle guarantees that an exit
+/// between those two operations is observed either by state or by the waiter.
+async fn wait_until_exited(rec: &Arc<TerminalRecord>, timeout: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let notified = rec.exit_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        if matches!(*rec.lifecycle.lock().await, LifecycleState::Exited { .. }) {
+            return true;
+        }
+
+        if tokio::time::timeout_at(deadline, notified).await.is_err() {
+            return false;
+        }
+    }
+}
+
+#[cfg(unix)]
+fn terminate_pty_process_tree(
+    pid: Option<u32>,
+    mut killer: Option<Box<dyn ChildKiller + Send + Sync>>,
+) -> Result<(), String> {
+    use nix::sys::signal::{kill, Signal};
+    use sysinfo::System;
+
+    let mut delivered = false;
+    let mut errors = Vec::new();
+
+    if let Some(session_id) = pid {
+        let session_pid = crate::process_registry::checked_unix_process_id(session_id)?;
+        // portable-pty calls setsid() before exec on Unix, so the spawned PID
+        // is also the session id. Kill every member, including foreground and
+        // background job groups, so no descendant can keep the slave PTY open.
+        let mut system = System::new_all();
+        system.refresh_processes();
+        let mut members = system
+            .processes()
+            .keys()
+            .map(|candidate| candidate.as_u32())
+            .filter(|candidate| {
+                let Ok(candidate) = crate::process_registry::checked_unix_process_id(*candidate)
+                else {
+                    return false;
+                };
+                nix::unistd::getsid(Some(candidate)).is_ok_and(|sid| sid == session_pid)
+            })
+            .collect::<Vec<_>>();
+        if !members.contains(&session_id) {
+            members.push(session_id);
+        }
+        // Terminate jobs before the session leader so their PID/session
+        // relationship remains stable throughout this bounded operation.
+        members.sort_by_key(|candidate| *candidate == session_id);
+        members.dedup();
+        for member in members {
+            let member_pid = crate::process_registry::checked_unix_process_id(member)?;
+            match kill(member_pid, Signal::SIGKILL) {
+                Ok(()) => delivered = true,
+                Err(nix::errno::Errno::ESRCH) => {}
+                Err(error) => errors.push(format!("SIGKILL {} failed: {}", member, error)),
+            }
+        }
+    }
+
+    if let Some(ref mut child_killer) = killer {
+        match child_killer.kill() {
+            Ok(()) => delivered = true,
+            Err(error) if error.raw_os_error() == Some(nix::libc::ESRCH) => {}
+            Err(error) => errors.push(format!("portable child kill failed: {}", error)),
+        }
+    }
+
+    if delivered || pid.is_some_and(|candidate| !pid_is_alive(candidate)) {
+        Ok(())
+    } else if errors.is_empty() {
+        Err("terminal child has no usable process id or kill handle".to_string())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_pty_process_tree(
+    pid: Option<u32>,
+    mut killer: Option<Box<dyn ChildKiller + Send + Sync>>,
+) -> Result<(), String> {
+    use crate::winproc::NoWindowExt as _;
+
+    let mut delivered = false;
+    let mut errors = Vec::new();
+    if let Some(pid) = pid {
+        match std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .no_window()
+            .status()
+        {
+            Ok(status)
+                if status.success() || crate::winproc::taskkill_is_already_gone(status.code()) =>
+            {
+                delivered = true;
+            }
+            Ok(status) => errors.push(format!("taskkill /T /F failed: exit={:?}", status.code())),
+            Err(error) => errors.push(format!("taskkill /T /F spawn failed: {}", error)),
+        }
+    }
+    if let Some(ref mut child_killer) = killer {
+        match child_killer.kill() {
+            Ok(()) => delivered = true,
+            Err(error) => errors.push(format!("portable child kill failed: {}", error)),
+        }
+    }
+    if delivered || pid.is_some_and(|candidate| !pid_is_alive(candidate)) {
+        Ok(())
+    } else if errors.is_empty() {
+        Err("terminal child has no usable process id or kill handle".to_string())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+async fn terminate_terminal(rec: &Arc<TerminalRecord>) -> Result<(), String> {
+    if matches!(*rec.lifecycle.lock().await, LifecycleState::Exited { .. }) {
+        return Ok(());
+    }
+    let killer = rec.child_killer.lock().await.take();
+    let pid = rec.pid;
+    let result = tokio::task::spawn_blocking(move || terminate_pty_process_tree(pid, killer))
+        .await
+        .map_err(|error| format!("terminal kill worker failed: {}", error))?;
+
+    if wait_until_exited(rec, KILL_WAIT_TIMEOUT).await {
+        Ok(())
+    } else {
+        let detail = result
+            .err()
+            .map(|error| format!("; termination error: {}", error))
+            .unwrap_or_default();
+        Err(format!(
+            "terminal child did not exit within {} seconds{}",
+            KILL_WAIT_TIMEOUT.as_secs(),
+            detail
+        ))
+    }
+}
+
 /// `terminal/wait_for_exit` implementation. Awaits the per-record Notify
 /// up to `WAIT_FOR_EXIT_TIMEOUT`; returns `{exitCode, signal}`.
 pub async fn acp_wait_for_exit(
@@ -933,38 +1167,23 @@ pub async fn acp_wait_for_exit(
         .get(&key)
         .await
         .ok_or_else(|| format!("invalid terminalId: {}", terminal_id))?;
-    // Fast path: already exited.
-    {
-        let lc = rec.lifecycle.lock().await;
-        if let LifecycleState::Exited { exit_code, signal } = &*lc {
-            return Ok(serde_json::json!({
-                "exitCode": exit_code,
-                "signal": signal,
-            }));
-        }
+    if !wait_until_exited(&rec, WAIT_FOR_EXIT_TIMEOUT).await {
+        return Err("wait_for_exit: timeout after 10 minutes".into());
     }
-    let notify = rec.exit_notify.clone();
-    let notified = notify.notified();
-    // Race against the bounded timeout.
-    match tokio::time::timeout(WAIT_FOR_EXIT_TIMEOUT, notified).await {
-        Ok(()) => {
-            let lc = rec.lifecycle.lock().await;
-            match &*lc {
-                LifecycleState::Exited { exit_code, signal } => Ok(serde_json::json!({
-                    "exitCode": exit_code,
-                    "signal": signal,
-                })),
-                // Should not happen — Notify fires only on exit transition.
-                LifecycleState::Running => Err("wait_for_exit: notified but still running".into()),
-            }
+    let lc = rec.lifecycle.lock().await;
+    match &*lc {
+        LifecycleState::Exited { exit_code, signal } => Ok(serde_json::json!({
+            "exitCode": exit_code,
+            "signal": signal,
+        })),
+        LifecycleState::Running => {
+            Err("wait_for_exit: exit waiter completed but terminal is still running".into())
         }
-        Err(_) => Err("wait_for_exit: timeout after 10 minutes".into()),
     }
 }
 
-/// `terminal/kill` implementation. Sends Ctrl-C via the master PTY's
-/// writer and drops the master after 500ms so SIGHUP propagates to the
-/// child on platforms where SIGINT was ignored.
+/// `terminal/kill` implementation. Terminates the whole PTY process
+/// session/tree, closes the master and waits for reader/consumer cleanup.
 ///
 /// Important: per ACP spec, the terminalId stays VALID after kill —
 /// subsequent `terminal/output` / `terminal/wait_for_exit` calls still
@@ -982,49 +1201,7 @@ pub async fn acp_kill(
         .get(&key)
         .await
         .ok_or_else(|| format!("invalid terminalId: {}", terminal_id))?;
-    // Already exited? — kill is a no-op.
-    {
-        let lc = rec.lifecycle.lock().await;
-        if matches!(&*lc, LifecycleState::Exited { .. }) {
-            return Ok(());
-        }
-    }
-    // Portable termination strategy:
-    // 1. Inject Ctrl-C (0x03) via the PTY's stdin. Well-behaved foreground
-    // processes will SIGINT-die immediately. ConPTY converts this to
-    // CTRL_C_EVENT on Windows.
-    // 2. After 500ms, the spawn_pty cleanup task will drop the master if
-    // the child has already exited (reader loop's `Ok(0)` path). We
-    // don't need to drop master ourselves — the lifecycle transition
-    // to Exited will be observed naturally by the reader EOFing.
-    {
-        let mut w = rec.writer.lock().await;
-        // Best-effort: write may fail if the child already closed stdin.
-        let _ = w.write_all(&[0x03]);
-        let _ = w.flush();
-    }
-    // Force-kill follow-up: if the process hasn't exited after 500ms,
-    // close the master so the slave-side fd dies and the kernel sends
-    // SIGHUP. On Windows ConPTY this triggers the same cleanup.
-    let rec_for_force = rec.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        // If still running, the reader hasn't EOFed; closing the master
-        // is the canonical force-kill. portable-pty doesn't expose
-        // explicit close — the Box<dyn MasterPty> drop is what does it.
-        // We can't drop through the Arc, so we resize to (0,0) as a
-        // hint and rely on the writer being closed; on Unix the slave
-        // fd is closed when we wrote the EOT (0x04) we now inject as
-        // last-resort. ConPTY-side it's already gone.
-        let lc = rec_for_force.lifecycle.lock().await;
-        if matches!(&*lc, LifecycleState::Running) {
-            drop(lc);
-            let mut w = rec_for_force.writer.lock().await;
-            let _ = w.write_all(&[0x04]); // EOT
-            let _ = w.flush();
-        }
-    });
-    Ok(())
+    terminate_terminal(&rec).await
 }
 
 /// `terminal/release` implementation. Kills if still alive, then drops
@@ -1039,8 +1216,7 @@ pub async fn acp_release(
         tab_id: tab_id.to_string(),
         terminal_id: terminal_id.to_string(),
     };
-    // Best-effort kill; ignore "already exited".
-    let _ = acp_kill(registry.clone(), tab_id, terminal_id).await;
+    acp_kill(registry.clone(), tab_id, terminal_id).await?;
     if registry.remove(&key).await.is_some() {
         info!(
             "terminal: released (ACP) tab_id={} terminal_id={}",
@@ -1108,10 +1284,14 @@ pub async fn pty_write(
         .get(&key)
         .await
         .ok_or_else(|| format!("unknown terminal: {:?}", key))?;
-    let mut w = rec.writer.lock().await;
-    w.write_all(&data)
+    let mut writer = rec.writer.lock().await;
+    let writer = writer
+        .as_mut()
+        .ok_or_else(|| "terminal has already exited".to_string())?;
+    writer
+        .write_all(&data)
         .map_err(|e| format!("write failed: {}", e))?;
-    w.flush().map_err(|e| format!("flush failed: {}", e))?;
+    writer.flush().map_err(|e| format!("flush failed: {}", e))?;
     Ok(())
 }
 
@@ -1167,25 +1347,26 @@ pub async fn pty_resize(
         .get(&key)
         .await
         .ok_or_else(|| format!("unknown terminal: {:?}", key))?;
-    let m = rec.master.lock().await;
-    m.resize(PtySize {
-        cols,
-        rows,
-        pixel_width: 0,
-        pixel_height: 0,
-    })
-    .map_err(|e| format!("resize failed: {}", e))?;
+    let master = rec.master.lock().await;
+    let master = master
+        .as_ref()
+        .ok_or_else(|| "terminal has already exited".to_string())?;
+    master
+        .resize(PtySize {
+            cols,
+            rows,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("resize failed: {}", e))?;
     Ok(())
 }
 
 /// Kill + remove a PTY. Called from the frontend on tab close / component
 /// unmount.
 ///
-/// Implementation note: this is the User-origin kill path. ACP-origin
-/// terminals are killed by `acp_release` (which calls `acp_kill` first).
-/// portable-pty doesn't expose a direct "send signal" API — closing the
-/// master is the canonical termination, which the `remove`-then-drop
-/// flow accomplishes naturally.
+/// This is the User-origin kill path. ACP-origin terminals use
+/// `acp_release`. Both paths terminate and wait before removing the record.
 #[tauri::command]
 pub async fn pty_kill(
     tab_id: String,
@@ -1196,12 +1377,15 @@ pub async fn pty_kill(
         tab_id,
         terminal_id,
     };
-    if registry.remove(&key).await.is_some() {
-        info!(
-            "terminal: killed tab_id={} terminal_id={}",
-            key.tab_id, key.terminal_id
-        );
-    }
+    let Some(rec) = registry.get(&key).await else {
+        return Ok(());
+    };
+    terminate_terminal(&rec).await?;
+    let _ = registry.remove(&key).await;
+    info!(
+        "terminal: killed tab_id={} terminal_id={}",
+        key.tab_id, key.terminal_id
+    );
     Ok(())
 }
 
@@ -1224,6 +1408,40 @@ mod tests {
         assert!(reg.remove(&key).await.is_none());
     }
 
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn process_tree_termination_reaps_hup_ignoring_pty_child() {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                cols: DEFAULT_COLS,
+                rows: DEFAULT_ROWS,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("open test PTY");
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "trap '' HUP TERM; while :; do sleep 60; done"]);
+        let mut child = pair
+            .slave
+            .spawn_command(command)
+            .expect("spawn HUP-ignoring child");
+        let pid = child.process_id().expect("PTY child PID");
+        let killer = child.clone_killer();
+        drop(pair.slave);
+
+        let waiter = tokio::task::spawn_blocking(move || child.wait());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        terminate_pty_process_tree(Some(pid), Some(killer)).expect("terminate PTY session");
+        let status = tokio::time::timeout(Duration::from_secs(2), waiter)
+            .await
+            .expect("child waiter must not leak")
+            .expect("child waiter joins")
+            .expect("child reaped");
+
+        assert_ne!(status.exit_code(), 0);
+        assert!(!pid_is_alive(pid));
+    }
+
     #[test]
     fn acp_id_minting_is_monotonic_and_padded() {
         let reg = TerminalRegistry::new();
@@ -1242,5 +1460,27 @@ mod tests {
             .parse()
             .expect("numeric suffix");
         assert!(n_b > n_a);
+    }
+
+    #[test]
+    fn windows_terminal_candidates_include_provider_user_bins() {
+        assert_eq!(
+            windows_user_bin_path_candidates(
+                r"C:\Users\FixtureUser\",
+                r"C:\Users\FixtureUser\AppData\Roaming\",
+                r"C:\Users\FixtureUser\AppData\Local\",
+            ),
+            vec![
+                r"C:\Users\FixtureUser\.local\bin",
+                r"C:\Users\FixtureUser\bin",
+                r"C:\Users\FixtureUser\.grok\bin",
+                r"C:\Users\FixtureUser\.claude\bin",
+                r"C:\Users\FixtureUser\.bun\bin",
+                r"C:\Users\FixtureUser\.cargo\bin",
+                r"C:\Users\FixtureUser\AppData\Local\Programs\OpenAI\Codex\bin",
+                r"C:\Users\FixtureUser\AppData\Local\agy\bin",
+                r"C:\Users\FixtureUser\AppData\Roaming\npm",
+            ]
+        );
     }
 }

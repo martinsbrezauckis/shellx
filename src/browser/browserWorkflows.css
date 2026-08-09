@@ -1,0 +1,44 @@
+.shellx-browser-bookmark-workflow-badges {
+  grid-column: 2;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.shellx-browser-bookmark-workflow-badge,
+.shellx-browser-bookmark-refresh-badge {
+  justify-self: start;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-chip);
+  padding: 2px 6px;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+.shellx-browser-bookmark-refresh-badge {
+  border-color: rgba(245, 158, 11, 0.42);
+  color: #fbbf24;
+}
+.shellx-browser-workflow-preview {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid rgba(59, 130, 246, 0.55);
+  border-radius: var(--radius-button);
+  padding: 8px;
+  background: var(--surface-2);
+}
+.shellx-browser-workflow-preview strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-workflow-preview span {
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+}
+.shellx-browser-workflow-preview.error {
+  border-left-color: rgba(239, 68, 68, 0.62);
+}

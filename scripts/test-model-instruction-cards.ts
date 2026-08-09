@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { readRustModuleFamily } from "./read-rust-module-family";
 
 import {
   findModelInstructionCard,
@@ -79,10 +80,7 @@ assert(card, "finds grok image/video card");
 assert.equal(isExplicitOnlyCard(card), true);
 assert.deepEqual(requiredPreflightIds(card), ["grokConnected", "grokToolsHealthy"]);
 
-const debugApiSource = readFileSync(
-  new URL("../src-tauri/src/debug_api.rs", import.meta.url),
-  "utf8",
-);
+const debugApiSource = readRustModuleFamily("src-tauri/src/debug_api.rs");
 assert(
   debugApiSource.includes("\"/state/model_instruction_cards\""),
   "debug API must wire /state/model_instruction_cards",
@@ -92,7 +90,7 @@ assert(
   "debug API must expose model instruction card handler",
 );
 
-const apiDocs = readFileSync(new URL("../docs/API.md", import.meta.url), "utf8");
+const apiDocs = readFileSync(new URL("../docs/public/API.md", import.meta.url), "utf8");
 assert(
   apiDocs.includes("GET /state/model_instruction_cards"),
   "API docs must document model instruction card route",
@@ -184,11 +182,23 @@ const shellxHostSkill = readFileSync(
   "utf8",
 );
 assert(
+  shellxHostSkill.includes("## Activation precondition") &&
+    shellxHostSkill.includes("positively identifies this session as running inside ShellX") &&
+    shellxHostSkill.includes("Global skill availability") &&
+    shellxHostSkill.includes("Outside ShellX, do not invoke it"),
+  "shellx-host skill must fail closed unless the current session has positive ShellX host evidence",
+);
+assert.doesNotMatch(
+  shellxHostSkill,
+  /Read this at session start|# You are running inside shellX/i,
+  "shellx-host skill must not claim that an ordinary direct CLI session is hosted by ShellX",
+);
+assert(
   shellxHostSkill.includes("Media Handoff Recipes") &&
     shellxHostSkill.includes("GPT Image via Codex") &&
     shellxHostSkill.includes("Grok Imagine image") &&
     shellxHostSkill.includes("Grok Imagine video"),
-  "shellx-host skill must expose direct media handoff recipes at session start",
+  "shellx-host skill must expose direct media handoff recipes in a confirmed ShellX host session",
 );
 
 console.log("test-model-instruction-cards ok");

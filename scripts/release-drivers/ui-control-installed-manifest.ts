@@ -1,0 +1,41 @@
+/**
+ * Exact transitive source set attested with the generic installed UI driver.
+ * Keep this list beside the driver and share it with controller-binding tests
+ * so a newly routed lifecycle cannot leave stale per-test manifest copies.
+ */
+export const UI_CONTROL_INSTALLED_CONTROLLER_FILES = [
+  "scripts/release-drivers/ui-control-installed-manifest.ts",
+  "scripts/shellx-browser-test-cleanup.ts",
+  "scripts/lib/release-surface-installed-input-client.ts",
+  "scripts/lib/release-surface-bounded-observation.ts",
+  "scripts/lib/release-surface-macos-native-input.ts",
+  "scripts/lib/release-surface-tauri-invoke-client.ts",
+  "scripts/release-drivers/debug-api-session-fixture.ts",
+  "scripts/release-drivers/ui-control-owned-browser-bookmarks.ts",
+  "scripts/release-drivers/ui-control-owned-browser-history.ts",
+  "scripts/release-drivers/ui-control-browser-personal-lock-settings.ts",
+  "scripts/release-drivers/ui-control-owned-browser-bookmark-navigation.ts",
+  "scripts/release-drivers/ui-control-browser-ad-modes.ts",
+  "scripts/release-drivers/ui-control-browser-shields.ts",
+  "scripts/release-drivers/ui-control-right-rail-goal.ts",
+  "scripts/release-drivers/ui-control-build-run-cockpit.ts",
+  "scripts/release-drivers/ui-control-misc-safe.ts",
+  "scripts/release-drivers/ui-control-files-pane.ts",
+  "scripts/release-drivers/ui-control-goal-plan-review.ts",
+  "scripts/release-drivers/ui-control-connectors-owned.ts",
+  "scripts/release-drivers/ui-control-safe-families.ts",
+  "scripts/release-drivers/ui-control-safe-vault-drafts.ts",
+  "scripts/release-drivers/ui-control-vault-owned-edit.ts",
+  "scripts/release-drivers/ui-control-find-new-tab.ts",
+  "scripts/release-drivers/ui-control-file-preview-safe.ts",
+  "scripts/release-drivers/ui-control-attachment-media-safe.ts",
+  "scripts/release-drivers/ui-control-plugins-safe.ts",
+  "scripts/release-drivers/ui-control-build-plan-review-safe.ts",
+  "scripts/release-drivers/ui-control-shellxagent-lifecycle.ts",
+  "scripts/release-drivers/ui-control-remote-cwd-lifecycle.ts",
+  "scripts/release-drivers/ui-control-setup-guide.ts",
+  "scripts/release-drivers/ui-control-work-preview-kind.ts",
+  "scripts/release-drivers/ui-control-work-preview-running.ts",
+  "scripts/release-drivers/ui-control-work-preview-safe.ts",
+  "scripts/release-drivers/ui-control-work-preview-start.ts",
+] as const;

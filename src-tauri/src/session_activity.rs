@@ -19,6 +19,7 @@ use crate::acp::{tab_id_or_default, SessionRegistry, SshSpawnConfig};
 const MAX_HUNK_RECORD_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_FILTERED_UPDATE_BYTES: usize = 8 * 1024 * 1024;
 
+#[derive(Debug)]
 enum ActivityFileRead {
     Missing,
     TooLarge(u64),
@@ -1506,7 +1507,12 @@ async fn read_ssh_filtered_updates_jsonl(
     let script = format!(
         "p={q}; awk 'index($0,\"\\\"sessionUpdate\\\":\\\"tool_call\\\"\") || index($0,\"\\\"sessionUpdate\\\":\\\"tool_call_update\\\"\") {{ next_len = n + length($0) + 1; if (next_len > {cap}) exit; print; n = next_len }}' \"$p\""
     );
-    let out = ssh_run_activity_command(ssh_config, script, "updates.jsonl").await?;
+    let windows_path = crate::acp::powershell_single_quote(path);
+    let windows_script = format!(
+        "{prelude}$path={windows_path};$used=0;foreach($line in [IO.File]::ReadLines($path)){{if($line.Contains('\"sessionUpdate\":\"tool_call\"')-or$line.Contains('\"sessionUpdate\":\"tool_call_update\"')){{$next=$used+[Text.Encoding]::UTF8.GetByteCount($line)+1;if($next -gt {cap}){{break}};[Console]::Out.WriteLine($line);$used=$next}}}}",
+        prelude = crate::acp::windows_remote_shell_prelude(),
+    );
+    let out = ssh_run_activity_command(ssh_config, script, windows_script, "updates.jsonl").await?;
     Ok(FilteredUpdatesRead {
         jsonl: String::from_utf8_lossy(&out).into_owned(),
         present: true,
@@ -1574,7 +1580,13 @@ async fn ssh_read_activity_file_optional(
         return Ok(ActivityFileRead::TooLarge(size));
     }
     let q = crate::acp::shell_quote_for_remote(remote_path);
-    let out = ssh_run_activity_command(ssh_config, format!("cat -- {q}"), label).await?;
+    let windows_path = crate::acp::powershell_single_quote(remote_path);
+    let windows_script = format!(
+        "{prelude}$path={windows_path};$input=[IO.File]::OpenRead($path);try{{$stdout=[Console]::OpenStandardOutput();$input.CopyTo($stdout);$stdout.Flush()}}finally{{$input.Dispose()}}",
+        prelude = crate::acp::windows_remote_shell_prelude(),
+    );
+    let out =
+        ssh_run_activity_command(ssh_config, format!("cat -- {q}"), windows_script, label).await?;
     if out.len() as u64 > cap_bytes {
         return Ok(ActivityFileRead::TooLarge(out.len() as u64));
     }
@@ -1592,7 +1604,12 @@ async fn ssh_activity_file_size(
     let script = format!(
         "p={q}; if [ ! -e \"$p\" ]; then printf 'missing\\n'; elif [ ! -f \"$p\" ]; then printf 'missing\\n'; elif stat -c %s -- \"$p\" >/dev/null 2>&1; then printf 'size:%s\\n' \"$(stat -c %s -- \"$p\")\"; else printf 'size:%s\\n' \"$(stat -f %z \"$p\")\"; fi"
     );
-    let out = ssh_run_activity_command(ssh_config, script, label).await?;
+    let windows_path = crate::acp::powershell_single_quote(remote_path);
+    let windows_script = format!(
+        "{prelude}$path={windows_path};if(-not(Test-Path -LiteralPath $path -PathType Leaf)){{[Console]::Out.WriteLine('missing')}}else{{$item=Get-Item -LiteralPath $path -Force;[Console]::Out.WriteLine(('size:'+([string]$item.Length)))}}",
+        prelude = crate::acp::windows_remote_shell_prelude(),
+    );
+    let out = ssh_run_activity_command(ssh_config, script, windows_script, label).await?;
     let text = String::from_utf8_lossy(&out).trim().to_string();
     if text == "missing" {
         return Ok(None);
@@ -1613,7 +1630,8 @@ async fn ssh_activity_file_size(
 
 async fn ssh_run_activity_command(
     ssh_config: &SshSpawnConfig,
-    remote_command: String,
+    posix_command: String,
+    windows_command: String,
     label: &str,
 ) -> Result<Vec<u8>, String> {
     crate::acp::validate_ssh_destination_arg(&ssh_config.host)?;
@@ -1624,6 +1642,21 @@ async fn ssh_run_activity_command(
     if let Some(port) = ssh_config.port {
         cmd.arg("-p").arg(port.to_string());
     }
+    if let Some(key_path) =
+        crate::provider_adapters::resolve_provider_ssh_key_path(ssh_config.key_vault_ref.as_deref())
+            .await?
+    {
+        cmd.arg("-i").arg(key_path);
+    }
+    let remote_command = if ssh_config.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        crate::acp::wrap_ssh_windows_command(&windows_command)
+    } else {
+        crate::acp::wrap_ssh_posix_command(
+            ssh_config.remote_runtime,
+            ssh_config.wsl_distro.as_deref(),
+            &posix_command,
+        )?
+    };
     cmd.arg("--").arg(&ssh_config.host).arg(remote_command);
     use crate::winproc::NoWindowExt as _;
     cmd.no_window();
@@ -1675,9 +1708,60 @@ mod tests {
     use super::{
         build_session_activity_report, discover_scratch_dir_under_home, filter_updates_jsonl,
         missing_hunk_status, percent_decode_path_segment, read_filtered_updates_jsonl,
-        remote_scratch_dir, urlencoded_cwd, wsl_scratch_dir, FilteredUpdatesRead,
-        SessionActivitySource, MAX_FILTERED_UPDATE_BYTES,
+        read_ssh_filtered_updates_jsonl, remote_scratch_dir, ssh_read_activity_file_optional,
+        ssh_run_activity_command, urlencoded_cwd, wsl_scratch_dir, ActivityFileRead,
+        FilteredUpdatesRead, SessionActivitySource, MAX_FILTERED_UPDATE_BYTES,
     };
+
+    #[tokio::test]
+    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
+    async fn live_native_windows_ssh_activity_read_and_filter() {
+        let host = std::env::var("SHELLX_WINDOWS_SSH_HOST")
+            .expect("SHELLX_WINDOWS_SSH_HOST must name a test Windows endpoint");
+        let home = std::env::var("SHELLX_WINDOWS_SSH_HOME")
+            .expect("SHELLX_WINDOWS_SSH_HOME must be an absolute Windows user profile");
+        let path = format!(
+            r"{}\shellx-activity-live-{}.jsonl",
+            home.trim_end_matches('\\'),
+            std::process::id()
+        );
+        let ssh = crate::acp::SshSpawnConfig {
+            host,
+            port: None,
+            key_vault_ref: None,
+            remote_grok_path: "grok".to_string(),
+            remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+            wsl_distro: None,
+        };
+        let content = concat!(
+            "{\"sessionUpdate\":\"agent_message_chunk\",\"content\":\"ignore\"}\n",
+            "{\"sessionUpdate\":\"tool_call\",\"title\":\"ReadFile\"}\n",
+            "{\"sessionUpdate\":\"tool_call_update\",\"status\":\"completed\"}\n",
+        );
+        crate::acp::ssh_write_file(&ssh, &path, content)
+            .await
+            .expect("write remote activity fixture");
+
+        let filtered = read_ssh_filtered_updates_jsonl(&ssh, &path).await;
+        let full = ssh_read_activity_file_optional(&ssh, &path, 1024 * 1024, "fixture").await;
+        let windows_path = crate::acp::powershell_single_quote(&path);
+        let _ = ssh_run_activity_command(
+            &ssh,
+            format!("rm -f -- {}", crate::acp::shell_quote_for_remote(&path)),
+            format!("if(Test-Path -LiteralPath {windows_path}){{Remove-Item -LiteralPath {windows_path} -Force}}"),
+            "cleanup",
+        )
+        .await;
+
+        let filtered = filtered.expect("filter remote activity");
+        assert!(filtered.present);
+        assert_eq!(filtered.jsonl.lines().count(), 2);
+        assert!(!filtered.jsonl.contains("agent_message_chunk"));
+        match full.expect("read remote activity") {
+            ActivityFileRead::Content(value) => assert_eq!(value, content),
+            other => panic!("unexpected remote activity result: {other:?}"),
+        }
+    }
 
     #[test]
     fn encodes_cwd_as_grok_session_segment() {

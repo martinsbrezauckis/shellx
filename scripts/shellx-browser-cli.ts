@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { shellxDataPaths } from "./shellx-debug-paths";
+import { readFileSync } from "node:fs";
+import { resolveShellxDebugApiConnection } from "./shellx-debug-paths";
 
 type JsonObject = Record<string, unknown>;
 type FlagValue = string | true;
@@ -15,36 +15,12 @@ interface DebugApiConnection {
   token: string;
 }
 
-function readFirst(paths: string[]): string | null {
-  for (const path of paths) {
-    if (!existsSync(path)) continue;
-    const value = readFileSync(path, "utf8").trim();
-    if (value) return value;
-  }
-  return null;
-}
-
-function readDebugApiConnection(flags: Record<string, FlagValue>): DebugApiConnection {
-  const explicitBase = stringFlag(flags, "base") ?? process.env.SHELLX_DEBUG_BASE?.trim();
-  const port = stringFlag(flags, "port")
-    ?? process.env.SHELLX_DEBUG_PORT?.trim()
-    ?? readFirst(shellxDataPaths("debug-api.port"));
-  const token = stringFlag(flags, "token")
-    ?? process.env.SHELLX_DEBUG_SECRET?.trim()
-    ?? process.env.SHELLX_DEBUG_TOKEN?.trim()
-    ?? readFirst(shellxDataPaths("shellxagent.token"))
-    ?? readFirst(shellxDataPaths("debug.token"));
-
-  if (!explicitBase && !port) {
-    throw new Error("ShellX Debug API port not found. Start ShellX or set SHELLX_DEBUG_BASE.");
-  }
-  if (!token) {
-    throw new Error("ShellX Debug API token not found. Start ShellX or set SHELLX_DEBUG_SECRET.");
-  }
-  return {
-    base: explicitBase ?? `http://127.0.0.1:${port}`,
-    token,
-  };
+async function readDebugApiConnection(flags: Record<string, FlagValue>): Promise<DebugApiConnection> {
+  return resolveShellxDebugApiConnection({
+    base: stringFlag(flags, "base"),
+    port: stringFlag(flags, "port"),
+    token: stringFlag(flags, "token"),
+  });
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -88,9 +64,41 @@ function boolFlag(flags: Record<string, FlagValue>, key: string): boolean {
   return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
+function numberFlag(flags: Record<string, FlagValue>, key: string): number | null {
+  const value = stringFlag(flags, key);
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function requiredPositiveIntegerFlag(
+  flags: Record<string, FlagValue>,
+  keys: string[],
+  label: string,
+): number {
+  const value = keys.map((key) => numberFlag(flags, key)).find((item) => item !== null) ?? null;
+  if (value === null || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return value;
+}
+
+function requiredNumberPositional(parsed: ParsedArgs, index: number, name: string): number {
+  const raw = requiredPositional(parsed, index, name);
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative number`);
+  }
+  return value;
+}
+
 function objectValue(value: unknown): JsonObject | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as JsonObject;
+}
+
+function isJsonObject(value: JsonObject | null): value is JsonObject {
+  return Boolean(value);
 }
 
 function stringValue(value: unknown): string | null {
@@ -102,6 +110,15 @@ function stringValue(value: unknown): string | null {
 function stringArrayValue(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map(stringValue).filter((item): item is string => Boolean(item));
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
+}
+
+function booleanValue(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 function commonActionFields(flags: Record<string, FlagValue>): JsonObject {
@@ -127,11 +144,13 @@ async function callDebugApi<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
+  const callerId = shellxHostCallerId();
   const response = await fetch(`${connection.base}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${connection.token}`,
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(callerId ? { "x-shellx-mcp-caller-id": callerId } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -146,13 +165,43 @@ async function callDebugApi<T>(
   return parsed as T;
 }
 
+function shellxHostCallerId(): string | null {
+  const value = process.env.SHELLX_HOST_MCP_TAB_ID?.trim() ?? "";
+  return value && value.length <= 200 ? value : null;
+}
+
 async function runCommand(parsed: ParsedArgs): Promise<unknown> {
   if (parsed.command === "help" || parsed.command === "--help" || parsed.command === "-h") {
     return { usage: usageLines() };
   }
 
-  const connection = readDebugApiConnection(parsed.flags);
+  const connection = await readDebugApiConnection(parsed.flags);
   switch (parsed.command) {
+    case "check": {
+      const query = new URLSearchParams({ timeoutMs: String(Math.min(120_000, Math.floor(numberFlag(parsed.flags, "timeout-ms") ?? numberFlag(parsed.flags, "timeoutMs") ?? 0))) });
+      const taskId = stringFlag(parsed.flags, "task") ?? stringFlag(parsed.flags, "task-id");
+      const browserTabId = stringFlag(parsed.flags, "tab") ?? stringFlag(parsed.flags, "browser-tab-id");
+      if (taskId) query.set("taskId", taskId);
+      if (browserTabId) query.set("browserTabId", browserTabId);
+      return callDebugApi(connection, "GET", `/browser/check?${query}`);
+    }
+    case "rendered-check": {
+      const url = requiredPositional(parsed, 0, "url");
+      const expectedDomains = stringFlag(parsed.flags, "expected-domains")
+        ?.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      return callDebugApi(connection, "POST", "/browser/rendered-check", cleanBody({
+        url,
+        expectText: stringFlag(parsed.flags, "expect-text"),
+        titleIncludes: stringFlag(parsed.flags, "title-includes"),
+        selector: stringFlag(parsed.flags, "selector"),
+        caseSensitive: boolFlag(parsed.flags, "case-sensitive") || undefined,
+        timeoutMs: numberFlag(parsed.flags, "timeout-ms"),
+        settleMs: numberFlag(parsed.flags, "settle-ms"),
+        expectedDomains: expectedDomains?.length ? expectedDomains : undefined,
+      }));
+    }
     case "snapshot":
       return callDebugApi(connection, "GET", "/browser/state");
     case "tabs":
@@ -191,6 +240,21 @@ async function runCommand(parsed: ParsedArgs): Promise<unknown> {
         refId,
       });
     }
+    case "click-at": {
+      const xFlag = numberFlag(parsed.flags, "x");
+      const yFlag = numberFlag(parsed.flags, "y");
+      if ((xFlag === null) !== (yFlag === null)) {
+        throw new Error("click-at requires both --x and --y, or positional x y");
+      }
+      const x = xFlag ?? requiredNumberPositional(parsed, 0, "x");
+      const y = yFlag ?? requiredNumberPositional(parsed, 1, "y");
+      return browserAction(connection, {
+        ...commonActionFields(parsed.flags),
+        action: "clickAt",
+        x,
+        y,
+      });
+    }
     case "fill-ref": {
       const refId = requiredPositional(parsed, 0, "refId");
       const value = requiredPositional(parsed, 1, "value");
@@ -198,6 +262,23 @@ async function runCommand(parsed: ParsedArgs): Promise<unknown> {
         ...commonActionFields(parsed.flags),
         action: "fillRef",
         refId,
+        value,
+      });
+    }
+    case "type-text": {
+      const xFlag = numberFlag(parsed.flags, "x");
+      const yFlag = numberFlag(parsed.flags, "y");
+      if ((xFlag === null) !== (yFlag === null)) {
+        throw new Error("type-text requires both --x and --y, or positional x y");
+      }
+      const x = xFlag ?? requiredNumberPositional(parsed, 0, "x");
+      const y = yFlag ?? requiredNumberPositional(parsed, 1, "y");
+      const value = requiredPositional(parsed, xFlag === null ? 2 : 0, "value");
+      return browserAction(connection, {
+        ...commonActionFields(parsed.flags),
+        action: "typeText",
+        x,
+        y,
         value,
       });
     }
@@ -224,9 +305,8 @@ async function runCommand(parsed: ParsedArgs): Promise<unknown> {
       });
     }
     case "extract": {
-      const format = requiredPositional(parsed, 0, "text|markdown");
-      const action = format === "markdown" ? "extractMarkdown" : format === "text" ? "extractText" : null;
-      if (!action) throw new Error("extract format must be text or markdown");
+      const format = requiredPositional(parsed, 0, "text|markdown|table");
+      const action = extractActionFromFormat(format);
       return browserAction(connection, {
         ...commonActionFields(parsed.flags),
         action,
@@ -247,6 +327,11 @@ async function runCommand(parsed: ParsedArgs): Promise<unknown> {
         ...commonActionFields(parsed.flags),
         action: "captureScreenshot",
         fullPage: boolFlag(parsed.flags, "full-page") || boolFlag(parsed.flags, "fullPage"),
+      });
+    case "clear-site-data":
+      return browserAction(connection, {
+        ...commonActionFields(parsed.flags),
+        action: "clearSiteData",
       });
     case "dialogs": {
       const limit = stringFlag(parsed.flags, "limit") ?? "20";
@@ -272,6 +357,19 @@ async function runCommand(parsed: ParsedArgs): Promise<unknown> {
         browserTabId: stringFlag(parsed.flags, "tab") ?? stringFlag(parsed.flags, "browser-tab-id"),
         reason: stringFlag(parsed.flags, "reason") ?? "ShellX Browser CLI trace-open",
       }));
+    case "flight-recorder-export":
+      return callDebugApi(connection, "POST", "/browser/flight-recorder/export", cleanBody({
+        taskId: stringFlag(parsed.flags, "task") ?? stringFlag(parsed.flags, "task-id"),
+        browserTabId: stringFlag(parsed.flags, "tab") ?? stringFlag(parsed.flags, "browser-tab-id"),
+        suiteId: stringFlag(parsed.flags, "suite") ?? stringFlag(parsed.flags, "suite-id"),
+        attemptIndex: numberFlag(parsed.flags, "attempt-index") ?? numberFlag(parsed.flags, "attemptIndex"),
+        group: stringFlag(parsed.flags, "group"),
+        reason: stringFlag(parsed.flags, "reason") ?? "ShellX Browser CLI Flight Recorder export",
+      }));
+    case "workflow-evaluate":
+      return workflowEvaluate(connection, parsed.flags);
+    case "run-steps":
+      return runSteps(connection, parsed.flags);
     case "workflow-bookmarks":
       return workflowBookmarks(connection, parsed.flags);
     case "workflow-save":
@@ -285,6 +383,315 @@ async function runCommand(parsed: ParsedArgs): Promise<unknown> {
 
 function browserAction(connection: DebugApiConnection, body: JsonObject): Promise<unknown> {
   return callDebugApi(connection, "POST", "/browser/action", body);
+}
+
+function parseEvaluationAttempts(flags: Record<string, FlagValue>): JsonObject[] {
+  const inline = stringFlag(flags, "attempts-json") ?? stringFlag(flags, "attemptsJson");
+  const file = stringFlag(flags, "attempts-file") ?? stringFlag(flags, "attemptsFile");
+  if (inline && file) {
+    throw new Error("workflow-evaluate accepts either --attempts-json or --attempts-file, not both");
+  }
+  const raw = inline ?? (file ? readFileSync(file, "utf8") : null);
+  if (!raw) {
+    throw new Error("workflow-evaluate requires --attempts-json <json> or --attempts-file <path>");
+  }
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error("workflow-evaluate attempts JSON must be an array");
+  return parsed.map((attempt, index) => {
+    const object = objectValue(attempt);
+    if (!object) throw new Error(`workflow-evaluate attempt ${index} must be an object`);
+    return { ...object };
+  });
+}
+
+async function workflowEvaluate(
+  connection: DebugApiConnection,
+  flags: Record<string, FlagValue>,
+): Promise<unknown> {
+  const suiteId = stringFlag(flags, "suite") ?? stringFlag(flags, "suite-id");
+  if (!suiteId) throw new Error("workflow-evaluate requires --suite <suiteId>");
+  const evaluatedAtMs = requiredPositiveIntegerFlag(
+    flags,
+    ["evaluated-at-ms", "evaluatedAtMs"],
+    "workflow-evaluate --evaluated-at-ms",
+  );
+  return callDebugApi(connection, "POST", "/browser/evaluations", cleanBody({
+    suiteId,
+    evaluatedAtMs,
+    taskId: stringFlag(flags, "task") ?? stringFlag(flags, "task-id"),
+    baselineLabel: stringFlag(flags, "baseline-label") ?? stringFlag(flags, "baselineLabel"),
+    candidateLabel: stringFlag(flags, "candidate-label") ?? stringFlag(flags, "candidateLabel"),
+    attempts: parseEvaluationAttempts(flags),
+    reason: stringFlag(flags, "reason") ?? "ShellX Browser CLI workflow evaluation",
+  }));
+}
+
+function runStepAction(action: unknown): string {
+  if (typeof action !== "string" || !action.trim()) {
+    throw new Error("run-steps step requires action");
+  }
+  switch (action.trim()) {
+    case "navigate": return "navigate";
+    case "observe": return "observe";
+    case "clickRef":
+    case "click": return "clickRef";
+    case "fillRef": return "fillRef";
+    case "press":
+    case "pressKey": return "press";
+    case "scroll": return "scroll";
+    case "select": return "select";
+    case "goBack":
+    case "back": return "goBack";
+    case "goForward":
+    case "forward": return "goForward";
+    case "reload":
+    case "refresh": return "reload";
+    case "waitFor": return "waitFor";
+    case "verify": return "verify";
+    case "findText": return "findText";
+    case "extractText": return "extractText";
+    case "extractMarkdown": return "extractMarkdown";
+    case "extractTable": return "extractTable";
+    case "captureScreenshot":
+    case "screenshot": return "captureScreenshot";
+    case "fillFromVaultGrant":
+    case "fillProfileCardGrant":
+    case "capturePageSecretToVault":
+    case "readEmailCodeGrant":
+    case "useAgentWalletGrant":
+      throw new Error(`run-steps rejected unsupported sensitive Browser action '${action.trim()}'; use the dedicated CLI/MCP tool instead`);
+    default:
+      throw new Error(`run-steps rejected unsupported Browser action '${action.trim()}'`);
+  }
+}
+
+function parseRunSteps(flags: Record<string, FlagValue>): JsonObject[] {
+  const inline = stringFlag(flags, "steps-json") ?? stringFlag(flags, "stepsJson");
+  const file = stringFlag(flags, "steps-file") ?? stringFlag(flags, "stepsFile");
+  if (inline && file) throw new Error("run-steps accepts either --steps-json or --steps-file, not both");
+  const raw = inline ?? (file ? readFileSync(file, "utf8") : null);
+  if (!raw) throw new Error("run-steps requires --steps-json <json> or --steps-file <path>");
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error("run-steps JSON must be an array of step objects");
+  return parsed.map((step, index) => {
+    const object = objectValue(step);
+    if (!object) throw new Error(`run-steps step ${index} must be an object`);
+    return { ...object };
+  });
+}
+
+function addIfMissing(body: JsonObject, key: string, value: unknown): void {
+  if (body[key] !== undefined || value === undefined || value === null || value === "") return;
+  body[key] = value;
+}
+
+function normalizeRunStep(step: JsonObject, common: JsonObject): JsonObject {
+  const action = runStepAction(step.action);
+  const body: JsonObject = { ...step, action };
+  if (action === "findText" && !stringValue(body.value)) {
+    const query = stringValue(body.query) ?? stringValue(body.q) ?? stringValue(body.text);
+    if (query) body.value = query;
+  }
+  delete body.query;
+  delete body.q;
+  delete body.text;
+  for (const [key, value] of Object.entries(common)) addIfMissing(body, key, value);
+  return cleanBody(body);
+}
+
+function runStepsSummaryEntry(index: number, action: string, response: unknown): JsonObject {
+  const data = objectValue(response) ?? {};
+  const ok = typeof data.ok === "boolean" ? data.ok : true;
+  return cleanBody({
+    index,
+    action,
+    ok,
+    status: stringValue(data.status) ?? "unknown",
+    taskId: stringValue(data.taskId),
+    currentUrl: stringValue(data.currentUrl),
+    failureKind: ok ? undefined : "action",
+    error: ok ? undefined : stringValue(data.error) ?? stringValue(data.message)
+      ?? `Browser action returned status ${stringValue(data.status) ?? "unknown"}`,
+  });
+}
+
+function runStepsAggregate(results: JsonObject[]): {
+  succeeded: number;
+  failed: number;
+  continuedAfterFailure: boolean;
+  failures: JsonObject[];
+} {
+  let succeeded = 0;
+  let failed = 0;
+  let sawFailure = false;
+  let continuedAfterFailure = false;
+  const failures: JsonObject[] = [];
+  for (const result of results) {
+    if (sawFailure) continuedAfterFailure = true;
+    if (result.ok === true) {
+      succeeded += 1;
+      continue;
+    }
+    failed += 1;
+    sawFailure = true;
+    const status = stringValue(result.status) ?? "unknown";
+    failures.push(cleanBody({
+      index: result.index,
+      action: result.action,
+      status,
+      failureKind: stringValue(result.failureKind) ?? "action",
+      error: stringValue(result.error) ?? `Browser action returned status ${status}`,
+    }));
+  }
+  return { succeeded, failed, continuedAfterFailure, failures };
+}
+
+function shouldWaitForCliBrowserSettle(action: string, response: unknown): boolean {
+  const data = objectValue(response) ?? {};
+  const ok = typeof data.ok === "boolean" ? data.ok : true;
+  return ok && ["navigate", "goBack", "goForward", "reload"].includes(action);
+}
+
+function runStepsUsesExplicitTarget(flags: Record<string, FlagValue>): boolean {
+  return Boolean(
+    stringFlag(flags, "task") ||
+      stringFlag(flags, "task-id") ||
+      stringFlag(flags, "tab") ||
+      stringFlag(flags, "browser-tab-id") ||
+      boolFlag(flags, "use-active-tab") ||
+      boolFlag(flags, "active-tab"),
+  );
+}
+
+function firstRunStepsNavigateUrl(steps: JsonObject[]): string | null {
+  for (const step of steps) {
+    const action = typeof step.action === "string" ? step.action.trim() : "";
+    if (action !== "navigate") continue;
+    const url = stringValue(step.url);
+    if (url) return url;
+  }
+  return null;
+}
+
+async function ensureRunStepsTask(
+  connection: DebugApiConnection,
+  flags: Record<string, FlagValue>,
+  steps: JsonObject[],
+  common: JsonObject,
+): Promise<{ taskId: string | null; startedTask: JsonObject | null }> {
+  const explicitTaskId = stringFlag(flags, "task") ?? stringFlag(flags, "task-id");
+  if (explicitTaskId) return { taskId: explicitTaskId, startedTask: null };
+  if (runStepsUsesExplicitTarget(flags)) return { taskId: null, startedTask: null };
+
+  const startUrl = firstRunStepsNavigateUrl(steps);
+  const startSiteKey = siteKeyFromUrl(startUrl);
+  const expectedDomains = commaListFlag(flags, "expected-domains") ??
+    commaListFlag(flags, "expectedDomains") ??
+    (startSiteKey ? [startSiteKey] : undefined);
+  const startedTask = await callDebugApi<JsonObject>(connection, "POST", "/browser/task/start", cleanBody({
+    goal: stringFlag(flags, "goal") ?? "ShellX Browser CLI run-steps",
+    startUrl,
+    profileId: stringFlag(flags, "profile") ?? stringFlag(flags, "profile-id") ?? "agent-work",
+    autonomy: stringFlag(flags, "autonomy") ?? "assistedAutonomous",
+    expectedDomains,
+    blockedDomains: commaListFlag(flags, "blocked-domains") ?? commaListFlag(flags, "blockedDomains"),
+  }));
+  const taskId = stringValue(startedTask.taskId);
+  if (!taskId) throw new Error("run-steps could not start an agent Browser task");
+  addIfMissing(common, "taskId", taskId);
+  return { taskId, startedTask };
+}
+
+async function waitForCliBrowserSettle(
+  connection: DebugApiConnection,
+  taskId: string | null,
+  timeoutMs: number,
+): Promise<void> {
+  const query = new URLSearchParams({ timeoutMs: String(Math.min(120_000, Math.floor(timeoutMs))) });
+  if (taskId) query.set("taskId", taskId);
+  const settle = await callDebugApi<{ settled?: boolean }>(connection, "GET", `/browser/settle?${query}`);
+  if (settle.settled) return;
+  throw new Error("run-steps timed out waiting for Browser navigation to settle");
+}
+
+async function runSteps(
+  connection: DebugApiConnection,
+  flags: Record<string, FlagValue>,
+): Promise<unknown> {
+  const steps = parseRunSteps(flags);
+  if (steps.length === 0) throw new Error("run-steps requires at least one step");
+  if (steps.length > 20) throw new Error("run-steps accepts at most 20 steps");
+  const continueOnError = boolFlag(flags, "continue-on-error") || boolFlag(flags, "continueOnError");
+  const timeoutMs = numberFlag(flags, "timeout-ms") ?? numberFlag(flags, "timeoutMs") ?? 30_000;
+  const common = cleanBody({
+    ...commonActionFields(flags),
+    timeoutMs,
+  });
+  const target = await ensureRunStepsTask(connection, flags, steps, common);
+  let carriedTaskId = target.taskId;
+  const results: JsonObject[] = [];
+  let lastResponse: unknown = null;
+  let stoppedAt: number | null = null;
+  let stoppedReason: string | null = null;
+
+  for (let index = 0; index < steps.length; index += 1) {
+    let body: JsonObject;
+    let failureKind = "validation";
+    try {
+      body = normalizeRunStep(steps[index] ?? {}, common);
+      if (!body.taskId && carriedTaskId) body.taskId = carriedTaskId;
+      failureKind = "transport";
+      const response = await browserAction(connection, body);
+      if (!carriedTaskId) carriedTaskId = stringValue(objectValue(response)?.taskId);
+      if (shouldWaitForCliBrowserSettle(String(body.action), response)) {
+        failureKind = "navigationSettle";
+        await waitForCliBrowserSettle(connection, carriedTaskId, timeoutMs);
+      }
+      lastResponse = response;
+      const row = runStepsSummaryEntry(index, String(body.action), response);
+      results.push(row);
+      if (row.ok === false && !continueOnError) {
+        stoppedAt = index;
+        stoppedReason = `Browser action returned status ${String(row.status ?? "unknown")}`;
+        break;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      results.push(cleanBody({
+        index,
+        action: typeof steps[index]?.action === "string" ? steps[index]?.action : undefined,
+        ok: false,
+        status: "error",
+        failureKind,
+        error: message,
+      }));
+      if (!continueOnError) {
+        stoppedAt = index;
+        stoppedReason = message;
+        break;
+      }
+    }
+  }
+
+  const aggregate = runStepsAggregate(results);
+
+  return {
+    ok: aggregate.failed === 0,
+    stepsPlanned: steps.length,
+    stepsRun: results.length,
+    stepsSucceeded: aggregate.succeeded,
+    stepsFailed: aggregate.failed,
+    continuedAfterFailure: aggregate.continuedAfterFailure,
+    failureSummary: aggregate.failures,
+    continueOnError,
+    stoppedAt,
+    stoppedReason,
+    taskId: carriedTaskId,
+    startedTask: target.startedTask,
+    steps: results,
+    lastResponse,
+    note: "browser_run_steps style generic batch; sensitive Browser/Vault actions stay on dedicated gated tools",
+  };
 }
 
 async function workflowBookmarks(
@@ -326,7 +733,7 @@ async function workflowBookmarks(
       };
     })
     .filter((workflow) => !site || domainMatches(workflow.siteKey, normalizeSite(site)))
-    .filter((workflow) => !taskType || workflow.taskType === slug(taskType).split("-")[0])
+    .filter((workflow) => !taskType || workflow.taskType === workflowTaskType(taskType))
     .filter((workflow) => !target || workflow.target === slug(target))
     .filter((workflow) => !surface || workflow.surface === slug(surface))
     .filter((workflow) => !secretKind || workflow.secretKinds.some((item) => item.toLowerCase() === secretKind.toLowerCase()))
@@ -336,6 +743,23 @@ async function workflowBookmarks(
     })
     .slice(0, limit);
   return { ok: true, count: workflows.length, workflows };
+}
+
+function workflowTaskType(value: string): string {
+  const normalized = slug(value);
+  if (normalized === "signup" || normalized.startsWith("signup-") || normalized.startsWith("sign-up")) {
+    return "register";
+  }
+  if (normalized.startsWith("register") || normalized.startsWith("registration")) {
+    return "register";
+  }
+  if (normalized === "signin" || normalized.startsWith("signin-") || normalized.startsWith("sign-in")) {
+    return "login";
+  }
+  if (normalized.startsWith("log-in") || normalized.startsWith("login")) {
+    return "login";
+  }
+  return normalized;
 }
 
 async function workflowReplay(
@@ -355,12 +779,64 @@ async function workflowReplay(
     }
   }
   if (!recipePath) throw new Error("workflow-replay requires --recipe-path <path> or --bookmark <bookmarkId>");
-  return callDebugApi(connection, "POST", "/browser/recipes/replay", cleanBody({
+  const replay = await callDebugApi<JsonObject>(connection, "POST", "/browser/recipes/replay", cleanBody({
     ...commonActionFields(flags),
     recipePath,
     dryRun: !(boolFlag(flags, "apply") || boolFlag(flags, "no-dry-run")),
     reason: stringFlag(flags, "reason") ?? "ShellX Browser CLI workflow-replay",
   }));
+  return {
+    ok: booleanValue(replay.ok) ?? true,
+    summary: workflowReplaySummary(replay),
+    replay,
+  };
+}
+
+function compactReplayStepResult(step: JsonObject, fallbackIndex: number): JsonObject {
+  return cleanBody({
+    index: numberValue(step.index) ?? fallbackIndex,
+    action: stringValue(step.action),
+    ok: booleanValue(step.ok),
+    status: stringValue(step.status),
+    reason: stringValue(step.reason),
+    taskId: stringValue(step.taskId),
+    currentUrl: stringValue(step.currentUrl),
+  });
+}
+
+function compactSkippedStep(step: JsonObject, fallbackIndex: number): JsonObject {
+  return cleanBody({
+    index: numberValue(step.index) ?? fallbackIndex,
+    action: stringValue(step.action),
+    reason: stringValue(step.reason),
+  });
+}
+
+function workflowReplaySummary(replay: JsonObject): JsonObject {
+  const stepResults = Array.isArray(replay.stepResults)
+    ? replay.stepResults.map(objectValue).filter(isJsonObject).map(compactReplayStepResult)
+    : [];
+  const skippedSteps = Array.isArray(replay.skippedSteps)
+    ? replay.skippedSteps.map(objectValue).filter(isJsonObject).map(compactSkippedStep)
+    : [];
+  const decisionPoints = Array.isArray(replay.decisionPoints) ? replay.decisionPoints : [];
+  const firstSkippedReason = stringValue(skippedSteps[0]?.reason);
+  const needsLiveRecovery = skippedSteps.length > 0 || stepResults.some((step) => booleanValue(step.ok) === false);
+  return cleanBody({
+    ok: booleanValue(replay.ok) ?? true,
+    status: stringValue(replay.status),
+    dryRun: booleanValue(replay.dryRun),
+    taskId: stringValue(replay.taskId),
+    browserTabId: stringValue(replay.browserTabId),
+    stepsPlanned: numberValue(replay.stepsPlanned) ?? stepResults.length + skippedSteps.length,
+    stepsApplied: numberValue(replay.stepsApplied),
+    stepsSkipped: numberValue(replay.stepsSkipped) ?? skippedSteps.length,
+    decisionPointCount: decisionPoints.length,
+    firstSkippedReason,
+    needsLiveRecovery,
+    stepResults,
+    skippedSteps,
+  });
 }
 
 async function workflowSave(
@@ -391,7 +867,7 @@ async function workflowSave(
   const siteKey = stringFlag(flags, "site") ?? stringFlag(flags, "site-key") ?? stringFlag(flags, "siteKey") ?? siteKeyFromUrl(url);
   const workflow = cleanBody({
     siteKey,
-    taskType: slug(taskType).split("-")[0],
+    taskType: workflowTaskType(taskType),
     target: slug(target),
     surface: stringFlag(flags, "surface") ? slug(stringFlag(flags, "surface") ?? "") : undefined,
     aliases: commaListFlag(flags, "aliases"),
@@ -460,23 +936,49 @@ function requiredPositional(parsed: ParsedArgs, index: number, label: string): s
   return value;
 }
 
+function extractActionFromFormat(format: string): string {
+  switch (format.trim().toLowerCase()) {
+    case "text":
+    case "txt":
+      return "extractText";
+    case "markdown":
+    case "md":
+      return "extractMarkdown";
+    case "table":
+    case "tables":
+      return "extractTable";
+    default:
+      throw new Error("extract format must be text, markdown, or table");
+  }
+}
+
 function usageLines(): string[] {
   return [
+    "pnpm shellx-browser check --task <taskId> --timeout-ms 1000",
+    "pnpm shellx-browser rendered-check https://example.com --expect-text \"Example Domain\" --selector h1",
     "pnpm shellx-browser snapshot",
     "pnpm shellx-browser navigate https://example.com --tab <browserTabId>",
     "pnpm shellx-browser observe --tab <browserTabId>",
     "pnpm shellx-browser click-ref <refId> --task <taskId>",
+    "pnpm shellx-browser click-at 128 240 --task <taskId>",
     "pnpm shellx-browser fill-ref <refId> <value> --task <taskId>",
+    "pnpm shellx-browser type-text 128 240 \"hello\" --task <taskId>",
     "pnpm shellx-browser fill-from-vault <refId> <grantId> <secretRef> --task <taskId>",
     "pnpm shellx-browser wait-for text <value>",
     "pnpm shellx-browser extract markdown --selector main",
+    "pnpm shellx-browser extract table --selector table",
     "pnpm shellx-browser verify text <value>",
     "pnpm shellx-browser screenshot --full-page --task <taskId>",
+    "pnpm shellx-browser clear-site-data --task <taskId>",
     "pnpm shellx-browser dialogs --limit 20",
     "pnpm shellx-browser resolve-dialog <dialogId> --task <taskId> --action accept",
     "pnpm shellx-browser tabs",
     "pnpm shellx-browser locks",
     "pnpm shellx-browser trace-open --task <taskId>",
+    "pnpm shellx-browser flight-recorder-export --task <taskId> --suite <suiteId> --group baseline --attempt-index 1",
+    "pnpm shellx-browser workflow-evaluate --suite <suiteId> --evaluated-at-ms <unixMs> --task <taskId> --attempts-file <attempts.json>",
+    "pnpm shellx-browser run-steps --steps-json '[{\"action\":\"navigate\",\"url\":\"https://example.com\"},{\"action\":\"waitFor\",\"value\":\"Example Domain\"}]'",
+    "pnpm shellx-browser run-steps --use-active-tab --steps-json '[{\"action\":\"observe\"}]'",
     "pnpm shellx-browser workflow-bookmarks --site google.com --task-type get --target api-key",
     "pnpm shellx-browser workflow-save --label \"Google API key\" --task-type get --target api-key --site google.com",
     "pnpm shellx-browser workflow-replay --recipe-path <path> --dry-run",
@@ -491,6 +993,12 @@ async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
   const result = await runCommand(parsed);
   printResult(result, parsed.flags.pretty === true);
+  if (
+    (["run-steps", "rendered-check"].includes(parsed.command) && objectValue(result)?.ok === false) ||
+    (parsed.command === "workflow-evaluate" && objectValue(result)?.evidenceComplete !== true)
+  ) {
+    process.exitCode = 1;
+  }
 }
 
 main().catch((error) => {

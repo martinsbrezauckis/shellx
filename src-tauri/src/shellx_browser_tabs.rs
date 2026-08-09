@@ -10,7 +10,10 @@ use crate::shellx_browser::{
     ShellxBrowserRegistry,
 };
 use crate::shellx_browser_profiles::resolve_profile_id;
-use crate::shellx_browser_tasks::{browser_agent_step_summary_for_task, find_task_index};
+use crate::shellx_browser_tasks::{
+    browser_agent_step_summary_for_task, browser_task_is_terminal, find_task_index,
+    repair_browser_task_invariants_locked, transition_task_status_locked,
+};
 
 impl ShellxBrowserRegistry {
     pub fn open_tab(&self, request: BrowserTabOpenRequest) -> Result<BrowserTabResponse, String> {
@@ -32,6 +35,12 @@ impl ShellxBrowserRegistry {
             .filter(|value| !value.is_empty());
         if let Some(task_id) = task_id.as_deref() {
             let task_idx = find_task_index(&state, task_id)?;
+            if browser_task_is_terminal(&state.tasks[task_idx].status) {
+                return Err(format!(
+                    "browser task '{}' is terminal with status '{}'; it cannot own new tabs",
+                    task_id, state.tasks[task_idx].status
+                ));
+            }
             let task_profile_id = state.tasks[task_idx].profile_id.clone();
             if profile_id != task_profile_id {
                 let delegated_personal_context = profile_id == "personal"
@@ -62,6 +71,16 @@ impl ShellxBrowserRegistry {
             .unwrap_or_default();
         expected_domains.extend(task_expected_domains);
         expected_domains = normalize_tab_open_expected_domains(expected_domains);
+        let blocked_domains = task_id
+            .as_deref()
+            .and_then(|task_id| {
+                state
+                    .tasks
+                    .iter()
+                    .find(|task| task.task_id == task_id)
+                    .map(|task| task.blocked_domains.clone())
+            })
+            .unwrap_or_default();
         let tab_url = request
             .url
             .as_deref()
@@ -71,6 +90,7 @@ impl ShellxBrowserRegistry {
                 validate_browser_navigation_target(
                     url,
                     &expected_domains,
+                    &blocked_domains,
                     &profile_id,
                     task_id.is_some(),
                 )
@@ -126,7 +146,6 @@ impl ShellxBrowserRegistry {
         }
         set_active_tab(&mut state, &request.browser_tab_id);
         let tab = state.tabs[tab_idx].clone();
-        state.active_task_id = tab.task_id.clone();
         let receipt = push_receipt(
             &mut state,
             "browserTabFocused",
@@ -226,6 +245,28 @@ impl ShellxBrowserRegistry {
                 .engines
                 .retain(|engine| engine.engine_id != closed_engine_id);
         }
+        if let Some(task_id) = tab.task_id.as_deref() {
+            let has_remaining_owned_tab = state
+                .tabs
+                .iter()
+                .any(|item| item.task_id.as_deref() == Some(task_id));
+            if !has_remaining_owned_tab {
+                let task_idx = find_task_index(&state, task_id)?;
+                if !browser_task_is_terminal(&state.tasks[task_idx].status) {
+                    transition_task_status_locked(
+                        &mut state,
+                        task_id,
+                        "aborted",
+                        "lastTabClosed",
+                        "browserTaskAborted",
+                        "Browser task aborted after its final owned tab closed",
+                        "browserTabClose",
+                        true,
+                        true,
+                    )?;
+                }
+            }
+        }
         if state.active_browser_tab_id.as_deref() == Some(request.browser_tab_id.as_str()) {
             state.active_browser_tab_id =
                 state.tabs.first().map(|item| item.browser_tab_id.clone());
@@ -240,6 +281,7 @@ impl ShellxBrowserRegistry {
                 state.active_task_id = None;
             }
         }
+        repair_browser_task_invariants_locked(&mut state);
         if state.tabs.is_empty() {
             reset_browser_engine_snapshots_for_empty_tabs_locked(&mut state);
         }

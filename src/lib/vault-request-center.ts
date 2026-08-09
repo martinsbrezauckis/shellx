@@ -15,7 +15,8 @@ export type VaultRequestCenterItemKind =
   | "sessionPermission"
   | "browserSessionGrant"
   | "browserVaultDeposit"
-  | "vaultGrant";
+  | "vaultGrant"
+  | "vaultAgentRequest";
 
 export type VaultRequestCenterActionKind =
   | "allowPermission"
@@ -25,6 +26,8 @@ export type VaultRequestCenterActionKind =
   | "denyBrowserGrant"
   | "approveVaultGrant"
   | "denyVaultGrant"
+  | "approveVaultAgentRequest"
+  | "denyVaultAgentRequest"
   | "openVault"
   | "dismissDeposit";
 
@@ -47,6 +50,8 @@ export interface VaultRequestCenterItem {
   tabTitle?: string | null;
   toolName?: string;
   grantId?: string;
+  agentRequestId?: string;
+  expectedDigest?: string;
   depositId?: string;
   primaryAction: VaultRequestCenterAction;
   secondaryAction?: VaultRequestCenterAction;
@@ -73,6 +78,7 @@ export interface VaultRequestCenterInput {
   browserSessionGrants?: BrowserSessionGrantPromptSource[];
   browserVaultDeposits?: BrowserVaultDepositPromptSource[];
   vaultGrants?: VaultGrantPromptSource[];
+  agentRequests?: VaultAgentRequestSource[];
   dismissedDepositIds?: ReadonlySet<string>;
 }
 
@@ -81,10 +87,33 @@ export interface VaultGrantPromptSource {
   secretRef: string;
   actorScope: string;
   operation: string;
+  origin?: string | null;
   createdAtMs?: number | null;
   expiresAtMs?: number | null;
   revoked: boolean;
   approved: boolean;
+}
+
+export interface VaultAgentRequestSource {
+  requestId: string;
+  requestDigest: string;
+  actorId: string;
+  actorLabel: string;
+  status: string;
+  createdAtMs: number;
+  expiresAtMs: number;
+  spec: {
+    purpose: string;
+    program: string;
+    args?: string[];
+    cwd?: string | null;
+    bindings: Array<{
+      resourceId: string;
+      field: string;
+      env: string;
+    }>;
+    timeoutMs: number;
+  };
 }
 
 const VAULT_PERMISSION_KEYWORDS = [
@@ -188,14 +217,51 @@ export function buildVaultRequestCenterItems(input: VaultRequestCenterInput): Va
     items.push(requestFromPendingVaultGrant(grant));
   }
 
+  for (const request of input.agentRequests ?? []) {
+    if (request.status.toLowerCase() !== "pending") continue;
+    items.push(requestFromPendingVaultAgentRequest(request));
+  }
+
   return items.sort((a, b) => {
     if (a.tone !== b.tone) return tonePriority(b.tone) - tonePriority(a.tone);
     return b.createdAtMs - a.createdAtMs;
   });
 }
 
+function requestFromPendingVaultAgentRequest(
+  request: VaultAgentRequestSource,
+): VaultRequestCenterItem {
+  const args = request.spec.args ?? [];
+  const exactArgs = args.length > 0 ? JSON.stringify(args) : "[]";
+  const bindings = request.spec.bindings
+    .map((binding) => `${cleanText(binding.env)} <- ${cleanText(binding.resourceId)}`)
+    .join(", ");
+  return {
+    id: `vault-agent-request:${request.requestId}`,
+    kind: "vaultAgentRequest",
+    title: "Approve Vault command",
+    summary: `${cleanText(request.actorLabel) || cleanText(request.actorId) || "Agent"} · ${cleanText(request.spec.purpose) || "Use Vault resources"}`,
+    detailLines: [
+      `Requester: ${cleanText(request.actorLabel) || "Agent"} (${cleanText(request.actorId) || "unknown id"})`,
+      `Program: ${cleanText(request.spec.program)}`,
+      `Arguments: ${exactArgs}`,
+      request.spec.cwd ? `Working directory: ${cleanText(request.spec.cwd)}` : "Working directory: inherited",
+      `Bindings: ${bindings || "none"} · ${formatGrantExpiry(request.expiresAtMs)}`,
+    ],
+    createdAtMs: request.createdAtMs,
+    tone: "danger",
+    sourceLabel: "Vault",
+    agentRequestId: request.requestId,
+    expectedDigest: request.requestDigest,
+    primaryAction: { kind: "approveVaultAgentRequest", label: "Run" },
+    secondaryAction: { kind: "denyVaultAgentRequest", label: "Deny" },
+  };
+}
+
 function requestFromPendingVaultGrant(grant: VaultGrantPromptSource): VaultRequestCenterItem {
   const expires = formatGrantExpiry(grant.expiresAtMs);
+  const browserBound = ["Fill", "fill", "ProfileFill", "profileFill", "EmailCodeRead", "emailCodeRead", "AgentWalletUse", "agentWalletUse"]
+    .includes(grant.operation);
   return {
     id: `vault-grant:${grant.grantId}`,
     kind: "vaultGrant",
@@ -204,6 +270,9 @@ function requestFromPendingVaultGrant(grant: VaultGrantPromptSource): VaultReque
     detailLines: [
       `Operation: ${formatGrantOperation(grant.operation)}`,
       `Scope: ${cleanText(grant.actorScope) || "unknown"}`,
+      browserBound
+        ? (grant.origin ? `Website: ${cleanText(grant.origin)}` : "Website: not bound (browser use blocked)")
+        : "",
       expires,
       "The agent can use this only after operator approval.",
     ].filter(Boolean),
@@ -217,9 +286,9 @@ function requestFromPendingVaultGrant(grant: VaultGrantPromptSource): VaultReque
 }
 
 export function vaultRequestSummaryText(requests: readonly VaultRequestCenterItem[]): string {
-  if (requests.length === 0) return "Vault ready";
-  if (requests.length === 1) return "1 Vault request";
-  return `${requests.length} Vault requests`;
+  if (requests.length === 0) return "Ready";
+  if (requests.length === 1) return "1 approval needed";
+  return `${requests.length} approvals needed`;
 }
 
 export function loadDismissedVaultDepositIds(): Set<string> {

@@ -4,7 +4,7 @@
  *
  * Renders the canonical hover-revealed rename + delete icon cluster used
  * across LeftRail's chat/past-chat rows. CSS (.row-edit / .row-del) hides
- * the spans until the parent row is hovered, exactly as the inline
+ * the buttons until the parent row is hovered, exactly as the inline
  * duplicates did before extraction.
  *
  * Callers pass discrete callbacks (`onRename`, `onDelete`); each affordance
@@ -49,10 +49,9 @@ export function RowActions({
   return (
     <>
       {onRename && (
-        <span
+        <button data-debug-id="surface-components-rowactions-1"
+          type="button"
           className="row-edit"
-          role="button"
-          tabIndex={-1}
           onClick={(e) => {
             e.stopPropagation();
             onRename();
@@ -61,13 +60,12 @@ export function RowActions({
           aria-label={renameTitle ?? "Rename"}
         >
           <ShellIcon name="pencil" size={12} />
-        </span>
+        </button>
       )}
       {onDelete && (
-        <span
+        <button data-debug-id="surface-components-rowactions-2"
+          type="button"
           className="row-del"
-          role="button"
-          tabIndex={-1}
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
@@ -76,7 +74,7 @@ export function RowActions({
           aria-label={deleteTitle ?? "Delete"}
         >
           <ShellIcon name="trash" size={12} />
-        </span>
+        </button>
       )}
     </>
   );

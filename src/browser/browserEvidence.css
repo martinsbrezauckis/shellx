@@ -1,0 +1,163 @@
+.shellx-browser-evidence-panel {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+.shellx-browser-evidence-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.shellx-browser-evidence-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-evidence-head strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-evidence-head span {
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-evidence-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.shellx-browser-evidence-head .shellx-browser-secondary {
+  flex: 0 0 auto;
+  height: 28px;
+}
+.shellx-browser-evidence-recorded {
+  display: grid;
+  gap: 2px;
+  border: 1px solid color-mix(in oklab, var(--ok) 42%, var(--hairline));
+  border-radius: var(--radius-button);
+  padding: 8px 9px;
+  background: color-mix(in oklab, var(--ok) 8%, var(--surface-2));
+}
+.shellx-browser-evidence-recorded.incomplete {
+  border-color: color-mix(in oklab, var(--warn) 46%, var(--hairline));
+  background: color-mix(in oklab, var(--warn) 8%, var(--surface-2));
+}
+.shellx-browser-evidence-recorded strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-evidence-recorded span {
+  color: var(--ink-2);
+  font-size: 10px;
+}
+.shellx-browser-evidence-list {
+  display: grid;
+  gap: 8px;
+}
+.shellx-browser-evidence-row {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid rgba(59, 130, 246, 0.55);
+  border-radius: var(--radius-button);
+  padding: 9px;
+  background: var(--surface-2);
+}
+.shellx-browser-evidence-row.evaluation {
+  border-left-color: rgba(34, 197, 94, 0.58);
+}
+.shellx-browser-evidence-row-head,
+.shellx-browser-evidence-kind,
+.shellx-browser-evidence-metrics {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shellx-browser-evidence-row-head {
+  justify-content: space-between;
+}
+.shellx-browser-evidence-kind {
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 700;
+}
+.shellx-browser-evidence-status {
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-chip);
+  padding: 2px 6px;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.shellx-browser-evidence-status.complete {
+  border-color: color-mix(in oklab, var(--ok) 42%, var(--hairline));
+  color: var(--ok);
+}
+.shellx-browser-evidence-status.incomplete {
+  border-color: color-mix(in oklab, var(--warn) 46%, var(--hairline));
+  color: var(--warn);
+}
+.shellx-browser-evidence-row > strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-evidence-metrics {
+  flex-wrap: wrap;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-evidence-metrics span + span::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--ink-3);
+}
+.shellx-browser-evidence-row code {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-evidence-row small {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.shellx-browser-evidence-error {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(239, 68, 68, 0.38);
+  border-radius: var(--radius-button);
+  padding: 9px;
+  background: rgba(239, 68, 68, 0.07);
+}
+.shellx-browser-evidence-error strong {
+  color: var(--err);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-evidence-error span {
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.4;
+}
+.shellx-browser-evidence-warning {
+  border: 1px solid color-mix(in oklab, var(--warn) 42%, var(--hairline));
+  border-radius: var(--radius-button);
+  padding: 8px 9px;
+  background: color-mix(in oklab, var(--warn) 8%, var(--surface-2));
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.4;
+}

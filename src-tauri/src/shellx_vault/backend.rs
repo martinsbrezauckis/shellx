@@ -410,6 +410,8 @@ pub struct ShellxVaultBackend {
     status: tokio::sync::Mutex<ShellxVaultStatus>,
     profile_dir: PathBuf,
     remembered_device_store: Arc<dyn RememberedDeviceStore>,
+    state_transition: tokio::sync::Mutex<()>,
+    remembered_unlock_attempt: tokio::sync::Mutex<RememberedUnlockAttempt>,
     pending_profile: tokio::sync::Mutex<Option<VaultProfile>>,
     pending_keyfile_publish: tokio::sync::Mutex<Option<String>>,
     pending_remembered_device_secret: tokio::sync::Mutex<Option<String>>,
@@ -417,10 +419,20 @@ pub struct ShellxVaultBackend {
     session: tokio::sync::Mutex<Option<VaultBridgeSession>>,
     manual_lock: tokio::sync::Mutex<bool>,
     local_server: tokio::sync::Mutex<Option<vault_server::EmbeddedServer>>,
+    compat_mutation: tokio::sync::Mutex<()>,
     compat_values: tokio::sync::Mutex<BTreeMap<String, String>>,
     compat_meta: tokio::sync::Mutex<BTreeMap<String, ShellxVaultCompatMeta>>,
     grants: tokio::sync::Mutex<BrokerGrantPolicy>,
     debug_audit: tokio::sync::Mutex<Vec<VaultDebugAuditRecord>>,
+}
+
+const REMEMBERED_UNLOCK_RETRY_COOLDOWN_MS: i64 = 15_000;
+const MAX_DEBUG_AUDIT_RECORDS: usize = 512;
+
+#[derive(Debug, Default)]
+struct RememberedUnlockAttempt {
+    last_attempt_ms: Option<i64>,
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -550,6 +562,10 @@ impl Default for ShellxVaultBackend {
 }
 
 impl ShellxVaultBackend {
+    pub(crate) fn profile_dir(&self) -> &Path {
+        &self.profile_dir
+    }
+
     pub fn for_test(profile_dir: PathBuf) -> Self {
         Self::with_remembered_device_store_for_test(
             profile_dir,
@@ -581,6 +597,8 @@ impl ShellxVaultBackend {
             status: tokio::sync::Mutex::new(initial_status),
             profile_dir,
             remembered_device_store,
+            state_transition: tokio::sync::Mutex::new(()),
+            remembered_unlock_attempt: tokio::sync::Mutex::new(RememberedUnlockAttempt::default()),
             pending_profile: tokio::sync::Mutex::new(None),
             pending_keyfile_publish: tokio::sync::Mutex::new(None),
             pending_remembered_device_secret: tokio::sync::Mutex::new(None),
@@ -588,6 +606,7 @@ impl ShellxVaultBackend {
             session: tokio::sync::Mutex::new(None),
             manual_lock: tokio::sync::Mutex::new(false),
             local_server: tokio::sync::Mutex::new(None),
+            compat_mutation: tokio::sync::Mutex::new(()),
             compat_values: tokio::sync::Mutex::new(BTreeMap::new()),
             compat_meta: tokio::sync::Mutex::new(BTreeMap::new()),
             grants: tokio::sync::Mutex::new(grants),
@@ -679,6 +698,7 @@ impl ShellxVaultBackend {
         {
             return Err("external vault requires serverUrl".into());
         }
+        let _transition = self.state_transition.lock().await;
         let kit = generate_recovery_kit();
         let mode = match request.target {
             SetupTarget::Local => ShellxVaultMode::Local,
@@ -728,6 +748,7 @@ impl ShellxVaultBackend {
         *self.pending_remembered_device_secret.lock().await = remembered_device_secret;
         *self.pending_session.lock().await = Some(session);
         *self.manual_lock.lock().await = false;
+        *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
         let mut status = self.status.lock().await;
         status.mode = ShellxVaultMode::Unconfigured;
         status.unlocked = false;
@@ -739,6 +760,7 @@ impl ShellxVaultBackend {
         if request.passphrase.trim().is_empty() {
             return Err("vault passphrase must not be empty".into());
         }
+        let _transition = self.state_transition.lock().await;
         let mut profile = read_persisted_profile(&self.profile_path())
             .map_err(|e| format!("Vault profile load failed: {e}"))?;
         if !profile.recovery.confirmed {
@@ -784,6 +806,7 @@ impl ShellxVaultBackend {
         *self.manual_lock.lock().await = false;
         self.flush_compat_cache_to_session(&session).await?;
         let legacy_xai_import_error = self.import_legacy_xai_key_if_present().await.err();
+        *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
         let mut status = self.status.lock().await;
         status.mode = profile.mode;
         status.unlocked = true;
@@ -796,6 +819,7 @@ impl ShellxVaultBackend {
     }
 
     pub async fn lock(&self) -> Result<(), String> {
+        let _transition = self.state_transition.lock().await;
         {
             let status = self.status.lock().await;
             if matches!(status.mode, ShellxVaultMode::Unconfigured) {
@@ -809,6 +833,7 @@ impl ShellxVaultBackend {
         *self.session.lock().await = None;
         self.compat_values.lock().await.clear();
         self.compat_meta.lock().await.clear();
+        *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
         let mut status = self.status.lock().await;
         status.unlocked = false;
         status.last_error = None;
@@ -1049,6 +1074,7 @@ impl ShellxVaultBackend {
         enabled: bool,
         passphrase: Option<String>,
     ) -> Result<(), String> {
+        let _transition = self.state_transition.lock().await;
         let mut profile = read_persisted_profile(&self.profile_path())
             .map_err(|e| format!("Vault profile load failed: {e}"))?;
         if enabled {
@@ -1065,12 +1091,20 @@ impl ShellxVaultBackend {
             self.forget_current_device_for_profile(&mut profile).await?;
         }
         self.write_profile(&profile)?;
+        *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
         let mut status = self.status.lock().await;
         status.remembered_device_enabled = profile.remember_device;
         Ok(())
     }
 
     async fn ensure_remembered_device_unlocked_for_access(&self) -> Result<bool, String> {
+        if self.session.lock().await.is_some() {
+            return Ok(true);
+        }
+        if *self.manual_lock.lock().await {
+            return Err("vault is locked; unlock before using secrets".into());
+        }
+        let _transition = self.state_transition.lock().await;
         if self.session.lock().await.is_some() {
             return Ok(true);
         }
@@ -1084,9 +1118,29 @@ impl ShellxVaultBackend {
         if !should_try_remembered_unlock {
             return Ok(false);
         }
+        let now = now_ms();
+        let mut attempt = self.remembered_unlock_attempt.lock().await;
+        if attempt
+            .last_attempt_ms
+            .is_some_and(|last| now.saturating_sub(last) < REMEMBERED_UNLOCK_RETRY_COOLDOWN_MS)
+        {
+            return match attempt.last_error.as_ref() {
+                Some(err) => Err(err.clone()),
+                None => Ok(false),
+            };
+        }
+        attempt.last_attempt_ms = Some(now);
         match self.unlock_with_remembered_device_if_available().await {
-            Ok(unlocked) => Ok(unlocked),
+            Ok(true) => {
+                *attempt = RememberedUnlockAttempt::default();
+                Ok(true)
+            }
+            Ok(false) => {
+                attempt.last_error = None;
+                Ok(false)
+            }
             Err(err) => {
+                attempt.last_error = Some(err.clone());
                 let mut status = self.status.lock().await;
                 status.last_error = Some(format!("Remembered device unlock failed: {err}"));
                 Err(err)
@@ -1129,6 +1183,7 @@ impl ShellxVaultBackend {
         import_legacy: bool,
         legacy_pairs: Vec<(String, String)>,
     ) -> Result<LegacyImportReceipt, String> {
+        let _transition = self.state_transition.lock().await;
         self.ensure_pending_confirmation(confirmation_id).await?;
         let receipt = if import_legacy {
             self.stage_legacy_pairs(legacy_pairs).await?
@@ -1141,13 +1196,16 @@ impl ShellxVaultBackend {
             }
         };
 
-        let mut pending = self.pending_profile.lock().await;
-        let profile = pending
-            .as_mut()
-            .ok_or_else(|| "no pending vault setup".to_string())?;
-        if profile.recovery.pending_confirmation_id.as_deref() != Some(confirmation_id) {
-            return Err("recovery confirmation id did not match".into());
-        }
+        let mut profile = {
+            let pending = self.pending_profile.lock().await;
+            let profile = pending
+                .as_ref()
+                .ok_or_else(|| "no pending vault setup".to_string())?;
+            if profile.recovery.pending_confirmation_id.as_deref() != Some(confirmation_id) {
+                return Err("recovery confirmation id did not match".into());
+            }
+            profile.clone()
+        };
         let session_to_activate = self
             .pending_session
             .lock()
@@ -1188,7 +1246,8 @@ impl ShellxVaultBackend {
             self.remembered_device_store
                 .delete(&self.remembered_device_account())?;
         }
-        self.write_profile(profile)?;
+        self.write_profile(&profile)?;
+        *self.pending_profile.lock().await = Some(profile.clone());
         let activated_session = self.pending_session.lock().await.take();
         *self.session.lock().await = activated_session.clone();
         *self.manual_lock.lock().await = false;
@@ -1197,6 +1256,7 @@ impl ShellxVaultBackend {
         if let Some(session) = activated_session.as_ref() {
             self.flush_compat_cache_to_session(session).await?;
         }
+        *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
         let mut status = self.status.lock().await;
         status.mode = profile.mode.clone();
         status.unlocked = true;
@@ -1415,6 +1475,75 @@ impl ShellxVaultBackend {
         .await
     }
 
+    pub async fn compat_create_with_description(
+        &self,
+        key: &str,
+        value: &str,
+        description: Option<String>,
+    ) -> Result<bool, String> {
+        if key.trim().is_empty() {
+            return Err("vault key cannot be empty".into());
+        }
+        let _mutation = self.compat_mutation.lock().await;
+        self.ensure_remembered_device_unlocked_for_access().await?;
+        if self
+            .compat_get_current_session_or_cache(key)
+            .await?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        let meta = self.compat_meta_for_key(key).await?;
+        self.compat_set_resource_with_metadata_locked(
+            key,
+            value,
+            description,
+            meta.user_only,
+            meta.resource_kind,
+            meta.resource_summary,
+            meta.resource_provider,
+            meta.resource_fields,
+        )
+        .await?;
+        Ok(true)
+    }
+
+    /// Create a value owned by the agent-managed Vault namespace. The
+    /// resource-provider marker is durable metadata used by the Host MCP
+    /// deletion path; user-created or user-only values are never inferred to
+    /// be agent-owned merely because their key has a similar spelling.
+    pub async fn compat_create_agent_managed(
+        &self,
+        key: &str,
+        value: &str,
+        description: Option<String>,
+    ) -> Result<bool, String> {
+        if key.trim().is_empty() {
+            return Err("vault key cannot be empty".into());
+        }
+        let _mutation = self.compat_mutation.lock().await;
+        self.ensure_remembered_device_unlocked_for_access().await?;
+        if self
+            .compat_get_current_session_or_cache(key)
+            .await?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        self.compat_set_resource_with_metadata_locked(
+            key,
+            value,
+            description,
+            false,
+            VaultResourceKind::Secret,
+            Some("Agent-managed value".to_string()),
+            Some("shellx-agent-managed".to_string()),
+            Vec::new(),
+        )
+        .await?;
+        Ok(true)
+    }
+
     pub async fn compat_set_with_metadata(
         &self,
         key: &str,
@@ -1439,6 +1568,32 @@ impl ShellxVaultBackend {
 
     #[allow(clippy::too_many_arguments)]
     pub async fn compat_set_resource_with_metadata(
+        &self,
+        key: &str,
+        value: &str,
+        description: Option<String>,
+        user_only: bool,
+        resource_kind: VaultResourceKind,
+        resource_summary: Option<String>,
+        resource_provider: Option<String>,
+        resource_fields: Vec<String>,
+    ) -> Result<(), String> {
+        let _mutation = self.compat_mutation.lock().await;
+        self.compat_set_resource_with_metadata_locked(
+            key,
+            value,
+            description,
+            user_only,
+            resource_kind,
+            resource_summary,
+            resource_provider,
+            resource_fields,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn compat_set_resource_with_metadata_locked(
         &self,
         key: &str,
         value: &str,
@@ -1483,6 +1638,7 @@ impl ShellxVaultBackend {
     }
 
     pub async fn compat_delete(&self, key: &str) -> Result<(), String> {
+        let _mutation = self.compat_mutation.lock().await;
         self.ensure_remembered_device_unlocked_for_access().await?;
         if let Some(session) = self.session.lock().await.clone() {
             let id = compat_key_to_item_id(key);
@@ -1587,6 +1743,7 @@ impl ShellxVaultBackend {
         description: Option<String>,
         user_only: bool,
     ) -> Result<(), String> {
+        let _mutation = self.compat_mutation.lock().await;
         if key.trim().is_empty() {
             return Err("vault key cannot be empty".into());
         }
@@ -1633,22 +1790,53 @@ impl ShellxVaultBackend {
     }
 
     pub async fn create_grant(&self, request: GrantRequest) -> Result<GrantSummary, String> {
-        if request.secret_ref.trim().is_empty() {
+        let GrantRequest {
+            secret_ref,
+            actor_scope,
+            operation,
+            origin,
+            expires_at_ms,
+        } = request;
+        if secret_ref.trim().is_empty() {
             return Err("grant secretRef cannot be empty".into());
         }
-        if self.is_user_only_secret(&request.secret_ref).await {
+        if self.is_user_only_secret(&secret_ref).await {
             return Err("grantUserOnlySecret".into());
         }
+        let actor_scope = match actor_scope {
+            GrantScope::BrowserOrigin { origin } => GrantScope::BrowserOrigin {
+                origin: normalize_browser_grant_origin(&origin)?,
+            },
+            scope => scope,
+        };
+        let scope_origin = match &actor_scope {
+            GrantScope::BrowserOrigin { origin } => Some(origin.clone()),
+            _ => None,
+        };
+        let requested_origin = origin
+            .as_deref()
+            .map(normalize_browser_grant_origin)
+            .transpose()?;
+        if let (Some(requested), Some(scoped)) = (&requested_origin, &scope_origin) {
+            if requested != scoped {
+                return Err("grant origin must match browserOrigin actor scope".to_string());
+            }
+        }
+        let origin = requested_origin.or(scope_origin);
+        if browser_grant_operation_requires_origin(&operation) && origin.is_none() {
+            return Err("browser grant operation requires an exact http/https origin".to_string());
+        }
         let mut policy = self.grants.lock().await;
-        policy.set_resource_permission(&request.secret_ref, ResourcePermission::VisibleAsk);
-        policy.register_actor(broker_actor_from_scope(&request.actor_scope));
+        policy.set_resource_permission(&secret_ref, ResourcePermission::VisibleAsk);
+        policy.register_actor(broker_actor_from_scope(&actor_scope));
         let grant = policy
             .create_grant(BrokerGrantRequest {
-                actor_id: broker_actor_id_from_scope(&request.actor_scope),
-                resource_id: request.secret_ref.clone(),
-                action: broker_action_from_shellx_operation(&request.operation)?,
+                actor_id: broker_actor_id_from_scope(&actor_scope),
+                resource_id: secret_ref,
+                action: broker_action_from_shellx_operation(&operation)?,
                 constraints: vault_broker::grants::GrantConstraints {
-                    expires_at_ms: request.expires_at_ms,
+                    origin,
+                    expires_at_ms,
                     ..vault_broker::grants::GrantConstraints::default()
                 },
                 created_at_ms: now_ms(),
@@ -1746,6 +1934,13 @@ impl ShellxVaultBackend {
                 reason: "grantNotFound".into(),
             };
         };
+        if browser_broker_action_requires_origin(&grant.action)
+            && grant.constraints.origin.is_none()
+        {
+            return GrantDecision::Deny {
+                reason: "grantOriginRequired".into(),
+            };
+        }
         let actor_id = match actor {
             Some(actor) => broker_actor_id_for_authorization(grant.actor_id.as_str(), actor),
             None => grant.actor_id.clone(),
@@ -1781,6 +1976,7 @@ impl ShellxVaultBackend {
     }
 
     pub async fn debug_reset_e2e(&self) -> Result<VaultDebugAuditRecord, String> {
+        let _transition = self.state_transition.lock().await;
         let mut reset_warning: Option<String> = None;
         self.compat_values.lock().await.clear();
         self.compat_meta.lock().await.clear();
@@ -1792,7 +1988,9 @@ impl ShellxVaultBackend {
         *self.pending_session.lock().await = None;
         *self.session.lock().await = None;
         *self.manual_lock.lock().await = false;
+        *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
         *self.local_server.lock().await = None;
+        super::agent_requests::debug_reset_agent_state(self)?;
         if let Err(err) = self
             .remembered_device_store
             .delete(&self.remembered_device_account())
@@ -1942,7 +2140,12 @@ impl ShellxVaultBackend {
             secret_exposed: input.secret_exposed,
             t: now_ms(),
         };
-        self.debug_audit.lock().await.push(record.clone());
+        let mut audit = self.debug_audit.lock().await;
+        audit.push(record.clone());
+        let overflow = audit.len().saturating_sub(MAX_DEBUG_AUDIT_RECORDS);
+        if overflow > 0 {
+            audit.drain(..overflow);
+        }
         record
     }
 }
@@ -2045,15 +2248,86 @@ fn broker_actor_id_from_context(actor: &GrantActorContext) -> Option<String> {
 }
 
 fn broker_actor_id_for_authorization(grant_actor_id: &str, actor: &GrantActorContext) -> String {
-    if grant_actor_id == "shellx:all-agents"
-        && actor
-            .agent_id
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-    {
-        return grant_actor_id.to_string();
+    if grant_actor_id == "shellx:all-agents" {
+        return nonempty_actor_value(actor.agent_id.as_deref())
+            .map(|_| grant_actor_id.to_string())
+            .unwrap_or_else(|| "shellx:unknown-actor".to_string());
+    }
+    if grant_actor_id.starts_with("shellx:agent:") {
+        return nonempty_actor_value(actor.agent_id.as_deref())
+            .map(|value| format!("shellx:agent:{value}"))
+            .unwrap_or_else(|| "shellx:unknown-actor".to_string());
+    }
+    if grant_actor_id.starts_with("shellx:provider:") {
+        return nonempty_actor_value(actor.provider_id.as_deref())
+            .map(|value| format!("shellx:provider:{value}"))
+            .unwrap_or_else(|| "shellx:unknown-actor".to_string());
+    }
+    if grant_actor_id.starts_with("shellx:workspace:") {
+        return nonempty_actor_value(actor.workspace.as_deref())
+            .map(|value| format!("shellx:workspace:{value}"))
+            .unwrap_or_else(|| "shellx:unknown-actor".to_string());
+    }
+    if grant_actor_id.starts_with("shellx:browser-origin:") {
+        return nonempty_actor_value(actor.origin.as_deref())
+            .map(|value| format!("shellx:browser-origin:{value}"))
+            .unwrap_or_else(|| "shellx:unknown-actor".to_string());
+    }
+    if grant_actor_id.starts_with("shellx:connector:") {
+        return nonempty_actor_value(actor.connector_id.as_deref())
+            .map(|value| format!("shellx:connector:{value}"))
+            .unwrap_or_else(|| "shellx:unknown-actor".to_string());
     }
     broker_actor_id_from_context(actor).unwrap_or_else(|| "shellx:unknown-actor".to_string())
+}
+
+fn nonempty_actor_value(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn browser_grant_operation_requires_origin(operation: &GrantOperation) -> bool {
+    matches!(
+        operation,
+        GrantOperation::Fill
+            | GrantOperation::ProfileFill
+            | GrantOperation::EmailCodeRead
+            | GrantOperation::AgentWalletUse
+    )
+}
+
+fn browser_broker_action_requires_origin(action: &BrokerGrantAction) -> bool {
+    matches!(
+        action,
+        BrokerGrantAction::FillLogin
+            | BrokerGrantAction::FillProfile
+            | BrokerGrantAction::ReadEmailCode
+            | BrokerGrantAction::UseWallet
+    )
+}
+
+fn normalize_browser_grant_origin(raw: &str) -> Result<String, String> {
+    let raw = raw.trim();
+    let parsed = tauri::Url::parse(raw)
+        .map_err(|_| "grant origin must be an absolute http/https origin".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !matches!(parsed.path(), "" | "/")
+    {
+        return Err(
+            "grant origin must be exactly scheme://host[:port] with no credentials, path, query, or fragment"
+                .to_string(),
+        );
+    }
+    let host = parsed.host_str().unwrap_or_default();
+    let mut origin = format!("{}://{}", parsed.scheme(), host);
+    if let Some(port) = parsed.port() {
+        origin.push_str(&format!(":{port}"));
+    }
+    Ok(origin)
 }
 
 fn broker_action_from_shellx_operation(
@@ -2122,6 +2396,7 @@ fn grant_summary_from_broker(grant: &vault_broker::grants::VaultGrant) -> GrantS
         secret_ref: grant.resource_id.clone(),
         actor_scope: broker_scope_label(&grant.actor_id),
         operation: shellx_operation_label_from_broker(&grant.action),
+        origin: grant.constraints.origin.clone(),
         created_at_ms: grant.created_at_ms,
         expires_at_ms: grant.constraints.expires_at_ms,
         revoked: matches!(
@@ -2495,8 +2770,43 @@ fn typed_resource_item_from_compat(
 }
 
 #[cfg(test)]
+#[path = "backend_reliability_tests.rs"]
+mod reliability_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn compatibility_bridge_round_trips_one_backend_across_active_surfaces() {
+        let dir = tempfile::tempdir().expect("vault profile tempdir");
+        let backend = ShellxVaultBackend::for_test(dir.path().to_path_buf());
+        let key = "ssh/test-host-key";
+        let value = "/tmp/test-host-key";
+
+        backend.compat_set(key, value).await.expect("modern write");
+        let listed = backend
+            .compat_list_agent_visible_keys_with_meta(Some("ssh/"))
+            .await
+            .expect("modern list");
+        assert_eq!(listed.len(), 1, "marketplace/list surfaces see the write");
+        assert_eq!(listed[0].key, key);
+        assert_eq!(
+            crate::shellx_vault::resolve_internal_secret(&backend, key)
+                .await
+                .expect("SSH/session resolver"),
+            Some(value.to_string())
+        );
+
+        backend.compat_delete(key).await.expect("modern delete");
+        assert!(
+            crate::shellx_vault::resolve_internal_secret(&backend, key)
+                .await
+                .expect("read after delete")
+                .is_none(),
+            "all active surfaces must observe the same delete"
+        );
+    }
 
     fn test_backend_with_store(
         profile_dir: PathBuf,
@@ -3052,6 +3362,7 @@ mod tests {
                 secret_ref: "test/persistent-grant".into(),
                 actor_scope: GrantScope::AllShellxAgents,
                 operation: GrantOperation::Fill,
+                origin: Some("https://accounts.example.test".into()),
                 expires_at_ms: None,
             })
             .await
@@ -3072,6 +3383,10 @@ mod tests {
         assert_eq!(grants[0].grant_id, grant.grant_id);
         assert_eq!(grants[0].secret_ref, "test/persistent-grant");
         assert_eq!(grants[0].operation, "Fill");
+        assert_eq!(
+            grants[0].origin.as_deref(),
+            Some("https://accounts.example.test")
+        );
         assert_eq!(grants[0].created_at_ms, grant.created_at_ms);
         assert!(!grants[0].revoked);
         assert!(grants[0].approved);
@@ -3087,6 +3402,122 @@ mod tests {
         assert_eq!(grants.len(), 1);
         assert_eq!(grants[0].grant_id, grant.grant_id);
         assert!(grants[0].revoked);
+    }
+
+    #[tokio::test]
+    async fn browser_grants_require_and_enforce_exact_origin() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = ShellxVaultBackend::for_test(dir.path().to_path_buf());
+        backend
+            .compat_set("test/origin-bound-grant", "secret")
+            .await
+            .expect("store secret");
+
+        let missing = backend
+            .create_grant(GrantRequest {
+                secret_ref: "test/origin-bound-grant".into(),
+                actor_scope: GrantScope::AllShellxAgents,
+                operation: GrantOperation::Fill,
+                origin: None,
+                expires_at_ms: None,
+            })
+            .await
+            .expect_err("browser fill grant without an origin must fail closed");
+        assert!(missing.contains("exact http/https origin"));
+
+        let grant = backend
+            .create_grant(GrantRequest {
+                secret_ref: "test/origin-bound-grant".into(),
+                actor_scope: GrantScope::AllShellxAgents,
+                operation: GrantOperation::Fill,
+                origin: Some("https://accounts.example.test".into()),
+                expires_at_ms: None,
+            })
+            .await
+            .expect("create origin-bound grant");
+        let grant = backend
+            .approve_grant(&grant.grant_id)
+            .await
+            .expect("approve origin-bound grant");
+        let actor = |origin: &str| GrantActorContext {
+            agent_id: Some("fixture-agent".into()),
+            origin: Some(origin.into()),
+            ..GrantActorContext::default()
+        };
+
+        assert_eq!(
+            backend
+                .authorize_secret_use_for_actor(
+                    &grant.grant_id,
+                    "test/origin-bound-grant",
+                    &GrantOperation::Fill,
+                    &actor("https://accounts.example.test"),
+                )
+                .await,
+            GrantDecision::AllowMediated
+        );
+        assert_eq!(
+            backend
+                .authorize_secret_use_for_actor(
+                    &grant.grant_id,
+                    "test/origin-bound-grant",
+                    &GrantOperation::Fill,
+                    &actor("https://attacker.example.test"),
+                )
+                .await,
+            GrantDecision::Deny {
+                reason: "originMismatch".into()
+            }
+        );
+
+        let scoped = backend
+            .create_grant(GrantRequest {
+                secret_ref: "test/origin-bound-grant".into(),
+                actor_scope: GrantScope::BrowserOrigin {
+                    origin: "https://accounts.example.test".into(),
+                },
+                operation: GrantOperation::Fill,
+                origin: Some("https://accounts.example.test".into()),
+                expires_at_ms: None,
+            })
+            .await
+            .expect("create browser-origin actor grant");
+        let scoped = backend
+            .approve_grant(&scoped.grant_id)
+            .await
+            .expect("approve browser-origin actor grant");
+        assert_eq!(
+            backend
+                .authorize_secret_use_for_actor(
+                    &scoped.grant_id,
+                    "test/origin-bound-grant",
+                    &GrantOperation::Fill,
+                    &actor("https://accounts.example.test"),
+                )
+                .await,
+            GrantDecision::AllowMediated,
+            "the grant's browser-origin actor must use tab origin instead of caller agent id"
+        );
+    }
+
+    #[test]
+    fn browser_grant_origin_parser_rejects_broadened_urls() {
+        assert_eq!(
+            normalize_browser_grant_origin("HTTPS://Example.COM:443/").unwrap(),
+            "https://example.com"
+        );
+        for invalid in [
+            "ftp://example.com",
+            "https://user@example.com",
+            "https://example.com/login",
+            "https://example.com/?next=login",
+            "https://example.com/#login",
+        ] {
+            assert!(
+                normalize_browser_grant_origin(invalid).is_err(),
+                "{invalid} must not be accepted as an exact browser origin"
+            );
+        }
     }
 
     #[test]

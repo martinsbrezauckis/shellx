@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertDebugHealthVersion } from "./shellx-debug-version";
 import { shellxHomeCandidates } from "./shellx-debug-paths";
+import { cleanupOwnedBrowserLifecycle } from "./shellx-browser-test-cleanup";
 
 type Json = Record<string, unknown>;
 
@@ -61,6 +62,13 @@ function readTrim(path: string): string | null {
 }
 
 let localE2eProfileDir: string | null = null;
+let cleanupContext: {
+  base: string;
+  token: string;
+  baselineTaskIds: Set<string>;
+  baselineTabIds: Set<string>;
+  vaultGrantIds: Set<string>;
+} | null = null;
 
 function e2eProfileDirForLocalLaunch(): string {
   if (process.env.SHELLX_VAULT_PROFILE_DIR?.trim()) return process.env.SHELLX_VAULT_PROFILE_DIR.trim();
@@ -155,44 +163,33 @@ function ensureMainShellxWindowVisible(): void {
   }
 }
 
-function restartInstalledShellxVaultE2e(): void {
-  execFileSync("powershell.exe", [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-Command",
-    [
-      "$ErrorActionPreference='Stop';",
-      "Get-Process shellx -ErrorAction SilentlyContinue | Stop-Process -Force;",
-      "Start-Sleep -Milliseconds 700;",
-      "$candidates=@(",
-      "(Join-Path $env:LOCALAPPDATA 'shellX\\shellx.exe'),",
-      "(Join-Path $env:LOCALAPPDATA 'shellx\\shellx.exe')",
-      ");",
-      "$exe=$candidates | Where-Object { Test-Path $_ } | Select-Object -First 1;",
-      "if (-not $exe) { throw 'installed shellX executable not found' };",
-      "$vaultProfile=Join-Path $env:TEMP ('shellx-vault-e2e-' + [guid]::NewGuid().ToString('N'));",
-      "New-Item -ItemType Directory -Force -Path $vaultProfile | Out-Null;",
-      "$env:SHELLX_VAULT_E2E='1';",
-      "$env:SHELLX_VAULT_PROFILE_DIR=$vaultProfile;",
-      "Start-Process -FilePath $exe;",
-      "Start-Sleep -Seconds 5;",
-    ].join(" "),
-  ], { stdio: "ignore" });
-}
-
-async function reconnectAfterInstalledVaultE2eRestart(): Promise<DebugConnection> {
-  restartInstalledShellxVaultE2e();
-  const connection = await resolveDebugConnection();
-  await waitFor("Vault E2E reset route becomes available after isolated relaunch", async () => {
-    return await resetVaultE2eIfAvailable(connection.base, connection.token) ? { ok: true } : null;
-  }, 12_000, 500);
-  return connection;
-}
-
 function hasStaleBrowserVaultRequests(state: BrowserState): boolean {
-  return (state.vaultDeposits?.length ?? 0) > 0
-    || (state.sessionGrants?.some((grant) => grant.status === "requested") ?? false);
+  return state.sessionGrants?.some((grant) => grant.status === "requested") ?? false;
+}
+
+async function cleanupRequestCenterState(): Promise<void> {
+  const context = cleanupContext;
+  if (!context) return;
+  const state = await api<BrowserState>(context.base, context.token, "GET", "/browser/state");
+  const taskIds = (state.tasks ?? [])
+    .map((task) => task.taskId)
+    .filter((taskId) => !context.baselineTaskIds.has(taskId));
+  const tabIds = ((state as BrowserState & { tabs?: Array<{ browserTabId: string }> }).tabs ?? [])
+    .map((tab) => tab.browserTabId)
+    .filter((tabId) => !context.baselineTabIds.has(tabId));
+  await cleanupOwnedBrowserLifecycle(
+    (method, path, body) => api(context.base, context.token, method, path, body),
+    { taskIds, tabIds, label: "vault-request-center-ui" },
+  );
+  for (const grantId of context.vaultGrantIds) {
+    await api<Json>(context.base, context.token, "POST", `/vault/grants/${grantId}/revoke`, {}).catch(() => undefined);
+  }
+  await postAppUi(context.base, context.token, {
+    source: "vault-request-center-ui-smoke-cleanup",
+    openModal: "close",
+    vaultRequestCenterOpen: false,
+    debugHighlights: [],
+  }).catch(() => undefined);
 }
 
 async function focusMainShellxWindow(base: string, token: string): Promise<void> {
@@ -399,18 +396,23 @@ async function openRequestCenter(
 }
 
 async function main(): Promise<void> {
-  let { shellxHome, base, token } = await resolveDebugConnection();
+  const { shellxHome, base, token } = await resolveDebugConnection();
   assert(true, `debug API health responds from ${shellxHome}`);
-  let resetAvailable = await resetVaultE2eIfAvailable(base, token);
+  const resetAvailable = await resetVaultE2eIfAvailable(base, token);
   if (!resetAvailable) {
-    ({ shellxHome, base, token } = await reconnectAfterInstalledVaultE2eRestart());
-    resetAvailable = true;
+    throw new Error("Vault Request Center UI smoke requires the isolated installed harness with Vault E2E enabled");
   }
   assert(resetAvailable, "Vault E2E reset route is available for Request Center smoke");
   let state = await api<BrowserState>(base, token, "GET", "/browser/state");
+  cleanupContext = {
+    base,
+    token,
+    baselineTaskIds: new Set((state.tasks ?? []).map((task) => task.taskId)),
+    baselineTabIds: new Set(((state as BrowserState & { tabs?: Array<{ browserTabId: string }> }).tabs ?? []).map((tab) => tab.browserTabId)),
+    vaultGrantIds: new Set(),
+  };
   if (hasStaleBrowserVaultRequests(state)) {
-    ({ shellxHome, base, token } = await reconnectAfterInstalledVaultE2eRestart());
-    assert(true, `Vault Request Center smoke isolated Browser request state in ${shellxHome}`);
+    throw new Error("Vault Request Center UI smoke found a pending Browser grant before the suite started");
   }
   await focusMainShellxWindow(base, token);
 
@@ -570,7 +572,9 @@ async function main(): Promise<void> {
     secretRef: `000-smoke/request-center-relay-${Date.now()}`,
     operation: "fill",
     actorScope: { kind: "allShellxAgents" },
+    origin: "https://example.com",
   });
+  cleanupContext.vaultGrantIds.add(vaultGrant.grant.grantId);
   const vaultGrantSelector = `[data-request-id='vault-grant:${vaultGrant.grant.grantId}']`;
   await openRequestCenter(base, token, "vault-center-vault-grant-visible", vaultGrantSelector);
   await postAppUiForbidden(base, token, {
@@ -600,7 +604,16 @@ async function main(): Promise<void> {
   console.log("Vault Request Center installed UI smoke passed");
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
-  process.exit(1);
-});
+  process.exitCode = 1;
+} finally {
+  try {
+    await cleanupRequestCenterState();
+  } catch (error) {
+    console.error(`Vault Request Center cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
+}

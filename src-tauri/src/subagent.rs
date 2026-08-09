@@ -102,7 +102,7 @@ const SUBAGENT_RUNTIME_GUARD: &str = "\
 - You are already running inside a shellX Agent subprocess.
 - Do not call `Agent`, `Agent_status`, `Agent_output`, `Agent_poll_all`, or `Agent_kill`.
 - Do not call `search_tool`, `use_tool`, or dynamically discovered MCP tools from a subagent. Use the direct shell/file/browser tools already available to you; if optional browser/MCP evidence is unavailable, report that gap instead of trying to discover or invoke another tool server.
-- native ShellX Browser exists for web work when browser tools are available. Use `browser_tabs`/`browser_state`, then `browser_navigate`, then `browser_observe`, then `browser_click_ref`/`browser_fill_ref`/`browser_fill_from_vault`/`browser_wait_for`, retry valid visible refs with `browser_click_ref force=true` when synthetic click applies but menu/page state does not change, use `browser_screenshot fullPage=true` plus `browser_click_at` for split-button arrow/subtargets when whole-button refs still do not change state, use `browser_click_at`/`browser_type_text` only for rich editors, canvas areas, or visual-only app overlays without usable refs after screenshot evidence and cssScale conversion; re-capture after Browser resize/minimize/restore and scroll off-screen targets into view before coordinate actions, use `browser_clear_site_data` when a page itself asks to clear application resources, use `browser_resolve_dialog` only for task-owned beforeunload prompts, and collect evidence with `browser_extract`/`browser_verify`/`browser_trace_open`; Browser and Vault approval gates still apply. When `browser_observe` returns a `secret-*` ref or an action `capturePageSecretToVault`, pass that ref directly to `browser_capture_secret_to_vault` with a durable `secretRef`; do not use clipboard reads, raw reveal, or hand-built XPath unless no capturable ref exists. Do not write raw Browser state or observe JSON into the current working directory or user folders; use `browser_trace_open` for redacted diagnostics and returned artifact paths for files.
+- native ShellX Browser exists for web work when browser tools are available. Use `browser_read action=tabs`, `browser_act action=navigate`, then `browser_read action=observe` for token-budgeted refs. Prefer `browser_act` ref actions; use coordinates only after permission-gated `browser_act action=screenshot` evidence and Browser/Vault actions for secrets. Use `browser_act action=runSteps` for a short planned generic batch. For repeatable attempt evidence use `browser_act action=flightRecorderExport`, `browser_act action=evaluationWrite`, and scoped `browser_read action=evidence`. Browser and Vault approval gates still apply. Do not write raw Browser state or observation JSON into the current working directory or user folders; keep bounded artifacts in ShellX storage.
 - If a plan, scratchboard, or checklist says to dispatch an Agent, treat that as an instruction for the parent manager, not for you.
 - Avoid broad machine scans such as `find /`, `find /mnt/c`, or multi-root `/home /root /usr /opt` sweeps; scope discovery to the assigned project cwd, prefer `rg --files`, `rg`, `git ls-files`, `command -v`, and package-manager metadata, and report a scoped-search gap instead of crawling the whole PC.
 - Do your assigned task directly, return your own result, and never wait on a subagent id.
@@ -114,6 +114,49 @@ fn subagent_remote_deny_args() -> String {
         .map(|rule| format!("--deny {}", crate::acp::shell_quote_for_remote(rule)))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn posix_isolated_grok_home_setup(snippet_b64: &str) -> String {
+    format!(
+        "shellx_grok_auth=$HOME/.grok/auth.json && shellx_grok_home=$(mktemp -d \"${{TMPDIR:-/tmp}}/shellx-grok-subagent.XXXXXX\") && shellx_cleanup_grok_home() {{ trap - EXIT HUP INT TERM; rm -rf -- \"$shellx_grok_home\"; }} && trap shellx_cleanup_grok_home EXIT HUP INT TERM && printf %s {snippet} | base64 -d > \"$shellx_grok_home/config.toml\" && chmod 700 \"$shellx_grok_home\" && chmod 600 \"$shellx_grok_home/config.toml\" && if [ -f \"$shellx_grok_auth\" ]; then export GROK_AUTH_PATH=\"$shellx_grok_auth\"; fi && export GROK_HOME=\"$shellx_grok_home\"; ",
+        snippet = crate::acp::shell_quote_for_remote(snippet_b64),
+    )
+}
+
+fn windows_native_subagent_bootstrap(cwd: &str, grok_path: &str, prompt: &str) -> String {
+    let cwd = if cwd == "~" {
+        "$env:USERPROFILE".to_string()
+    } else {
+        crate::acp::powershell_single_quote(cwd)
+    };
+    let mut args = vec![
+        "-p".to_string(),
+        prompt.to_string(),
+        "--no-subagents".to_string(),
+        "--always-approve".to_string(),
+        "--allow".to_string(),
+        SUBAGENT_ALLOWED_MCP.to_string(),
+    ];
+    for rule in SUBAGENT_DENIED_MCP {
+        args.push("--deny".to_string());
+        args.push((*rule).to_string());
+    }
+    args.push("--output-format".to_string());
+    args.push("plain".to_string());
+    let args = args
+        .iter()
+        .map(|arg| crate::acp::powershell_single_quote(arg))
+        .collect::<Vec<_>>()
+        .join(",");
+    let token_name = crate::acp::powershell_single_quote(crate::mcp_http::MCP_TOKEN_ENV_VAR);
+    format!(
+        "{prelude}$work={cwd};if(-not(Test-Path -LiteralPath $work -PathType Container)){{throw ('ShellX Windows SSH cwd is not a directory: '+$work)}};$legacy=Join-Path $env:USERPROFILE '.grok\\skills\\shellx-host\\SKILL.md';if(Test-Path -LiteralPath $legacy -PathType Leaf){{$item=Get-Item -LiteralPath $legacy -Force;if(-not $item.LinkType){{Remove-Item -LiteralPath $legacy -Force}}}};$snippetB64=[Console]::In.ReadLine();if([string]::IsNullOrWhiteSpace($snippetB64)){{throw 'missing ShellX remote MCP config'}};$grokHome=Join-Path ([IO.Path]::GetTempPath()) ('shellx-grok-subagent-'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory -Force -Path $grokHome|Out-Null;$cfg=Join-Path $grokHome 'config.toml';[IO.File]::WriteAllBytes($cfg,[Convert]::FromBase64String($snippetB64));$auth=Join-Path $env:USERPROFILE '.grok\\auth.json';if(Test-Path -LiteralPath $auth -PathType Leaf){{[Environment]::SetEnvironmentVariable('GROK_AUTH_PATH',$auth,'Process')}};$token=[Console]::In.ReadLine();if($null -eq $token){{throw 'missing ShellX MCP token'}};[Environment]::SetEnvironmentVariable({token_name},$token,'Process');[Environment]::SetEnvironmentVariable('SHELLX_SUBAGENT_DEPTH','1','Process');[Environment]::SetEnvironmentVariable('GROK_HOME',$grokHome,'Process');$code=1;try{{Set-Location -LiteralPath $work;$a=@({args});& {grok} @a;$code=$LASTEXITCODE}}finally{{if(Test-Path -LiteralPath $grokHome -PathType Container){{Remove-Item -LiteralPath $grokHome -Recurse -Force}}}};exit $code",
+        prelude = crate::acp::windows_remote_shell_prelude(),
+        cwd = cwd,
+        token_name = token_name,
+        args = args,
+        grok = crate::acp::powershell_single_quote(grok_path),
+    )
 }
 
 /// Resolve a persona name to its full embedded prompt body. Returns None
@@ -371,14 +414,15 @@ fn real_user_home() -> Result<PathBuf, String> {
     }
 }
 
-fn prepare_isolated_grok_subagent_home() -> Result<(PathBuf, PathBuf, PathBuf), String> {
+fn prepare_isolated_grok_subagent_home(
+) -> Result<(PathBuf, PathBuf, PathBuf, Option<PathBuf>), String> {
     let real_home = real_user_home()?;
     prepare_isolated_grok_subagent_home_for(&real_home)
 }
 
 fn prepare_isolated_grok_subagent_home_for(
     real_home: &Path,
-) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+) -> Result<(PathBuf, PathBuf, PathBuf, Option<PathBuf>), String> {
     let isolated_home = real_home.join(".shellx").join("grok-subagent-home");
     let isolated_grok_home = isolated_home.join(".grok");
     std::fs::create_dir_all(&isolated_grok_home)
@@ -396,19 +440,20 @@ permission_mode = \"always-approve\"
     std::fs::write(isolated_grok_home.join("config.toml"), config)
         .map_err(|e| format!("write isolated Grok config failed: {}", e))?;
 
-    let auth_src = real_home.join(".grok").join("auth.json");
-    if auth_src.exists() {
-        let auth_dst = isolated_grok_home.join("auth.json");
-        std::fs::copy(&auth_src, &auth_dst)
-            .map_err(|e| format!("copy Grok auth into isolated home failed: {}", e))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&auth_dst, std::fs::Permissions::from_mode(0o600));
-        }
+    let legacy_auth_copy = isolated_grok_home.join("auth.json");
+    if legacy_auth_copy.exists() {
+        std::fs::remove_file(&legacy_auth_copy)
+            .map_err(|e| format!("remove legacy isolated Grok auth copy failed: {}", e))?;
     }
+    let canonical_auth = real_home.join(".grok").join("auth.json");
+    let canonical_auth = canonical_auth.is_file().then_some(canonical_auth);
 
-    Ok((isolated_home, isolated_grok_home, real_home.to_path_buf()))
+    Ok((
+        isolated_home,
+        isolated_grok_home,
+        real_home.to_path_buf(),
+        canonical_auth,
+    ))
 }
 
 /// JSON-friendly summary of every subagent
@@ -771,6 +816,8 @@ pub enum SubagentTransport {
         port: Option<u16>,
         key_vault_ref: Option<String>,
         remote_grok_path: String,
+        remote_runtime: crate::acp::SshRemoteRuntime,
+        wsl_distro: Option<String>,
         tab_id: String,
     },
 }
@@ -926,8 +973,8 @@ pub async fn spawn_subagent_with_transport_options(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| transport_tab_id.to_string());
     let mcp_token = crate::mcp_http::tab_bound_mcp_token(transport_tab_id);
-    let (mut cmd, encoded_args_in_transport, write_token_to_stdin) = match &transport {
-        SubagentTransport::Local { .. } => (Command::new(&grok_path), false, false),
+    let (mut cmd, encoded_args_in_transport, ssh_setup_stdin) = match &transport {
+        SubagentTransport::Local { .. } => (Command::new(&grok_path), false, None),
         SubagentTransport::Wsl {
             distro, grok_path, ..
         } => {
@@ -936,53 +983,6 @@ pub async fn spawn_subagent_with_transport_options(
             // ~/.grok/bin on many installs, so resolve the absolute
             // binary the same way the parent WSL ACP spawn path does.
             let grok_wsl = resolve_wsl_grok_path(distro, grok_path.as_deref()).await;
-            let mut c = Command::new("wsl.exe");
-            c.arg("-d").arg(distro);
-            if let Some(dir) = cwd.as_ref() {
-                c.arg("--cd").arg(dir);
-            }
-            c.arg("-e").arg(grok_wsl);
-            (c, false, false)
-        }
-        SubagentTransport::Ssh {
-            host,
-            port,
-            key_vault_ref,
-            remote_grok_path,
-            tab_id,
-        } => {
-            crate::acp::validate_ssh_destination_arg(host)?;
-            let mut c = Command::new("ssh");
-            c.arg("-o").arg("BatchMode=yes");
-            c.arg("-o").arg("ConnectTimeout=5");
-            c.arg("-T");
-            // Match the parent SSH ACP spawn: the remote grok reads an
-            // HTTP MCP config pointed at localhost:<mcp_port>, so this
-            // SSH connection must provide the loopback path back to
-            // shellX. If the parent session already owns the remote bind,
-            // OpenSSH may warn and continue; the subagent can still reuse
-            // that existing loopback tunnel while the parent is alive.
-            let mcp_p = crate::mcp_http::mcp_port();
-            c.arg("-R").arg(ssh_mcp_reverse_forward_arg(mcp_p));
-            if let Some(p) = port {
-                c.arg("-p").arg(p.to_string());
-            }
-            if let Some(vault_ref) = key_vault_ref {
-                let vault = crate::vault::Vault::open().map_err(|e| {
-                    format!("ssh: failed to open vault for key '{}': {}", vault_ref, e)
-                })?;
-                let key_path = vault
-                    .get(vault_ref)
-                    .await
-                    .map_err(|e| format!("ssh: vault.get('{}') failed: {}", vault_ref, e))?
-                    .ok_or_else(|| {
-                        format!(
-                            "ssh: vault key '{}' is not set — open Settings → Vault and add it, or remove key_vault_ref from the preset",
-                            vault_ref
-                        )
-                    })?;
-                c.arg("-i").arg(key_path);
-            }
             let remote_cwd = cwd.as_deref().unwrap_or("~");
             let cwd_q = if remote_cwd == "~" {
                 "~".to_string()
@@ -992,24 +992,112 @@ pub async fn spawn_subagent_with_transport_options(
             let snippet = crate::mcp_http::http_config_snippet_toml(
                 crate::mcp_http::mcp_port(),
                 &mcp_token,
-                tab_id,
+                transport_tab_id,
             );
-            use base64::engine::general_purpose::STANDARD as B64;
             use base64::Engine as _;
-            let snippet_b64 = B64.encode(snippet.as_bytes());
-            let mcp_setup = crate::acp::remote_project_mcp_config_setup_chain(&cwd_q, &snippet_b64);
+            let snippet_b64 = base64::engine::general_purpose::STANDARD.encode(snippet.as_bytes());
             let remote_full = format!(
-                "{mcp_setup}cd {cwd} && IFS= read -r {env_name} && export {env_name} && export SHELLX_SUBAGENT_DEPTH=1 && exec {grok} -p {prompt} --no-subagents --always-approve --allow {allow} {deny} --output-format plain",
-                mcp_setup = mcp_setup,
+                "{home_setup}cd {cwd} && {grok} -p {prompt} --no-subagents --always-approve --allow {allow} {deny} --output-format plain; shellx_status=$?; exit $shellx_status",
+                home_setup = posix_isolated_grok_home_setup(&snippet_b64),
                 cwd = cwd_q,
-                env_name = crate::mcp_http::MCP_TOKEN_ENV_VAR,
-                grok = crate::acp::shell_quote_for_remote(remote_grok_path),
+                grok = crate::acp::shell_quote_for_remote(&grok_wsl),
                 prompt = crate::acp::shell_quote_for_remote(&prompt),
                 allow = crate::acp::shell_quote_for_remote(SUBAGENT_ALLOWED_MCP),
                 deny = subagent_remote_deny_args(),
             );
-            c.arg("--").arg(host).arg(remote_full);
-            (c, true, true)
+            let mut c = Command::new("wsl.exe");
+            c.args(["-d", distro, "-e", "bash", "-lc", &remote_full]);
+            (c, true, None)
+        }
+        SubagentTransport::Ssh {
+            host,
+            port,
+            key_vault_ref,
+            remote_grok_path,
+            remote_runtime,
+            wsl_distro,
+            tab_id,
+        } => {
+            crate::acp::validate_ssh_destination_arg(host)?;
+            let mut c = Command::new("ssh");
+            c.arg("-o").arg("BatchMode=yes");
+            c.arg("-o").arg("ConnectTimeout=5");
+            c.args(crate::acp::SSH_SESSION_KEEPALIVE_ARGS);
+            c.args(crate::acp::SSH_FORWARD_REQUIRED_ARGS);
+            c.arg("-T");
+            // Give every remote subagent its own loopback listener. Reusing
+            // the parent port made OpenSSH continue after bind collisions,
+            // leaving the child alive with an advertised but unreachable MCP.
+            let host_mcp_port = crate::mcp_http::mcp_port();
+            let remote_mcp_port = subagent_remote_mcp_port(id, host_mcp_port);
+            c.arg("-R")
+                .arg(ssh_mcp_reverse_forward_arg(remote_mcp_port, host_mcp_port));
+            if let Some(p) = port {
+                c.arg("-p").arg(p.to_string());
+            }
+            if let Some(vault_ref) = key_vault_ref {
+                let backend = crate::shellx_vault::shared_backend();
+                let key_path = crate::shellx_vault::resolve_internal_secret(&backend, vault_ref)
+                    .await
+                    .map_err(|e| format!("ssh: vault resolve '{}' failed: {}", vault_ref, e))?
+                    .ok_or_else(|| {
+                        format!(
+                            "ssh: vault key '{}' is not set — open Settings → Vault and add it, or remove key_vault_ref from the preset",
+                            vault_ref
+                        )
+                    })?;
+                c.arg("-i").arg(key_path);
+            }
+            let snippet =
+                crate::mcp_http::http_config_snippet_toml(remote_mcp_port, &mcp_token, tab_id);
+            use base64::engine::general_purpose::STANDARD as B64;
+            use base64::Engine as _;
+            let snippet_b64 = B64.encode(snippet.as_bytes());
+            let remote_cwd = cwd.as_deref().unwrap_or("~");
+            let (remote_command, setup_stdin) = if *remote_runtime
+                == crate::acp::SshRemoteRuntime::Windows
+            {
+                let bootstrap =
+                    windows_native_subagent_bootstrap(remote_cwd, remote_grok_path, &prompt);
+                let mut setup = B64.encode(bootstrap.as_bytes()).into_bytes();
+                setup.push(b'\n');
+                setup.extend_from_slice(snippet_b64.as_bytes());
+                setup.push(b'\n');
+                setup.extend_from_slice(mcp_token.as_bytes());
+                setup.push(b'\n');
+                (
+                    crate::acp::wrap_ssh_windows_command(
+                        &crate::acp::windows_native_ssh_dispatch_command(),
+                    ),
+                    setup,
+                )
+            } else {
+                let cwd_q = if remote_cwd == "~" {
+                    "~".to_string()
+                } else {
+                    crate::acp::shell_quote_for_remote(remote_cwd)
+                };
+                let remote_full = format!(
+                        "{home_setup}cd {cwd} && IFS= read -r {env_name} && export {env_name} && export SHELLX_SUBAGENT_DEPTH=1 && {grok} -p {prompt} --no-subagents --always-approve --allow {allow} {deny} --output-format plain; shellx_status=$?; exit $shellx_status",
+                        home_setup = posix_isolated_grok_home_setup(&snippet_b64),
+                        cwd = cwd_q,
+                        env_name = crate::mcp_http::MCP_TOKEN_ENV_VAR,
+                        grok = crate::acp::shell_quote_for_remote(remote_grok_path),
+                        prompt = crate::acp::shell_quote_for_remote(&prompt),
+                        allow = crate::acp::shell_quote_for_remote(SUBAGENT_ALLOWED_MCP),
+                        deny = subagent_remote_deny_args(),
+                    );
+                let remote_command = crate::acp::wrap_ssh_posix_command(
+                    *remote_runtime,
+                    wsl_distro.as_deref(),
+                    &remote_full,
+                )?;
+                let mut setup = mcp_token.as_bytes().to_vec();
+                setup.push(b'\n');
+                (remote_command, setup)
+            };
+            c.arg("--").arg(host).arg(remote_command);
+            (c, true, Some(setup_stdin))
         }
     };
     if !encoded_args_in_transport {
@@ -1031,7 +1119,7 @@ pub async fn spawn_subagent_with_transport_options(
             cmd.current_dir(dir);
         }
     }
-    if write_token_to_stdin {
+    if ssh_setup_stdin.is_some() {
         cmd.stdin(Stdio::piped());
     } else {
         cmd.stdin(Stdio::null());
@@ -1058,11 +1146,14 @@ pub async fn spawn_subagent_with_transport_options(
     cmd.env("SHELLX_SUBAGENT_DEPTH", "1");
     if matches!(&transport, SubagentTransport::Local { .. }) {
         match prepare_isolated_grok_subagent_home() {
-            Ok((isolated_home, isolated_grok_home, real_home)) => {
+            Ok((isolated_home, isolated_grok_home, real_home, canonical_auth)) => {
                 cmd.env("HOME", &isolated_home);
                 cmd.env("USERPROFILE", &isolated_home);
                 cmd.env("GROK_HOME", &isolated_grok_home);
                 cmd.env("SHELLX_REAL_HOME", &real_home);
+                if let Some(canonical_auth) = canonical_auth {
+                    cmd.env("GROK_AUTH_PATH", canonical_auth);
+                }
             }
             Err(e) => {
                 tracing::warn!(
@@ -1116,10 +1207,13 @@ pub async fn spawn_subagent_with_transport_options(
         map.insert(id, handle.clone());
     }
 
-    // Linux pre_exec sets PR_SET_PDEATHSIG so the subagent grok child
-    // dies with shellX. Windows assignment happens post-spawn via
-    // tie_to_parent_lifetime below.
+    // Linux pre_exec sets PR_SET_PDEATHSIG so the subagent child dies
+    // with ShellX. Unix children also become session leaders so the
+    // ProcessRegistry's tree signal can terminate their descendants by
+    // process group. Windows assignment happens post-spawn via the Job
+    // Object and taskkill /T path below.
     crate::winproc::apply_pdeathsig_preexec(&mut cmd);
+    crate::winproc::apply_new_session_preexec(&mut cmd);
 
     let child_res = cmd.spawn();
     let mut child = match child_res {
@@ -1140,18 +1234,14 @@ pub async fn spawn_subagent_with_transport_options(
             ));
         }
     };
-    if write_token_to_stdin {
+    if let Some(setup_stdin) = ssh_setup_stdin {
         let mut stdin = child.stdin.take().ok_or_else(|| {
-            "Agent: SSH subagent stdin pipe missing for MCP token handoff".to_string()
+            "Agent: SSH subagent stdin pipe missing for setup handoff".to_string()
         })?;
         stdin
-            .write_all(mcp_token.as_bytes())
+            .write_all(&setup_stdin)
             .await
-            .map_err(|e| format!("Agent: failed to write SSH MCP token prelude: {}", e))?;
-        stdin
-            .write_all(b"\n")
-            .await
-            .map_err(|e| format!("Agent: failed to finish SSH MCP token prelude: {}", e))?;
+            .map_err(|e| format!("Agent: failed to write SSH setup prelude: {}", e))?;
         drop(stdin);
     }
 
@@ -1393,8 +1483,15 @@ fn append_wslenv_var(existing: &str, name: &str) -> String {
     }
 }
 
-fn ssh_mcp_reverse_forward_arg(port: u16) -> String {
-    format!("{0}:127.0.0.1:{0}", port)
+fn subagent_remote_mcp_port(id: Uuid, host_port: u16) -> u16 {
+    const MIN_PORT: u16 = 49_152;
+    const PORT_SPAN: u16 = 12_000;
+    let seed = id.as_u128() ^ u128::from(host_port);
+    MIN_PORT + (seed % u128::from(PORT_SPAN)) as u16
+}
+
+fn ssh_mcp_reverse_forward_arg(remote_port: u16, host_port: u16) -> String {
+    format!("{remote_port}:127.0.0.1:{host_port}")
 }
 
 /// Write the initial dispatch record for a freshly-spawned subagent
@@ -2194,24 +2291,27 @@ pub async fn kill(subagent_id: &str, force: bool) -> Result<Value, String> {
 #[cfg(unix)]
 fn send_term(pid: u32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
-    use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
-        .map_err(|e| format!("SIGTERM {} failed: {}", pid, e))
+    kill(
+        crate::process_registry::checked_unix_process_id(pid)?,
+        Signal::SIGTERM,
+    )
+    .map_err(|e| format!("SIGTERM {} failed: {}", pid, e))
 }
 
 #[cfg(unix)]
 fn send_kill9(pid: u32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
-    use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGKILL)
-        .map_err(|e| format!("SIGKILL {} failed: {}", pid, e))
+    kill(
+        crate::process_registry::checked_unix_process_id(pid)?,
+        Signal::SIGKILL,
+    )
+    .map_err(|e| format!("SIGKILL {} failed: {}", pid, e))
 }
 
 #[cfg(unix)]
 fn pid_is_alive(pid: u32) -> bool {
     use nix::sys::signal::kill;
-    use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), None).is_ok()
+    crate::process_registry::checked_unix_process_id(pid).is_ok_and(|pid| kill(pid, None).is_ok())
 }
 
 #[cfg(not(unix))]
@@ -2341,35 +2441,63 @@ fn percentile(samples: &mut [u128], pct: f64) -> Value {
 mod tests {
     use super::*;
 
+    #[test]
+    fn native_windows_subagent_bootstrap_uses_streamed_config_and_bounded_args() {
+        let script = windows_native_subagent_bootstrap(
+            r"C:\Users\Fixture\Project",
+            r"C:\Users\Fixture\.grok\bin\grok.exe",
+            "review the current diff",
+        );
+
+        assert!(script.contains("[Console]::In.ReadLine()"));
+        assert!(script.contains("SHELLX_SUBAGENT_DEPTH"));
+        assert!(script.contains("--no-subagents"));
+        assert!(script.contains("--always-approve"));
+        assert!(script.contains("mcp:shellx-host-http/Agent"));
+        assert!(script.contains(r"C:\Users\Fixture\Project"));
+        assert!(script.contains("review the current diff"));
+        assert!(script.contains("GROK_HOME"));
+        assert!(script.contains("GROK_AUTH_PATH"));
+        assert!(script.contains("shellx-grok-subagent-"));
+        assert!(script.contains("Remove-Item -LiteralPath $grokHome -Recurse -Force"));
+        assert!(!script.contains("Copy-Item -LiteralPath $auth"));
+        assert!(!script.contains("Join-Path $work '.grok'"));
+        assert!(!script.contains("Bearer "));
+    }
+
+    #[test]
+    fn posix_subagent_home_is_process_scoped_and_self_cleaning() {
+        let setup = posix_isolated_grok_home_setup("c2hlbGx4LWZpeHR1cmU=");
+        assert!(setup.contains("mktemp -d"));
+        assert!(setup.contains("GROK_HOME"));
+        assert!(setup.contains("trap shellx_cleanup_grok_home EXIT HUP INT TERM"));
+        assert!(setup.contains("rm -rf -- \"$shellx_grok_home\""));
+        assert!(setup.contains("config.toml"));
+        assert!(setup.contains("GROK_AUTH_PATH"));
+        assert!(!setup.contains("cp ~/.grok/auth.json"));
+        assert!(!setup.contains("$work/.grok"));
+    }
+
     fn fake_grok_bin() -> &'static Path {
         static FAKE_GROK: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
         FAKE_GROK
             .get_or_init(|| {
-                let dir =
-                    std::env::temp_dir().join(format!("shellx-fake-grok-{}", std::process::id()));
-                std::fs::create_dir_all(&dir).expect("create fake grok dir");
-                let path = if cfg!(target_os = "windows") {
-                    dir.join("grok.cmd")
-                } else {
-                    dir.join("grok")
-                };
                 if cfg!(target_os = "windows") {
-                    std::fs::write(&path, "@echo off\r\necho fake grok ok\r\nexit /b 0\r\n")
-                        .expect("write fake grok cmd");
-                } else {
-                    std::fs::write(&path, "#!/bin/sh\nprintf 'fake grok ok\\n'\nexit 0\n")
-                        .expect("write fake grok script");
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let mut perms = std::fs::metadata(&path)
-                            .expect("fake grok metadata")
-                            .permissions();
-                        perms.set_mode(0o755);
-                        std::fs::set_permissions(&path, perms).expect("chmod fake grok executable");
+                    // `std::process::Command` deliberately rejects complex
+                    // argument forwarding through .cmd files. The current
+                    // Rust test executable is a real PE and exits quickly on
+                    // Grok's unknown CLI arguments, which is sufficient for
+                    // these spawn/registry tests (the child result is not the
+                    // behavior under test).
+                    return std::env::current_exe().expect("current Windows test executable");
+                }
+                for candidate in ["/usr/bin/true", "/bin/true"] {
+                    let path = PathBuf::from(candidate);
+                    if path.is_file() {
+                        return path;
                     }
                 }
-                path
+                panic!("tests require a system true executable")
             })
             .as_path()
     }
@@ -2388,11 +2516,7 @@ mod tests {
         assert!(SUBAGENT_DENIED_MCP.contains(&"mcp:shellx-host-http/Agent"));
         assert!(SUBAGENT_DENIED_MCP.contains(&"mcp:shellx-host-http/send_prompt_to_provider"));
         assert!(SUBAGENT_DENIED_MCP.contains(&"mcp:shellx-host-http/send_prompt_to_session"));
-        for term in [
-            "native ShellX Browser",
-            "browser_navigate",
-            "browser_observe",
-        ] {
+        for term in ["native ShellX Browser", "browser_act", "browser_read"] {
             assert!(
                 SUBAGENT_RUNTIME_GUARD.contains(term),
                 "subagent runtime guard must teach Browser flow term {term}"
@@ -2401,7 +2525,7 @@ mod tests {
     }
 
     #[test]
-    fn isolated_grok_home_copies_auth_and_uses_minimal_config() {
+    fn isolated_grok_home_references_canonical_auth_and_uses_minimal_config() {
         let real_home = std::env::temp_dir().join(format!(
             "shellx-isolated-grok-home-test-{}",
             std::process::id()
@@ -2413,8 +2537,16 @@ mod tests {
             "{\"token\":\"test\"}\n",
         )
         .expect("write fake auth");
+        let legacy_isolated_grok_home = real_home.join(".shellx/grok-subagent-home/.grok");
+        std::fs::create_dir_all(&legacy_isolated_grok_home)
+            .expect("create legacy isolated Grok home");
+        std::fs::write(
+            legacy_isolated_grok_home.join("auth.json"),
+            "{\"token\":\"stale-copy\"}\n",
+        )
+        .expect("write stale isolated auth copy");
 
-        let (isolated_home, isolated_grok_home, returned_real_home) =
+        let (isolated_home, isolated_grok_home, returned_real_home, canonical_auth) =
             prepare_isolated_grok_subagent_home_for(&real_home).expect("prepare isolated home");
 
         assert_eq!(returned_real_home, real_home);
@@ -2426,10 +2558,8 @@ mod tests {
             std::fs::read_to_string(isolated_grok_home.join("config.toml")).expect("read config");
         assert!(config.contains("auto_update = false"));
         assert!(!config.contains("mcp_servers."));
-        assert_eq!(
-            std::fs::read_to_string(isolated_grok_home.join("auth.json")).expect("read auth"),
-            "{\"token\":\"test\"}\n"
-        );
+        assert_eq!(canonical_auth, Some(real_home.join(".grok/auth.json")));
+        assert!(!isolated_grok_home.join("auth.json").exists());
 
         let _ = std::fs::remove_dir_all(returned_real_home);
     }
@@ -2609,7 +2739,14 @@ mod tests {
 
     #[test]
     fn ssh_mcp_reverse_forward_matches_http_snippet_port() {
-        assert_eq!(ssh_mcp_reverse_forward_arg(5760), "5760:127.0.0.1:5760");
+        assert_eq!(
+            ssh_mcp_reverse_forward_arg(57_610, 5_760),
+            "57610:127.0.0.1:5760"
+        );
+        let first = subagent_remote_mcp_port(Uuid::from_u128(1), 5_760);
+        let second = subagent_remote_mcp_port(Uuid::from_u128(2), 5_760);
+        assert!((49_152..61_152).contains(&first));
+        assert_ne!(first, second);
     }
 
     #[tokio::test]
@@ -2668,10 +2805,11 @@ mod tests {
         // registry. wait=false: we don't care about the child outcome,
         // just the registry row creation.
         let needle = format!("registry-mirror-test-{}", Uuid::new_v4());
+        let test_cwd = std::env::temp_dir().to_string_lossy().into_owned();
         let _ = spawn_subagent(
             "general-purpose",
             &needle,
-            Some("/tmp".to_string()),
+            Some(test_cwd),
             false,
             None,
             None,
@@ -2908,11 +3046,12 @@ mod tests {
         std::env::set_var("SHELLX_MAX_SUBAGENTS", "20");
         let mut tasks = Vec::new();
         for i in 0..5 {
+            let test_cwd = std::env::temp_dir().to_string_lossy().into_owned();
             let t = tokio::spawn(async move {
                 spawn_subagent(
                     "general-purpose",
                     &format!("noop-test-{}", i),
-                    Some("/tmp".to_string()),
+                    Some(test_cwd),
                     false, // wait=false: we want fan-out, no blocking
                     None,
                     None,
@@ -2978,10 +3117,11 @@ mod tests {
         assert!(!ledger.exists(), "tempdir should not pre-exist");
 
         let needle = format!("ledger-write-test-{}", Uuid::new_v4());
+        let test_cwd = std::env::temp_dir().to_string_lossy().into_owned();
         let v = spawn_subagent(
             "general-purpose",
             &needle,
-            Some("/tmp".to_string()),
+            Some(test_cwd),
             false, // detach — we just want to observe the ledger file
             Some(ledger.clone()),
             None,
@@ -3014,7 +3154,9 @@ mod tests {
             "ledger missing persona line"
         );
         assert!(
-            body.contains("- status: running") || body.contains("- status: completed"),
+            body.contains("- status: running")
+                || body.contains("- status: completed")
+                || body.contains("- status: failed"),
             "ledger missing expected status line"
         );
         assert!(

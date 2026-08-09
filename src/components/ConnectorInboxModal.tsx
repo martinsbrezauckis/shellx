@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ShellIcon } from "./icons";
 import { inTauri } from "../lib/tauri-bridge";
@@ -12,8 +12,25 @@ import {
   type OutsideConnectorEvent,
   type ProviderKind,
 } from "../lib/outside-connectors";
+import { useModalFocus } from "../lib/useModalFocus";
 
 type InboxFilter = "all" | ProviderKind;
+
+type ManualRefreshReceipt = {
+  sequence: number;
+  completedAtMs: number | null;
+  connectorCount: number | null;
+  eventCount: number | null;
+  maxEventMs: number | null;
+};
+
+const EMPTY_MANUAL_REFRESH_RECEIPT: ManualRefreshReceipt = {
+  sequence: 0,
+  completedAtMs: null,
+  connectorCount: null,
+  eventCount: null,
+  maxEventMs: null,
+};
 
 export function ConnectorInboxModal({
   open,
@@ -31,8 +48,11 @@ export function ConnectorInboxModal({
   const [localDate, setLocalDate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [manualRefreshReceipt, setManualRefreshReceipt] = useState<ManualRefreshReceipt>(EMPTY_MANUAL_REFRESH_RECEIPT);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(open, dialogRef, onClose);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (source: "automatic" | "manual" = "automatic") => {
     if (!open) return;
     if (!inTauri()) {
       setError("Connector inbox is only available inside shellX.");
@@ -46,7 +66,17 @@ export function ConnectorInboxModal({
       ]);
       setConnectors([...list].sort((a, b) => a.label.localeCompare(b.label)));
       setEvents(recentEvents);
-      onSeen?.(maxEventMs(recentEvents));
+      const latestEventMs = maxEventMs(recentEvents);
+      onSeen?.(latestEventMs);
+      if (source === "manual") {
+        setManualRefreshReceipt((previous) => ({
+          sequence: previous.sequence + 1,
+          completedAtMs: Date.now(),
+          connectorCount: list.length,
+          eventCount: recentEvents.length,
+          maxEventMs: latestEventMs,
+        }));
+      }
       setError(null);
     } catch (e) {
       setError(formatError(e));
@@ -54,6 +84,10 @@ export function ConnectorInboxModal({
       setBusy(false);
     }
   }, [open, onSeen]);
+
+  useEffect(() => {
+    if (!open) setManualRefreshReceipt(EMPTY_MANUAL_REFRESH_RECEIPT);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -84,8 +118,25 @@ export function ConnectorInboxModal({
   if (!open) return null;
 
   return (
-    <div className="pmodal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Connector inbox">
-      <div className="pmodal connector-inbox-modal" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="pmodal-backdrop"
+      data-debug-id="connector-inbox-backdrop"
+      onClick={onClose}
+    >
+      <div
+        ref={dialogRef}
+        data-debug-id="surface-components-connectorinboxmodal-2"
+        data-connector-inbox-manual-refresh-sequence={manualRefreshReceipt.sequence}
+        data-connector-inbox-manual-refresh-completed-at-ms={manualRefreshReceipt.completedAtMs ?? ""}
+        data-connector-inbox-manual-refresh-connector-count={manualRefreshReceipt.connectorCount ?? ""}
+        data-connector-inbox-manual-refresh-event-count={manualRefreshReceipt.eventCount ?? ""}
+        data-connector-inbox-manual-refresh-max-event-ms={manualRefreshReceipt.maxEventMs ?? ""}
+        className="pmodal connector-inbox-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Connector inbox"
+      >
         <div className="pmodal-hdr">
           <span className="pmodal-title">Connector inbox</span>
           <span className="pmodal-sub">
@@ -123,7 +174,15 @@ export function ConnectorInboxModal({
                 />
               ))}
             </div>
-            <button type="button" className="settings-pill" onClick={() => void refresh()} disabled={busy}>
+            <button
+              data-debug-id="surface-components-connectorinboxmodal-4"
+              data-shellx-release-observe="disabled title"
+              title={`Connector inbox refresh receipt · sequence=${manualRefreshReceipt.sequence} · completedAtMs=${manualRefreshReceipt.completedAtMs ?? "none"} · connectors=${manualRefreshReceipt.connectorCount ?? "none"} · events=${manualRefreshReceipt.eventCount ?? "none"} · maxEventMs=${manualRefreshReceipt.maxEventMs ?? "none"}`}
+              type="button"
+              className="settings-pill"
+              onClick={() => void refresh("manual")}
+              disabled={busy}
+            >
               <ShellIcon name="refresh" size={13} />
               {busy ? "Refreshing" : "Refresh"}
             </button>
@@ -135,6 +194,7 @@ export function ConnectorInboxModal({
               <input
                 className="settings-input connector-inbox-search-input"
                 data-debug-id="connector-inbox-search-input"
+                data-shellx-release-observe="value"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search messages, sender, target"
@@ -144,6 +204,7 @@ export function ConnectorInboxModal({
               className="settings-input connector-inbox-date"
               type="date"
               data-debug-id="connector-inbox-date-input"
+              data-shellx-release-observe="value"
               value={localDate}
               onChange={(e) => setLocalDate(e.target.value)}
               aria-label="Filter connector inbox by date"
@@ -215,10 +276,11 @@ function InboxTab({
   onClick: () => void;
 }): JSX.Element {
   return (
-    <button
+    <button data-debug-id="surface-components-connectorinboxmodal-9"
       type="button"
       role="tab"
       aria-selected={active}
+      data-shellx-release-observe="selected"
       className={`connector-inbox-tab ${active ? "active" : ""}`}
       onClick={onClick}
       data-inbox={id}

@@ -92,10 +92,10 @@ impl KdfParams {
     /// medium): KDF params arrive inside keyfiles and backup files —
     /// pre-authentication input — so a hostile file could otherwise
     /// request gigabytes of memory and hours of CPU as a DoS. Bounds are
-    /// generous around real use (test floor 8 MiB, default 64 MiB), not a
-    /// tuning knob.
+    /// generous around real use (interactive floor 19 MiB, default
+    /// 64 MiB), not a tuning knob.
     pub fn validate(&self) -> Result<(), KeysError> {
-        const M_MIN_KIB: u32 = 8 * 1024; // 8 MiB — light-client floor
+        const M_MIN_KIB: u32 = 19 * 1024; // OWASP interactive floor
         const M_MAX_KIB: u32 = 512 * 1024; // 512 MiB — beyond any sane interactive setting
         const T_MAX: u32 = 16;
         const P_MAX: u32 = 8;
@@ -268,7 +268,7 @@ mod tests {
     /// production strength is a default, not a hardcode.
     fn fast_kdf() -> KdfParams {
         KdfParams {
-            m_cost_kib: 8 * 1024,
+            m_cost_kib: 19 * 1024,
             t_cost: 1,
             p_cost: 1,
         }
@@ -329,7 +329,12 @@ mod tests {
 
         for bad in [
             KdfParams {
-                m_cost_kib: 1024, // below the 8 MiB floor (downgrade attack)
+                m_cost_kib: 1024, // below the interactive floor (downgrade attack)
+                t_cost: 3,
+                p_cost: 1,
+            },
+            KdfParams {
+                m_cost_kib: 8 * 1024, // below the OWASP 2026 interactive floor
                 t_cost: 3,
                 p_cost: 1,
             },
@@ -347,6 +352,13 @@ mod tests {
             assert!(bad.validate().is_err(), "{bad:?} must be refused");
         }
         assert!(KdfParams::default().validate().is_ok());
+        assert!(KdfParams {
+            m_cost_kib: 19 * 1024,
+            t_cost: 2,
+            p_cost: 1,
+        }
+        .validate()
+        .is_ok());
         assert!(fast_kdf().validate().is_ok());
     }
 

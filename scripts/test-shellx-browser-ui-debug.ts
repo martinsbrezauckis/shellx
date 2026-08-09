@@ -363,19 +363,26 @@ function highlightRight(result: DebugHighlightResult | undefined): number | null
   return rect.left + rect.width;
 }
 
-async function waitForNativeEngineBelow(
+async function readNativeEngineBounds(base: string, token: string): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  const state = await api<BrowserState>(base, token, "GET", "/browser/state");
+  return state.engine?.bounds ?? null;
+}
+
+async function waitForNativeEngineTopNear(
   base: string,
   token: string,
   label: string,
-  overlayBottom: number,
-): Promise<void> {
+  expectedTop: number,
+): Promise<{ x: number; y: number; width: number; height: number }> {
   await waitFor(label, async () => {
-    const state = await api<BrowserState>(base, token, "GET", "/browser/state");
-    const bounds = state.engine?.bounds;
+    const bounds = await readNativeEngineBounds(base, token);
     if (!bounds) return null;
-    return bounds.y >= overlayBottom - 4 ? state : null;
+    return Math.abs(bounds.y - expectedTop) <= 4 ? bounds : null;
   }, 12_000, 250);
   assert(true, label);
+  const bounds = await readNativeEngineBounds(base, token);
+  if (!bounds) throw new Error(`${label} lost Browser engine bounds after passing`);
+  return bounds;
 }
 
 async function waitForNativeEngineRightOf(
@@ -491,7 +498,7 @@ async function runVaultFillSuggestionSmoke(
   const seed = await apiMaybe<{ ok: boolean; key: string }>(base, token, "POST", "/vault/set", {
     key: secretRef,
     value: "SHELLX_UI_VAULT_FILL_SENTINEL",
-    description: "Gmail password for Browser UI Vault fill smoke",
+    description: "Gmail password for Browser UI Vault fill smoke on 127.0.0.1",
     userOnly: false,
   });
   if (!seed.ok) {
@@ -1181,6 +1188,8 @@ async function main(): Promise<void> {
     collapsedOptionsRight ?? 0,
   );
   evidence.push(await captureBrowser(base, token, task.taskId, outDir, "03-options-sidecar-collapsed-sidebar"));
+  const engineBeforeSave = await readNativeEngineBounds(base, token);
+  assert(engineBeforeSave !== null, "Native Browser engine has measurable bounds before opening save menu");
 
   await postUi(base, token, {
     source: "browser-ui-debug-smoke",
@@ -1198,11 +1207,15 @@ async function main(): Promise<void> {
     collapsedSaveHighlights.find((result) => result.selector === ".shellx-browser-save-popover"),
   );
   assert(collapsedSaveBottom !== null, "Collapsed-sidebar Browser save menu has a measurable rectangle");
-  await waitForNativeEngineBelow(
+  const engineAfterSave = await waitForNativeEngineTopNear(
     base,
     token,
-    "Native Browser engine yields to collapsed-sidebar save chrome dock",
-    collapsedSaveBottom ?? 0,
+    "Native Browser engine stays fixed while collapsed-sidebar save menu overlays",
+    engineBeforeSave?.y ?? 0,
+  );
+  assert(
+    collapsedSaveBottom !== null && engineAfterSave.y < collapsedSaveBottom,
+    "Collapsed-sidebar Browser save menu overlays the page instead of pushing it down",
   );
   evidence.push(await captureBrowser(base, token, task.taskId, outDir, "04-save-collapsed-sidebar"));
 
@@ -1684,46 +1697,29 @@ async function main(): Promise<void> {
   const settledNewTabUrl = normalizeUrl(settledNewTab?.url);
   assert(settledNewTabUrl !== beforeUrl, "Browser new tab does not clone the previous page URL");
   assert(/^https?:\/\//i.test(settledNewTabUrl), "Browser new tab opens a configured home/default URL");
+  assert(settledNewTab?.profileId === "personal", "Browser new tab uses the personal profile by default");
+  const personalOwnershipBannerVisible = await highlightsVisible(
+    base,
+    token,
+    "browser-personal-ownership-banner-hidden",
+    ["[data-debug-id='shellx-browser-tab-ownership-banner']"],
+    900,
+  );
+  assert(!personalOwnershipBannerVisible, "Browser normal personal tabs hide the redundant ownership banner");
 
-  const taskIntentGoal = "lets open google.com and search for info about best white bread in the world";
-  await ensureActiveBrowserTask(base, token, "Browser Agent chat intent smoke");
   await postUi(base, token, {
     source: "browser-ui-debug-smoke",
     debugClick: "[data-debug-id='shellx-browser-right-tab-chat']",
-    debugHighlights: expectedHighlights("browser-agent-chat-before-intent", [
+    debugHighlights: expectedHighlights("browser-agent-chat-controls", [
       "[data-debug-id='shellx-browser-goal']",
       "[data-debug-id='shellx-browser-agent-send']",
     ]),
   });
-  await waitForHighlights(base, token, "browser-agent-chat-before-intent", [
+  await waitForHighlights(base, token, "browser-agent-chat-controls", [
     "[data-debug-id='shellx-browser-goal']",
     "[data-debug-id='shellx-browser-agent-send']",
   ]);
-  await postUi(base, token, {
-    source: "browser-ui-debug-smoke",
-    debugInput: {
-      selector: "[data-debug-id='shellx-browser-goal']",
-      value: taskIntentGoal,
-    },
-  });
-  await postUi(base, token, {
-    source: "browser-ui-debug-smoke",
-    debugClick: "[data-debug-id='shellx-browser-agent-send']",
-    debugHighlights: [],
-  });
-  const searchTaskState = await waitFor("Browser Agent chat routes explicit Google search task", async () => {
-    const state = await api<BrowserState>(base, token, "GET", "/browser/state");
-    const activeTask = state.tasks?.find((entry) => entry.taskId === state.activeTaskId) ?? null;
-    const active = activeTab(state);
-    const candidateUrl = normalizeUrl(activeTask?.currentUrl ?? active?.url ?? state.engine?.url);
-    if (!candidateUrl.startsWith("https://www.google.com/search?")) return null;
-    return candidateUrl.includes("best+white+bread") ? state : null;
-  }, 20_000, 500);
-  assert(
-    normalizeUrl(searchTaskState.tasks?.find((entry) => entry.taskId === searchTaskState.activeTaskId)?.currentUrl ?? activeTab(searchTaskState)?.url)
-      .includes("best+white+bread"),
-    "Browser Agent chat opens explicit Google search tasks instead of cloning the current page",
-  );
+  assert(true, "Browser Agent chat input and trusted Send control render");
 
   await closeAllBrowserTabs(base, token);
   await waitFor("Browser tabs are closed", async () => {

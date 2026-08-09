@@ -14,8 +14,7 @@
         { "path": "$HOME/.grok/**" },
         { "path": "/home/**/.grok/**" },
         { "path": "$APPDATA/.grok/**" },
-        { "path": "$LOCALAPPDATA/.grok/**" },
-        { "path": "/tmp/shellx-*/**" }
+        { "path": "$LOCALAPPDATA/.grok/**" }
       ]
     },
     "dialog:default",

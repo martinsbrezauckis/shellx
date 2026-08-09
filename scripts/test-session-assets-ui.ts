@@ -1,11 +1,15 @@
 import { readFileSync } from "node:fs";
+import { readRustModuleFamily } from "./read-rust-module-family";
 
 const app = readFileSync("src/App.tsx", "utf8");
 const board = readFileSync("src/components/AttachmentMediaBoard.tsx", "utf8");
 const css = readFileSync("src/App.css", "utf8");
 const rust = readFileSync("src-tauri/src/lib.rs", "utf8");
-const debugApi = readFileSync("src-tauri/src/debug_api.rs", "utf8");
-const apiDocs = readFileSync("docs/API.md", "utf8");
+const webviewRuntimePaths = readFileSync("src-tauri/src/webview_runtime_paths.rs", "utf8");
+const browserWindowRuntime = readFileSync("src-tauri/src/shellx_browser_window_open_runtime.rs", "utf8");
+const browserVault = readFileSync("src-tauri/src/shellx_browser_vault.rs", "utf8");
+const debugApi = readRustModuleFamily("src-tauri/src/debug_api.rs");
+const apiDocs = readFileSync("docs/public/API.md", "utf8");
 const tauriConf = readFileSync("src-tauri/tauri.conf.json", "utf8");
 
 let failures = 0;
@@ -42,6 +46,17 @@ assert(rust.includes("copy_asset_to_scope") && rust.includes("provider_registry:
 assert(rust.includes("provider_registry: State<'_, Arc<provider_sessions::ProviderSessionRegistry>>"), "media preview fallback can inspect provider session transport");
 assert(rust.includes("preview_session_context(&registry, Some(provider_registry.inner()), &tab_key)"), "media preview fallback uses provider tab context when no Grok session exists");
 assert(!tauriConf.includes("\"$HOME/.grok/**\""), "Tauri asset protocol does not expose all ~/.grok");
+assert(!tauriConf.includes("/tmp/shellx-*/**"), "Tauri asset protocol has no production-wide temporary ShellX scope");
+assert(!tauriConf.match(/frame-src[^;]*\basset:/), "Tauri CSP does not permit asset-protocol documents in frames");
+assert(!tauriConf.includes('"dataDirectory"'), "main WebView data does not rely on Tauri's relative Windows config resolution");
+assert(rust.includes(".config_mut()") && rust.includes("main.create = false"), "Windows defers automatic main-window creation until an absolute data directory is available");
+assert(webviewRuntimePaths.includes('var_os("LOCALAPPDATA")') && webviewRuntimePaths.includes("path.is_absolute()"), "Windows requires an absolute per-user LocalAppData root");
+assert(webviewRuntimePaths.includes('.join(&app.config().identifier)') && webviewRuntimePaths.includes('.join("webview-data")'), "Windows resolves application WebView state below the app-specific LocalAppData directory");
+assert(rust.includes("WebviewWindowBuilder::from_config") && rust.includes(".data_directory(webview_data_dir)"), "Windows creates the configured main window with the resolved WebView data directory");
+assert(rust.includes("webview_runtime_paths::app_webview_data_directory(_app.handle())"), "Windows main-window setup uses the shared app-data resolver");
+const sharedAppWebviewDirectory = /\.data_directory\(crate::webview_runtime_paths::app_webview_data_directory\(\s*app,?\s*\)\?\)/s;
+assert(sharedAppWebviewDirectory.test(browserWindowRuntime), "Windows Browser chrome window uses the shared app-data WebView directory");
+assert(sharedAppWebviewDirectory.test(browserVault), "Windows restored main window uses the shared app-data WebView directory");
 assert(tauriConf.includes("\"$HOME/.grok/sessions/**\""), "Tauri asset protocol allows Grok session media");
 assert(tauriConf.includes("\"$HOME/.grok/shellx-preview-screenshots/**\""), "Tauri asset protocol allows ShellX preview screenshots");
 

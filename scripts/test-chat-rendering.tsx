@@ -58,6 +58,17 @@ console.log("\n=== chat rendering: assistant labels ===");
   assert(chatSource.includes("const speakerLabel = g.speakerLabel ?? assistantFallbackLabel"), "provider speaker labels win over the fallback");
   assert(!chatSource.includes('g.speakerLabel ?? "GROK"'), "ChatOutput does not hard-code Grok as the assistant fallback");
   assert(appSource.includes("assistantFallbackLabel={agentDisplayName("), "App passes the active agent label into ChatOutput");
+  assert(
+    chatSource.includes('return "build-objective-required"')
+      && chatSource.includes('return "goal-objective-required"')
+      && chatSource.includes("data-shellx-event-code={uiEventCode(g.text)}"),
+    "ShellX command validation pills expose exact non-secret event codes",
+  );
+  assert(
+    appSource.includes("/goal requires an objective")
+      && appSource.includes("legacy alias of /build"),
+    "the legacy /goal validation points users to its current /build equivalent",
+  );
 }
 
 console.log("\n=== chat layout overflow guards ===");

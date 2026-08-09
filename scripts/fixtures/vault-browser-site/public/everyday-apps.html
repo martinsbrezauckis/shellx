@@ -195,7 +195,7 @@
               Search mail
               <input data-testid="mail-search" name="query" value="" autocomplete="off" />
             </label>
-            <button type="submit">Search mail</button>
+            <button type="button" data-testid="mail-search-run">Search mail</button>
           </form>
           <div class="result-list" data-testid="mail-results" aria-live="polite">
             <article data-mail-item>
@@ -271,7 +271,8 @@
                 <option>15:00</option>
               </select>
             </label>
-            <button type="submit">Create event</button>
+            <button type="button" data-testid="calendar-preview">Preview event</button>
+            <button type="submit" data-testid="calendar-submit">Create event</button>
           </form>
           <output data-testid="calendar-status">No event created</output>
         </div>
@@ -322,6 +323,7 @@
               Shipping note
               <textarea data-testid="checkout-note">Leave at reception</textarea>
             </label>
+            <button type="button" data-testid="checkout-review">Review order</button>
             <button type="submit" data-testid="checkout-submit">Submit order</button>
           </form>
           <output data-testid="checkout-status">Checkout idle</output>
@@ -348,6 +350,7 @@
               City
               <input data-testid="profile-city" name="city" autocomplete="address-level2" value="" />
             </label>
+            <button type="button" data-testid="profile-card-preview">Preview profile</button>
             <button type="submit" data-testid="profile-card-submit">Create profile</button>
           </form>
           <output data-testid="profile-card-status">Profile form idle</output>
@@ -362,6 +365,7 @@
               Verification code
               <input data-testid="email-code-input" inputmode="numeric" autocomplete="one-time-code" value="" />
             </label>
+            <button type="button" data-testid="email-code-check">Check code locally</button>
             <button type="submit" data-testid="email-code-submit">Verify code</button>
           </form>
           <output data-testid="email-code-status">Code waiting</output>
@@ -387,6 +391,7 @@
               <input data-testid="agent-wallet-terms" type="checkbox" />
               I approve this subscription
             </label>
+            <button type="button" data-testid="agent-wallet-dry-run">Prepare wallet dry run</button>
             <button type="submit" data-testid="agent-wallet-submit">Subscribe</button>
           </form>
           <output data-testid="agent-wallet-status">Wallet checkout idle</output>
@@ -434,8 +439,7 @@
         status("[data-testid='mail-status']", "Cookie overlay dismissed");
       });
 
-      document.querySelector("[data-testid='mail-search-form']").addEventListener("submit", (event) => {
-        event.preventDefault();
+      document.querySelector("[data-testid='mail-search-run']").addEventListener("click", () => {
         const query = document.querySelector("[data-testid='mail-search']").value.trim().toLowerCase();
         const items = Array.from(document.querySelectorAll("[data-mail-item]"));
         let count = 0;
@@ -489,6 +493,11 @@
         status("[data-testid='calendar-status']", title ? `Calendar event created: ${title}` : "Calendar title missing");
       });
 
+      document.querySelector("[data-testid='calendar-preview']").addEventListener("click", () => {
+        const title = document.querySelector("[data-testid='calendar-title']").value.trim();
+        status("[data-testid='calendar-status']", title ? `Calendar event preview: ${title}` : "Calendar title missing");
+      });
+
       document.querySelector("[data-testid='sheet-save']").addEventListener("click", () => {
         const budget = document.querySelector("[data-testid='sheet-budget']").value;
         status("[data-testid='sheet-status']", `Sheet saved with budget ${budget}`);
@@ -508,11 +517,22 @@
         status("[data-testid='checkout-status']", email ? `Order submitted for ${email}` : "Email missing");
       });
 
+      document.querySelector("[data-testid='checkout-review']").addEventListener("click", () => {
+        const email = document.querySelector("[data-testid='checkout-email']").value.trim();
+        status("[data-testid='checkout-status']", email ? `Order review ready for ${email}` : "Email missing");
+      });
+
       document.querySelector("[data-testid='profile-card-form']").addEventListener("submit", (event) => {
         event.preventDefault();
         const email = document.querySelector("[data-testid='profile-email']").value.trim();
         const company = document.querySelector("[data-testid='profile-company']").value.trim();
         status("[data-testid='profile-card-status']", email && company ? `Profile created for ${email} at ${company}` : "Profile missing fields");
+      });
+
+      document.querySelector("[data-testid='profile-card-preview']").addEventListener("click", () => {
+        const email = document.querySelector("[data-testid='profile-email']").value.trim();
+        const company = document.querySelector("[data-testid='profile-company']").value.trim();
+        status("[data-testid='profile-card-status']", email && company ? `Profile preview for ${email} at ${company}` : "Profile missing fields");
       });
 
       document.querySelector("[data-testid='email-code-form']").addEventListener("submit", (event) => {
@@ -521,8 +541,19 @@
         status("[data-testid='email-code-status']", code === "739214" ? "Email code accepted" : `Email code rejected: ${code || "empty"}`);
       });
 
+      document.querySelector("[data-testid='email-code-check']").addEventListener("click", () => {
+        const code = document.querySelector("[data-testid='email-code-input']").value.trim();
+        status("[data-testid='email-code-status']", code === "739214" ? "Email code locally valid" : `Email code locally invalid: ${code || "empty"}`);
+      });
+
       document.querySelector("[data-testid='agent-wallet-form']").addEventListener("submit", (event) => {
         event.preventDefault();
+        const email = document.querySelector("[data-testid='agent-wallet-email']").value.trim();
+        const terms = document.querySelector("[data-testid='agent-wallet-terms']").checked;
+        status("[data-testid='agent-wallet-status']", email && terms ? `Subscription dry-run prepared for ${email}` : "Subscription needs email and approval");
+      });
+
+      document.querySelector("[data-testid='agent-wallet-dry-run']").addEventListener("click", () => {
         const email = document.querySelector("[data-testid='agent-wallet-email']").value.trim();
         const terms = document.querySelector("[data-testid='agent-wallet-terms']").checked;
         status("[data-testid='agent-wallet-status']", email && terms ? `Subscription dry-run prepared for ${email}` : "Subscription needs email and approval");

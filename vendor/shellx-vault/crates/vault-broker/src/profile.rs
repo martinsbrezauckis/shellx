@@ -92,7 +92,43 @@ pub fn resolve_current_profile_dirs() -> Result<ProfileDirs> {
 pub fn ensure_current_profile_dir() -> Result<PathBuf> {
     let dirs = resolve_current_profile_dirs()?;
     fs::create_dir_all(&dirs.canonical_dir)?;
+    harden_profile_permissions(&dirs)?;
     Ok(dirs.canonical_dir)
+}
+
+#[cfg(unix)]
+fn harden_profile_permissions(dirs: &ProfileDirs) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(&dirs.canonical_dir, fs::Permissions::from_mode(0o700))?;
+    let candidates = [
+        canonical_profile_path(&dirs.canonical_dir),
+        shellx_legacy_profile_path(&dirs.canonical_dir),
+        canonical_profile_path(&dirs.shellx_legacy_dir),
+        shellx_legacy_profile_path(&dirs.shellx_legacy_dir),
+    ];
+    for path in candidates {
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(anyhow!(
+                    "vault profile file must not be a symlink: {}",
+                    path.display()
+                ));
+            }
+            Ok(metadata) if metadata.is_file() => {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn harden_profile_permissions(_dirs: &ProfileDirs) -> Result<()> {
+    Ok(())
 }
 
 pub fn resolve_profile_dirs(input: ProfileDirInput) -> Result<ProfileDirs> {
@@ -209,5 +245,50 @@ fn same_profile_payload(a: &str, b: &str) -> bool {
     match (a_json, b_json) {
         (Ok(a), Ok(b)) => a == b,
         _ => a.as_bytes() == b.as_bytes(),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod permission_tests {
+    use super::*;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    #[test]
+    fn hardening_repairs_existing_profile_modes_and_rejects_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let canonical_dir = root.path().join("canonical");
+        let legacy_dir = root.path().join("legacy");
+        fs::create_dir_all(&canonical_dir).unwrap();
+        fs::create_dir_all(&legacy_dir).unwrap();
+        let canonical = canonical_profile_path(&canonical_dir);
+        let legacy = shellx_legacy_profile_path(&legacy_dir);
+        fs::write(&canonical, b"secret").unwrap();
+        fs::write(&legacy, b"legacy-secret").unwrap();
+        fs::set_permissions(&canonical_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&canonical, fs::Permissions::from_mode(0o644)).unwrap();
+        fs::set_permissions(&legacy, fs::Permissions::from_mode(0o644)).unwrap();
+        let dirs = ProfileDirs {
+            canonical_dir: canonical_dir.clone(),
+            shellx_legacy_dir: legacy_dir.clone(),
+            source: ProfileDirSource::PlatformDefault,
+        };
+
+        harden_profile_permissions(&dirs).unwrap();
+        assert_eq!(
+            fs::metadata(&canonical_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&canonical).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(&legacy).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        fs::remove_file(&canonical).unwrap();
+        symlink(&legacy, &canonical).unwrap();
+        assert!(harden_profile_permissions(&dirs).is_err());
     }
 }

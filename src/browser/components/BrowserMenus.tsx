@@ -1,32 +1,22 @@
 import type { ChangeEvent, JSX, MouseEvent } from "react";
 
 import { ShellIcon, type ShellIconName } from "../../components/icons";
+import { DEFAULT_HOME_URL } from "../browserPreferences";
 import type {
   BrowserPersonalLockAuthMode,
   BrowserPersonalLockSettings,
+  BrowserPageSaveKind,
   BrowserProfile,
   BrowserVisibleAdMode,
 } from "../types";
 
 export type BrowserColorMode = "system" | "light" | "dark";
-export type BrowserEngineAutomationMode = "normal" | "backgroundOnly";
-export type BrowserPageSaveKind =
-  | "explain"
-  | "screenshot"
-  | "fullPageScreenshot"
-  | "markdown"
-  | "linksJson"
-  | "snapshotJson"
-  | "media"
-  | "code"
-  | "site";
 
 interface BrowserOptionsMenuProps {
   colorMode: BrowserColorMode;
   homeUrl: string;
   profileId: string;
   profiles: BrowserProfile[];
-  engineMode: BrowserEngineAutomationMode;
   configuredParallelAgents: string;
   showRightSidebar: boolean;
   personalLock?: BrowserPersonalLockSettings | null;
@@ -35,7 +25,6 @@ interface BrowserOptionsMenuProps {
   onColorModeChange: (mode: BrowserColorMode) => void;
   onHomeUrlChange: (url: string) => void;
   onProfileChange: (profileId: string) => void;
-  onEngineModeChange: (mode: BrowserEngineAutomationMode) => void;
   onParallelAgentsChange: (configuredParallelAgents: string) => void;
   onShowRightSidebarChange: (show: boolean) => void;
   onPersonalLockPatch: (patch: {
@@ -62,7 +51,6 @@ export function BrowserOptionsMenu({
   homeUrl,
   profileId,
   profiles,
-  engineMode,
   configuredParallelAgents,
   showRightSidebar,
   personalLock,
@@ -71,7 +59,6 @@ export function BrowserOptionsMenu({
   onColorModeChange,
   onHomeUrlChange,
   onProfileChange,
-  onEngineModeChange,
   onParallelAgentsChange,
   onShowRightSidebarChange,
   onPersonalLockPatch,
@@ -83,10 +70,22 @@ export function BrowserOptionsMenu({
   const lockActive = personalLock?.locked === true;
   const pinMode = personalLock?.authMode === "pinOnly";
   return (
-    <aside className="shellx-browser-left-sidecar shellx-browser-options-sidecar" data-debug-id="shellx-browser-options-sidecar">
+    <aside
+      id="shellx-browser-options-sidecar"
+      className="shellx-browser-left-sidecar shellx-browser-options-sidecar"
+      data-debug-id="shellx-browser-options-sidecar"
+      aria-labelledby="shellx-browser-options"
+    >
       <div className="shellx-browser-options-head">
         <h2>Browser settings</h2>
-        <button type="button" className="shellx-browser-icon-btn" onClick={onClose} data-debug-id="shellx-browser-options-close" title="Close Browser settings">
+        <button
+          type="button"
+          className="shellx-browser-icon-btn"
+          onClick={onClose}
+          data-debug-id="shellx-browser-options-close"
+          title="Close Browser settings"
+          aria-label="Close Browser settings"
+        >
           <ShellIcon name="circle-x" size={15} />
         </button>
       </div>
@@ -99,6 +98,8 @@ export function BrowserOptionsMenu({
               value={colorMode}
               onChange={(event) => onColorModeChange(event.target.value as BrowserColorMode)}
               data-debug-id="shellx-browser-color-mode"
+              data-shellx-release-observe="value title"
+              title={`Browser color state: applied=${colorMode}; storage=${colorMode === "system" ? "default" : "custom"}`}
             >
               <option value="system">System</option>
               <option value="light">Light</option>
@@ -116,6 +117,8 @@ export function BrowserOptionsMenu({
               value={homeUrl}
               onChange={(event) => onHomeUrlChange(event.target.value)}
               data-debug-id="shellx-browser-homepage"
+              data-shellx-release-observe="value title"
+              title={`Browser homepage state: storage=${homeUrl.trim() === "" || homeUrl.trim() === DEFAULT_HOME_URL ? "default" : "custom"}`}
               aria-label="Browser homepage"
             />
           </label>
@@ -129,6 +132,7 @@ export function BrowserOptionsMenu({
               value={profileId}
               onChange={(event) => onProfileChange(event.target.value)}
               data-debug-id="shellx-browser-profile-select"
+              data-shellx-release-observe="value"
               aria-label="Browser profile"
             >
               {profiles.map((profile) => (
@@ -148,6 +152,7 @@ export function BrowserOptionsMenu({
               checked={showRightSidebar}
               onChange={(event) => onShowRightSidebarChange(event.target.checked)}
               data-debug-id="shellx-browser-toggle-right-sidebar"
+              data-shellx-release-observe="checked"
             />
             <span>Right sidebar</span>
           </label>
@@ -169,6 +174,7 @@ export function BrowserOptionsMenu({
               }}
               disabled={lockEnabled && pinMode && lockActive && personalLock?.pinConfigured && !personalLockPinDraft.trim()}
               data-debug-id={!lockEnabled ? "shellx-browser-personal-enable-now" : lockActive ? "shellx-browser-personal-unlock-now" : "shellx-browser-personal-lock-now"}
+              aria-label={!lockEnabled ? "Enable Personal Browser Lock" : lockActive ? "Unlock personal tabs" : "Lock personal tabs now"}
             >
               {!lockEnabled ? "Enable" : lockActive ? "Unlock" : "Lock now"}
             </button>
@@ -227,6 +233,7 @@ export function BrowserOptionsMenu({
               onClick={(event) => onPersonalLockPatch({ newPin: personalLockPinDraft }, event)}
               disabled={personalLockPinDraft.trim().length < 4}
               data-debug-id="shellx-browser-personal-lock-set-pin"
+              data-shellx-release-observe="disabled"
             >
               {personalLock?.pinConfigured ? "Update PIN" : "Set PIN"}
             </button>
@@ -276,23 +283,12 @@ export function BrowserOptionsMenu({
         <section className="shellx-browser-options-section">
           <h3>Agent engines</h3>
           <label>
-            <span>Mode</span>
-            <select
-              value={engineMode}
-              onChange={(event) => onEngineModeChange(event.target.value as BrowserEngineAutomationMode)}
-              data-debug-id="shellx-browser-engine-mode"
-              aria-label="Browser engine mode"
-            >
-              <option value="normal">Normal</option>
-              <option value="backgroundOnly">Background only</option>
-            </select>
-          </label>
-          <label>
             <span>Parallel agents</span>
             <select
               value={configuredParallelAgents}
               onChange={(event) => onParallelAgentsChange(event.target.value)}
               data-debug-id="shellx-browser-parallel-agents"
+              data-shellx-release-observe="value"
               aria-label="Parallel browser agents"
             >
               <option value="auto">Auto</option>
@@ -317,15 +313,6 @@ interface BrowserPageSaveMenuProps {
 
 export function BrowserPageSaveMenu({ busy, canSavePage, onRequestPageSave }: BrowserPageSaveMenuProps): JSX.Element {
   const disabled = busy || !canSavePage;
-  const pageActions: Array<{ kind: BrowserPageSaveKind; debugId: string; icon: ShellIconName; label: string; detail: string }> = [
-    {
-      kind: "explain",
-      debugId: "shellx-browser-explain-page",
-      icon: "sparkles",
-      label: "Explain page",
-      detail: "Ask the Browser agent to explain this page.",
-    },
-  ];
   const localActions: Array<{ kind: BrowserPageSaveKind; debugId: string; icon: ShellIconName; label: string; detail: string }> = [
     {
       kind: "fullPageScreenshot",
@@ -388,25 +375,13 @@ export function BrowserPageSaveMenu({ busy, canSavePage, onRequestPageSave }: Br
   ];
 
   return (
-    <div className="shellx-browser-header-popover shellx-browser-save-popover shellx-browser-docked-popover">
+    <div
+      id="shellx-browser-save-menu"
+      className="shellx-browser-header-popover shellx-browser-save-popover shellx-browser-docked-popover"
+      role="region"
+      aria-labelledby="shellx-browser-save-page"
+    >
       <h2>Save page</h2>
-      <section className="shellx-browser-save-section">
-        <h3>Page actions</h3>
-        {pageActions.map((action) => (
-          <button
-            key={action.kind}
-            type="button"
-            className="shellx-browser-menu-row"
-            onClick={(event) => onRequestPageSave(action.kind, event)}
-            disabled={disabled}
-            data-debug-id={action.debugId}
-          >
-            <ShellIcon name={action.icon} size={13} />
-            <span>{action.label}</span>
-            <small>{action.detail}</small>
-          </button>
-        ))}
-      </section>
       <section className="shellx-browser-save-section">
         <h3>Local artifacts</h3>
         {localActions.map((action) => (
@@ -416,7 +391,8 @@ export function BrowserPageSaveMenu({ busy, canSavePage, onRequestPageSave }: Br
             className="shellx-browser-menu-row"
             onClick={(event) => onRequestPageSave(action.kind, event)}
             disabled={disabled}
-            data-debug-id={action.debugId}
+            data-debug-id={`${action.debugId}`}
+            data-release-control="browser-save-local-action"
           >
             <ShellIcon name={action.icon} size={13} />
             <span>{action.label}</span>
@@ -433,7 +409,8 @@ export function BrowserPageSaveMenu({ busy, canSavePage, onRequestPageSave }: Br
             className="shellx-browser-menu-row"
             onClick={(event) => onRequestPageSave(action.kind, event)}
             disabled={disabled}
-            data-debug-id={action.debugId}
+            data-debug-id={`${action.debugId}`}
+            data-release-control="browser-save-queued-action"
           >
             <ShellIcon name={action.icon} size={13} />
             <span>{action.label}</span>
@@ -448,39 +425,70 @@ export function BrowserPageSaveMenu({ busy, canSavePage, onRequestPageSave }: Br
 interface BrowserAdFilterMenuProps {
   busy: boolean;
   selectedAdMode: BrowserVisibleAdMode;
+  usesGlobalDefault: boolean;
   onSetAdMode: (mode: BrowserVisibleAdMode) => void;
+  onUseGlobalDefault: () => void;
 }
 
-export function BrowserAdFilterMenu({ busy, selectedAdMode, onSetAdMode }: BrowserAdFilterMenuProps): JSX.Element {
+export function BrowserAdFilterMenu({
+  busy,
+  selectedAdMode,
+  usesGlobalDefault,
+  onSetAdMode,
+  onUseGlobalDefault,
+}: BrowserAdFilterMenuProps): JSX.Element {
   return (
-    <div className="shellx-browser-header-popover shellx-browser-ad-popover shellx-browser-docked-popover">
+    <div
+      id="shellx-browser-ad-filter-menu"
+      className="shellx-browser-header-popover shellx-browser-ad-popover shellx-browser-docked-popover"
+      role="region"
+      aria-labelledby="shellx-browser-ad-filter"
+    >
       <h2>Ads filter</h2>
       <button
         type="button"
-        className={`shellx-browser-menu-row ${selectedAdMode === "balanced" ? "active" : ""}`}
+        className={`shellx-browser-menu-row ${usesGlobalDefault ? "active" : ""}`}
+        onClick={onUseGlobalDefault}
+        disabled={busy || usesGlobalDefault}
+        data-debug-id="shellx-browser-ad-mode-default"
+        aria-pressed={usesGlobalDefault}
+        data-shellx-release-observe="pressed disabled"
+      >
+        <span>Use global default</span>
+        <small>Remove this profile override and follow the Browser-wide setting.</small>
+      </button>
+      <button
+        type="button"
+        className={`shellx-browser-menu-row ${!usesGlobalDefault && selectedAdMode === "balanced" ? "active" : ""}`}
         onClick={() => onSetAdMode("balanced")}
         disabled={busy}
         data-debug-id="shellx-browser-ad-mode-balanced"
+        aria-pressed={!usesGlobalDefault && selectedAdMode === "balanced"}
+        data-shellx-release-observe="pressed disabled"
       >
         <span>Balanced</span>
         <small>Block common ad noise while preserving compatibility.</small>
       </button>
       <button
         type="button"
-        className={`shellx-browser-menu-row ${selectedAdMode === "strict" ? "active" : ""}`}
+        className={`shellx-browser-menu-row ${!usesGlobalDefault && selectedAdMode === "strict" ? "active" : ""}`}
         onClick={() => onSetAdMode("strict")}
         disabled={busy}
         data-debug-id="shellx-browser-ad-mode-strict"
+        aria-pressed={!usesGlobalDefault && selectedAdMode === "strict"}
+        data-shellx-release-observe="pressed disabled"
       >
         <span>Strict</span>
         <small>Block matching ad and tracker requests before they load.</small>
       </button>
       <button
         type="button"
-        className={`shellx-browser-menu-row ${selectedAdMode === "off" ? "active" : ""}`}
+        className={`shellx-browser-menu-row ${!usesGlobalDefault && selectedAdMode === "off" ? "active" : ""}`}
         onClick={() => onSetAdMode("off")}
         disabled={busy}
         data-debug-id="shellx-browser-ad-mode-off"
+        aria-pressed={!usesGlobalDefault && selectedAdMode === "off"}
+        data-shellx-release-observe="pressed disabled"
       >
         <span>Off</span>
         <small>Load the page without ShellX ad filtering.</small>

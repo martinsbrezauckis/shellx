@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 const app = readFileSync("src/App.tsx", "utf8");
 const chatOutput = readFileSync("src/components/ChatOutput.tsx", "utf8");
-const packageJson = readFileSync("package.json", "utf8");
+const testSuiteManifest = readFileSync("scripts/test-suite-manifest.mjs", "utf8");
 
 let failures = 0;
 function assert(cond: boolean, label: string): void {
@@ -29,8 +29,8 @@ assert(
   "Stable preview callback dispatches through a current implementation ref",
 );
 assert(
-  packageJson.includes("tsx scripts/test-chat-typing-performance.ts"),
-  "typing performance guard runs in pnpm test",
+  testSuiteManifest.includes('["tsx","scripts/test-chat-typing-performance.ts"]'),
+  "typing performance guard runs in the canonical test suite",
 );
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} chat typing performance guards`);

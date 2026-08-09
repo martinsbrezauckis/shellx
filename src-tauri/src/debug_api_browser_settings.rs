@@ -6,7 +6,8 @@ use axum::{
     Json, Router,
 };
 
-use crate::debug_api::{browser_registry, emit_browser_latest, ApiState};
+use crate::debug_api::{browser_registry, ApiState};
+use crate::debug_api_browser_events::emit_browser_latest;
 
 pub(crate) fn browser_settings_routes() -> Router<ApiState> {
     Router::new()

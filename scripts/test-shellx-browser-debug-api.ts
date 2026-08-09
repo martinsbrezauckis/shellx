@@ -1,13 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
-import { shellxDataPaths } from "./shellx-debug-paths";
+import { cleanupOwnedBrowserLifecycle } from "./shellx-browser-test-cleanup";
+import { resolveShellxDebugApiConnection } from "./shellx-debug-paths";
 
 type JsonObject = Record<string, unknown>;
 
 interface BrowserTask {
   taskId: string;
   profileId: string;
+  ownerActorId: string;
+  ownerSurface: string;
   status: string;
 }
 
@@ -78,11 +81,13 @@ interface BrowserBookmark {
 
 interface BrowserState {
   profiles: Array<{ profileId: string }>;
+  tasks?: BrowserTask[];
   tabs?: BrowserTab[];
   activeBrowserTabId?: string | null;
   bookmarks?: BrowserBookmark[];
   bookmarkToolbar?: Array<{ label: string; url?: string | null; kind: "link" | "folder"; children: Array<{ label: string; url?: string | null }> }>;
   history?: Array<{ url: string; profileId: string; title?: string | null }>;
+  receipts?: Array<{ kind?: string }>;
   privacy?: {
     globalAdMode: string;
     profileModes: Array<{ profileId: string; adMode: string }>;
@@ -159,6 +164,9 @@ interface BrowserActionResponse {
     attached: boolean;
     visible: boolean;
     stable: boolean;
+    expectedFingerprint?: string | null;
+    actualFingerprint?: string | null;
+    fingerprintMatches?: boolean | null;
     enabled: boolean;
     editable: boolean;
     inViewport: boolean;
@@ -205,6 +213,11 @@ interface BrowserActionResponse {
     refs?: Array<{
       refId: string;
       selector?: string;
+      fingerprint?: string | null;
+      domPath?: string | null;
+      frameUrl?: string | null;
+      shadowPath?: string[];
+      optionValues?: string[];
       label?: string;
       role?: string;
       name?: string | null;
@@ -237,6 +250,24 @@ interface BrowserActionResponse {
       value?: string | null;
       autocomplete?: string | null;
       formAction?: string | null;
+    }>;
+    formFieldGroups?: Array<{
+      groupId: string;
+      groupKind: string;
+      label: string;
+      formAction?: string | null;
+      fieldIntents: string[];
+      sensitive: boolean;
+      fields: Array<{
+        refId?: string | null;
+        selector?: string | null;
+        label: string;
+        fieldKind: string;
+        intent: string;
+        required: boolean;
+        disabled: boolean;
+        sensitive: boolean;
+      }>;
     }>;
     accessibilityTree?: Array<{
       refId?: string | null;
@@ -278,6 +309,7 @@ interface VaultApprovedGrantResponse {
   grant: {
     grantId: string;
     secretRef: string;
+    origin: string | null;
     approved: boolean;
     revoked: boolean;
   };
@@ -317,7 +349,7 @@ interface BrowserTraceBundleResponse {
   bytes: number;
   sha256: string;
   source: string;
-  receipt: { kind: string };
+  receipt: { kind: string; taskId?: string | null };
 }
 
 interface BrowserCdpExecuteResponse {
@@ -366,6 +398,7 @@ interface BrowserRecipeReplayResponse {
   status: string;
   stepsPlanned: number;
   stepsApplied: number;
+  decisionPoints: JsonObject[];
   dryRun: boolean;
   receipt: { kind: string };
 }
@@ -376,7 +409,7 @@ interface BrowserRobotJob {
   kind: string;
   recipePath?: string | null;
   attempts: number;
-  receipt: { kind: string };
+  receipt: { kind: string; evidence?: JsonObject };
 }
 
 interface BrowserStorageStateManifest {
@@ -501,39 +534,17 @@ const SECRET_SENTINEL = "SHELLX_BROWSER_SMOKE_SECRET_DO_NOT_ECHO";
 const CONSOLE_ERROR_SENTINEL = "SHELLX_BROWSER_CONSOLE_SMOKE_ERROR";
 const CONTROL_FIXTURE_TITLE = "ShellX Browser Control Fixture";
 
-function readFirst(paths: string[]): string | null {
-  for (const path of paths) {
-    if (!existsSync(path)) continue;
-    const value = readFileSync(path, "utf8").trim();
-    if (value) return value;
-  }
-  return null;
-}
-
-function debugBase(): { base: string; token: string } {
-  const explicitBase = process.env.SHELLX_DEBUG_BASE?.trim();
-  const port = process.env.SHELLX_DEBUG_PORT?.trim()
-    ?? readFirst(shellxDataPaths("debug-api.port"));
-  const token = process.env.SHELLX_DEBUG_SECRET?.trim()
-    ?? process.env.SHELLX_DEBUG_TOKEN?.trim()
-    ?? readFirst(shellxDataPaths("shellxagent.token"))
-    ?? readFirst(shellxDataPaths("debug.token"));
-
-  if (!explicitBase && !port) {
-    throw new Error("ShellX debug API port not found. Start the installed app or set SHELLX_DEBUG_BASE.");
-  }
-  if (!token) {
-    throw new Error("ShellX debug API token not found. Set SHELLX_DEBUG_SECRET or start the installed app.");
-  }
-  return {
-    base: explicitBase ?? `http://127.0.0.1:${port}`,
-    token,
-  };
-}
-
 function assert(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
   console.log(`  ✓ ${message}`);
+}
+
+function recordsEqual(left: unknown, right: unknown): boolean {
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  const leftRecord = left as JsonObject;
+  const rightRecord = right as JsonObject;
+  const leftKeys = Object.keys(leftRecord);
+  return leftKeys.length === Object.keys(rightRecord).length && leftKeys.every((key) => Object.is(leftRecord[key], rightRecord[key]));
 }
 
 async function api<T>(ctx: { base: string; token: string }, method: string, path: string, body?: unknown): Promise<T> {
@@ -642,6 +653,8 @@ async function startControlFixture(): Promise<{ url: string; close: () => Promis
     <div id="rich-editor" role="textbox" contenteditable="true" aria-labelledby="rich-label"></div>
     <div id="choice-card" role="radio" tabindex="0" aria-checked="false">For myself I want a personal space</div>
     <button id="apply">Apply</button>
+    <button id="stale-target" aria-label="Stale target version one">Stale target v1</button>
+    <button id="replace-stale-target">Replace stale target</button>
     <button id="advance-signin-step">Advance sign-in step</button>
     <button id="hidden-action">Hidden action</button>
     <div id="covered-wrap">
@@ -650,6 +663,7 @@ async function startControlFixture(): Promise<{ url: string; close: () => Promis
     </div>
     <button id="start-delayed">Start delayed status</button>
     <output id="result">Waiting</output>
+    <output id="stale-result">Stale target waiting</output>
     <output id="signin-step">Identifier step</output>
     <output id="choice-result">Choice waiting</output>
     <output id="rich-result">Rich waiting</output>
@@ -676,6 +690,19 @@ async function startControlFixture(): Promise<{ url: string; close: () => Promis
           "beforeOk=" + String(richBeforeInput > 0),
           "inputOk=" + String(richInput > 0)
         ].join(" ");
+      });
+      document.getElementById("stale-target").addEventListener("click", () => {
+        document.getElementById("stale-result").textContent = "Original stale target clicked";
+      });
+      document.getElementById("replace-stale-target").addEventListener("click", () => {
+        const replacement = document.createElement("button");
+        replacement.id = "stale-target";
+        replacement.setAttribute("aria-label", "Stale target version two");
+        replacement.textContent = "Stale target v2";
+        replacement.addEventListener("click", () => {
+          document.getElementById("stale-result").textContent = "Fresh stale target clicked";
+        });
+        document.getElementById("stale-target").replaceWith(replacement);
       });
       document.getElementById("advance-signin-step").addEventListener("click", () => {
         window.history.pushState({ step: "password" }, "", "/password-step");
@@ -858,25 +885,46 @@ function hostReadablePath(path: string): string {
   return path;
 }
 
-async function closeAllBrowserTabs(ctx: { base: string; token: string }): Promise<void> {
-  const tabs = await api<{ tabs: BrowserTab[] }>(ctx, "GET", "/browser/tabs").catch(() => ({ tabs: [] }));
-  for (const tab of tabs.tabs) {
-    await api<{ ok: boolean; tab: BrowserTab }>(ctx, "POST", "/browser/tabs/close", {
-      browserTabId: tab.browserTabId,
-    }).catch(() => undefined);
-  }
+function isShellxBrowserArtifactPath(path: string | null | undefined, folder: string): boolean {
+  if (!path) return false;
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  return normalized.includes(`/.shellx/browser-artifacts/${folder.toLowerCase()}/`);
 }
 
 async function main(): Promise<void> {
   console.log("\n=== ShellX Browser live Debug API smoke ===");
-  const ctx = debugBase();
+  const ctx = await resolveShellxDebugApiConnection();
   let fixture: { url: string; close: () => Promise<void> } | null = null;
+  let depositVaultRef: string | null = null;
+  const baselineTaskIds = new Set<string>();
+  const baselineTabIds = new Set<string>();
 
   try {
     const health = await api<JsonObject>(ctx, "GET", "/health");
     assert(Boolean(health), "debug API health responds");
+    assert(typeof health.appVersion === "string" && health.appVersion.length > 0, "debug API health identifies the app version");
+    assert(typeof health.buildCommit === "string" && health.buildCommit.length > 0, "debug API health identifies the build commit");
+    assert(health.browserProtocolVersion === "1.5.0", "debug API health identifies the Browser protocol version");
+    assert(typeof health.browserSchemaRevision === "string" && health.browserSchemaRevision.length > 0, "debug API health identifies the Browser schema revision");
+    assert(Array.isArray(health.browserFeatureFlags), "debug API health advertises Browser feature flags");
+    assert((health.browserFeatureFlags as unknown[]).includes("hiddenRenderedCheck"), "debug API health advertises hidden rendered checks");
+
+  const initialSummary = await api<JsonObject>(ctx, "GET", "/browser/summary");
+  assert(Buffer.byteLength(JSON.stringify(initialSummary), "utf8") < 16 * 1024, "Browser summary stays under the 16 KiB orientation budget");
+  assert(!JSON.stringify(initialSummary).includes("lastObservation"), "Browser summary excludes prior observations");
+  assert(typeof initialSummary.revisions === "object" && initialSummary.revisions !== null, "Browser summary exposes revision ids");
+  const quietCheck = await api<JsonObject>(ctx, "GET", "/browser/check?timeoutMs=0");
+  const quietEffects = quietCheck.effects as JsonObject;
+  assert(quietCheck.schema === "shellx/browser-quiet-check@1" && quietCheck.mode === "quiet", "Browser quiet check exposes a versioned compact contract");
+  assert(Object.values(quietEffects).every((value) => value === false), "Browser quiet check reports no UI, task, engine, or receipt mutation");
+  assert(recordsEqual((quietCheck.summary as JsonObject).revisions, initialSummary.revisions), "Browser quiet check leaves Browser revisions unchanged");
+
+  const coreState = await api<BrowserState>(ctx, "GET", "/browser/state?view=core");
+  assert((coreState.history ?? []).length === 0 && (coreState.receipts ?? []).length === 0, "Browser core state excludes heavy history and receipt slices");
 
   const state = await api<BrowserState>(ctx, "GET", "/browser/state");
+  for (const task of state.tasks ?? []) baselineTaskIds.add(task.taskId);
+  for (const tab of state.tabs ?? []) baselineTabIds.add(tab.browserTabId);
   assert(state.profiles.some((profile) => profile.profileId === "agent-work"), "browser state exposes Agent Work profile");
   assert(state.profiles.some((profile) => profile.profileId === "task-disposable"), "browser state exposes Task Disposable profile");
   const personalBrowserLocked = state.personalLock?.enabled === true && state.personalLock.locked === true;
@@ -898,6 +946,11 @@ async function main(): Promise<void> {
   assert(task.profileId === "agent-work", "browser task uses requested profile");
   await waitForBrowserEngine(ctx, "https://example.com/");
   assert(true, "native Browser engine loads example.com");
+  const taskSummaries = await api<{ detail: string; includeObservation: boolean; tasks: JsonObject[] }>(ctx, "GET", "/browser/tasks");
+  assert(taskSummaries.detail === "summary" && taskSummaries.includeObservation === false, "Browser task listing defaults to summary detail");
+  assert(!JSON.stringify(taskSummaries.tasks).includes("lastObservation"), "Browser task summaries omit observations");
+  const settledTask = await api<{ settled: boolean; taskId?: string }>(ctx, "GET", `/browser/settle?taskId=${encodeURIComponent(task.taskId)}&timeoutMs=1000`);
+  assert(settledTask.settled === true && settledTask.taskId === task.taskId, "Browser settle endpoint returns a compact settled task snapshot");
 
   const tabsResponse = await api<{ tabs: BrowserTab[] }>(ctx, "GET", "/browser/tabs");
   const taskTab = tabsResponse.tabs.find((tab) => tab.taskId === task.taskId);
@@ -1169,7 +1222,7 @@ async function main(): Promise<void> {
     reason: "Debug API smoke needs a safe storage-state manifest",
   });
   assert(storageExport.exportId.startsWith("browser-storage-"), "storage-state export returns export id");
-  assert(storageExport.path.includes("shellx-browser-storage-state"), "storage-state export returns Browser storage artifact path");
+  assert(isShellxBrowserArtifactPath(storageExport.path, "shellx-browser-storage-state"), "storage-state export returns ShellX Browser storage artifact path");
   assert(/^[a-f0-9]{64}$/i.test(storageExport.sha256), "storage-state export returns SHA-256");
   assert(storageExport.receipt.kind === "browserStorageStateManifestExported", "storage-state export emits browserStorageStateManifestExported receipt");
   const storageJson = JSON.parse(readFileSync(hostReadablePath(storageExport.path), "utf8")) as JsonObject;
@@ -1189,7 +1242,7 @@ async function main(): Promise<void> {
     reason: "Debug API smoke needs a redacted Browser HAR",
   });
   assert(harExport.harId.startsWith("browser-har-"), "HAR export returns har id");
-  assert(harExport.path.includes("shellx-browser-har"), "HAR export returns Browser HAR artifact path");
+  assert(isShellxBrowserArtifactPath(harExport.path, "shellx-browser-har"), "HAR export returns ShellX Browser HAR artifact path");
   assert(harExport.entries > 0, "HAR export includes at least one network entry");
   assert(/^[a-f0-9]{64}$/i.test(harExport.sha256), "HAR export returns SHA-256");
   assert(harExport.receipt.kind === "browserHarExported", "HAR export emits browserHarExported receipt");
@@ -1204,7 +1257,7 @@ async function main(): Promise<void> {
     reason: "Debug API smoke needs Browser performance metrics",
   });
   assert(performanceExport.performanceId.startsWith("browser-performance-"), "performance export returns performance id");
-  assert(performanceExport.path.includes("shellx-browser-performance"), "performance export returns Browser performance artifact path");
+  assert(isShellxBrowserArtifactPath(performanceExport.path, "shellx-browser-performance"), "performance export returns ShellX Browser performance artifact path");
   assert(performanceExport.bytes > 100, "performance export writes non-empty JSON");
   assert(/^[a-f0-9]{64}$/i.test(performanceExport.sha256), "performance export returns SHA-256");
   assert(performanceExport.receipt.kind === "browserPerformanceExported", "performance export emits browserPerformanceExported receipt");
@@ -1394,7 +1447,7 @@ async function main(): Promise<void> {
   });
   assert(screenshot.status === "applied", "captureScreenshot applies through the Browser debug API");
   assert(screenshot.receipt?.kind === "browserScreenshotCaptured", "captureScreenshot emits browserScreenshotCaptured receipt");
-  assert(Boolean(screenshot.screenshot?.path.includes("shellx-browser-screenshots")), "captureScreenshot returns Browser screenshot path");
+  assert(isShellxBrowserArtifactPath(screenshot.screenshot?.path, "shellx-browser-screenshots"), "captureScreenshot returns ShellX Browser screenshot path");
   assert((screenshot.screenshot?.bytes ?? 0) > 10_000, "captureScreenshot returns non-empty PNG bytes");
   assert(/^[a-f0-9]{64}$/i.test(screenshot.screenshot?.sha256 ?? ""), "captureScreenshot returns screenshot SHA-256");
   assert((screenshot.screenshot?.width ?? 0) > 0, "captureScreenshot returns screenshot width");
@@ -1409,6 +1462,26 @@ async function main(): Promise<void> {
   assert(selectorlessClick.requiresEngine === false, "selectorless click has an engine but no target");
 
   fixture = await startControlFixture();
+  const renderedSummaryBefore = await api<JsonObject>(ctx, "GET", "/browser/summary");
+  const renderedCheckUrl = new URL(fixture.url);
+  renderedCheckUrl.searchParams.set("redacted", "query-secret");
+  const renderedCheck = await api<JsonObject>(ctx, "POST", "/browser/rendered-check", {
+    url: renderedCheckUrl.toString(),
+    expectText: CONTROL_FIXTURE_TITLE,
+    titleIncludes: CONTROL_FIXTURE_TITLE,
+    selector: "#apply",
+    timeoutMs: 10_000,
+    expectedDomains: ["127.0.0.1"],
+  });
+  const renderedEvidence = renderedCheck.evidence as JsonObject;
+  const renderedEffects = renderedCheck.effects as JsonObject;
+  assert(renderedCheck.schema === "shellx/browser-rendered-check@1" && renderedCheck.status === "passed", "hidden rendered check loads and verifies the JavaScript-capable fixture");
+  assert(renderedEvidence.textMatched === true && renderedEvidence.titleMatched === true && renderedEvidence.selectorMatched === true, "hidden rendered check returns bounded expectation evidence");
+  assert(!String(renderedEvidence.finalUrl).includes("query-secret"), "hidden rendered check redacts final URL query data");
+  assert(renderedEffects.visibleWindowOpened === false && renderedEffects.browserTaskCreated === false && renderedEffects.browserTabCreated === false, "hidden rendered check does not mutate the visible cowork surface");
+  assert(renderedEffects.hiddenRendererDestroyed === true && renderedEffects.profilePersisted === false, "hidden rendered check destroys its incognito renderer");
+  const renderedSummaryAfter = await api<JsonObject>(ctx, "GET", "/browser/summary");
+  assert(recordsEqual(renderedSummaryAfter.revisions, renderedSummaryBefore.revisions), "hidden rendered check leaves Browser registry revisions unchanged");
   const controlTask = await api<BrowserTask>(ctx, "POST", "/browser/task/start", {
     goal: "Smoke test: fill, click, wait, and extract a local control fixture",
     startUrl: fixture.url,
@@ -1433,6 +1506,11 @@ async function main(): Promise<void> {
     && field.label === "Agent input"
     && field.fieldKind === "text"
   )), "observe returns fixture form field map");
+  assert(Boolean(fixtureObserve.observation?.formFieldGroups?.some((group) =>
+    group.fieldIntents.includes("password")
+    && group.sensitive === true
+    && group.fields.some((field) => field.intent === "password" && field.sensitive === true)
+  )), "observe returns grouped form intelligence for sensitive password fields");
   assert(Boolean(fixtureObserve.observation?.accessibilityTree?.some((node) =>
     node.role === "button"
     && node.label === "Apply"
@@ -1445,8 +1523,49 @@ async function main(): Promise<void> {
   assert((applyRef?.bounds?.width ?? 0) > 0 && (applyRef?.bounds?.height ?? 0) > 0, "observe returns element bounds for fixture button");
   assert(applyRef?.visible === true && applyRef.enabled === true, "observe returns visible/enabled metadata for fixture button");
   assert(applyRef?.frameId === "main", "observe marks fixture button in main frame");
+  assert(typeof applyRef?.fingerprint === "string" && applyRef.fingerprint.startsWith("fp-"), "observe returns an opaque element fingerprint");
+  assert(typeof applyRef?.domPath === "string" && applyRef.domPath.includes("button#apply"), "observe returns a bounded DOM path");
+  assert(applyRef?.frameUrl === fixture.url, "observe returns the main-frame URL for a ref");
+  assert(Array.isArray(applyRef?.shadowPath) && applyRef.shadowPath.length === 0, "observe returns an explicit empty shadow path for a main-DOM ref");
   const inputRef = fixtureObserve.observation?.refs?.find((ref) => ref.selector === "#agent-input");
   assert(inputRef?.editable === true, "observe returns editable metadata for fixture input");
+
+  const unchangedObserve = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
+    taskId: controlTask.taskId,
+    action: "observe",
+  });
+  const unchangedApplyRef = unchangedObserve.observation?.refs?.find((ref) => ref.selector === "#apply");
+  assert(unchangedApplyRef?.refId === applyRef?.refId, "unchanged controls keep the same deterministic ref across observations");
+  assert(unchangedApplyRef?.fingerprint === applyRef?.fingerprint, "unchanged controls keep the same fingerprint across observations");
+
+  const staleTargetRef = unchangedObserve.observation?.refs?.find((ref) => ref.selector === "#stale-target");
+  assert(Boolean(staleTargetRef?.refId && staleTargetRef.fingerprint), "observe returns a stable ref for the stale-target fixture");
+  const replaceStaleTarget = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
+    taskId: controlTask.taskId,
+    action: "clickRef",
+    selector: "#replace-stale-target",
+  });
+  assert(replaceStaleTarget.status === "applied", "fixture replaces a same-selector control after observation");
+  const staleTargetClick = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
+    taskId: controlTask.taskId,
+    action: "clickRef",
+    refId: staleTargetRef?.refId,
+  });
+  assert(staleTargetClick.status === "staleRef" && staleTargetClick.ok === false, "changed element identity blocks an old observation ref");
+  assert(staleTargetClick.actionability?.fingerprintMatches === false, "stale ref response exposes fingerprint mismatch evidence");
+  assert(staleTargetClick.stepSummary?.failedChecks?.includes("fingerprint") === true, "stale ref step summary requires a fresh observe");
+  const refreshedObserve = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
+    taskId: controlTask.taskId,
+    action: "observe",
+  });
+  const refreshedStaleTargetRef = refreshedObserve.observation?.refs?.find((ref) => ref.selector === "#stale-target");
+  assert(refreshedStaleTargetRef?.refId !== staleTargetRef?.refId, "changed semantic identity produces a new deterministic ref");
+  const refreshedStaleTargetClick = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
+    taskId: controlTask.taskId,
+    action: "clickRef",
+    refId: refreshedStaleTargetRef?.refId,
+  });
+  assert(refreshedStaleTargetClick.status === "applied", "fresh observation ref acts on the replacement control");
 
   const controlTabState = await api<BrowserState>(ctx, "GET", "/browser/state");
   const controlTab = controlTabState.tabs?.find((tab) => tab.taskId === controlTask.taskId);
@@ -1498,7 +1617,7 @@ async function main(): Promise<void> {
   assert((fullPageScreenshot.screenshot?.pageHeight ?? 0) >= 1800, "full-page screenshot reports full document height");
   assert((fullPageScreenshot.screenshot?.height ?? 0) > 1200, "full-page screenshot PNG height exceeds the visible Browser viewport");
 
-  const passwordRef = fixtureObserve.observation?.refs?.find((ref) => ref.selector === "input[type=\"password\"][name=\"Passwd\"]");
+  const passwordRef = fixtureObserve.observation?.refs?.find((ref) => ref.role === "password" && ref.selector === "input[name=\"Passwd\"]");
   assert(passwordRef?.editable === true && passwordRef.action === "fillRef", "observe returns a strict executable selector for named password fields");
   assert((passwordRef?.strictMatchCount ?? 0) === 1, "named password ref is strict");
   const richRef = fixtureObserve.observation?.refs?.find((ref) => ref.selector === "#rich-editor");
@@ -1528,7 +1647,7 @@ async function main(): Promise<void> {
     value: "fixture-password",
   });
   assert(passwordFill.status === "applied", "fillRef applies through a named password ref from observe");
-  assert(passwordFill.actionability?.selector === "input[type=\"password\"][name=\"Passwd\"]", "password ref resolves to the strict observed selector");
+  assert(passwordFill.actionability?.selector === passwordRef?.selector, "password ref resolves to the strict observed selector");
   assert(!JSON.stringify(passwordFill).includes("fixture-password"), "password fill response omits raw typed value");
 
   const richFill = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
@@ -1723,11 +1842,13 @@ async function main(): Promise<void> {
     reason: "Debug API smoke needs a reusable Browser recipe",
   });
   assert(recipeExport.recipeId.startsWith("browser-recipe-"), "recipe export returns recipe id");
-  assert(recipeExport.path.includes("shellx-browser-recipes"), "recipe export returns Browser recipe artifact path");
+  assert(isShellxBrowserArtifactPath(recipeExport.path, "shellx-browser-recipes"), "recipe export returns ShellX Browser recipe artifact path");
   assert(recipeExport.steps > 0, "recipe export records replay steps");
   assert(/^[a-f0-9]{64}$/i.test(recipeExport.sha256), "recipe export returns SHA-256");
   assert(recipeExport.receipt.kind === "browserRecipeExported", "recipe export emits browserRecipeExported receipt");
-  const recipeJson = JSON.parse(readFileSync(hostReadablePath(recipeExport.path), "utf8")) as JsonObject;
+  const recipeArtifactPath = hostReadablePath(recipeExport.path);
+  const recipeArtifactText = readFileSync(recipeArtifactPath, "utf8");
+  const recipeJson = JSON.parse(recipeArtifactText) as JsonObject;
   assert(recipeJson.schemaVersion === 2, "recipe export records the Action Recipe V2 schema version");
   assert(typeof recipeJson.goal === "string" && recipeJson.goal.includes("Smoke test"), "recipe export records a reusable workflow goal");
   assert(Array.isArray(recipeJson.variableInputs), "recipe export records variable input declarations");
@@ -1746,6 +1867,8 @@ async function main(): Promise<void> {
   assert(recipeReplay.ok && recipeReplay.dryRun === true, "recipe replay supports dry-run mode");
   assert(recipeReplay.stepsPlanned === recipeExport.steps, "recipe replay counts planned steps from recipe artifact");
   assert(recipeReplay.stepsApplied === 0, "recipe dry-run does not apply steps");
+  assert(Array.isArray(recipeReplay.decisionPoints), "recipe replay returns decision points for dry-run recovery");
+  assert(recipeReplay.decisionPoints.length === (recipeJson.decisionPoints as unknown[]).length, "recipe replay decision points match the exported recipe");
   assert(recipeReplay.receipt.kind === "browserRecipeReplayCompleted", "recipe replay emits browserRecipeReplayCompleted receipt");
 
   const scheduledRobot = await api<BrowserRobotJob>(ctx, "POST", "/browser/robots/schedule", {
@@ -1765,6 +1888,7 @@ async function main(): Promise<void> {
   });
   assert(robotRun.status === "dryRunCompleted" && robotRun.attempts >= 1, "robot run supports dry-run execution");
   assert(robotRun.receipt.kind === "browserRobotRunCompleted", "robot run emits browserRobotRunCompleted receipt");
+  assert(robotRun.receipt.evidence?.stepsPlanned === recipeExport.steps, "robot run executes the saved recipe dry-run planner before completion");
 
   const cancelRobot = await api<BrowserRobotJob>(ctx, "POST", "/browser/robots/schedule", {
     taskId: controlTask.taskId,
@@ -1779,15 +1903,31 @@ async function main(): Promise<void> {
   assert(cancelledRobot.status === "cancelled", "robot cancel marks a queued job cancelled");
   assert(cancelledRobot.receipt.kind === "browserRobotCancelled", "robot cancel emits browserRobotCancelled receipt");
 
+  let changedRecipeError = "";
+  try {
+    writeFileSync(recipeArtifactPath, `${recipeArtifactText}\n`, "utf8");
+    changedRecipeError = await apiError(ctx, "POST", "/browser/recipes/replay", {
+      taskId: controlTask.taskId,
+      recipePath: recipeExport.path,
+      dryRun: true,
+      reason: "Debug API smoke rejects a changed Browser recipe",
+    });
+  } finally {
+    writeFileSync(recipeArtifactPath, recipeArtifactText, "utf8");
+  }
+  assert(changedRecipeError.includes("does not match its export receipt"), "recipe replay rejects a changed saved artifact");
+
   const traceBundle = await api<BrowserTraceBundleResponse>(ctx, "POST", "/browser/trace/export", {
     taskId: controlTask.taskId,
     reason: "Debug API smoke needs a bounded Browser trace bundle",
   });
   assert(traceBundle.traceId.startsWith("browser-trace-"), "trace bundle export returns trace id");
-  assert(traceBundle.path.includes("shellx-browser-traces"), "trace bundle export returns Browser trace artifact path");
+  assert(traceBundle.taskId === controlTask.taskId, "trace bundle response preserves its exact typed task identity after payload redaction");
+  assert(isShellxBrowserArtifactPath(traceBundle.path, "shellx-browser-traces"), "trace bundle export returns ShellX Browser trace artifact path");
   assert(traceBundle.bytes > 100, "trace bundle export writes non-empty JSON");
   assert(/^[a-f0-9]{64}$/i.test(traceBundle.sha256), "trace bundle export returns SHA-256");
   assert(traceBundle.receipt.kind === "browserTraceBundleExported", "trace bundle export emits browserTraceBundleExported receipt");
+  assert(traceBundle.receipt.taskId === controlTask.taskId, "trace bundle receipt preserves its exact typed task identity after payload redaction");
   const traceJson = JSON.parse(readFileSync(hostReadablePath(traceBundle.path), "utf8")) as JsonObject;
   assert((traceJson.redactionPolicy as JsonObject)?.rawDom === false, "trace bundle records raw DOM redaction");
   const diagnosticsSections = traceJson.diagnosticsSections as JsonObject;
@@ -1840,6 +1980,36 @@ async function main(): Promise<void> {
   });
   assert(rejectedGrantApply.includes("not granted"), "session grant apply rejects unapproved grants");
 
+  for (const route of ["/browser/vault/fill-receipt", "/browser/vault/generate-receipt"]) {
+    const rejectedReceipt = await apiError(ctx, "POST", route, {
+      taskId: task.taskId,
+      origin: "https://example.com",
+      itemId: "caller-authored-receipt",
+      grantId: "caller-authored-grant",
+    });
+    assert(
+      rejectedReceipt.includes("browser_vault_receipt_requires_verified_operation"),
+      `${route} rejects caller-authored success receipts`,
+    );
+    assert(bodyDoesNotEchoSecret(rejectedReceipt), `${route} denial remains redacted`);
+  }
+
+  const depositKeyBaseline = await api<{ keys: string[] }>(ctx, "GET", "/vault/keys?prefix=browser-deposits%2F");
+  for (const invalid of [
+    { label: "   ", secretValue: SECRET_SENTINEL },
+    { label: "Browser empty secret", secretValue: "" },
+    { label: "Browser oversized secret", secretValue: "x".repeat(4_097) },
+  ]) {
+    const rejected = await apiMaybe<JsonObject>(ctx, "POST", "/browser/vault-deposits", invalid);
+    if (rejected.ok || rejected.status !== 400) throw new Error("invalid Vault deposit must fail before persistence");
+    assert(bodyDoesNotEchoSecret(rejected.text), "invalid Vault deposit error does not echo secret material");
+  }
+  const depositKeysAfterRejections = await api<{ keys: string[] }>(ctx, "GET", "/vault/keys?prefix=browser-deposits%2F");
+  assert(
+    recordsEqual([...depositKeysAfterRejections.keys].sort(), [...depositKeyBaseline.keys].sort()),
+    "invalid Vault deposits do not create orphan browser-deposits keys",
+  );
+
   const deposit = await api<BrowserVaultDepositResponse>(ctx, "POST", "/browser/vault-deposits", {
     taskId: task.taskId,
     label: "Browser smoke API key",
@@ -1851,6 +2021,7 @@ async function main(): Promise<void> {
   assert(deposit.serverReceipt.payloadHash === deposit.storageCommitHash, "deposit serverReceipt carries payload hash");
   assert(typeof deposit.vaultRef === "string" && deposit.vaultRef.startsWith("browser-deposits/"), "write-only Vault deposit persists to a Vault ref");
   assert(bodyDoesNotEchoSecret(deposit), "write-only Vault deposit response does not echo secret");
+  depositVaultRef = deposit.vaultRef ?? null;
 
   for (const [action, expected] of [
     ["submitFinal", "finalActionApproval"],
@@ -1868,14 +2039,17 @@ async function main(): Promise<void> {
     assert(gated.requiredApproval === expected, `${action} requires ${expected}`);
   }
 
-  const deniedVaultFill = await apiError(ctx, "POST", "/browser/action", {
-    taskId: task.taskId,
-    action: "fillFromVaultGrant",
-    refId: "page",
+  const deniedVaultFill = await api<VaultProbeResponse>(ctx, "POST", "/vault/e2e/probe-use", {
     grantId: "grant-missing",
     secretRef: "missing/browser-password",
+    operation: "fill",
+    actor: { agentId: "shellx-browser-agent", origin: new URL(fixture.url).origin },
   });
-  assert(deniedVaultFill.includes("vault_grant_denied"), "fillFromVaultGrant rejects missing grants before fill");
+  assert(
+    deniedVaultFill.ok === false && deniedVaultFill.decision === "deny" && deniedVaultFill.reason === "grantNotFound",
+    "Vault probe rejects a missing grant before Browser fill",
+  );
+  assert(deniedVaultFill.secretPresent === false, "missing Browser fill secret remains absent");
   assert(bodyDoesNotEchoSecret(deniedVaultFill), "denied Vault fill response does not echo secret sentinel");
 
   const vaultGrantSecretRef = `000-smoke/browser-debug-grant-${Date.now()}`;
@@ -1893,7 +2067,7 @@ async function main(): Promise<void> {
       "Vault grant smoke skips writes unless SHELLX_VAULT_E2E=1 and disposable SHELLX_VAULT_PROFILE_DIR are enabled",
     );
   } else {
-    const seededSecretRefs = [vaultGrantSecretRef, vaultUserOnlySecretRef];
+    const seededSecretRefs = [vaultGrantSecretRef];
     try {
       if (!seedVaultGrantSecret.ok) {
         throw new Error(`POST /vault/set failed ${seedVaultGrantSecret.status}: ${seedVaultGrantSecret.text}`);
@@ -1905,16 +2079,18 @@ async function main(): Promise<void> {
         secretRef: vaultGrantSecretRef,
         actorScope: { kind: "allShellxAgents" },
         operation: "fill",
+        origin: new URL(fixture.url).origin,
         expiresAtMs: Date.now() + 10 * 60 * 1000,
       });
       assert(approvedVaultGrant.ok === true && approvedVaultGrant.grant.approved === true, "Vault E2E grant can approve mediated Browser fill");
+      assert(approvedVaultGrant.grant.origin === new URL(fixture.url).origin, "Vault E2E Browser grant remains bound to the exact fixture origin");
       assert(approvedVaultGrant.secretExposed === false && bodyDoesNotEchoSecret(approvedVaultGrant), "Vault grant approval response is redacted");
 
       const probeAllowed = await api<VaultProbeResponse>(ctx, "POST", "/vault/e2e/probe-use", {
         grantId: approvedVaultGrant.grant.grantId,
         secretRef: vaultGrantSecretRef,
         operation: "fill",
-        actor: { agentId: "shellx-browser-agent" },
+        actor: { agentId: "shellx-browser-agent", origin: new URL(fixture.url).origin },
       });
       assert(probeAllowed.ok === true && probeAllowed.decision === "allowMediated", "Vault approved fill grant authorizes Browser agent actor");
       assert(probeAllowed.secretPresent === true && probeAllowed.secretExposed === false, "Vault approved fill probe reports presence without value");
@@ -1937,12 +2113,14 @@ async function main(): Promise<void> {
         userOnly: true,
       });
       assert(seedUserOnly.ok === true, "Vault grant smoke seeds disposable user-only secret");
+      seededSecretRefs.push(vaultUserOnlySecretRef);
       assert(bodyDoesNotEchoSecret(seedUserOnly), "Vault user-only seed response does not echo the disposable secret");
 
       const deniedUserOnlyGrant = await apiMaybe<VaultApprovedGrantResponse>(ctx, "POST", "/vault/e2e/approve-grant", {
         secretRef: vaultUserOnlySecretRef,
         actorScope: { kind: "allShellxAgents" },
         operation: "fill",
+        origin: new URL(fixture.url).origin,
         expiresAtMs: Date.now() + 10 * 60 * 1000,
       });
       if (deniedUserOnlyGrant.ok || deniedUserOnlyGrant.status !== 400) {
@@ -1958,7 +2136,10 @@ async function main(): Promise<void> {
       assert(!agentResources.resources.some((resource) => resource.key === vaultUserOnlySecretRef), "Vault resources hides disposable user-only secret metadata from agents");
     } finally {
       for (const key of seededSecretRefs) {
-        await apiMaybe<{ ok: boolean }>(ctx, "POST", "/vault/delete", { key }).catch(() => ({ ok: false, status: 0, text: "delete failed" }));
+        const deleted = await api<{ ok: boolean }>(ctx, "POST", "/vault/delete", { key });
+        assert(deleted.ok === true, `Vault grant smoke cleanup deletes ${key}`);
+        const afterDelete = await api<{ keys: string[] }>(ctx, "GET", `/vault/keys?prefix=${encodeURIComponent(key)}`);
+        assert(!afterDelete.keys.includes(key), `Vault grant smoke cleanup proves ${key} absent`);
       }
     }
   }
@@ -1972,13 +2153,43 @@ async function main(): Promise<void> {
   assert(rawReveal.status === "blocked", "raw secret reveal is blocked");
   assert(rawReveal.requiredApproval === "rawSecretRevealApproval", "raw secret reveal requires explicit approval");
 
-  const operatorTask = await api<BrowserTask>(ctx, "POST", "/browser/task/start", {
-    goal: "Smoke test: operator pause, resume, takeover, and abort Browser task controls",
+  const tasksBeforePolicyDenial = await api<{ tasks: JsonObject[] }>(ctx, "GET", "/browser/tasks");
+  const tabsBeforePolicyDenial = await api<{ tabs: BrowserTab[] }>(ctx, "GET", "/browser/tabs");
+  const deniedLegacyAutonomy = await apiMaybe<JsonObject>(ctx, "POST", "/browser/task/start", {
+    goal: "Smoke test: reject a policy label that ShellX does not enforce",
     startUrl: "https://example.com/",
     profileId: "agent-work",
     autonomy: "approvalFirst",
     expectedDomains: ["example.com"],
   });
+  if (deniedLegacyAutonomy.ok || deniedLegacyAutonomy.status !== 403) {
+    throw new Error("Debug API unexpectedly accepted a legacy Browser autonomy label");
+  }
+  assert(deniedLegacyAutonomy.text.includes("browser_task_autonomy_policy_fixed"), "legacy Browser autonomy denial exposes a stable machine-readable code");
+  const tasksAfterPolicyDenial = await api<{ tasks: JsonObject[] }>(ctx, "GET", "/browser/tasks");
+  const tabsAfterPolicyDenial = await api<{ tabs: BrowserTab[] }>(ctx, "GET", "/browser/tabs");
+  assert(
+    tasksAfterPolicyDenial.tasks.length === tasksBeforePolicyDenial.tasks.length &&
+      tabsAfterPolicyDenial.tabs.length === tabsBeforePolicyDenial.tabs.length,
+    "rejected Browser autonomy creates no task or tab lifecycle",
+  );
+  const deniedAutonomyMutation = await apiMaybe<JsonObject>(ctx, "POST", "/browser/task/autonomy", {
+    taskId: task.taskId,
+    autonomy: "assistedAutonomous",
+  });
+  if (deniedAutonomyMutation.ok || deniedAutonomyMutation.status !== 403) {
+    throw new Error("Debug API unexpectedly mutated fixed Browser autonomy");
+  }
+  assert(deniedAutonomyMutation.text.includes("browser_task_autonomy_policy_fixed"), "Browser autonomy mutation denial exposes a stable machine-readable code");
+
+  const operatorTask = await api<BrowserTask>(ctx, "POST", "/browser/task/start", {
+    goal: "Smoke test: operator pause, resume, takeover, and abort Browser task controls",
+    startUrl: "https://example.com/",
+    profileId: "agent-work",
+    autonomy: "assistedAutonomous",
+    expectedDomains: ["example.com"],
+  });
+  assert(operatorTask.ownerActorId === "shellxDebugApiAgent" && operatorTask.ownerSurface === "debugApiBearer", "Browser task records its authenticated Debug API owner principal");
   const pausedTask = await api<BrowserTaskControlResponse>(ctx, "POST", "/browser/task/control", {
     taskId: operatorTask.taskId,
     action: "pause",
@@ -1987,6 +2198,7 @@ async function main(): Promise<void> {
   });
   assert(pausedTask.ok === true && pausedTask.status === "paused", "browser task control can pause a task");
   assert(pausedTask.receipt.kind === "browserTaskPaused", "browser task pause emits browserTaskPaused receipt");
+  assert(pausedTask.receipt.evidence?.requestedBy === "shellxDebugApiAgent", "browser task pause actor comes from the authenticated API surface");
   const blockedPausedAction = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
     taskId: operatorTask.taskId,
     action: "observe",
@@ -2000,24 +2212,18 @@ async function main(): Promise<void> {
   });
   assert(resumedTask.status === "running", "browser task control can resume a paused task");
   assert(resumedTask.receipt.kind === "browserTaskResumed", "browser task resume emits browserTaskResumed receipt");
-  const takeoverTask = await api<BrowserTaskControlResponse>(ctx, "POST", "/browser/task/control", {
+  assert(resumedTask.receipt.evidence?.requestedBy === "shellxDebugApiAgent", "browser task resume ignores a forged requestedBy actor");
+  const deniedTakeover = await apiMaybe<JsonObject>(ctx, "POST", "/browser/task/control", {
     taskId: operatorTask.taskId,
     action: "userTakeover",
     reason: "debug-api smoke user takeover",
     requestedBy: "debug-api-smoke",
   });
-  assert(takeoverTask.status === "userTakeover", "browser task control can hand a task to the user");
-  assert(takeoverTask.receipt.kind === "browserTaskUserTakeover", "browser task user takeover emits browserTaskUserTakeover receipt");
-  const blockedTakeoverAction = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
-    taskId: operatorTask.taskId,
-    action: "observe",
-  });
-  assert(blockedTakeoverAction.status === "userTakeover", "user-takeover browser task blocks agent actions");
-  await api<BrowserTaskControlResponse>(ctx, "POST", "/browser/task/control", {
-    taskId: operatorTask.taskId,
-    action: "resume",
-    requestedBy: "debug-api-smoke",
-  });
+  if (deniedTakeover.ok || deniedTakeover.status !== 403) {
+    throw new Error("Debug API unexpectedly claimed operator user takeover");
+  }
+  assert(true, "Debug API cannot claim operator user takeover");
+  assert(deniedTakeover.text.includes("browser_task_operator_control_required"), "takeover denial exposes a stable machine-readable code");
   const abortedTask = await api<BrowserTaskControlResponse>(ctx, "POST", "/browser/task/control", {
     taskId: operatorTask.taskId,
     action: "abort",
@@ -2026,6 +2232,7 @@ async function main(): Promise<void> {
   });
   assert(abortedTask.status === "aborted", "browser task control can abort a task");
   assert(abortedTask.receipt.kind === "browserTaskAborted", "browser task abort emits browserTaskAborted receipt");
+  assert(abortedTask.receipt.evidence?.requestedBy === "shellxDebugApiAgent", "browser task abort actor comes from the authenticated API surface");
   const blockedAbortAction = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
     taskId: operatorTask.taskId,
     action: "observe",
@@ -2046,7 +2253,7 @@ async function main(): Promise<void> {
   });
   assert(finish.status === "completed", "browser task can be completed through debug API");
 
-  const receipts = await api<{ receipts: Array<{ kind: string }> }>(ctx, "GET", "/browser/receipts?limit=200");
+  const receipts = await api<{ receipts: Array<{ kind: string; taskId?: string | null }> }>(ctx, "GET", "/browser/receipts?limit=200");
   for (const kind of [
     "browserTaskStarted",
     "browserBookmarkSaved",
@@ -2075,7 +2282,6 @@ async function main(): Promise<void> {
     "browserVaultDepositCreated",
     "browserTaskPaused",
     "browserTaskResumed",
-    "browserTaskUserTakeover",
     "browserTaskAborted",
     "browserTaskActionBlocked",
     "browserReportWritten",
@@ -2083,11 +2289,36 @@ async function main(): Promise<void> {
   ]) {
     assert(receipts.receipts.some((receipt) => receipt.kind === kind), `receipt log includes ${kind}`);
   }
+  assert(
+    !receipts.receipts.some((receipt) => receipt.kind === "browserTaskUserTakeover" && receipt.taskId === operatorTask.taskId),
+    "denied Debug API takeover does not emit a successful user-takeover receipt",
+  );
 
   console.log("ShellX Browser live Debug API smoke passed");
   } finally {
-    await fixture?.close();
-    await closeAllBrowserTabs(ctx);
+    try {
+      if (depositVaultRef) {
+        const deleted = await api<{ ok: boolean }>(ctx, "POST", "/vault/delete", { key: depositVaultRef });
+        assert(deleted.ok === true, "write-only Vault deposit cleanup deletes its exact owned key");
+        const afterDelete = await api<{ keys: string[] }>(ctx, "GET", `/vault/keys?prefix=${encodeURIComponent(depositVaultRef)}`);
+        assert(!afterDelete.keys.includes(depositVaultRef), "write-only Vault deposit cleanup proves its key absent");
+      }
+      const current = await api<BrowserState>(ctx, "GET", "/browser/state");
+      await cleanupOwnedBrowserLifecycle(
+        (method, path, body) => api(ctx, method, path, body),
+        {
+          taskIds: (current.tasks ?? [])
+            .map((task) => task.taskId)
+            .filter((taskId) => !baselineTaskIds.has(taskId)),
+          tabIds: (current.tabs ?? [])
+            .map((tab) => tab.browserTabId)
+            .filter((tabId) => !baselineTabIds.has(tabId)),
+          label: "browser-debug-api",
+        },
+      );
+    } finally {
+      await fixture?.close();
+    }
   }
 }
 

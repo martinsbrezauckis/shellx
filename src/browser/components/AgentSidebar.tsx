@@ -1,29 +1,39 @@
-import type { FormEvent, JSX, KeyboardEvent, MouseEvent, PointerEvent } from "react";
+import { useEffect, useRef, type FormEvent, type JSX, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 
 import type { VaultApprovalPrompt } from "../../lib/vault-approval-prompts";
 import type { ShellIconName } from "../../components/icons";
 import { ShellIcon } from "../../components/icons";
-import type { BrowserAutonomy, BrowserConsoleLog, BrowserReceipt, BrowserTask, BrowserTransferEntry } from "../types";
+import type { BrowserConsoleLog, BrowserReceipt, BrowserTask, BrowserTransferEntry } from "../types";
+import type { BrowserCoworkMessage } from "../browserCowork";
+import { BrowserEvidencePanel } from "./BrowserEvidencePanel";
 import { VaultPromptCards } from "./VaultPromptCards";
 
-export type AgentSidebarPanelId = "chat" | "requests" | "actions" | "errors";
+export type AgentSidebarPanelId = "chat" | "requests" | "actions" | "evidence" | "errors";
 export type AgentSidebarSectionId = "tasks" | "console" | "receipts";
 
-interface BrowserChatMessage {
-  id: string;
-  role: "system" | "user" | "assistant";
-  label: string;
-  text: string;
+const AGENT_SIDEBAR_PANEL_ORDER: AgentSidebarPanelId[] = [
+  "chat",
+  "requests",
+  "actions",
+  "evidence",
+  "errors",
+];
+
+function agentSidebarTabId(panel: AgentSidebarPanelId): string {
+  return `shellx-browser-right-tab-${panel}`;
 }
 
 interface AgentSidebarProps {
   show: boolean;
+  rightSidebarWidth: number;
   rightPanelTab: AgentSidebarPanelId;
-  autonomy: BrowserAutonomy;
   goal: string;
   busy: boolean;
+  taskControlBusy: boolean;
   activeTask: BrowserTask | null;
-  browserChatMessages: BrowserChatMessage[];
+  browserChatMessages: BrowserCoworkMessage[];
+  coworkSessionLabel: string;
+  canSendCoworkMessage: boolean;
   vaultPromptSummary: string;
   vaultPrompts: VaultApprovalPrompt[];
   tasks: BrowserTask[];
@@ -37,16 +47,21 @@ interface AgentSidebarProps {
   browserLogLevelClass: (level: string) => string;
   vaultPromptIcon: (prompt: VaultApprovalPrompt) => ShellIconName;
   vaultPromptDebugSuffix: (prompt: VaultApprovalPrompt) => string;
+  canExplainPage: boolean;
   onResizeStart: (event: PointerEvent<HTMLButtonElement>) => void;
+  onResizeKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   onHideRightSidebar: () => void;
   onSelectRightPanelTab: (tab: AgentSidebarPanelId) => void;
-  onAutonomyChange: (autonomy: BrowserAutonomy) => void;
   onGoalChange: (goal: string) => void;
   onSubmitTask: (event: FormEvent<HTMLFormElement>) => void;
   onSubmitTaskFromKeyboard: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-  onControlTask: (action: "pause" | "resume" | "abort" | "userTakeover") => void;
-  onFinishTask: (status: "completed" | "blocked") => void;
+  onControlTask: (
+    action: "pause" | "resume" | "abort" | "userTakeover",
+    event: MouseEvent<HTMLButtonElement>,
+  ) => void;
+  onFinishTask: (status: "completed" | "blocked", event: MouseEvent<HTMLButtonElement>) => void;
   onToggleSection: (section: AgentSidebarSectionId) => void;
+  onExplainPage: (event: MouseEvent<HTMLButtonElement>) => void;
   onVaultPromptAction: (
     prompt: VaultApprovalPrompt,
     actionKind?: string,
@@ -56,12 +71,15 @@ interface AgentSidebarProps {
 
 export function AgentSidebar({
   show,
+  rightSidebarWidth,
   rightPanelTab,
-  autonomy,
   goal,
   busy,
+  taskControlBusy,
   activeTask,
   browserChatMessages,
+  coworkSessionLabel,
+  canSendCoworkMessage,
   vaultPromptSummary,
   vaultPrompts,
   tasks,
@@ -75,18 +93,26 @@ export function AgentSidebar({
   browserLogLevelClass,
   vaultPromptIcon,
   vaultPromptDebugSuffix,
+  canExplainPage,
   onResizeStart,
+  onResizeKeyDown,
   onHideRightSidebar,
   onSelectRightPanelTab,
-  onAutonomyChange,
   onGoalChange,
   onSubmitTask,
   onSubmitTaskFromKeyboard,
   onControlTask,
   onFinishTask,
   onToggleSection,
+  onExplainPage,
   onVaultPromptAction,
 }: AgentSidebarProps): JSX.Element | null {
+  const chatStreamRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollChatRef = useRef(true);
+  useEffect(() => {
+    const stream = chatStreamRef.current;
+    if (stream && autoScrollChatRef.current) stream.scrollTop = stream.scrollHeight;
+  }, [browserChatMessages, show]);
   if (!show) return null;
 
   const isSectionOpen = (section: AgentSidebarSectionId) => !collapsedSections[section];
@@ -95,6 +121,27 @@ export function AgentSidebar({
   const recentTasks = tasks.slice().reverse().slice(0, 1);
   const recentTransfers = [...downloads, ...uploads].slice().reverse().slice(0, 1);
   const recentReceipts = receipts.slice().reverse().slice(0, 4);
+  const handlePanelTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    panel: AgentSidebarPanelId,
+  ) => {
+    const currentIndex = AGENT_SIDEBAR_PANEL_ORDER.indexOf(panel);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % AGENT_SIDEBAR_PANEL_ORDER.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + AGENT_SIDEBAR_PANEL_ORDER.length) % AGENT_SIDEBAR_PANEL_ORDER.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = AGENT_SIDEBAR_PANEL_ORDER.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextPanel = AGENT_SIDEBAR_PANEL_ORDER[nextIndex] ?? panel;
+    onSelectRightPanelTab(nextPanel);
+    document.getElementById(agentSidebarTabId(nextPanel))?.focus();
+  };
 
   return (
     <aside className="shellx-browser-sidebar shellx-browser-right">
@@ -102,9 +149,11 @@ export function AgentSidebar({
         type="button"
         className="shellx-browser-sidebar-resize"
         onPointerDown={onResizeStart}
+        onKeyDown={onResizeKeyDown}
         data-debug-id="shellx-browser-sidebar-resize"
-        title="Resize right panel"
-        aria-label="Resize right panel"
+        data-shellx-release-observe="title"
+        title={`Resize right panel · width=${rightSidebarWidth}px · use Left/Right arrows`}
+        aria-label="Resize right panel with Left and Right arrow keys"
       />
       <div className="shellx-browser-right-controls">
         <button
@@ -113,57 +162,89 @@ export function AgentSidebar({
           onClick={onHideRightSidebar}
           data-debug-id="shellx-browser-toggle-right-sidebar-button"
           title="Hide right panel"
+          aria-label="Hide right panel"
+          data-shellx-release-observe="title"
         >
           <ShellIcon name="chevrons-right" size={14} />
         </button>
-        <label className="shellx-browser-sidebar-autonomy">
-          <span>Autonomy</span>
-          <select
-            value={autonomy}
-            onChange={(event) => onAutonomyChange(event.target.value as BrowserAutonomy)}
-            data-debug-id="shellx-browser-autonomy"
-          >
-            <option value="approvalFirst">Approval first</option>
-            <option value="assistedAutonomous">Assisted autonomous</option>
-            <option value="autonomous">Autonomous</option>
-            <option value="unattendedWithPolicy">Unattended policy</option>
-          </select>
-        </label>
         <div className="shellx-browser-vault-prompt" data-debug-id="shellx-browser-vault-prompt">
           {vaultPromptSummary}
         </div>
       </div>
-      <div className="shellx-browser-right-tabs" role="tablist" aria-label="Browser right panel">
+      <div className="shellx-browser-right-tabs" role="tablist" aria-label="Browser right panel" aria-orientation="horizontal">
         <button
           type="button"
+          id="shellx-browser-right-tab-chat"
+          role="tab"
+          aria-selected={rightPanelTab === "chat"}
+          aria-controls="shellx-browser-panel-chat"
+          tabIndex={rightPanelTab === "chat" ? 0 : -1}
           className={rightPanelTab === "chat" ? "active" : ""}
           onClick={() => onSelectRightPanelTab("chat")}
+          onKeyDown={(event) => handlePanelTabKeyDown(event, "chat")}
           data-debug-id="shellx-browser-right-tab-chat"
+          data-shellx-release-observe="selected"
         >
           Chat
         </button>
         <button
           type="button"
+          id="shellx-browser-right-tab-requests"
+          role="tab"
+          aria-selected={rightPanelTab === "requests"}
+          aria-controls="shellx-browser-panel-requests"
+          tabIndex={rightPanelTab === "requests" ? 0 : -1}
           className={rightPanelTab === "requests" ? "active" : ""}
           onClick={() => onSelectRightPanelTab("requests")}
+          onKeyDown={(event) => handlePanelTabKeyDown(event, "requests")}
           data-debug-id="shellx-browser-right-tab-requests"
+          data-shellx-release-observe="selected"
         >
           <span>Requests</span>
           {requestBadge && <span className="shellx-browser-tab-badge">{requestBadge}</span>}
         </button>
         <button
           type="button"
+          id="shellx-browser-right-tab-actions"
+          role="tab"
+          aria-selected={rightPanelTab === "actions"}
+          aria-controls="shellx-browser-panel-actions"
+          tabIndex={rightPanelTab === "actions" ? 0 : -1}
           className={rightPanelTab === "actions" ? "active" : ""}
           onClick={() => onSelectRightPanelTab("actions")}
+          onKeyDown={(event) => handlePanelTabKeyDown(event, "actions")}
           data-debug-id="shellx-browser-right-tab-actions"
+          data-shellx-release-observe="selected"
         >
           Actions
         </button>
         <button
           type="button"
+          id="shellx-browser-right-tab-evidence"
+          role="tab"
+          aria-selected={rightPanelTab === "evidence"}
+          aria-controls="shellx-browser-panel-evidence"
+          tabIndex={rightPanelTab === "evidence" ? 0 : -1}
+          className={rightPanelTab === "evidence" ? "active" : ""}
+          onClick={() => onSelectRightPanelTab("evidence")}
+          onKeyDown={(event) => handlePanelTabKeyDown(event, "evidence")}
+          data-debug-id="shellx-browser-right-tab-evidence"
+          data-shellx-release-observe="selected"
+        >
+          Evidence
+        </button>
+        <button
+          type="button"
+          id="shellx-browser-right-tab-errors"
+          role="tab"
+          aria-selected={rightPanelTab === "errors"}
+          aria-controls="shellx-browser-panel-errors"
+          tabIndex={rightPanelTab === "errors" ? 0 : -1}
           className={rightPanelTab === "errors" ? "active" : ""}
           onClick={() => onSelectRightPanelTab("errors")}
+          onKeyDown={(event) => handlePanelTabKeyDown(event, "errors")}
           data-debug-id="shellx-browser-right-tab-errors"
+          data-shellx-release-observe="selected"
         >
           Errors
         </button>
@@ -171,10 +252,25 @@ export function AgentSidebar({
 
       {rightPanelTab === "chat" && (
         <section
+          id="shellx-browser-panel-chat"
+          role="tabpanel"
+          aria-labelledby="shellx-browser-right-tab-chat"
           className="shellx-browser-agent-panel chat-expanded"
           data-debug-id="shellx-browser-agent-panel"
         >
-          <div className="shellx-browser-agent-chat-stream" data-debug-id="shellx-browser-agent-chat-stream">
+          <div
+            ref={chatStreamRef}
+            className="shellx-browser-agent-chat-stream"
+            data-debug-id="shellx-browser-agent-chat-stream"
+            onScroll={(event) => {
+              const stream = event.currentTarget;
+              autoScrollChatRef.current = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 48;
+            }}
+          >
+            <div className="shellx-browser-chat-bubble system" data-debug-id="shellx-browser-cowork-session">
+              <span>Attached session</span>
+              <p>{coworkSessionLabel}</p>
+            </div>
             {browserChatMessages.map((message) => (
               <div key={message.id} className={`shellx-browser-chat-bubble ${message.role}`}>
                 <span>{message.label}</span>
@@ -183,6 +279,19 @@ export function AgentSidebar({
             ))}
           </div>
           <form className="shellx-browser-agent-compose" onSubmit={onSubmitTask}>
+            <div className="shellx-browser-agent-quick-actions" data-debug-id="shellx-browser-agent-quick-actions">
+              <button
+                type="button"
+                className="shellx-browser-secondary"
+                onClick={onExplainPage}
+                disabled={busy || !canExplainPage || !canSendCoworkMessage}
+                data-debug-id="shellx-browser-chat-explain-page"
+                title={!canSendCoworkMessage ? "Open or choose a ShellX agent tab first" : canExplainPage ? "Ask the Browser agent to explain this page" : "Open a page before asking the Browser agent to explain it"}
+              >
+                <ShellIcon name="sparkles" size={13} />
+                Explain page
+              </button>
+            </div>
             <label className="shellx-browser-goal">
               <span>Message</span>
               <textarea
@@ -190,6 +299,7 @@ export function AgentSidebar({
                 onChange={(event) => onGoalChange(event.target.value)}
                 onKeyDown={onSubmitTaskFromKeyboard}
                 data-debug-id="shellx-browser-goal"
+                data-shellx-release-observe="value"
                 rows={4}
               />
             </label>
@@ -197,9 +307,9 @@ export function AgentSidebar({
               <button
                 type="submit"
                 className="shellx-browser-primary"
-                disabled={busy || !goal.trim()}
+                disabled={busy || !goal.trim() || !canSendCoworkMessage}
                 data-debug-id="shellx-browser-agent-send"
-                title="Send"
+                title={canSendCoworkMessage ? `Send to ${coworkSessionLabel}` : "Open or choose a ShellX agent tab first"}
               >
                 <ShellIcon name="send" size={14} />
                 Send
@@ -207,9 +317,10 @@ export function AgentSidebar({
               <button
                 type="button"
                 className="shellx-browser-secondary"
-                onClick={() => onControlTask("pause")}
-                disabled={!activeTask || activeTask.status === "paused" || busy}
+                onClick={(event) => onControlTask("pause", event)}
+                disabled={!activeTask || activeTask.status === "paused" || taskControlBusy}
                 data-debug-id="shellx-browser-agent-pause"
+                data-shellx-release-observe="disabled"
                 title="Pause"
               >
                 <ShellIcon name="pause" size={13} />
@@ -218,9 +329,10 @@ export function AgentSidebar({
               <button
                 type="button"
                 className="shellx-browser-secondary"
-                onClick={() => onControlTask("resume")}
-                disabled={!activeTask || activeTask.status === "running" || busy}
+                onClick={(event) => onControlTask("resume", event)}
+                disabled={!activeTask || activeTask.status === "running" || taskControlBusy}
                 data-debug-id="shellx-browser-agent-resume"
+                data-shellx-release-observe="disabled"
                 title="Resume"
               >
                 <ShellIcon name="play" size={13} />
@@ -229,9 +341,10 @@ export function AgentSidebar({
               <button
                 type="button"
                 className="shellx-browser-secondary"
-                onClick={() => onControlTask("userTakeover")}
-                disabled={!activeTask || activeTask.status === "userTakeover" || busy}
+                onClick={(event) => onControlTask("userTakeover", event)}
+                disabled={!activeTask || activeTask.status === "userTakeover" || taskControlBusy}
                 data-debug-id="shellx-browser-agent-takeover"
+                data-shellx-release-observe="disabled"
                 title="User takeover"
               >
                 <ShellIcon name="user" size={13} />
@@ -240,9 +353,10 @@ export function AgentSidebar({
               <button
                 type="button"
                 className="shellx-browser-secondary"
-                onClick={() => onControlTask("abort")}
-                disabled={!activeTask || activeTask.status === "aborted" || busy}
+                onClick={(event) => onControlTask("abort", event)}
+                disabled={!activeTask || activeTask.status === "aborted" || taskControlBusy}
                 data-debug-id="shellx-browser-agent-abort"
+                data-shellx-release-observe="disabled"
                 title="Abort task"
               >
                 <ShellIcon name="ban" size={13} />
@@ -254,7 +368,7 @@ export function AgentSidebar({
       )}
 
       {rightPanelTab === "requests" && (
-        <section className="shellx-browser-requests-panel shellx-browser-scroll-panel" data-debug-id="shellx-browser-requests-panel">
+        <section id="shellx-browser-panel-requests" role="tabpanel" aria-labelledby="shellx-browser-right-tab-requests" className="shellx-browser-requests-panel shellx-browser-scroll-panel" data-debug-id="shellx-browser-requests-panel">
           <VaultPromptCards
             prompts={vaultPrompts}
             busy={busy}
@@ -271,67 +385,75 @@ export function AgentSidebar({
       )}
 
       {rightPanelTab === "actions" && (
-        <section className="shellx-browser-actions-panel shellx-browser-scroll-panel" data-debug-id="shellx-browser-actions-panel">
+        <section id="shellx-browser-panel-actions" role="tabpanel" aria-labelledby="shellx-browser-right-tab-actions" className="shellx-browser-actions-panel shellx-browser-scroll-panel" data-debug-id="shellx-browser-actions-panel">
           <button
             type="button"
+            id="shellx-browser-collapse-tasks"
             className="shellx-browser-section-heading"
             onClick={() => onToggleSection("tasks")}
             data-debug-id="shellx-browser-collapse-tasks"
             aria-expanded={isSectionOpen("tasks")}
+            aria-controls="shellx-browser-actions-tasks-section"
           >
             <ShellIcon name={isSectionOpen("tasks") ? "chevron-down" : "chevron-right"} size={12} />
             <span>Tasks</span>
           </button>
           {isSectionOpen("tasks") && (
-            <div className="shellx-browser-agent-controls">
+            <div
+              id="shellx-browser-actions-tasks-section"
+              role="region"
+              aria-labelledby="shellx-browser-collapse-tasks"
+            >
+              <div className="shellx-browser-agent-controls">
               <button
                 type="button"
                 className="shellx-browser-secondary"
-                onClick={() => onFinishTask("completed")}
-                disabled={!activeTask || busy}
+                onClick={(event) => onFinishTask("completed", event)}
+                disabled={!activeTask || taskControlBusy}
                 data-debug-id="shellx-browser-complete"
+                data-shellx-release-observe="disabled"
               >
                 Complete
               </button>
               <button
                 type="button"
                 className="shellx-browser-secondary"
-                onClick={() => onFinishTask("blocked")}
-                disabled={!activeTask || busy}
+                onClick={(event) => onFinishTask("blocked", event)}
+                disabled={!activeTask || taskControlBusy}
                 data-debug-id="shellx-browser-block"
+                data-shellx-release-observe="disabled"
               >
                 Block
               </button>
+              </div>
+              {recentTasks.map((task) => (
+                <div
+                  key={task.taskId}
+                  className={`shellx-browser-list-row ${task.taskId === activeTask?.taskId ? "active" : ""}`}
+                  data-debug-id={`shellx-browser-task-${task.taskId}`}
+                  aria-current={task.taskId === activeTask?.taskId ? "true" : undefined}
+                >
+                  <span>{task.goal}</span>
+                  <small>{task.status}</small>
+                </div>
+              ))}
+              {tasks.length > recentTasks.length && (
+                <div className="shellx-browser-empty-log">{tasks.length - recentTasks.length} older tasks hidden</div>
+              )}
+              {tasks.length === 0 && (
+                <div className="shellx-browser-empty-state">No browser tasks yet</div>
+              )}
             </div>
-          )}
-          {isSectionOpen("tasks") && recentTasks.map((task) => (
-            <button
-              key={task.taskId}
-              type="button"
-              className={`shellx-browser-list-row ${task.taskId === activeTask?.taskId ? "active" : ""}`}
-              data-debug-id={`shellx-browser-task-${task.taskId}`}
-            >
-              <span>{task.goal}</span>
-              <small>{task.status}</small>
-            </button>
-          ))}
-          {isSectionOpen("tasks") && tasks.length > recentTasks.length && (
-            <div className="shellx-browser-empty-log">{tasks.length - recentTasks.length} older tasks hidden</div>
-          )}
-          {isSectionOpen("tasks") && tasks.length === 0 && (
-            <div className="shellx-browser-empty-state">No browser tasks yet</div>
           )}
 
           <section className="shellx-browser-transfer-list" data-debug-id="shellx-browser-downloads">
-            <button
-              type="button"
-              className="shellx-browser-section-heading"
-              onClick={() => undefined}
-              aria-expanded="true"
+            <div
+              className="shellx-browser-section-heading static"
+              aria-label="Transfer history"
             >
               <ShellIcon name="file" size={12} />
               <span>Transfers</span>
-            </button>
+            </div>
             {recentTransfers.map((entry) => (
               <div key={entry.transferId} className="shellx-browser-transfer">
                 <span>{entry.direction}</span>
@@ -350,51 +472,76 @@ export function AgentSidebar({
           <section>
             <button
               type="button"
+              id="shellx-browser-collapse-receipts"
               className="shellx-browser-section-heading"
               onClick={() => onToggleSection("receipts")}
               data-debug-id="shellx-browser-collapse-receipts"
               aria-expanded={isSectionOpen("receipts")}
+              aria-controls="shellx-browser-actions-receipts-section"
             >
               <ShellIcon name={isSectionOpen("receipts") ? "chevron-down" : "chevron-right"} size={12} />
               <span>Receipts</span>
             </button>
-            {isSectionOpen("receipts") && recentReceipts.map((receipt) => (
-              <div key={receipt.receiptId} className="shellx-browser-receipt">
-                <span>{receipt.kind}</span>
-                <small>{formatReceiptTime(receipt.t)} · {receipt.summary}</small>
+            {isSectionOpen("receipts") && (
+              <div
+                id="shellx-browser-actions-receipts-section"
+                role="region"
+                aria-labelledby="shellx-browser-collapse-receipts"
+              >
+                {recentReceipts.map((receipt) => (
+                  <div key={receipt.receiptId} className="shellx-browser-receipt">
+                    <span>{receipt.kind}</span>
+                    <small>{formatReceiptTime(receipt.t)} · {receipt.summary}</small>
+                  </div>
+                ))}
+                {receipts.length > recentReceipts.length && (
+                  <div className="shellx-browser-empty-log">{receipts.length - recentReceipts.length} older receipts hidden</div>
+                )}
+                {receipts.length === 0 && (
+                  <div className="shellx-browser-empty-state">No receipts yet</div>
+                )}
               </div>
-            ))}
-            {isSectionOpen("receipts") && receipts.length > recentReceipts.length && (
-              <div className="shellx-browser-empty-log">{receipts.length - recentReceipts.length} older receipts hidden</div>
-            )}
-            {isSectionOpen("receipts") && receipts.length === 0 && (
-              <div className="shellx-browser-empty-state">No receipts yet</div>
             )}
           </section>
         </section>
       )}
 
+      <BrowserEvidencePanel
+        open={rightPanelTab === "evidence"}
+        activeTaskId={activeTask?.taskId}
+      />
+
       {rightPanelTab === "errors" && (
-        <section className="shellx-browser-console shellx-browser-scroll-panel" data-debug-id="shellx-browser-console">
+        <section id="shellx-browser-panel-errors" role="tabpanel" aria-labelledby="shellx-browser-right-tab-errors" className="shellx-browser-console shellx-browser-scroll-panel" data-debug-id="shellx-browser-console">
           <button
             type="button"
+            id="shellx-browser-collapse-console"
             className="shellx-browser-section-heading"
             onClick={() => onToggleSection("console")}
             data-debug-id="shellx-browser-collapse-console"
             aria-expanded={isSectionOpen("console")}
+            aria-controls="shellx-browser-errors-console-section"
           >
             <ShellIcon name={isSectionOpen("console") ? "chevron-down" : "chevron-right"} size={12} />
             <span>Page errors</span>
           </button>
-          {isSectionOpen("console") && consoleLogs.slice().reverse().slice(0, 12).map((log) => (
-            <div key={log.logId} className={`shellx-browser-log ${browserLogLevelClass(log.level)}`}>
-              <span>{log.level}</span>
-              <p>{log.message}</p>
-              <small>{formatReceiptTime(log.t)} · {formatLogLocation(log)}</small>
+          {isSectionOpen("console") && (
+            <div
+              id="shellx-browser-errors-console-section"
+              role="region"
+              aria-labelledby="shellx-browser-collapse-console"
+            >
+              {consoleLogs.slice().reverse().slice(0, 12).map((log) => (
+                <div key={log.logId} className={`shellx-browser-log ${browserLogLevelClass(log.level)}`}>
+                  <span>{log.level}</span>
+                  <p>{log.message}</p>
+                  <small>{formatReceiptTime(log.t)} · {formatLogLocation(log)}</small>
+                </div>
+              ))}
+              {consoleLogs.length === 0 && (
+                <div className="shellx-browser-empty-log">No page errors recorded</div>
+              )}
             </div>
-          ))}
-          {isSectionOpen("console") && consoleLogs.length === 0 && (
-            <div className="shellx-browser-empty-log">No page errors recorded</div>
           )}
         </section>
       )}

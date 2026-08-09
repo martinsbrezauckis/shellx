@@ -18,6 +18,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import type { AcpCommand } from "../types/acp";
+import { useModalFocus } from "../lib/useModalFocus";
 
 export interface PaletteAction {
  /** Stable id for the row, also used for keyboard nav. */
@@ -49,6 +50,9 @@ export function CommandPalette({
   const [q, setQ] = useState("");
   const [idx, setIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const listboxId = "shellx-command-palette-listbox";
+  useModalFocus(open, dialogRef, onClose);
 
  // Reset query on open/close so the palette is fresh each invocation.
   useEffect(() => {
@@ -78,6 +82,7 @@ export function CommandPalette({
       .map((x) => x.r);
     return ranked;
   }, [q, actions, skills, insertSlash]);
+  const activeOptionId = rowsOptionId(rows[idx]?.id);
 
  // Clamp idx into the available range.
   useEffect(() => {
@@ -114,11 +119,13 @@ export function CommandPalette({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div data-debug-id="surface-components-commandpalette-1" className="modal-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="palette"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
+        aria-modal="true"
         aria-label="Command palette"
       >
         <input
@@ -126,19 +133,31 @@ export function CommandPalette({
           type="text"
           className="palette-input"
           data-debug-id="command-palette-input"
+          data-shellx-release-observe="value"
           placeholder="Type a command — actions and slash-commands"
           value={q}
           onChange={(e) => { setQ(e.target.value); setIdx(0); }}
           onKeyDown={handleKey}
+          role="combobox"
+          aria-label="Search commands"
+          aria-autocomplete="list"
+          aria-expanded="true"
+          aria-controls={listboxId}
+          aria-activedescendant={activeOptionId}
         />
-        <div className="palette-list">
+        <div id={listboxId} className="palette-list" role="listbox" aria-label="Commands">
           {rows.length === 0 && (
             <div className="palette-empty">No matches.</div>
           )}
           {rows.map((r, i) => (
-            <button
+            <button data-debug-id="surface-components-commandpalette-4"
+              data-release-driver-family="activation"
               key={r.id}
               type="button"
+              id={rowsOptionId(r.id)}
+              role="option"
+              aria-selected={i === idx}
+              data-palette-action-id={r.group === "Action" ? r.id : undefined}
               className={`palette-row ${i === idx ? "active" : ""}`}
               onMouseEnter={() => setIdx(i)}
               onClick={() => { r.run(); onClose(); }}
@@ -155,6 +174,11 @@ export function CommandPalette({
       </div>
     </div>
   );
+}
+
+function rowsOptionId(rowId: string | undefined): string | undefined {
+  if (!rowId) return undefined;
+  return `shellx-command-palette-option-${rowId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 /**

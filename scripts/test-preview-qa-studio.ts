@@ -5,6 +5,7 @@ import {
   renderPreviewQaReceiptMarkdown,
   type PreviewQaFlowCheck,
 } from "../src/lib/preview-qa-studio";
+import { validatePreviewQaReleaseReceipt } from "./verify-preview-qa-receipt";
 import type { WorkPreviewDiagnostic } from "../src/lib/work-preview";
 
 const baseDiagnostic: WorkPreviewDiagnostic = {
@@ -66,6 +67,7 @@ const happyFlows: PreviewQaFlowCheck[] = [
 
 const receipt = buildPreviewQaReceipt({
   generatedAt: "2026-06-06T12:00:00.000Z",
+  sourceCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   target: {
     tabId: "tab-preview",
     label: "Preview QA fixture",
@@ -76,6 +78,7 @@ const receipt = buildPreviewQaReceipt({
 });
 
 assert.equal(receipt.schemaVersion, "shellx.preview.qa.v1", "preview QA receipt has a stable schema");
+assert.equal(receipt.sourceCommit, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "preview QA receipt can bind source identity");
 assert.equal(receipt.status, "pass", "passing Preview Doctor plus passing flows produce pass");
 assert.equal(receipt.summary.pass, 8, "receipt includes core and flow checks");
 assert(
@@ -131,5 +134,35 @@ const markdown = renderPreviewQaReceiptMarkdown(browserErrorReceipt);
 assert(markdown.includes("Preview QA Studio receipt"), "markdown receipt has a title");
 assert(markdown.includes("ReferenceError"), "markdown receipt includes browser evidence");
 assert(markdown.includes("Primary button responds"), "markdown receipt includes flow checks");
+
+const liveReceipt = buildPreviewQaReceipt({
+  generatedAt: "2026-07-27T12:00:00.000Z",
+  sourceCommit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  target: { tabId: "tab-live", label: "Installed app preview", cwd: "/workspace/app" },
+  diagnostic: {
+    ...baseDiagnostic,
+    tabId: "tab-live",
+    cwd: "/workspace/app",
+    state: { ...baseDiagnostic.state, tabId: "tab-live", cwd: "/workspace/app" },
+  },
+  flowChecks: happyFlows,
+});
+const validation = validatePreviewQaReleaseReceipt(
+  liveReceipt,
+  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  Date.parse("2026-07-27T13:00:00.000Z"),
+);
+assert.equal(validation.status, "pass", "fresh source-bound live receipt passes release validation");
+assert.equal(validation.interactiveCheckCount, happyFlows.length, "release validation requires live flow evidence");
+assert.throws(
+  () => validatePreviewQaReleaseReceipt(receipt, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Date.parse("2026-06-06T13:00:00.000Z")),
+  /synthetic unit-test target/,
+  "synthetic receipt cannot satisfy the release command",
+);
+assert.throws(
+  () => validatePreviewQaReleaseReceipt(liveReceipt, "cccccccccccccccccccccccccccccccccccccccc", Date.parse("2026-07-27T13:00:00.000Z")),
+  /does not match current source/,
+  "receipt from another source commit cannot satisfy the release command",
+);
 
 console.log("test-preview-qa-studio ok");

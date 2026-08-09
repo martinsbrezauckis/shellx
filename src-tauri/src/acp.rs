@@ -9,14 +9,14 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{oneshot, Mutex as TokioMutex};
-use tokio::time::{timeout, Duration};
+use tokio::sync::{oneshot, Mutex as TokioMutex, Notify, Semaphore};
+use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
 
 // Tauri trait imports — Emitter for .emit, Manager for .try_state /
@@ -25,6 +25,20 @@ use tracing::{debug, error, info, warn};
 // outside the debug-api feature gate (the parallel agent added the
 // access path; the import wasn't widened with it, causing build break).
 use tauri::{Emitter, Manager};
+
+#[path = "acp_requests.rs"]
+mod requests;
+use requests::{PendingAcpRequest, PendingAcpResponse};
+
+/// ShellX sessions are intentionally provider-native Full Auto unless a
+/// legacy/debug caller explicitly selects another wire mode. Keep this in one
+/// place so fresh Tauri, Debug API, reconnect, and direct spawn paths cannot
+/// silently drift back to the old confirmation default.
+pub const SHELLX_DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
+
+pub fn resolve_shellx_permission_mode(mode: Option<String>) -> String {
+    mode.unwrap_or_else(|| SHELLX_DEFAULT_PERMISSION_MODE.to_string())
+}
 
 /// Inject `_meta.tabId = <tab_id>` into a JSON payload if both:
 /// - payload is a Value::Object (most ACP events are)
@@ -104,6 +118,7 @@ fn emit_and_debug(
 /// path used by debug_api.rs and any caller that didn't migrate
 pub struct SessionRegistry {
     sessions: TokioMutex<HashMap<String, Arc<TokioMutex<GrokAcpSession>>>>,
+    session_starts: Arc<std::sync::Mutex<HashMap<String, Arc<SessionStartCancellation>>>>,
     // Tab-scoped autonomy store that survives session drops. Without
     // this, autonomy would live on `GrokAcpSession.permission_mode`
     // and every `/abort` → drop_tab → /connect rebuild would lose the
@@ -123,8 +138,69 @@ impl SessionRegistry {
     pub fn new() -> Self {
         Self {
             sessions: TokioMutex::new(HashMap::new()),
+            session_starts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             tab_autonomy: TokioMutex::new(HashMap::new()),
         }
+    }
+
+    /// Register one cancellable provider startup for a tab. The token lives
+    /// outside the per-session mutex so `/abort` can signal a slow ACP
+    /// handshake without waiting behind the startup that owns that mutex.
+    pub(crate) fn begin_session_start(&self, tab_id: &str) -> Result<SessionStartLease, String> {
+        let mut starts = self
+            .session_starts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if starts.contains_key(tab_id) {
+            return Err(format!(
+                "session start is already in progress for tab '{tab_id}'"
+            ));
+        }
+        let cancellation = Arc::new(SessionStartCancellation::default());
+        starts.insert(tab_id.to_string(), cancellation.clone());
+        Ok(SessionStartLease {
+            tab_id: tab_id.to_string(),
+            starts: self.session_starts.clone(),
+            cancellation,
+            finished: false,
+        })
+    }
+
+    /// Signal an in-flight startup without acquiring the session mutex.
+    /// Returns the exact token so an abort cleanup task can prove it is still
+    /// cancelling the same generation before touching the session slot.
+    pub(crate) fn cancel_session_start(
+        &self,
+        tab_id: &str,
+    ) -> Option<Arc<SessionStartCancellation>> {
+        let cancellation = self
+            .session_starts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(tab_id)
+            .cloned()?;
+        cancellation.cancel();
+        Some(cancellation)
+    }
+
+    pub(crate) fn session_start_is_current(
+        &self,
+        tab_id: &str,
+        cancellation: &Arc<SessionStartCancellation>,
+    ) -> bool {
+        self.session_starts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(tab_id)
+            .is_some_and(|current| Arc::ptr_eq(current, cancellation))
+    }
+
+    pub(crate) fn finish_session_start(
+        &self,
+        tab_id: &str,
+        cancellation: &Arc<SessionStartCancellation>,
+    ) {
+        remove_session_start(&self.session_starts, tab_id, cancellation);
     }
 
     /// Record the autonomy mode for a tab. Idempotent;
@@ -138,8 +214,8 @@ impl SessionRegistry {
 
     /// Read the autonomy mode previously stored for a
     /// tab. Returns None when no /autonomy has been issued for this
-    /// tab yet (first-connect flow — initial mode defaults to
-    /// `default` / Confirm).
+    /// tab yet; every spawn path resolves that absence to
+    /// `SHELLX_DEFAULT_PERMISSION_MODE`.
     pub async fn get_tab_autonomy(&self, tab_id: &str) -> Option<String> {
         let map = self.tab_autonomy.lock().await;
         map.get(tab_id).cloned()
@@ -147,7 +223,6 @@ impl SessionRegistry {
 
     /// Clear stored autonomy. Called when the React
     /// tab is closed (not on /abort — that's only the session lifecycle).
-    #[allow(dead_code)]
     pub async fn clear_tab_autonomy(&self, tab_id: &str) {
         let mut map = self.tab_autonomy.lock().await;
         map.remove(tab_id);
@@ -260,6 +335,83 @@ impl SessionRegistry {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct SessionStartCancellation {
+    cancelled: AtomicBool,
+    notify: Notify,
+}
+
+impl SessionStartCancellation {
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    async fn cancelled(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+        let notified = self.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if self.is_cancelled() {
+            return;
+        }
+        notified.await;
+    }
+}
+
+pub(crate) struct SessionStartLease {
+    tab_id: String,
+    starts: Arc<std::sync::Mutex<HashMap<String, Arc<SessionStartCancellation>>>>,
+    cancellation: Arc<SessionStartCancellation>,
+    finished: bool,
+}
+
+impl SessionStartLease {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+
+    pub(crate) async fn cancelled(&self) {
+        self.cancellation.cancelled().await;
+    }
+
+    pub(crate) fn finish(&mut self) {
+        remove_session_start(&self.starts, &self.tab_id, &self.cancellation);
+        self.finished = true;
+    }
+}
+
+impl Drop for SessionStartLease {
+    fn drop(&mut self) {
+        if self.finished || self.cancellation.is_cancelled() {
+            return;
+        }
+        remove_session_start(&self.starts, &self.tab_id, &self.cancellation);
+    }
+}
+
+fn remove_session_start(
+    starts: &std::sync::Mutex<HashMap<String, Arc<SessionStartCancellation>>>,
+    tab_id: &str,
+    cancellation: &Arc<SessionStartCancellation>,
+) {
+    let mut starts = starts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if starts
+        .get(tab_id)
+        .is_some_and(|current| Arc::ptr_eq(current, cancellation))
+    {
+        starts.remove(tab_id);
+    }
+}
+
 /// Cancel the active prompt for an already-registered tab without creating a
 /// new session slot. Build Stop uses this after halting the orchestrator so a
 /// long ACP turn cannot keep streaming receipts behind the stopped UI state.
@@ -296,9 +448,8 @@ impl Default for SessionRegistry {
     }
 }
 
-/// Pending synchronous permission
-/// requests, keyed by request_id (uuid v4). Used to make Confirm-mode
-/// `terminal/create` a TRUE blocking gate.
+/// Pending synchronous permission requests, keyed by request_id (uuid v4).
+/// Retained for defensive requests from migrated sessions and diagnostics.
 ///
 /// Flow:
 /// 1. acp.rs::handle_terminal_create creates a `oneshot::channel`,
@@ -378,15 +529,6 @@ pub fn tab_id_or_default(tab_id: Option<String>) -> String {
     tab_id.unwrap_or_else(|| "default".to_string())
 }
 
-/// Basic ACP request structure
-#[derive(Serialize, Debug)]
-struct AcpRequest<T> {
-    jsonrpc: String,
-    id: u64,
-    method: String,
-    params: T,
-}
-
 /// Basic ACP notification structure (no id) — kept for future / compatibility (dead in Phase 1 custom path)
 #[allow(dead_code)]
 #[derive(Serialize, Debug)]
@@ -431,19 +573,27 @@ struct FsCapabilities {
     write_text_file: bool,
 }
 
-/// Session creation parameters
-/// Phase 4: mcpServers must be camelCase to match what the Grok agent expects in session/new params.
-/// grok-build requires authMethodId in session/new; without it the
-/// server returns 'Authentication required — no auth method id
-/// provided'. We pick the first authMethod declared in the initialize
-/// response (see GrokAcpSession::auth_method_id).
+/// Session creation parameters. Current Grok Build ACP authenticates with a
+/// separate `authenticate` request after `initialize`; `session/new` only
+/// receives the working directory and session-scoped MCP servers.
 #[derive(Serialize, Debug)]
 struct SessionNewParams {
     cwd: String,
     #[serde(rename = "mcpServers")]
     mcp_servers: Vec<serde_json::Value>,
-    #[serde(rename = "authMethodId", skip_serializing_if = "Option::is_none")]
-    auth_method_id: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct AuthenticateParams {
+    method_id: String,
+    #[serde(rename = "_meta")]
+    meta: AuthenticateMeta,
+}
+
+#[derive(Serialize, Debug)]
+struct AuthenticateMeta {
+    headless: bool,
 }
 
 /// Existing-session load parameters. Grok's ACP docs advertise
@@ -538,7 +688,7 @@ pub struct GrokAcpSession {
     /// Shared stdin for sending requests and replying to agent capability requests (fs/* etc)
     stdin: Option<Arc<TokioMutex<ChildStdin>>>,
     /// Map of pending request IDs to oneshot channels for correlating responses
-    pending_responses: Arc<TokioMutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
+    pending_responses: Arc<TokioMutex<HashMap<u64, PendingAcpRequest>>>,
     /// Tauri AppHandle for emitting live streaming events (thoughts, tool calls, notifications)
     app_handle: Option<tauri::AppHandle>,
     /// Session working directory (for resolving relative fs paths in capability handlers) — always Windows-style from UI
@@ -548,6 +698,9 @@ pub struct GrokAcpSession {
     agent_cwd: Option<String>,
     /// Handle to the reader task (for clean shutdown / detection)
     reader_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Exact local Grok executable selected by a Local connection preset.
+    /// None keeps the existing environment/PATH/platform-default resolver.
+    local_grok_path: Option<String>,
     // Phase 3.6 WSL Bridge config (set before start if using WSL backend)
     wsl_distro: Option<String>,
     wsl_grok_path: Option<String>,
@@ -571,19 +724,17 @@ pub struct GrokAcpSession {
 
     /// Phase 4: Dynamic Max Tokens
     detected_max_context_length: Option<u64>,
-    /// Auth method id reported by grok-build's initialize
-    /// response. Required by `session/new` — without it grok returns
-    /// `Authentication required: no auth method id provided`. We use
-    /// the first method declared in `initialize.authMethods[]`, or
-    /// fall back to "login" (the canonical ACP auth method).
+    /// Non-interactive auth method negotiated from Grok Build's
+    /// `initialize.authMethods[]`, then consumed by the separate ACP
+    /// `authenticate` request before any session operation.
     auth_method_id: Option<String>,
     /// Phase 4: Enabled MCP/Skills servers
     mcp_servers: Vec<serde_json::Value>,
 
     /// Requested permission mode for the next session spawn. One of
     /// grok's `--permission-mode` values: `plan`, `acceptEdits`,
-    /// `default`, `bypassPermissions`. Maps to the UI autonomy dial
-    /// (Observe/Propose/Confirm/Auto).
+    /// `default`, `bypassPermissions`. Full Auto is the normal ShellX mode;
+    /// the other values remain wire-compatible for migration and diagnostics.
     permission_mode: Option<String>,
 
     /// Tab identity for the multi-session refactor. Set by Tauri
@@ -622,9 +773,9 @@ impl GrokAcpSession {
     pub fn get_debug_session_info(&self) -> serde_json::Value {
         // Surface SSH transport state alongside WSL so the
         // /state/header reader can render "SSH preset → host" status the same
-        // way "WSL → distro" already renders. ssh_host is the only field we
-        // expose; port/key_vault_ref/remote_grok_path stay internal (the UI
-        // can re-fetch the full preset by id if it needs the rest).
+        // way "WSL → distro" already renders. Runtime/distro are non-secret
+        // routing metadata needed by archive/health consumers; port,
+        // key_vault_ref, and remote_grok_path stay internal.
         serde_json::json!({
                    "hasSession": self.session_id.is_some(),
                    "sessionId": self.session_id,
@@ -634,23 +785,19 @@ impl GrokAcpSession {
                    "wslDistro": self.wsl_distro,
                    "isSsh": self.ssh_config.is_some(),
                    "sshHost": self.ssh_config.as_ref().map(|s| s.host.clone()),
+                   "sshRemoteRuntime": self.ssh_config.as_ref().map(|s| match s.remote_runtime {
+                       SshRemoteRuntime::Posix => "posix",
+                       SshRemoteRuntime::Windows => "windows",
+                       SshRemoteRuntime::WindowsWsl => "windows_wsl",
+                   }),
+                   "sshWslDistro": self.ssh_config.as_ref().and_then(|s| s.wsl_distro.clone()),
                    "linuxHome": self.linux_home,
                    "detectedMaxContextLength": self.detected_max_context_length,
-        // `mcpServerCount` is the number of servers shellX INJECTED
-        // via session/new params. For SSH transport that's typically
-        // 0 because the remote grok loads MCPs from its OWN
-        // config.toml (incl. shellx-host over the reverse HTTP
-        // tunnel). `mcpServersSource` lets consumers interpret the
-        // count honestly. For an authoritative count, drivers can
-        // call grok's `tools/list` over the ACP stream.
+        // `mcpServerCount` is the number of servers ShellX injected via
+        // session/new. Local, WSL, and SSH now share this session-scoped
+        // source; remote project config is migration input only.
                    "mcpServerCount": self.mcp_servers.len(),
-                   "mcpServersSource": if self.ssh_config.is_some() {
-        // Remote grok loads from its OWN config.toml; we only
-        // know what shellX explicitly added via session/new.
-                       "session-new + remote-config.toml (not enumerated by shellX)"
-                   } else {
-                       "session-new"
-                   },
+                   "mcpServersSource": "session-new",
                    "hasActiveChild": self.child.is_some(),
                    "permissionMode": self.permission_mode,
         // Expose the stderr-derived auth
@@ -675,6 +822,431 @@ pub struct SshSpawnConfig {
     pub port: Option<u16>,
     pub key_vault_ref: Option<String>,
     pub remote_grok_path: String,
+    pub remote_runtime: SshRemoteRuntime,
+    pub wsl_distro: Option<String>,
+}
+
+pub(crate) const SSH_NATIVE_WINDOWS_RUNTIME_REQUIRED: &str =
+    "This SSH endpoint is native Windows OpenSSH. Select the native Windows runtime to use Windows-installed agent CLIs and Windows paths, or select Windows + WSL only when the agent and project intentionally live inside WSL.";
+
+/// Keep long-running SSH-backed agent streams from silently becoming half-open.
+/// These options are shared by ACP, provider CLI, and subagent transports.
+pub(crate) const SSH_SESSION_KEEPALIVE_ARGS: [&str; 6] = [
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=3",
+    "-o",
+    "TCPKeepAlive=yes",
+];
+
+/// OpenSSH normally continues even when a requested port forward failed. An
+/// agent would then start without the ShellX host tools its config advertises.
+pub(crate) const SSH_FORWARD_REQUIRED_ARGS: [&str; 2] = ["-o", "ExitOnForwardFailure=yes"];
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SshRemoteRuntime {
+    #[default]
+    Posix,
+    Windows,
+    WindowsWsl,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SshRemotePlatform {
+    Posix,
+    NativeWindows,
+}
+
+fn classify_ssh_remote_platform(output: &str) -> Option<SshRemotePlatform> {
+    if output.lines().any(|line| line.trim() == "SHELLX_POSIX") {
+        return Some(SshRemotePlatform::Posix);
+    }
+    if output.lines().any(|line| line.trim() == "SHELLX_WINDOWS") {
+        return Some(SshRemotePlatform::NativeWindows);
+    }
+    None
+}
+
+fn ssh_platform_probe_output(
+    host: &str,
+    port: Option<u16>,
+    key_path: Option<&str>,
+    remote_command: &str,
+) -> Result<std::process::Output, String> {
+    validate_ssh_destination_arg(host)?;
+    use crate::winproc::NoWindowExt as _;
+    let mut command = std::process::Command::new("ssh");
+    command
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=5")
+        .arg("-T");
+    if let Some(port) = port {
+        command.arg("-p").arg(port.to_string());
+    }
+    if let Some(key_path) = key_path.map(str::trim).filter(|value| !value.is_empty()) {
+        command.arg("-i").arg(key_path);
+    }
+    command
+        .arg("--")
+        .arg(host)
+        .arg(remote_command)
+        .no_window()
+        .output()
+        .map_err(|error| format!("SSH platform probe could not launch ssh: {error}"))
+}
+
+fn ssh_probe_diagnostic(output: &std::process::Output) -> String {
+    let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let text = if text.is_empty() {
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        text
+    };
+    if text.is_empty() {
+        format!("status {}", output.status)
+    } else {
+        text.chars().take(240).collect()
+    }
+}
+
+pub(crate) fn validate_ssh_wsl_distro_arg(distro: Option<&str>) -> Result<&str, String> {
+    let distro = distro
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "wslDistro is required for the Windows + WSL SSH runtime".to_string())?;
+    if distro.starts_with('-') {
+        return Err("wslDistro cannot start with '-'".to_string());
+    }
+    if !distro
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(
+            "wslDistro may contain only ASCII letters, digits, '.', '_' and '-'".to_string(),
+        );
+    }
+    Ok(distro)
+}
+
+/// Wrap a POSIX command for the selected SSH endpoint runtime. Direct POSIX
+/// targets receive the command unchanged. Native Windows OpenSSH targets use a
+/// small encoded PowerShell launcher so cmd.exe and PowerShell default shells
+/// both hand one intact Linux command to `wsl.exe`.
+pub(crate) fn wrap_ssh_posix_command(
+    runtime: SshRemoteRuntime,
+    wsl_distro: Option<&str>,
+    posix_command: &str,
+) -> Result<String, String> {
+    match runtime {
+        SshRemoteRuntime::Posix => return Ok(posix_command.to_string()),
+        SshRemoteRuntime::Windows => {
+            return Err(
+                "native Windows SSH runtime requires a PowerShell command, not a POSIX command"
+                    .to_string(),
+            )
+        }
+        SshRemoteRuntime::WindowsWsl => {}
+    }
+    let distro = validate_ssh_wsl_distro_arg(wsl_distro)?;
+    use base64::Engine as _;
+    let command_b64 = base64::engine::general_purpose::STANDARD.encode(posix_command.as_bytes());
+    // PowerShell 5.1 can rewrite embedded quotes while constructing a native
+    // process command line. Give wsl.exe only a quote-free Bash bootstrap and
+    // decode/source the real script inside WSL. `source <(...)` leaves the
+    // process stdin untouched, which is required by ACP and streamed writes.
+    let linux_bootstrap = format!("source <(printf %s {command_b64}|base64 -d)");
+    let powershell = format!(
+        "$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';$l='{linux_bootstrap}';& wsl.exe --distribution '{distro}' --exec bash -lc $l;exit $LASTEXITCODE"
+    );
+    Ok(encode_powershell_remote_command(&powershell))
+}
+
+pub(crate) fn encode_powershell_remote_command(powershell: &str) -> String {
+    use base64::Engine as _;
+    let mut utf16 = Vec::with_capacity(powershell.len() * 2);
+    for unit in powershell.encode_utf16() {
+        utf16.extend_from_slice(&unit.to_le_bytes());
+    }
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    format!(
+        "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}"
+    )
+}
+
+pub(crate) fn powershell_single_quote(value: &str) -> String {
+    // PowerShell treats several Unicode quote characters as real string
+    // delimiters. Escaping only the ASCII apostrophe therefore lets a value
+    // containing U+2018..U+201B terminate a single-quoted literal. Encode that
+    // entire Unicode quote class (and the sibling double-quote class) as char
+    // expressions, while retaining compact normal literals so native Windows
+    // OpenSSH launch commands stay below cmd.exe's practical length limit.
+    let mut pieces = Vec::new();
+    let mut literal = String::new();
+    for ch in value.chars() {
+        if matches!(ch, '\u{2018}'..='\u{201f}') {
+            pieces.push(format!("'{}'", literal.replace('\'', "''")));
+            pieces.push(format!("[char]0x{:04X}", ch as u32));
+            literal.clear();
+        } else {
+            literal.push(ch);
+        }
+    }
+
+    if pieces.is_empty() {
+        return format!("'{}'", value.replace('\'', "''"));
+    }
+    pieces.push(format!("'{}'", literal.replace('\'', "''")));
+    format!("({})", pieces.join("+"))
+}
+
+pub(crate) fn is_windows_absolute_remote_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+}
+
+fn normalize_windows_remote_path(path: &str) -> String {
+    path.replace('/', "\\")
+}
+
+fn windows_remote_path_is_within(path: &str, parent: &str) -> bool {
+    let path = normalize_windows_remote_path(path)
+        .trim_end_matches('\\')
+        .to_ascii_lowercase();
+    let parent = normalize_windows_remote_path(parent)
+        .trim_end_matches('\\')
+        .to_ascii_lowercase();
+    path == parent
+        || path
+            .strip_prefix(&parent)
+            .is_some_and(|rest| rest.starts_with('\\'))
+}
+
+pub(crate) fn windows_remote_shell_prelude() -> &'static str {
+    crate::provider_runtime::WINDOWS_PROVIDER_SHELL_PRELUDE
+}
+
+pub(crate) fn wrap_ssh_windows_command(powershell: &str) -> String {
+    encode_powershell_remote_command(powershell)
+}
+
+pub(crate) fn windows_native_process_script(
+    cwd: Option<&str>,
+    program: &str,
+    args: &[String],
+) -> String {
+    windows_native_process_script_with_env_file(cwd, program, args, None)
+}
+
+pub(crate) fn windows_native_process_script_with_env_file(
+    cwd: Option<&str>,
+    program: &str,
+    args: &[String],
+    env_file: Option<&str>,
+) -> String {
+    let env_source = env_file
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let value = powershell_single_quote(value);
+            format!(
+                "$shellxEnv={value};if(-not(Test-Path -LiteralPath $shellxEnv -PathType Leaf)){{throw ('ShellX Windows SSH environment file is missing: '+$shellxEnv)}};try{{. $shellxEnv}}finally{{Remove-Item -LiteralPath $shellxEnv -Force}};"
+            )
+        })
+        .unwrap_or_default();
+    let location = cwd
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let value = powershell_single_quote(value);
+            format!(
+                "$work={value};if(-not(Test-Path -LiteralPath $work -PathType Container)){{throw ('ShellX Windows SSH cwd is not a directory: '+$work)}};Set-Location -LiteralPath $work;"
+            )
+        })
+        .unwrap_or_default();
+    let args = args
+        .iter()
+        .map(|arg| powershell_single_quote(arg))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{prelude}{env_source}{location}$a=@({args});& {program} @a;exit $LASTEXITCODE",
+        prelude = windows_remote_shell_prelude(),
+        env_source = env_source,
+        location = location,
+        args = args,
+        program = powershell_single_quote(program),
+    )
+}
+
+fn windows_native_grok_launch_script(
+    cwd: &str,
+    remote_grok_path: &str,
+    perm_args: &[String],
+) -> String {
+    let cwd_expr = if cwd == "~" {
+        "$env:USERPROFILE".to_string()
+    } else {
+        powershell_single_quote(cwd)
+    };
+    let mut grok_args = perm_args.to_vec();
+    grok_args.push("--rules".to_string());
+    grok_args.push(crate::skill_install::SHELLX_SESSION_RULES.to_string());
+    grok_args.push("agent".to_string());
+    grok_args.push("stdio".to_string());
+    let grok_args = grok_args
+        .iter()
+        .map(|arg| powershell_single_quote(arg))
+        .collect::<Vec<_>>()
+        .join(",");
+    let grok = powershell_single_quote(remote_grok_path);
+    format!(
+        "{prelude}$work={cwd};if(-not(Test-Path -LiteralPath $work -PathType Container)){{throw ('ShellX Windows SSH cwd is not a directory: '+$work)}};$legacy=Join-Path $env:USERPROFILE '.grok\\skills\\shellx-host\\SKILL.md';if(Test-Path -LiteralPath $legacy -PathType Leaf){{$item=Get-Item -LiteralPath $legacy -Force;if(-not $item.LinkType){{Remove-Item -LiteralPath $legacy -Force}}}};$cfg=Join-Path (Join-Path $work '.grok') 'config.toml';if(Test-Path -LiteralPath $cfg -PathType Leaf){{$kept=[Collections.Generic.List[string]]::new();$buffer=[Collections.Generic.List[string]]::new();$expected=$null;$managed=$false;$drop=$false;$changed=$false;foreach($line in [IO.File]::ReadAllLines($cfg)){{if($managed){{$buffer.Add($line);if($line -eq $expected){{$managed=$false;$expected=$null;$buffer.Clear();$changed=$true}};continue}};if($line -match '^# shellX:managed-(mcp:(shellx-host-http|grok-shell-host)|mcp-marketplace:[^ ]+) BEGIN'){{$managed=$true;$expected=($line -replace ' BEGIN.*$',' END');$buffer.Add($line);continue}};if(($line -match '^\\[mcp_servers\\.(shellx-host-http|grok-shell-host)(\\.headers|\\.env)?\\]$')-or($line -match '^\\[mcp_servers\\.shellx-mp-[^]]+(\\.(headers|env))?\\]$')){{$drop=$true;$changed=$true;continue}};if($line.StartsWith('[')){{$drop=$false}};if(-not $drop){{$kept.Add($line)}}}};if($managed){{foreach($held in $buffer){{$kept.Add($held)}}}};if($changed){{$tmp=$cfg+'.shellx.'+[Guid]::NewGuid().ToString('N');[IO.File]::WriteAllLines($tmp,$kept,[Text.UTF8Encoding]::new($false));Move-Item -LiteralPath $tmp -Destination $cfg -Force}}}};Set-Location -LiteralPath $work;$a=@({grok_args});& {grok} @a;exit $LASTEXITCODE",
+        prelude = windows_remote_shell_prelude(),
+        cwd = cwd_expr,
+        grok_args = grok_args,
+        grok = grok,
+    )
+}
+
+fn grok_session_launch_args(autonomy_on: bool) -> Vec<String> {
+    let mut args = vec!["--no-auto-update".to_string()];
+    if autonomy_on {
+        args.push("--always-approve".to_string());
+    }
+    args
+}
+
+/// Generic native-Windows SSH dispatch used by one-shot provider/subagent
+/// paths whose bootstrap is intentionally streamed before their own protocol.
+/// Long-lived Grok ACP sessions use `windows_native_grok_launch_script`
+/// instead so stdin is ACP JSONL from byte zero.
+pub(crate) fn windows_native_ssh_dispatch_command() -> String {
+    format!(
+        "{}$b=[Console]::In.ReadLine();if([string]::IsNullOrWhiteSpace($b)){{throw 'missing ShellX Windows SSH bootstrap'}};$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b));&([ScriptBlock]::Create($s));exit $LASTEXITCODE",
+        windows_remote_shell_prelude(),
+    )
+}
+
+fn windows_wsl_loopback_probe_command(distro: &str) -> String {
+    let powershell = format!(
+        "$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';\
+         $l=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0);$l.Start();\
+         $p=([Net.IPEndPoint]$l.LocalEndpoint).Port;$a=$l.AcceptTcpClientAsync();\
+         $s=\"if exec 3<>/dev/tcp/127.0.0.1/$p; then printf '%s\\n' SHELLX_WINDOWS_WSL_LOOPBACK; exec 3>&-; else exit 42; fi\";\
+         & wsl.exe --distribution '{distro}' --exec bash -lc $s;$c=$LASTEXITCODE;\
+         if($a.Wait(1000)){{$a.Result.Close()}};$l.Stop();exit $c"
+    );
+    encode_powershell_remote_command(&powershell)
+}
+
+/// Verify that the selected connection runtime matches the actual SSH endpoint
+/// before ShellX sends filesystem or provider commands.
+pub(crate) fn ensure_ssh_remote_runtime(
+    host: &str,
+    port: Option<u16>,
+    key_path: Option<&str>,
+    runtime: SshRemoteRuntime,
+    wsl_distro: Option<&str>,
+) -> Result<(), String> {
+    if runtime == SshRemoteRuntime::Windows {
+        if wsl_distro.is_some_and(|value| !value.trim().is_empty()) {
+            return Err("wslDistro must be empty for the native Windows SSH runtime".to_string());
+        }
+        let windows = ssh_platform_probe_output(
+            host,
+            port,
+            key_path,
+            &wrap_ssh_windows_command("[Console]::Out.WriteLine('SHELLX_WINDOWS')"),
+        )?;
+        if windows.status.success()
+            && classify_ssh_remote_platform(&String::from_utf8_lossy(&windows.stdout))
+                == Some(SshRemotePlatform::NativeWindows)
+        {
+            return Ok(());
+        }
+        return Err(format!(
+            "Native Windows SSH runtime probe failed: {}. Verify that the endpoint is Windows OpenSSH and PowerShell is available for the SSH account.",
+            ssh_probe_diagnostic(&windows),
+        ));
+    }
+    if runtime == SshRemoteRuntime::WindowsWsl {
+        let distro = validate_ssh_wsl_distro_arg(wsl_distro)?;
+        let marker = wrap_ssh_posix_command(
+            runtime,
+            Some(distro),
+            "printf '%s\\n' SHELLX_WINDOWS_WSL_POSIX",
+        )?;
+        let output = ssh_platform_probe_output(host, port, key_path, &marker)?;
+        if output.status.success()
+            && String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .any(|line| line.trim() == "SHELLX_WINDOWS_WSL_POSIX")
+        {
+            let loopback = ssh_platform_probe_output(
+                host,
+                port,
+                key_path,
+                &windows_wsl_loopback_probe_command(distro),
+            )?;
+            if loopback.status.success()
+                && String::from_utf8_lossy(&loopback.stdout)
+                    .lines()
+                    .any(|line| line.trim() == "SHELLX_WINDOWS_WSL_LOOPBACK")
+            {
+                return Ok(());
+            }
+            return Err(format!(
+                "Windows + WSL command launch works for distro '{}', but WSL cannot reach Windows localhost, so ShellX's reverse host-MCP tunnel would be unavailable. Enable WSL mirrored networking in the remote Windows user's .wslconfig and restart WSL, or use an SSH server inside WSL. Loopback probe: {}",
+                distro,
+                ssh_probe_diagnostic(&loopback),
+            ));
+        }
+        return Err(format!(
+            "Windows + WSL SSH runtime probe failed for distro '{}': {}. Verify that wsl.exe can start this distro for the SSH account and that bash is installed.",
+            distro,
+            ssh_probe_diagnostic(&output),
+        ));
+    }
+
+    let posix = ssh_platform_probe_output(
+        host,
+        port,
+        key_path,
+        "sh -lc 'printf \"%s\\n\" SHELLX_POSIX'",
+    )?;
+    if posix.status.success()
+        && classify_ssh_remote_platform(&String::from_utf8_lossy(&posix.stdout))
+            == Some(SshRemotePlatform::Posix)
+    {
+        return Ok(());
+    }
+
+    let windows = ssh_platform_probe_output(
+        host,
+        port,
+        key_path,
+        "cmd.exe /d /s /c \"echo SHELLX_WINDOWS\"",
+    )?;
+    if windows.status.success()
+        && classify_ssh_remote_platform(&String::from_utf8_lossy(&windows.stdout))
+            == Some(SshRemotePlatform::NativeWindows)
+    {
+        return Err(SSH_NATIVE_WINDOWS_RUNTIME_REQUIRED.to_string());
+    }
+
+    Err(format!(
+        "SSH target did not expose the selected POSIX runtime. POSIX probe: {}; Windows probe: {}. {}",
+        ssh_probe_diagnostic(&posix),
+        ssh_probe_diagnostic(&windows),
+        SSH_NATIVE_WINDOWS_RUNTIME_REQUIRED,
+    ))
 }
 
 impl GrokAcpSession {
@@ -689,6 +1261,7 @@ impl GrokAcpSession {
             cwd: None,
             agent_cwd: None,
             reader_handle: None,
+            local_grok_path: None,
             wsl_distro: None,
             wsl_grok_path: None,
             ssh_config: None,
@@ -774,9 +1347,9 @@ impl GrokAcpSession {
 
     /// Which transport the spawn used. Mirrors the
     /// is_ssh / is_wsl gates in `start`. Used by handle_terminal_create
-    /// to pick a transport-aware redirect message — local grok can use
-    /// grok-shell-host__Agent, but SSH/WSL grok cannot (the host MCP
-    /// is on Windows, the agent runs elsewhere).
+    /// to pick a transport-aware redirect message. Every current transport
+    /// can use the session-scoped `shellx-host-http__Agent`; its child is
+    /// launched in the parent provider's exact target frame.
     /// #427 — true when a grok child process is alive for this session.
     /// Lets /connect refuse silently retaining a stale session when a
     /// new connectionId is supplied. Only the debug-api feature uses
@@ -806,8 +1379,21 @@ impl GrokAcpSession {
         }
     }
 
+    /// Configure a local backend. The exact preset path, when present,
+    /// outranks environment and PATH discovery. Calling this also clears
+    /// every non-local transport so a reused tab cannot retain stale routing.
+    pub fn set_local_config(&mut self, grok_path: Option<String>) {
+        self.local_grok_path = grok_path
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        self.wsl_distro = None;
+        self.wsl_grok_path = None;
+        self.ssh_config = None;
+    }
+
     /// Configure WSL backend (called from Tauri command before start). Smallest extension.
     pub fn set_wsl_config(&mut self, distro: Option<String>, grok_path: Option<String>) {
+        self.local_grok_path = None;
         self.wsl_distro = distro;
         self.wsl_grok_path = grok_path;
         // Setting WSL implicitly clears any prior SSH config so a stale
@@ -824,11 +1410,21 @@ impl GrokAcpSession {
     /// order is unambiguous. Vault reference (if any) is resolved lazily at
     /// spawn time inside `build_command_for_transport`.
     pub fn set_ssh_config(&mut self, ssh: Option<SshSpawnConfig>) {
+        self.local_grok_path = None;
         self.ssh_config = ssh;
-        if self.ssh_config.is_some() {
-            self.wsl_distro = None;
-            self.wsl_grok_path = None;
-        }
+        self.wsl_distro = None;
+        self.wsl_grok_path = None;
+    }
+
+    /// Exact local Grok executable configured by a Local preset, if any.
+    pub fn local_grok_path(&self) -> Option<&str> {
+        self.local_grok_path.as_deref()
+    }
+
+    fn resolved_local_grok_exe(&self) -> String {
+        self.local_grok_path
+            .clone()
+            .unwrap_or_else(resolve_grok_exe)
     }
 
     /// Read accessor for the WSL distro currently configured on this
@@ -854,7 +1450,7 @@ impl GrokAcpSession {
     /// when `ssh_config` is set.
     /// - WSL bridge via wsl.exe when `wsl_distro` + `wsl_grok_path`
     /// are set.
-    /// - Local spawn otherwise.
+    /// - Local spawn otherwise, preferring the preset's exact executable.
     pub async fn start(
         &mut self,
         cwd: &str,
@@ -877,6 +1473,43 @@ impl GrokAcpSession {
         let use_wsl = !use_ssh && self.wsl_distro.is_some();
         if let Some(ssh) = &self.ssh_config {
             validate_ssh_destination_arg(&ssh.host)?;
+        }
+
+        let ssh_probe_key_path = if let Some(ssh) = &self.ssh_config {
+            if let Some(vault_ref) = ssh
+                .key_vault_ref
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                let backend = crate::shellx_vault::shared_backend();
+                Some(
+                    crate::shellx_vault::resolve_internal_secret(&backend, vault_ref)
+                        .await
+                        .map_err(|error| {
+                            format!("ssh: vault resolve '{}' failed: {}", vault_ref, error)
+                        })?
+                        .ok_or_else(|| {
+                            format!(
+                                "ssh: vault key '{}' is not set — open Settings → Vault and add it, or remove key_vault_ref from the preset",
+                                vault_ref
+                            )
+                        })?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(ssh) = &self.ssh_config {
+            ensure_ssh_remote_runtime(
+                &ssh.host,
+                ssh.port,
+                ssh_probe_key_path.as_deref(),
+                ssh.remote_runtime,
+                ssh.wsl_distro.as_deref(),
+            )?;
         }
 
         // Path translation:
@@ -912,19 +1545,33 @@ impl GrokAcpSession {
             if let Some(p) = ssh.port {
                 probe.arg("-p").arg(p.to_string());
             }
+            if let Some(key_path) = ssh_probe_key_path.as_deref() {
+                probe.arg("-i").arg(key_path);
+            }
             // We deliberately DO NOT use a key-vault-ref-resolved -i here
             // because the resolver is async and this probe is sync; the
             // user's ssh-agent / ssh-config must already be set up for
             // the preset to work — same constraint as the main spawn.
-            probe
-                .arg("--")
-                .arg(&ssh.host)
-                .arg("printf '%s\\n' \"$HOME\"");
+            let home_command = if ssh.remote_runtime == SshRemoteRuntime::Windows {
+                wrap_ssh_windows_command("[Console]::Out.WriteLine($env:USERPROFILE)")
+            } else {
+                wrap_ssh_posix_command(
+                    ssh.remote_runtime,
+                    ssh.wsl_distro.as_deref(),
+                    "printf '%s\\n' \"$HOME\"",
+                )?
+            };
+            probe.arg("--").arg(&ssh.host).arg(home_command);
             probe.no_window();
             match probe.output() {
                 Ok(o) if o.status.success() => {
                     let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                    if s.starts_with('/') {
+                    let absolute = if ssh.remote_runtime == SshRemoteRuntime::Windows {
+                        is_windows_absolute_remote_path(&s)
+                    } else {
+                        s.starts_with('/')
+                    };
+                    if absolute {
                         info!("SSH probe: remote $HOME = {}", s);
                         Some(s)
                     } else {
@@ -955,28 +1602,39 @@ impl GrokAcpSession {
         let agent_cwd = if use_wsl {
             windows_to_wsl_path(cwd)
         } else if use_ssh {
-            // Windows-path detection — backslash or drive-letter pattern
-            // means the UI passed a local path that can't possibly be
-            // valid on a Linux/macOS SSH target. Substitute the probed
-            // remote $HOME (absolute) so both `cd` on the remote shell
-            // AND the ACP `session/new` cwd field are accepted. If the
-            // probe failed we fall back to a documented placeholder so
-            // the operator sees a clear error rather than silent crash.
-            // // Also catch bogus POSIX paths like "placeholder" — anything
-            // that doesn't start with `/` or `~`. Such a path causes
-            // `cd placeholder && exec grok` to short-circuit on the
-            // remote while the SSH tunnel stays open waiting for grok's
-            // initialize hello that never appears (10-minute ACP timeout).
-            // Substitute $HOME for any non-absolute non-tilde input.
-            let looks_local_win = cwd.contains('\\') || cwd.contains(':');
-            let looks_invalid_posix =
-                !cwd.is_empty() && !cwd.starts_with('/') && !cwd.starts_with('~');
-            if looks_local_win || cwd.is_empty() || looks_invalid_posix {
-                ssh_remote_home
-                    .clone()
-                    .unwrap_or_else(|| "/root".to_string())
+            let ssh = self.ssh_config.as_ref().expect("use_ssh guard");
+            if ssh.remote_runtime == SshRemoteRuntime::Windows {
+                if is_windows_absolute_remote_path(cwd) {
+                    normalize_windows_remote_path(cwd)
+                } else {
+                    ssh_remote_home
+                        .clone()
+                        .unwrap_or_else(|| r"C:\Users\Public".to_string())
+                }
             } else {
-                cwd.to_string()
+                // Windows-path detection — backslash or drive-letter pattern
+                // means the UI passed a local path that can't possibly be
+                // valid on a Linux/macOS SSH target. Substitute the probed
+                // remote $HOME (absolute) so both `cd` on the remote shell
+                // AND the ACP `session/new` cwd field are accepted. If the
+                // probe failed we fall back to a documented placeholder so
+                // the operator sees a clear error rather than silent crash.
+                // // Also catch bogus POSIX paths like "placeholder" — anything
+                // that doesn't start with `/` or `~`. Such a path causes
+                // `cd placeholder && exec grok` to short-circuit on the
+                // remote while the SSH tunnel stays open waiting for grok's
+                // initialize hello that never appears (10-minute ACP timeout).
+                // Substitute $HOME for any non-absolute non-tilde input.
+                let looks_local_win = cwd.contains('\\') || cwd.contains(':');
+                let looks_invalid_posix =
+                    !cwd.is_empty() && !cwd.starts_with('/') && !cwd.starts_with('~');
+                if looks_local_win || cwd.is_empty() || looks_invalid_posix {
+                    ssh_remote_home
+                        .clone()
+                        .unwrap_or_else(|| "/root".to_string())
+                } else {
+                    cwd.to_string()
+                }
             }
         } else {
             cwd.to_string()
@@ -999,33 +1657,83 @@ impl GrokAcpSession {
             let ssh = self.ssh_config.as_ref().expect("use_ssh guard");
             use crate::winproc::NoWindowExt as _;
 
-            // Auto-create remote cwd if missing.
-            // Bounded by safety checks identical to the WSL branch.
-            if agent_cwd.starts_with('/') {
-                let has_traversal = agent_cwd.split('/').any(|seg| seg == "..");
-                let is_system = matches!(
-                    agent_cwd.split('/').nth(1).unwrap_or(""),
-                    "proc" | "sys" | "dev"
+            if ssh.remote_runtime == SshRemoteRuntime::Windows {
+                let mut probe = std::process::Command::new("ssh");
+                probe.arg("-o").arg("BatchMode=yes");
+                probe.arg("-o").arg("ConnectTimeout=5");
+                probe.arg("-T");
+                if let Some(p) = ssh.port {
+                    probe.arg("-p").arg(p.to_string());
+                }
+                if let Some(key_path) = ssh_probe_key_path.as_deref() {
+                    probe.arg("-i").arg(key_path);
+                }
+                let path = powershell_single_quote(&agent_cwd);
+                let command = format!(
+                    "{}$path={path};if(Test-Path -LiteralPath $path -PathType Container){{exit 0}};exit 1",
+                    windows_remote_shell_prelude(),
                 );
-                if has_traversal || is_system {
-                    debug!(
-                        "SSH Bridge: refusing auto-mkdir for cwd '{}' (traversal={} system={})",
-                        agent_cwd, has_traversal, is_system
-                    );
-                } else {
-                    let mut mk = std::process::Command::new("ssh");
-                    mk.arg("-o").arg("BatchMode=yes");
-                    mk.arg("-o").arg("ConnectTimeout=5");
-                    mk.arg("-T");
-                    if let Some(p) = ssh.port {
-                        mk.arg("-p").arg(p.to_string());
+                probe
+                    .arg("--")
+                    .arg(&ssh.host)
+                    .arg(wrap_ssh_windows_command(&command));
+                probe.no_window();
+                match probe.output() {
+                    Ok(output) if output.status.success() => {
+                        info!(
+                            "SSH cwd probe OK: {} exists as a directory on native Windows host",
+                            agent_cwd
+                        );
                     }
-                    mk.arg("--").arg(&ssh.host).arg(format!(
-                        "mkdir -p -- {}",
-                        shell_quote_for_remote(&agent_cwd)
-                    ));
-                    mk.no_window();
-                    match mk.output() {
+                    Ok(output) => {
+                        return Err(format!(
+                            "SSH cwd probe failed: '{}' is not a directory on the native Windows host {}. Select an existing Windows directory or reconnect without a project path to use the remote user profile. (stderr: {})",
+                            agent_cwd,
+                            ssh.host,
+                            String::from_utf8_lossy(&output.stderr).trim()
+                        ));
+                    }
+                    Err(error) => {
+                        return Err(format!(
+                            "SSH cwd probe could not launch ssh: {}. (ssh client missing from PATH?)",
+                            error
+                        ));
+                    }
+                }
+            } else {
+                // Auto-create remote cwd if missing.
+                // Bounded by safety checks identical to the WSL branch.
+                if agent_cwd.starts_with('/') {
+                    let has_traversal = agent_cwd.split('/').any(|seg| seg == "..");
+                    let is_system = matches!(
+                        agent_cwd.split('/').nth(1).unwrap_or(""),
+                        "proc" | "sys" | "dev"
+                    );
+                    if has_traversal || is_system {
+                        debug!(
+                            "SSH Bridge: refusing auto-mkdir for cwd '{}' (traversal={} system={})",
+                            agent_cwd, has_traversal, is_system
+                        );
+                    } else {
+                        let mut mk = std::process::Command::new("ssh");
+                        mk.arg("-o").arg("BatchMode=yes");
+                        mk.arg("-o").arg("ConnectTimeout=5");
+                        mk.arg("-T");
+                        if let Some(p) = ssh.port {
+                            mk.arg("-p").arg(p.to_string());
+                        }
+                        if let Some(key_path) = ssh_probe_key_path.as_deref() {
+                            mk.arg("-i").arg(key_path);
+                        }
+                        let mkdir_command =
+                            format!("mkdir -p -- {}", shell_quote_for_remote(&agent_cwd));
+                        mk.arg("--").arg(&ssh.host).arg(wrap_ssh_posix_command(
+                            ssh.remote_runtime,
+                            ssh.wsl_distro.as_deref(),
+                            &mkdir_command,
+                        )?);
+                        mk.no_window();
+                        match mk.output() {
                         Ok(o) if o.status.success() => {
                             info!(
                                 "SSH Bridge: auto-mkdir cwd '{}' on host '{}' ok",
@@ -1046,43 +1754,48 @@ impl GrokAcpSession {
                             agent_cwd, e
                         ),
                     }
+                    }
                 }
-            }
 
-            let mut probe = std::process::Command::new("ssh");
-            probe.arg("-o").arg("BatchMode=yes");
-            probe.arg("-o").arg("ConnectTimeout=5");
-            probe.arg("-T");
-            if let Some(p) = ssh.port {
-                probe.arg("-p").arg(p.to_string());
-            }
-            probe
-                .arg("--")
-                .arg(&ssh.host)
-                .arg(format!("test -d {}", shell_quote_for_remote(&agent_cwd)));
-            probe.no_window();
-            match probe.output() {
-                Ok(o) if o.status.success() => {
-                    info!(
-                        "SSH cwd probe OK: {} exists as directory on remote",
-                        agent_cwd
-                    );
+                let mut probe = std::process::Command::new("ssh");
+                probe.arg("-o").arg("BatchMode=yes");
+                probe.arg("-o").arg("ConnectTimeout=5");
+                probe.arg("-T");
+                if let Some(p) = ssh.port {
+                    probe.arg("-p").arg(p.to_string());
                 }
-                Ok(o) => {
-                    return Err(format!(
-                        "SSH cwd probe failed: '{}' is not a directory on the remote host {}. \
+                if let Some(key_path) = ssh_probe_key_path.as_deref() {
+                    probe.arg("-i").arg(key_path);
+                }
+                probe.arg("--").arg(&ssh.host).arg(wrap_ssh_posix_command(
+                    ssh.remote_runtime,
+                    ssh.wsl_distro.as_deref(),
+                    &format!("test -d {}", shell_quote_for_remote(&agent_cwd)),
+                )?);
+                probe.no_window();
+                match probe.output() {
+                    Ok(o) if o.status.success() => {
+                        info!(
+                            "SSH cwd probe OK: {} exists as directory on remote",
+                            agent_cwd
+                        );
+                    }
+                    Ok(o) => {
+                        return Err(format!(
+                            "SSH cwd probe failed: '{}' is not a directory on the remote host {}. \
                          Either fix the connection preset's cwd, or pass a valid POSIX path / `~` \
                          via the /connect cwd field. (stderr: {})",
-                        agent_cwd,
-                        ssh.host,
-                        String::from_utf8_lossy(&o.stderr).trim()
-                    ));
-                }
-                Err(e) => {
-                    return Err(format!(
+                            agent_cwd,
+                            ssh.host,
+                            String::from_utf8_lossy(&o.stderr).trim()
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(format!(
                         "SSH cwd probe could not launch ssh: {}. (ssh client missing from PATH?)",
                         e
                     ));
+                    }
                 }
             }
         }
@@ -1117,20 +1830,14 @@ impl GrokAcpSession {
             }
         }
 
-        // Keep the shellX autonomy surface intentionally two-state.
-        // Grok 0.2.x exposes a top-level `--permission-mode`, but
-        // shellX still uses the narrower, verified `--always-approve`
-        // plus explicit `--allow` rules for Auto because the UI only
-        // promises Confirm vs Auto and older builds accepted that shape.
+        // ShellX's normal agent surface is provider-native Full Auto. Grok
+        // still needs the verified `--always-approve` plus explicit `--allow`
+        // rules because the top-level flag alone does not cover every native
+        // terminal tool class. Legacy wire values remain accepted for stored
+        // sessions and debug compatibility, but an absent value resolves to
+        // the ShellX Full Auto default here.
         //
-        // So the autonomy chip is a 2-state surface:
-        // None | Some("confirm") → no flag — grok prompts (default)
-        // Some("alwaysApprove") | Some("bypassPermissions") | Some("auto")
-        // → emit `--always-approve`
-        // Legacy values (`plan`/`acceptEdits`/`default`) are treated as
-        // confirm — they don't map cleanly and grok would reject the
-        // flag.
-        // // Belt-and-braces fallback for SSH. If `permission_mode` is None
+        // Belt-and-braces fallback for SSH. If `permission_mode` is None
         // on the session but the registry's `tab_autonomy` slot has a
         // value, use it. This final lookup at spawn time guarantees the
         // SSH branch composes --always-approve consistently with WSL/Local
@@ -1160,9 +1867,15 @@ impl GrokAcpSession {
                 None
             }
         };
+        let perm_mode = resolve_shellx_permission_mode(perm_mode);
+        // Persist the resolved default on the live session too. The read loop
+        // consults this field when a provider still emits a permission event;
+        // keeping it null here would launch with Full Auto argv but later
+        // handle the event as interactive.
+        self.permission_mode = Some(perm_mode.clone());
         let autonomy_on = matches!(
-            perm_mode.as_deref(),
-            Some("alwaysApprove") | Some("bypassPermissions") | Some("auto")
+            perm_mode.as_str(),
+            "alwaysApprove" | "bypassPermissions" | "auto"
         );
         // Log autonomy-flag composition decision per transport so any
         // future regression where SSH drops the flag silently shows up
@@ -1176,14 +1889,14 @@ impl GrokAcpSession {
             } else {
                 "local"
             },
-            perm_mode,
+            Some(perm_mode.as_str()),
             autonomy_on
         );
-        let mut perm_args: Vec<String> = if autonomy_on {
-            vec!["--always-approve".to_string()]
-        } else {
-            vec![]
-        };
+        // Provider discovery owns version refresh. Grok's official ACP
+        // guidance recommends disabling background updates for long-lived
+        // stdio sessions so the selected version/hash cannot change while
+        // ShellX is establishing the child protocol.
+        let mut perm_args = grok_session_launch_args(autonomy_on);
         // EMPIRICAL: in grok-build 0.1.211, --always-approve does NOT
         // actually auto-approve native run_terminal_command — the
         // permission popup still fires with "Yes, and don't ask again
@@ -1234,10 +1947,28 @@ impl GrokAcpSession {
         perm_args.push("--disallowed-tools".to_string());
         perm_args.push("run_terminal_command,monitor".to_string());
 
-        let marketplace_env = crate::mcp_marketplace::marketplace_env_vars().await;
-        let marketplace_env_names: Vec<String> =
-            marketplace_env.iter().map(|(k, _)| k.clone()).collect();
-        let marketplace_config_blocks = crate::mcp_marketplace::enabled_project_config_blocks();
+        // Remote providers receive ShellX marketplace tools in the portable
+        // ACP `mcpServers` list. Values are scoped to this session and never
+        // written into the remote project or account config. Local Grok keeps
+        // its native marketplace config for compatibility and therefore only
+        // needs the process-local vault environment below.
+        remove_session_marketplace_servers(&mut self.mcp_servers);
+        let marketplace_env = if use_ssh || use_wsl {
+            let runtime = if self
+                .ssh_config
+                .as_ref()
+                .is_some_and(|ssh| ssh.remote_runtime == SshRemoteRuntime::Windows)
+            {
+                crate::mcp_marketplace::MarketplaceAcpRuntime::Windows
+            } else {
+                crate::mcp_marketplace::MarketplaceAcpRuntime::Posix
+            };
+            let session_servers = crate::mcp_marketplace::enabled_acp_servers(runtime).await;
+            self.mcp_servers.extend(session_servers);
+            Vec::new()
+        } else {
+            crate::mcp_marketplace::marketplace_env_vars().await
+        };
 
         let mut cmd = if use_ssh {
             // SSH transport. Reuses the shared
@@ -1256,8 +1987,9 @@ impl GrokAcpSession {
                 port: ssh.port,
                 key_vault_ref: ssh.key_vault_ref.clone(),
                 remote_grok_path: ssh.remote_grok_path.clone(),
+                remote_runtime: ssh.remote_runtime,
+                wsl_distro: ssh.wsl_distro.clone(),
             };
-            let tab_for_ssh = self.tab_id.clone().unwrap_or_else(|| "default".to_string());
             build_command_for_transport(&transport, &agent_cwd, &perm_args, |vault_ref| async move {
                 // Closure resolves a vault ref (e.g. "ssh/host-key") into
                 // the actual private-key file path. Open the vault once
@@ -1272,7 +2004,7 @@ impl GrokAcpSession {
                     "ssh: vault key '{}' is not set — open Settings → Vault and add it, or remove key_vault_ref from the preset",
                     vault_ref
                 ))
-            }, &tab_for_ssh, &marketplace_env_names, &marketplace_config_blocks)
+            })
             .await?
         } else if use_wsl {
             let distro = self.wsl_distro.as_ref().unwrap();
@@ -1381,86 +2113,51 @@ impl GrokAcpSession {
                     }
                 }
             }
-            // Write the HTTP MCP snippet into
-            // `<agent_cwd>/.grok/config.toml` BEFORE spawning grok so the
-            // launched WSL grok picks it up at init. We reach the
-            // WSL filesystem via the `\\wsl$\<distro>\<path>` UNC share;
-            // mode bits transfer through to ext4 so the resulting file
-            // is 0o600 from WSL's perspective.
-            // // We swallow write errors as warnings rather than failing the
-            // spawn — without this snippet, the grok process still runs,
-            // just without the host MCP. Operator can see the warning in
-            // logs and fix permissions / disk space.
+            // Migrate any project-scoped registrations written by older
+            // ShellX builds. Current host and marketplace tools arrive only
+            // through ACP `mcpServers`, so a later direct Grok launch in this
+            // WSL project cannot inherit them.
             if let Some(unc) = crate::skill_install::wsl_path_to_unc(distro, &agent_cwd) {
-                let port = crate::mcp_http::mcp_port();
-                // Plumb tab_id so the config.toml snippet bakes in
-                // `MCP-Tab-Id = "<tab>"` — host-MCP gate resolves
-                // calling-tab autonomy from this header.
-                let tab = self.tab_id.as_deref().unwrap_or("default");
-                let token = crate::mcp_http::tab_bound_mcp_token(tab);
-                match crate::skill_install::ensure_project_mcp_http_config(
-                    &unc,
-                    port,
-                    &token,
-                    tab,
-                    &marketplace_config_blocks,
-                ) {
-                    Ok(true) => info!(
-                        "WSL project .grok/config.toml installed at {}",
-                        unc.display()
-                    ),
-                    Ok(false) => info!("WSL project .grok/config.toml already up-to-date"),
-                    Err(e) => warn!(
-                        "WSL project .grok/config.toml install failed (non-fatal): {}",
-                        e
-                    ),
+                match crate::skill_install::cleanup_project_grok_host_mcp_config(&unc) {
+                    Ok(true) => info!("WSL project legacy ShellX host MCP removed"),
+                    Ok(false) => debug!("WSL project legacy ShellX host MCP absent"),
+                    Err(error) => warn!("WSL project host MCP cleanup failed: {}", error),
+                }
+                match crate::mcp_marketplace::cleanup_project_marketplace_config(&unc) {
+                    Ok(true) => info!("WSL project legacy ShellX marketplace MCPs removed"),
+                    Ok(false) => debug!("WSL project legacy ShellX marketplace MCPs absent"),
+                    Err(error) => warn!("WSL project marketplace cleanup failed: {}", error),
                 }
             }
-            // Deploy AGENTS.md to the WSL home dir so WSL grok has the
-            // same shellX-host routing cheatsheet the Windows-local grok
-            // already has. Source: Windows-side
-            // %USERPROFILE%\.grok\AGENTS.md. Destination:
-            // <wsl-home>/.grok/AGENTS.md via UNC. Optional — if the
-            // source file isn't present we skip with a warn.
+            // Remove account-wide guidance deployed by older ShellX
+            // versions. This process receives compact rules below via
+            // --rules, so unrelated WSL Grok sessions stay untouched.
             if let Some(linux_home) = &self.linux_home {
-                match crate::skill_install::ensure_wsl_agents_md(distro, linux_home) {
+                match crate::skill_install::cleanup_wsl_agents_md(distro, linux_home) {
                     Ok(true) => info!(
-                        "WSL ~/.grok/AGENTS.md installed for distro {} home {}",
+                        "WSL ~/.grok/AGENTS.md legacy ShellX block removed for distro {} home {}",
                         distro, linux_home
                     ),
                     Ok(false) => {
-                        debug!("WSL ~/.grok/AGENTS.md already up-to-date or source missing")
+                        debug!("WSL ~/.grok/AGENTS.md legacy ShellX block absent")
                     }
-                    Err(e) => warn!("WSL ~/.grok/AGENTS.md install failed (non-fatal): {}", e),
+                    Err(e) => warn!("WSL ~/.grok/AGENTS.md cleanup failed (non-fatal): {}", e),
+                }
+                match crate::skill_install::cleanup_wsl_grok_host_mcp_config(distro, linux_home) {
+                    Ok(true) => info!(
+                        "WSL ~/.grok/config.toml legacy ShellX host MCP removed for distro {} home {}",
+                        distro, linux_home
+                    ),
+                    Ok(false) => debug!("WSL ~/.grok/config.toml legacy ShellX host MCP absent"),
+                    Err(e) => warn!(
+                        "WSL ~/.grok/config.toml cleanup failed (non-fatal): {}",
+                        e
+                    ),
                 }
             } else {
-                debug!("WSL linux_home unknown — skipping AGENTS.md deploy");
+                debug!("WSL linux_home unknown — skipping legacy AGENTS.md and Grok MCP cleanup");
             }
             let mut c = Command::new("wsl.exe");
-            // H2 token strategy (2026-05-20): the project-scoped
-            // config.toml now declares `bearer_token_env_var =
-            // "SHELLX_MCP_TOKEN"` — NOT a literal Bearer line. Inject
-            // the value via env so the Linux grok process can pick it
-            // up. WSLENV is the WSL interop knob that forwards a host
-            // env var into the Linux child; without it the wsl.exe
-            // boundary drops the value silently.
-            let mcp_token_for_wsl =
-                crate::mcp_http::tab_bound_mcp_token(self.tab_id.as_deref().unwrap_or("default"));
-            let existing_wslenv = std::env::var("WSLENV").unwrap_or_default();
-            let mut wslenv_names = Vec::with_capacity(1 + marketplace_env_names.len());
-            wslenv_names.push(crate::mcp_http::MCP_TOKEN_ENV_VAR.to_string());
-            wslenv_names.extend(marketplace_env_names.clone());
-            let wslenv_suffix = wslenv_names.join(":");
-            let combined_wslenv = if existing_wslenv.is_empty() {
-                wslenv_suffix
-            } else {
-                format!("{}:{}", existing_wslenv, wslenv_suffix)
-            };
-            c.env(crate::mcp_http::MCP_TOKEN_ENV_VAR, &mcp_token_for_wsl);
-            for (name, value) in &marketplace_env {
-                c.env(name, value);
-            }
-            c.env("WSLENV", combined_wslenv);
             // Base args before the grok binary
             c.args(["-d", distro, "--cd", &agent_cwd, "-e", grok_wsl]);
             // --always-approve only when the autonomy chip is in the
@@ -1468,7 +2165,9 @@ impl GrokAcpSession {
             for a in &perm_args {
                 c.arg(a);
             }
-            c.args(["agent", "stdio"])
+            c.arg("--rules")
+                .arg(crate::skill_install::SHELLX_SESSION_RULES)
+                .args(["agent", "stdio"])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1493,11 +2192,14 @@ impl GrokAcpSession {
             // 3. Platform-aware default location:
             // - Windows: $USERPROFILE\.grok\bin\grok.exe
             // - Linux/macOS: $HOME/.grok/bin/grok
-            let grok_exe = resolve_grok_exe();
+            let configured_local_grok = self.local_grok_path.as_deref();
+            let grok_exe = self.resolved_local_grok_exe();
 
             info!("Using grok executable: {} {:?}", grok_exe, perm_args);
-            if !std::path::Path::new(&grok_exe).exists() {
-                let install_hint = if cfg!(target_os = "windows") {
+            if !std::path::Path::new(&grok_exe).is_file() {
+                let install_hint = if configured_local_grok.is_some() {
+                    "The selected Local connection preset points to a missing or non-file Grok executable. Rescan agents or edit that preset's grokPath."
+                } else if cfg!(target_os = "windows") {
                     "Install grok CLI from https://docs.x.ai/docs/grok-cli (Scoop or .msi), or set the GROK_EXE_PATH env var to an existing grok.exe."
                 } else {
                     "Install grok CLI from https://docs.x.ai/docs/grok-cli, or set the GROK_EXE_PATH env var to an existing grok binary."
@@ -1508,25 +2210,31 @@ impl GrokAcpSession {
                 ));
             }
 
-            match ensure_local_project_mcp_http_config(&agent_cwd, self.tab_id.as_deref(), "") {
-                Ok(true) => info!("Local project .grok/config.toml installed at {}", agent_cwd),
-                Ok(false) => info!("Local project .grok/config.toml already up-to-date"),
-                Err(e) => warn!(
-                    "Local project .grok/config.toml install failed (non-fatal): {}",
-                    e
+            // Local Grok receives shellx-host-http directly in
+            // session/new.mcpServers. Remove any project-scoped block left by
+            // an older ShellX launch so a later direct `grok` invocation in
+            // the same project does not discover ShellX host tooling.
+            match crate::skill_install::cleanup_project_grok_host_mcp_config(std::path::Path::new(
+                &agent_cwd,
+            )) {
+                Ok(true) => info!(
+                    "Local project legacy ShellX MCP config removed at {}",
+                    agent_cwd
                 ),
+                Ok(false) => debug!("Local project legacy ShellX MCP config absent"),
+                Err(e) => {
+                    return Err(format!(
+                        "ShellX could not remove a legacy project-scoped Grok host registration from {}: {}. Fix the project .grok/config.toml permissions and retry; ShellX will not launch with a host bridge that can leak into later direct Grok sessions.",
+                        agent_cwd, e
+                    ));
+                }
             }
 
             let mut c = Command::new(grok_exe);
-            // H2 token strategy (2026-05-20): the project-scoped
-            // config.toml declares `bearer_token_env_var = "SHELLX_MCP_TOKEN"`
-            // (NOT a literal Bearer). Inject the value via env so the
-            // grok process can resolve the header at MCP request time.
-            // Direct Command::env is sufficient on Local (no WSL hop).
-            c.env(
-                crate::mcp_http::MCP_TOKEN_ENV_VAR,
-                crate::mcp_http::tab_bound_mcp_token(self.tab_id.as_deref().unwrap_or("default")),
-            );
+            // The local host bearer is carried only in the ACP
+            // session/new.mcpServers HTTP header. Do not export it as a
+            // process environment variable, where a project config could
+            // accidentally consume it outside the session-scoped entry.
             for (name, value) in &marketplace_env {
                 c.env(name, value);
             }
@@ -1536,6 +2244,8 @@ impl GrokAcpSession {
                 c.arg(a);
             }
             c.kill_on_drop(true)
+                .arg("--rules")
+                .arg(crate::skill_install::SHELLX_SESSION_RULES)
                 .arg("agent")
                 .arg("stdio")
                 .current_dir(cwd)
@@ -1582,61 +2292,9 @@ impl GrokAcpSession {
             crate::winproc::tie_to_parent_lifetime(pid);
         }
 
-        let mut stdin_handle = child.stdin.take().ok_or("Failed to open stdin for ACP")?;
+        let stdin_handle = child.stdin.take().ok_or("Failed to open stdin for ACP")?;
         let stdout = child.stdout.take().ok_or("Failed to open stdout for ACP")?;
         let stderr = child.stderr.take().ok_or("Failed to open stderr for ACP")?;
-
-        // SSH token-via-stdin prelude (audit fix). The remote
-        // shim reads the first line of stdin into SHELLX_MCP_TOKEN
-        // before exec'ing grok. Write that line here, BEFORE the
-        // stdin handle is wrapped in the Mutex used by the async
-        // writers, so the token is the very first bytes the remote
-        // sees. Token never appears in any argv.
-        if use_ssh {
-            use tokio::io::AsyncWriteExt;
-            let tab = self.tab_id.as_deref().unwrap_or("default");
-            let (skill_b64, config_b64) =
-                ssh_remote_prelude_payloads(tab, &marketplace_config_blocks);
-            for (label, value) in [
-                ("SSH remote shellx-host skill", skill_b64),
-                ("SSH remote MCP config", config_b64),
-            ] {
-                stdin_handle
-                    .write_all(value.as_bytes())
-                    .await
-                    .map_err(|e| format!("Failed to write {} prelude: {}", label, e))?;
-                stdin_handle
-                    .write_all(b"\n")
-                    .await
-                    .map_err(|e| format!("Failed to write {} prelude newline: {}", label, e))?;
-            }
-            for (name, value) in &marketplace_env {
-                stdin_handle
-                    .write_all(value.as_bytes())
-                    .await
-                    .map_err(|e| format!("Failed to write SSH marketplace env {}: {}", name, e))?;
-                stdin_handle.write_all(b"\n").await.map_err(|e| {
-                    format!(
-                        "Failed to write SSH marketplace env newline {}: {}",
-                        name, e
-                    )
-                })?;
-            }
-            let token =
-                crate::mcp_http::tab_bound_mcp_token(self.tab_id.as_deref().unwrap_or("default"));
-            stdin_handle
-                .write_all(token.as_bytes())
-                .await
-                .map_err(|e| format!("Failed to write SSH MCP token prelude: {}", e))?;
-            stdin_handle
-                .write_all(b"\n")
-                .await
-                .map_err(|e| format!("Failed to write SSH MCP token newline: {}", e))?;
-            stdin_handle
-                .flush()
-                .await
-                .map_err(|e| format!("Failed to flush SSH MCP token prelude: {}", e))?;
-        }
 
         self.child = Some(child);
         self.stdin = Some(Arc::new(TokioMutex::new(stdin_handle)));
@@ -1656,13 +2314,11 @@ impl GrokAcpSession {
         self.first_prompt_sent = false;
         // Fresh for new initialize parse.
         self.detected_max_context_length = None;
+        self.auth_method_id = None;
         // DO NOT reset `self.mcp_servers` here. A prior reset would
         // wipe the array AFTER `set_mcp_servers` had populated it
         // but BEFORE `session/new` consumed it — silently dropping
-        // every marketplace entry and any custom MCP. The legacy
-        // `grok-shell-host` MCP would still work because grok reads
-        // ~/.grok/config.toml independently of session/new mcp_servers,
-        // hiding the bug.
+        // the host bridge, every marketplace entry, and any custom MCP.
         // Carry-forward concern (the original reason for the reset): if
         // start is called twice on the same session struct without an
         // intervening `set_mcp_servers`, the previous list survives.
@@ -1717,15 +2373,23 @@ impl GrokAcpSession {
         });
         self.reader_handle = Some(handle);
 
-        // Now perform ACP handshake (initialize + session/new or
-        // session/load) - responses will be delivered by the reader.
-        // For WSL: pass the Linux-style cwd so the agent (inside WSL) sees correct paths for its session
-        self.initialize().await?;
-        // mcp_servers (if set via set_mcp_servers before start) are passed to session/new so agent sees the tools
-        if let Some(existing_session_id) = load_session_id {
-            self.load_session(&agent_cwd, &existing_session_id).await?;
-        } else {
-            self.create_session(&agent_cwd).await?;
+        // Now perform ACP handshake (initialize + authenticate + session/new
+        // or session/load); responses are delivered by the reader. A failed
+        // handshake must not leave a local ssh.exe or remote grok child alive.
+        let handshake = async {
+            self.initialize().await?;
+            // For WSL/SSH, agent_cwd is already in the target's path frame.
+            if let Some(existing_session_id) = load_session_id {
+                self.load_session(&agent_cwd, &existing_session_id).await?;
+            } else {
+                self.create_session(&agent_cwd).await?;
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        if let Err(error) = handshake {
+            self.cleanup_failed_start().await;
+            return Err(error);
         }
 
         info!(
@@ -1759,23 +2423,85 @@ impl GrokAcpSession {
 
         let result = self.send_request("initialize", params).await?;
 
-        // Parse authMethods from the initialize response. grok-build
-        // declares one (e.g. "login") and rejects session/new without
-        // an authMethodId.
-        if let Some(methods) = result.pointer("/authMethods").and_then(|v| v.as_array()) {
-            if let Some(first) = methods
-                .iter()
-                .find_map(|m| m.get("id").and_then(|i| i.as_str()))
-            {
-                self.auth_method_id = Some(first.to_string());
-                info!("grok declared authMethod '{}'", first);
-            }
+        let http_mcp_supported = acp_supports_http_mcp(&result);
+        let requested_http_mcp = self
+            .mcp_servers
+            .iter()
+            .any(|server| server.get("type").and_then(|value| value.as_str()) == Some("http"));
+        if requested_http_mcp && !http_mcp_supported {
+            return Err(
+                "The installed Grok CLI does not advertise ACP HTTP MCP support required by ShellX host tools. Update Grok or choose another provider; ShellX will not fall back to the unscoped stdio host bridge."
+                    .to_string(),
+            );
         }
-        // Fallback: ACP canonical method id is "login" if grok returns
-        // no authMethods array (older builds). Better to send something
-        // than to skip the field and fail.
-        if self.auth_method_id.is_none() {
-            self.auth_method_id = Some("login".to_string());
+        let requested_sse_mcp = self
+            .mcp_servers
+            .iter()
+            .any(|server| server.get("type").and_then(|value| value.as_str()) == Some("sse"));
+        if requested_sse_mcp && !acp_supports_mcp_transport(&result, "sse") {
+            return Err(
+                "The installed Grok CLI does not advertise ACP SSE MCP support required by an enabled ShellX marketplace entry. Update Grok or disable that entry; ShellX will not persist a compatibility registration into the project."
+                    .to_string(),
+            );
+        }
+
+        let advertised_auth_methods = grok_auth_method_ids(&result);
+        self.auth_method_id = select_grok_headless_auth_method(&result);
+        match self.auth_method_id.clone() {
+            Some(method_id) => {
+                info!("grok selected headless auth method '{}'", method_id);
+                let params = AuthenticateParams {
+                    method_id: method_id.clone(),
+                    meta: AuthenticateMeta { headless: true },
+                };
+                if let Err(error) = self.send_request("authenticate", params).await {
+                    let hint = format!(
+                        "Grok authentication failed on the selected {} target. Run `grok login` there (for SSH/headless targets, use `grok login --device-auth`) or configure XAI_API_KEY, then reconnect. ({error})",
+                        self.transport_kind()
+                    );
+                    mark_auth_unhealthy(self.tab_id.as_deref().unwrap_or("default"), &hint);
+                    if let Some(handle) = &self.app_handle {
+                        emit_and_debug(
+                            handle,
+                            "auth-unhealthy",
+                            serde_json::json!({
+                                "kind": "auth_unhealthy",
+                                "hint": hint,
+                                "authMethodId": method_id,
+                            }),
+                            self.tab_id.as_deref(),
+                        );
+                    }
+                    return Err(hint);
+                }
+            }
+            None if advertised_auth_methods.is_empty() => {
+                // Compatibility path for older ACP agents that do not expose
+                // authentication negotiation. Current Grok Build always
+                // advertises methods, but a missing list alone is not proof
+                // that a legacy already-authenticated child should be denied.
+                info!("grok initialize exposed no authMethods; continuing legacy ACP flow");
+            }
+            None => {
+                let hint = format!(
+                    "Grok CLI is not authenticated on the selected {} target. Run `grok login` there (for SSH/headless targets, use `grok login --device-auth`) or configure XAI_API_KEY, then reconnect.",
+                    self.transport_kind()
+                );
+                mark_auth_unhealthy(self.tab_id.as_deref().unwrap_or("default"), &hint);
+                if let Some(handle) = &self.app_handle {
+                    emit_and_debug(
+                        handle,
+                        "auth-unhealthy",
+                        serde_json::json!({
+                            "kind": "auth_unhealthy",
+                            "hint": hint,
+                            "advertisedAuthMethods": advertised_auth_methods,
+                        }),
+                        self.tab_id.as_deref(),
+                    );
+                }
+                return Err(hint);
+            }
         }
 
         // Parse real max context length from agent capabilities. Grok
@@ -1862,7 +2588,6 @@ impl GrokAcpSession {
         let params = SessionNewParams {
             cwd: cwd.to_string(),
             mcp_servers: self.mcp_servers.clone(),
-            auth_method_id: self.auth_method_id.clone(),
         };
 
         let response = self.send_request("session/new", params).await?;
@@ -1894,9 +2619,7 @@ impl GrokAcpSession {
     /// + drop outer guard + await the returned receiver outside the State lock.
     #[allow(dead_code)]
     pub async fn send_prompt(&mut self, prompt: &str) -> Result<(), String> {
-        let rx = self.initiate_and_send_prompt(prompt).await?;
-        // Bounded await (see #5); events carry the important live data anyway
-        let _ = timeout(Duration::from_secs(600), rx).await;
+        self.initiate_and_send_prompt(prompt).await?.wait().await?;
         Ok(())
     }
 
@@ -1906,7 +2629,7 @@ impl GrokAcpSession {
     pub async fn initiate_and_send_prompt(
         &mut self,
         prompt: &str,
-    ) -> Result<oneshot::Receiver<serde_json::Value>, String> {
+    ) -> Result<PendingAcpResponse, String> {
         self.initiate_and_send_prompt_with_meta(prompt, None).await
     }
 
@@ -1920,7 +2643,7 @@ impl GrokAcpSession {
         &mut self,
         prompt: &str,
         meta: Option<serde_json::Value>,
-    ) -> Result<oneshot::Receiver<serde_json::Value>, String> {
+    ) -> Result<PendingAcpResponse, String> {
         if let Some(session_id) = &self.session_id {
             // First-prompt cwd-context prefix. Grok's
             // native session/new doesn't surface the working directory
@@ -1949,43 +2672,20 @@ impl GrokAcpSession {
                 meta: meta.clone(),
             };
 
-            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-            let (tx, rx) = oneshot::channel::<serde_json::Value>();
-            {
-                let mut pending = self.pending_responses.lock().await;
-                pending.insert(id, tx);
-            }
-
-            let request = AcpRequest {
-                jsonrpc: "2.0".to_string(),
-                id,
-                method: "session/prompt".to_string(),
-                params,
-            };
-            let json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-            let line = format!("{}\n", json);
-
-            if let Some(stdin_arc) = &self.stdin {
-                let mut stdin = stdin_arc.lock().await;
-                stdin
-                    .write_all(line.as_bytes())
-                    .await
-                    .map_err(|e| e.to_string())?;
-                stdin.flush().await.map_err(|e| e.to_string())?;
-                debug!("ACP sent prompt request id={}", id);
-                // Arm the local wall-clock timer so `prompt_complete`
-                // can compute elapsedMs even when grok's _meta lacks
-                // the server-side timestamps.
-                record_prompt_start(self.tab_id.as_deref().unwrap_or("default"));
-            } else {
-                return Err("No active stdin writer".to_string());
-            }
+            let pending = self
+                .initiate_request("session/prompt", params, Duration::from_secs(600))
+                .await?;
+            debug!("ACP sent prompt request id={}", pending.id());
+            // Arm the local wall-clock timer so `prompt_complete`
+            // can compute elapsedMs even when grok's _meta lacks
+            // the server-side timestamps.
+            record_prompt_start(self.tab_id.as_deref().unwrap_or("default"));
             // Flip the first-prompt flag AFTER the write
             // succeeds so a failed first-prompt retry still gets the
             // cwd header.
             self.first_prompt_sent = true;
 
-            Ok(rx)
+            Ok(pending)
         } else {
             Err("No active session".to_string())
         }
@@ -2000,7 +2700,7 @@ impl GrokAcpSession {
     pub async fn initiate_and_send_prompt_parts(
         &mut self,
         parts: Vec<PromptPart>,
-    ) -> Result<oneshot::Receiver<serde_json::Value>, String> {
+    ) -> Result<PendingAcpResponse, String> {
         self.initiate_and_send_prompt_parts_with_meta(parts, None)
             .await
     }
@@ -2013,7 +2713,7 @@ impl GrokAcpSession {
         &mut self,
         parts: Vec<PromptPart>,
         meta: Option<serde_json::Value>,
-    ) -> Result<oneshot::Receiver<serde_json::Value>, String> {
+    ) -> Result<PendingAcpResponse, String> {
         if let Some(session_id) = &self.session_id {
             if parts.is_empty() {
                 return Err("No prompt parts to send".to_string());
@@ -2045,104 +2745,29 @@ impl GrokAcpSession {
                 meta: meta.clone(),
             };
 
-            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-            let (tx, rx) = oneshot::channel::<serde_json::Value>();
-            {
-                let mut pending = self.pending_responses.lock().await;
-                pending.insert(id, tx);
-            }
+            let pending = self
+                .initiate_request("session/prompt", params, Duration::from_secs(600))
+                .await?;
+            info!(
+                "ACP sent session/prompt request id={} (parts={})",
+                pending.id(),
+                parts_count
+            );
+            debug!(
+                "ACP prompt params sent id={} parts={} (body omitted)",
+                pending.id(),
+                parts_count
+            );
+            // Arm the local wall-clock timer so prompt_complete can
+            // compute elapsedMs fallback.
+            record_prompt_start(self.tab_id.as_deref().unwrap_or("default"));
+            // Match text-prompt behavior: a successfully written rich
+            // first prompt consumes the cwd prefix exactly once.
+            self.first_prompt_sent = true;
 
-            let request = AcpRequest {
-                jsonrpc: "2.0".to_string(),
-                id,
-                method: "session/prompt".to_string(),
-                params,
-            };
-            let json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-            let line = format!("{}\n", json);
-
-            if let Some(stdin_arc) = &self.stdin {
-                let mut stdin = stdin_arc.lock().await;
-                stdin
-                    .write_all(line.as_bytes())
-                    .await
-                    .map_err(|e| e.to_string())?;
-                stdin.flush().await.map_err(|e| e.to_string())?;
-                info!(
-                    "ACP sent session/prompt request id={} (parts={})",
-                    id, parts_count
-                );
-                debug!(
-                    "ACP prompt payload sent id={} bytes={} parts={} (body omitted)",
-                    id,
-                    json.len(),
-                    parts_count
-                );
-                // Arm the local wall-clock timer so prompt_complete can
-                // compute elapsedMs fallback.
-                record_prompt_start(self.tab_id.as_deref().unwrap_or("default"));
-            } else {
-                return Err("No active stdin writer".to_string());
-            }
-
-            Ok(rx)
+            Ok(pending)
         } else {
             Err("No active session".to_string())
-        }
-    }
-
-    async fn send_request<T: Serialize>(
-        &self,
-        method: &str,
-        params: T,
-    ) -> Result<serde_json::Value, String> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-
-        let (tx, rx) = oneshot::channel::<serde_json::Value>();
-        {
-            let mut pending = self.pending_responses.lock().await;
-            pending.insert(id, tx);
-        }
-
-        let request = AcpRequest {
-            jsonrpc: "2.0".to_string(),
-            id,
-            method: method.to_string(),
-            params,
-        };
-
-        let json = serde_json::to_string(&request).map_err(|e| e.to_string())?;
-        let line = format!("{}\n", json);
-
-        if let Some(stdin_arc) = &self.stdin {
-            let mut stdin = stdin_arc.lock().await;
-            stdin
-                .write_all(line.as_bytes())
-                .await
-                .map_err(|e| e.to_string())?;
-            stdin.flush().await.map_err(|e| e.to_string())?;
-            debug!("ACP sent request id={} method={}", id, method);
-        } else {
-            return Err("No active stdin writer".to_string());
-        }
-
-        // Await the correlated response from the reader task (enables true bidirectional)
-        // Bounded to prevent permanent hang (#5); 10min for long agent runs
-        let resp = timeout(Duration::from_secs(600), rx)
-            .await
-            .map_err(|_| "ACP request timeout (no response in 10min)".to_string())?
-            .map_err(|_| "ACP response channel closed (process died?)".to_string())?;
-
-        if let Some(err) = resp.get("error").filter(|e| !e.is_null()) {
-            error!("ACP request {} error: {:?}", method, err);
-            return Err(format!("ACP error for {}: {:?}", method, err));
-        }
-
-        // Return the result object (or full if no result wrapper)
-        if let Some(result) = resp.get("result") {
-            Ok(result.clone())
-        } else {
-            Ok(resp)
         }
     }
 
@@ -2237,13 +2862,14 @@ impl GrokAcpSession {
                 info!("SSH abort: post-EOF wait complete");
             }
         }
-        // Step 3 — hard kill (no-op if already exited).
+        // Step 3 — terminate the exact owned process tree and reap the child.
+        // On Windows the CLI can leave descendants holding the session cwd
+        // after killing only its root process, so the platform helper uses
+        // taskkill /PID <owned-pid> /T /F. Unix retains direct child kill.
+        let transport = self.transport_kind().to_string();
         if let Some(child) = self.child.as_mut() {
-            let _ = child.kill().await;
-            info!(
-                "Grok ACP process killed (transport={})",
-                self.transport_kind()
-            );
+            crate::winproc::terminate_owned_tokio_child_tree(child).await?;
+            info!("Grok ACP process tree terminated (transport={})", transport);
         }
         self.child = None;
         if let Some(h) = self.reader_handle.take() {
@@ -2270,6 +2896,35 @@ impl GrokAcpSession {
         Ok(())
     }
 
+    async fn cleanup_failed_start(&mut self) {
+        let is_ssh = self.ssh_config.is_some();
+        self.stdin = None;
+        if is_ssh {
+            if let Some(child) = self.child.as_mut() {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
+            }
+        }
+        if let Some(child) = self.child.as_mut() {
+            if let Err(error) = crate::winproc::terminate_owned_tokio_child_tree(child).await {
+                warn!("Failed-start Grok process-tree cleanup failed: {}", error);
+            }
+        }
+        self.child = None;
+        self.session_id = None;
+        if let Some(handle) = self.reader_handle.take() {
+            handle.abort();
+        }
+        self.pending_responses.lock().await.clear();
+        if let Some(handle) = &self.app_handle {
+            emit_and_debug(
+                handle,
+                "session-ended",
+                serde_json::json!({ "reason": "startup_failed" }),
+                self.tab_id.as_deref(),
+            );
+        }
+    }
+
     /// Phase 4: Return the context length reported during initialize (or None if not yet started / parsed).
     pub fn get_detected_max_context_length(&self) -> Option<u64> {
         self.detected_max_context_length
@@ -2279,6 +2934,52 @@ impl GrokAcpSession {
     pub fn set_mcp_servers(&mut self, servers: Vec<serde_json::Value>) {
         self.mcp_servers = servers;
     }
+}
+
+fn acp_supports_http_mcp(initialize_result: &serde_json::Value) -> bool {
+    acp_supports_mcp_transport(initialize_result, "http")
+}
+
+fn grok_auth_method_ids(initialize_result: &serde_json::Value) -> Vec<String> {
+    initialize_result
+        .get("authMethods")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|method| method.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect()
+}
+
+fn select_grok_headless_auth_method(initialize_result: &serde_json::Value) -> Option<String> {
+    let methods = grok_auth_method_ids(initialize_result);
+    // An explicitly provided API key is the documented automation path and
+    // Grok only advertises this id when that route is available. Otherwise
+    // reuse the target's own cached login. Never select `grok.com`: it is an
+    // interactive browser flow and would strand an ACP stdio session.
+    ["xai.api_key", "cached_token"]
+        .into_iter()
+        .find(|candidate| methods.iter().any(|method| method == candidate))
+        .map(str::to_string)
+}
+
+fn remove_session_marketplace_servers(servers: &mut Vec<serde_json::Value>) {
+    servers.retain(|server| {
+        server
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map_or(true, |name| !name.starts_with("shellx-mp-"))
+    });
+}
+
+fn acp_supports_mcp_transport(initialize_result: &serde_json::Value, transport: &str) -> bool {
+    initialize_result
+        .pointer(&format!("/agentCapabilities/mcpCapabilities/{transport}"))
+        .or_else(|| {
+            initialize_result.pointer(&format!("/capabilities/mcpCapabilities/{transport}"))
+        })
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
 
 /// Internal JSON-RPC wire message for both incoming responses, notifications and requests
@@ -2298,6 +2999,79 @@ struct JsonRpcMessage {
     error: Option<serde_json::Value>,
 }
 
+const ACP_STDOUT_MAX_LINE_BYTES: usize = 32 * 1024 * 1024;
+const ACP_STDERR_MAX_LINE_BYTES: usize = 1024 * 1024;
+const ACP_MAX_CONCURRENT_HOST_REQUESTS: usize = 8;
+const ACP_PARSE_ERROR_PREVIEW_CHARS: usize = 512;
+
+#[derive(Debug, PartialEq, Eq)]
+enum AcpBoundedLine {
+    Line(Vec<u8>),
+    Overflow,
+    Eof,
+}
+
+/// Read one JSONL record without allowing an unterminated peer payload to
+/// grow memory without bound. Overflow is drained through the next newline so
+/// callers can either resynchronize (stderr) or fail the protocol closed
+/// (stdout, where dropping a JSON-RPC record would corrupt correlation).
+async fn read_acp_bounded_line<R>(
+    reader: &mut R,
+    max_line_bytes: usize,
+) -> std::io::Result<AcpBoundedLine>
+where
+    R: AsyncBufReadExt + Unpin,
+{
+    let mut buf = Vec::new();
+    let mut limited = reader.take(max_line_bytes as u64);
+    let read = limited.read_until(b'\n', &mut buf).await?;
+    if read == 0 {
+        return Ok(AcpBoundedLine::Eof);
+    }
+    if buf.last() == Some(&b'\n') {
+        buf.pop();
+        if buf.last() == Some(&b'\r') {
+            buf.pop();
+        }
+        return Ok(AcpBoundedLine::Line(buf));
+    }
+    if buf.len() < max_line_bytes {
+        return Ok(AcpBoundedLine::Line(buf));
+    }
+
+    loop {
+        let mut scratch = Vec::new();
+        let mut limited = reader.take(max_line_bytes as u64);
+        let read = limited.read_until(b'\n', &mut scratch).await?;
+        if read == 0 || scratch.last() == Some(&b'\n') {
+            return Ok(AcpBoundedLine::Overflow);
+        }
+    }
+}
+
+async fn fail_pending_acp_responses(
+    pending: &Arc<TokioMutex<HashMap<u64, PendingAcpRequest>>>,
+    reason: &str,
+) -> usize {
+    let senders = {
+        let mut entries = pending.lock().await;
+        entries
+            .drain()
+            .map(|(_, request)| request.sender)
+            .collect::<Vec<_>>()
+    };
+    let count = senders.len();
+    for sender in senders {
+        let _ = sender.send(serde_json::json!({
+            "error": {
+                "code": -32098,
+                "message": reason,
+            }
+        }));
+    }
+    count
+}
+
 /// Background task: read lines from stdout (protocol) + stderr, correlate responses, dispatch notifications and handle capability requests from the agent.
 ///
 /// Args are kept positional rather than bundled into a struct because each
@@ -2308,7 +3082,7 @@ struct JsonRpcMessage {
 async fn read_loop(
     stdout: tokio::process::ChildStdout,
     stderr: tokio::process::ChildStderr,
-    pending: Arc<TokioMutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
+    pending: Arc<TokioMutex<HashMap<u64, PendingAcpRequest>>>,
     app_handle: Option<tauri::AppHandle>,
     stdin: Arc<TokioMutex<ChildStdin>>,
     cwd: String,
@@ -2329,14 +3103,46 @@ async fn read_loop(
     // `ssh host -- cat / tee` when this is Some.
     ssh_config: Option<SshSpawnConfig>,
 ) -> Result<(), String> {
-    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stdout_reader = BufReader::with_capacity(64 * 1024, stdout);
     let tab_id_for_stderr = tab_id.clone();
 
     // Separate task for stderr (agent logs / diagnostics) -> emit as event + console
     let app_for_stderr = app_handle.clone();
     let stderr_task = tokio::spawn(async move {
-        let mut err_reader = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = err_reader.next_line().await {
+        let mut err_reader = BufReader::with_capacity(16 * 1024, stderr);
+        loop {
+            let bytes = match read_acp_bounded_line(&mut err_reader, ACP_STDERR_MAX_LINE_BYTES)
+                .await
+            {
+                Ok(AcpBoundedLine::Line(bytes)) => bytes,
+                Ok(AcpBoundedLine::Eof) => break,
+                Ok(AcpBoundedLine::Overflow) => {
+                    warn!(
+                        "grok stderr line exceeded {} bytes; dropped",
+                        ACP_STDERR_MAX_LINE_BYTES
+                    );
+                    if let Some(ref h) = app_for_stderr {
+                        emit_and_debug(
+                            h,
+                            "grok-stderr",
+                            serde_json::json!({
+                                "line": format!(
+                                    "[shellX] Grok stderr line exceeded {} bytes and was dropped",
+                                    ACP_STDERR_MAX_LINE_BYTES
+                                ),
+                                "truncated": true,
+                            }),
+                            tab_id_for_stderr.as_deref(),
+                        );
+                    }
+                    continue;
+                }
+                Err(error) => {
+                    warn!("grok stderr reader failed: {}", error);
+                    break;
+                }
+            };
+            let line = String::from_utf8_lossy(&bytes).into_owned();
             if !line.trim().is_empty() {
                 if let Some(ref h) = app_for_stderr {
                     emit_and_debug(
@@ -2381,7 +3187,31 @@ async fn read_loop(
         }
     });
 
-    while let Ok(Some(line)) = stdout_reader.next_line().await {
+    let request_slots = Arc::new(Semaphore::new(ACP_MAX_CONCURRENT_HOST_REQUESTS));
+    let mut request_tasks: Vec<tokio::task::JoinHandle<()>> =
+        Vec::with_capacity(ACP_MAX_CONCURRENT_HOST_REQUESTS);
+    let mut end_reason = "grok_process_exited".to_string();
+
+    loop {
+        let bytes = match read_acp_bounded_line(&mut stdout_reader, ACP_STDOUT_MAX_LINE_BYTES).await
+        {
+            Ok(AcpBoundedLine::Line(bytes)) => bytes,
+            Ok(AcpBoundedLine::Eof) => break,
+            Ok(AcpBoundedLine::Overflow) => {
+                end_reason = "acp_stdout_line_too_large".to_string();
+                error!(
+                    "ACP stdout line exceeded {} bytes; terminating corrupt protocol stream",
+                    ACP_STDOUT_MAX_LINE_BYTES
+                );
+                break;
+            }
+            Err(error) => {
+                end_reason = "acp_stdout_read_error".to_string();
+                error!("ACP stdout read failed: {}", error);
+                break;
+            }
+        };
+        let line = String::from_utf8_lossy(&bytes);
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -2390,7 +3220,16 @@ async fn read_loop(
         let msg: JsonRpcMessage = match serde_json::from_str(trimmed) {
             Ok(m) => m,
             Err(e) => {
-                warn!("ACP parse error: {} | raw: {}", e, trimmed);
+                let preview = trimmed
+                    .chars()
+                    .take(ACP_PARSE_ERROR_PREVIEW_CHARS)
+                    .collect::<String>();
+                warn!(
+                    "ACP parse error: {} | bytes={} preview={:?}",
+                    e,
+                    bytes.len(),
+                    preview
+                );
                 continue;
             }
         };
@@ -2406,26 +3245,61 @@ async fn read_loop(
                 // Incoming REQUEST from agent (capability call e.g. fs/read_text_file)
                 let params = msg.params.unwrap_or(serde_json::json!({}));
                 debug!("ACP received request id={} method={}", id, method);
-                // Pass the real WSL config + discovered linux_home
-                // through so terminal/create can spawn inside WSL with proper
-                // path translation, matching the fs/* handlers.
-                handle_agent_request(
-                    id,
-                    method,
-                    params,
-                    &stdin,
-                    &cwd,
-                    &app_handle,
-                    &wsl_distro,
-                    &linux_home,
-                    &ssh_config,
-                    tab_id.as_deref(),
-                )
-                .await;
+                // Capability calls may wait on user permission or a long
+                // terminal operation. Dispatch them off the sole stdout
+                // reader so responses and notifications remain live.
+                request_tasks.retain(|task| !task.is_finished());
+                match request_slots.clone().try_acquire_owned() {
+                    Ok(permit) => {
+                        let request_stdin = stdin.clone();
+                        let request_cwd = cwd.clone();
+                        let request_app = app_handle.clone();
+                        let request_wsl = wsl_distro.clone();
+                        let request_linux_home = linux_home.clone();
+                        let request_ssh = ssh_config.clone();
+                        let request_tab_id = tab_id.clone();
+                        request_tasks.push(tokio::spawn(async move {
+                            let _permit = permit;
+                            handle_agent_request(
+                                id,
+                                method,
+                                params,
+                                &request_stdin,
+                                &request_cwd,
+                                &request_app,
+                                &request_wsl,
+                                &request_linux_home,
+                                &request_ssh,
+                                request_tab_id.as_deref(),
+                            )
+                            .await;
+                        }));
+                    }
+                    Err(_) => {
+                        warn!(
+                            "ACP host request concurrency limit reached; rejecting id={} method={}",
+                            id, method
+                        );
+                        send_error_response(
+                            id,
+                            -32001,
+                            format!(
+                                "shellX host is already handling {} concurrent ACP requests; retry",
+                                ACP_MAX_CONCURRENT_HOST_REQUESTS
+                            ),
+                            &stdin,
+                        )
+                        .await;
+                    }
+                }
             } else if msg.result.is_some() || msg.error.is_some() {
                 // RESPONSE to our earlier request
-                let mut p = pending.lock().await;
-                if let Some(sender) = p.remove(&id) {
+                // Remove under the map lock, then release it before any
+                // orchestration hooks or I/O. Those hooks can take seconds
+                // and must not block registration of unrelated requests.
+                let pending_request = pending.lock().await.remove(&id);
+                if let Some(pending_request) = pending_request {
+                    let is_prompt_response = pending_request.method == "session/prompt";
                     // Clean payload: only include the actual result or error from the wire.
                     // This prevents "error: null" from being treated as failure (fixes response correlation).
                     let response_payload = if let Some(e) = msg.error.clone() {
@@ -2433,7 +3307,7 @@ async fn read_loop(
                     } else {
                         serde_json::json!({ "result": msg.result.clone() })
                     };
-                    let _ = sender.send(response_payload.clone());
+                    let _ = pending_request.sender.send(response_payload);
 
                     // Synthesize `prompt-complete`
                     // when grok skipped the `_x.ai/session/prompt_complete`
@@ -2449,75 +3323,78 @@ async fn read_loop(
                     // stopReason grok included in its response result (or
                     // "completed" as a generic fallback).
                     let tab_key = tab_id.as_deref().unwrap_or("default");
-                    if let Some(elapsed_ms) = take_prompt_elapsed_ms(tab_key) {
-                        // Real envelope didn't fire. Synthesize from the
-                        // session/prompt response payload — pull stopReason
-                        // if present, else use a generic marker so callers
-                        // can distinguish synthetic from real envelopes.
-                        let result_obj = msg.result.as_ref();
-                        let error_text = msg.error.as_ref().map(|e| e.to_string());
-                        let stop_reason = if error_text.is_some() {
-                            "error".to_string()
-                        } else {
-                            result_obj
-                                .and_then(|v| v.get("stopReason"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| "completed".to_string())
-                        };
-                        let session_id = result_obj
-                            .and_then(|v| v.get("sessionId"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        // Classify a bare `cancelled`
-                        // when we know /abort fired during this prompt.
-                        let reason_detail: Option<&'static str> = if stop_reason == "cancelled" {
-                            let was_aborted = was_aborted_during_current_prompt(tab_key);
-                            take_abort_flag(tab_key);
-                            if was_aborted {
-                                Some("user_aborted")
+                    if is_prompt_response {
+                        if let Some(elapsed_ms) = take_prompt_elapsed_ms(tab_key) {
+                            // Real envelope didn't fire. Synthesize from the
+                            // session/prompt response payload — pull stopReason
+                            // if present, else use a generic marker so callers
+                            // can distinguish synthetic from real envelopes.
+                            let result_obj = msg.result.as_ref();
+                            let error_text = msg.error.as_ref().map(|e| e.to_string());
+                            let stop_reason = if error_text.is_some() {
+                                "error".to_string()
                             } else {
-                                Some("agent_chose")
+                                result_obj
+                                    .and_then(|v| v.get("stopReason"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| "completed".to_string())
+                            };
+                            let session_id = result_obj
+                                .and_then(|v| v.get("sessionId"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            // Classify a bare `cancelled`
+                            // when we know /abort fired during this prompt.
+                            let reason_detail: Option<&'static str> = if stop_reason == "cancelled"
+                            {
+                                let was_aborted = was_aborted_during_current_prompt(tab_key);
+                                take_abort_flag(tab_key);
+                                if was_aborted {
+                                    Some("user_aborted")
+                                } else {
+                                    Some("agent_chose")
+                                }
+                            } else {
+                                None
+                            };
+                            let synth = serde_json::json!({
+                                "kind": "prompt_complete",
+                                "stopReason": stop_reason,
+                                "promptId": serde_json::Value::Null,
+                                "sessionId": session_id,
+                                "elapsedMs": elapsed_ms,
+                                "synthetic": true,
+                                "reasonDetail": reason_detail,
+                            });
+                            if let Some(ref h) = app_handle {
+                                emit_and_debug(h, "prompt-complete", synth, tab_id.as_deref());
                             }
-                        } else {
-                            None
-                        };
-                        let synth = serde_json::json!({
-                            "kind": "prompt_complete",
-                            "stopReason": stop_reason,
-                            "promptId": serde_json::Value::Null,
-                            "sessionId": session_id,
-                            "elapsedMs": elapsed_ms,
-                            "synthetic": true,
-                            "reasonDetail": reason_detail,
-                        });
-                        if let Some(ref h) = app_handle {
-                            emit_and_debug(h, "prompt-complete", synth, tab_id.as_deref());
-                        }
-                        warn!(
+                            warn!(
                             "synthesized prompt-complete for tab='{}' (grok skipped _x.ai/session/prompt_complete) — elapsed_ms={}",
                             tab_key, elapsed_ms
                         );
-                        maybe_mark_build_transport_failure(
-                            &app_handle,
-                            tab_id.as_deref(),
-                            Some(&stop_reason),
-                            error_text.as_deref(),
-                        )
-                        .await;
-                        // Goal orchestrator hook (synthetic-fallback
-                        // site). Mirrors the real envelope call inside
-                        // handle_notification. Mutually exclusive paths:
-                        // `take_prompt_elapsed_ms` consumed here means
-                        // handle_notification's site won't see the same
-                        // prompt, preserving the consider_continue
-                        // idempotency invariant (one call per event).
-                        maybe_inject_goal_continuation(
-                            &app_handle,
-                            tab_id.as_deref(),
-                            Some(&stop_reason),
-                        )
-                        .await;
+                            maybe_mark_build_transport_failure(
+                                &app_handle,
+                                tab_id.as_deref(),
+                                Some(&stop_reason),
+                                error_text.as_deref(),
+                            )
+                            .await;
+                            // Goal orchestrator hook (synthetic-fallback
+                            // site). Mirrors the real envelope call inside
+                            // handle_notification. Mutually exclusive paths:
+                            // `take_prompt_elapsed_ms` consumed here means
+                            // handle_notification's site won't see the same
+                            // prompt, preserving the consider_continue
+                            // idempotency invariant (one call per event).
+                            maybe_inject_goal_continuation(
+                                &app_handle,
+                                tab_id.as_deref(),
+                                Some(&stop_reason),
+                            )
+                            .await;
+                        }
                     }
                 } else {
                     debug!("Received response for unknown id {}", id);
@@ -2531,16 +3408,29 @@ async fn read_loop(
         }
     }
 
-    // Natural termination (stdout EOF) — grok agent stdio exited
+    for task in request_tasks {
+        task.abort();
+    }
+    let failed_pending =
+        fail_pending_acp_responses(&pending, &format!("ACP transport ended: {end_reason}")).await;
+
+    // Natural termination (stdout EOF), read failure, or framing violation.
     if let Some(ref h) = app_handle {
         emit_and_debug(
             h,
             "session-ended",
-            serde_json::json!({ "reason": "grok_process_exited" }),
+            serde_json::json!({
+                "reason": end_reason.clone(),
+                "failedPendingResponses": failed_pending,
+            }),
             tab_id.as_deref(),
         );
     }
-    debug!("ACP reader detected grok process exit (stdout closed)");
+    debug!(
+        "ACP reader ended reason={} failed_pending={}",
+        end_reason, failed_pending
+    );
+    stderr_task.abort();
     let _ = stderr_task.await;
     Ok(())
 }
@@ -3755,10 +4645,14 @@ async fn handle_agent_request(
             // tokio::fs path runs on the Windows host and fails with
             // os error 3 for any /home/<remote-user>/... path.
             if let Some(ssh) = ssh_config {
-                let remote_path = resolve_remote_ssh_path(&path, cwd, linux_home);
-                if let Err(e) =
-                    validate_remote_ssh_fs_path("fs/read_text_file", &remote_path, linux_home)
-                {
+                let remote_path =
+                    resolve_remote_ssh_path(&path, cwd, linux_home, ssh.remote_runtime);
+                if let Err(e) = validate_remote_ssh_fs_path(
+                    "fs/read_text_file",
+                    &remote_path,
+                    linux_home,
+                    ssh.remote_runtime,
+                ) {
                     return send_error_response(id, -32603, e, stdin).await;
                 }
                 match ssh_read_file(ssh, &remote_path).await {
@@ -3895,10 +4789,14 @@ async fn handle_agent_request(
             // — route the write through `ssh host -- 'cat > path'` so it
             // hits the remote filesystem.
             if let Some(ssh) = ssh_config {
-                let remote_path = resolve_remote_ssh_path(&path, cwd, linux_home);
-                if let Err(e) =
-                    validate_remote_ssh_fs_path("fs/write_text_file", &remote_path, linux_home)
-                {
+                let remote_path =
+                    resolve_remote_ssh_path(&path, cwd, linux_home, ssh.remote_runtime);
+                if let Err(e) = validate_remote_ssh_fs_path(
+                    "fs/write_text_file",
+                    &remote_path,
+                    linux_home,
+                    ssh.remote_runtime,
+                ) {
                     return send_error_response(id, -32603, e, stdin).await;
                 }
                 match ssh_write_file(ssh, &remote_path, &content).await {
@@ -4240,7 +5138,9 @@ async fn current_permission_mode(
             return Some(m.to_string());
         }
     }
-    reg.get_tab_autonomy(&key).await
+    reg.get_tab_autonomy(&key)
+        .await
+        .or_else(|| Some(SHELLX_DEFAULT_PERMISSION_MODE.to_string()))
 }
 
 /// `terminal/create` handler. Returns `{terminalId}` on success, or a JSON-RPC error:
@@ -4254,7 +5154,7 @@ async fn current_permission_mode(
 /// runs on Linux/WSL/SSH). Verified hang by stress agent
 /// 2026-05-18 and confirmed via direct ACP probe. Grok now
 /// gets a structured -32601 with the exact replacement so it
-/// pivots to grok-shell-host__Agent on the next tool call.
+/// pivots to shellx-host-http__Agent on the next tool call.
 ///
 /// Args kept positional: this handler is one of five terminal/* dispatch
 /// targets called from a single match in handle_agent_request, and they
@@ -4276,14 +5176,10 @@ async fn handle_terminal_create(
     tab_id: Option<&str>,
     _session_cwd: &str,
 ) -> () {
-    // Hardware-level
-    // kill of run_terminal_command + monitor with transport-aware redirect.
-    // Local transport: redirect to grok-shell-host__Agent (works — host
-    // MCP is wired on Windows where shellX lives).
-    // SSH transport: Agent is unreachable from the remote grok (no
-    // remote shellX). Redirect the user instead.
-    // WSL transport: same gap — WSL-side config.toml has the host MCP
-    // disabled + stale path (see BUG-D-WSL). Redirect the user.
+    // Hardware-level kill of run_terminal_command + monitor with a
+    // transport-aware redirect. The session-scoped HTTP host MCP is now
+    // reachable over local, WSL, and SSH routes, and Agent launches its child
+    // in the same target frame as the parent provider.
     // // Look up the session's transport via SessionRegistry. tab_id is
     // already in scope; the lookup is one mutex acquire on the
     // already-running session's slot.
@@ -4303,33 +5199,28 @@ async fn handle_terminal_create(
     // hand work BACK to the user ("ask the user to run X" / "open a PTY
     // tab yourself"). The whole point of shellX is that grok does the
     // work — offloading shell commands to the human breaks that contract.
-    // - For Local: redirect to the working grok-shell-host__Agent.
-    // - For SSH/WSL: tell grok plainly that shell exec is unavailable
-    // in this transport, point at fs_* for file work, and let grok
-    // fail the user-facing turn honestly rather than pretending the
-    // user will fill the gap.
-    // The WSL/SSH redirect must NOT point grok at grok-shell-host__fs_*
+    // The WSL/SSH redirect must NOT point grok at host-MCP fs_*
     // — those tools write to the Windows host filesystem, not the
     // remote. Match the MCP serverInfo.instructions guidance: use
     // NATIVE grok file tools (write, read_file, search_replace) for
     // remote files.
     let redirect_msg = match transport_kind {
         "ssh" => {
-            "shell exec is unavailable over SSH transport in shellX \
-                  (the grok-build PTY bridge spawns on the Windows host, \
-                  not on the remote machine). For files on the REMOTE \
+            "The native grok-build PTY bridge is disabled for this SSH \
+                  session because it targets the wrong host frame. For files on the REMOTE \
                   machine, use NATIVE grok tools: `write`, `read_file`, \
                   `search_replace`, `list_dir`, `grep`. The host-MCP \
                   fs_* tools tunnel back to Windows and would write to \
                   the parent host filesystem — do NOT use them for \
-                  remote-fs work. For anything that genuinely requires \
-                  an interactive shell, tell the user this task isn't \
-                  supported in the current shellX transport; do NOT \
-                  instruct them to run commands manually."
+                  remote-fs work. When a step requires a shell, use \
+                  `shellx-host-http__Agent` with `kind:\"general-purpose\"`; \
+                  ShellX launches that child through the same SSH preset. Poll \
+                  with `shellx-host-http__Agent_status` / `__Agent_output`. \
+                  Do NOT instruct the user to run commands manually."
         }
         "wsl" => {
-            "shell exec is unavailable in WSL transport — `terminal/create` \
-                  spawns Windows-side, not inside WSL. For files on the \
+            "The native grok-build PTY bridge is disabled for this WSL \
+                  session because `terminal/create` spawns Windows-side. For files on the \
                   WSL Linux filesystem, use NATIVE grok tools: `write`, \
                   `read_file`, `search_replace`, `list_dir`, `grep`. The \
                   host-MCP fs_* tools tunnel back to Windows and would \
@@ -4337,10 +5228,11 @@ async fn handle_terminal_create(
                   for WSL-fs work. \
                   \
                   IMPORTANT: when a step genuinely needs a shell (bash, \
-                  pip, apt, git push, npm, …), use `grok-shell-host__Agent` \
+                  pip, apt, git, npm, …), use `shellx-host-http__Agent` \
                   with `kind:\"general-purpose\"` to dispatch a shellX-managed \
                   shell subagent — its output is captured in the shellX UI's \
-                  Tasks rail. Then poll with `Agent_status` / `Agent_output`. \
+                  Tasks rail. Then poll with `shellx-host-http__Agent_status` / \
+                  `shellx-host-http__Agent_output`. \
                   Do NOT instruct the user to run commands manually. \
                   Same Agent fallback pattern as Local Windows. \
                   Valid `kind` values: general-purpose, explore, \
@@ -4349,8 +5241,8 @@ async fn handle_terminal_create(
         _ => {
             "shellX does not support `terminal/create` on this host \
               (the grok-build → ACP PTY bridge hangs on Windows; run_terminal_command \
-              and monitor both route through it). Use `grok-shell-host__Agent` to \
-              spawn shell tasks — then `grok-shell-host__Agent_status` / `__Agent_output` \
+              and monitor both route through it). Use `shellx-host-http__Agent` to \
+              spawn shell tasks — then `shellx-host-http__Agent_status` / `__Agent_output` \
               to read results. Do NOT instruct the user to run commands manually \
               — Agent works fine here."
         }
@@ -4379,7 +5271,7 @@ async fn handle_terminal_create(
     // round-trip. To revive: delete the early-return above and `cargo
     // check` will surface the dead-code warning for the rest.
     // // For the record, the dead branch handled: param parsing, autonomy
-    // gating, Confirm-mode synchronous permission gate, sanitize_cwd_param,
+    // gating, defensive synchronous permission gate, sanitize_cwd_param,
     // is_unix_shell_command detection + cmd.exe /c / sh -c wrap, WSL
     // bridge wrap, ProcessRegistry insert, TerminalRegistry::spawn, and
     // the success path returning {terminalId}. See git@HEAD~1.
@@ -4658,8 +5550,9 @@ fn shell_quote(s: &str) -> String {
 /// Convert Windows absolute path (from UI, picker, Projects linkedPaths) to WSL /mnt/ form for --cd and agent session cwd.
 fn windows_to_wsl_path(win_path: &str) -> String {
     let normalized = win_path.replace('\\', "/");
-    if normalized.len() >= 2 && normalized.chars().nth(1) == Some(':') {
-        let drive = normalized.chars().next().unwrap().to_ascii_lowercase();
+    let bytes = normalized.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        let drive = (bytes[0] as char).to_ascii_lowercase();
         let rest = if normalized.len() > 2 {
             &normalized[2..]
         } else {
@@ -4668,6 +5561,21 @@ fn windows_to_wsl_path(win_path: &str) -> String {
         format!("/mnt/{}{}", drive, rest)
     } else {
         normalized // already WSL or relative style
+    }
+}
+
+#[cfg(test)]
+mod windows_to_wsl_path_tests {
+    use super::windows_to_wsl_path;
+
+    #[test]
+    fn translates_ascii_windows_drives_without_slicing_unicode() {
+        assert_eq!(
+            windows_to_wsl_path(r"C:\Users\ExampleUser"),
+            "/mnt/c/Users/ExampleUser"
+        );
+        assert_eq!(windows_to_wsl_path("€:/not-a-drive"), "€:/not-a-drive");
+        assert_eq!(windows_to_wsl_path("/home/example"), "/home/example");
     }
 }
 
@@ -4680,7 +5588,43 @@ fn windows_to_wsl_path(win_path: &str) -> String {
 ///
 /// Relative paths are joined onto `cwd` (which is itself the remote
 /// cwd that grok was spawned in, per `agent_cwd` resolution in `start`).
-fn resolve_remote_ssh_path(path: &str, cwd: &str, remote_home: &Option<String>) -> String {
+fn resolve_remote_ssh_path(
+    path: &str,
+    cwd: &str,
+    remote_home: &Option<String>,
+    remote_runtime: SshRemoteRuntime,
+) -> String {
+    if remote_runtime == SshRemoteRuntime::Windows {
+        if path == "~" {
+            return remote_home.clone().unwrap_or_else(|| "~".to_string());
+        }
+        if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+            return remote_home
+                .as_deref()
+                .map(|home| {
+                    format!(
+                        "{}\\{}",
+                        normalize_windows_remote_path(home).trim_end_matches('\\'),
+                        normalize_windows_remote_path(rest).trim_start_matches('\\')
+                    )
+                })
+                .unwrap_or_else(|| path.to_string());
+        }
+        if is_windows_absolute_remote_path(path) {
+            return normalize_windows_remote_path(path);
+        }
+        if path.is_empty() {
+            return cwd.to_string();
+        }
+        if is_windows_absolute_remote_path(cwd) {
+            return format!(
+                "{}\\{}",
+                normalize_windows_remote_path(cwd).trim_end_matches('\\'),
+                normalize_windows_remote_path(path).trim_start_matches('\\')
+            );
+        }
+        return path.to_string();
+    }
     let expanded = if path == "~" {
         remote_home.clone().unwrap_or_else(|| "~".to_string())
     } else if let Some(rest) = path.strip_prefix("~/") {
@@ -4709,6 +5653,7 @@ fn validate_remote_ssh_fs_path(
     tool: &str,
     remote_path: &str,
     remote_home: &Option<String>,
+    remote_runtime: SshRemoteRuntime,
 ) -> Result<(), String> {
     if remote_path.is_empty() {
         return Err(format!("{}: path is required", tool));
@@ -4716,23 +5661,33 @@ fn validate_remote_ssh_fs_path(
     if remote_path.as_bytes().contains(&0) {
         return Err(format!("{}: path contains NUL byte", tool));
     }
-    if remote_path.contains('\\') {
-        return Err(format!(
-            "{}: SSH paths must use POSIX separators, got {}",
-            tool, remote_path
-        ));
+    let native_windows = remote_runtime == SshRemoteRuntime::Windows;
+    if native_windows {
+        if !is_windows_absolute_remote_path(remote_path) {
+            return Err(format!(
+                "{}: SSH path must resolve to an absolute Windows path, got {}",
+                tool, remote_path
+            ));
+        }
+    } else {
+        if remote_path.contains('\\') {
+            return Err(format!(
+                "{}: SSH paths must use POSIX separators, got {}",
+                tool, remote_path
+            ));
+        }
+        if !remote_path.starts_with('/') {
+            return Err(format!(
+                "{}: SSH path must resolve to an absolute POSIX path, got {}",
+                tool, remote_path
+            ));
+        }
     }
-    if !remote_path.starts_with('/') {
-        return Err(format!(
-            "{}: SSH path must resolve to an absolute POSIX path, got {}",
-            tool, remote_path
-        ));
-    }
-    if remote_path.split('/').any(|part| part == "..") {
+    if remote_path.split(['/', '\\']).any(|part| part == "..") {
         return Err(format!("{}: path traversal is not allowed", tool));
     }
 
-    let lower = remote_path.to_ascii_lowercase();
+    let lower = remote_path.replace('\\', "/").to_ascii_lowercase();
     const SENSITIVE_REMOTE_PATHS: &[&str] = &[
         "/.ssh/",
         "/.shellx/mcp.token",
@@ -4780,12 +5735,27 @@ fn validate_remote_ssh_fs_path(
         ));
     }
 
-    let Some(home) = remote_home.as_deref().filter(|h| h.starts_with('/')) else {
+    let Some(home) = remote_home.as_deref().filter(|home| {
+        if native_windows {
+            is_windows_absolute_remote_path(home)
+        } else {
+            home.starts_with('/')
+        }
+    }) else {
         return Err(format!(
             "{}: remote SSH HOME probe unavailable; refusing remote filesystem path {}",
             tool, remote_path
         ));
     };
+    if native_windows {
+        if !windows_remote_path_is_within(remote_path, home) {
+            return Err(format!(
+                "{}: remote SSH path must stay under {}, got {}",
+                tool, home, remote_path
+            ));
+        }
+        return Ok(());
+    }
     let home = home.trim_end_matches('/');
     if remote_path != home
         && !remote_path
@@ -4829,7 +5799,20 @@ pub(crate) async fn ssh_read_file(
         cmd.arg("-p").arg(p.to_string());
     }
     cmd.arg("--").arg(&ssh.host);
-    cmd.arg(format!("cat -- {}", shell_quote_for_remote(remote_path)));
+    let remote_command = if ssh.remote_runtime == SshRemoteRuntime::Windows {
+        let path = powershell_single_quote(remote_path);
+        wrap_ssh_windows_command(&format!(
+            "{}$path={path};$bytes=[IO.File]::ReadAllBytes($path);$stdout=[Console]::OpenStandardOutput();$stdout.Write($bytes,0,$bytes.Length);$stdout.Flush()",
+            windows_remote_shell_prelude(),
+        ))
+    } else {
+        wrap_ssh_posix_command(
+            ssh.remote_runtime,
+            ssh.wsl_distro.as_deref(),
+            &format!("cat -- {}", shell_quote_for_remote(remote_path)),
+        )?
+    };
+    cmd.arg(remote_command);
     use crate::winproc::NoWindowExt as _;
     cmd.no_window();
     cmd.stdout(std::process::Stdio::piped());
@@ -4880,7 +5863,6 @@ pub(crate) async fn ssh_write_file(
         cmd.arg("-p").arg(p.to_string());
     }
     cmd.arg("--").arg(&ssh.host);
-    let q = shell_quote_for_remote(remote_path);
     let tmp_path = format!(
         "{}.shellx.tmp.{}.{}",
         remote_path,
@@ -4890,16 +5872,28 @@ pub(crate) async fn ssh_write_file(
             .map(|d| d.as_nanos())
             .unwrap_or_default()
     );
-    let tmp_q = shell_quote_for_remote(&tmp_path);
-    cmd.arg(format!(
-        "tmp={tmp}; trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; \
-         mkdir -p -- \"$(dirname -- {path})\" && \
-         cat > \"$tmp\" && \
-         mv -f -- \"$tmp\" {path} && \
-         trap - EXIT HUP INT TERM",
-        tmp = tmp_q,
-        path = q
-    ));
+    let remote_command = if ssh.remote_runtime == SshRemoteRuntime::Windows {
+        let path = powershell_single_quote(remote_path);
+        let tmp = powershell_single_quote(&tmp_path);
+        wrap_ssh_windows_command(&format!(
+            "{prelude}$path={path};$tmp={tmp};$dir=Split-Path -Parent $path;if([string]::IsNullOrWhiteSpace($dir)){{throw 'remote path has no parent directory'}};New-Item -ItemType Directory -Force -Path $dir|Out-Null;$stdinStream=[Console]::OpenStandardInput();$output=[IO.File]::Open($tmp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{{$stdinStream.CopyTo($output)}}finally{{$output.Dispose()}};try{{Move-Item -LiteralPath $tmp -Destination $path -Force}}finally{{if(Test-Path -LiteralPath $tmp){{Remove-Item -LiteralPath $tmp -Force}}}}",
+            prelude = windows_remote_shell_prelude(),
+        ))
+    } else {
+        let q = shell_quote_for_remote(remote_path);
+        let tmp_q = shell_quote_for_remote(&tmp_path);
+        let command = format!(
+            "tmp={tmp}; trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; \
+             mkdir -p -- \"$(dirname -- {path})\" && \
+             cat > \"$tmp\" && \
+             mv -f -- \"$tmp\" {path} && \
+             trap - EXIT HUP INT TERM",
+            tmp = tmp_q,
+            path = q
+        );
+        wrap_ssh_posix_command(ssh.remote_runtime, ssh.wsl_distro.as_deref(), &command)?
+    };
+    cmd.arg(remote_command);
     use crate::winproc::NoWindowExt as _;
     cmd.no_window();
     cmd.stdin(std::process::Stdio::piped());
@@ -5089,6 +6083,103 @@ mod tests {
     }
 
     #[test]
+    fn http_mcp_capability_accepts_current_and_legacy_initialize_shapes() {
+        assert!(acp_supports_http_mcp(&serde_json::json!({
+            "agentCapabilities": { "mcpCapabilities": { "http": true } }
+        })));
+        assert!(acp_supports_http_mcp(&serde_json::json!({
+            "capabilities": { "mcpCapabilities": { "http": true } }
+        })));
+        assert!(acp_supports_mcp_transport(
+            &serde_json::json!({
+                "agentCapabilities": { "mcpCapabilities": { "sse": true } }
+            }),
+            "sse"
+        ));
+    }
+
+    #[test]
+    fn http_mcp_capability_defaults_to_fail_closed() {
+        assert!(!acp_supports_http_mcp(&serde_json::json!({})));
+        assert!(!acp_supports_http_mcp(&serde_json::json!({
+            "agentCapabilities": { "mcpCapabilities": { "http": false } }
+        })));
+    }
+
+    #[test]
+    fn session_marketplace_refresh_removes_stale_owned_entries_only() {
+        let mut servers = vec![
+            serde_json::json!({ "name": "shellx-host-http", "type": "http" }),
+            serde_json::json!({ "name": "caller-server", "command": "/bin/tool" }),
+            serde_json::json!({ "name": "shellx-mp-disabled", "command": "/bin/old" }),
+            serde_json::json!({ "command": "/bin/unnamed" }),
+        ];
+
+        remove_session_marketplace_servers(&mut servers);
+
+        assert_eq!(servers.len(), 3);
+        assert!(servers
+            .iter()
+            .any(|server| server["name"] == "shellx-host-http"));
+        assert!(servers
+            .iter()
+            .any(|server| server["name"] == "caller-server"));
+        assert!(servers.iter().any(|server| server.get("name").is_none()));
+        assert!(!servers
+            .iter()
+            .any(|server| server["name"] == "shellx-mp-disabled"));
+    }
+
+    #[tokio::test]
+    async fn bounded_acp_reader_drops_overflow_and_resynchronizes() {
+        let input = b"12345678overflow\n{\"ok\":true}\r\n";
+        let mut reader = BufReader::new(input.as_slice());
+
+        assert_eq!(
+            read_acp_bounded_line(&mut reader, 8).await.unwrap(),
+            AcpBoundedLine::Overflow
+        );
+        assert_eq!(
+            read_acp_bounded_line(&mut reader, 64).await.unwrap(),
+            AcpBoundedLine::Line(br#"{"ok":true}"#.to_vec())
+        );
+        assert_eq!(
+            read_acp_bounded_line(&mut reader, 64).await.unwrap(),
+            AcpBoundedLine::Eof
+        );
+    }
+
+    #[tokio::test]
+    async fn transport_end_fails_and_drains_every_pending_response() {
+        let pending = Arc::new(TokioMutex::new(HashMap::new()));
+        let (sender_a, receiver_a) = oneshot::channel();
+        let (sender_b, receiver_b) = oneshot::channel();
+        pending.lock().await.insert(
+            41,
+            PendingAcpRequest {
+                method: "session/prompt".to_string(),
+                sender: sender_a,
+            },
+        );
+        pending.lock().await.insert(
+            42,
+            PendingAcpRequest {
+                method: "initialize".to_string(),
+                sender: sender_b,
+            },
+        );
+
+        let failed = fail_pending_acp_responses(&pending, "ACP transport ended: test").await;
+
+        assert_eq!(failed, 2);
+        assert!(pending.lock().await.is_empty());
+        for response in [receiver_a.await.unwrap(), receiver_b.await.unwrap()] {
+            assert_eq!(response["error"]["code"], -32098);
+            assert_eq!(response["error"]["message"], "ACP transport ended: test");
+        }
+    }
+
+    #[test]
     fn resolve_path_rejects_traversal() {
         assert_eq!(
             resolve_path("../etc/passwd", "C:\\workspace", &None),
@@ -5100,7 +6191,10 @@ mod tests {
     #[test]
     fn resolve_path_joins_relative() {
         let p = resolve_path("src/lib.rs", "C:\\project", &None);
-        assert!(p.ends_with("project\\src\\lib.rs") || p.ends_with("project/src/lib.rs"));
+        assert!(
+            p.replace('\\', "/").ends_with("project/src/lib.rs"),
+            "unexpected resolved path: {p:?}"
+        );
     }
 
     #[tokio::test]
@@ -5123,55 +6217,209 @@ mod tests {
     }
 
     #[test]
+    fn session_start_registry_rejects_parallel_connects_for_one_tab() {
+        let registry = SessionRegistry::new();
+        let tab = unique_tab("parallel-connect");
+        let mut first = registry
+            .begin_session_start(&tab)
+            .expect("first connect should own the startup slot");
+
+        let error = registry
+            .begin_session_start(&tab)
+            .err()
+            .expect("parallel connect must fail fast");
+        assert!(error.contains("already in progress"));
+
+        first.finish();
+        assert!(
+            registry.begin_session_start(&tab).is_ok(),
+            "a completed connect must release the startup slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_start_cancellation_does_not_wait_for_session_mutex() {
+        let registry = SessionRegistry::new();
+        let tab = unique_tab("cancel-with-locked-session");
+        let session = registry.get_or_create(&tab).await;
+        let _session_guard = session.lock().await;
+        let mut lease = registry
+            .begin_session_start(&tab)
+            .expect("connect should register its cancellation token");
+
+        let cancellation = registry
+            .cancel_session_start(&tab)
+            .expect("abort should find the in-flight connect token");
+        tokio::time::timeout(Duration::from_millis(100), lease.cancelled())
+            .await
+            .expect("cancellation notification must not wait for the session mutex");
+        assert!(lease.is_cancelled());
+        assert!(registry.session_start_is_current(&tab, &cancellation));
+
+        lease.finish();
+        assert!(!registry.session_start_is_current(&tab, &cancellation));
+    }
+
+    #[test]
+    fn cancelled_session_start_stays_registered_until_cleanup_finishes() {
+        let registry = SessionRegistry::new();
+        let tab = unique_tab("cancelled-connect-cleanup");
+        let lease = registry
+            .begin_session_start(&tab)
+            .expect("connect should register its cancellation token");
+        let cancellation = registry
+            .cancel_session_start(&tab)
+            .expect("abort should find the startup token");
+
+        drop(lease);
+        assert!(
+            registry.session_start_is_current(&tab, &cancellation),
+            "dropping a cancelled handler must leave the token for abort cleanup"
+        );
+
+        registry.finish_session_start(&tab, &cancellation);
+        assert!(!registry.session_start_is_current(&tab, &cancellation));
+    }
+
+    #[test]
+    fn stale_session_start_cleanup_cannot_remove_a_new_generation() {
+        let registry = SessionRegistry::new();
+        let tab = unique_tab("connect-generation");
+        let mut first_lease = registry
+            .begin_session_start(&tab)
+            .expect("first connect should register");
+        let first_token = registry
+            .cancel_session_start(&tab)
+            .expect("first connect token should exist");
+        first_lease.finish();
+
+        let mut second_lease = registry
+            .begin_session_start(&tab)
+            .expect("second connect should register after the first finishes");
+        let second_token = registry
+            .cancel_session_start(&tab)
+            .expect("second connect token should exist");
+
+        registry.finish_session_start(&tab, &first_token);
+        assert!(
+            registry.session_start_is_current(&tab, &second_token),
+            "late cleanup from an old connect must not clear the current token"
+        );
+        second_lease.finish();
+    }
+
+    #[test]
     fn remote_ssh_fs_path_validator_blocks_escape_and_sensitive_paths() {
         let home = Some("/home/alice".to_string());
         assert!(validate_remote_ssh_fs_path(
             "fs/write_text_file",
             "/home/alice/project/goal.md",
-            &home
+            &home,
+            SshRemoteRuntime::Posix,
         )
         .is_ok());
         assert!(validate_remote_ssh_fs_path(
             "fs/write_text_file",
             "/home/alice/project/../.ssh/authorized_keys",
-            &home
+            &home,
+            SshRemoteRuntime::Posix,
         )
         .is_err());
         assert!(validate_remote_ssh_fs_path(
             "fs/read_text_file",
             "/home/alice/.grok/auth.json",
-            &home
+            &home,
+            SshRemoteRuntime::Posix,
         )
         .is_err());
-        assert!(
-            validate_remote_ssh_fs_path("fs/write_text_file", "/home/alice/.bashrc", &home)
-                .is_err()
-        );
+        assert!(validate_remote_ssh_fs_path(
+            "fs/write_text_file",
+            "/home/alice/.bashrc",
+            &home,
+            SshRemoteRuntime::Posix,
+        )
+        .is_err());
         assert!(validate_remote_ssh_fs_path(
             "fs/write_text_file",
             "/home/alice/.ssh/config",
-            &home
+            &home,
+            SshRemoteRuntime::Posix,
         )
         .is_err());
         assert!(validate_remote_ssh_fs_path(
             "fs/read_text_file",
             "/home/alice/.config/gh/hosts.yml",
-            &home
+            &home,
+            SshRemoteRuntime::Posix,
         )
         .is_err());
-        assert!(
-            validate_remote_ssh_fs_path("fs/read_text_file", "/home/alice/.npmrc", &home).is_err()
+        assert!(validate_remote_ssh_fs_path(
+            "fs/read_text_file",
+            "/home/alice/.npmrc",
+            &home,
+            SshRemoteRuntime::Posix,
+        )
+        .is_err());
+        assert!(validate_remote_ssh_fs_path(
+            "fs/write_text_file",
+            "/tmp/outside-home.txt",
+            &home,
+            SshRemoteRuntime::Posix,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn native_windows_remote_paths_resolve_and_stay_in_user_profile() {
+        let home = Some(r"C:\Users\alice".to_string());
+        assert_eq!(
+            resolve_remote_ssh_path(
+                r"project/src/main.rs",
+                r"C:\Users\alice",
+                &home,
+                SshRemoteRuntime::Windows,
+            ),
+            r"C:\Users\alice\project\src\main.rs"
         );
-        assert!(
-            validate_remote_ssh_fs_path("fs/write_text_file", "/tmp/outside-home.txt", &home)
-                .is_err()
-        );
+        assert!(validate_remote_ssh_fs_path(
+            "fs/write_text_file",
+            r"C:\Users\alice\project\goal.md",
+            &home,
+            SshRemoteRuntime::Windows,
+        )
+        .is_ok());
+        assert!(validate_remote_ssh_fs_path(
+            "fs/read_text_file",
+            r"C:\Users\alice\.ssh\config",
+            &home,
+            SshRemoteRuntime::Windows,
+        )
+        .is_err());
+        assert!(validate_remote_ssh_fs_path(
+            "fs/write_text_file",
+            r"C:\Users\alice\project\..\outside.txt",
+            &home,
+            SshRemoteRuntime::Windows,
+        )
+        .is_err());
+        assert!(validate_remote_ssh_fs_path(
+            "fs/write_text_file",
+            r"D:\outside.txt",
+            &home,
+            SshRemoteRuntime::Windows,
+        )
+        .is_err());
     }
 
     #[test]
     fn remote_ssh_fs_path_validator_fails_closed_without_home_probe() {
-        let err = validate_remote_ssh_fs_path("fs/read_text_file", "/tmp/outside-home.txt", &None)
-            .expect_err("remote SSH fs validation must fail closed when $HOME probe is missing");
+        let err = validate_remote_ssh_fs_path(
+            "fs/read_text_file",
+            "/tmp/outside-home.txt",
+            &None,
+            SshRemoteRuntime::Posix,
+        )
+        .expect_err("remote SSH fs validation must fail closed when $HOME probe is missing");
         assert!(
             err.contains("HOME") || err.contains("home"),
             "error should explain the missing remote HOME boundary, got: {}",
@@ -5186,6 +6434,74 @@ mod tests {
         assert_eq!(msg.id, Some(serde_json::json!(42)));
         assert!(msg.result.is_some());
         assert!(msg.method.is_none());
+    }
+
+    #[test]
+    fn current_grok_authentication_is_a_separate_headless_request() {
+        let initialize = serde_json::json!({
+            "authMethods": [
+                { "id": "cached_token", "name": "cached_token" },
+                { "id": "grok.com", "name": "Grok" }
+            ],
+            "_meta": { "defaultAuthMethodId": "cached_token" }
+        });
+        assert_eq!(
+            select_grok_headless_auth_method(&initialize).as_deref(),
+            Some("cached_token")
+        );
+
+        let authenticate = serde_json::to_value(AuthenticateParams {
+            method_id: "cached_token".to_string(),
+            meta: AuthenticateMeta { headless: true },
+        })
+        .unwrap();
+        assert_eq!(authenticate["methodId"], "cached_token");
+        assert_eq!(authenticate["_meta"]["headless"], true);
+
+        let session = serde_json::to_value(SessionNewParams {
+            cwd: r"C:\Users\FixtureUser".to_string(),
+            mcp_servers: vec![],
+        })
+        .unwrap();
+        assert!(session.get("authMethodId").is_none());
+    }
+
+    #[test]
+    fn grok_authentication_never_selects_interactive_browser_flow() {
+        let logged_out = serde_json::json!({
+            "authMethods": [{ "id": "grok.com", "name": "Grok" }]
+        });
+        assert_eq!(select_grok_headless_auth_method(&logged_out), None);
+
+        let api_key = serde_json::json!({
+            "authMethods": [
+                { "id": "cached_token" },
+                { "id": "xai.api_key" }
+            ]
+        });
+        assert_eq!(
+            select_grok_headless_auth_method(&api_key).as_deref(),
+            Some("xai.api_key")
+        );
+    }
+
+    #[test]
+    fn grok_acp_launches_are_version_stable() {
+        let interactive_compat = grok_session_launch_args(false);
+        assert_eq!(interactive_compat, vec!["--no-auto-update"]);
+
+        let auto = grok_session_launch_args(true);
+        assert_eq!(auto, vec!["--no-auto-update", "--always-approve"]);
+    }
+
+    #[test]
+    fn missing_permission_mode_resolves_to_shellx_full_auto() {
+        assert_eq!(SHELLX_DEFAULT_PERMISSION_MODE, "bypassPermissions");
+        assert_eq!(resolve_shellx_permission_mode(None), "bypassPermissions");
+        assert_eq!(
+            resolve_shellx_permission_mode(Some("plan".to_string())),
+            "plan"
+        );
     }
 
     #[test]
@@ -5733,6 +7049,10 @@ pub enum Transport {
         /// Remote grok binary path. Use a bare `grok` if it's on PATH on
         /// the remote, or a full path like `/home/user/.grok/bin/grok`.
         remote_grok_path: String,
+        #[serde(default)]
+        remote_runtime: SshRemoteRuntime,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wsl_distro: Option<String>,
     },
     /// RESERVED. Spawn attempts return a clear error.
     WsDirect {
@@ -5786,12 +7106,6 @@ impl Transport {
 /// REMOTE filesystem's frame for ssh; the local frame for local/wsl).
 /// `resolve_vault_ref` is a closure the caller supplies to translate
 /// vault refs → real values (only called for SSH key_vault_ref today).
-/// `marketplace_env_names` are env var names the remote shim reads from
-/// stdin after the setup payload lines and before the shellX MCP token,
-/// so Grok-native MCP config can use `${SHELLX_MCP_MARKETPLACE_*}`
-/// secrets without putting them in argv.
-/// `marketplace_config_blocks` are project-scoped marketplace MCP blocks
-/// appended beside shellx-host for remote transports.
 ///
 /// Returns either the configured Command (with stdin/stdout/stderr
 /// piped) or a structured error describing why the transport can't be
@@ -5801,9 +7115,6 @@ pub async fn build_command_for_transport<F, Fut>(
     cwd: &str,
     perm_args: &[String],
     resolve_vault_ref: F,
-    tab_id: &str,
-    marketplace_env_names: &[String],
-    _marketplace_config_blocks: &str,
 ) -> Result<Command, String>
 where
     F: Fn(String) -> Fut,
@@ -5829,7 +7140,9 @@ where
             for a in perm_args {
                 c.arg(a);
             }
-            c.arg("agent")
+            c.arg("--rules")
+                .arg(crate::skill_install::SHELLX_SESSION_RULES)
+                .arg("agent")
                 .arg("stdio")
                 .current_dir(cwd)
                 .stdin(Stdio::piped())
@@ -5837,14 +7150,6 @@ where
                 .stderr(Stdio::piped())
                 .no_window()
                 .kill_on_drop(true); /* Phase 11 M5 */
-            // H2 token strategy: inject the bearer token via env so
-            // grok-build can pick it up via `bearer_token_env_var` in
-            // the project config.toml. Token never lives at rest on
-            // disk — see mcp_http::http_config_snippet_toml.
-            c.env(
-                crate::mcp_http::MCP_TOKEN_ENV_VAR,
-                crate::mcp_http::tab_bound_mcp_token(tab_id),
-            );
             Ok(c)
         }
         Transport::Wsl { distro, grok_path } => {
@@ -5855,32 +7160,13 @@ where
                 return Err("Transport::Wsl is only available on Windows hosts".to_string());
             }
             let mut c = Command::new("wsl.exe");
-            // H2 token strategy: route the host-side env var into WSL
-            // via WSLENV. Setting `WSLENV=SHELLX_MCP_TOKEN` tells the
-            // WSL interop layer to copy that env var from the Windows
-            // host process into the spawned Linux grok process. Without
-            // WSLENV, child env propagation is silently dropped at the
-            // wsl.exe boundary.
-            // // We use `Command::env(name, value)` so the value is set on
-            // the wsl.exe parent process, then WSLENV tells WSL to
-            // forward it. `/u` suffix would force unix-path translation
-            // — we want the raw hex token preserved, so no suffix.
-            // // We APPEND to any pre-existing WSLENV — overriding would
-            // clobber the user's other forwards.
-            let mcp_token = crate::mcp_http::tab_bound_mcp_token(tab_id);
-            let existing_wslenv = std::env::var("WSLENV").unwrap_or_default();
-            let combined_wslenv = if existing_wslenv.is_empty() {
-                crate::mcp_http::MCP_TOKEN_ENV_VAR.to_string()
-            } else {
-                format!("{}:{}", existing_wslenv, crate::mcp_http::MCP_TOKEN_ENV_VAR)
-            };
-            c.env(crate::mcp_http::MCP_TOKEN_ENV_VAR, &mcp_token);
-            c.env("WSLENV", combined_wslenv);
             c.args(["-d", distro, "--cd", cwd, "-e", grok_path]);
             for a in perm_args {
                 c.arg(a);
             }
-            c.args(["agent", "stdio"])
+            c.arg("--rules")
+                .arg(crate::skill_install::SHELLX_SESSION_RULES)
+                .args(["agent", "stdio"])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -5893,6 +7179,8 @@ where
             port,
             key_vault_ref,
             remote_grok_path,
+            remote_runtime,
+            wsl_distro,
         } => {
             validate_ssh_destination_arg(host)?;
             // BatchMode=yes refuses ANY interactive prompts (passphrase,
@@ -5905,6 +7193,8 @@ where
             let mut c = Command::new("ssh");
             c.arg("-o").arg("BatchMode=yes");
             c.arg("-o").arg("ConnectTimeout=5");
+            c.args(SSH_SESSION_KEEPALIVE_ARGS);
+            c.args(SSH_FORWARD_REQUIRED_ARGS);
             // -T disables remote PTY allocation — we want clean
             // newline-delimited JSON over stdout, not an interactive
             // shell wrapper.
@@ -5935,97 +7225,57 @@ where
                 c.arg("-i").arg(&key_path);
             }
             c.arg("--").arg(host);
-            // Remote command. `--` defends against grok seeing a stray
-            // ssh option in remote_grok_path. The `cd` ensures grok
-            // initialises with the right working directory inside the
-            // remote filesystem.
-            // // SAFETY note: we DO NOT shell-quote cwd or remote_grok_path
-            // — those come from the connection preset (saved by the user
-            // via the UI), not from grok's own output. They are trusted
-            // operator input. If we later accept arbitrary cwd from the
-            // agent here, add a shellwords::escape step.
-            // `~` must NOT be shell-quoted — `'~'` is a
-            // literal tilde, no home expansion. Any other cwd is operator-
-            // controlled and goes through the single-quote escape to defend
-            // against spaces / special chars.
-            let cwd_for_remote = if cwd == "~" {
-                "~".to_string()
+            if *remote_runtime == SshRemoteRuntime::Windows {
+                // The complete launcher is encoded in argv and stdin is pure
+                // ACP JSONL from byte zero. The launcher only removes legacy
+                // ShellX-owned config before starting the Windows Grok CLI.
+                let launch = wrap_ssh_windows_command(&windows_native_grok_launch_script(
+                    cwd,
+                    remote_grok_path,
+                    perm_args,
+                ));
+                if launch.len() >= 8_000 {
+                    return Err(format!(
+                        "native Windows Grok SSH launcher exceeds the safe command length ({} bytes)",
+                        launch.len()
+                    ));
+                }
+                c.arg(launch);
             } else {
-                shell_quote_for_remote(cwd)
-            };
-
-            // Install the compact shellx-host skill and project-scoped
-            // HTTP MCP config before `cd` + `exec grok`. These payloads
-            // used to be embedded as base64 argv fragments, but the
-            // Browser/Vault skill surface can exceed Windows CreateProcess
-            // limits. The remote shell now reads both base64 payloads
-            // from stdin before the marketplace env values and MCP token.
-            let remote_payload_read_chain = format!(
-                "IFS= read -r {skill_var} && IFS= read -r {config_var} && ",
-                skill_var = SSH_REMOTE_SKILL_B64_VAR,
-                config_var = SSH_REMOTE_MCP_CONFIG_B64_VAR,
-            );
-            let remote_skill_chain = format!(
-                "mkdir -p ~/.grok/skills/shellx-host && \
-                 printf %s \"${skill_var}\" | base64 -d > ~/.grok/skills/shellx-host/SKILL.md && \
-                 chmod 600 ~/.grok/skills/shellx-host/SKILL.md && ",
-                skill_var = SSH_REMOTE_SKILL_B64_VAR,
-            );
-            let mcp_setup = format!(
-                "{}{}",
-                remote_skill_chain,
-                remote_project_mcp_config_setup_chain_from_var(
-                    &cwd_for_remote,
-                    SSH_REMOTE_MCP_CONFIG_B64_VAR,
-                )
-            );
-
-            // Token delivery (audit fix): instead of inlining the
-            // bearer into the remote exec argv as `SHELLX_MCP_TOKEN=<val>
-            // exec grok …`, read prelude lines from stdin into env vars,
-            // then exec grok with the remaining stdin reserved for ACP
-            // traffic. Token and marketplace vault values therefore never
-            // appear in any process's argv (local ssh, remote sshd, remote
-            // sh, remote grok). Caller writes `<value>\n` lines BEFORE any
-            // ACP frame — see start spawn site below.
-            // // `IFS= read -r` consumes exactly one line without word-
-            // splitting; `export` makes each var visible to the exec'd
-            // grok; `exec` replaces sh with grok so the remaining stdin
-            // (ACP JSON-RPC) flows directly to it.
-            // // We DO NOT rely on `ssh -o SendEnv=SHELLX_MCP_TOKEN` because
-            // that requires a matching `AcceptEnv` on the remote sshd
-            // we cannot assume operators have set up. The read-from-
-            // stdin shim works on any POSIX sh remote. For SSH sessions
-            // the first two stdin prelude lines are setup payloads, then
-            // marketplace env values, then SHELLX_MCP_TOKEN.
-            let mut env_read_chain = String::new();
-            for name in marketplace_env_names {
-                env_read_chain.push_str("IFS= read -r ");
-                env_read_chain.push_str(name);
-                env_read_chain.push_str(" && export ");
-                env_read_chain.push_str(name);
-                env_read_chain.push_str(" && ");
-            }
-            env_read_chain.push_str("IFS= read -r ");
-            env_read_chain.push_str(crate::mcp_http::MCP_TOKEN_ENV_VAR);
-            env_read_chain.push_str(" && export ");
-            env_read_chain.push_str(crate::mcp_http::MCP_TOKEN_ENV_VAR);
-            env_read_chain.push_str(" && ");
-            let remote_cmd = format!(
-                "{remote_payload_read_chain}{mcp_setup}cd {cwd} && {env_read_chain}exec {grok} ",
-                remote_payload_read_chain = remote_payload_read_chain,
-                mcp_setup = mcp_setup,
-                cwd = cwd_for_remote,
-                env_read_chain = env_read_chain,
-                grok = shell_quote_for_remote(remote_grok_path),
-            );
-            let mut remote_full = remote_cmd;
-            for a in perm_args {
-                remote_full.push_str(&shell_quote_for_remote(a));
+                // POSIX and Windows+WSL share one Linux command frame. Remove
+                // only legacy ShellX-owned config, then start Grok with stdin
+                // reserved exclusively for ACP JSONL.
+                let cwd_for_remote = if cwd == "~" {
+                    "~".to_string()
+                } else {
+                    shell_quote_for_remote(cwd)
+                };
+                let legacy_skill_cleanup =
+                    "if [ ! -L ~/.grok/skills/shellx-host/SKILL.md ]; then rm -f ~/.grok/skills/shellx-host/SKILL.md; rmdir ~/.grok/skills/shellx-host 2>/dev/null || true; fi && ";
+                let remote_cmd = format!(
+                    "{legacy_skill_cleanup}{mcp_cleanup}cd {cwd} && exec {grok} ",
+                    legacy_skill_cleanup = legacy_skill_cleanup,
+                    mcp_cleanup = remote_shellx_mcp_cleanup_chain(&cwd_for_remote),
+                    cwd = cwd_for_remote,
+                    grok = shell_quote_for_remote(remote_grok_path),
+                );
+                let mut remote_full = remote_cmd;
+                for a in perm_args {
+                    remote_full.push_str(&shell_quote_for_remote(a));
+                    remote_full.push(' ');
+                }
+                remote_full.push_str("--rules ");
+                remote_full.push_str(&shell_quote_for_remote(
+                    crate::skill_install::SHELLX_SESSION_RULES,
+                ));
                 remote_full.push(' ');
+                remote_full.push_str("agent stdio");
+                c.arg(wrap_ssh_posix_command(
+                    *remote_runtime,
+                    wsl_distro.as_deref(),
+                    &remote_full,
+                )?);
             }
-            remote_full.push_str("agent stdio");
-            c.arg(remote_full);
             c.stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -6062,38 +7312,6 @@ fn default_local_grok_path() -> String {
         let home = std::env::var("HOME").unwrap_or_else(|_| "(HOME unset)".to_string());
         format!("{home}/.grok/bin/grok")
     }
-}
-
-fn ensure_local_project_mcp_http_config(
-    agent_cwd: &str,
-    tab_id: Option<&str>,
-    marketplace_config_blocks: &str,
-) -> Result<bool, String> {
-    let tab_id = tab_id.unwrap_or("default");
-    let token = crate::mcp_http::tab_bound_mcp_token(tab_id);
-    ensure_local_project_mcp_http_config_with(
-        std::path::Path::new(agent_cwd),
-        crate::mcp_http::mcp_port(),
-        &token,
-        tab_id,
-        marketplace_config_blocks,
-    )
-}
-
-fn ensure_local_project_mcp_http_config_with(
-    project_dir: &std::path::Path,
-    port: u16,
-    token: &str,
-    tab_id: &str,
-    marketplace_config_blocks: &str,
-) -> Result<bool, String> {
-    crate::skill_install::ensure_project_mcp_http_config(
-        project_dir,
-        port,
-        token,
-        tab_id,
-        marketplace_config_blocks,
-    )
 }
 
 /// Robust grok-binary resolver. The naive
@@ -6162,79 +7380,34 @@ pub fn shell_quote_for_remote(s: &str) -> String {
     out
 }
 
-const SSH_REMOTE_SKILL_B64_VAR: &str = "SHELLX_REMOTE_SKILL_B64";
-const SSH_REMOTE_MCP_CONFIG_B64_VAR: &str = "SHELLX_REMOTE_MCP_CONFIG_B64";
-
-fn ssh_remote_prelude_payloads(tab_id: &str, marketplace_config_blocks: &str) -> (String, String) {
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine as _;
-
-    let token = crate::mcp_http::tab_bound_mcp_token(tab_id);
-    let snippet =
-        crate::mcp_http::http_config_snippet_toml(crate::mcp_http::mcp_port(), &token, tab_id);
-    let snippet = if marketplace_config_blocks.trim().is_empty() {
-        snippet
-    } else {
-        format!(
-            "{}\n{}\n",
-            snippet.trim_end(),
-            marketplace_config_blocks.trim()
-        )
-    };
-
-    (
-        B64.encode(crate::skill_install::BUNDLED_SKILL_BODY.as_bytes()),
-        B64.encode(snippet.as_bytes()),
-    )
-}
-
-/// POSIX-shell setup chain that merges shellX's project-scoped HTTP MCP
-/// snippet into a remote `<cwd>/.grok/config.toml` without clobbering
-/// user-defined Grok config. The remote shell gets a base64 snippet, strips
-/// prior shellX-managed/orphan `shellx-host-http`, stale `grok-shell-host`
-/// stdio entries, and `shellx-mp-*` sections with awk, then appends the
-/// fresh snippet.
-pub fn remote_project_mcp_config_setup_chain(cwd_q: &str, snippet_b64: &str) -> String {
-    remote_project_mcp_config_setup_chain_with_source(
-        cwd_q,
-        &format!("printf %s {}", shell_quote_for_remote(snippet_b64)),
-    )
-}
-
-pub fn remote_project_mcp_config_setup_chain_from_var(
-    cwd_q: &str,
-    snippet_b64_var: &str,
-) -> String {
-    remote_project_mcp_config_setup_chain_with_source(
-        cwd_q,
-        &format!("printf %s \"${}\"", snippet_b64_var),
-    )
-}
-
-fn remote_project_mcp_config_setup_chain_with_source(cwd_q: &str, snippet_source: &str) -> String {
+/// POSIX-shell migration chain that removes only ShellX-owned host and
+/// marketplace registrations from a remote project's Grok config. Current
+/// tools arrive in ACP `mcpServers`; user-authored config is preserved and an
+/// absent config is never created.
+pub fn remote_shellx_mcp_cleanup_chain(cwd_q: &str) -> String {
     let awk = r#"
-/shellX:managed-mcp:shellx-host-http BEGIN/ { managed=1; next }
-/shellX:managed-mcp:shellx-host-http END/ { managed=0; next }
-/shellX:managed-mcp:grok-shell-host BEGIN/ { managed=1; next }
-/shellX:managed-mcp:grok-shell-host END/ { managed=0; next }
-/shellX:managed-mcp-marketplace:.* BEGIN/ { managed=1; next }
-/shellX:managed-mcp-marketplace:.* END/ { managed=0; next }
-managed { next }
-/^\[mcp_servers\.shellx-host-http(\.headers)?\]/ { drop=1; next }
-/^\[mcp_servers\.grok-shell-host\]/ { drop=1; next }
+managed {
+  buffer = buffer $0 ORS
+  if ($0 == expected_end) { managed=0; expected_end=""; buffer="" }
+  next
+}
+/shellX:managed-(mcp:(shellx-host-http|grok-shell-host)|mcp-marketplace:[^ ]+) BEGIN/ {
+  managed=1
+  expected_end=$0
+  sub(/ BEGIN.*$/, " END", expected_end)
+  buffer=$0 ORS
+  next
+}
+/^\[mcp_servers\.shellx-host-http(\.headers|\.env)?\]/ { drop=1; next }
+/^\[mcp_servers\.grok-shell-host(\.headers|\.env)?\]/ { drop=1; next }
 /^\[mcp_servers\.shellx-mp-[^]]*(\.headers|\.env)?\]/ { drop=1; next }
 /^\[/ { drop=0 }
 !drop { print }
+END { if (managed) printf "%s", buffer }
 "#;
     format!(
-        "mkdir -p {cwd}/.grok && \
-         cfg={cwd}/.grok/config.toml && \
-         tmp=\"$cfg.shellx.$$\" && snip=\"$tmp.snip\" && \
-         {snippet_source} | base64 -d > \"$snip\" && \
-         ( [ -f \"$cfg\" ] && awk {awk} \"$cfg\" || true; printf '\\n\\n'; cat \"$snip\" ) > \"$tmp\" && \
-         mv \"$tmp\" \"$cfg\" && rm -f \"$snip\" && chmod 600 \"$cfg\" && ",
+        "cfg={cwd}/.grok/config.toml; if [ -f \"$cfg\" ]; then tmp=\"$cfg.shellx.$$\"; awk {awk} \"$cfg\" > \"$tmp\"; if cmp -s \"$cfg\" \"$tmp\"; then rm -f \"$tmp\"; else mv \"$tmp\" \"$cfg\" && chmod 600 \"$cfg\"; fi; fi && ",
         cwd = cwd_q,
-        snippet_source = snippet_source,
         awk = shell_quote_for_remote(awk),
     )
 }
@@ -6267,6 +7440,21 @@ pub fn validate_ssh_destination_arg(host: &str) -> Result<(), String> {
 mod transport_tests {
     use super::*;
 
+    #[test]
+    fn ssh_remote_platform_signatures_are_unambiguous() {
+        assert_eq!(
+            classify_ssh_remote_platform("SHELLX_POSIX\n"),
+            Some(SshRemotePlatform::Posix)
+        );
+        assert_eq!(
+            classify_ssh_remote_platform("\r\nSHELLX_WINDOWS\r\n"),
+            Some(SshRemotePlatform::NativeWindows)
+        );
+        assert_eq!(classify_ssh_remote_platform("Darwin\n"), None);
+        assert!(SSH_NATIVE_WINDOWS_RUNTIME_REQUIRED.contains("Windows OpenSSH"));
+        assert!(SSH_NATIVE_WINDOWS_RUNTIME_REQUIRED.contains("native Windows runtime"));
+    }
+
     /// Local-variant serialization round-trip — confirms the
     /// camelCase + serde-tag shape we promised the React caller.
     #[test]
@@ -6278,6 +7466,43 @@ mod transport_tests {
         assert!(matches!(back, Transport::Local { .. }));
     }
 
+    #[test]
+    fn session_transport_configuration_is_mutually_exclusive_and_local_path_wins() {
+        let mut session = GrokAcpSession::new();
+        session.set_wsl_config(
+            Some("Ubuntu-24.04".to_string()),
+            Some("/home/test/.grok/bin/grok".to_string()),
+        );
+        assert_eq!(session.transport_kind(), "wsl");
+        assert_eq!(session.local_grok_path(), None);
+
+        session.set_local_config(Some("  /owned/local/grok  ".to_string()));
+        assert_eq!(session.transport_kind(), "local");
+        assert_eq!(session.local_grok_path(), Some("/owned/local/grok"));
+        assert_eq!(session.resolved_local_grok_exe(), "/owned/local/grok");
+        assert_eq!(session.wsl_distro(), None);
+        assert_eq!(session.wsl_grok_path(), None);
+        assert!(session.ssh_config().is_none());
+
+        session.set_ssh_config(Some(SshSpawnConfig {
+            host: "fixture.example".to_string(),
+            port: Some(22),
+            key_vault_ref: None,
+            remote_grok_path: "grok".to_string(),
+            remote_runtime: SshRemoteRuntime::Posix,
+            wsl_distro: None,
+        }));
+        assert_eq!(session.transport_kind(), "ssh");
+        assert_eq!(session.local_grok_path(), None);
+        assert_eq!(session.wsl_distro(), None);
+        assert_eq!(session.wsl_grok_path(), None);
+
+        session.set_local_config(None);
+        assert_eq!(session.transport_kind(), "local");
+        assert_eq!(session.local_grok_path(), None);
+        assert!(session.ssh_config().is_none());
+    }
+
     /// Ssh variant — full field set serializes/deserializes correctly.
     #[test]
     fn transport_ssh_roundtrip() {
@@ -6286,11 +7511,15 @@ mod transport_tests {
             port: Some(2222),
             key_vault_ref: Some("connections.prod.ssh_key_path".to_string()),
             remote_grok_path: "/home/user/.grok/bin/grok".to_string(),
+            remote_runtime: SshRemoteRuntime::WindowsWsl,
+            wsl_distro: Some("Ubuntu".to_string()),
         };
         let v = serde_json::to_value(&t).unwrap();
         assert_eq!(v["kind"], "ssh");
         assert_eq!(v["host"], "user@example-host");
         assert_eq!(v["port"], 2222);
+        assert_eq!(v["remoteRuntime"], "windows_wsl");
+        assert_eq!(v["wslDistro"], "Ubuntu");
         let back: Transport = serde_json::from_value(v).unwrap();
         match back {
             Transport::Ssh { host, port, .. } => {
@@ -6301,6 +7530,117 @@ mod transport_tests {
         }
     }
 
+    #[test]
+    fn legacy_ssh_transport_defaults_to_direct_posix() {
+        let transport: Transport = serde_json::from_value(serde_json::json!({
+            "kind": "ssh",
+            "host": "user@example-host",
+            "remoteGrokPath": "grok"
+        }))
+        .expect("legacy SSH transport should deserialize");
+        assert!(matches!(
+            transport,
+            Transport::Ssh {
+                remote_runtime: SshRemoteRuntime::Posix,
+                wsl_distro: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn windows_wsl_wrapper_is_encoded_and_distro_is_bounded() {
+        let wrapped = wrap_ssh_posix_command(
+            SshRemoteRuntime::WindowsWsl,
+            Some("Ubuntu-24.04"),
+            "printf '%s\\n' SHELLX_OK",
+        )
+        .expect("Windows + WSL wrapper");
+        assert!(wrapped.starts_with("powershell.exe -NoLogo -NoProfile -NonInteractive"));
+        assert!(!wrapped.contains("SHELLX_OK"));
+        use base64::Engine as _;
+        let encoded = wrapped.split_whitespace().last().expect("encoded command");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("PowerShell base64");
+        let utf16 = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        let powershell = String::from_utf16(&utf16).expect("PowerShell UTF-16LE");
+        assert!(powershell.contains("source <(printf %s "));
+        assert!(powershell.contains("|base64 -d)"));
+        assert!(!powershell.contains("SHELLX_OK"));
+        assert!(validate_ssh_wsl_distro_arg(Some("Ubuntu-24.04")).is_ok());
+        assert!(validate_ssh_wsl_distro_arg(Some("Ubuntu; calc")).is_err());
+        assert!(wrap_ssh_posix_command(SshRemoteRuntime::WindowsWsl, None, "true").is_err());
+    }
+
+    #[test]
+    fn native_windows_grok_launcher_keeps_plain_values_out_of_argv() {
+        let script = windows_native_grok_launch_script(
+            r"C:\Users\Fixture O'Brien\project",
+            r"C:\Users\Fixture O'Brien\.grok\bin\grok.exe",
+            &["--always-approve".to_string()],
+        );
+        let wrapped = wrap_ssh_windows_command(&script);
+        assert!(wrapped.starts_with("powershell.exe -NoLogo -NoProfile -NonInteractive"));
+        assert!(wrapped.len() < 8_000);
+        assert!(!wrapped.contains("grok.exe"));
+        assert!(!wrapped.contains("--always-approve"));
+        assert!(!script.contains("[Console]::In.ReadLine"));
+        assert!(script.contains("config.toml"));
+        assert!(script.contains("$expected=($line -replace ' BEGIN.*$',' END')"));
+        assert!(script.contains("if($managed){foreach($held in $buffer)"));
+        assert!(script.contains("Set-Location -LiteralPath $work"));
+        assert!(script.contains("C:\\Users\\Fixture O''Brien\\project"));
+        assert!(script.contains("--rules"));
+        assert!(script.contains("agent"));
+        assert!(script.contains("stdio"));
+        assert!(!script.contains("Bearer "));
+    }
+
+    #[test]
+    fn native_windows_process_script_loads_and_removes_private_env_before_launch() {
+        let script = windows_native_process_script_with_env_file(
+            Some(r"C:\Users\Fixture O'Brien\project"),
+            "codex",
+            &["app-server".to_string()],
+            Some(r"C:\Users\Fixture O'Brien\.shellx\provider-env.ps1"),
+        );
+
+        assert!(script.contains(". $shellxEnv"));
+        assert!(script.contains("Remove-Item -LiteralPath $shellxEnv -Force"));
+        assert!(script.contains(r"C:\Users\Fixture O''Brien\.shellx\provider-env.ps1"));
+        assert!(script.contains("Set-Location -LiteralPath $work"));
+        assert!(script.contains("& 'codex' @a"));
+        assert!(script.contains("'app-server'"));
+        assert!(!script.contains("[Console]::In.ReadLine"));
+    }
+
+    #[test]
+    fn powershell_string_expression_encodes_unicode_quote_delimiters() {
+        let value = "C:\\work\\quote-'‘’‚‛-\"“”„‟-終.txt";
+        let expression = powershell_single_quote(value);
+
+        assert!(!expression.contains(value));
+        for (quote, codepoint) in [
+            ('‘', "2018"),
+            ('’', "2019"),
+            ('‚', "201A"),
+            ('‛', "201B"),
+            ('“', "201C"),
+            ('”', "201D"),
+            ('„', "201E"),
+            ('‟', "201F"),
+        ] {
+            assert!(!expression.contains(quote));
+            assert!(expression.contains(&format!("[char]0x{codepoint}")));
+        }
+        assert!(expression.contains("quote-''"));
+        assert!(expression.ends_with("'-終.txt')"));
+    }
+
     /// Reserved-variant must fail loudly when spawn is attempted.
     #[tokio::test]
     async fn p_transport_2_variants_error_on_build() {
@@ -6309,15 +7649,9 @@ mod transport_tests {
             secret_vault_ref: None,
         };
         assert!(t.is_p_transport_2());
-        let r = build_command_for_transport(
-            &t,
-            "/tmp",
-            &[],
-            |_| async { Ok::<_, String>("ignored".to_string()) },
-            "default",
-            &[],
-            "",
-        )
+        let r = build_command_for_transport(&t, "/tmp", &[], |_| async {
+            Ok::<_, String>("ignored".to_string())
+        })
         .await;
         assert!(r.is_err(), "WsDirect must error today");
         let msg = r.unwrap_err();
@@ -6335,43 +7669,244 @@ mod transport_tests {
         assert_eq!(shell_quote_for_remote(""), "''");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn remote_shellx_mcp_cleanup_preserves_user_config_and_creates_nothing() {
+        let root = std::env::temp_dir().join(format!(
+            "shellx-remote-mcp-cleanup-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config_dir = root.join(".grok");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let config = config_dir.join("config.toml");
+        std::fs::write(
+            &config,
+            "[mcp_servers.keep]\ncommand = \"keep\"\n\n# shellX:managed-mcp:shellx-host-http BEGIN\n[mcp_servers.shellx-host-http]\nurl = \"http://127.0.0.1:5758/mcp\"\n# shellX:managed-mcp:shellx-host-http END\n\n[mcp_servers.shellx-mp-old]\ncommand = \"old\"\n",
+        )
+        .unwrap();
+        let command = format!(
+            "{} true",
+            remote_shellx_mcp_cleanup_chain(&shell_quote_for_remote(
+                root.to_string_lossy().as_ref()
+            ))
+        );
+        assert!(std::process::Command::new("sh")
+            .args(["-c", &command])
+            .status()
+            .unwrap()
+            .success());
+        let updated = std::fs::read_to_string(&config).unwrap();
+        assert!(updated.contains("[mcp_servers.keep]"));
+        assert!(!updated.contains("shellx-host-http"));
+        assert!(!updated.contains("shellx-mp-old"));
+
+        let malformed = "[mcp_servers.keep]\ncommand = \"keep\"\n# shellX:managed-mcp:shellx-host-http BEGIN\n[mcp_servers.shellx-host-http]\nurl = \"http://127.0.0.1:5758/mcp\"\n[user.settings]\nvalue = \"preserve after incomplete marker\"\n";
+        std::fs::write(&config, malformed).unwrap();
+        let command = format!(
+            "{} true",
+            remote_shellx_mcp_cleanup_chain(&shell_quote_for_remote(
+                root.to_string_lossy().as_ref()
+            ))
+        );
+        assert!(std::process::Command::new("sh")
+            .args(["-c", &command])
+            .status()
+            .unwrap()
+            .success());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), malformed);
+
+        let absent = root.join("absent-project");
+        let command = format!(
+            "{} true",
+            remote_shellx_mcp_cleanup_chain(&shell_quote_for_remote(
+                absent.to_string_lossy().as_ref()
+            ))
+        );
+        assert!(std::process::Command::new("sh")
+            .args(["-c", &command])
+            .status()
+            .unwrap()
+            .success());
+        assert!(!absent.join(".grok/config.toml").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[tokio::test]
-    async fn ssh_spawn_command_streams_setup_payloads_over_stdin() {
+    async fn ssh_spawn_command_reserves_stdin_for_acp() {
         let transport = Transport::Ssh {
             host: "user@example.com".to_string(),
             port: None,
             key_vault_ref: None,
             remote_grok_path: "/home/user/.grok/bin/grok".to_string(),
+            remote_runtime: SshRemoteRuntime::Posix,
+            wsl_distro: None,
         };
         let cmd = build_command_for_transport(
             &transport,
             "/home/user/project",
             &["--always-approve".to_string()],
             |_| async { Ok::<_, String>("ignored".to_string()) },
-            "tab-ssh",
-            &[],
-            "",
         )
         .await
         .expect("ssh command should build");
         let rendered = format!("{:?}", cmd.as_std());
-        let (skill_b64, config_b64) = ssh_remote_prelude_payloads("tab-ssh", "");
-
-        assert!(rendered.contains(SSH_REMOTE_SKILL_B64_VAR));
-        assert!(rendered.contains(SSH_REMOTE_MCP_CONFIG_B64_VAR));
+        assert!(!rendered.contains("read -r"));
+        assert!(!rendered.contains(crate::mcp_http::MCP_TOKEN_ENV_VAR));
         assert!(
-            !rendered.contains(&skill_b64[..64]),
-            "skill payload should not be embedded in ssh argv"
+            rendered.contains("--rules") && rendered.contains("running inside ShellX"),
+            "SSH Grok should receive ShellX rules only in its launch command"
         );
         assert!(
-            !rendered.contains(&config_b64[..64]),
-            "config payload should not be embedded in ssh argv"
+            rendered.contains("rm -f ~/.grok/skills/shellx-host/SKILL.md"),
+            "SSH setup should migrate the legacy global remote skill"
+        );
+        assert!(
+            rendered.contains("config.toml") && rendered.contains("cmp -s"),
+            "SSH launch should remove prior ShellX-owned project registrations"
         );
         assert!(
             rendered.len() < 12_000,
             "ssh argv should stay far below Windows CreateProcess limits, got {} chars",
             rendered.len()
         );
+    }
+
+    #[tokio::test]
+    async fn windows_wsl_ssh_spawn_keeps_bootstrap_below_windows_command_limit() {
+        let transport = Transport::Ssh {
+            host: "user@windows-host".to_string(),
+            port: None,
+            key_vault_ref: None,
+            remote_grok_path: "/home/user/.grok/bin/grok".to_string(),
+            remote_runtime: SshRemoteRuntime::WindowsWsl,
+            wsl_distro: Some("Ubuntu".to_string()),
+        };
+        let cmd = build_command_for_transport(
+            &transport,
+            "/home/user/project",
+            &["--always-approve".to_string()],
+            |_| async { Ok::<_, String>("ignored".to_string()) },
+        )
+        .await
+        .expect("Windows + WSL SSH command should build");
+        let remote = cmd
+            .as_std()
+            .get_args()
+            .last()
+            .expect("remote command")
+            .to_string_lossy();
+        assert!(remote.starts_with("powershell.exe "));
+        assert!(
+            remote.len() < 8_000,
+            "Windows OpenSSH bootstrap exceeds cmd.exe's practical command limit: {} bytes",
+            remote.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn native_windows_ssh_spawn_reserves_stdin_for_acp() {
+        let transport = Transport::Ssh {
+            host: "user@windows-host".to_string(),
+            port: None,
+            key_vault_ref: None,
+            remote_grok_path: r"C:\Users\FixtureUser\.grok\bin\grok.exe".to_string(),
+            remote_runtime: SshRemoteRuntime::Windows,
+            wsl_distro: None,
+        };
+        let cmd = build_command_for_transport(
+            &transport,
+            r"C:\Users\FixtureUser\project",
+            &["--always-approve".to_string()],
+            |_| async { Ok::<_, String>("ignored".to_string()) },
+        )
+        .await
+        .expect("native Windows SSH command should build");
+        let args = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-o", "ExitOnForwardFailure=yes"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-o", "ServerAliveInterval=15"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-o", "ServerAliveCountMax=3"]));
+        let remote = cmd
+            .as_std()
+            .get_args()
+            .last()
+            .expect("remote command")
+            .to_string_lossy();
+        assert!(remote.starts_with("powershell.exe "));
+        assert!(remote.len() < 8_000);
+        assert!(!remote.contains("grok.exe"));
+        assert!(!remote.contains("--always-approve"));
+        use base64::Engine as _;
+        let encoded = remote.split_whitespace().last().expect("encoded command");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("PowerShell base64");
+        let utf16 = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        let script = String::from_utf16(&utf16).expect("PowerShell UTF-16LE");
+        assert!(!script.contains("[Console]::In.ReadLine"));
+        assert!(script.contains(r"C:\Users\FixtureUser\.grok\bin\grok.exe"));
+        assert!(script.contains("config.toml"));
+        assert!(script.contains("--always-approve"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
+    async fn live_native_windows_ssh_file_roundtrip() {
+        let host =
+            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
+        let home =
+            std::env::var("SHELLX_WINDOWS_SSH_HOME").expect("SHELLX_WINDOWS_SSH_HOME is required");
+        let remote_path = format!(
+            "{}\\.shellx\\native-windows-file-test-{}.txt",
+            normalize_windows_remote_path(&home).trim_end_matches('\\'),
+            uuid::Uuid::new_v4()
+        );
+        let content = "ShellX native Windows SSH file roundtrip\n";
+        let ssh = SshSpawnConfig {
+            host,
+            port: None,
+            key_vault_ref: None,
+            remote_grok_path: "grok".to_string(),
+            remote_runtime: SshRemoteRuntime::Windows,
+            wsl_distro: None,
+        };
+
+        let write = ssh_write_file(&ssh, &remote_path, content).await;
+        let read = if write.is_ok() {
+            ssh_read_file(&ssh, &remote_path).await
+        } else {
+            Err("write failed before read".to_string())
+        };
+
+        let mut cleanup = tokio::process::Command::new("ssh");
+        cleanup
+            .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-T", "--"])
+            .arg(&ssh.host)
+            .arg(wrap_ssh_windows_command(&format!(
+                "$path={};if(Test-Path -LiteralPath $path -PathType Leaf){{Remove-Item -LiteralPath $path -Force}}",
+                powershell_single_quote(&remote_path)
+            )));
+        let cleanup_status = cleanup.status().await.expect("spawn cleanup ssh");
+
+        write.expect("native Windows SSH write");
+        assert_eq!(read.expect("native Windows SSH read"), content);
+        assert!(cleanup_status.success(), "remote fixture cleanup failed");
     }
 
     #[test]
@@ -6383,51 +7918,6 @@ mod transport_tests {
         assert!(validate_ssh_destination_arg(" user@example.com").is_err());
         assert!(validate_ssh_destination_arg("user@example.com\nProxyCommand=sh").is_err());
         assert!(validate_ssh_destination_arg("../host").is_err());
-    }
-
-    #[test]
-    fn local_spawn_installs_project_http_mcp_config() {
-        let unique = format!("shellx-local-project-http-mcp-{}", test_unique_suffix());
-        let root = std::env::temp_dir().join(unique);
-
-        let changed = ensure_local_project_mcp_http_config_with(
-            &root,
-            5858,
-            "0123456789abcdef0123456789abcdef",
-            "tab-local",
-            "",
-        )
-        .expect("install local project HTTP MCP config");
-
-        assert!(changed, "first install should write project config");
-        let config_path = root.join(".grok").join("config.toml");
-        let config = std::fs::read_to_string(&config_path).unwrap();
-        assert!(config.contains("[mcp_servers.shellx-host-http]"));
-        assert!(config.contains("url = \"http://localhost:5858/mcp\""));
-        assert!(config.contains("bearer_token_env_var = \"SHELLX_MCP_TOKEN\""));
-        assert!(config.contains("MCP-Tab-Id = \"tab-local\""));
-        toml::from_str::<toml::Value>(&config).expect("local project config should parse");
-
-        let changed_again = ensure_local_project_mcp_http_config_with(
-            &root,
-            5858,
-            "0123456789abcdef0123456789abcdef",
-            "tab-local",
-            "",
-        )
-        .expect("second install should be idempotent");
-        assert!(!changed_again, "unchanged config should be idempotent");
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    fn test_unique_suffix() -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        format!("{}-{}", std::process::id(), nanos)
     }
 }
 
@@ -6445,7 +7935,7 @@ mod pending_permission_tests {
     //! is by exact id match).
     use super::*;
     use std::sync::Arc;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::Duration;
 
     #[test]
     fn missing_permission_registry_response_fails_closed() {
@@ -6466,7 +7956,10 @@ mod pending_permission_tests {
         tokio::spawn(async move {
             let _ = r.resolve(&id2, true).await;
         });
-        let got = timeout(Duration::from_secs(1), rx).await.unwrap().unwrap();
+        let got = tokio::time::timeout(Duration::from_secs(1), rx)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(got, "Allow must deliver true to the awaiting handler");
     }
 
@@ -6480,7 +7973,10 @@ mod pending_permission_tests {
         tokio::spawn(async move {
             let _ = r.resolve(&id2, false).await;
         });
-        let got = timeout(Duration::from_secs(1), rx).await.unwrap().unwrap();
+        let got = tokio::time::timeout(Duration::from_secs(1), rx)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!got, "Deny must deliver false to the awaiting handler");
     }
 
@@ -6499,7 +7995,7 @@ mod pending_permission_tests {
         reg.forget(&id).await;
         // Receiver must error (Sender was dropped) — exactly the path
         // the 60s-timeout arm in handle_terminal_create uses.
-        let res = timeout(Duration::from_millis(50), rx).await;
+        let res = tokio::time::timeout(Duration::from_millis(50), rx).await;
         match res {
             Ok(Err(_)) => { /* expected: Sender dropped */ }
             Ok(Ok(_)) => panic!("forget must NOT deliver a value"),
@@ -6525,11 +8021,11 @@ mod pending_permission_tests {
             let _ = r2.resolve("b", false).await;
         });
 
-        let got_a = timeout(Duration::from_secs(1), rx_a)
+        let got_a = tokio::time::timeout(Duration::from_secs(1), rx_a)
             .await
             .unwrap()
             .unwrap();
-        let got_b = timeout(Duration::from_secs(1), rx_b)
+        let got_b = tokio::time::timeout(Duration::from_secs(1), rx_b)
             .await
             .unwrap()
             .unwrap();
