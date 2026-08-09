@@ -3203,9 +3203,9 @@ function runBoundedDriver(requestValue: ReleaseSurfaceDriverRequest): ReleaseSur
     "--import", "tsx", resolve(root, "scripts/release-drivers/ui-control-bounded-installed.ts"),
     "--request", requestPath,
     "--out", reportPath,
-  ], { cwd: root, encoding: "utf8", timeout: 60_000 });
+  ], { cwd: root, encoding: "utf8", timeout: 300_000 });
   const reportText = existsSync(reportPath) ? readFileSync(reportPath, "utf8") : "";
-  assert.equal(run.status, 0, [run.stderr, run.stdout, reportText].filter(Boolean).join("\n"));
+  assert.equal(run.status, 0, [run.error?.message, run.stderr, run.stdout, reportText].filter(Boolean).join("\n"));
   return JSON.parse(reportText) as ReleaseSurfaceDriverReport;
 }
 

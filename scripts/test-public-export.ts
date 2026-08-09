@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,17 +30,44 @@ function assert(condition: boolean, label: string): void {
 
 function runExporter(destination: string, git = false): string {
   const script = join(root, "scripts/public_export.sh");
-  const args = process.platform === "win32"
-    ? [windowsWslPath(script), "--out", windowsWslPath(destination), "--allow-dirty"]
-    : [script, "--out", destination, "--allow-dirty"];
-  if (git) args.push("--git");
-  return process.platform === "win32"
-    ? execFileSync("wsl.exe", ["--exec", "bash", ...args], { cwd: root, encoding: "utf8" })
-    : execFileSync("bash", args, { cwd: root, encoding: "utf8" });
+  const invocation = publicExporterInvocation(script, destination, ["--allow-dirty", ...(git ? ["--git"] : [])]);
+  return execFileSync(invocation.executable, invocation.args, { cwd: root, encoding: "utf8" });
 }
 
-function windowsWslPath(path: string): string {
-  return execFileSync("wsl.exe", ["--exec", "wslpath", "-u", path], {
+function publicExporterInvocation(script: string, destination: string, extraArgs: string[] = []): {
+  executable: string;
+  args: string[];
+} {
+  if (process.platform !== "win32") {
+    return { executable: "bash", args: [script, "--out", destination, ...extraArgs] };
+  }
+  const bash = windowsGitBash();
+  return {
+    executable: bash,
+    args: [
+      "--noprofile",
+      "--norc",
+      windowsGitBashPath(bash, script),
+      "--out",
+      windowsGitBashPath(bash, destination),
+      ...extraArgs,
+    ],
+  };
+}
+
+function windowsGitBash(): string {
+  const gitPath = execFileSync("where.exe", ["git.exe"], { encoding: "utf8" })
+    .split(/\r?\n/u)
+    .map((path) => path.trim())
+    .find(Boolean);
+  if (!gitPath) throw new Error("Git for Windows is required to test the POSIX public exporter");
+  const bash = resolve(dirname(gitPath), "..", "bin", "bash.exe");
+  if (!existsSync(bash)) throw new Error(`Git for Windows Bash was not found at ${bash}`);
+  return bash;
+}
+
+function windowsGitBashPath(bash: string, path: string): string {
+  return execFileSync(bash, ["--noprofile", "--norc", "-c", 'cygpath -u -- "$1"', "shellx-cygpath", path], {
     encoding: "utf8",
   }).trim();
 }
@@ -91,6 +119,7 @@ function runSyntheticPolicyFixture(input: {
   files: Record<string, string | Buffer>;
   payloadMutations?: Record<string, string | Buffer>;
   staleExactPath?: string;
+  helperPath?: string;
   expectSuccess: boolean;
 }): { result: ReturnType<typeof spawnSync>; payload: string } {
   const fixtureRoot = join(workspace, input.name);
@@ -139,7 +168,7 @@ function runSyntheticPolicyFixture(input: {
   }
   const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
   const result = spawnSync(process.execPath, [
-    helper,
+    input.helperPath ?? helper,
     "--repo-root", repo,
     "--payload-root", payload,
     "--source-commit", commit,
@@ -158,7 +187,9 @@ try {
   const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   const outputText = runExporter(output);
   assert(outputText.includes(`SHELLX_PUBLIC_EXPORT_OK ${sourceCommit}`), "export reports exact committed source identity");
-  assert(readFileSync(join(output, ".gitattributes"), "utf8").includes("*.sh text eol=lf"), "public clones keep Bash scripts on LF line endings");
+  const publicAttributes = readFileSync(join(output, ".gitattributes"), "utf8");
+  assert(publicAttributes.includes("*.sh text eol=lf") && !publicAttributes.includes("\r"),
+    "public clones keep Bash scripts and export metadata on LF line endings");
   assert(existsSync(join(output, "package.json")), "package metadata is exported");
   assert(existsSync(join(output, "src-tauri/src/lib.rs")), "native product source is exported");
   assert(existsSync(join(output, "skills/shellx-host/SKILL.md")), "installer-embedded host skill is exported");
@@ -398,20 +429,23 @@ try {
   }
   assert(brokenManualAssets.length === 0, `manual local styles, scripts, and images resolve inside the public payload${brokenManualAssets.length ? ` (${brokenManualAssets.join(", ")})` : ""}`);
 
-  const repeat = spawnSync("bash", [join(root, "scripts/public_export.sh"), "--out", output, "--allow-dirty"], {
+  const repeatInvocation = publicExporterInvocation(join(root, "scripts/public_export.sh"), output, ["--allow-dirty"]);
+  const repeat = spawnSync(repeatInvocation.executable, repeatInvocation.args, {
     cwd: root,
     encoding: "utf8",
   });
   assert(repeat.status === 2 && repeat.stderr.includes("must be empty"), "non-empty destination fails closed");
 
-  const sourceTarget = spawnSync("bash", [join(root, "scripts/public_export.sh"), "--out", root, "--allow-dirty"], {
+  const sourceInvocation = publicExporterInvocation(join(root, "scripts/public_export.sh"), root, ["--allow-dirty"]);
+  const sourceTarget = spawnSync(sourceInvocation.executable, sourceInvocation.args, {
     cwd: root,
     encoding: "utf8",
   });
   assert(sourceTarget.status === 2 && sourceTarget.stderr.includes("unsafe"), "source checkout cannot be an export destination");
 
   const nestedTargetPath = join(root, "public-export-nested-test");
-  const nestedTarget = spawnSync("bash", [join(root, "scripts/public_export.sh"), "--out", nestedTargetPath, "--allow-dirty"], {
+  const nestedInvocation = publicExporterInvocation(join(root, "scripts/public_export.sh"), nestedTargetPath, ["--allow-dirty"]);
+  const nestedTarget = spawnSync(nestedInvocation.executable, nestedInvocation.args, {
     cwd: root,
     encoding: "utf8",
   });
@@ -425,7 +459,11 @@ try {
   assert(exportStatus.trim() === "", "optional local Git export is clean after its local commit");
 
   const secondGeneration = join(workspace, "public-export-second-generation");
-  const secondGenerationRun = spawnSync("bash", [join(gitOutput, "scripts/public_export.sh"), "--out", secondGeneration], {
+  const secondGenerationInvocation = publicExporterInvocation(
+    join(gitOutput, "scripts/public_export.sh"),
+    secondGeneration,
+  );
+  const secondGenerationRun = spawnSync(secondGenerationInvocation.executable, secondGenerationInvocation.args, {
     cwd: gitOutput,
     encoding: "utf8",
   });
@@ -726,6 +764,19 @@ try {
   });
   assert(!existsSync(join(generated.payload, "scripts/cache/raw.log")), "cache and raw log paths are excluded even below a public source prefix");
   assert(lstatSync(join(generated.payload, "PUBLIC_EXPORT_MANIFEST.json")).isFile(), "successful synthetic export writes its manifest");
+
+  if (process.platform !== "win32") {
+    const helperAlias = join(workspace, "prepare-public-export-alias.mjs");
+    symlinkSync(helper, helperAlias);
+    const aliasedHelper = runSyntheticPolicyFixture({
+      name: "symlinked-helper-main",
+      files: { "README.md": "fixture\n" },
+      helperPath: helperAlias,
+      expectSuccess: true,
+    });
+    assert(existsSync(join(aliasedHelper.payload, "PUBLIC_EXPORT_MANIFEST.json")),
+      "export helper executes when its main-module path uses a filesystem alias");
+  }
 } finally {
   rmSync(workspace, { recursive: true, force: true });
 }

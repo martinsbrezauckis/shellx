@@ -84,7 +84,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-git -C "$source_dir" archive --format=tar HEAD | tar -C "$tmp_dir" -xf -
+# Export canonical Git blob bytes on every host. Git for Windows otherwise
+# applies core.autocrlf while archiving and the payload no longer matches the
+# committed objects that the manifest binds.
+git -c core.autocrlf=false -C "$source_dir" archive --format=tar HEAD | tar -C "$tmp_dir" -xf -
 
 # The helper and policy come from the same committed archive as the payload.
 # Every tracked path must be included or excluded by a category/reason before

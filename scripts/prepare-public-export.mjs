@@ -6,13 +6,14 @@ import {
   lstatSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
-import { calculateManualAtlasProductSourceSha256 } from "./lib/manual-atlas-product-source.js";
+import { fileURLToPath } from "node:url";
+import { calculateManualAtlasProductSourceSha256FromGit } from "./lib/manual-atlas-product-source.js";
 
 export const PUBLIC_EXPORT_POLICY_SCHEMA = "shellx/public-export-policy@1";
 export const PUBLIC_EXPORT_MANIFEST_SCHEMA = "shellx/public-export-manifest@4";
@@ -219,7 +220,7 @@ export function preparePublicExport({ repoRoot, payloadRoot, sourceCommit }) {
   if (JSON.stringify(actualBefore) !== JSON.stringify(trackedPaths)) {
     throw new Error("public export staging tree contains files outside the committed source archive");
   }
-  validateReviewedMarketingAssets(payload, trackedPathSet);
+  validateReviewedMarketingAssets(payload, trackedPathSet, repo, resolvedSourceCommit);
 
   const included = [];
   const excluded = [];
@@ -318,7 +319,7 @@ export function preparePublicExport({ repoRoot, payloadRoot, sourceCommit }) {
   return manifest;
 }
 
-function validateReviewedMarketingAssets(payload, trackedPathSet) {
+function validateReviewedMarketingAssets(payload, trackedPathSet, repo, sourceCommit) {
   const marketingAssets = [...trackedPathSet]
     .filter((path) => path.startsWith("docs/public/assets/") && /\.(?:jpe?g|png|webp)$/i.test(path))
     .sort();
@@ -345,7 +346,7 @@ function validateReviewedMarketingAssets(payload, trackedPathSet) {
   const atlas = readJsonObject(join(payload, MANUAL_ATLAS_PATH), "manual visual atlas");
   const packageJson = readJsonObject(join(payload, "package.json"), "package manifest");
   if (!isNonEmptyString(packageJson.version)) throw new Error("package manifest is missing its version");
-  const productSourceSha256 = calculateManualAtlasProductSourceSha256(payload);
+  const productSourceSha256 = calculateManualAtlasProductSourceSha256FromGit(repo, sourceCommit);
   const revalidation = manifest.revalidation;
   if (!revalidation || revalidation.status !== "reviewed"
     || !/^[a-f0-9]{40,64}$/.test(revalidation.sourceCommit ?? "")
@@ -611,7 +612,16 @@ async function main() {
   process.stdout.write(`SHELLX_PUBLIC_EXPORT_MANIFEST_OK ${manifest.payload.fileCount} ${manifest.payload.digest}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isDirectExecution() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectExecution()) {
   main().catch((error) => {
     process.stderr.write(`public export preparation failed: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);

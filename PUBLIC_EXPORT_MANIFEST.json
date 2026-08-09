@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "4cfa5015b289acc38db21a22bb848fd345639feb",
-    "tree": "9cb13e386abfde252a109b159affe2917938eef5"
+    "commit": "7b42ffc5c38045977d5c9332d91db36d500d876d",
+    "tree": "bfa1dbcaabf71d4d60e5e39980d7296d395b539e"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1063,
-    "totalBytes": 30177377,
-    "digest": "8261a770db24039f39e5ff3faf37c73ee9850c53b3039e3a662c8e1d769ed431"
+    "totalBytes": 30179776,
+    "digest": "fdb6c370edf0a89a2af4ed2d553b789cc433e3e8d8fb17593aac468a1b1d19d1"
   },
   "exclusions": {
     "fileCount": 14,
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "1eb25019be8f197a59c808f03640ea6f4004109e63143e2b2c35f7d01593a391",
+      "sha256": "a057a4e7cdfb76c5ee16b8a31397792eaad0038967e55721fd7dc91e0bf72636",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -2128,8 +2128,8 @@
     {
       "path": "scripts/prepare-public-export.mjs",
       "mode": "100644",
-      "sha256": "8d395bb8d8c28e975fc279cb751ddbd4775332b0d06f0e82dea8741308947053",
-      "bytes": 25007,
+      "sha256": "3a57886846207f6688f1255be64a395ef85c80d0d1417da0b944594bd2abe7a6",
+      "bytes": 25246,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -2194,8 +2194,8 @@
     {
       "path": "scripts/public_export.sh",
       "mode": "100755",
-      "sha256": "2a71c727153a4af2f140130dabafa6301608047973ddb5b84f0b6bac0a441b8a",
-      "bytes": 2956,
+      "sha256": "86246e0095d39492c2f2a3a83bf992cdedb42396b3acab881bf64e031264bec4",
+      "bytes": 3177,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4306,8 +4306,8 @@
     {
       "path": "scripts/test-public-export.ts",
       "mode": "100644",
-      "sha256": "1ab1aa3ae13c90fb794826ec048195aed33c189f3028498f96c527cc2b793174",
-      "bytes": 39435,
+      "sha256": "822258719cb0fa28cd48e6713279eecadde09419b4a5b501e4c25a558f035574",
+      "bytes": 41353,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5054,8 +5054,8 @@
     {
       "path": "scripts/test-release-surface-ui-control-webdriver.ts",
       "mode": "100644",
-      "sha256": "eb016c4bed33bfe6883b62730bb4a29442fd3ea388493be55d81194809e57f5b",
-      "bytes": 169743,
+      "sha256": "c4b0764df9f7a68604df4d2b2aaf1e4fb11d93234cf0deea02876cb36b7e32c3",
+      "bytes": 169764,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
