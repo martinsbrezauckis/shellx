@@ -4,13 +4,16 @@ use super::{env_lock, now_ms_for_temp, tempdir_lite, EnvVarGuard};
 #[test]
 fn path_safety_blocks_outside_cwd() {
     // Synthetic cwd — `tempfile::TempDir` would also work but pulls a
-    // dev-dep; for the lexical check `path_is_allowed` runs, any
-    // absolute path string is sufficient.
+    // dev-dep. Canonicalize the native temp root before appending a
+    // nonexistent child because macOS spells /var as /private/var after
+    // canonicalization.
     #[cfg(not(windows))]
     let cwd = PathBuf::from("/srv/test-project");
     #[cfg(windows)]
     let cwd = PathBuf::from(r"C:\srv\test-project");
-    assert!(path_is_allowed(&std::env::temp_dir().join("foo"), &cwd));
+    let temp = std::env::temp_dir();
+    let temp = std::fs::canonicalize(&temp).unwrap_or(temp);
+    assert!(path_is_allowed(&temp.join("foo"), &cwd));
     #[cfg(not(windows))]
     assert!(!path_is_allowed(Path::new("/etc/passwd"), &cwd));
     #[cfg(windows)]

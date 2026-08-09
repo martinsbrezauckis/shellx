@@ -181,7 +181,7 @@ SHA256SUMS` (or compare the listed SHA-256 in PowerShell with
 `Get-FileHash -Algorithm SHA256`). OS signing/notarization checks remain
 separate and should also pass where the platform provides them.
 
-Requires Node 20+, pnpm, Rust 1.80+, and the
+Requires Node 22+, pnpm, Rust 1.80+, and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ## Quick start

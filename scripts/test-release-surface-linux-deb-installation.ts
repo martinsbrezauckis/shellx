@@ -28,8 +28,8 @@ import {
   validateReleaseSurfaceLinuxDebInstallationObservation,
 } from "./lib/release-surface-linux-deb-installation";
 
-if (process.platform === "win32") {
-  console.log("SKIP Linux Debian installation adapter fixture: requires native dpkg-deb and POSIX path semantics");
+if (process.platform !== "linux") {
+  console.log("SKIP Linux Debian installation adapter fixture: requires native Linux dpkg-deb and path semantics");
   process.exit(0);
 }
 

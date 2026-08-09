@@ -24,7 +24,10 @@ const EXPECTED_CI_SCRIPT = [
 
 export function ciSurfaceCoverageErrors({
   ciSource,
+  buildScript,
+  packageEngines,
   packageScripts,
+  releaseSource,
   inventory,
   driverPlan,
   testSuites,
@@ -47,6 +50,20 @@ export function ciSurfaceCoverageErrors({
 
   if (packageScripts?.["ci:surface-contracts"] !== EXPECTED_CI_SCRIPT) {
     errors.push("ci:surface-contracts must check inventory, driver plan, and the complete test registry");
+  }
+  if (packageEngines?.node !== ">=22") {
+    errors.push("package Node baseline must be the maintained Node 22+ line");
+  }
+  const workflowSources = `${ciSource}\n${releaseSource ?? ""}`;
+  const nodeVersions = [...workflowSources.matchAll(/node-version:\s*([^\s#]+)/g)].map((match) => match[1]);
+  if (nodeVersions.length < 3 || nodeVersions.some((version) => version !== "22")) {
+    errors.push("every CI and build-only Node setup must exercise the declared Node 22 minimum");
+  }
+  if (!ciSource.includes("debug-api,windows-test-manifest")) {
+    errors.push("Windows Rust CI is missing the test-only Common Controls manifest feature");
+  }
+  if (!buildScript?.includes("WindowsAttributes::new_without_app_manifest()")) {
+    errors.push("the Windows test manifest feature must suppress Tauri's duplicate app manifest resource");
   }
   if (packageScripts?.["audit:dependencies"] !== "pnpm audit --audit-level low") {
     errors.push("audit:dependencies must cover the complete lockfile down to low severity");

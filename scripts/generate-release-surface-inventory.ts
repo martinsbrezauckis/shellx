@@ -4,6 +4,7 @@ import {
   collectReleaseSurfaceInventory,
   inventoryJson,
 } from "./lib/release-surface-inventory";
+import { textContentMatches } from "./lib/text-content";
 
 const root = resolve(import.meta.dirname, "..");
 const output = resolve(root, "release", "surface-inventory.json");
@@ -26,7 +27,7 @@ if (check) {
     console.error("Run: pnpm run surface:inventory:write");
     process.exit(1);
   }
-  if (actual !== expected) {
+  if (!textContentMatches(actual, expected)) {
     console.error("Release surface inventory drifted from shipped source.");
     console.error("Run pnpm run surface:inventory:write, then classify and test every new or changed surface.");
     process.exit(1);

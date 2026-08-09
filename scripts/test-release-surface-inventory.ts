@@ -37,6 +37,14 @@ import {
 } from "./lib/release-ui-debug-surface-cohorts";
 
 const root = resolve(import.meta.dirname, "..");
+const generatorSource = readFileSync(
+  resolve(root, "scripts", "generate-release-surface-inventory.ts"),
+  "utf8",
+);
+assert(
+  generatorSource.includes("if (!textContentMatches(actual, expected))"),
+  "the inventory CLI must use the cross-platform text comparison instead of raw CRLF-sensitive bytes",
+);
 assert(
   textContentMatches("{\r\n  \"ready\": true\r\n}\r\n", "{\n  \"ready\": true\n}\n"),
   "generated-file drift checks must accept Git's native Windows CRLF checkout spelling",

@@ -5,6 +5,9 @@
   "license": "MIT",
   "private": true,
   "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
   "pnpm": {
     "overrides": {
       "@babel/core": "7.29.6",

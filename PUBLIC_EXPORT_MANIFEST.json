@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "8c6a0d5f32b1b5d915af46ae71d0758b27152c7e",
-    "tree": "ae990b81114187d81fbdc4f3d3e8b0b27491c0d5"
+    "commit": "481c515d6936edce658e096c7458a92a29c4d2c9",
+    "tree": "64645ce68b296a2b758d1793ffff8bdfc6dd5513"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1063,
-    "totalBytes": 30172653,
-    "digest": "7cb51d472102afabc45dc8d445769a20b2323d6784bfb036243f9d7ce6b2209f"
+    "totalBytes": 30175661,
+    "digest": "c417fab80029b2b7fab8bc5a5505d9351175ecd7c9a68b74cc353354d69b3286"
   },
   "exclusions": {
     "fileCount": 14,
@@ -60,7 +60,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "mode": "100644",
-      "sha256": "cffebae87360122f14009dba5d67d0f70480a7871992fbb0c2d5125a677eff09",
+      "sha256": "4409ccbdc1a2aa0f990277314b89a1502c344d28e1bd1c74f36488bd8f85b3b9",
       "bytes": 4801,
       "ruleId": "public-automation",
       "matchedBy": "exact",
@@ -71,7 +71,7 @@
     {
       "path": ".github/workflows/release.yml",
       "mode": "100644",
-      "sha256": "f070b8c7ec661a1ee7c30d8e6f928318063b54d39752c3f2d919e9b45ea277b6",
+      "sha256": "aabd2179c7f47ffc470e6d41b3a783986a6770cdf0ad627b56e2776e87aa6efc",
       "bytes": 2435,
       "ruleId": "public-automation",
       "matchedBy": "exact",
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "5b9297e37d56afed58a0f68ff6bfc565d9438d0f50c1068f0dc67f96a233d44b",
+      "sha256": "aee925282d4a895fe0f262a6a55c2251d37eb088d5c105a34addfcfaed5a2207",
       "bytes": 5952,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -632,7 +632,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "1743b81ee999bde7cfb3469c18ad0cf1df7f86e7a99b4beae5659acb006b3a78",
+      "sha256": "b04af092367d0e4217c9d7d28e457c338138ca0426cd1bb9f53a824f5b8d0f54",
       "bytes": 50423,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -720,8 +720,8 @@
     {
       "path": "package.json",
       "mode": "100644",
-      "sha256": "78de389a0cac8cfc13506788c0367fb9c62bd253eec59a657a3b5c3f0d8c40b0",
-      "bytes": 16343,
+      "sha256": "dd0d09eb10b015719d204c1a4734f033cc63c0ae8ed99fa1a8eadfff91c67d33",
+      "bytes": 16382,
       "ruleId": "repository-metadata",
       "matchedBy": "exact",
       "matchedPath": "package.json",
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "7259745082a938751c3899707f827f33758761fb104f4719b590729987bc07a1",
+      "sha256": "0ae708e71db32601ed474d2812f58d88cf452972254df3267339d8a48f3fd9cc",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -764,7 +764,7 @@
     {
       "path": "README.md",
       "mode": "100644",
-      "sha256": "20704518d0b8d8259691c25500d0e2a4bad31d0d6614aed21faa60eae20ba843",
+      "sha256": "37ce5a81243cdb705157084291fb503a88f7db7fc57f145ed9d240dee1df6bde",
       "bytes": 15224,
       "ruleId": "repository-metadata",
       "matchedBy": "exact",
@@ -1501,8 +1501,8 @@
     {
       "path": "scripts/generate-release-surface-inventory.ts",
       "mode": "100644",
-      "sha256": "1467eb9fa5a9b65a37519573c1bbd4c28c1f8975370a9169cbb3e6cfa74596b6",
-      "bytes": 1905,
+      "sha256": "1416641db06a8b401545e50ce810ddda1fdcff02fd246df78540f448e659dc56",
+      "bytes": 1980,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -1534,8 +1534,8 @@
     {
       "path": "scripts/lib/ci-surface-coverage.mjs",
       "mode": "100644",
-      "sha256": "b5182cbfcfe7e52fe52e7ca2fbc4b7f56796f47cab9ae0c34e5d604a80f0a40d",
-      "bytes": 4019,
+      "sha256": "f56c4e6e945bd50118d9935a94c3e84e8029af763244bb77be9b9458ba1a7c6b",
+      "bytes": 4908,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -3965,8 +3965,8 @@
     {
       "path": "scripts/test-ci-surface-coverage.mjs",
       "mode": "100644",
-      "sha256": "0715d6c6b4978e4c33f71dd2e270ae82547d1d207511c20dcdb72eb538d28399",
-      "bytes": 2273,
+      "sha256": "1653cd8814e21467d3b9b36a9004fabcc4562219ef54aedf0ebc76c298c64e57",
+      "bytes": 3253,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4449,8 +4449,8 @@
     {
       "path": "scripts/test-release-surface-inventory.ts",
       "mode": "100644",
-      "sha256": "da99394048415adf33140af31f6f62392faf7a79f0429cfd79e77e15764d3cc8",
-      "bytes": 122164,
+      "sha256": "5fe04c7b82f3bfaf99a3b1f3cbb532a8ec659cab810b91a58a9b2aa97b56f264",
+      "bytes": 122472,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4471,7 +4471,7 @@
     {
       "path": "scripts/test-release-surface-linux-deb-installation.ts",
       "mode": "100644",
-      "sha256": "fc5ef829bc741c60ca8721a1602be2ac4ee1ae1e0c3510e9ccda471d857b62b3",
+      "sha256": "b2bcf164496d27ee5d564b8e9eac629806e97f7e0064860e9722adc08d83bfa5",
       "bytes": 9850,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
@@ -6077,8 +6077,8 @@
     {
       "path": "src-tauri/build.rs",
       "mode": "100644",
-      "sha256": "aeba464c5ad53b939504192fd59f007eb28cf461398757b8bd29557f7d682808",
-      "bytes": 3244,
+      "sha256": "1a8cd68abb5331dd7780aa9b595cb8728f2877769d2b8ec2b47295c0b8614531",
+      "bytes": 3821,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -7331,8 +7331,8 @@
     {
       "path": "src-tauri/src/host_mcp/tests/filesystem.rs",
       "mode": "100644",
-      "sha256": "7f9e825329f02b21f67282a8910d22a02f43f964614c81448c108c4ef99e4905",
-      "bytes": 27194,
+      "sha256": "79b43ea87b375300225f87fa627677088abdf1ae09ed7190e9eead0e478e511f",
+      "bytes": 27334,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
