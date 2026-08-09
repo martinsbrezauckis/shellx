@@ -1049,46 +1049,25 @@ impl WorkPreviewManager {
             );
         }
 
+        let readiness = tokio::select! {
+            result = child.wait() => {
+                self.record_process_wait_result(&tab_id, &task_id, result).await;
+                return Ok(self.state(&tab_id).await);
+            }
+            result = self.wait_for_http_or_exit(&tab_id, &task_id, &url, &kind) => result,
+        };
+
         let wait_manager = Arc::clone(self);
-        let wait_registry = Arc::clone(&self.process_registry);
         let wait_tab = tab_id.clone();
         let wait_task = task_id.clone();
         tokio::spawn(async move {
             let result = child.wait().await;
-            match result {
-                Ok(status) => {
-                    let code = status.code();
-                    let proc_status = if status.success() {
-                        ProcessStatus::Exited
-                    } else {
-                        ProcessStatus::Failed
-                    };
-                    wait_registry
-                        .mark_exited(&wait_task, code, proc_status)
-                        .await;
-                    wait_manager
-                        .finish_process(&wait_tab, &wait_task, code)
-                        .await;
-                }
-                Err(err) => {
-                    wait_registry
-                        .mark_exited(&wait_task, None, ProcessStatus::Failed)
-                        .await;
-                    wait_manager
-                        .fail_if_current(
-                            &wait_tab,
-                            Some(&wait_task),
-                            format!("preview process wait failed: {}", err),
-                        )
-                        .await;
-                }
-            }
+            wait_manager
+                .record_process_wait_result(&wait_tab, &wait_task, result)
+                .await;
         });
 
-        if let Err(err) = self
-            .wait_for_http_or_exit(&tab_id, &task_id, &url, &kind)
-            .await
-        {
+        if let Err(err) = readiness {
             let snapshot = self
                 .mark_running_unready(&tab_id, &task_id, url.clone(), err)
                 .await;
@@ -1103,6 +1082,12 @@ impl WorkPreviewManager {
             let runtime = sessions
                 .get_mut(&tab_id)
                 .ok_or_else(|| "preview state disappeared after process readiness".to_string())?;
+            if matches!(
+                runtime.state.status,
+                WorkPreviewStatus::Failed | WorkPreviewStatus::Stopped
+            ) {
+                return Ok(runtime.snapshot());
+            }
             runtime.state.status = WorkPreviewStatus::Running;
             runtime.state.url = Some(url.clone());
             runtime.state.updated_at_ms = now_ms();
@@ -1404,6 +1389,39 @@ impl WorkPreviewManager {
         runtime.state.updated_at_ms = now_ms();
     }
 
+    async fn record_process_wait_result(
+        &self,
+        tab_id: &str,
+        task_id: &str,
+        result: std::io::Result<std::process::ExitStatus>,
+    ) {
+        match result {
+            Ok(status) => {
+                let code = status.code();
+                let proc_status = if status.success() {
+                    ProcessStatus::Exited
+                } else {
+                    ProcessStatus::Failed
+                };
+                self.process_registry
+                    .mark_exited(task_id, code, proc_status)
+                    .await;
+                self.finish_process(tab_id, task_id, code).await;
+            }
+            Err(err) => {
+                self.process_registry
+                    .mark_exited(task_id, None, ProcessStatus::Failed)
+                    .await;
+                self.fail_if_current(
+                    tab_id,
+                    Some(task_id),
+                    format!("preview process wait failed: {}", err),
+                )
+                .await;
+            }
+        }
+    }
+
     async fn wait_for_http_or_exit(
         &self,
         tab_id: &str,
@@ -1418,18 +1436,33 @@ impl WorkPreviewManager {
             .map_err(|e| format!("preview HTTP client failed: {}", e))?;
         let started = tokio::time::Instant::now();
         while started.elapsed() < deadline {
-            match timeout(
+            let probe = timeout(
                 request_timeout + Duration::from_millis(250),
                 client.get(url).send(),
-            )
-            .await
-            {
-                Ok(Ok(resp)) if resp.status().is_success() => return Ok(()),
-                _ => {
-                    if let Some(error) = self.preview_exit_error(tab_id, task_id).await {
-                        return Err(error);
+            );
+            tokio::pin!(probe);
+            loop {
+                tokio::select! {
+                    response = &mut probe => {
+                        if matches!(response, Ok(Ok(resp)) if resp.status().is_success()) {
+                            return Ok(());
+                        }
+                        break;
                     }
-                    sleep(poll_delay).await;
+                    _ = sleep(poll_delay) => {
+                        if let Some(error) = self.preview_exit_error(tab_id, task_id).await {
+                            return Err(error);
+                        }
+                    }
+                }
+            }
+            if let Some(error) = self.preview_exit_error(tab_id, task_id).await {
+                return Err(error);
+            }
+            if started.elapsed() < deadline {
+                sleep(poll_delay).await;
+                if let Some(error) = self.preview_exit_error(tab_id, task_id).await {
+                    return Err(error);
                 }
             }
         }
@@ -4644,6 +4677,69 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("preview process exited"));
+    }
+
+    #[tokio::test]
+    async fn readiness_probe_stops_waiting_when_preview_process_fails() {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind hanging readiness server");
+        let port = listener.local_addr().expect("readiness address").port();
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.expect("accept readiness probe");
+            sleep(Duration::from_secs(5)).await;
+        });
+
+        let manager = Arc::new(WorkPreviewManager::new(Arc::new(ProcessRegistry::new())));
+        let task_id = "hung-readiness-task".to_string();
+        let state = WorkPreviewState {
+            tab_id: "hung-readiness-tab".to_string(),
+            cwd: None,
+            kind: Some(WorkPreviewKind::WebApp),
+            status: WorkPreviewStatus::Starting,
+            url: None,
+            command: Some("failing command".to_string()),
+            task_id: Some(task_id.clone()),
+            pid: None,
+            started_at_ms: Some(now_ms()),
+            updated_at_ms: now_ms(),
+            viewport_hint: None,
+            error: None,
+            logs: Vec::new(),
+        };
+        manager
+            .sessions
+            .lock()
+            .await
+            .insert("hung-readiness-tab".to_string(), RuntimePreview::new(state));
+
+        let failing_manager = Arc::clone(&manager);
+        let failing_task_id = task_id.clone();
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(100)).await;
+            failing_manager
+                .fail_if_current(
+                    "hung-readiness-tab",
+                    Some(&failing_task_id),
+                    "preview process exited with code Some(1)".to_string(),
+                )
+                .await;
+        });
+
+        let result = timeout(
+            Duration::from_secs(2),
+            manager.wait_for_http_or_exit(
+                "hung-readiness-tab",
+                &task_id,
+                &format!("http://127.0.0.1:{port}/"),
+                &WorkPreviewKind::WebApp,
+            ),
+        )
+        .await
+        .expect("process failure must interrupt a hanging HTTP readiness probe")
+        .expect_err("failed preview cannot become ready");
+        assert!(result.contains("exited with code"));
+        server.abort();
     }
 
     #[test]

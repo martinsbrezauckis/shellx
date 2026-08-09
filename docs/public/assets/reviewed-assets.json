@@ -3,10 +3,10 @@
   "reviewedAt": "2026-08-09T08:37:54Z",
   "revalidation": {
     "status": "reviewed",
-    "sourceCommit": "262a02dde301c3333fe6daa59bd9812292977d70",
-    "productSourceSha256": "79d02d1ebd3a6660c33c2b80aecd25edd6f564d12dee99e72b27cea8263d8cb2",
-    "reviewedAt": "2026-08-09T16:43:55Z",
-    "evidenceSha256": "67e7c565d07c479c2615619a001cd7429adfa646945071da7f6a05f1a15ac90b"
+    "sourceCommit": "0f66c06ac4ef3d57b8bbbcb353d1f9300588f055",
+    "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
+    "reviewedAt": "2026-08-09T20:54:40Z",
+    "evidenceSha256": "d7d36339c4fa5b987562506c600333172b736c20ea118fc58315a77b399aecd2"
   },
   "generation": {
     "mode": "gpt-image-background-plus-reviewed-product-composite",
@@ -32,7 +32,7 @@
         "status": "reviewed",
         "kind": "installed-candidate",
         "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "79d02d1ebd3a6660c33c2b80aecd25edd6f564d12dee99e72b27cea8263d8cb2",
+        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
         "appVersion": "0.3.5",
         "platform": "linux-installed",
         "sha256": "1aa65bda2d6b6761a4ab4c8f7fa852a4a0fa2a980d2065bafb6cc8013ea3bfa2",
@@ -51,7 +51,7 @@
         "status": "reviewed",
         "kind": "installed-browser-live-site-composite",
         "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "79d02d1ebd3a6660c33c2b80aecd25edd6f564d12dee99e72b27cea8263d8cb2",
+        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
         "appVersion": "0.3.5",
         "platform": "linux-installed",
         "sha256": "b21417397f9de6e2b9af2016f49b73c6e56eaaceb7487230ec1d0d1e7b2e7cec",
