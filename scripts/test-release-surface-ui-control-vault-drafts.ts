@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { FinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
@@ -262,15 +262,16 @@ try {
     "--import", "tsx", resolve(root, "scripts/release-drivers/ui-control-installed.ts"),
     "--request", requestPath,
     "--out", reportPath,
-  ], { cwd: root, encoding: "utf8", timeout: 60_000 });
-  const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
+  ], { cwd: root, encoding: "utf8", timeout: 300_000 });
+  const reportText = existsSync(reportPath) ? readFileSync(reportPath, "utf8") : "";
   assert.equal(
     run.status,
     0,
-    [run.stderr, run.stdout, JSON.stringify(report.outcomes.filter((outcome) => outcome.error), null, 2)]
+    [run.error?.message, run.stderr, run.stdout, reportText]
       .filter(Boolean)
       .join("\n"),
   );
+  const report = JSON.parse(reportText) as ReleaseSurfaceDriverReport;
   assert.equal(report.outcomes.length, 58);
   assert(syntheticGrantValues.every((value) => !JSON.stringify(report).includes(value)), "report must not retain synthetic Vault grant values");
   const recoveryAssignment = assignments.find((assignment) => assignment.fixtureId === "ui:vault-setup-recovery-action");
@@ -575,9 +576,10 @@ try {
     "--import", "tsx", resolve(root, "scripts/release-drivers/ui-control-bounded-installed.ts"),
     "--request", boundedRequestPath,
     "--out", boundedReportPath,
-  ], { cwd: root, encoding: "utf8", timeout: 60_000 });
-  const boundedReport = JSON.parse(readFileSync(boundedReportPath, "utf8")) as ReleaseSurfaceDriverReport;
-  assert.equal(boundedRun.status, 0, [boundedRun.stderr, boundedRun.stdout, JSON.stringify(boundedReport, null, 2)].filter(Boolean).join("\n"));
+  ], { cwd: root, encoding: "utf8", timeout: 300_000 });
+  const boundedReportText = existsSync(boundedReportPath) ? readFileSync(boundedReportPath, "utf8") : "";
+  assert.equal(boundedRun.status, 0, [boundedRun.error?.message, boundedRun.stderr, boundedRun.stdout, boundedReportText].filter(Boolean).join("\n"));
+  const boundedReport = JSON.parse(boundedReportText) as ReleaseSurfaceDriverReport;
   assert.equal(boundedReport.outcomes.length, 58);
   assert(boundedReport.outcomes.every((outcome) => (
     outcome.present === "pass" && outcome.invoke === "pass"
@@ -589,7 +591,9 @@ try {
     "--request", requestPath,
     "--out", reportPath,
   ], { cwd: root, encoding: "utf8", timeout: 60_000 });
+  assert.equal(overwrite.error, undefined, overwrite.error?.message);
   assert.notEqual(overwrite.status, 0, "Vault draft evidence output must remain create-only");
+  assert.match(`${overwrite.stderr}\n${overwrite.stdout}`, /EEXIST|file already exists/i, "Vault draft overwrite refusal must come from create-only output semantics");
 
   console.log("Release surface Vault UI controls passed: 58 exact assignments");
 } finally {

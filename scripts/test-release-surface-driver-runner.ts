@@ -103,8 +103,8 @@ assert.deepEqual(
   ],
   "Node must import cross-platform controller file URLs through an eval bootstrap while preserving controller arguments",
 );
-if (process.platform === "win32") {
-  console.log("SKIP Linux installed-driver integration fixture: portable controller bindings passed; native POSIX runtime required for the remaining fixture");
+if (process.platform !== "linux") {
+  console.log("SKIP Linux installed-driver integration fixture: portable controller bindings passed; a native Linux runtime is required for the remaining fixture");
   process.exit(0);
 }
 const sourceCommit = releaseSurfaceFixtureSourceCommit;
