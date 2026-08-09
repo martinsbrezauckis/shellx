@@ -18,11 +18,11 @@ import { validateCreateOnlyEvidenceDirectory } from "./lib/release-surface-evide
 const root = resolve(import.meta.dirname, "..");
 const fixturePath = resolve(root, "scripts/fixtures/release-surface-webdriver-lifecycle-driver-fixture.ts");
 const temp = mkdtempSync(join(tmpdir(), "shellx-webdriver-orchestration-"));
-const fixturePlatform = process.platform === "win32"
-  ? "windows-installed"
-  : process.platform === "darwin"
-    ? "macos-installed"
-    : "linux-installed";
+// This fixture proves the WebDriver orchestration used by Windows and Linux.
+// macOS has a separate native-input candidate orchestration contract and must
+// never be mislabeled as WebDriver-backed merely because this source test runs
+// on a macOS CI host.
+const fixturePlatform = process.platform === "win32" ? "windows-installed" : "linux-installed";
 const children = new Set<ChildProcess>();
 try {
   const passedInput = await orchestrationInput("pass");

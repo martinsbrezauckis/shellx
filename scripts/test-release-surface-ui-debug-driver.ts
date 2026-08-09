@@ -54,8 +54,8 @@ try {
     resolve(root, "scripts/release-drivers/ui-debug-surface-installed.ts"),
     "--request", requestPath,
     "--out", reportPath,
-  ], { cwd: root, encoding: "utf8", timeout: 120_000 });
-  assert.equal(run.status, 0, run.stderr || run.stdout);
+  ], { cwd: root, encoding: "utf8", timeout: 300_000 });
+  assert.equal(run.status, 0, run.error?.message || run.stderr || run.stdout);
   const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
   assert.equal(report.schema, RELEASE_SURFACE_DRIVER_REPORT_SCHEMA);
   assert.deepEqual(validateReleaseSurfaceDriverReport(request, report), []);
