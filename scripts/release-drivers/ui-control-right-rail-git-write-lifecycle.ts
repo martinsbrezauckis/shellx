@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   rmdirSync,
@@ -89,7 +90,8 @@ export async function exerciseRightRailGitWriteLifecycle(
     const cleanupError = fixture ? await cleanup(connection, fixture) : null;
     for (const value of outcomes.values()) {
       if (!cleanupError) value.cleanup = "pass";
-      if (primaryError && !value.error) value.error = primaryError;
+      if (primaryError && !value.error
+        && [value.present, value.invoke, value.effect].includes("fail")) value.error = primaryError;
       if (cleanupError) value.error = appendError(value.error, `cleanup: ${cleanupError}`);
       if ([value.present, value.invoke, value.effect, value.cleanup].includes("fail") && !value.error) {
         value.error = "RightRail/GitPane write lifecycle did not satisfy every required verdict";
@@ -226,14 +228,14 @@ function validateCheckpoint(path: string, fixture: GitWriteFixture): void {
 }
 
 async function waitForOwnedWorktree(fixture: GitWriteFixture): Promise<WorktreeEntry> {
-  const baselinePaths = new Set(fixture.baselineWorktrees.map((entry) => resolve(entry.path)));
+  const baselinePaths = new Set(fixture.baselineWorktrees.map((entry) => nativeCanonicalPathKey(entry.path)));
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    const added = listWorktrees(fixture.nodeRepo).filter((entry) => !baselinePaths.has(resolve(entry.path)));
+    const added = listWorktrees(fixture.nodeRepo).filter((entry) => !baselinePaths.has(nativeCanonicalPathKey(entry.path)));
     if (added.length === 1) {
       const entry = added[0]!;
       const expectedContainer = resolve(fixture.nodeRepo, ".worktrees");
-      if (resolve(entry.path) !== expectedContainer && !resolve(entry.path).startsWith(`${expectedContainer}${sep}`)) {
+      if (!nativePathInsideContainer(entry.path, expectedContainer)) {
         throw new Error("owned Git worktree escaped the in-repository .worktrees container");
       }
       if (!entry.branch || !/^refs\/heads\/shellx\/release-proof-\d+$/.test(entry.branch)) {
@@ -271,7 +273,9 @@ async function cleanup(connection: Connection, fixture: GitWriteFixture): Promis
   }
   try {
     const added = listWorktrees(fixture.nodeRepo).filter((entry) => (
-      !fixture.baselineWorktrees.some((baseline) => resolve(baseline.path) === resolve(entry.path))
+      !fixture.baselineWorktrees.some((baseline) => (
+        nativeCanonicalPathKey(baseline.path) === nativeCanonicalPathKey(entry.path)
+      ))
     ));
     for (const entry of added) {
       runGit(fixture.nodeRepo, ["worktree", "remove", "--force", entry.path]);
@@ -411,6 +415,17 @@ function samePortablePath(left: string, right: string): boolean {
   const a = normalize(left);
   const b = normalize(right);
   return /^[A-Za-z]:\//.test(a) || /^[A-Za-z]:\//.test(b) ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+function nativeCanonicalPathKey(path: string): string {
+  const canonical = realpathSync.native(path);
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
+export function nativePathInsideContainer(path: string, container: string): boolean {
+  const child = nativeCanonicalPathKey(path);
+  const parent = nativeCanonicalPathKey(container);
+  return child === parent || child.startsWith(`${parent}${sep}`);
 }
 
 function pruneEmptyParents(start: string, stop: string): void {

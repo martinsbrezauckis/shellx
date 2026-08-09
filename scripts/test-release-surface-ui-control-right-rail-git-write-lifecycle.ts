@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { FinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
@@ -11,6 +11,7 @@ import {
   releaseSurfaceFixtureSourceCommit,
 } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
+import { nativePathInsideContainer } from "./release-drivers/ui-control-right-rail-git-write-lifecycle";
 
 const root = resolve(import.meta.dirname, "..");
 const temp = mkdtempSync(join(tmpdir(), "shellx-ui-right-rail-git-write-"));
@@ -41,6 +42,18 @@ const exactNames = new Set([
 
 let fixture: ChildProcess | null = null;
 try {
+  if (process.platform !== "win32") {
+    const canonicalRoot = join(temp, "canonical-root");
+    const aliasRoot = join(temp, "alias-root");
+    const canonicalChild = join(canonicalRoot, ".worktrees", "child");
+    mkdirSync(canonicalChild, { recursive: true });
+    symlinkSync(canonicalRoot, aliasRoot, "dir");
+    assert.equal(
+      nativePathInsideContainer(canonicalChild, join(aliasRoot, ".worktrees")),
+      true,
+      "worktree containment must compare canonical paths across native aliases such as macOS /var and /private/var",
+    );
+  }
   mkdirSync(shellxHome, { recursive: true, mode: 0o700 });
   writeFileSync(tokenPath, token, { encoding: "utf8", mode: 0o600 });
   fixture = spawn(process.execPath, [

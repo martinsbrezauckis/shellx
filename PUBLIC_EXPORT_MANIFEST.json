@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "481c515d6936edce658e096c7458a92a29c4d2c9",
-    "tree": "64645ce68b296a2b758d1793ffff8bdfc6dd5513"
+    "commit": "6b86fce007d77cf58f2c468ed3a10029f67137e2",
+    "tree": "ecc9e4da16e243a21105edbd76efc1af9c47a780"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1063,
-    "totalBytes": 30175661,
-    "digest": "c417fab80029b2b7fab8bc5a5505d9351175ecd7c9a68b74cc353354d69b3286"
+    "totalBytes": 30177159,
+    "digest": "7633a9e612bc4e204e3f8b60bc9f052732b68b000d8a863b432dc9a45f3ebe2e"
   },
   "exclusions": {
     "fileCount": 14,
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "aee925282d4a895fe0f262a6a55c2251d37eb088d5c105a34addfcfaed5a2207",
+      "sha256": "35ed9b0d3a2cf4152a35949a2c468f54d8d0cdb90e15560aa8b5ee6d9abbe237",
       "bytes": 5952,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -632,7 +632,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "b04af092367d0e4217c9d7d28e457c338138ca0426cd1bb9f53a824f5b8d0f54",
+      "sha256": "6eff37b22ec6e65818d72191b996d98d612cc3fb3ae600ebc7a59c287517972d",
       "bytes": 50423,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "0ae708e71db32601ed474d2812f58d88cf452972254df3267339d8a48f3fd9cc",
+      "sha256": "6866d07bc7f8aebac7b76c671b0181b963d4aa92e73e030618218614a68a9262",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -3305,8 +3305,8 @@
     {
       "path": "scripts/release-drivers/ui-control-right-rail-git-write-lifecycle.ts",
       "mode": "100644",
-      "sha256": "371dfe778a0f4a92f62c011d63f45e12c72a09fec44932f9afe9ac11180bcc16",
-      "bytes": 19665,
+      "sha256": "a5c57bb5448ae75d7e88d0e0c48248fe6081dd9672619698a2d49550c1bf4395",
+      "bytes": 20218,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4977,8 +4977,8 @@
     {
       "path": "scripts/test-release-surface-ui-control-right-rail-git-write-lifecycle.ts",
       "mode": "100644",
-      "sha256": "484a9c59e6bcc43572d51680ca27e5d1b1e42a513dd68fea10bac048d5fb272e",
-      "bytes": 10908,
+      "sha256": "6b123c1034dc4d0d64fe62aa4e4808ffc8585a636d1b8b979790650e797fb81b",
+      "bytes": 11579,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -7353,8 +7353,8 @@
     {
       "path": "src-tauri/src/host_mcp/tests/mod.rs",
       "mode": "100644",
-      "sha256": "a75b619c134c79e72776da81b91c68dd4adb6d5305f395995cecf7b137760e1d",
-      "bytes": 2189,
+      "sha256": "629d07ce86ae845b99fac5e6a6c0919d44436c2b4175cac0cd83717116562a68",
+      "bytes": 2463,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
