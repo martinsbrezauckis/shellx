@@ -71,7 +71,14 @@ mod tempdir_lite {
                 std::process::id(),
                 super::now_ms_for_temp()
             );
-            let path = std::env::temp_dir().join(unique);
+            #[cfg(windows)]
+            let base = std::env::current_dir()
+                .expect("resolve Windows test checkout")
+                .join("target")
+                .join("shellx-host-mcp-tests");
+            #[cfg(not(windows))]
+            let base = std::env::temp_dir();
+            let path = base.join(unique);
             std::fs::create_dir_all(&path).unwrap();
             Self { path }
         }
