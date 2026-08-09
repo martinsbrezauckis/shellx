@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "006234ffa862859728dfd15568aaced0345c361f",
-    "tree": "d3c90958fb1656c48fe8794f4fbda30a993a8e34"
+    "commit": "fe541aa5bf0dcef315b0776377a07a3589d05391",
+    "tree": "73b1067f0c4fff2608f99ab007bdc018801c80ce"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1063,
-    "totalBytes": 30184897,
-    "digest": "4d8b675072c31118c47ac330703b7c497c34b8de1e78eecaecf32af09e55a20a"
+    "totalBytes": 30185416,
+    "digest": "d5e90e2f3ef363b7c4a027d9bf8caa21de74b26c8b9260ebce417df9dfb12ee3"
   },
   "exclusions": {
     "fileCount": 14,
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "1f8e27937b99bd46f2c9f27d5595fecce4f44188c5cf256bb5b25d231bbbfe94",
+      "sha256": "6c00bb48433c1dd80147989540b225b69accba785fc25ed8b38f5f94fd4a2be2",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -962,8 +962,8 @@
     {
       "path": "scripts/collect-release-surface-windows-runtime.ps1",
       "mode": "100644",
-      "sha256": "b4f0dca9e1bfbd56d1776dbdeec0914cd4455d2f4965d5870f4cd70564313118",
-      "bytes": 5745,
+      "sha256": "9c207a0d96e4da423d5e9ae732396c38cc08a0f7effe74d9725161228273e44d",
+      "bytes": 6135,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5164,8 +5164,8 @@
     {
       "path": "scripts/test-release-surface-windows-native-runtime.ts",
       "mode": "100644",
-      "sha256": "c1a21a4b84ad67f24bf1d0ff2cff98030a21b9629127873bfc0a5e8d4cd9cceb",
-      "bytes": 14111,
+      "sha256": "13cb965ccc845c575036893cad79d5c5f65815582a0432e184ab147231dde8fa",
+      "bytes": 14240,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",

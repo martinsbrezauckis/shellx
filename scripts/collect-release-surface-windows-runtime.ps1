@@ -35,6 +35,26 @@ function Get-VolumeSerial([string]$RootPath) {
   return $serial.ToString("x8")
 }
 
+function Get-Sha256([string]$LiteralPath) {
+  $stream = $null
+  $sha256 = $null
+  try {
+    $stream = [IO.File]::Open(
+      $LiteralPath,
+      [IO.FileMode]::Open,
+      [IO.FileAccess]::Read,
+      [IO.FileShare]::Read
+    )
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    $digest = $sha256.ComputeHash($stream)
+    return [BitConverter]::ToString($digest).Replace("-", "").ToLowerInvariant()
+  }
+  finally {
+    if ($stream) { $stream.Dispose() }
+    if ($sha256) { $sha256.Dispose() }
+  }
+}
+
 function Get-Ipv4LoopbackListeners([int]$ListenerPort) {
   $output = & "$env:SystemRoot\System32\netstat.exe" -ano -p tcp
   if ($LASTEXITCODE -ne 0) { throw "Unable to inspect the candidate loopback listener" }
@@ -59,7 +79,7 @@ function Get-Ipv4LoopbackListeners([int]$ListenerPort) {
 $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
 if (-not $process -or -not $process.Path) { throw "Candidate process is not running" }
 $image = Get-Item -LiteralPath $process.Path
-$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $image.FullName).Hash.ToLowerInvariant()
+$hash = Get-Sha256 $image.FullName
 $fileIdOutput = (& fsutil file queryFileID $image.FullName 2>&1 | Out-String)
 $fileIdMatch = [regex]::Match($fileIdOutput, "0x[0-9a-fA-F]+")
 if (-not $fileIdMatch.Success) { throw "Unable to resolve the candidate executable file ID" }
@@ -78,7 +98,7 @@ $listener = $listeners | Where-Object { $_.OwningProcess -eq $owners[0] } | Sele
 $finalProcess = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
 if (-not $finalProcess -or -not $finalProcess.Path) { throw "Candidate process exited during collection" }
 $finalImage = Get-Item -LiteralPath $finalProcess.Path
-$finalHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $finalImage.FullName).Hash.ToLowerInvariant()
+$finalHash = Get-Sha256 $finalImage.FullName
 $finalFileIdOutput = (& fsutil file queryFileID $finalImage.FullName 2>&1 | Out-String)
 $finalFileIdMatch = [regex]::Match($finalFileIdOutput, "0x[0-9a-fA-F]+")
 if (-not $finalFileIdMatch.Success) { throw "Unable to re-resolve the candidate executable file ID" }

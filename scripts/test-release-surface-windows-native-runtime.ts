@@ -114,6 +114,8 @@ assert.deepEqual(validateReleaseSurfaceWindowsNativeRuntime(unicodePath, {
 const collectorSource = readFileSync(resolve(import.meta.dirname, "collect-release-surface-windows-runtime.ps1"), "utf8");
 assert(collectorSource.includes("Get-Process -Id $ProcessId"));
 assert(collectorSource.includes("GetVolumeInformation"));
+assert(collectorSource.includes("[Security.Cryptography.SHA256]::Create()"));
+assert(!collectorSource.includes("Get-FileHash"));
 assert(!collectorSource.includes("Get-CimInstance"));
 const fixtureSource = readFileSync(
   resolve(import.meta.dirname, "fixtures", "release-surface-windows-runtime-server-fixture.ps1"),
