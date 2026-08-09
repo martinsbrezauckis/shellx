@@ -36,9 +36,9 @@ fn normalize_build_commit(value: String) -> Option<String> {
 
 fn main() {
     println!("cargo:rerun-if-env-changed=SHELLX_BUILD_COMMIT");
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
-        && std::env::var_os("CARGO_FEATURE_WINDOWS_TEST_MANIFEST").is_some()
-    {
+    let windows_test_manifest = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var_os("CARGO_FEATURE_WINDOWS_TEST_MANIFEST").is_some();
+    if windows_test_manifest {
         // `tauri_build` embeds this dependency in the packaged application,
         // but Cargo's generated test and benchmark executables do not inherit
         // that application resource. Without it Windows binds the legacy
@@ -66,5 +66,14 @@ fn main() {
         .or_else(|| git_stdout(&["rev-parse", "HEAD"]).and_then(normalize_build_commit))
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=SHELLX_BUILD_COMMIT={build_commit}");
-    tauri_build::build()
+    let attributes = if windows_test_manifest {
+        // The test-only linker directive emits its own application manifest.
+        // Suppress Tauri's default manifest resource for this feature so the
+        // Windows binary test target cannot link two RT_MANIFEST entries.
+        tauri_build::Attributes::new()
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest())
+    } else {
+        tauri_build::Attributes::new()
+    };
+    tauri_build::try_build(attributes).expect("failed to run Tauri build script")
 }
