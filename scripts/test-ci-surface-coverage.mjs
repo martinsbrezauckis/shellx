@@ -24,9 +24,20 @@ const input = {
 };
 assert.deepEqual(ciSurfaceCoverageErrors(input), []);
 
+const windowsCheckout = {
+  ...input,
+  ciSource: ciSource.replaceAll("\n", "\r\n"),
+  releaseSource: releaseSource.replaceAll("\n", "\r\n"),
+};
+assert.deepEqual(
+  ciSurfaceCoverageErrors(windowsCheckout),
+  [],
+  "CI source contracts must be independent of checkout newline spelling",
+);
+
 const missingWindows = ciSurfaceCoverageErrors({
   ...input,
-  ciSource: ciSource.replace("          - windows-latest\n", ""),
+  ciSource: ciSource.replace("          - windows-latest", ""),
 });
 assert(missingWindows.some((error) => error.includes("missing windows-latest")));
 

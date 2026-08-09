@@ -32,6 +32,8 @@ export function ciSurfaceCoverageErrors({
   driverPlan,
   testSuites,
 }) {
+  ciSource = normalizeNewlines(ciSource);
+  releaseSource = normalizeNewlines(releaseSource ?? "");
   const errors = [];
   const job = workflowJobBlock(ciSource, "surface-contracts");
   if (!job) {
@@ -115,6 +117,10 @@ export function ciSurfaceCoverageErrors({
   }
 
   return errors;
+}
+
+function normalizeNewlines(source) {
+  return source.replace(/\r\n?/g, "\n");
 }
 
 function workflowJobBlock(source, jobId) {
