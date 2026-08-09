@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState, type JSX, type PointerEvent } fro
 import { invoke } from "@tauri-apps/api/core";
 import {
   clearWorkPreviewBrowserEvents,
+  buildOwnedClipboardPreviewDiagnostic,
   emptyWorkPreviewState,
   diagnoseWorkPreview,
+  formatPreviewDoctorReport,
   getWorkPreviewState,
   getWorkPreviewBrowserEvents,
   recordWorkPreviewBrowserEvent,
@@ -21,6 +23,7 @@ import {
 } from "../lib/work-preview";
 import { inTauri } from "../lib/tauri-bridge";
 import { ShellIcon } from "./icons";
+import type { DebugProviderAction } from "../lib/debug-provider-action-fixture";
 
 const START_OPTIONS: Array<{ id: WorkPreviewStartKind; label: string; help: string }> = [
   { id: "auto", label: "Auto", help: "Detect Expo, package dev scripts, or static HTML." },
@@ -56,12 +59,14 @@ export function WorkPreviewPanel({
   onStateChange,
   onOpenPreview,
   onAskGrokToFix,
+  debugClipboardFixture = null,
 }: {
   activeTabId: string | null;
   cwd: string;
   onStateChange?: (state: WorkPreviewState) => void;
   onOpenPreview?: (state: WorkPreviewState) => void;
   onAskGrokToFix?: (state: WorkPreviewState) => void;
+  debugClipboardFixture?: "owned-safe" | null;
 }): JSX.Element {
   const tabId = activeTabId || "default";
   const [state, setState] = useState<WorkPreviewState>(() => emptyWorkPreviewState(tabId));
@@ -180,6 +185,11 @@ export function WorkPreviewPanel({
 
   async function runDoctor(): Promise<void> {
     if (!inTauri() || diagnosing) return;
+    if (debugClipboardFixture === "owned-safe") {
+      setDiagnostic(buildOwnedClipboardPreviewDiagnostic(state));
+      setError(null);
+      return;
+    }
     setDiagnosing(true);
     setError(null);
     try {
@@ -215,7 +225,8 @@ export function WorkPreviewPanel({
     const clamped = clampLogHeight(nextHeight);
     setLogHeight(clamped);
     try {
-      window.localStorage.setItem(WORK_PREVIEW_LOG_PANEL_SIZE_STORE, String(clamped));
+      if (clamped === LOG_PANEL_SIZE_DEFAULT) window.localStorage.removeItem(WORK_PREVIEW_LOG_PANEL_SIZE_STORE);
+      else window.localStorage.setItem(WORK_PREVIEW_LOG_PANEL_SIZE_STORE, String(clamped));
     } catch {
       /* no-op */
     }
@@ -282,48 +293,52 @@ export function WorkPreviewPanel({
           </div>
         </div>
         <div className="work-preview-actions">
-          <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void refresh()} title="Refresh preview state">
+          <button id="work-preview-refresh-state" type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void refresh()} title="Refresh preview state" aria-label="Refresh preview state">
             <ShellIcon name="refresh" size={12} />
           </button>
         </div>
       </div>
 
       <div className="work-preview-main">
-        <div className={`work-preview-status work-preview-status-${state.status}`}>
+        <div
+          className={`work-preview-status work-preview-status-${state.status}`}
+          data-shellx-release-observe="title"
+          title={`Work preview state: status=${state.status}; url=${hasUrl ? "present" : "absent"}`}
+        >
           <div>
             <div className="work-preview-status-title">{statusHeadline}</div>
             <div className="work-preview-status-detail">{statusDetail}</div>
           </div>
           <div className="work-preview-primary-actions">
             {hasUrl ? (
-              <button type="button" className="mp-action-btn mp-action-btn-primary" onClick={() => onOpenPreview?.(state)}>
+              <button id="work-preview-open" type="button" className="mp-action-btn mp-action-btn-primary" onClick={() => onOpenPreview?.(state)}>
                 <ShellIcon name="app-window" size={12} />
                 Open
               </button>
             ) : (
-              <button type="button" className="mp-action-btn mp-action-btn-primary" onClick={() => void start()} disabled={!canStart}>
+              <button data-debug-id="surface-components-workpreviewpanel-3" type="button" className="mp-action-btn mp-action-btn-primary" onClick={() => void start()} disabled={!canStart}>
                 <ShellIcon name={busy ? "loader" : "play"} size={12} />
                 {startLabel}
               </button>
             )}
             {hasUrl && (
-              <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void start()} disabled={!canStart}>
+              <button id="work-preview-restart" type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void start()} disabled={!canStart}>
                 <ShellIcon name={busy ? "loader" : "rotate"} size={12} />
                 Restart
               </button>
             )}
-            <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void stop()} disabled={!running || busy}>
+            <button id="work-preview-stop" type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void stop()} disabled={!running || busy}>
               <ShellIcon name="square" size={12} />
               Stop
             </button>
             {(hasUrl || state.status === "failed") && onAskGrokToFix && (
-              <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => onAskGrokToFix(state)} disabled={busy}>
+              <button id="work-preview-ask-fix" type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => onAskGrokToFix(state)} disabled={busy}>
                 <ShellIcon name="alert" size={12} />
                 Ask Fix
               </button>
             )}
             {(hasUrl || state.status === "failed") && (
-              <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void runDoctor()} disabled={busy || diagnosing}>
+              <button id="work-preview-doctor" type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void runDoctor()} disabled={busy || diagnosing}>
                 <ShellIcon name={diagnosing ? "loader" : "shield-alert"} size={12} />
                 Doctor
               </button>
@@ -333,16 +348,50 @@ export function WorkPreviewPanel({
 
         <div className="work-preview-controls">
           <div className="work-preview-segments" role="tablist" aria-label="Preview kind">
-            {START_OPTIONS.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={kind === option.id ? "active" : ""}
-                onClick={() => setKind(option.id)}
-              >
-                {option.label}
-              </button>
-            ))}
+            <button
+              id="work-preview-kind-auto"
+              type="button"
+              role="tab"
+              className={kind === "auto" ? "active" : ""}
+              onClick={() => setKind("auto")}
+              aria-selected={kind === "auto"}
+              data-shellx-release-observe="selected"
+            >
+              Auto
+            </button>
+            <button
+              id="work-preview-kind-static"
+              type="button"
+              role="tab"
+              className={kind === "static" ? "active" : ""}
+              onClick={() => setKind("static")}
+              aria-selected={kind === "static"}
+              data-shellx-release-observe="selected"
+            >
+              Static
+            </button>
+            <button
+              id="work-preview-kind-web"
+              type="button"
+              role="tab"
+              className={kind === "web" ? "active" : ""}
+              onClick={() => setKind("web")}
+              aria-selected={kind === "web"}
+              data-shellx-release-observe="selected"
+            >
+              Web
+            </button>
+            <button
+              id="work-preview-kind-expo"
+              type="button"
+              role="tab"
+              className={kind === "expo" ? "active" : ""}
+              onClick={() => setKind("expo")}
+              aria-selected={kind === "expo"}
+              data-shellx-release-observe="selected"
+            >
+              Expo
+            </button>
           </div>
           <div className="work-preview-mode-help">{selectedOption.help}</div>
         </div>
@@ -367,7 +416,11 @@ export function WorkPreviewPanel({
         )}
 
         {diagnostic && (
-          <div className={`work-preview-doctor-card work-preview-doctor-${diagnostic.status}`}>
+          <div
+            className={`work-preview-doctor-card work-preview-doctor-${diagnostic.status}`}
+            data-shellx-release-observe="title"
+            title={`Preview Doctor state: status=${diagnostic.status}; ok=${diagnostic.ok ? "yes" : "no"}; http=${diagnostic.httpStatus ?? "none"}; title=${diagnostic.title ? "present" : "absent"}; screenshot=${diagnostic.screenshotPath ? "captured" : diagnostic.screenshotError ? "unavailable" : "absent"}`}
+          >
             <div className="work-preview-doctor-head">
               <div>
                 <div className="work-preview-doctor-title">
@@ -376,7 +429,7 @@ export function WorkPreviewPanel({
                 </div>
                 <div className="work-preview-doctor-summary">{diagnostic.summary}</div>
               </div>
-              <button type="button" className="settings-pill" onClick={() => void copyDoctorReport()} title="Copy Preview Doctor report">
+              <button id="work-preview-copy-doctor-report" type="button" className="settings-pill" onClick={() => void copyDoctorReport()} title="Copy Preview Doctor report">
                 <ShellIcon name={diagnosticCopied ? "check" : "copy"} size={12} />
                 Report
               </button>
@@ -407,10 +460,10 @@ export function WorkPreviewPanel({
           <div className="work-preview-url-card">
             <div className="work-preview-urlbar">
               <span title={state.url}>{state.url}</span>
-              <button type="button" className="settings-pill" onClick={() => void copyUrl()} title="Copy URL">
+              <button id="work-preview-panel-copy-url" type="button" className="settings-pill" onClick={() => void copyUrl()} title="Copy URL" aria-label="Copy URL">
                 <ShellIcon name="copy" size={12} />
               </button>
-              <button type="button" className="settings-pill" onClick={() => void openExternal()} title="Open externally">
+              <button id="work-preview-panel-open-external" type="button" className="settings-pill" onClick={() => void openExternal()} title="Open externally" aria-label="Open externally">
                 <ShellIcon name="external-link" size={12} />
               </button>
             </div>
@@ -423,7 +476,12 @@ export function WorkPreviewPanel({
         )}
       </div>
 
-      <div className="work-preview-log" style={{ flexBasis: `${logHeight}px` }}>
+      <div
+        className="work-preview-log"
+        style={{ flexBasis: `${logHeight}px` }}
+        data-shellx-release-observe="title"
+        title={`Work preview log: height=${logHeight}; storage=${logHeight === LOG_PANEL_SIZE_DEFAULT ? "default" : "custom"}`}
+      >
         <div
           className="work-preview-log-resize"
           role="separator"
@@ -442,10 +500,12 @@ export function WorkPreviewPanel({
           <div className="work-preview-log-actions">
             <span>{state.logs.length} lines</span>
             <button
+              id="work-preview-log-height-toggle"
               type="button"
               className="settings-pill"
               onClick={() => resizeLogs(logHeight < 360 ? 430 : LOG_PANEL_SIZE_DEFAULT)}
               title={logHeight < 360 ? "Expand preview logs" : "Restore preview logs height"}
+              aria-label={logHeight < 360 ? "Expand preview logs" : "Restore preview logs height"}
             >
               <ShellIcon name={logHeight < 360 ? "maximize" : "minimize"} size={12} />
             </button>
@@ -459,14 +519,12 @@ export function WorkPreviewPanel({
 
 export function WorkPreviewStage({
   state,
-  onClose,
   onAskGrokToFix,
-  showClose = true,
+  debugProviderAction,
 }: {
   state: WorkPreviewState | null;
-  onClose?: () => void;
   onAskGrokToFix?: (state: WorkPreviewState) => void;
-  showClose?: boolean;
+  debugProviderAction?: DebugProviderAction | null;
 }): JSX.Element {
   const effective = state ?? emptyWorkPreviewState("default");
   const hasUrl = Boolean(effective.url);
@@ -491,25 +549,23 @@ export function WorkPreviewStage({
   }, [effective.url, frameRevision]);
 
   useEffect(() => {
+    if (debugProviderAction === "work-preview-browser-issue-fix") {
+      setBrowserIssueCount(1);
+      setLastBrowserIssue({
+        t: effective.startedAtMs ?? effective.updatedAtMs,
+        level: "error",
+        message: "SHELLX_RELEASE_PROVIDER_ACTION_BROWSER_ISSUE_035",
+        source: effective.url ?? undefined,
+      });
+      return;
+    }
     const issues = getWorkPreviewBrowserEvents(effective.tabId, {
       url: effective.url,
       sinceMs: effective.startedAtMs,
     }).filter(isPreviewBrowserIssue);
     setBrowserIssueCount(issues.length);
     setLastBrowserIssue(issues[issues.length - 1] ?? null);
-  }, [effective.tabId, effective.url, frameRevision]);
-
-  useEffect(() => {
-    if (!onClose) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [debugProviderAction, effective.tabId, effective.url, frameRevision]);
 
   useEffect(() => {
     if (!effective.url) return;
@@ -572,29 +628,41 @@ export function WorkPreviewStage({
               {effective.url && (
                 <div className="work-preview-device-toggle" role="tablist" aria-label="Preview viewport">
                   <button
+                    id="work-preview-viewport-phone"
                     type="button"
+                    role="tab"
                     className={viewport === "phone" ? "active" : ""}
                     onClick={() => setViewport("phone")}
                     aria-selected={viewport === "phone"}
+                    data-shellx-release-observe="selected"
                     title="Phone viewport"
+                    aria-label="Phone viewport"
                   >
                     <ShellIcon name="phone" size={12} />
                   </button>
                   <button
+                    id="work-preview-viewport-tablet"
                     type="button"
+                    role="tab"
                     className={viewport === "tablet" ? "active" : ""}
                     onClick={() => setViewport("tablet")}
                     aria-selected={viewport === "tablet"}
+                    data-shellx-release-observe="selected"
                     title="Tablet viewport"
+                    aria-label="Tablet viewport"
                   >
                     <ShellIcon name="tablet" size={12} />
                   </button>
                   <button
+                    id="work-preview-viewport-desktop"
                     type="button"
+                    role="tab"
                     className={viewport === "desktop" ? "active" : ""}
                     onClick={() => setViewport("desktop")}
                     aria-selected={viewport === "desktop"}
+                    data-shellx-release-observe="selected"
                     title="Desktop viewport"
+                    aria-label="Desktop viewport"
                   >
                     <ShellIcon name="monitor" size={12} />
                   </button>
@@ -603,7 +671,7 @@ export function WorkPreviewStage({
               {effective.url && (
                 <>
                   {browserIssueCount > 0 && onAskGrokToFix && (
-                    <button
+                    <button data-debug-id="surface-components-workpreviewpanel-16"
                       type="button"
                       className="settings-pill work-preview-error-pill"
                       onClick={() => onAskGrokToFix(effective)}
@@ -614,31 +682,30 @@ export function WorkPreviewStage({
                     </button>
                   )}
                   {onAskGrokToFix && (
-                    <button type="button" className="settings-pill" onClick={() => onAskGrokToFix(effective)} title="Run Preview Doctor and ask the active agent to fix">
+                    <button id="work-preview-stage-ask-fix" type="button" className="settings-pill" onClick={() => onAskGrokToFix(effective)} title="Run Preview Doctor and ask the active agent to fix" aria-label="Run Preview Doctor and ask the active agent to fix">
                       <ShellIcon name="alert" size={12} />
                     </button>
                   )}
-                  <button type="button" className="settings-pill" onClick={() => setFrameReloadSeq((seq) => seq + 1)} title="Reload preview frame">
+                  <button id="work-preview-frame-reload" type="button" className="settings-pill" onClick={() => setFrameReloadSeq((seq) => seq + 1)} title="Reload preview frame" aria-label="Reload preview frame">
                     <ShellIcon name="refresh" size={12} />
                   </button>
-                  <button type="button" className="settings-pill" onClick={() => void copyUrl()} title="Copy URL">
+                  <button id="work-preview-stage-copy-url" type="button" className="settings-pill" onClick={() => void copyUrl()} title="Copy URL" aria-label="Copy URL">
                     <ShellIcon name="copy" size={12} />
                   </button>
-                  <button type="button" className="settings-pill" onClick={() => void openExternal()} title="Open externally">
+                  <button id="work-preview-stage-open-external" type="button" className="settings-pill" onClick={() => void openExternal()} title="Open externally" aria-label="Open externally">
                     <ShellIcon name="external-link" size={12} />
                   </button>
                 </>
-              )}
-              {showClose && onClose && (
-                <button type="button" className="settings-pill" onClick={onClose} title="Close">
-                  <ShellIcon name="close" size={12} />
-                </button>
               )}
             </div>
           </div>
 
           {hasUrl ? (
-            <div className={`work-preview-stage-canvas work-preview-stage-canvas-${viewport}`}>
+            <div
+              className={`work-preview-stage-canvas work-preview-stage-canvas-${viewport}`}
+              data-shellx-release-observe="title"
+              title={`Work preview stage: viewport=${viewport}; frame=${hasUrl ? "present" : "absent"}; reload=${frameReloadSeq}`}
+            >
               <div className={`work-preview-device work-preview-device-${viewport}`}>
                 <iframe
                   key={frameSrc}
@@ -667,31 +734,6 @@ export function WorkPreviewStage({
   );
 }
 
-export function WorkPreviewModal({
-  open,
-  state,
-  onClose,
-  onAskGrokToFix,
-}: {
-  open: boolean;
-  state: WorkPreviewState | null;
-  onClose: () => void;
-  onAskGrokToFix?: (state: WorkPreviewState) => void;
-}): JSX.Element | null {
-  if (!open) return null;
-  return (
-    <div className="work-preview-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Work Preview">
-      <div className="work-preview-modal" onClick={(event) => event.stopPropagation()}>
-        <WorkPreviewStage
-          state={state}
-          onClose={onClose}
-          onAskGrokToFix={onAskGrokToFix}
-        />
-      </div>
-    </div>
-  );
-}
-
 function isPreviewBrowserIssue(event: WorkPreviewBrowserEvent): boolean {
   const level = event.level.toLowerCase();
   return level.includes("error") || level.includes("warn") || level === "exception";
@@ -708,45 +750,6 @@ function normalizePreviewBrowserEvent(data: Record<string, unknown>): WorkPrevie
     column: typeof data.column === "number" ? data.column : null,
     stack: typeof data.stack === "string" ? data.stack : null,
   };
-}
-
-function formatPreviewDoctorReport(diagnostic: WorkPreviewDiagnostic): string {
-  const issues = diagnostic.issues.length > 0
-    ? diagnostic.issues.map((issue) => `- ${issue.severity} ${issue.source}: ${issue.message}`).join("\n")
-    : "- none";
-  const browserEvents = diagnostic.browserEvents.length > 0
-    ? diagnostic.browserEvents.slice(-20).map((event) => {
-        const location = [event.url, event.line, event.column].filter((part) => part !== null && part !== undefined && part !== "").join(":");
-        return `- ${event.level}: ${event.message}${location ? ` (${location})` : ""}`;
-      }).join("\n")
-    : "- none";
-  const logs = diagnostic.logs.length > 0
-    ? diagnostic.logs.slice(-80).map((line) => `[${line.stream}] ${line.line}`).join("\n")
-    : "(no logs)";
-
-  return [
-    "shellX Preview Doctor report",
-    "",
-    `Status: ${diagnostic.status}`,
-    `Summary: ${diagnostic.summary}`,
-    `URL: ${diagnostic.url ?? "(none)"}`,
-    `CWD: ${diagnostic.cwd ?? "(none)"}`,
-    `Command: ${diagnostic.command ?? "(none)"}`,
-    `HTTP: ${diagnostic.httpStatus ?? "(none)"}`,
-    `Title: ${diagnostic.title ?? "(none)"}`,
-    `Screenshot: ${diagnostic.screenshotPath ?? diagnostic.screenshotError ?? "(none)"}`,
-    "",
-    "Issues:",
-    issues,
-    "",
-    "Browser events:",
-    browserEvents,
-    "",
-    "Recent logs:",
-    "```text",
-    logs,
-    "```",
-  ].join("\n");
 }
 
 function cacheBustPreviewUrl(url: string, updatedAtMs: number, reloadSeq: number): string {

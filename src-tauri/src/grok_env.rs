@@ -1538,6 +1538,8 @@ async fn probe_environment_commands_for_context(
                     host: host.to_string(),
                     port: ssh_port,
                     remote_grok_path: "grok".to_string(),
+                    remote_runtime: crate::acp::SshRemoteRuntime::Posix,
+                    wsl_distro: None,
                 })
             }
             None => {
@@ -1560,26 +1562,64 @@ async fn probe_environment_commands(
         Some(GrokCommandTarget::Wsl { distro, .. }) => {
             probe_remote_commands(RemoteProbeTarget::Wsl { distro }, commands).await
         }
-        Some(GrokCommandTarget::Ssh { host, port, .. }) => {
-            probe_remote_commands(RemoteProbeTarget::Ssh { host, port: *port }, commands).await
+        Some(GrokCommandTarget::Ssh {
+            host,
+            port,
+            remote_runtime,
+            wsl_distro,
+            ..
+        }) => {
+            probe_remote_commands(
+                RemoteProbeTarget::Ssh {
+                    host,
+                    port: *port,
+                    remote_runtime: *remote_runtime,
+                    wsl_distro: wsl_distro.as_deref(),
+                },
+                commands,
+            )
+            .await
         }
         _ => probe_local_commands(commands),
     }
 }
 
 enum RemoteProbeTarget<'a> {
-    Wsl { distro: &'a str },
-    Ssh { host: &'a str, port: Option<u16> },
+    Wsl {
+        distro: &'a str,
+    },
+    Ssh {
+        host: &'a str,
+        port: Option<u16>,
+        remote_runtime: crate::acp::SshRemoteRuntime,
+        wsl_distro: Option<&'a str>,
+    },
 }
 
 async fn probe_remote_commands(
     target: RemoteProbeTarget<'_>,
     commands: &[&str],
 ) -> CommandProbeSnapshot {
-    let script = remote_command_probe_script(commands);
+    let posix_script = remote_command_probe_script(commands);
+    let windows_script = remote_windows_command_probe_script(commands);
     let output = match target {
-        RemoteProbeTarget::Wsl { distro } => run_wsl_probe(distro, &script).await,
-        RemoteProbeTarget::Ssh { host, port } => run_ssh_probe(host, port, &script).await,
+        RemoteProbeTarget::Wsl { distro } => run_wsl_probe(distro, &posix_script).await,
+        RemoteProbeTarget::Ssh {
+            host,
+            port,
+            remote_runtime,
+            wsl_distro,
+        } => {
+            run_ssh_probe(
+                host,
+                port,
+                remote_runtime,
+                wsl_distro,
+                &posix_script,
+                &windows_script,
+            )
+            .await
+        }
     };
     match output {
         Ok(stdout) => parse_command_probe_output(&stdout),
@@ -1626,8 +1666,19 @@ fn remote_command_probe_script(commands: &[&str]) -> String {
     parts.join(" ")
 }
 
+fn remote_windows_command_probe_script(commands: &[&str]) -> String {
+    let mut parts = vec![crate::acp::windows_remote_shell_prelude().to_string()];
+    for command in commands {
+        let name = crate::acp::powershell_single_quote(command);
+        parts.push(format!(
+            "$command=Get-Command {name} -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1;if($null -ne $command){{[Console]::Out.WriteLine(({name}+'='+$command.Source))}};"
+        ));
+    }
+    parts.join("")
+}
+
 fn remote_probe_prelude() -> &'static str {
-    "export PATH=\"$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$HOME/.claude/bin:$HOME/.grok/bin:$HOME/.bun/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; if [ -s \"$HOME/.nvm/nvm.sh\" ]; then export NVM_DIR=\"$HOME/.nvm\"; . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1 || true; fi;"
+    crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE
 }
 
 async fn run_wsl_probe(distro: &str, script: &str) -> Result<String, String> {
@@ -1658,7 +1709,14 @@ async fn run_wsl_probe(distro: &str, script: &str) -> Result<String, String> {
     }
 }
 
-async fn run_ssh_probe(host: &str, port: Option<u16>, script: &str) -> Result<String, String> {
+async fn run_ssh_probe(
+    host: &str,
+    port: Option<u16>,
+    remote_runtime: crate::acp::SshRemoteRuntime,
+    wsl_distro: Option<&str>,
+    posix_script: &str,
+    windows_script: &str,
+) -> Result<String, String> {
     use crate::winproc::NoWindowExt as _;
     crate::acp::validate_ssh_destination_arg(host)?;
     let mut cmd = Command::new("ssh");
@@ -1671,9 +1729,14 @@ async fn run_ssh_probe(host: &str, port: Option<u16>, script: &str) -> Result<St
     if let Some(port) = port {
         cmd.arg("-p").arg(port.to_string());
     }
+    let remote_command = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        crate::acp::wrap_ssh_windows_command(windows_script)
+    } else {
+        crate::acp::wrap_ssh_posix_command(remote_runtime, wsl_distro, posix_script)?
+    };
     cmd.arg("--")
         .arg(host)
-        .arg(script)
+        .arg(remote_command)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
@@ -1910,6 +1973,8 @@ enum GrokCommandTarget {
         host: String,
         port: Option<u16>,
         remote_grok_path: String,
+        remote_runtime: crate::acp::SshRemoteRuntime,
+        wsl_distro: Option<String>,
     },
 }
 
@@ -1921,6 +1986,8 @@ impl GrokCommandTarget {
                 host: ssh.host.clone(),
                 port: ssh.port,
                 remote_grok_path: ssh.remote_grok_path.clone(),
+                remote_runtime: ssh.remote_runtime,
+                wsl_distro: ssh.wsl_distro.clone(),
             });
         }
         if let Some(distro) = session.wsl_distro() {
@@ -1976,6 +2043,8 @@ async fn run_grok(
             host,
             port,
             remote_grok_path,
+            remote_runtime,
+            wsl_distro,
         } => {
             let mut cmd = Command::new("ssh");
             cmd.arg("-o")
@@ -1987,7 +2056,37 @@ async fn run_grok(
             if let Some(port) = port {
                 cmd.arg("-p").arg(port.to_string());
             }
-            let remote = ssh_grok_command(remote_grok_path, args);
+            let remote = if *remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+                let args = args
+                    .iter()
+                    .map(|arg| crate::acp::powershell_single_quote(arg))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let location = cwd
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| {
+                        let value = crate::acp::powershell_single_quote(value);
+                        format!(
+                            "$work={value};if(-not(Test-Path -LiteralPath $work -PathType Container)){{throw ('ShellX Windows SSH cwd is not a directory: '+$work)}};Set-Location -LiteralPath $work;"
+                        )
+                    })
+                    .unwrap_or_default();
+                let token_name =
+                    crate::acp::powershell_single_quote(crate::mcp_http::MCP_TOKEN_ENV_VAR);
+                let script = format!(
+                    "{prelude}$token=[Console]::In.ReadLine();if($null -eq $token){{throw 'missing ShellX MCP token'}};[Environment]::SetEnvironmentVariable({token_name},$token,'Process');{location}$a=@({args});& {program} @a;exit $LASTEXITCODE",
+                    prelude = crate::acp::windows_remote_shell_prelude(),
+                    token_name = token_name,
+                    location = location,
+                    args = args,
+                    program = crate::acp::powershell_single_quote(remote_grok_path),
+                );
+                crate::acp::wrap_ssh_windows_command(&script)
+            } else {
+                let remote = ssh_grok_command(remote_grok_path, args);
+                crate::acp::wrap_ssh_posix_command(*remote_runtime, wsl_distro.as_deref(), &remote)?
+            };
             cmd.arg("--").arg(host).arg(remote);
             cmd
         }
@@ -2060,7 +2159,8 @@ fn remote_command(grok_path: &str, args: &[&str]) -> String {
 
 fn wsl_grok_command(grok_path: &str, args: &[&str]) -> String {
     format!(
-        "export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.npm-global/bin:$PATH\"; exec {}",
+        "{} exec {}",
+        crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
         remote_command(grok_path, args)
     )
 }
@@ -2238,7 +2338,17 @@ mod tests {
     fn wsl_grok_command_adds_user_bins_and_quotes_args() {
         let command = wsl_grok_command("/home/alice/.grok/bin/grok", &["mcp", "doctor", "--json"]);
 
-        assert!(command.contains("$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.npm-global/bin:$PATH"));
+        for path in [
+            "$HOME/.local/bin",
+            "$HOME/bin",
+            "$HOME/.cargo/bin",
+            "$HOME/.claude/bin",
+            "$HOME/.grok/bin",
+            "$HOME/.bun/bin",
+            "$HOME/.npm-global/bin",
+        ] {
+            assert!(command.contains(path), "missing {path}: {command}");
+        }
         assert!(command.contains("exec '/home/alice/.grok/bin/grok' 'mcp' 'doctor' '--json'"));
     }
 

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AgentId } from "../lib/agent-selection";
 import {
+  cancelAgentCliInstall,
   confirmAgentCliInstall,
   getAgentCliSetupState,
   prepareAgentCliInstall,
@@ -13,6 +14,15 @@ import {
   type AgentCliSetupState,
 } from "../lib/agent-cli-setup";
 import type { ConnectionPreset, ConnectionProviderScanEntry } from "./ConnectionPicker";
+import { useModalFocus } from "../lib/useModalFocus";
+
+export interface AgentCliSetupFixture {
+  state: AgentCliSetupState;
+  confirmation?: AgentCliInstallConfirmation | null;
+  allowOwnedClipboard?: boolean;
+  allowOwnedExternal?: boolean;
+  allowOwnedInstall?: boolean;
+}
 
 export function AgentCliSetupAssistant({
   preset,
@@ -21,6 +31,7 @@ export function AgentCliSetupAssistant({
   onClose,
   embedded = false,
   missingOnly = false,
+  fixture,
 }: {
   preset: ConnectionPreset | null;
   initialProviderId?: AgentId | string | null;
@@ -28,13 +39,24 @@ export function AgentCliSetupAssistant({
   onClose?: () => void;
   embedded?: boolean;
   missingOnly?: boolean;
+  fixture?: AgentCliSetupFixture;
 }): JSX.Element | null {
-  const [state, setState] = useState<AgentCliSetupState | null>(null);
+  const [state, setState] = useState<AgentCliSetupState | null>(() => fixture?.state ?? null);
   const [loading, setLoading] = useState(false);
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirmation, setConfirmation] = useState<AgentCliInstallConfirmation | null>(null);
+  const [confirmation, setConfirmation] = useState<AgentCliInstallConfirmation | null>(
+    () => fixture?.confirmation ?? null,
+  );
   const [installResult, setInstallResult] = useState<AgentCliInstallResult | null>(null);
+  const confirmationRef = useRef<HTMLDivElement | null>(null);
+  const closeConfirmationFromKeyboard = useCallback(() => {
+    if (!confirmation || fixture) return;
+    const confirmationId = confirmation.confirmationId;
+    setConfirmation(null);
+    void cancelAgentCliInstall(confirmationId).catch(() => { /* expiry cleanup remains as fallback */ });
+  }, [confirmation, fixture]);
+  useModalFocus(Boolean(confirmation), confirmationRef, closeConfirmationFromKeyboard);
   const presetKey = useMemo(
     () => preset ? `${preset.id}|${preset.label}|${JSON.stringify(preset.transport)}` : "",
     [preset],
@@ -44,6 +66,15 @@ export function AgentCliSetupAssistant({
     if (!preset) {
       setState(null);
       setError(null);
+      return;
+    }
+    if (fixture) {
+      setState(fixture.state);
+      setConfirmation(fixture.confirmation ?? null);
+      setLoading(false);
+      setBusyProviderId(null);
+      setError(null);
+      setInstallResult(null);
       return;
     }
     let cancelled = false;
@@ -64,7 +95,15 @@ export function AgentCliSetupAssistant({
     return () => {
       cancelled = true;
     };
-  }, [presetKey]);
+  }, [fixture, presetKey]);
+
+  useEffect(() => {
+    const confirmationId = confirmation?.confirmationId;
+    if (!confirmationId || fixture?.confirmation?.confirmationId === confirmationId) return;
+    return () => {
+      void cancelAgentCliInstall(confirmationId).catch(() => { /* expiry cleanup remains as fallback */ });
+    };
+  }, [confirmation?.confirmationId, fixture?.confirmation?.confirmationId]);
 
   const providers = useMemo(() => {
     const all = state?.providers ?? [];
@@ -117,7 +156,21 @@ export function AgentCliSetupAssistant({
       const result = await confirmAgentCliInstall(confirmation.confirmationId);
       setInstallResult(result);
       setConfirmation(null);
-      await refresh();
+      if (fixture?.allowOwnedInstall !== true) await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyProviderId(null);
+    }
+  }
+
+  async function cancelPreparedInstall(): Promise<void> {
+    if (!confirmation) return;
+    setBusyProviderId(confirmation.providerId);
+    setError(null);
+    try {
+      await cancelAgentCliInstall(confirmation.confirmationId);
+      setConfirmation(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -158,7 +211,7 @@ export function AgentCliSetupAssistant({
           </span>
         </div>
         <div className="agent-cli-setup-header-actions">
-          <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void refresh()} disabled={loading}>
+          <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void refresh()} disabled={loading || Boolean(fixture)}>
             Recheck
           </button>
           {onClose && (
@@ -172,7 +225,11 @@ export function AgentCliSetupAssistant({
       {error && <div className="agent-cli-setup-error">{error}</div>}
       {installResult && (
         <div className={installResult.success ? "agent-cli-setup-result ok" : "agent-cli-setup-result warn"}>
-          {installResult.success ? "Installer finished. Recheck completed." : "Installer exited with an error."}
+          {installResult.success
+            ? fixture?.allowOwnedInstall === true
+              ? "Owned installer fixture finished."
+              : "Installer finished. Recheck completed."
+            : "Installer exited with an error."}
           {installResult.stderrTail && <pre>{installResult.stderrTail}</pre>}
         </div>
       )}
@@ -181,7 +238,13 @@ export function AgentCliSetupAssistant({
         {providers.map((provider) => {
           const command = provider.installMethods[0]?.command;
           return (
-            <div key={provider.providerId} className="agent-cli-setup-card">
+            <div
+              key={provider.providerId}
+              className="agent-cli-setup-card"
+              data-agent-cli-provider={provider.providerId}
+              data-shellx-release-observe="title"
+              title={agentCliSetupReceipt(provider)}
+            >
               <div className="agent-cli-setup-card-main">
                 <span className={provider.canRun ? "agent-cli-setup-dot ok" : "agent-cli-setup-dot warn"} />
                 <div>
@@ -191,7 +254,7 @@ export function AgentCliSetupAssistant({
                 </div>
               </div>
               <div className="agent-cli-setup-card-actions">
-                <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => openExternal(provider.docsUrl)}>
+                <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => openExternal(provider.docsUrl)} disabled={Boolean(fixture) && fixture?.allowOwnedExternal !== true}>
                   Open docs
                 </button>
                 {command && (
@@ -199,16 +262,17 @@ export function AgentCliSetupAssistant({
                     type="button"
                     className="mp-action-btn mp-action-btn-secondary"
                     onClick={() => void copyCommand(command)}
+                    disabled={Boolean(fixture) && fixture?.allowOwnedClipboard !== true}
                   >
                     Copy command
                   </button>
                 )}
                 {provider.installable && (
-                  <button
+                  <button data-debug-id="surface-components-agentclisetupassistant-5"
                     type="button"
                     className="mp-action-btn"
                     onClick={() => void prepareInstall(provider)}
-                    disabled={busyProviderId === provider.providerId}
+                    disabled={(Boolean(fixture) && fixture?.allowOwnedInstall !== true) || busyProviderId === provider.providerId}
                   >
                     {busyProviderId === provider.providerId ? "Preparing…" : "Install"}
                   </button>
@@ -223,30 +287,41 @@ export function AgentCliSetupAssistant({
       </div>
 
       {confirmation && (
-        <div className="agent-cli-setup-confirm" role="dialog" aria-modal="true" data-debug-id="agent-cli-setup-confirm">
-          <div className="agent-cli-setup-confirm-panel">
+        <div
+          className="agent-cli-setup-confirm"
+          data-debug-id="agent-cli-setup-confirm"
+          data-shellx-release-observe="title"
+          title={agentCliInstallConfirmationReceipt(confirmation)}
+        >
+          <div ref={confirmationRef} className="agent-cli-setup-confirm-panel" role="alertdialog" aria-modal="true" aria-label={`Install ${confirmation.displayName}`}>
             <div className="agent-cli-setup-confirm-title">
               <strong>Install {confirmation.displayName}</strong>
               <span>{confirmation.target.label} · {confirmation.methodLabel}</span>
             </div>
-            <p>
-              This command will run in <strong>{confirmation.target.commandRunsOn}</strong>. It may change PATH,
-              package-manager state, or provider authentication state.
-            </p>
+            <p><strong>{confirmation.target.commandRunsOn}</strong>: {confirmation.warning}</p>
+            {confirmation.installerSourceUrl && confirmation.artifactSha256 && (
+              <dl className="agent-cli-setup-artifact">
+                <div><dt>Source</dt><dd>{confirmation.installerSourceUrl}</dd></div>
+                <div><dt>Version</dt><dd>{confirmation.detectedVersion ?? "Not declared"}</dd></div>
+                <div><dt>Size</dt><dd>{confirmation.artifactBytes?.toLocaleString() ?? "Unknown"} bytes</dd></div>
+                <div><dt>SHA-256</dt><dd>{confirmation.artifactSha256}</dd></div>
+                <div><dt>Verification</dt><dd>{confirmation.verification}</dd></div>
+              </dl>
+            )}
             <pre className="agent-cli-setup-command">{confirmation.command}</pre>
             <div className="agent-cli-setup-confirm-links">
-              <button type="button" onClick={() => openExternal(confirmation.docsUrl)}>
+              <button type="button" onClick={() => openExternal(confirmation.docsUrl)} disabled={Boolean(fixture) && fixture?.allowOwnedExternal !== true}>
                 Open docs
               </button>
-              <button type="button" onClick={() => void copyCommand(confirmation.command)}>
+              <button type="button" onClick={() => void copyCommand(confirmation.command)} disabled={Boolean(fixture) && fixture?.allowOwnedClipboard !== true}>
                 Copy command
               </button>
             </div>
             <div className="agent-cli-setup-confirm-actions">
-              <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => setConfirmation(null)}>
+              <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void cancelPreparedInstall()} disabled={(Boolean(fixture) && fixture?.allowOwnedInstall !== true) || busyProviderId === confirmation.providerId} data-dialog-initial-focus="true">
                 Cancel
               </button>
-              <button type="button" className="mp-action-btn" onClick={() => void runConfirmedInstall()} disabled={busyProviderId === confirmation.providerId}>
+              <button data-debug-id="surface-components-agentclisetupassistant-9" type="button" className="mp-action-btn" onClick={() => void runConfirmedInstall()} disabled={(Boolean(fixture) && fixture?.allowOwnedInstall !== true) || busyProviderId === confirmation.providerId}>
                 {busyProviderId === confirmation.providerId ? "Installing…" : "Run installer"}
               </button>
             </div>
@@ -257,38 +332,55 @@ export function AgentCliSetupAssistant({
   );
 }
 
+function agentCliInstallConfirmationReceipt(confirmation: AgentCliInstallConfirmation): string {
+  return [
+    "Agent CLI install confirmation receipt",
+    `id=${confirmation.confirmationId}`,
+    `provider=${confirmation.providerId}`,
+    `method=${confirmation.methodId}`,
+    `command=${confirmation.command}`,
+  ].join(" · ");
+}
+
 export function AgentCliSetupDialog({
   preset,
   initialProviderId,
   onSetupChanged,
   onClose,
   missingOnly,
+  fixture,
 }: {
   preset: ConnectionPreset | null;
   initialProviderId?: AgentId | string | null;
   onSetupChanged?: (providers: ConnectionProviderScanEntry[]) => void;
   onClose: () => void;
   missingOnly?: boolean;
+  fixture?: AgentCliSetupFixture;
 }): JSX.Element | null {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(Boolean(preset), dialogRef, onClose);
   if (!preset) return null;
   return (
     <div
       className="agent-cli-setup-dialog-backdrop"
       data-debug-id="agent-cli-setup-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Agent CLI setup"
       onClick={onClose}
     >
-      <div className="agent-cli-setup-dialog" onClick={(event) => event.stopPropagation()}>
+      <div ref={dialogRef} data-debug-id="surface-components-agentclisetupassistant-11" className="agent-cli-setup-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Agent CLI setup">
         <AgentCliSetupAssistant
           preset={preset}
           initialProviderId={initialProviderId}
           onSetupChanged={onSetupChanged}
           onClose={onClose}
           missingOnly={missingOnly}
+          fixture={fixture}
         />
       </div>
     </div>
   );
+}
+
+function agentCliSetupReceipt(provider: AgentCliSetupCard): string {
+  const detail = provider.version ? `version ${provider.version}` : `status ${provider.status}`;
+  return `Agent CLI setup receipt: ${detail}`.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 200);
 }

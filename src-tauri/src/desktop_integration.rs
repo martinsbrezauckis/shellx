@@ -136,27 +136,57 @@ fn desktop_integration_status_inner() -> Result<DesktopIntegrationStatus, String
 #[cfg(target_os = "windows")]
 fn desktop_integration_install_windows_context_menu_inner(
 ) -> Result<DesktopIntegrationStatus, String> {
+    if registry_key_exists(FILE_VERB_KEY)
+        || registry_key_exists(DIRECTORY_VERB_KEY)
+        || send_to_shortcut_path().is_some_and(|path| path.exists())
+    {
+        return Err(
+            "Send files to shellX already has Explorer or SendTo entries; remove the existing integration before installing it again."
+                .to_string(),
+        );
+    }
     let exe = std::env::current_exe()
         .map_err(|e| format!("current_exe failed: {}", e))?
         .to_string_lossy()
         .to_string();
     let command = format!("\"{}\" --attach \"%1\"", exe);
 
-    install_registry_verb(FILE_VERB_KEY, FILE_COMMAND_KEY, &exe, &command)?;
-    install_registry_verb(DIRECTORY_VERB_KEY, DIRECTORY_COMMAND_KEY, &exe, &command)?;
-    install_send_to_shortcut(&exe)?;
+    let install_result = (|| {
+        install_registry_verb(FILE_VERB_KEY, FILE_COMMAND_KEY, &exe, &command)?;
+        install_registry_verb(DIRECTORY_VERB_KEY, DIRECTORY_COMMAND_KEY, &exe, &command)?;
+        install_send_to_shortcut(&exe)
+    })();
+    if let Err(error) = install_result {
+        let cleanup = remove_windows_desktop_integration();
+        return Err(match cleanup {
+            Ok(()) => format!("Desktop integration install failed and its partial entries were removed: {error}"),
+            Err(cleanup_error) => format!(
+                "Desktop integration install failed: {error}; partial-entry cleanup also failed: {cleanup_error}"
+            ),
+        });
+    }
     desktop_integration_status_inner()
 }
 
 #[cfg(target_os = "windows")]
 fn desktop_integration_remove_windows_context_menu_inner(
 ) -> Result<DesktopIntegrationStatus, String> {
-    let _ = run_reg(["delete", FILE_VERB_KEY, "/f"]);
-    let _ = run_reg(["delete", DIRECTORY_VERB_KEY, "/f"]);
-    if let Some(path) = send_to_shortcut_path() {
-        let _ = std::fs::remove_file(path);
-    }
+    remove_windows_desktop_integration()?;
     desktop_integration_status_inner()
+}
+
+#[cfg(target_os = "windows")]
+fn remove_windows_desktop_integration() -> Result<(), String> {
+    remove_registry_verb(FILE_VERB_KEY)?;
+    remove_registry_verb(DIRECTORY_VERB_KEY)?;
+    if let Some(path) = send_to_shortcut_path() {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("remove SendTo shortcut failed: {error}")),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -171,6 +201,14 @@ const DIRECTORY_COMMAND_KEY: &str = r"HKCU\Software\Classes\Directory\shell\shel
 #[cfg(target_os = "windows")]
 fn registry_key_exists(key: &str) -> bool {
     run_reg(["query", key]).is_ok()
+}
+
+#[cfg(target_os = "windows")]
+fn remove_registry_verb(key: &str) -> Result<(), String> {
+    if registry_key_exists(key) {
+        run_reg(["delete", key, "/f"])?;
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -233,9 +271,9 @@ fn install_send_to_shortcut(exe: &str) -> Result<(), String> {
          $s.IconLocation='{},0';\
          $s.Description='Send selected file(s) to shellX';\
          $s.Save()",
-        ps_single_quote(&shortcut.to_string_lossy()),
-        ps_single_quote(exe),
-        ps_single_quote(exe),
+        crate::acp::powershell_single_quote(&shortcut.to_string_lossy()),
+        crate::acp::powershell_single_quote(exe),
+        crate::acp::powershell_single_quote(exe),
     );
     let output = std::process::Command::new("powershell.exe")
         .args([
@@ -254,11 +292,6 @@ fn install_send_to_shortcut(exe: &str) -> Result<(), String> {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Err(if stderr.is_empty() { stdout } else { stderr })
-}
-
-#[cfg(target_os = "windows")]
-fn ps_single_quote(value: &str) -> String {
-    value.replace('\'', "''")
 }
 
 #[cfg(test)]

@@ -184,17 +184,18 @@ export default function ReleaseReadinessPanel({
               </div>
               <div className="release-check-actions">
                 {check.command && (
-                  <button
+                  <button data-debug-id="surface-components-settings-releasereadinesspanel-3"
                     type="button"
                     className="settings-pill"
                     onClick={() => copyReleaseCommand(check)}
                     title={check.command}
+                    aria-label={`Copy command for ${check.label}`}
                   >
                     <ShellIcon name={copiedCommand === check.id ? "check" : "copy"} size={12} />
                   </button>
                 )}
                 {check.id !== "publish-approval" && (
-                  <button
+                  <button data-debug-id="surface-components-settings-releasereadinesspanel-4"
                     type="button"
                     className="settings-pill"
                     onClick={() => setReleaseGate(check.id, !done)}

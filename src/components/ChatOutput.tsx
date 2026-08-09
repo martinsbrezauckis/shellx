@@ -15,7 +15,7 @@ import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { linkifyPreviewableFileRefs, SafeMarkdownLink } from "../lib/markdown-links";
-import { TerminalView } from "./TerminalView";
+import { LazyTerminalView } from "./LazyTerminalView";
 import { SafeImg, SafeVideo } from "./MediaPreview";
 import { ShellIcon, type ShellIconName } from "./icons";
 import type {
@@ -30,9 +30,9 @@ import type {
   UiGroup,
   UiAttachment,
   UiTextGroup,
-  VendorGroup,
 } from "../lib/grouping";
 import { PermissionPill } from "./PermissionPill";
+import type { DebugPermissionDecisionFixture } from "../lib/debug-permission-decision-fixture";
 
 /* tabId is the active session's tab_id; forwarded to inline
  * <TerminalView attachOnly/> so it binds to the right ACP-origin PTY
@@ -44,6 +44,7 @@ function ChatOutputView({
   onPreviewFile,
   tabId,
   assistantFallbackLabel = "Agent",
+  debugPermissionFixture = null,
 }: {
   groups: UiGroup[];
   onPreviewFile: (path: string) => void;
@@ -51,6 +52,7 @@ function ChatOutputView({
   tabId?: string;
   /** Label for ACP assistant groups that predate provider speaker metadata. */
   assistantFallbackLabel?: string;
+  debugPermissionFixture?: DebugPermissionDecisionFixture | null;
 }): JSX.Element {
   const endRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -149,7 +151,7 @@ function ChatOutputView({
           No events yet. Use the prompt input below — events render here as
           chat bubbles + tool cards.
           <div className="output-empty-tips">
-            <span className="oe-tip"><kbd>Ctrl</kbd>+<kbd>K</kbd> search</span>
+            <span className="oe-tip"><kbd>Ctrl</kbd>+<kbd>K</kbd> palette</span>
             <span className="oe-tip"><kbd>/</kbd> commands</span>
             <span className="oe-tip"><kbd>@</kbd> attach</span>
           </div>
@@ -202,6 +204,9 @@ function ChatOutputView({
     <div
       className="output"
       ref={containerRef}
+      tabIndex={0}
+      role="region"
+      aria-label="Chat transcript"
       onScroll={onScroll}
       onMouseUp={onMouseUpAutoCopy}
     >
@@ -213,6 +218,7 @@ function ChatOutputView({
           tabId={ttabId}
           duplicateMedia={duplicates.get(g.id)}
           assistantFallbackLabel={assistantFallbackLabel}
+          debugPermissionFixture={debugPermissionFixture}
         />
       ))}
       <div ref={endRef} />
@@ -220,7 +226,7 @@ function ChatOutputView({
  * an explicit "↓ jump to latest" affordance instead of forcing
  * them back down on every new chunk. Click re-pins to bottom. */}
       {!pinnedBottom && (
-        <button
+        <button data-debug-id="surface-components-chatoutput-1"
           type="button"
           className="jump-to-latest"
           onClick={() => {
@@ -318,11 +324,13 @@ function Row({
   tabId,
   duplicateMedia,
   assistantFallbackLabel,
+  debugPermissionFixture,
 }: {
   group: UiGroup;
   onPreviewFile: (path: string) => void;
   tabId: string;
   assistantFallbackLabel: string;
+  debugPermissionFixture: DebugPermissionDecisionFixture | null;
  /** When set, this tool group's image/video matches an earlier
  * group's path — render a "duplicate" pill instead of the actual
  * <SafeImg>/<SafeVideo>. */
@@ -351,8 +359,6 @@ function Row({
       );
     case "system":
       return <SystemPill g={group} />;
-    case "vendor":
-      return <VendorPill g={group} />;
     case "ui":
       return <UserBubble g={group} tabId={tabId} onPreviewFile={onPreviewFile} />;
     case "marker":
@@ -364,7 +370,15 @@ function Row({
     case "host-mcp-unreachable":
       return <HostMcpUnreachableChip g={group} />;
     case "permission":
-      return <PermissionPill g={group} tabId={tabId} />;
+      return (
+        <PermissionPill
+          g={group}
+          tabId={tabId}
+          debugFixture={debugPermissionFixture?.requestId === group.requestId
+            ? debugPermissionFixture
+            : null}
+        />
+      );
   }
 }
 
@@ -384,11 +398,14 @@ function TurnCompletePill({ g }: { g: MarkerGroup }): JSX.Element {
   return (
     <div
       className="row-pill marker turn-complete"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
       style={{
         opacity: 0.85,
         fontSize: "var(--fs-ui-xs)",
         fontFamily: "var(--mono)",
-        color: "var(--ok, #6cbf6c)",
+        color: "var(--ok)",
       }}
       data-marker={g.marker}
       data-prompt-id={g.promptId}
@@ -458,7 +475,7 @@ function UserBubble({
  // Lifecycle ui events render as compact system pills.
     const status = uiEventStatus(g.text);
     return (
-      <div className="row-pill system">
+      <div className="row-pill system" data-shellx-event-code={uiEventCode(g.text)}>
         <Time t={g.t} />
         <span className="pi" />
         <span className="label">
@@ -530,7 +547,7 @@ function AttachmentFileChip({
   const label = attachment.label || baseName(attachment.path);
   const icon: ShellIconName = attachment.kind === "text" ? "file" : "paperclip";
   return (
-    <button
+    <button data-debug-id="surface-components-chatoutput-3"
       type="button"
       className="attach-file-chip"
       title={attachment.path}
@@ -542,10 +559,10 @@ function AttachmentFileChip({
         maxWidth: 260,
         height: 28,
         padding: "0 9px",
-        border: "1px solid var(--border, #2a2a2a)",
+        border: "1px solid var(--border)",
         borderRadius: 999,
-        background: "var(--bg-elev, #111)",
-        color: "var(--fg, #ddd)",
+        background: "var(--bg-elev)",
+        color: "var(--fg)",
         cursor: "pointer",
         fontFamily: "var(--sans)",
         fontSize: "var(--fs-ui-xs)",
@@ -578,9 +595,9 @@ function AttachThumb({ path, tabId }: { path: string; tabId?: string }): JSX.Ele
         alignItems: "center",
         gap: 2,
         padding: 4,
-        border: "1px solid var(--border, #2a2a2a)",
+        border: "1px solid var(--border)",
         borderRadius: 6,
-        background: "var(--bg-elev, #111)",
+        background: "var(--bg-elev)",
         position: "relative",
         maxWidth: 96,
       }}
@@ -594,7 +611,7 @@ function AttachThumb({ path, tabId }: { path: string; tabId?: string }): JSX.Ele
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#000",
+          background: "var(--bg)",
         }}
       >
         <SafeImg
@@ -611,7 +628,7 @@ function AttachThumb({ path, tabId }: { path: string; tabId?: string }): JSX.Ele
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          color: "var(--fg-muted, #999)",
+          color: "var(--fg-muted)",
         }}
       >
         {name}
@@ -813,7 +830,7 @@ function ToolCard({
  * into the agent's shell (e.g. REPL prompts). */}
           {hasTerminal && (
             <div className="tool-terminal">
-              <TerminalView
+              <LazyTerminalView
                 tabId={tabId}
                 terminalId={g.terminalId!}
                 attachOnly
@@ -894,7 +911,7 @@ function DiffHunks({
 
   return (
     <div className="tool-diff" ref={containerRef} onKeyDown={onKey}>
-      <button
+      <button data-debug-id="surface-components-chatoutput-4"
         type="button"
         className="diff-path"
         style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", color: "var(--ink)", font: "inherit" }}
@@ -915,6 +932,7 @@ function DiffHunks({
             className={cls}
             data-hunk
             data-hunk-idx={i}
+            data-shellx-release-observe="focused"
             tabIndex={0}
             role="region"
             aria-label={`hunk ${i + 1} of ${hunks.length}`}
@@ -950,7 +968,14 @@ function ThoughtPill({ g }: { g: ThoughtGroup }): JSX.Element {
  {/* Chunk count intentionally omitted — already visible in the
           toggled-open body. */}
       <span className="label">thought</span>
-      <button type="button" className="toggle" onClick={() => setOpen((v) => !v)}>
+      <button
+        data-debug-id="surface-components-chatoutput-5"
+        type="button"
+        className="toggle"
+        aria-expanded={open}
+        data-shellx-release-observe="expanded"
+        onClick={() => setOpen((v) => !v)}
+      >
         {open ? "hide" : "show"}
       </button>
       {open && <pre className="thought-body">{g.text}</pre>}
@@ -992,6 +1017,12 @@ function uiEventStatus(text: string): { icon: ShellIconName; label: string } {
   return { icon: "circle", label: text };
 }
 
+function uiEventCode(text: string): string | undefined {
+  if (text.startsWith("✗ /build requires an objective")) return "build-objective-required";
+  if (text.startsWith("✗ /goal requires an objective")) return "goal-objective-required";
+  return undefined;
+}
+
 /**
  * doom_loop_detected chip. Amber pill rendered when grok's anti-loop
  * watchdog flags repeated tool invocations. Click-to-dismiss; the
@@ -1008,14 +1039,16 @@ function DoomLoopChip({ g }: { g: DoomLoopGroup }): JSX.Element | null {
   const toolList = g.toolNames.length > 0 ? g.toolNames.join(", ") : "(unknown)";
   const summary = `stuck loop: ${toolList} ×${g.repeatCount}`;
   return (
-    <div
+    <button
+      type="button"
       className="row-pill doom-loop"
       onClick={() => setDismissed(true)}
       title={`${g.message} — click to dismiss`}
+      aria-label={`Dismiss warning: ${summary}`}
       style={{
         cursor: "pointer",
-        background: "color-mix(in oklab, var(--warn, #f59e0b) 18%, transparent)",
-        border: "1px solid var(--warn, #f59e0b)",
+        background: "color-mix(in oklab, var(--warn) 18%, transparent)",
+        border: "1px solid var(--warn)",
         color: "var(--ink)",
       }}
     >
@@ -1028,7 +1061,7 @@ function DoomLoopChip({ g }: { g: DoomLoopGroup }): JSX.Element | null {
       {g.message && g.message !== summary && (
         <span className="detail">{truncate(g.message, 120)}</span>
       )}
-    </div>
+    </button>
   );
 }
 
@@ -1042,14 +1075,16 @@ function HostMcpUnreachableChip({
   const toolLabel = g.toolName ? ` · ${g.toolName}` : "";
   const haltedLabel = g.goalHalted ? " · goal halted" : "";
   return (
-    <div
+    <button
+      type="button"
       className="row-pill host-mcp-unreachable"
       onClick={() => setDismissed(true)}
       title={`${g.message} — click to dismiss`}
+      aria-label="Dismiss host MCP unreachable warning"
       style={{
         cursor: "pointer",
-        background: "color-mix(in oklab, var(--danger, #ef4444) 16%, transparent)",
-        border: "1px solid var(--danger, #ef4444)",
+        background: "color-mix(in oklab, var(--danger) 16%, transparent)",
+        border: "1px solid var(--danger)",
         color: "var(--ink)",
       }}
     >
@@ -1063,22 +1098,7 @@ function HostMcpUnreachableChip({
       {g.message && (
         <span className="detail">{truncate(g.message, 140)}</span>
       )}
-    </div>
-  );
-}
-
-function VendorPill({ g }: { g: VendorGroup }): JSX.Element {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="row-pill vendor">
-      <Time t={g.t} />
-      <span className="pi" />
-      <span className="label">{g.method.replace(/^_x\.ai\//, "")}</span>
-      <button type="button" className="toggle" onClick={() => setOpen((v) => !v)}>
-        {open ? "hide" : "show"}
-      </button>
-      {open && <pre className="vendor-body">{g.detail}</pre>}
-    </div>
+    </button>
   );
 }
 

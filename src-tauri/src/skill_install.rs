@@ -1,8 +1,9 @@
 //! src-tauri/src/skill_install.rs — host-skill install hook.
 //!
-//! Ships the canonical `shellx-host` skill manifest bundled into the
-//! shellX binary via `include_str!`, and installs it to
-//! agent-readable locations on app boot.
+//! Ships the canonical `shellx-host` manifest bundled into the shellX
+//! binary via `include_str!`. The file is persisted only in ShellX-owned
+//! agent docs; provider sessions receive a small runtime rule through
+//! their launch command instead of a globally discoverable skill.
 //!
 //! Why bundle, not copy-at-runtime?
 //! - Hermetic: no relative-path lookup, no "where did the source
@@ -12,7 +13,8 @@
 //! consistent manifest to every installed shellX.
 //!
 //! Idempotency contract (callers depend on this):
-//! - First call on a fresh host: parent dir created, file written,
+//! - First call on a fresh host: the ShellX-owned docs parent is created,
+//! file written,
 //! returns Ok(true).
 //! - Subsequent calls with no manifest change: byte-equal check, no
 //! write, returns Ok(false).
@@ -20,9 +22,9 @@
 //! with updated manifest): overwrite, returns Ok(true).
 //!
 //! Failure mode: non-fatal. Caller (lib.rs setup) logs and continues —
-//! shellX boots even if `~/` is read-only or agent skill/docs dirs can't
-//! be created. The agent will just not see the host-skill hints; nothing
-//! else breaks.
+//! shellX boots even if `~/` is read-only or the docs directory cannot be
+//! created. The live session still receives its compact launch rule and
+//! MCP instructions.
 //!
 //! Primary callers:
 //! - `crate::run` setup closure in lib.rs (single call, app boot).
@@ -32,7 +34,7 @@
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Canonical shellX host-skill manifest body, bundled at compile time.
 ///
@@ -78,18 +80,19 @@ pub const LEGACY_WORKFLOW_SKILLS: &[LegacyWorkflowSkill] = &[
     },
 ];
 
-/// Resolve the primary Grok on-disk path where the host-skill manifest lands.
-///
-/// Linux/macOS: `$HOME/.grok/skills/shellx-host/SKILL.md`.
-/// Windows: `%USERPROFILE%\.grok\skills\shellx-host\SKILL.md`.
-///
-/// `grok-build` looks at `~/.grok/skills/<name>/SKILL.md` regardless of
-/// platform; we just resolve `~` against the right env var per OS.
+/// Resolve ShellX's product-owned on-disk copy of the host manifest.
+/// It deliberately does not live in Grok, Codex, or Claude global skill
+/// discovery paths: direct CLI sessions must not activate ShellX tooling.
 ///
 /// Returns `None` when neither HOME nor USERPROFILE is set — vanishingly
 /// rare in practice but it must not panic in `pub fn` callers.
 pub fn target_skill_path() -> Option<PathBuf> {
-    target_skill_path_for("shellx-host")
+    let mut p = user_home_dir()?;
+    p.push(".shellx");
+    p.push("agent-docs");
+    p.push("shellx-host");
+    p.push("SKILL.md");
+    Some(p)
 }
 
 pub fn target_skill_path_for(skill_id: &str) -> Option<PathBuf> {
@@ -117,40 +120,28 @@ fn grok_skill_path_for(skill_id: &str) -> Option<PathBuf> {
 }
 
 fn shellx_host_skill_install_targets_for_home(home: &Path) -> Vec<HostSkillInstallTarget> {
-    vec![
-        HostSkillInstallTarget {
-            id: "grok",
+    vec![HostSkillInstallTarget {
+        id: "shellx-agent-docs",
+        path: home
+            .join(".shellx")
+            .join("agent-docs")
+            .join("shellx-host")
+            .join("SKILL.md"),
+    }]
+}
+
+fn legacy_global_shellx_host_skill_targets_for_home(home: &Path) -> Vec<HostSkillInstallTarget> {
+    [".grok", ".codex", ".claude"]
+        .into_iter()
+        .map(|agent_dir| HostSkillInstallTarget {
+            id: agent_dir.trim_start_matches('.'),
             path: home
-                .join(".grok")
+                .join(agent_dir)
                 .join("skills")
                 .join("shellx-host")
                 .join("SKILL.md"),
-        },
-        HostSkillInstallTarget {
-            id: "codex",
-            path: home
-                .join(".codex")
-                .join("skills")
-                .join("shellx-host")
-                .join("SKILL.md"),
-        },
-        HostSkillInstallTarget {
-            id: "claude",
-            path: home
-                .join(".claude")
-                .join("skills")
-                .join("shellx-host")
-                .join("SKILL.md"),
-        },
-        HostSkillInstallTarget {
-            id: "shellx-agent-docs",
-            path: home
-                .join(".shellx")
-                .join("agent-docs")
-                .join("shellx-host")
-                .join("SKILL.md"),
-        },
-    ]
+        })
+        .collect()
 }
 
 pub fn shellx_host_skill_install_targets() -> Result<Vec<HostSkillInstallTarget>, String> {
@@ -285,117 +276,22 @@ fn home_relative_path_display(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-/// Ensure the bundled host-skill manifest is installed for supported agents.
+/// Ensure the bundled host manifest is installed in ShellX-owned agent docs.
 ///
 /// Behavior:
 /// 1. Resolve the user's home via HOME / USERPROFILE. If neither is
 /// set, return Err — callers (lib.rs setup) treat this as non-fatal.
-/// 2. Write the exact binary-bundled body to Grok, Codex, Claude, and
-/// ShellX-owned agent-docs locations. Each target uses
+/// 2. Write the exact binary-bundled body only to the ShellX-owned
+/// agent-docs location. The target uses
 /// `ensure_installed_at`, which creates the parent dir, short-circuits
 /// on byte-equal, otherwise writes.
 ///
 /// Returns `Ok(true)` when at least one write happened, `Ok(false)` when
 /// all reachable targets were already up-to-date, `Err(...)` only when
 /// no target could be installed.
-/// Write `~/.grok/config.toml` with the `[mcp_servers.grok-shell-host]`
-/// section so grok-build actually initializes the host MCP server at
-/// session start. grok-build ignores mcpServers from ACP `session/new`
-/// for MCP-server registration — its docs say MCP servers live in
-/// `~/.grok/config.toml`. Verified via `grok mcp list` after this writes:
-/// grok-shell-host appears as a "config"-sourced server in `grok inspect`.
-///
-/// Idempotency contract:
-/// - File missing → write the section, return Ok(true).
-/// - File exists, our managed section already present and bytes
-/// match → return Ok(false), no write.
-/// - File exists with our section but the path/args have drifted
-/// (binary moved, args changed) → REWRITE just our section,
-/// preserve everything else. Returns Ok(true).
-/// - File exists with our section AND user added other servers →
-/// preserve everything. We only touch the
-/// `[mcp_servers.grok-shell-host]` block.
-///
-/// We do NOT touch unrelated [mcp_servers.*] sections or top-level keys.
-/// We do strip shellX-owned HTTP MCP sections from the global config:
-/// `shellx-host-http` is regenerated as project-scoped config for WSL/SSH
-/// sessions and a stale global copy causes noisy failed MCP spawns.
-/// On any IO/parse failure we return Err — caller treats as non-fatal
-/// (lib.rs setup just warns).
-pub fn ensure_grok_mcp_config_installed(exe_path: &Path) -> Result<bool, String> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "neither HOME nor USERPROFILE is set".to_string())?;
-    let config_path = Path::new(&home).join(".grok").join("config.toml");
-    let _ = std::fs::create_dir_all(config_path.parent().unwrap());
-
-    // TOML doesn't have a stable "edit one section" API in the stdlib;
-    // we do a simple textual replace bounded by section markers. The
-    // managed section is delimited by sentinel comments so re-writes
-    // are idempotent even if the user re-orders other sections.
-    const BEGIN: &str = "# shellX:managed-mcp:grok-shell-host BEGIN — do not edit by hand";
-    const END: &str = "# shellX:managed-mcp:grok-shell-host END";
-
-    // Escape backslashes for TOML basic-string. Forward slashes are
-    // fine, but on Windows std::env::current_exe returns backslash.
-    let exe_escaped = exe_path.to_string_lossy().replace('\\', "\\\\");
-    let new_section_raw = format!(
-        "{begin}\n[mcp_servers.grok-shell-host]\ncommand = \"{exe}\"\nargs = [\"--mcp-server\"]\nenabled = true\nstartup_timeout_sec = 15\n{end}\n",
-        begin = BEGIN,
-        end = END,
-        exe = exe_escaped
-    );
-
-    let existing = std::fs::read_to_string(&config_path).unwrap_or_default();
-    let preserve_enabled = find_managed_block_range(&existing)
-        .map(|(start, end)| block_is_enabled(&existing[start..end]))
-        .unwrap_or(true);
-    let new_section = if preserve_enabled {
-        new_section_raw
-    } else {
-        comment_block(&new_section_raw)
-    };
-
-    // Strip any prior managed block, regardless of position. Re-attach
-    // ours at the end of the file.
-    let stripped = strip_managed_block(&existing, BEGIN, END);
-    let stripped = strip_orphan_managed_sentinel_lines(&stripped, MCP_BEGIN_NEEDLE, MCP_END_NEEDLE);
-    // Also strip ANY pre-existing `[mcp_servers.grok-shell-host]`
-    // section even if it wasn't sentinel-wrapped. This handles the
-    // "user (or me debugging) hand-edited config.toml first, then
-    // shellX boots" path — without this, TOML parsers reject the
-    // duplicate section.
-    let stripped = strip_unmanaged_section(&stripped, "mcp_servers.grok-shell-host");
-    let stripped = strip_managed_block(
-        &stripped,
-        crate::mcp_http::HTTP_SNIPPET_BEGIN,
-        crate::mcp_http::HTTP_SNIPPET_END,
-    );
-    let stripped = strip_unmanaged_section(&stripped, "mcp_servers.shellx-host-http");
-    let stripped = strip_unmanaged_section(&stripped, "mcp_servers.shellx-host-http.headers");
-    let mut updated = stripped.trim_end().to_string();
-    if !updated.is_empty() {
-        updated.push_str("\n\n");
-    }
-    updated.push_str(&new_section);
-
-    if updated == existing {
-        return Ok(false);
-    }
-    std::fs::write(&config_path, &updated)
-        .map_err(|e| format!("write {}: {}", config_path.display(), e))?;
-    info!(
-        "config.toml updated: {:+} bytes ({} → {} bytes)",
-        updated.len() as isize - existing.len() as isize,
-        existing.len(),
-        updated.len()
-    );
-    Ok(true)
-}
-
 /// Strip a TOML section `[<header>]` plus its body
 /// (everything up to the next `[` section header or EOF). Used so
-/// `ensure_grok_mcp_config_installed` doesn't leave a duplicate
+/// project/session config writers do not leave a duplicate
 /// `[mcp_servers.grok-shell-host]` block when an earlier process
 /// wrote one un-wrapped by the sentinel comments. Returns the source
 /// minus that one section (or unchanged if header not found). Leading
@@ -452,8 +348,8 @@ fn strip_unmanaged_section_once(source: &str, header: &str) -> String {
 
 /// Remove a single block delimited by `begin` and `end` marker lines
 /// from `source`. If either marker is missing, returns `source`
-/// unchanged. Used by `ensure_grok_mcp_config_installed` so re-writes
-/// are idempotent.
+/// unchanged. Used by project/session config migration so re-writes are
+/// idempotent.
 fn strip_managed_block(source: &str, begin: &str, end: &str) -> String {
     let mut out = source.to_string();
     loop {
@@ -504,12 +400,15 @@ fn strip_managed_block_once(source: &str, begin: &str, end: &str) -> String {
     }
 }
 
-// ──────────── Project-scoped HTTP MCP config writer ────────────
+// ──────────── Legacy project-scoped HTTP MCP config migration ────────────
+
+const MCP_ARTIFACT_EXCLUDE_BEGIN: &str = "# shellX:managed-mcp-artifacts BEGIN";
+const MCP_ARTIFACT_EXCLUDE_END: &str = "# shellX:managed-mcp-artifacts END";
 
 /// Write the shellx-host-http snippet into a project's
-/// `.grok/config.toml`. Used by the WSL + SSH spawn paths so the remote
-/// grok process auto-discovers our HTTP MCP server when it starts in
-/// that directory.
+/// `.grok/config.toml`. Retained for migration and compatibility tests; current
+/// provider launches deliver the host bridge through ACP `mcpServers` and do
+/// not call this writer.
 ///
 /// The snippet itself comes from `mcp_http::http_config_snippet_toml`
 /// (bound port + `bearer_token_env_var`, not the literal token). We
@@ -545,6 +444,17 @@ pub fn ensure_project_mcp_http_config(
     let dir = project_dir.join(".grok");
     let path = dir.join("config.toml");
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {}", dir.display(), e))?;
+    let artifact_exclude_changed = match ensure_project_mcp_artifact_git_excludes(project_dir) {
+        Ok(changed) => changed,
+        Err(e) => {
+            warn!(
+                "project MCP artifact git exclude install failed at {} (non-fatal): {}",
+                project_dir.display(),
+                e
+            );
+            false
+        }
+    };
 
     let mut new_section = crate::mcp_http::http_config_snippet_toml(port, token, tab_id);
     let extra_mcp_config = extra_mcp_config.trim();
@@ -572,7 +482,7 @@ pub fn ensure_project_mcp_http_config(
     updated.push_str(&new_section);
 
     if updated == existing {
-        return Ok(false);
+        return Ok(artifact_exclude_changed);
     }
     std::fs::write(&path, &updated).map_err(|e| format!("write {}: {}", path.display(), e))?;
     #[cfg(unix)]
@@ -586,6 +496,117 @@ pub fn ensure_project_mcp_http_config(
         updated.len()
     );
     Ok(true)
+}
+
+fn ensure_project_mcp_artifact_git_excludes(project_dir: &Path) -> Result<bool, String> {
+    let Some((git_root, git_dir)) = find_enclosing_git_dir(project_dir)? else {
+        return Ok(false);
+    };
+    let patterns = shellx_mcp_artifact_exclude_patterns(&git_root, project_dir);
+    if patterns.is_empty() {
+        return Ok(false);
+    }
+
+    let info_dir = git_dir.join("info");
+    let exclude_path = info_dir.join("exclude");
+    std::fs::create_dir_all(&info_dir)
+        .map_err(|e| format!("mkdir {}: {}", info_dir.display(), e))?;
+    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
+    let stripped = strip_managed_block(
+        &existing,
+        MCP_ARTIFACT_EXCLUDE_BEGIN,
+        MCP_ARTIFACT_EXCLUDE_END,
+    );
+    let mut updated = stripped.trim_end().to_string();
+    if !updated.is_empty() {
+        updated.push_str("\n\n");
+    }
+    updated.push_str(MCP_ARTIFACT_EXCLUDE_BEGIN);
+    updated.push('\n');
+    for pattern in patterns {
+        updated.push_str(&pattern);
+        updated.push('\n');
+    }
+    updated.push_str(MCP_ARTIFACT_EXCLUDE_END);
+    updated.push('\n');
+
+    if updated == existing {
+        return Ok(false);
+    }
+    std::fs::write(&exclude_path, updated)
+        .map_err(|e| format!("write {}: {}", exclude_path.display(), e))?;
+    info!(
+        "project git exclude updated for shellX MCP artifacts at {}",
+        exclude_path.display()
+    );
+    Ok(true)
+}
+
+fn shellx_mcp_artifact_exclude_patterns(git_root: &Path, project_dir: &Path) -> Vec<String> {
+    let rel = project_dir.strip_prefix(git_root).unwrap_or(project_dir);
+    let prefix = git_exclude_path_prefix(rel);
+    let scoped = |suffix: &str| {
+        if prefix.is_empty() {
+            format!("/{suffix}")
+        } else {
+            format!("/{prefix}/{suffix}")
+        }
+    };
+    vec![scoped(".grok/config.toml"), scoped("mcps/")]
+}
+
+fn git_exclude_path_prefix(path: &Path) -> String {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().replace('\\', "/")),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn find_enclosing_git_dir(start: &Path) -> Result<Option<(PathBuf, PathBuf)>, String> {
+    let mut current = if start.is_file() {
+        start
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| start.to_path_buf())
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        let marker = current.join(".git");
+        if marker.exists() {
+            let git_dir = resolve_git_dir_marker(&marker)?;
+            return Ok(Some((current, git_dir)));
+        }
+        if !current.pop() {
+            return Ok(None);
+        }
+    }
+}
+
+fn resolve_git_dir_marker(marker: &Path) -> Result<PathBuf, String> {
+    if marker.is_dir() {
+        return Ok(marker.to_path_buf());
+    }
+    let source =
+        std::fs::read_to_string(marker).map_err(|e| format!("read {}: {}", marker.display(), e))?;
+    let Some(raw_gitdir) = source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("gitdir:").map(str::trim))
+    else {
+        return Err(format!("{} is not a valid gitdir marker", marker.display()));
+    };
+    let git_dir = PathBuf::from(raw_gitdir);
+    if git_dir.is_absolute() {
+        Ok(git_dir)
+    } else {
+        Ok(marker
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(git_dir))
+    }
 }
 
 /// Translate a Linux/WSL absolute path into the Windows
@@ -607,53 +628,32 @@ pub fn wsl_path_to_unc(distro: &str, linux_path: &str) -> Option<std::path::Path
     )))
 }
 
-/// Managed shellX section in `~/.grok/AGENTS.md`.
+/// Remove ShellX-owned global guidance from `~/.grok/AGENTS.md`.
 ///
-/// grok-build doesn't reliably surface MCP `serverInfo.instructions` to
-/// its LLM context (verified during testing on Local Windows —
-/// grok never followed the §7 install-nudge from serverInfo). It DOES
-/// read `~/.grok/AGENTS.md` at session start. So we write the
-/// shellX-managed runtime rules into a clearly-fenced section of
-/// AGENTS.md and rewrite that section on every session start.
-///
-/// Markers: `<!-- BEGIN shellX-managed -->` / `<!-- END shellX-managed -->`.
-/// Content between markers belongs to shellX and is replaced wholesale
-/// on each call. Everything outside the markers is the user's content
-/// and is preserved byte-for-byte.
-///
-/// Returns Ok(true) on write/update, Ok(false) on no-op (content
-/// unchanged), Err on IO failure.
+/// Older releases used this account-wide file because Grok did not surface
+/// MCP server instructions reliably. Current ShellX launches Grok with a
+/// compact `--rules` argument instead, so direct Grok sessions must no
+/// longer inherit the managed block. Only sentinel-bounded ShellX content
+/// and an exact historical ShellX sentence are removed.
 pub fn ensure_user_agents_md_shellx_section() -> Result<bool, String> {
-    let section_body = MANAGED_AGENTS_MD_SECTION;
-    let block = managed_agents_block(section_body);
-
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "ensure_user_agents_md_shellx_section: HOME/USERPROFILE unset".to_string())?;
-    let dir = std::path::PathBuf::from(&home).join(".grok");
-    std::fs::create_dir_all(&dir).map_err(|e| {
+    let path = std::path::PathBuf::from(&home)
+        .join(".grok")
+        .join("AGENTS.md");
+    if !path.exists() {
+        return Ok(false);
+    }
+    let existing = std::fs::read_to_string(&path).map_err(|e| {
         format!(
-            "ensure_user_agents_md_shellx_section: mkdir {} failed: {}",
-            dir.display(),
+            "ensure_user_agents_md_shellx_section: read {} failed: {}",
+            path.display(),
             e
         )
     })?;
-    let path = dir.join("AGENTS.md");
 
-    let existing = if path.exists() {
-        std::fs::read_to_string(&path).map_err(|e| {
-            format!(
-                "ensure_user_agents_md_shellx_section: read {} failed: {}",
-                path.display(),
-                e
-            )
-        })?
-    } else {
-        String::new()
-    };
-
-    let cleaned = clean_legacy_shellx_agents_guidance(&strip_shellx_managed_blocks(&existing));
-    let new_content = append_managed(&cleaned, &block);
+    let new_content = clean_legacy_shellx_agents_guidance(&strip_shellx_managed_blocks(&existing));
 
     if new_content == existing {
         return Ok(false);
@@ -666,38 +666,13 @@ pub fn ensure_user_agents_md_shellx_section() -> Result<bool, String> {
         )
     })?;
     info!(
-        "ensure_user_agents_md_shellx_section: wrote {} ({} bytes)",
+        "ensure_user_agents_md_shellx_section: removed global ShellX guidance from {} ({} bytes remain)",
         path.display(),
         new_content.len()
     );
     Ok(true)
 }
 
-fn append_managed(existing: &str, block: &str) -> String {
-    let trimmed = existing.trim_end();
-    if trimmed.is_empty() {
-        block.to_string()
-    } else {
-        format!("{}\n\n{}", trimmed, block)
-    }
-}
-
-fn managed_agents_block(section_body: &str) -> String {
-    format!(
-        "{}\n{}\n{}\n",
-        MANAGED_AGENTS_BEGIN,
-        section_body.trim(),
-        MANAGED_AGENTS_END
-    )
-}
-
-fn refresh_shellx_agents_managed_block(existing: &str) -> String {
-    let block = managed_agents_block(MANAGED_AGENTS_MD_SECTION);
-    let cleaned = clean_legacy_shellx_agents_guidance(&strip_shellx_managed_blocks(existing));
-    append_managed(&cleaned, &block)
-}
-
-const MANAGED_AGENTS_BEGIN: &str = "<!-- BEGIN shellX-managed (do not edit between markers; shellX rewrites this section on session start) -->";
 const MANAGED_AGENTS_BEGIN_PREFIX: &str = "<!-- BEGIN shellX-managed";
 const MANAGED_AGENTS_END: &str = "<!-- END shellX-managed -->";
 
@@ -736,194 +711,109 @@ const LEGACY_SEARCH_TOOL_GUIDANCE: &str = "When you need the full schema for a h
 const UPDATED_SEARCH_TOOL_GUIDANCE: &str = "When you need shellX host orientation, call `shellx-host-http__capabilities_summary`\nwhen advertised, otherwise `grok-shell-host__capabilities_summary`. For exact schemas,\nuse targeted `search_tool` queries. Use `full_inventory: true` only for debugging\nschema drift.";
 
 fn clean_legacy_shellx_agents_guidance(existing: &str) -> String {
-    existing.replace(LEGACY_SEARCH_TOOL_GUIDANCE, UPDATED_SEARCH_TOOL_GUIDANCE)
+    existing
+        .replace(LEGACY_SEARCH_TOOL_GUIDANCE, "")
+        .replace(UPDATED_SEARCH_TOOL_GUIDANCE, "")
 }
 
-const MANAGED_AGENTS_MD_SECTION: &str = "\
-## shellX host MCP - current runtime rules
+/// Compact rules injected only into Grok processes launched by ShellX.
+/// Detailed schemas and safety guidance remain available from the MCP
+/// server and bundled agent-doc manifest, avoiding a large startup prompt.
+pub const SHELLX_SESSION_RULES: &str = "This agent session is running inside ShellX. ShellX host tools are session-scoped: use shellx-host-http__capabilities_summary when advertised, otherwise grok-shell-host__capabilities_summary, before broad host-tool discovery. Prefer native agent file tools for ordinary project files. Use ShellX host tools only for Browser, mediated Vault operations, ShellX UI/runtime evidence, provider handoffs, or explicitly host-scoped operations. Never dump full tool inventory unless debugging schema drift.";
 
-These rules override older shellX transport notes elsewhere in this
-file. User edits outside this managed block are preserved.
-
-- If `shellx-host-http__capabilities_summary` or
-  `grok-shell-host__capabilities_summary` is advertised, call it
-  directly before broad tool discovery when you need the current
-  shellX capability map. Use `get_session_info` for cwd, transport,
-  WSL distro, SSH host, Linux home, or tab id. Use targeted
-  `search_tool` queries only for exact schemas; do not dump
-  full_inventory as routine discovery.
-- For ordinary project files, use native Grok file tools first:
-  `write`, `read_file`, `list_dir`, `grep`, and `search_replace`.
-  On Local Windows, host-MCP `fs_*` reaches the same Windows
-  filesystem, but keep it for atomic large/hot writes, binary/base64
-  reads or writes, explicit shellX host permission/audit, `fs_watch`,
-  copy/delete helpers, or Windows parent-host paths from remote
-  sessions.
-- For WSL and SSH files under `/home/...`, use native Grok file tools:
-  `write`, `read_file`, `list_dir`, `grep`, and `search_replace`.
-  shellX routes those ACP fs calls to the target Linux filesystem.
-- Use host-MCP `fs_*` only for Windows-form paths such as
-  `C:\\Users\\...` on the parent Windows host. Do not use host-MCP
-  `fs_*` for POSIX `/home/...` paths.
-- For mutating or tab-aware host tools, prefer the
-  `shellx-host-http__...` qualified name when it is advertised. Use
-  `grok-shell-host__...` for read-only discovery or as the local
-  fallback.
-- For status, health, logs, and audit evidence, do not guess from chat
-  text only. Use direct shellX tools: `shellx_health`,
-  `session_tooling`, `environment`, `event_log`,
-  `process_list`/`process_stats`, `build_state`, `build_receipts`,
-  `preview_state`, `preview_logs`, and `preview_diagnose`.
-- For attached image files, do not call `read_file`; use
-  `shellx-host-http__vision_describe` when advertised, otherwise
-  `grok-shell-host__vision_describe`.
-- For generated HTML, web, Vite, Next, or Expo UI work, use shellX Work
-  Preview instead of starting preview servers only through shell
-  commands. Call `preview_start`, then `preview_diagnose`; inspect any
-  returned `screenshotPath` with `vision_describe` and fix reported
-  errors before claiming visual success.
-- `run_terminal_command` and `monitor` are unavailable in shellX ACP
-  sessions. Use shellX `Agent`, then poll with `Agent_status`,
-  `Agent_output`, or `Agent_poll_all`.
-- Grok 0.2.x may advertise `/check-work`, `/best-of-n`, and
-  `/execute-plan`. Do not use those upstream task-tool skills as hard
-  `/build` gates in shellX ACP mode. For `/build`, use shellX `Agent`
-  reviewer/verifier runs and record receipts instead.
-- For code-changing `/build` work, run a reviewer/check subagent before
-  `build_complete`; include an AI slop / wiring audit for unwired UI,
-  placeholders, fake success paths, missing bridges, config drift, and
-  release-debug leaks; record the result in `build.md`.
-- When `_meta.voiceReplyExpected` is true, answer in 1-3 plain spoken
-  sentences: no markdown tables, code blocks, long paths, or URLs.
-- If MCP marketplace servers failed to connect, ask once: \"Want me to
-  install the missing tools?\" If yes, use shellX `Agent` to install
-  Node.js for npx servers or uv for uvx servers.
-";
-
-/// WSL grok reads `~/.grok/AGENTS.md` at session start for
-/// shellX-specific tool routing hints. Without this push the file would
-/// only exist on the Windows side — WSL grok would have no guidance
-/// about which tools shellX intercepts, when to use grok-shell-host__*
-/// over native equivalents, etc.
-///
-/// Strategy: read the canonical Windows-side `%USERPROFILE%\.grok\AGENTS.md`
-/// at connect time and push it to the WSL home via the UNC bridge.
-/// `\\wsl$\<distro>\<linux_home>\.grok\AGENTS.md`. If the Windows file
-/// is missing, return Ok(false) — file is optional, just warn upstream.
-/// We also bail with Ok(false) when an identical file already exists
-/// so re-connects don't churn ext4 mtime.
-///
-/// Returns Ok(true) on write, Ok(false) on no-op/missing-source,
-/// Err(...) on IO failure. Caller treats Err as non-fatal warning.
-///
-/// Existing AGENTS.md user content is preserved, but shellX's managed
-/// block is refreshed on every connect so stale transport guidance does
-/// not survive forever inside WSL.
-pub fn ensure_wsl_agents_md(distro: &str, linux_home: &str) -> Result<bool, String> {
+/// Remove the legacy ShellX-managed block from WSL's global Grok rules.
+/// Current sessions receive `SHELLX_SESSION_RULES` on their launch command.
+pub fn cleanup_wsl_agents_md(distro: &str, linux_home: &str) -> Result<bool, String> {
     let dst = wsl_path_to_unc(
         distro,
         &format!("{}/.grok/AGENTS.md", linux_home.trim_end_matches('/')),
     )
-    .ok_or("ensure_wsl_agents_md: cannot build UNC path".to_string())?;
-    if dst.exists() {
-        let existing =
-            std::fs::read_to_string(&dst).map_err(|e| format!("read {}: {}", dst.display(), e))?;
-        let updated = refresh_shellx_agents_managed_block(&existing);
-        if updated == existing {
-            return Ok(false);
-        }
-        std::fs::write(&dst, updated).map_err(|e| format!("write {}: {}", dst.display(), e))?;
-        return Ok(true);
+    .ok_or("cleanup_wsl_agents_md: cannot build UNC path".to_string())?;
+    if !dst.exists() {
+        return Ok(false);
     }
-    let src_root = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "neither USERPROFILE nor HOME is set".to_string())?;
-    let src = std::path::Path::new(&src_root)
-        .join(".grok")
-        .join("AGENTS.md");
-    let seed = if src.exists() {
-        std::fs::read_to_string(&src).map_err(|e| format!("read {}: {}", src.display(), e))?
-    } else {
-        String::new()
-    };
-    let bytes = refresh_shellx_agents_managed_block(&seed).into_bytes();
-    if let Some(parent) = dst.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    let existing =
+        std::fs::read_to_string(&dst).map_err(|e| format!("read {}: {}", dst.display(), e))?;
+    let updated = clean_legacy_shellx_agents_guidance(&strip_shellx_managed_blocks(&existing));
+    if updated == existing {
+        return Ok(false);
     }
-    std::fs::write(&dst, &bytes).map_err(|e| format!("write {}: {}", dst.display(), e))?;
+    std::fs::write(&dst, updated).map_err(|e| format!("write {}: {}", dst.display(), e))?;
     Ok(true)
 }
 
-/// Corresponding base64 echo blob for SSH. The
-/// remote `~/.grok/AGENTS.md` is written via a `mkdir -p && echo X |
-/// base64 -d > ~/.grok/AGENTS.md && chmod 600 ...` chain, prepended to
-/// the grok-spawn command in the same way `.grok/config.toml` already
-/// is for the HTTP MCP snippet. Returns the encoded snippet body OR
-/// None if the local Windows-side AGENTS.md isn't present (file
-/// optional — skip the SSH write entirely).
-pub fn ssh_agents_md_b64() -> Option<String> {
-    // Push the FULL Windows-side AGENTS.md, NOT a stub. grok-inspect
-    // doesn't surface MCP serverInfo.instructions so we can't confirm
-    // grok-build consumes it — AGENTS.md remains the practical rules
-    // carrier. The acp.rs spawn chain wraps this with `[ -f
-    // ~/.grok/AGENTS.md ] || (...)` so it ONLY writes when the remote
-    // file is missing; user edits are preserved on subsequent connects.
-    let src_root = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .ok()?;
-    let src = std::path::Path::new(&src_root)
-        .join(".grok")
-        .join("AGENTS.md");
-    let bytes = std::fs::read(&src).ok()?;
-    if bytes.is_empty() {
-        return None;
-    }
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine as _;
-    Some(B64.encode(&bytes))
-}
-
-// ──────────── #27: host MCP toggle ────────────
-//
-// The PluginsModal's toggle wires through to a real backend that
-// comments/uncomments the sentinel-fenced
-// `[mcp_servers.grok-shell-host]` block in `~/.grok/config.toml`.
-//
-// Why comment-out instead of strip-and-restore?
-// - Round-trip preservation: ensure_grok_mcp_config_installed writes
-// a specific `command`/`args` payload that may have evolved between
-// builds. If we stripped the section on disable, we'd have to either
-// (a) regenerate it on enable (forgetting any user edits) or
-// (b) cache the deleted bytes somewhere out-of-band.
-// - Idempotent toggling: prefixing every line with `# ` is a pure
-// textual transform that round-trips perfectly with the matching
-// un-prefix.
-// - User-visible diagnostics: a commented block on disk still tells
-// the user "this is registered, just disabled" — clearer than a
-// mysteriously-absent server entry.
-//
-// Detection mechanism:
-// The sentinel BEGIN/END comment lines (defined inside
-// ensure_grok_mcp_config_installed as `BEGIN`/`END`) already start
-// with `# `. When disabled, every managed line — including those
-// sentinels — gets an ADDITIONAL `# ` prefix. So:
-// enabled → first line is `# shellX:managed-mcp:... BEGIN`
-// disabled → first line is `# # shellX:managed-mcp:... BEGIN`
-// We search for the substring `shellX:managed-mcp:grok-shell-host BEGIN`
-// (which appears in both states) and inspect the line prefix to
-// determine the current state.
-//
-// Failure modes:
-// - Config file doesn't exist OR has no managed block → read returns
-// Ok(true) ("enabled" is the documented default); set returns
-// Err describing the missing block (caller surfaces a hint).
-// - IO error (read/write) → Err propagated to the Tauri command.
-
 /// Substring that uniquely identifies the BEGIN sentinel line, with or
-/// without an extra `# ` disable-prefix. Stable across enable/disable
-/// states so detection works either way.
+/// without the historical disable-prefix. Used only for upgrade cleanup.
 const MCP_BEGIN_NEEDLE: &str = "shellX:managed-mcp:grok-shell-host BEGIN";
 const MCP_END_NEEDLE: &str = "shellX:managed-mcp:grok-shell-host END";
+
+/// Remove the global host-MCP registration written by older ShellX builds.
+/// ShellX sessions now receive a project/session-scoped HTTP MCP config;
+/// leaving this block globally registered exposes host tools to unrelated
+/// direct Grok sessions.
+pub fn cleanup_global_grok_host_mcp_config() -> Result<bool, String> {
+    let path = grok_config_path()?;
+    cleanup_grok_host_mcp_config_at(&path)
+}
+
+/// Remove the same legacy account-wide registration from a specific WSL
+/// user's Grok config. WSL sessions receive their host MCP transport at
+/// launch/project scope, so a global registration must not leak into direct
+/// Grok sessions in that distro.
+pub fn cleanup_wsl_grok_host_mcp_config(distro: &str, linux_home: &str) -> Result<bool, String> {
+    let path = wsl_path_to_unc(
+        distro,
+        &format!("{}/.grok/config.toml", linux_home.trim_end_matches('/')),
+    )
+    .ok_or("cleanup_wsl_grok_host_mcp_config: cannot build UNC path".to_string())?;
+    cleanup_grok_host_mcp_config_at(&path)
+}
+
+/// Remove only ShellX-owned host MCP registrations from a project's Grok
+/// config. Current ACP sessions inject the authenticated HTTP transport in
+/// `session/new`, so leaving a project block behind would make a later direct
+/// Grok launch discover ShellX tooling outside a ShellX tab.
+pub fn cleanup_project_grok_host_mcp_config(project_dir: &Path) -> Result<bool, String> {
+    cleanup_grok_host_mcp_config_at(&project_dir.join(".grok").join("config.toml"))
+}
+
+fn cleanup_grok_host_mcp_config_at(path: &Path) -> Result<bool, String> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let existing =
+        std::fs::read_to_string(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let mut updated = existing.clone();
+    while let Some((start, end)) = find_managed_block_range(&updated) {
+        let mut next = String::with_capacity(updated.len());
+        next.push_str(&updated[..start]);
+        next.push_str(&updated[end..]);
+        updated = next;
+    }
+    updated = strip_orphan_managed_sentinel_lines(&updated, MCP_BEGIN_NEEDLE, MCP_END_NEEDLE);
+    updated = strip_unmanaged_section(&updated, "mcp_servers.grok-shell-host");
+    updated = strip_managed_block(
+        &updated,
+        crate::mcp_http::HTTP_SNIPPET_BEGIN,
+        crate::mcp_http::HTTP_SNIPPET_END,
+    );
+    updated = strip_unmanaged_section(&updated, "mcp_servers.shellx-host-http.headers");
+    updated = strip_unmanaged_section(&updated, "mcp_servers.shellx-host-http");
+    updated = updated.trim_end().to_string();
+    if !updated.is_empty() {
+        updated.push('\n');
+    }
+    if updated == existing {
+        return Ok(false);
+    }
+    std::fs::write(path, &updated).map_err(|e| format!("write {}: {}", path.display(), e))?;
+    info!(
+        target: "skill_install",
+        "removed legacy global ShellX host MCP registration from {}",
+        path.display()
+    );
+    Ok(true)
+}
 
 /// Resolve `~/.grok/config.toml`. Returns Err when neither HOME nor
 /// USERPROFILE is set (same convention as `target_skill_path`).
@@ -961,146 +851,6 @@ fn find_managed_block_range(source: &str) -> Option<(usize, usize)> {
         .map(|i| end_match + i)
         .unwrap_or(source.len());
     Some((line_start, line_end))
-}
-
-/// Determine whether the managed block is currently enabled
-/// (uncommented). Heuristic: the BEGIN line, as written by
-/// `ensure_grok_mcp_config_installed`, starts with a single `# `.
-/// When disabled by `set_host_mcp_enabled(false)`, every line gets
-/// an additional `# ` prefix — so the BEGIN line then starts with
-/// `# # `. We treat "starts with `# # `" (with or without extra
-/// whitespace) as the disabled signature.
-fn block_is_enabled(block: &str) -> bool {
-    // First line of the block. Empty block → vacuously "enabled"
-    // (defensive; should never happen in practice).
-    let first = block.lines().next().unwrap_or("");
-    // `# shellX:managed-mcp:...` → enabled.
-    // `# # shellX:managed-mcp:...` (or `## shellX:...`) → disabled.
-    // We look at characters after the first `# ` prefix: if the next
-    // non-whitespace char is also `#`, it's been double-commented.
-    let trimmed = first.trim_start();
-    if !trimmed.starts_with('#') {
-        // Block line doesn't start with `#` at all — not our managed
-        // sentinel format; treat as enabled to avoid bogus re-writes.
-        return true;
-    }
-    let after_first_hash = trimmed[1..].trim_start();
-    !after_first_hash.starts_with('#')
-}
-
-/// Prefix every non-empty line in `block` with `# `. Empty lines are
-/// left alone so we don't produce trailing whitespace. Lines already
-/// starting with `# ` get a second `# ` prefix — that's the whole
-/// point: the round-trip with `uncomment_block` is exact.
-fn comment_block(block: &str) -> String {
-    let mut out = String::with_capacity(block.len() + block.lines().count() * 2);
-    let mut first = true;
-    for line in block.split('\n') {
-        if !first {
-            out.push('\n');
-        }
-        first = false;
-        if line.is_empty() {
-            continue;
-        }
-        out.push_str("# ");
-        out.push_str(line);
-    }
-    out
-}
-
-/// Inverse of `comment_block`: strip the leading `# ` prefix from
-/// every line that has one. Lines without the prefix are passed
-/// through unchanged (defensive — should not happen in a well-formed
-/// commented block, but we don't want to mangle hand-edited TOML).
-fn uncomment_block(block: &str) -> String {
-    let mut out = String::with_capacity(block.len());
-    let mut first = true;
-    for line in block.split('\n') {
-        if !first {
-            out.push('\n');
-        }
-        first = false;
-        if let Some(rest) = line.strip_prefix("# ") {
-            out.push_str(rest);
-        } else if let Some(rest) = line.strip_prefix("#") {
-            // Tolerate `#foo` (no space) too — defensive against
-            // hand-edits that drop the canonical space.
-            out.push_str(rest);
-        } else {
-            out.push_str(line);
-        }
-    }
-    out
-}
-
-/// Read the current enable/disable state of the host MCP block in
-/// `~/.grok/config.toml`. Returns Ok(true) when the block is present
-/// and uncommented, Ok(false) when present and commented out, Err
-/// when the config file or block is missing.
-///
-/// Callers (frontend) treat the "block missing" error as the auto-
-/// installer not having run yet — the toggle UI then surfaces a hint.
-pub fn read_host_mcp_enabled() -> Result<bool, String> {
-    let path = grok_config_path()?;
-    let source =
-        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
-    let Some((start, end)) = find_managed_block_range(&source) else {
-        return Err(format!(
-            "managed block not found in {} — the auto-installer has not run yet",
-            path.display()
-        ));
-    };
-    let block = &source[start..end];
-    Ok(block_is_enabled(block))
-}
-
-/// Set the enable/disable state of the host MCP block in
-/// `~/.grok/config.toml`. Idempotent: setting enabled=true when
-/// already enabled (or enabled=false when already disabled) is a
-/// no-op write. Returns the resulting state (always equal to
-/// `enabled` on success).
-///
-/// The grok session reads config.toml only at process spawn, so the
-/// caller MUST surface a "restart grok session to apply" hint to the
-/// user — this function does not touch any live session.
-pub fn set_host_mcp_enabled(enabled: bool) -> Result<bool, String> {
-    let path = grok_config_path()?;
-    let source =
-        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
-    let Some((start, end)) = find_managed_block_range(&source) else {
-        return Err(format!(
-            "managed block not found in {} — the auto-installer has not run yet",
-            path.display()
-        ));
-    };
-    let block = &source[start..end];
-    let currently_enabled = block_is_enabled(block);
-    if currently_enabled == enabled {
-        info!(
-            target: "skill_install",
-            "host MCP already in requested state ({}); no write",
-            if enabled { "enabled" } else { "disabled" }
-        );
-        return Ok(enabled);
-    }
-    let new_block = if enabled {
-        uncomment_block(block)
-    } else {
-        comment_block(block)
-    };
-    let mut updated = String::with_capacity(source.len() + new_block.len());
-    updated.push_str(&source[..start]);
-    updated.push_str(&new_block);
-    updated.push_str(&source[end..]);
-    std::fs::write(&path, &updated).map_err(|e| format!("write {}: {}", path.display(), e))?;
-    info!(
-        target: "skill_install",
-        "host MCP toggled to {} in {}",
-        if enabled { "enabled" } else { "disabled" },
-        path.display()
-    );
-    Ok(enabled)
 }
 
 pub fn ensure_shellx_host_skill_installed() -> Result<bool, String> {
@@ -1147,6 +897,76 @@ pub fn ensure_shellx_host_skill_installed() -> Result<bool, String> {
         );
     }
     Ok(wrote_any)
+}
+
+/// Remove the global ShellX host skill copies written by older releases.
+///
+/// These exact paths were wholly managed (and overwritten) by ShellX, so
+/// they cannot safely remain in global agent discovery after the product
+/// switches to session-scoped activation. We remove only a regular
+/// `SKILL.md` leaf at the exact ShellX namespace and then remove the now
+/// empty `shellx-host` directory. Symlinks and all sibling/user files are
+/// preserved.
+pub fn cleanup_legacy_global_shellx_host_skills() -> Result<usize, String> {
+    let home = user_home_dir().ok_or_else(|| {
+        "neither HOME nor USERPROFILE is set; cannot resolve legacy agent skill paths".to_string()
+    })?;
+    let mut removed = 0usize;
+    let mut errors = Vec::new();
+
+    for target in legacy_global_shellx_host_skill_targets_for_home(&home) {
+        let metadata = match std::fs::symlink_metadata(&target.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                errors.push(format!("inspect {}: {}", target.path.display(), error));
+                continue;
+            }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            warn!(
+                target: "skill_install",
+                "preserving non-regular legacy shellx-host path {}",
+                target.path.display()
+            );
+            continue;
+        }
+        if let Err(error) = std::fs::remove_file(&target.path) {
+            errors.push(format!("remove {}: {}", target.path.display(), error));
+            continue;
+        }
+        removed += 1;
+        if let Some(skill_dir) = target.path.parent() {
+            match std::fs::remove_dir(skill_dir) {
+                Ok(()) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                    ) => {}
+                Err(error) => errors.push(format!(
+                    "remove empty legacy directory {}: {}",
+                    skill_dir.display(),
+                    error
+                )),
+            }
+        }
+        info!(
+            target: "skill_install",
+            "removed legacy global shellx-host skill from {}",
+            target.id
+        );
+    }
+
+    if errors.is_empty() {
+        Ok(removed)
+    } else {
+        Err(format!(
+            "legacy global shellx-host cleanup was partial (removed {}): {}",
+            removed,
+            errors.join("; ")
+        ))
+    }
 }
 
 pub fn cleanup_legacy_shellx_workflow_skills() -> Result<usize, String> {
@@ -1246,7 +1066,7 @@ pub struct WorkflowSkillStatus {
     pub body_hash: String,
 }
 
-/// Lookup current status of the shellx-host skill file.
+/// Lookup current status of the ShellX-owned host manifest copy.
 ///
 /// Pure read — never writes. The frontend can poll this safely. Errors
 /// in path resolution surface as `installed=false`, `path=""`,
@@ -1263,7 +1083,7 @@ pub fn host_skill_status() -> HostSkillStatus {
     };
     let installed = path.is_file();
     /* Return a home-relative path
-     * ("~/.grok/skills/shellx-host/SKILL.md") rather than the absolute
+     * ("~/.shellx/agent-docs/shellx-host/SKILL.md") rather than the absolute
      * path which leaks the username to anyone with access to poll the
      * Tauri command (shared-machine info-disclosure). Falls back to the
      * absolute display only when HOME/USERPROFILE is unset. */
@@ -1359,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_install_writes_shellx_host_skill_for_supported_agents() {
+    fn fresh_install_writes_shellx_host_manifest_only_to_product_docs() {
         let unique = format!("shellx-host-agent-docs-{}", uuid_like());
         let root = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&root).unwrap();
@@ -1373,35 +1193,60 @@ mod tests {
             changed,
             "fresh home should report that at least one bundled skill/doc file was written"
         );
-        for target in [
-            root.join(".grok")
-                .join("skills")
-                .join("shellx-host")
-                .join("SKILL.md"),
-            root.join(".codex")
-                .join("skills")
-                .join("shellx-host")
-                .join("SKILL.md"),
-            root.join(".claude")
-                .join("skills")
-                .join("shellx-host")
-                .join("SKILL.md"),
-            root.join(".shellx")
-                .join("agent-docs")
-                .join("shellx-host")
-                .join("SKILL.md"),
-        ] {
+        let product_doc = root
+            .join(".shellx")
+            .join("agent-docs")
+            .join("shellx-host")
+            .join("SKILL.md");
+        assert!(product_doc.is_file());
+        assert_eq!(
+            std::fs::read_to_string(&product_doc).unwrap(),
+            BUNDLED_SKILL_BODY
+        );
+        for agent_dir in [".grok", ".codex", ".claude"] {
             assert!(
-                target.is_file(),
-                "fresh installer runtime should write bundled shellx-host docs to {}",
-                target.display()
+                !root
+                    .join(agent_dir)
+                    .join("skills")
+                    .join("shellx-host")
+                    .join("SKILL.md")
+                    .exists(),
+                "fresh install must not expose shellx-host to direct {} sessions",
+                agent_dir
             );
-            assert_eq!(
-                std::fs::read_to_string(&target).unwrap(),
-                BUNDLED_SKILL_BODY,
-                "{} should contain the exact binary-bundled skill body",
-                target.display()
-            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migration_removes_only_exact_legacy_global_host_skill_leaves() {
+        let unique = format!("shellx-host-global-migration-{}", uuid_like());
+        let root = std::env::temp_dir().join(unique);
+        for agent_dir in [".grok", ".codex", ".claude"] {
+            let skill_dir = root.join(agent_dir).join("skills").join("shellx-host");
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            std::fs::write(skill_dir.join("SKILL.md"), "managed by old ShellX\n").unwrap();
+        }
+        let preserved = root
+            .join(".codex")
+            .join("skills")
+            .join("shellx-host")
+            .join("user-note.md");
+        std::fs::write(&preserved, "keep\n").unwrap();
+
+        let _env_lock = crate::test_env_lock();
+        let _home_guard = HomeEnvGuard::set_home_only(&root);
+        assert_eq!(cleanup_legacy_global_shellx_host_skills().unwrap(), 3);
+
+        assert!(preserved.is_file(), "user sibling must be preserved");
+        for agent_dir in [".grok", ".codex", ".claude"] {
+            assert!(!root
+                .join(agent_dir)
+                .join("skills")
+                .join("shellx-host")
+                .join("SKILL.md")
+                .exists());
         }
 
         let _ = std::fs::remove_dir_all(&root);
@@ -1591,23 +1436,21 @@ mod tests {
     }
 
     #[test]
-    fn append_managed_after_cleanup_leaves_one_current_block() {
-        let block = format!("{}\nbody\n{}\n", MANAGED_AGENTS_BEGIN, MANAGED_AGENTS_END);
+    fn cleanup_does_not_append_a_new_managed_block() {
         let cleaned = strip_shellx_managed_blocks(concat!(
             "prefix\n",
             "<!-- BEGIN shellX-managed (old marker) -->\n",
             "stale\n",
             "<!-- END shellX-managed -->\n",
         ));
-        let out = append_managed(&cleaned, &block);
-        assert_eq!(out.matches(MANAGED_AGENTS_BEGIN_PREFIX).count(), 1);
-        assert_eq!(out.matches(MANAGED_AGENTS_END).count(), 1);
-        assert!(out.contains("prefix"));
-        assert!(!out.contains("stale"));
+        assert_eq!(cleaned.matches(MANAGED_AGENTS_BEGIN_PREFIX).count(), 0);
+        assert_eq!(cleaned.matches(MANAGED_AGENTS_END).count(), 0);
+        assert!(cleaned.contains("prefix"));
+        assert!(!cleaned.contains("stale"));
     }
 
     #[test]
-    fn refresh_agents_block_replaces_legacy_full_inventory_hint() {
+    fn cleanup_agents_guidance_removes_legacy_hint_without_replacement() {
         let source = format!(
             "# Behavior rules\n\n{}\n\n{}",
             LEGACY_SEARCH_TOOL_GUIDANCE,
@@ -1618,53 +1461,74 @@ mod tests {
             )
         );
 
-        let out = refresh_shellx_agents_managed_block(&source);
+        let out = clean_legacy_shellx_agents_guidance(&strip_shellx_managed_blocks(&source));
 
         assert!(!out.contains(LEGACY_SEARCH_TOOL_GUIDANCE));
         assert!(!out.contains("stale managed body"));
-        assert!(out.contains(UPDATED_SEARCH_TOOL_GUIDANCE));
-        assert!(out.contains("call it\n  directly before broad tool discovery"));
-        assert_eq!(out.matches(MANAGED_AGENTS_BEGIN_PREFIX).count(), 1);
-        assert_eq!(out.matches(MANAGED_AGENTS_END).count(), 1);
+        assert!(!out.contains(UPDATED_SEARCH_TOOL_GUIDANCE));
+        assert_eq!(out.matches(MANAGED_AGENTS_BEGIN_PREFIX).count(), 0);
+        assert_eq!(out.matches(MANAGED_AGENTS_END).count(), 0);
     }
 
     #[test]
-    fn ensure_grok_mcp_config_installed_preserves_disabled_block_on_rewrite() {
-        let unique = format!("shellx-grok-mcp-disabled-{}", uuid_like());
+    fn migration_removes_disabled_global_host_mcp_and_preserves_user_config() {
+        let unique = format!("shellx-grok-mcp-migration-{}", uuid_like());
         let root = std::env::temp_dir().join(unique);
         let config = root.join(".grok").join("config.toml");
         std::fs::create_dir_all(config.parent().unwrap()).unwrap();
 
-        const BEGIN: &str = "# shellX:managed-mcp:grok-shell-host BEGIN — do not edit by hand";
-        const END: &str = "# shellX:managed-mcp:grok-shell-host END";
-        let old_block = format!(
-            "{BEGIN}\n[mcp_servers.grok-shell-host]\ncommand = \"/old/shellx\"\nargs = [\"--mcp-server\"]\nenabled = true\nstartup_timeout_sec = 15\n{END}\n"
-        );
         std::fs::write(
             &config,
-            format!(
-                "[mcp_servers.keep]\ncommand = \"/bin/echo\"\n\n{}",
-                comment_block(&old_block)
+            concat!(
+                "[mcp_servers.keep]\ncommand = \"/bin/echo\"\n\n",
+                "# # shellX:managed-mcp:grok-shell-host BEGIN — do not edit by hand\n",
+                "# [mcp_servers.grok-shell-host]\n",
+                "# command = \"/old/shellx\"\n",
+                "# args = [\"--mcp-server\"]\n",
+                "# # shellX:managed-mcp:grok-shell-host END\n",
             ),
         )
         .unwrap();
 
-        let _env_lock = crate::test_env_lock();
-        let _home_guard = HomeEnvGuard::set_home_only(&root);
+        let changed = cleanup_grok_host_mcp_config_at(&config).expect("cleanup");
 
-        let changed = ensure_grok_mcp_config_installed(Path::new("/new/shellx")).expect("rewrite");
-
-        assert!(changed, "new exe path should rewrite the managed block");
+        assert!(changed, "legacy global block should be removed");
         let rewritten = std::fs::read_to_string(&config).unwrap();
-        let (start, end) = find_managed_block_range(&rewritten).expect("managed block");
-        let block = &rewritten[start..end];
-        assert!(
-            !block_is_enabled(block),
-            "disabled managed block must stay commented after auto-install rewrite:\n{}",
-            rewritten
-        );
-        assert!(block.contains("# command = \"/new/shellx\""));
+        assert!(!rewritten.contains(MCP_BEGIN_NEEDLE));
+        assert!(!rewritten.contains("/old/shellx"));
         assert!(rewritten.contains("[mcp_servers.keep]"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn project_cleanup_removes_shellx_host_mcp_and_preserves_user_servers() {
+        let unique = format!("shellx-project-mcp-cleanup-{}", uuid_like());
+        let root = std::env::temp_dir().join(unique);
+        let config = root.join(".grok").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config,
+            format!(
+                "[mcp_servers.keep]\ncommand = \"/bin/echo\"\n\n{}\n\
+                 [mcp_servers.shellx-host-http]\n\
+                 url = \"http://localhost:5758/mcp\"\n\
+                 [mcp_servers.shellx-host-http.headers]\n\
+                 MCP-Tab-Id = \"tab-old\"\n\
+                 {}\n",
+                crate::mcp_http::HTTP_SNIPPET_BEGIN,
+                crate::mcp_http::HTTP_SNIPPET_END,
+            ),
+        )
+        .unwrap();
+
+        let changed = cleanup_project_grok_host_mcp_config(&root).expect("project cleanup");
+
+        assert!(changed);
+        let rewritten = std::fs::read_to_string(&config).unwrap();
+        assert!(rewritten.contains("[mcp_servers.keep]"));
+        assert!(!rewritten.contains("shellx-host-http"));
+        assert!(!rewritten.contains("tab-old"));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1772,6 +1636,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn ensure_project_mcp_http_config_excludes_shellx_artifacts_locally() {
+        let unique = format!("shellx-project-mcp-exclude-{}", uuid_like());
+        let root = std::env::temp_dir().join(unique);
+        let project = root.join("work").join("sdk");
+        let git_info = root.join(".git").join("info");
+        std::fs::create_dir_all(&git_info).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+
+        let changed = ensure_project_mcp_http_config(
+            &project,
+            5764,
+            "0123456789abcdef0123456789abcdef",
+            "fresh-tab",
+            "",
+        )
+        .expect("write project MCP config and local git excludes");
+        assert!(changed, "first run should write config and git exclude");
+
+        let exclude = std::fs::read_to_string(git_info.join("exclude")).unwrap();
+        assert!(exclude.contains(MCP_ARTIFACT_EXCLUDE_BEGIN));
+        assert!(exclude.contains("/work/sdk/.grok/config.toml"));
+        assert!(exclude.contains("/work/sdk/mcps/"));
+        assert_eq!(
+            exclude.matches(MCP_ARTIFACT_EXCLUDE_BEGIN).count(),
+            1,
+            "managed exclude block should not duplicate:\n{}",
+            exclude
+        );
+
+        let changed_again = ensure_project_mcp_http_config(
+            &project,
+            5764,
+            "0123456789abcdef0123456789abcdef",
+            "fresh-tab",
+            "",
+        )
+        .expect("second run should be idempotent");
+        assert!(
+            !changed_again,
+            "matching config and git exclude should be idempotent"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// Tiny uuid-like helper for test scratch-dir names. Avoids pulling
     /// uuid into dev-deps just for tests — process id + nanos is unique
     /// enough across `cargo test --test-threads=N`.
@@ -1791,11 +1701,11 @@ mod tests {
         }
         // Don't poke at the actual env: we'd race with parallel tests.
         // Just sanity-check the public function returns a non-empty
-        // suffix matching `.grok/skills/shellx-host/SKILL.md`.
+        // suffix matching `.shellx/agent-docs/shellx-host/SKILL.md`.
         if let Some(p) = target_skill_path() {
             let s = p.to_string_lossy();
             assert!(
-                s.ends_with(".grok/skills/shellx-host/SKILL.md"),
+                s.ends_with(".shellx/agent-docs/shellx-host/SKILL.md"),
                 "unexpected target path: {}",
                 s
             );

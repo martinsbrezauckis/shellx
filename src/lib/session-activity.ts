@@ -93,6 +93,41 @@ export interface ActivitySummary {
   executed: number;
 }
 
+export interface ActivityClipboardSummaryInput {
+  sessionId?: string | null;
+  status?: string | null;
+  transport?: string | null;
+  search?: string | null;
+  visibleActionCount: number;
+  totalActionCount: number;
+  summary: ActivitySummary;
+  hunkRecordsPath?: string | null;
+  updatesPath?: string | null;
+}
+
+export function buildActivityClipboardSummary(input: ActivityClipboardSummaryInput): string {
+  const search = input.search?.trim() ?? "";
+  return [
+    `Session activity: ${input.sessionId ?? "(no session)"}`,
+    `status: ${input.status ?? "unknown"}`,
+    `transport: ${input.transport ?? "unknown"}`,
+    `search: ${search || "(none)"}`,
+    `matching actions: ${input.visibleActionCount}/${input.totalActionCount}`,
+    `actions: ${input.summary.total}`,
+    `verified: ${input.summary.verified}`,
+    `observed: ${input.summary.observed}`,
+    `inferred: ${input.summary.inferred}`,
+    `agent written: ${input.summary.agentWritten}`,
+    `agent deleted: ${input.summary.agentDeleted}`,
+    `reads: ${input.summary.read}`,
+    `lists: ${input.summary.listed}`,
+    `searches: ${input.summary.searched}`,
+    `git: ${input.summary.git}`,
+    `hunk source: ${input.hunkRecordsPath ?? "(none)"}`,
+    `update source: ${input.updatesPath ?? "(none)"}`,
+  ].join("\n");
+}
+
 export type ActivityGraphNodeKind = "session" | "action" | "folder" | "file";
 
 export interface ActivityGraphNode {

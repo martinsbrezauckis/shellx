@@ -11,7 +11,7 @@
 //! `crypto::seal(manifest_key, MANIFEST_AAD, lz4(postcard(Snapshot)))`.
 //! LZ4 before encryption — paths compress 3-5×, and compressing after
 //! encryption is impossible. postcard is the post-bincode (RUSTSEC-2025-
-//! 0141) spec'd binary format.
+//! 0141) spec'd binary format used by this workspace.
 //!
 //! The server stores sealed manifests as opaque blobs in an append-only,
 //! gap-free generation sequence; it never sees names or structure.
@@ -60,8 +60,8 @@ pub struct FileEntry {
     /// Unix executable bit (the only mode bit synced in v1).
     pub executable: bool,
     /// Modification time, nanoseconds since the Unix epoch. Carried for
-    /// preservation on apply; NEVER used for change detection (mtime is
-    /// unreliable).
+    /// preservation on apply; NEVER used for change detection because
+    /// mtimes are not a reliable content-change signal.
     pub mtime_ns: i64,
     /// Total plaintext size — must equal the sum of chunk sizes.
     pub size: u64,
@@ -139,7 +139,8 @@ impl Snapshot {
 /// Validate a manifest-supplied relative path before it may touch the
 /// local filesystem. Defense layer against a tampered/malicious manifest:
 /// rejects absolute paths, `..`/`.` components, empty components,
-/// backslashes (no Windows-separator smuggling), NUL, and the empty path.
+/// backslashes (no Windows-separator smuggling), Windows drive/NTFS
+/// prefix syntax via `:`, NUL, and the empty path.
 ///
 /// Returns the path's components on success so callers can join safely.
 pub fn validate_rel_path(path: &str) -> Result<Vec<&str>, String> {
@@ -154,6 +155,9 @@ pub fn validate_rel_path(path: &str) -> Result<Vec<&str>, String> {
     }
     if path.contains('\\') {
         return Err("backslash in path (paths are forward-slash relative)".into());
+    }
+    if path.contains(':') {
+        return Err("colon in path (portable relative paths cannot use Windows prefixes)".into());
     }
     if path.starts_with('/') {
         return Err("absolute path".into());
@@ -268,6 +272,9 @@ mod tests {
             "a//b",
             "a/",
             "win\\style",
+            "C:/Users/example/AppData/Roaming/Startup/run.bat",
+            "C:relative-drive-path.txt",
+            "docs/name:stream.txt",
             "nul\0byte",
         ] {
             assert!(validate_rel_path(evil).is_err(), "should reject {evil:?}");

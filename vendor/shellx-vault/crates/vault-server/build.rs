@@ -2,7 +2,7 @@
 //! Release builds carry the assets inside the executable (single-binary
 //! deploy); debug builds read the directory at request time (dev velocity).
 //! BUILD ORDER: `pnpm run build` in web/ BEFORE `cargo build --release`,
-//! or the embedded UI is stale/empty.
+//! or the embedded UI is stale/empty — scripts/build-all.sh does both.
 
 fn main() {
     let dist = std::path::Path::new("../../web/dist");

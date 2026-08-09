@@ -128,10 +128,62 @@ const DEFAULT_TELEGRAM_KEY = "telegram/bot-token";
 const DEFAULT_DISCORD_KEY = "discord/bot-token";
 const PROVIDER_TABS: ProviderKind[] = ["telegram", "discord"];
 
-export function ConnectorsTab(): JSX.Element {
+export type ConnectorsDebugFixture = "owned-safe";
+
+const DEBUG_OWNED_CONNECTORS: OutsideConnector[] = [
+  {
+    id: "release-owned-connector-telegram",
+    label: "Release owned Telegram",
+    enabled: false,
+    provider: {
+      kind: "telegram",
+      botTokenVaultKey: "release-owned/telegram-token-ref",
+      allowedChatIds: ["release-owned-chat"],
+    },
+    target: { mode: "activeTab" },
+    dispatchMode: "inbox",
+    requireApproval: true,
+    createdMs: 1_750_000_000_000,
+    updatedMs: 1_750_000_000_000,
+    lastTestMs: null,
+    lastError: null,
+  },
+  {
+    id: "release-owned-connector-discord",
+    label: "Release owned Discord",
+    enabled: false,
+    provider: {
+      kind: "discord",
+      botTokenVaultKey: "release-owned/discord-token-ref",
+      allowedTargetIds: ["release-owned-user"],
+    },
+    target: { mode: "activeTab" },
+    dispatchMode: "inbox",
+    requireApproval: true,
+    createdMs: 1_750_000_000_001,
+    updatedMs: 1_750_000_000_001,
+    lastTestMs: null,
+    lastError: null,
+  },
+];
+
+const DEBUG_OWNED_SESSIONS: LiveSession[] = [{
+  tabId: "release-owned-connector-tab",
+  title: "Release owned connector session",
+  sessionId: null,
+  cwd: null,
+  hasActiveChild: false,
+  isSsh: false,
+  isWsl: false,
+  sshHost: null,
+  wslDistro: null,
+}];
+
+export function ConnectorsTab({ debugFixture = null }: { debugFixture?: ConnectorsDebugFixture | null } = {}): JSX.Element {
   const [connectors, setConnectors] = useState<OutsideConnector[]>([]);
   const [vaultKeys, setVaultKeys] = useState<string[]>([]);
   const [sessions, setSessions] = useState<LiveSession[]>([]);
+  const [draftOpen, setDraftOpen] = useState(false);
   const [form, setForm] = useState<FormState>(() => emptyForm("telegram"));
   const [simForm, setSimForm] = useState<SimFormState>({
     connectorId: "",
@@ -145,12 +197,13 @@ export function ConnectorsTab(): JSX.Element {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
+  const desktopConnectorsAvailable = inTauri();
+  const debugFixtureActive = debugFixture === "owned-safe";
+  const visibleConnectors = debugFixtureActive ? DEBUG_OWNED_CONNECTORS : connectors;
+  const visibleSessions = debugFixtureActive ? DEBUG_OWNED_SESSIONS : sessions;
 
   const refresh = useCallback(async () => {
-    if (!inTauri()) {
-      setToast({ kind: "err", text: "Connectors unavailable outside Tauri." });
-      return;
-    }
+    if (!desktopConnectorsAvailable || debugFixtureActive) return;
     setBusy(true);
     try {
       const [list, keys, liveSessions] = await Promise.all([
@@ -168,19 +221,20 @@ export function ConnectorsTab(): JSX.Element {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [debugFixtureActive, desktopConnectorsAvailable]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
+    if (!desktopConnectorsAvailable || debugFixtureActive) return;
     const t = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(t);
-  }, [refresh]);
+  }, [debugFixtureActive, desktopConnectorsAvailable, refresh]);
 
   useEffect(() => {
-    if (simForm.connectorId || connectors.length === 0) return;
-    setSimForm((f) => ({ ...f, connectorId: connectors[0]?.id ?? "" }));
-  }, [connectors, simForm.connectorId]);
+    if (simForm.connectorId || visibleConnectors.length === 0) return;
+    setSimForm((f) => ({ ...f, connectorId: visibleConnectors[0]?.id ?? "" }));
+  }, [simForm.connectorId, visibleConnectors]);
 
   useEffect(() => {
     if (!toast) return;
@@ -190,24 +244,28 @@ export function ConnectorsTab(): JSX.Element {
 
   const editing = form.id.trim().length > 0;
   const selectedSession = useMemo(
-    () => sessions.find((session) => session.tabId === form.fixedTabId) ?? null,
-    [sessions, form.fixedTabId],
+    () => visibleSessions.find((session) => session.tabId === form.fixedTabId) ?? null,
+    [form.fixedTabId, visibleSessions],
   );
   const selectedSimConnector = useMemo(
-    () => connectors.find((connector) => connector.id === simForm.connectorId) ?? null,
-    [connectors, simForm.connectorId],
+    () => visibleConnectors.find((connector) => connector.id === simForm.connectorId) ?? null,
+    [simForm.connectorId, visibleConnectors],
   );
-  const canSave = form.vaultKey.trim().length > 0
+  const canSave = !debugFixtureActive
+    && desktopConnectorsAvailable
+    && form.vaultKey.trim().length > 0
     && (form.targetMode !== "fixedTab" || form.fixedTabId.trim().length > 0)
     && !saving;
-  const canSimulate = Boolean(selectedSimConnector)
+  const canSimulate = !debugFixtureActive
+    && desktopConnectorsAvailable
+    && Boolean(selectedSimConnector)
     && simForm.senderId.trim().length > 0
     && simForm.text.trim().length > 0
     && !simulating;
   const providerHelp = useMemo(() => {
     switch (form.providerKind) {
       case "telegram":
-        return "Telegram uses a BotFather token plus explicit allowed chat IDs. Inbox records messages; Session chat sends allowlisted messages to the selected shellX tab and returns the active session reply.";
+        return "Telegram uses a BotFather token plus explicit allowed chat IDs. A group chat ID authorizes every member of that group, so keep approval enabled or use a private chat for Session chat. Inbox records messages; Session chat sends allowlisted messages to the selected shellX tab and returns the active session reply.";
       case "discord":
         return "Discord uses a bot token plus explicit allowed user IDs. Inbox records DMs; Session chat sends allowlisted DMs to the selected shellX tab and returns the active session reply.";
     }
@@ -239,6 +297,7 @@ export function ConnectorsTab(): JSX.Element {
       const saved = await invoke<OutsideConnector>("outside_connectors_save", { connector });
       setToast({ kind: "ok", text: `Saved ${saved.label}` });
       setForm(emptyForm(saved.provider.kind));
+      setDraftOpen(false);
       await refresh();
     } catch (e) {
       setToast({ kind: "err", text: formatErr(e) });
@@ -248,6 +307,7 @@ export function ConnectorsTab(): JSX.Element {
   }
 
   async function handleTest(connector: OutsideConnector): Promise<void> {
+    if (debugFixtureActive) return;
     setTestingId(connector.id);
     try {
       const result = await invoke<ConnectorTestResult>("outside_connectors_test", { id: connector.id });
@@ -268,10 +328,14 @@ export function ConnectorsTab(): JSX.Element {
   }
 
   async function handleDelete(connector: OutsideConnector): Promise<void> {
+    if (debugFixtureActive) return;
     if (!window.confirm(`Delete connector "${connector.label}"?`)) return;
     try {
       await invoke("outside_connectors_delete", { id: connector.id });
-      if (form.id === connector.id) setForm(emptyForm(connector.provider.kind));
+      if (form.id === connector.id) {
+        setForm(emptyForm(connector.provider.kind));
+        setDraftOpen(false);
+      }
       setToast({ kind: "ok", text: `Deleted ${connector.label}` });
       await refresh();
     } catch (e) {
@@ -318,39 +382,69 @@ export function ConnectorsTab(): JSX.Element {
     }));
   }
 
+  function openNewDraft(): void {
+    setForm(emptyForm("telegram"));
+    setDraftOpen(true);
+  }
+
+  function cancelDraft(): void {
+    setForm(emptyForm("telegram"));
+    setDraftOpen(false);
+  }
+
   return (
-    <div className="settings-tab-body connectors-tab">
+    <div
+      className="settings-tab-body connectors-tab"
+      data-connectors-debug-fixture={debugFixtureActive ? "owned-safe" : undefined}
+      data-shellx-release-mounted={debugFixtureActive ? "true" : "false"}
+      data-shellx-release-observe="mounted"
+    >
       <div className="connectors-header">
         <p className="settings-tab-hint">
           Outside channels connect people to shellX. Keep new
           connectors in Inbox mode until you trust the source and routing.
         </p>
-        <button type="button" className="settings-pill" onClick={() => void refresh()} disabled={busy}>
+        <button data-debug-id="surface-components-settings-connectorstab-1" type="button" className="settings-pill" onClick={() => void refresh()} disabled={busy || !desktopConnectorsAvailable || debugFixtureActive}>
           {busy ? "…" : "Refresh"}
         </button>
       </div>
+
+      {!desktopConnectorsAvailable && (
+        <div
+          role="status"
+          className="connector-toast"
+        >
+          This connector editor is a visual preview. Open ShellX desktop to save, test,
+          or simulate outside channels.
+        </div>
+      )}
 
       {toast && <div role="status" className={`connector-toast connector-toast-${toast.kind}`}>{toast.text}</div>}
 
       <section className="connector-editor" aria-label="Connector editor">
         <div className="connector-editor-head">
-          <h3>{editing ? "Edit connector" : "New connector"}</h3>
-          {editing && (
-            <button type="button" className="settings-pill" onClick={() => setForm(emptyForm(form.providerKind))}>
+          <h3>{draftOpen ? (editing ? "Edit connector" : "New connector") : "Connector setup"}</h3>
+          {!draftOpen && (
+            <button type="button" className="settings-pill" onClick={openNewDraft}>
               New
             </button>
           )}
+          {draftOpen && <ConnectorDraftCancelButton onCancel={cancelDraft} />}
         </div>
 
+        {draftOpen && (
+          <>
         <div className="settings-row">
           <label className="settings-label" id="connector-provider-label">Provider</label>
           <div className="connector-provider-tabs" role="tablist" aria-labelledby="connector-provider-label">
             {PROVIDER_TABS.map((providerKind) => (
-              <button
+              <button data-debug-id="surface-components-settings-connectorstab-3"
                 key={providerKind}
                 type="button"
                 role="tab"
                 aria-selected={form.providerKind === providerKind}
+                data-provider-kind={providerKind}
+                data-shellx-release-observe="selected"
                 className={`connector-provider-tab ${form.providerKind === providerKind ? "active" : ""}`}
                 onClick={() => handleProviderChange(providerKind)}
               >
@@ -367,6 +461,8 @@ export function ConnectorsTab(): JSX.Element {
           <div className="connector-provider-tabs connector-state-tabs" role="group" aria-label="Connector receiver state">
             <button
               type="button"
+              aria-pressed={!form.enabled}
+              data-shellx-release-observe="pressed"
               className={`connector-provider-tab ${!form.enabled ? "active" : ""}`}
               onClick={() => setForm((f) => ({ ...f, enabled: false }))}
             >
@@ -374,6 +470,8 @@ export function ConnectorsTab(): JSX.Element {
             </button>
             <button
               type="button"
+              aria-pressed={form.enabled}
+              data-shellx-release-observe="pressed"
               className={`connector-provider-tab ${form.enabled ? "active" : ""}`}
               onClick={() => setForm((f) => ({ ...f, enabled: true }))}
             >
@@ -388,6 +486,8 @@ export function ConnectorsTab(): JSX.Element {
           <div className="connector-provider-tabs connector-state-tabs" role="group" aria-label="Connector delivery mode">
             <button
               type="button"
+              aria-pressed={form.dispatchMode === "inbox"}
+              data-shellx-release-observe="pressed"
               className={`connector-provider-tab ${form.dispatchMode === "inbox" ? "active" : ""}`}
               onClick={() => setForm((f) => ({ ...f, dispatchMode: "inbox", requireApproval: true }))}
             >
@@ -395,6 +495,8 @@ export function ConnectorsTab(): JSX.Element {
             </button>
             <button
               type="button"
+              aria-pressed={form.dispatchMode === "autoPrompt"}
+              data-shellx-release-observe="pressed"
               className={`connector-provider-tab ${form.dispatchMode === "autoPrompt" ? "active" : ""}`}
               onClick={() => setForm((f) => ({ ...f, dispatchMode: "autoPrompt", requireApproval: false }))}
               title={`Send allowlisted ${providerLabel(form.providerKind)} messages to the active session`}
@@ -419,7 +521,8 @@ export function ConnectorsTab(): JSX.Element {
         <div className="settings-row">
           <label className="settings-label" htmlFor="connector-secret">Bot token</label>
           <input
-            id="connector-secret"
+                id="connector-secret"
+                data-shellx-release-observe="nonempty"
             className="settings-input"
             type="password"
             value={form.secretValue}
@@ -437,6 +540,7 @@ export function ConnectorsTab(): JSX.Element {
           <input
             id="connector-allowed"
             className="settings-input"
+            data-shellx-release-observe="nonempty"
             value={form.allowedIdsText}
             onChange={(e) => setForm((f) => ({ ...f, allowedIdsText: e.target.value }))}
             placeholder={allowedPlaceholder(form.providerKind)}
@@ -451,6 +555,7 @@ export function ConnectorsTab(): JSX.Element {
             <select
               id="connector-target"
               className="settings-select"
+              data-shellx-release-observe="value"
               value={form.targetMode}
               onChange={(e) => setForm((f) => ({ ...f, targetMode: e.target.value as FormState["targetMode"] }))}
             >
@@ -459,18 +564,19 @@ export function ConnectorsTab(): JSX.Element {
             </select>
             {form.targetMode === "fixedTab" && (
               <div className="connector-session-picker">
-                <select
+                <select data-debug-id="surface-components-settings-connectorstab-11"
                   className="settings-select"
+                  data-shellx-release-observe="value"
                   value={form.fixedTabId}
                   onChange={(e) => setForm((f) => ({ ...f, fixedTabId: e.target.value }))}
                 >
-                  <option value="">{sessions.length ? "Choose live session" : "No live sessions connected"}</option>
+                  <option value="">{visibleSessions.length ? "Choose live session" : "No live sessions connected"}</option>
                   {form.fixedTabId && !selectedSession && (
                     <option value={form.fixedTabId}>
                       Saved tab {shortTabId(form.fixedTabId)} (not live now)
                     </option>
                   )}
-                  {sessions.map((session, index) => (
+                  {visibleSessions.map((session, index) => (
                     <option key={session.tabId} value={session.tabId}>
                       {formatSessionOption(session, index + 1)}
                     </option>
@@ -490,25 +596,31 @@ export function ConnectorsTab(): JSX.Element {
         <p className="connector-help">{providerHelp}</p>
 
         <div className="connector-editor-actions">
-          <button type="button" className="settings-pill" onClick={() => void handleSave()} disabled={!canSave}>
+          <button data-debug-id="surface-components-settings-connectorstab-12" data-shellx-release-observe="disabled" type="button" className="settings-pill" onClick={() => void handleSave()} disabled={!canSave}>
             {saving ? "Saving…" : "Save connector"}
           </button>
         </div>
+          </>
+        )}
       </section>
 
-      {connectors.length === 0 ? (
+      {visibleConnectors.length === 0 ? (
         <div className="vault-empty">
           No outside connectors yet. Create a Telegram or Discord bot connector.
         </div>
       ) : (
         <div className="connectors-list" role="list">
-          {connectors.map((connector) => (
+          {visibleConnectors.map((connector) => (
             <ConnectorRow
               key={connector.id}
               connector={connector}
-              sessions={sessions}
+              sessions={visibleSessions}
               testing={testingId === connector.id}
-              onEdit={() => setForm(formFromConnector(connector))}
+              fixtureLocked={debugFixtureActive}
+              onEdit={() => {
+                setForm(formFromConnector(connector));
+                setDraftOpen(true);
+              }}
               onTest={() => void handleTest(connector)}
               onDelete={() => void handleDelete(connector)}
             />
@@ -526,11 +638,12 @@ export function ConnectorsTab(): JSX.Element {
           <select
             id="connector-sim-connector"
             className="settings-select"
+            data-shellx-release-observe="value"
             value={simForm.connectorId}
             onChange={(e) => setSimForm((f) => ({ ...f, connectorId: e.target.value }))}
           >
-            <option value="">{connectors.length ? "Choose connector" : "No connectors"}</option>
-            {connectors.map((connector) => (
+            <option value="">{visibleConnectors.length ? "Choose connector" : "No connectors"}</option>
+            {visibleConnectors.map((connector) => (
               <option key={connector.id} value={connector.id}>
                 {connector.label} · {providerLabel(connector.provider.kind)}
               </option>
@@ -543,6 +656,7 @@ export function ConnectorsTab(): JSX.Element {
           <input
             id="connector-sim-sender"
             className="settings-input"
+            data-shellx-release-observe="nonempty"
             value={simForm.senderId}
             onChange={(e) => setSimForm((f) => ({ ...f, senderId: e.target.value }))}
             placeholder={selectedSimConnector?.provider.kind === "discord" ? "123456789 or user:123456789" : "123456789"}
@@ -555,6 +669,7 @@ export function ConnectorsTab(): JSX.Element {
           <input
             id="connector-sim-conversation"
             className="settings-input"
+            data-shellx-release-observe="nonempty"
             value={simForm.conversationId}
             onChange={(e) => setSimForm((f) => ({ ...f, conversationId: e.target.value }))}
             placeholder={selectedSimConnector?.provider.kind === "discord" ? "optional DM channel id" : "same as sender if DM"}
@@ -565,13 +680,14 @@ export function ConnectorsTab(): JSX.Element {
           <input
             id="connector-sim-text"
             className="settings-input connector-sim-message"
+            data-shellx-release-observe="nonempty"
             value={simForm.text}
             onChange={(e) => setSimForm((f) => ({ ...f, text: e.target.value }))}
             placeholder="Message as the outside user would send it"
           />
 
           <div className="connector-sim-actions">
-            <button type="button" className="settings-pill" onClick={() => void handleSimulate()} disabled={!canSimulate}>
+            <button data-debug-id="surface-components-settings-connectorstab-17" data-shellx-release-observe="disabled" type="button" className="settings-pill" onClick={() => void handleSimulate()} disabled={!canSimulate}>
               {simulating ? "…" : "Simulate inbound"}
             </button>
           </div>
@@ -585,6 +701,7 @@ function ConnectorRow({
   connector,
   sessions,
   testing,
+  fixtureLocked,
   onEdit,
   onTest,
   onDelete,
@@ -592,6 +709,7 @@ function ConnectorRow({
   connector: OutsideConnector;
   sessions: LiveSession[];
   testing: boolean;
+  fixtureLocked: boolean;
   onEdit: () => void;
   onTest: () => void;
   onDelete: () => void;
@@ -604,7 +722,7 @@ function ConnectorRow({
   const stateLabel = connector.enabled ? (connector.lastError ? "failing" : "enabled") : "disabled";
 
   return (
-    <div className="connector-row" role="listitem">
+    <div className="connector-row" role="listitem" data-connector-id={connector.id}>
       <div className="connector-row-main">
         <div className="connector-row-title">
           <span className="connection-label">{connector.label}</span>
@@ -625,11 +743,11 @@ function ConnectorRow({
           {provider}
         </span>
         <span className="connection-last-used">test {lastTest}</span>
-        <button type="button" className="settings-pill" onClick={onTest} disabled={testing}>
+        <button data-debug-id="surface-components-settings-connectorstab-18" data-shellx-release-observe="disabled" type="button" className="settings-pill" onClick={onTest} disabled={testing || fixtureLocked}>
           {testing ? "…" : "Test"}
         </button>
         <button type="button" className="settings-pill" onClick={onEdit}>Edit</button>
-        <button type="button" className="settings-pill settings-pill-danger" onClick={onDelete}>
+        <button type="button" className="settings-pill settings-pill-danger" data-shellx-release-observe="disabled" onClick={onDelete} disabled={fixtureLocked}>
           Delete
         </button>
       </div>
@@ -650,9 +768,10 @@ function VaultKeyInput({
 }): JSX.Element {
   return (
     <div className="vault-key-combo">
-      <input
+      <input data-debug-id="surface-components-settings-connectorstab-21"
         id={id}
         className="settings-input"
+        data-shellx-release-observe="nonempty"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         spellCheck={false}
@@ -876,4 +995,17 @@ function readStoredTabOrder(): Map<string, { index: number; title: string | null
 function formatErr(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
+}
+
+function ConnectorDraftCancelButton({ onCancel }: { onCancel: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      className="settings-pill"
+      aria-label="Cancel connector draft"
+      onClick={onCancel}
+    >
+      Cancel
+    </button>
+  );
 }

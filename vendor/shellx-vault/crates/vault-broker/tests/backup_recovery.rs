@@ -115,7 +115,7 @@ fn backup_bundle_roundtrips_full_broker_state_without_plaintext_safe_folder() {
     ));
     broker
         .sync_sets_mut()
-        .add_device("docs", "mac-mini")
+        .add_device("docs", "remote-macos")
         .unwrap();
 
     broker

@@ -497,26 +497,26 @@ fn antigravity_cli_card() -> ModelInstructionCard {
             capability(
                 "chatStreaming",
                 "Chat streaming",
-                "hidden",
-                "Current print mode returns final plain text only.",
+                "supported",
+                "Antigravity 1.1.8+ emits init, step_update, and result NDJSON with text deltas and usage.",
             ),
             capability(
                 "fileWrites",
                 "File writes",
-                "hostRequired",
-                "ShellX must inspect filesystem/git changes because stdout does not expose structured edits.",
+                "supported",
+                "File-changing native tools are normalized from Antigravity tool_info events; verify final Git/filesystem state before completion.",
             ),
             capability(
                 "terminalCommands",
                 "Terminal commands",
-                "hidden",
-                "Current print mode does not expose native command events.",
+                "supported",
+                "Native command tool_info events are normalized into ShellX command activity.",
             ),
             capability(
                 "mcpToolCalls",
                 "MCP tool calls",
                 "unknown",
-                "No structured MCP stream is wired for agy --print yet.",
+                "Antigravity discovers workspace MCP schemas, but 1.1.8 through 1.1.10 print-mode call canaries never produced a real MCP tools/call; ShellX host MCP stays disabled.",
             ),
             capability(
                 "permissionPrompts",
@@ -534,7 +534,7 @@ fn antigravity_cli_card() -> ModelInstructionCard {
         },
         agent_instructions: vec![
             "Use only when the user explicitly asks for Antigravity or approves it as a handoff agent.".to_string(),
-            "Because native stream detail is limited, verify file and command effects through ShellX host observations.".to_string(),
+            "Prefer Antigravity native file, command, browser, search, image, and subagent tools; return to ShellX for host-scoped Vault, evidence, or cross-provider handoff work.".to_string(),
             "If Antigravity is unavailable, report the failed preflight and ask before using another coding agent.".to_string(),
         ],
         receipt_kinds: vec![

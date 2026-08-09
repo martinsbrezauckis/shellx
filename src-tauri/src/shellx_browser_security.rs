@@ -16,6 +16,7 @@ const BROWSER_PRIVATE_NETWORK_RESOLVE_TIMEOUT_MS: u64 = 1_500;
 pub(crate) fn validate_browser_navigation_target(
     raw: &str,
     expected_domains: &[String],
+    blocked_domains: &[String],
     profile_id: &str,
     task_bound: bool,
 ) -> Result<String, String> {
@@ -38,8 +39,21 @@ pub(crate) fn validate_browser_navigation_target(
     let Some(host) = parsed.host_str() else {
         return Err("Browser navigation URL requires a host".to_string());
     };
+    if browser_host_matches_blocked_domains(host, blocked_domains) {
+        return Err(format!(
+            "Browser navigation target '{}' is blocked by blockedDomains policy",
+            host
+        ));
+    }
+    let matches_expected = browser_host_matches_expected_domains(host, expected_domains);
+    if task_bound && !expected_domains.is_empty() && !matches_expected {
+        return Err(format!(
+            "Browser navigation target '{}' is outside expectedDomains scope",
+            host
+        ));
+    }
     if browser_url_uses_private_network(&parsed) {
-        let explicit_scope = browser_host_matches_expected_domains(host, expected_domains);
+        let explicit_scope = matches_expected;
         let manual_personal_tab = !task_bound && profile_id == "personal";
         if !explicit_scope && !manual_personal_tab {
             return Err(format!(
@@ -152,7 +166,10 @@ pub(crate) fn browser_engine_load_matches_pending_redirect(
         return false;
     };
     if expected_host == actual_host {
-        return true;
+        // A different loopback port is a different origin and, in the native
+        // engine, can be a late callback from the previously assigned page.
+        // Ordinary same-host redirects retain their port (or default port).
+        return expected_url.port_or_known_default() == actual_url.port_or_known_default();
     }
     let Some(active_task_id) = state.active_task_id.as_deref() else {
         return false;
@@ -202,6 +219,17 @@ pub(crate) fn browser_host_matches_expected_domains(
             .strip_prefix("*.")
             .map(|suffix| host.ends_with(&format!(".{}", suffix)) || host == suffix)
             .unwrap_or(false)
+    })
+}
+
+pub(crate) fn browser_host_matches_blocked_domains(host: &str, blocked_domains: &[String]) -> bool {
+    let host = normalize_host_for_policy(host);
+    blocked_domains.iter().any(|candidate| {
+        let Some(blocked) = normalize_expected_domain(candidate) else {
+            return false;
+        };
+        let suffix = blocked.strip_prefix("*.").unwrap_or(&blocked);
+        host == suffix || host.ends_with(&format!(".{suffix}"))
     })
 }
 
@@ -552,4 +580,30 @@ pub(crate) fn insecure_credential_denial_for_taskless_tab(
         step_summary: None,
         receipt,
     })
+}
+
+#[cfg(test)]
+mod domain_policy_tests {
+    use super::*;
+
+    #[test]
+    fn blocked_bare_domains_cover_subdomains_while_expected_domains_remain_exact() {
+        let policy = vec!["evil.example".to_string()];
+        assert!(browser_host_matches_blocked_domains(
+            "evil.example",
+            &policy
+        ));
+        assert!(browser_host_matches_blocked_domains(
+            "login.evil.example",
+            &policy
+        ));
+        assert!(!browser_host_matches_expected_domains(
+            "login.evil.example",
+            &policy
+        ));
+        assert!(browser_host_matches_expected_domains(
+            "login.evil.example",
+            &["*.evil.example".to_string()]
+        ));
+    }
 }

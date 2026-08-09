@@ -1,7 +1,7 @@
 //! Local tree scanner: walks the sync root and produces the "local"
 //! side of the three-way merge as a list of [`FileEntry`].
 //!
-//! Rules:
+//! Scanner rules:
 //! - Cache hit requires size AND mtime_ns to match — then the chunk list
 //!   is reused without reading the file. Any mismatch → full rehash.
 //!   mtime is never used to decide "content changed" directly.
@@ -352,7 +352,7 @@ mod tests {
         let (m, _) = Keyfile::create(
             "t",
             vault_core::keys::KdfParams {
-                m_cost_kib: 8192,
+                m_cost_kib: 19 * 1024,
                 t_cost: 1,
                 p_cost: 1,
             },

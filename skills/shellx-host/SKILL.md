@@ -1,65 +1,43 @@
 ---
 name: shellx-host
 description: >
-  shellX host manifest. Read this at session start when running inside shellX.
-  Defines host surfaces beyond a plain grok CLI: optional PTY terminals, vault,
-  native ShellX Browser, host MCP tools, debug API, per-tab sessions, `/build`
-  orchestration, and the UI
-  surfaces that render plan files, media, diffs, and live terminals.
+  ShellX host-session manifest. Use only when the current prompt or runtime
+  metadata positively identifies this session as running inside ShellX, when
+  ShellX host tools are advertised, or when the user explicitly asks about
+  ShellX host APIs or surfaces. Do not use merely because this skill is
+  installed, a project mentions ShellX, or a task involves SSH, macOS,
+  Windows, host transfers, file copies, images, or media.
 metadata:
-  short-description: "shellX host capabilities — vault, Browser, MCP, debug API, /build, optional PTY"
+  short-description: "ShellX-only host capabilities — vault, Browser, MCP, debug API, /build"
 ---
 
-# You are running inside shellX
+# ShellX host session
+
+## Activation precondition
+
+Use this skill only after positive evidence that the current session is hosted
+inside ShellX. Valid evidence is explicit ShellX ACP/session metadata in the
+current prompt or runtime, advertised `shellx-host-http__*` or
+`grok-shell-host__*` host tools, or an explicit user request about ShellX host
+APIs or surfaces. Global skill availability, a ShellX repository or product
+name, WSL/Windows context, SSH access, or an ordinary cross-host task is not
+evidence. If this precondition is absent, stop using this skill and continue
+with the normal agent tools.
 
 shellX is a Tauri 2 desktop application hosting this grok session over ACP
 stdio. Assume more than a plain CLI, but only use host surfaces when they
 help.
 
-## 1. ACP terminals (optional)
+## 1. ACP terminals are unavailable
 
-Production shellX currently advertises `clientCapabilities.terminal: false`
-because current grok-build builds may create terminals without polling their
-output. Do not call `terminal/*` unless initialize explicitly says terminal is
-enabled.
+ShellX 0.3.5 always advertises `clientCapabilities.terminal: false` and
+unconditionally rejects provider-originated `terminal/*` ACP requests with
+JSON-RPC `-32601`. Do not retry those calls. Use the provider's native tools
+or the ShellX `Agent` host tool for supervised work instead.
 
-When enabled, `terminal/create | output | wait_for_exit | kill | release`
-is routed through shellX's `portable-pty`-backed TerminalRegistry, not a
-wrapped `bash -c`.
-
-- Full ANSI / 24-bit color, scrollback, mouse mode, bracketed paste —
-  TUIs like `vim`, `htop`, `tmux` render properly.
-- Per-terminal ring buffer (default 1 MiB, override via `outputByteLimit`).
-  `terminal/output` is non-destructive.
-- `terminal/kill` keeps the `terminalId` valid (poll output, learn exit
-  signal); `terminal/release` invalidates it.
-- Platform: ConPTY on Windows, openpty on Linux.
-- WSL bridge: when the tab's transport is WSL, terminals spawn via
-  `wsl.exe -d <distro> --cd <linux_cwd> -e bash -lic <command>` with
-  automatic Linux ↔ UNC path translation.
-- SSH transport: terminals execute on the remote host via the
-  reverse-tunneled MCP channel. Same API surface, same JSON shape.
-- The user sees every terminal you create — `terminal/create` emits a
-  `{type:"terminal", terminalId}` content block that renders as a live
-  xterm.js view in chat.
-
-When terminals are enabled, use a terminal instead of a native one-shot for:
-- Terminal for anything interactive (TUIs, prompts, password entry).
-- Terminal for anything the user might want to watch live (build,
-  tests, long compiles).
-- One-shots where intermediate state does not matter should use the available
-  non-interactive file/process/MCP tools instead.
-
-Autonomy gating on `terminal/create` when the surface is enabled:
-- `plan` / `acceptEdits` modes → JSON-RPC error -32001
-  "permission denied: autonomy mode disallows shell execution".
-  Don't retry; reason about the task without spawning.
-- `default` (Confirm) → a `permission-request` event fires; the spawn
-  blocks synchronously until the user resolves. Prefer narrow,
-  reversible commands here.
-- `bypassPermissions` (Auto) → spawn is silent; logged for audit.
-  Treat this as Full Auto: the user has selected a high-trust mode for the
-  current project/environment, not a hidden permission prompt.
+The interactive Terminal panel visible to the user is a separate,
+operator-owned `portable-pty` surface. Its existence does not enable ACP
+terminal access for an agent.
 
 ## 2. Vault — mediated secrets and grants
 
@@ -100,6 +78,10 @@ may store it as a session artifact instead of showing it clearly in chat.
   Anything you pass to `secret_set` has already transited the agent context.
 - `secret_delete { key }` → idempotent (returns `existed: false` when
   the key wasn't present).
+- `vault_generate { origin, itemId, length?, includeUpper?, includeDigits?, includeSymbols? }`
+  → permission-gated, create-only generation inside Vault. The password is
+  stored without entering the agent result; an existing item is refused and
+  never overwritten.
 
 Never ask `secret_get` for plaintext. Plan from Vault names/descriptions
 only, ask for a grant when needed, and let ShellX mediate fill/injection
@@ -129,9 +111,20 @@ atomic large or hot writes, binary/base64 reads or writes, Windows
 parent-host paths from WSL/SSH sessions, explicit host permission/audit,
 `fs_watch`, and copy/delete helpers. For WSL/SSH `/home/...` paths, use
 native Grok file tools; host `fs_*` rejects POSIX paths by design.
+When a parent-host text read is needed, discover `fs_read` and route it through
+`host_read`. It returns a compact 16 KiB page by default with
+`next_offset_bytes` and `approx_tokens`; continue from that exact offset only
+when the task needs more of the document. Keep `max_bytes` small for planning
+and never request a whole large document merely to find one section.
 
 Direct status/evidence tool map:
 - `shellx_health` — debug API liveness.
+- `browser_check { taskId?, browserTabId?, timeoutMs? }` — bounded UI-silent
+  Browser liveness/settlement check; it never creates a task, opens/focuses
+  Browser, mounts an engine, navigates, observes DOM, or emits a receipt.
+- `browser_rendered_check { url, expectText?, titleIncludes?, selector? }` —
+  bounded incognito JavaScript-rendered check with redacted evidence and no
+  visible Browser, task/tab, personal cookies, receipt, or persisted profile.
 - `session_tooling` — Tools/Grok-environment health rows for the tab.
 - `grok_environment` — Grok version, MCP health, skills, trust, trace.
 - `event_log` — recent shellX event frames for audit evidence.
@@ -146,89 +139,178 @@ ShellX includes a native, ShellX-owned Browser window and runtime. Use it for
 web tasks instead of asking the user to paste credentials, cookies, page text,
 or screenshots into chat.
 
+For check-only work, use `browser_read action=check` for current Browser state,
+`browser_read action=renderedCheck` for public/incognito JavaScript-rendered text, title, or
+selector evidence, and `net_fetch` for plain HTTP. Use the visible Browser flow
+below when work needs cookies, authentication, interaction, approvals, or human
+cowork. The hidden rendered check is deliberately non-interactive and
+non-sessioned; page-load JavaScript can still make ordinary web requests.
+
 Host MCP Browser flow:
 
-1. `browser_tabs` or `browser_state` — find the active Browser tab, profile,
-   trust state, locks, and current URL.
-2. `browser_navigate { url, browserTabId? }` — open a URL in the native Browser.
+1. `browser_read action=tabs` or `browser_read action=state` — find the active Browser tab, profile,
+   trust state, locks, and current URL. `browser_state` is a bounded summary by
+   default. Pass `include` only for the detail needed now; prior observations,
+   receipts, network rows, history, and logs are opt-in slices.
+2. `browser_act { action: "navigate", url, browserTabId? }` — open a URL in the native Browser.
    If you omit `browserTabId` and `taskId`, ShellX auto-starts or reuses an
-   `agent-work` Browser task. It does not use the user's personal tabs unless
-   the user explicitly delegates one and you pass the task context.
-3. `browser_observe { browserTabId? }` — get refs, locator suggestions,
-   actionability metadata, and safe page evidence. MCP observe output is compact
-   by default on heavy pages; use `maxRefs`, `maxFormFields`,
-   `maxAccessibilityNodes`, or `includePageText` when you need more, and use
-   `browser_extract`/`browser_trace_open` instead of dumping full observation
+   MCP-session-bound `task-disposable` Browser task. It does not use the user's
+   personal tabs unless the user explicitly delegates one and you pass the task
+   context. Pass an explicit `taskId` when deliberately joining a human-agent
+   cowork task; another MCP session cannot implicitly reuse your bound task.
+3. `browser_read { action: "observe", browserTabId? }` — get refs, locator suggestions,
+   actionability metadata, stable fingerprints, grouped form intent
+   (`formFieldGroups`), and safe page evidence. Unchanged controls keep the same
+   deterministic ref across observations. Repeated observations include a
+   bounded delta; when its compact summary reports `changed=false`, avoid
+   re-planning the unchanged page. Otherwise use `refDelta` and `changeKinds`
+   to focus the next step. MCP observe output has a 3,000-byte serialized
+   structured-response budget by default and reports `mcpSerializedBytes` plus
+   `mcpApproxTokens`; use
+   `maxRefs`, `maxFormFields`,
+   `maxAccessibilityNodes`, `includePageText`, or an explicit
+   `maxPayloadBytes` when you need more. `fullObservation=true` is unbudgeted.
+   Use
+   `refId` for controls observed inside same-origin frames or open shadow roots;
+   their displayed selector is local to that DOM scope. `domSummary` reports
+   same-origin frame, cross-origin frame, open-shadow-root, and truncation
+   counts. Cross-origin frames are never traversed. Use
+   `browser_read action=extract`/`browser_act action=traceOpen` instead of dumping full observation
    JSON into files.
    API-key/token pages may expose redacted refs such as `secret-1` with action
    `capturePageSecretToVault`; pass those refs directly to
-   `browser_capture_secret_to_vault` with a durable `secretRef` instead of using
+   `browser_act action=captureSecretToVault` with a durable `secretRef` instead of using
    clipboard reads, raw reveal, or hand-built selectors.
-4. `browser_click_ref` / `browser_fill_ref` / `browser_wait_for` — act on refs.
-   Use tab lock fields when a tab is locked for an agent run. If a visible ref
-   click reports applied but a Google-style menu/page state does not change,
-   retry the same valid ref with `force=true` to dispatch native pointer input.
+4. `browser_act action=clickRef` / `browser_act action=fillRef` /
+   `browser_read action=waitFor` — act on refs returned by observe; click/fill
+   may also use a precise selector when it comes from a fixture, saved workflow,
+   or prior observation. Use tab lock fields when a tab is locked for an agent
+   run. If a visible ref click reports applied but a Google-style menu/page
+   state does not change, retry the same valid ref with `force=true` to dispatch
+   native pointer input. Host MCP may recover stale click refs with a strict
+   `stepSummary.locatorCandidates` selector, or retry automatically only when a
+   normal click fails solely on `receivesEvents`; inspect `mcpRecovery` in the
+   result when present.
+   If an action returns `staleRef` or failed check `fingerprint`, ShellX did not
+   act because the selector now identifies a changed element. Re-observe and use
+   the replacement ref; do not force-click or locator-recover across that check.
+   ShellX automatically gives DOM targets a short bounded wait to remain still
+   across multiple geometry samples before clicking or filling. If `stable`
+   still fails, treat the page as actively re-rendering and wait for its state
+   transition instead of forcing the action; force never bypasses stability.
    For split buttons/dropdowns where the whole-button ref still does not change
-   state, use `browser_screenshot fullPage=true` and coordinate-click the visible
+   state, use `browser_act action=screenshot fullPage=true` and coordinate-click the visible
    arrow/subtarget.
    If a real rich
    editor, canvas surface, or visual-only app overlay has no usable ref, take a
-   `browser_screenshot` with `fullPage=true` and use the returned `pageSize` and
+   `browser_act action=screenshot` with `fullPage=true` and use the returned `pageSize` and
    `cssScale` to convert image pixels into viewport CSS coordinates before
-   calling `browser_click_at` / `browser_type_text`. Re-capture after Browser
+   calling `browser_act action=clickAt` / `browser_act action=typeText`. Re-capture after Browser
    resize/minimize/restore; scroll off-screen full-page targets into the visible
    viewport before coordinate-clicking. Prefer refs for normal
    controls; never use coordinate typing to bypass Vault-mediated credential
    fills.
-5. If navigation returns `blockedBeforeUnload`, read the `dialogId` from the
-   response message or receipt and use `browser_resolve_dialog` with the owning
+5. `browser_act action=runSteps` — run a short ordered batch of generic Browser action steps,
+   such as `navigate -> waitFor -> observe -> clickRef -> scroll -> select -> findText -> extractTable -> verify`, when
+   the task is already clear and batching will reduce MCP round trips. This is
+   not a site-specific script runner: each step goes through the same Browser
+   action gates as the single-action tools, and Vault fills, secret capture,
+   wallet/email grants, approvals, dialog resolution, coordinate-only actions,
+   uploads, and downloads stay as explicit separate tools. Navigate/history/
+   reload steps wait for the task engine to settle before the next native Browser
+   action runs. `findText`
+   batch steps may use `query`; Host MCP maps it to the Browser action `value`
+   field. `continueOnError` is flow control only: later steps may run, but any
+   failure keeps aggregate `ok=false` / `isError=true`; inspect
+   `stepsSucceeded`, `stepsFailed`, `continuedAfterFailure`, and
+   `failureSummary`, while `stoppedAt` means execution ended early. If Host MCP
+   recovers a click inside the batch, the step row includes structured
+   `mcpRecovery` evidence.
+6. If navigation returns `blockedBeforeUnload`, read the `dialogId` from the
+   response message or receipt and use `browser_act action=resolveDialog` with the owning
    `taskId` to accept or dismiss only task-owned beforeunload prompts.
    Personal/delegated user-tab prompts still require ShellX operator UI.
-6. If the page itself reports broken app resources and asks to clear
-   application data, use `browser_clear_site_data` on that current origin before
+7. If the page itself reports broken app resources and asks to clear
+   application data, use `browser_act action=clearSiteData` on that current origin before
    retrying. It clears browser cache plus non-cookie app storage and preserves
    sign-in where the site allows it. If the page still asks to clear cookies,
    stop and request user approval; do not reset sign-in state silently.
-7. `browser_workflows` / `browser_workflow_save` / `browser_workflow_replay` —
+8. `browser_read action=workflows` / `browser_act action=workflowSave` /
+   `browser_act action=workflowReplay` —
    before repeating a known site workflow, search saved Agent workflow bookmarks
    by taxonomy such as `siteKey=google.com taskType=get target=api-key`,
    `surface=drive`, or `secretKind=apiToken`. Rehearse with dry-run first,
-   inspect planned/skipped steps and contract/health/drift metadata, and only
-   use `apply=true` when the user/task contract allows replaying the saved
-   route. Apply mode executes recorded navigation/click/wait/select/press/
-   verify fast-track steps, then you must observe and continue live for redacted
-   inputs, Vault fills/captures, or page drift. After a successful repeated
-   user-requested task, use `browser_workflow_save` to export the recipe and
-   store a reusable fast track. If no workflow matches, continue with live
-   `browser_navigate` and `browser_observe`.
-8. `browser_extract` / `browser_save_page` / `browser_verify` /
-   `browser_screenshot` / `browser_downloads` / `browser_trace_open` — collect
-   evidence, save page text/markdown to explicit `destinationDir`, the Browser
-   default download folder, or OS Downloads with a returned `finalPath`, list
-   completed transfer paths, capture full-page screenshots, and export redacted
-   traces.
+   inspect `stepResults`, `decisionPoints`, planned/skipped steps, and
+   contract/health/drift metadata, and only use `apply=true` when the user/task
+   contract allows replaying the saved route. Apply mode executes recorded
+   navigation/click/wait/select/press/verify fast-track steps, then you must
+   observe and continue live for redacted inputs, redacted text-only wait/search
+   points, Vault fills/captures, or page drift. If a replay step reports
+   `redactedTextRequiresFreshObservation`, observe the current page and continue
+   with current selectors or mediated Vault/user bindings instead of asking for
+   the raw text. After a successful repeated user-requested task, use
+   `browser_act action=workflowSave` to export the recipe and store a reusable fast track.
+   If no workflow matches, continue with live navigate and observe actions.
+9. `browser_read action=extract` / `browser_act action=savePage` /
+   `browser_read action=verify` / `browser_act action=screenshot` /
+   `browser_read action=downloads` / `browser_act action=traceOpen` — collect
+   evidence, extract page text/markdown/table data (`format: table` may include
+   a selector), save page text/markdown to explicit `destinationDir`, the
+   Browser default download folder, or OS Downloads with a returned `finalPath`,
+   list completed transfer paths, capture full-page screenshots, and export
+   redacted traces.
 
-Do not write raw `browser_state` or `browser_observe` JSON dumps into
+For repeatable Browser evidence, call
+`browser_act action=flightRecorderExport` after each baseline/candidate attempt
+and retain only its returned `attemptId`, private path, byte count, and SHA-256.
+Use a fresh caller-owned Browser task for every baseline or candidate attempt;
+one live task cannot populate multiple comparison cohorts. After collecting
+the exact source-bound attempt identities, call
+`browser_act action=evaluationWrite` with a fixed `evaluatedAtMs` and declared
+outcome metrics. ShellX verifies every artifact under private Flight Recorder
+storage, requires the artifact suite/group identity to match, writes a
+deterministic bounded report, and returns an error result
+when evidence is missing/incomplete or the candidate is unsafe. Use
+`browser_read action=evidence` to list only the current ShellX session's recent
+recorder/evaluation receipts. These artifacts are not a route for raw Browser
+state or secret values into a project folder.
+
+Agents running from the ShellX source package can use its Browser CLI fallback.
+Use `pnpm shellx-browser run-steps --steps-json ...` for short generic Browser
+batches; it starts an `agent-work` task by default so it does not act on the
+operator's active personal tab. Pass `--task`/`--tab` for an explicit target, or
+`--use-active-tab` only for deliberate manual active-tab work. Direct fallbacks
+for visual-only controls or current-origin app-cache recovery are:
+`pnpm shellx-browser click-at 128 240 --task <taskId>`,
+`pnpm shellx-browser type-text 128 240 "hello" --task <taskId>`, and
+`pnpm shellx-browser clear-site-data --task <taskId>`. `pnpm shellx-browser
+workflow-replay ...` returns a compact `summary` beside the raw `replay`;
+inspect the summary counts, skipped reasons, and decision-point count before
+continuing live.
+
+Do not write raw Browser state or observation JSON dumps into
 the current working directory, Downloads, or other user folders as task evidence.
-Use `browser_trace_open` for bounded redacted diagnostics, and use
-`browser_save_page` only when the user explicitly wants page content saved.
+Use `browser_act action=traceOpen` for bounded redacted diagnostics, and use
+`browser_act action=savePage` only when the user explicitly wants page content saved.
 
 Vault-backed Browser actions:
 
-- `browser_fill_from_vault` fills a field from an approved Vault grant without
+- `browser_act action=fillFromVault` fills a field from an approved Vault grant without
   returning the secret to the agent.
-- `browser_fill_profile_card` fills one approved profile-card field.
-- `browser_capture_secret_to_vault` stores a generated password, API key, or
+- `browser_act action=fillProfileCard` fills one approved profile-card field.
+- `browser_act action=captureSecretToVault` stores a generated password, API key, or
   other page-visible secret directly into Vault and returns only a receipt. Use
-  redacted `secret-*` refs from `browser_observe` whenever they are available.
+  redacted `secret-*` refs from observe whenever they are available.
   If a service only shows masked keys, prefer its Copy control or a visible leaf
   value selector. Avoid re-observing revealed keys unless needed; ShellX redacts
   known credential patterns, but capture itself should be host-mediated and
   write-only.
-- `browser_read_email_code` reads an approved short verification code from an
+- `browser_act action=readEmailCode` reads an approved short verification code from an
   email resource.
-- `browser_use_agent_wallet` prepares an approved agent-wallet checkout. It is
-  for ShellX agent wallets only, not user payment cards.
+- `browser_act action=useAgentWallet` is reserved for ShellX agent wallets, not
+  user payment cards. In 0.3.5 it returns
+  `browser_agent_wallet_checkout_unavailable` until a real provider transaction
+  bridge can prove the checkout; approval alone is not success.
 
 Credential/session use, payments, final submit/publish, destructive actions,
 and insecure-page credential entry are Browser/Vault approval-gated. Agents may
@@ -285,9 +367,11 @@ explicitly asks about tabs.
 
 HTTP+WS server bound to loopback. Read the actual bound port from
 `~/.shellx/debug-api.port` (preferred is 5757; falls back to higher
-ports if held). Bearer token at `~/.shellx/shellxagent.token` (mode
-0600). CORS allowlist: `tauri://localhost`, `http://tauri.localhost`,
-`https://tauri.localhost`, `http://localhost:*`, `http://127.0.0.1:*`.
+ports if held). The bearer token at `~/.shellx/shellxagent.token` uses mode
+0600 on macOS/Linux and inherits the user-private profile ACL on Windows.
+CORS allows exactly `tauri://localhost`, `http://tauri.localhost`,
+`https://tauri.localhost`, `http://localhost:5173`, and
+`http://127.0.0.1:5173`; other localhost ports are not allowed.
 
 Current high-use endpoints:
 - `GET /shellxagent.json` — local discovery descriptor for the bound Debug API,
@@ -299,8 +383,13 @@ Current high-use endpoints:
 - `GET /sessions/history`, `GET /sessions/history/:id` — recent saved
   sessions and raw JSONL for one saved session.
 - `POST /connect`, `POST /prompt`, `POST /abort` — drive a session
-  from outside. Mutating endpoints require both `?tabId=` query AND
-  `tabId` in the JSON body.
+  from outside. Mutating endpoints accept the tab selector in either the
+  `?tabId=` query or the JSON body's `tabId`; when both are present, the query
+  value takes precedence. One connect may start per tab; a parallel connect
+  fails with `409 connect_in_progress`. Aborting a provider handshake returns
+  `202 connectCancellationRequested` immediately, the original connect returns
+  `409 connect_cancelled` after cleanup, and callers must wait for that cleanup
+  before reconnecting.
 - `WS /events` — stream every ACP frame in real time.
 - `GET /events/recent?tabId=…&limit=…` — per-tab event ring.
 - `GET /state/header`, `GET /state/footer` — UI state mirrors.
@@ -317,12 +406,119 @@ Current high-use endpoints:
   `POST /connections/:id/test`.
 - `GET /vault/status`, `GET /vault/keys`, `POST /vault/get`,
   `POST /vault/set`, `POST /vault/delete`.
-- `GET /browser/state`, `GET /browser/tabs`, `POST /browser/action`,
+- `GET /browser/check`, `GET /browser/summary`, `GET /browser/state`, `GET /browser/settle`,
+  `GET /browser/tabs`, `GET /browser/history`, `GET /browser/requests`,
+  `POST /browser/action`,
   `POST /browser/recipes/export`, `POST /browser/recipes/replay` — native
   Browser state, actions, and workflow recipe surfaces.
 - `POST /tools/fs_watch`, `POST /tools/process_list`,
   `POST /tools/process_signal`, `POST /tools/process_stats`,
   `POST /tools/process_attach_stdout`, `POST /tools/secret_get`.
+
+### HTTP Debug API Browser flow for outside drivers
+
+The MCP tool names in the Browser section are for agents running inside
+ShellX. Outside drivers should prefer the ShellX-owned Browser CLI, which
+performs private loopback discovery and authentication without placing bearer
+values in shell history, arguments, or logs. Custom clients still use the raw
+`/browser/*` routes and `Authorization: Bearer <token>`, but must obtain that
+credential through a private process-local integration.
+
+Minimal outside-driver loop:
+
+```bash
+pnpm shellx-browser tabs
+pnpm shellx-browser snapshot
+pnpm shellx-browser run-steps --steps-json \
+  '[{"action":"navigate","url":"https://example.com"},{"action":"observe"}]'
+```
+
+The routed `browser_read`/`browser_act` tools call the same operations below.
+These legacy names document exact compatibility mappings and can be found with
+targeted `search_tool` queries:
+
+- `browser_navigate -> POST /browser/action` with `action: "navigate"` and `url`.
+- `browser_observe -> POST /browser/action` with `action: "observe"`.
+- `browser_click_ref -> POST /browser/action` with `action: "clickRef"`, `refId` or `selector`, and optional `force`.
+- `browser_click_at -> POST /browser/action` with `action: "clickAt"`, `x`, and `y`.
+- `browser_fill_ref -> POST /browser/action` with `action: "fillRef"`, `refId` or `selector`, and `value`.
+- `browser_type_text -> POST /browser/action` with `action: "typeText"`, `x`, `y`, and `value`.
+- `browser_clear_site_data -> POST /browser/action` with `action: "clearSiteData"`.
+- `browser_wait_for -> POST /browser/action` with `action: "waitFor"`, `value` or `selector`, and optional `timeoutMs`.
+- `browser_extract -> POST /browser/action` with `action: "extractText"`, `action: "extractMarkdown"`, or `action: "extractTable"`.
+- `browser_verify -> POST /browser/action` with `action: "verify"`, `key`, and expected `value` or selector/table/schema metadata.
+- `browser_screenshot -> POST /browser/action` with `action: "captureScreenshot"` and optional `fullPage: true`.
+- `browser_fill_from_vault -> POST /browser/action` with `action: "fillFromVaultGrant"`, `grantId`, `secretRef`, and `refId` or `selector`.
+- `browser_fill_profile_card -> POST /browser/action` with `action: "fillProfileCardGrant"`, `grantId`, `resourceRef`, `key`, and `refId` or `selector`.
+- `browser_capture_secret_to_vault -> POST /browser/action` with `action: "capturePageSecretToVault"`, `secretRef`, and `refId` or `selector`. Directly visible field/text values are deposited without being returned; copy-only controls stop for an explicit operator clipboard transfer, and ShellX neither clicks them nor reads the host clipboard.
+- `browser_read_email_code -> POST /browser/action` with `action: "readEmailCodeGrant"`, `grantId`, and `resourceRef`.
+- `browser_use_agent_wallet -> POST /browser/action` with `action: "useAgentWalletGrant"`, `grantId`, and `resourceRef`; currently returns a truthful unavailable result until provider transaction proof is wired.
+- `browser_downloads -> GET /browser/downloads`.
+- `browser_resolve_dialog -> POST /browser/dialogs/resolve` with `dialogId`, `taskId`, and `action: "accept"` or `"dismiss"`.
+- `browser_trace_open -> POST /browser/trace/export`.
+- `browser_workflows -> GET /browser/bookmarks` and filter rows with `agentWorkflow`.
+- `browser_workflow_save -> POST /browser/recipes/export`, then `POST /browser/bookmarks` with `agentWorkflow`.
+- `browser_workflow_replay -> POST /browser/recipes/replay`.
+- `browser_run_steps -> repeated POST /browser/action` calls using the same task/tab context, or the bundled `pnpm shellx-browser run-steps` helper when shell access is available.
+
+Raw HTTP route inventory for ShellX Browser:
+
+- Reads: `GET /browser/check`, `GET /browser/summary`, `GET /browser/state`, `GET /browser/settle`,
+  `GET /browser/tabs`, `GET /browser/profiles`, `GET /browser/tasks`,
+  `GET /browser/history`, `GET /browser/requests`, `GET /browser/bookmarks`,
+  `GET /browser/receipts`,
+  `GET /browser/privacy`, `GET /browser/personal-lock`,
+  `GET /browser/engine-pool`, `GET /browser/shields`,
+  `GET /browser/developer-mode`, `GET /browser/downloads`,
+  `GET /browser/uploads`, `GET /browser/logs`,
+  `GET /browser/storage-state`, `GET /browser/dialogs`,
+  `GET /browser/permissions`, `GET /browser/popups`,
+  `GET /browser/network`, and `GET /browser/robots`.
+- Tab/task/actions: `POST /browser/open`, `POST /browser/tabs/open`,
+  `POST /browser/tabs/focus`, `POST /browser/tabs/reorder`,
+  `POST /browser/tabs/close`, `POST /browser/tabs/lock`,
+  `POST /browser/tabs/heartbeat`, `POST /browser/tabs/unlock`,
+  `POST /browser/task/start`, `POST /browser/task/autonomy`,
+  `POST /browser/task/control`, `POST /browser/task/finish`, and
+  `POST /browser/action`. Task policy is fixed to `assistedAutonomous`;
+  `/browser/task/autonomy` remains only as a stable
+  `browser_task_autonomy_policy_fixed` denial path.
+- Bookmarks/settings: `POST /browser/bookmarks`,
+  `POST /browser/bookmarks/reorder`, `DELETE /browser/bookmarks/:bookmark_id`,
+  `POST /browser/logs`, `POST /browser/engine-pool`,
+  `POST /browser/privacy`, `POST /browser/personal-lock`,
+  `POST /browser/shields`, `POST /browser/shields/site`,
+  `DELETE /browser/shields/site/:host`, `POST /browser/developer-mode`, and
+  `POST /browser/developer-mode/approval`. Privacy, Personal Lock, Shields,
+  and Developer Mode writes are operator-only denial paths over Debug API.
+- Artifacts/workflows: `POST /browser/downloads/request`,
+  `POST /browser/downloads/complete`, `POST /browser/uploads/request`,
+  `POST /browser/uploads/complete`, `POST /browser/cdp/execute`,
+  `POST /browser/trace/export`, `POST /browser/har/export`,
+  `POST /browser/performance/export`, `POST /browser/recipes/export`,
+  `POST /browser/recipes/replay`, `POST /browser/robots/schedule`,
+  `POST /browser/robots/run`, `POST /browser/robots/cancel`, and
+  `POST /browser/storage-state/export`.
+  Path-based recipe replay accepts only the exact artifact represented by its
+  in-session `browserRecipeExported` receipt; changed, copied, or unreceipted
+  recipe files fail closed. Inline recipes remain available for direct plans.
+  Robot `run` executes the saved recipe planner or live replay before returning
+  a terminal job. Treat `incomplete` or `failed` as failure requiring receipt
+  inspection; `runAtMs` is queue metadata until a due-job runner invokes `run`.
+- Prompts/session/Vault/report: `POST /browser/dialogs`,
+  `POST /browser/dialogs/resolve`, `POST /browser/permissions`,
+  `POST /browser/permissions/resolve`, `POST /browser/popups`,
+  `POST /browser/session-grants/request`,
+  `POST /browser/session-grants/resolve`,
+  `POST /browser/session-grants/apply`, `POST /browser/vault-deposits`,
+  `POST /browser/vault/fill-receipt`,
+  `POST /browser/vault/generate-receipt` (a fail-closed compatibility denial),
+  and `POST /browser/report`.
+
+Raw HTTP callers still cannot self-approve operator-only actions. Vault grants,
+session grants, permission prompts, unsafe downloads/uploads, Developer Mode,
+privacy/Shields writes, and Personal Browser Lock changes remain mediated by
+the ShellX UI/Tauri operator path.
 
 The user may drive YOU through this API from outside (curl, scripts,
 other agents). Do not assume the preferred port is the bound port.
@@ -497,6 +693,6 @@ task and record the result in the provided Build Mode scratchboard.
 
 ## 8. When this applies
 
-Read this once at session start. It overrides default assumptions
-that you're in a plain terminal — you are inside a host application
-that gives you more, and expects more.
+Apply this manifest only after the activation precondition is satisfied. In a
+confirmed ShellX-hosted session, it overrides plain-terminal assumptions with
+the host surfaces above. Outside ShellX, do not invoke it.

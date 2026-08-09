@@ -48,7 +48,12 @@ export function DownloadSidecar({
   const transfers = [...downloads, ...uploads].slice().reverse();
 
   return (
-    <aside className="shellx-browser-left-sidecar shellx-browser-download-sidecar" data-debug-id="shellx-browser-download-sidecar">
+    <aside
+      id="shellx-browser-download-sidecar"
+      className="shellx-browser-left-sidecar shellx-browser-download-sidecar"
+      data-debug-id="shellx-browser-download-sidecar"
+      aria-labelledby="shellx-browser-downloads-menu"
+    >
       <div className="shellx-browser-download-head">
         <h2>Downloads</h2>
         <button
@@ -68,6 +73,7 @@ export function DownloadSidecar({
             onChange={(event) => onDefaultDownloadFolderChange(event.currentTarget.value)}
             placeholder="Choose a download folder"
             data-debug-id="shellx-browser-download-folder"
+            data-shellx-release-observe="value"
             aria-label="Default download folder"
           />
           <button

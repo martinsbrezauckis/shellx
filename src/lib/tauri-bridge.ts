@@ -9,11 +9,12 @@
 // - src/App.tsx — event.listen subscription wiring
 // - src/components/ConnectionPicker.tsx — connections_list invoke
 // - src/components/VaultPanel.tsx — vault_* invokes (if mounted)
+// - src/components/settings/VaultTab.tsx — Vault workspace invokes
 // - src/components/Header.tsx — set_permission_mode invoke
 //
 // Pattern: check `inTauri` before any invoke / listen call. If
-// false, render the empty-state UI silently — no console-spam errors,
-// no red banners.
+// false, render a deliberate unavailable/empty state — no console-spam
+// errors and no raw IPC failures presented as product errors.
 
 /**
  * Returns true if running inside a Tauri webview (where the JS-side
@@ -28,13 +29,4 @@ export function inTauri(): boolean {
   if (typeof window === "undefined") return false;
   return typeof (window as unknown as { __TAURI_INTERNALS__?: unknown })
     .__TAURI_INTERNALS__ !== "undefined";
-}
-
-/**
- * One-line label describing the runtime environment — shown in dev
- * console logs and the chat "running outside Tauri" warning so you
- * always know which lane you're in.
- */
-export function runtimeLabel(): string {
-  return inTauri() ? "tauri" : "browser";
 }

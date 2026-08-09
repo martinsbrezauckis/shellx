@@ -1,19 +1,16 @@
+use crate::debug_api::{
+    browser_registry, ApiState, BrowserEventListQuery, BrowserLogsQuery, BrowserReceiptsQuery,
+    BrowserStorageStateQuery,
+};
+use crate::debug_api_browser_caller::browser_mcp_caller_id;
+use crate::debug_api_browser_events::{emit_browser_latest, emit_browser_receipt};
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use std::sync::Arc;
-use tokio::time::{sleep, Duration, Instant};
-
-use crate::debug_api::{
-    browser_registry, emit_browser_latest, emit_browser_receipt, ApiState, BrowserEventListQuery,
-    BrowserLogsQuery, BrowserReceiptsQuery, BrowserStorageStateQuery,
-};
-
-const BROWSER_RECIPE_NAVIGATION_SETTLE_TIMEOUT_MS: u64 = 10_000;
 
 pub(crate) fn browser_artifact_routes() -> Router<ApiState> {
     Router::new()
@@ -36,6 +33,12 @@ pub(crate) fn browser_artifact_routes() -> Router<ApiState> {
             post(browser_upload_complete_http),
         )
         .route("/browser/trace/export", post(browser_trace_export_http))
+        .route(
+            "/browser/flight-recorder/export",
+            post(browser_flight_recorder_export_http),
+        )
+        .route("/browser/evidence", get(browser_evidence_get_http))
+        .route("/browser/evaluations", post(browser_evaluation_write_http))
         .route("/browser/cdp/execute", post(browser_cdp_execute_http))
         .route("/browser/har/export", post(browser_har_export_http))
         .route(
@@ -192,14 +195,148 @@ pub(crate) async fn browser_trace_export_http(
     }
 }
 
+pub(crate) async fn browser_flight_recorder_export_http(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Json(body): Json<crate::shellx_browser::BrowserFlightRecorderExportRequest>,
+) -> Response {
+    let registry = match browser_registry(&s) {
+        Ok(registry) => registry,
+        Err(response) => return *response,
+    };
+    let caller_session_id = match required_browser_evidence_caller_id(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return *response,
+    };
+    let result = registry.export_flight_recorder_for_agent_session(body, Some(&caller_session_id));
+    match result {
+        Ok(artifact) => {
+            emit_browser_latest(&s, &registry);
+            Json(artifact).into_response()
+        }
+        Err(error) => {
+            let status = if error
+                .contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED)
+            {
+                StatusCode::FORBIDDEN
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            (
+                status,
+                Json(serde_json::json!({ "ok": false, "error": error })),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub(crate) async fn browser_evidence_get_http(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(q): Query<BrowserReceiptsQuery>,
+) -> Response {
+    let registry = match browser_registry(&s) {
+        Ok(registry) => registry,
+        Err(response) => return *response,
+    };
+    let caller_session_id = match required_browser_evidence_caller_id(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return *response,
+    };
+    Json(registry.browser_evidence_summary(Some(&caller_session_id), q.limit)).into_response()
+}
+
+pub(crate) async fn browser_evaluation_write_http(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Json(body): Json<crate::shellx_browser::BrowserEvaluationReportRequest>,
+) -> Response {
+    let registry = match browser_registry(&s) {
+        Ok(registry) => registry,
+        Err(response) => return *response,
+    };
+    let caller_session_id = match required_browser_evidence_caller_id(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return *response,
+    };
+    let result = registry.write_evaluation_report_for_agent_session(body, Some(&caller_session_id));
+    match result {
+        Ok(artifact) => {
+            emit_browser_latest(&s, &registry);
+            Json(artifact).into_response()
+        }
+        Err(error) => {
+            let status = if error
+                .contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED)
+            {
+                StatusCode::FORBIDDEN
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            (
+                status,
+                Json(serde_json::json!({ "ok": false, "error": error })),
+            )
+                .into_response()
+        }
+    }
+}
+
+fn required_browser_evidence_caller_id(headers: &HeaderMap) -> Result<String, Box<Response>> {
+    if let Some(caller_session_id) = browser_mcp_caller_id(headers) {
+        return Ok(caller_session_id);
+    }
+    let (status, error) =
+        if headers.contains_key(crate::shellx_browser_caller::SHELLX_MCP_CALLER_ID_HEADER) {
+            (StatusCode::BAD_REQUEST, "invalid ShellX MCP caller id")
+        } else {
+            (
+                StatusCode::FORBIDDEN,
+                "ShellX MCP caller id is required for Browser evidence routes",
+            )
+        };
+    Err(Box::new(
+        (
+            status,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+    ))
+}
+
 pub(crate) async fn browser_cdp_execute_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::BrowserCdpExecuteRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    if headers.contains_key(crate::shellx_browser_caller::SHELLX_MCP_CALLER_ID_HEADER)
+        && caller_session_id.is_none()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": "invalid ShellX MCP caller id" })),
+        )
+            .into_response();
+    }
+    if let Err(error) = registry.ensure_agent_owns_cdp_target(&body, caller_session_id.as_deref()) {
+        let status =
+            if error.contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED) {
+                StatusCode::FORBIDDEN
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+        return (
+            status,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response();
+    }
     match crate::shellx_browser::execute_browser_cdp_command(s.app(), &registry, body).await {
         Ok(response) => {
             emit_browser_receipt(&s, &response.receipt);
@@ -278,166 +415,28 @@ pub(crate) async fn browser_recipe_export_http(
 
 pub(crate) async fn browser_recipe_replay_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::BrowserRecipeReplayRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    let mut plan = match crate::shellx_browser_recipes::browser_recipe_replay_plan(&body) {
-        Ok(plan) => plan,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "ok": false, "error": e })),
-            )
-                .into_response();
-        }
-    };
-    let dry_run = body.dry_run.unwrap_or(true);
-    let mut steps_applied = 0usize;
-    if !dry_run {
-        for replay_action in plan.actions.clone() {
-            let action = replay_action.request;
-            let requested_action = action.action.clone();
-            let response = match crate::shellx_browser::try_apply_engine_action(
-                s.app(),
-                &registry,
-                action.clone(),
-            )
-            .await
-            {
-                Ok(Some(response)) => response,
-                Ok(None) => match registry.apply_action(action) {
-                    Ok(response) => response,
-                    Err(_) => {
-                        plan.skipped_steps.push(
-                            crate::shellx_browser::BrowserRecipeReplaySkippedStep {
-                                index: replay_action.index,
-                                action: Some(requested_action),
-                                reason: "actionApplyFailed".to_string(),
-                            },
-                        );
-                        continue;
-                    }
-                },
-                Err(_) => {
-                    plan.skipped_steps.push(
-                        crate::shellx_browser::BrowserRecipeReplaySkippedStep {
-                            index: replay_action.index,
-                            action: Some(requested_action),
-                            reason: "engineApplyFailed".to_string(),
-                        },
-                    );
-                    continue;
-                }
-            };
-            emit_browser_receipt(&s, &response.receipt);
-            if response.ok && response.status == "applied" {
-                steps_applied += 1;
-                if let Err(e) = crate::debug_api::sync_browser_action_navigation_to_engine(
-                    s.app(),
-                    &registry,
-                    &requested_action,
-                    &response,
-                ) {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(serde_json::json!({ "ok": false, "error": e, "response": response })),
-                    )
-                        .into_response();
-                }
-                if requested_action.trim() == "navigate" {
-                    if let Err(e) =
-                        wait_for_recipe_replay_navigation_settle(&registry, &response).await
-                    {
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            Json(serde_json::json!({
-                                "ok": false,
-                                "error": e,
-                                "response": response
-                            })),
-                        )
-                            .into_response();
-                    }
-                }
-            } else {
-                plan.skipped_steps
-                    .push(crate::shellx_browser::BrowserRecipeReplaySkippedStep {
-                        index: replay_action.index,
-                        action: Some(requested_action),
-                        reason: "actionNotApplied".to_string(),
-                    });
-            }
-        }
-    }
-    match registry.replay_recipe_record(body, plan.steps_planned, steps_applied, plan.skipped_steps)
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    match crate::debug_api_browser_recipe_replay::execute_browser_recipe_replay(
+        &s,
+        &registry,
+        caller_session_id.as_deref(),
+        body,
+    )
+    .await
     {
         Ok(response) => {
             emit_browser_receipt(&s, &response.receipt);
             Json(response).into_response()
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+        Err((status, error)) => (status, Json(error)).into_response(),
     }
-}
-
-async fn wait_for_recipe_replay_navigation_settle(
-    registry: &Arc<crate::shellx_browser::ShellxBrowserRegistry>,
-    response: &crate::shellx_browser::BrowserActionResponse,
-) -> Result<(), String> {
-    let deadline =
-        Instant::now() + Duration::from_millis(BROWSER_RECIPE_NAVIGATION_SETTLE_TIMEOUT_MS);
-    loop {
-        if recipe_replay_navigation_is_settled(registry, response)? {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "Browser recipe replay navigation did not settle within {}ms before the next saved step",
-                BROWSER_RECIPE_NAVIGATION_SETTLE_TIMEOUT_MS
-            ));
-        }
-        sleep(Duration::from_millis(75)).await;
-    }
-}
-
-fn recipe_replay_navigation_is_settled(
-    registry: &crate::shellx_browser::ShellxBrowserRegistry,
-    response: &crate::shellx_browser::BrowserActionResponse,
-) -> Result<bool, String> {
-    let state = registry.state();
-    let tab = response
-        .task_id
-        .as_deref()
-        .and_then(|task_id| {
-            state
-                .tabs
-                .iter()
-                .find(|tab| tab.task_id.as_deref() == Some(task_id))
-        })
-        .or_else(|| {
-            state
-                .active_browser_tab_id
-                .as_deref()
-                .and_then(|tab_id| state.tabs.iter().find(|tab| tab.browser_tab_id == tab_id))
-        })
-        .ok_or_else(|| {
-            "Browser recipe replay navigation has no task tab to wait for".to_string()
-        })?;
-    let engine = state
-        .engine_pool
-        .engines
-        .iter()
-        .find(|engine| engine.engine_id == tab.engine_id)
-        .or_else(|| (state.engine.engine_id == tab.engine_id).then_some(&state.engine))
-        .ok_or_else(|| "Browser recipe replay navigation has no engine to wait for".to_string())?;
-    Ok(engine.pending_url.is_none()
-        && !matches!(engine.load_status.as_str(), "navigating" | "loading"))
 }
 
 pub(crate) async fn browser_robots_get_http(
@@ -477,22 +476,78 @@ pub(crate) async fn browser_robot_schedule_http(
 
 pub(crate) async fn browser_robot_run_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::BrowserRobotRunRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    match registry.run_robot(body) {
-        Ok(job) => {
-            emit_browser_receipt(&s, &job.receipt);
-            Json(job).into_response()
+    let (plan, running_job) = match registry.begin_robot_run(body) {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": error })),
+            )
+                .into_response();
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+    };
+    emit_browser_receipt(&s, &running_job.receipt);
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    let replay_request = crate::shellx_browser::BrowserRecipeReplayRequest {
+        task_id: plan.task_id.clone(),
+        browser_tab_id: plan.browser_tab_id.clone(),
+        recipe_path: Some(plan.recipe_path.clone()),
+        dry_run: Some(plan.dry_run),
+        reason: Some(format!("Browser robot {}: {}", plan.job_id, plan.reason)),
+        ..crate::shellx_browser::BrowserRecipeReplayRequest::default()
+    };
+    match crate::debug_api_browser_recipe_replay::execute_browser_recipe_replay(
+        &s,
+        &registry,
+        caller_session_id.as_deref(),
+        replay_request,
+    )
+    .await
+    {
+        Ok(replay) => {
+            emit_browser_receipt(&s, &replay.receipt);
+            match registry.finish_robot_run(&plan.job_id, Some(&replay), None) {
+                Ok(job) => {
+                    emit_browser_receipt(&s, &job.receipt);
+                    Json(job).into_response()
+                }
+                Err(error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "ok": false, "error": error })),
+                )
+                    .into_response(),
+            }
+        }
+        Err((status, error_body)) => {
+            let error = error_body
+                .get("error")
+                .and_then(|value| value.as_str())
+                .unwrap_or("Browser recipe replay failed")
+                .to_string();
+            let failed_job = registry
+                .finish_robot_run(&plan.job_id, None, Some(error.clone()))
+                .ok();
+            if let Some(job) = failed_job.as_ref() {
+                emit_browser_receipt(&s, &job.receipt);
+            }
+            (
+                status,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": error,
+                    "job": failed_job,
+                    "replayError": error_body,
+                })),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -586,22 +641,41 @@ pub(crate) async fn browser_logs_get_http(
 
 pub(crate) async fn browser_logs_post_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::BrowserConsoleLogRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    match registry.record_console_log(body) {
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    if headers.contains_key(crate::shellx_browser_caller::SHELLX_MCP_CALLER_ID_HEADER)
+        && caller_session_id.is_none()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": "invalid ShellX MCP caller id" })),
+        )
+            .into_response();
+    }
+    let result = match caller_session_id.as_deref() {
+        Some(caller_session_id) => registry.record_agent_console_log(body, caller_session_id),
+        None => registry.record_operator_ui_console_log(body),
+    };
+    match result {
         Ok(entry) => {
             emit_browser_latest(&s, &registry);
             Json(entry).into_response()
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+        Err(e) => {
+            let status =
+                if e.contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED) {
+                    StatusCode::FORBIDDEN
+                } else {
+                    StatusCode::BAD_REQUEST
+                };
+            (status, Json(serde_json::json!({ "ok": false, "error": e }))).into_response()
+        }
     }
 }
 
@@ -639,3 +713,7 @@ pub(crate) async fn browser_report_http(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+#[path = "debug_api_browser_artifacts_tests.rs"]
+mod evidence_caller_tests;

@@ -11,7 +11,7 @@
 //! Primary callers: `vault-cli` (all modules), `vault-server` (only the
 //! ID types and path validation — the server never holds keys or plaintext).
 //!
-//! Security invariants enforced here:
+//! Security invariants enforced here (see docs/SECURITY.md for the model):
 //! 1. Chunk IDs are keyed BLAKE3 of *plaintext* — deterministic dedup
 //!    without letting the server dictionary-test content.
 //! 2. Every AEAD call binds a context string (and the chunk ID for chunks)

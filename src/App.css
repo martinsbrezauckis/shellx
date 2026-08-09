@@ -11,7 +11,7 @@
  * (borders, surfaces, type, status colors) translate 1:1.
  *
  * Class naming follows the mockup:
- *   .top / .brand / .workspace / .dial / .tok          → top header bar
+ *   .top / .brand / .workspace / .header-actions / .tok → top header bar
  *   .left / .tabs / .tab / .tree / .gh-strip / .gh-row → left rail
  *   .mid / .session-tabs / .mid-head / .output / .turn → middle pane
  *   .bottom-panel / .btab / .prompt / .attach / .send  → bottom panel
@@ -75,6 +75,131 @@ button .sx-icon {
 .shell-body {
   flex: 1;
   min-height: 0;
+}
+
+.shellx-setup-guide {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 42px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: var(--fg);
+}
+
+.shellx-setup-guide-title,
+.shellx-setup-step,
+.shellx-setup-guide-close {
+  display: inline-flex;
+  align-items: center;
+}
+
+.shellx-setup-guide-title {
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-ui-sm);
+  white-space: nowrap;
+}
+
+.shellx-setup-guide-title span {
+  color: var(--fg-muted);
+  font-size: var(--fs-ui-xs);
+}
+
+.shellx-setup-guide-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  overflow: visible;
+}
+
+.shellx-setup-step {
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: var(--fs-ui-xs);
+  cursor: pointer;
+}
+
+.shellx-setup-step:hover {
+  border-color: var(--ink-3);
+  background: var(--panel-3);
+}
+
+.shellx-setup-step.ready {
+  border-color: color-mix(in srgb, var(--green) 38%, var(--hairline));
+}
+
+.shellx-setup-step.todo {
+  border-color: color-mix(in srgb, var(--orange) 38%, var(--hairline));
+}
+
+.shellx-setup-step span {
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.shellx-setup-step small {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: var(--fs-ui-xs);
+  white-space: nowrap;
+}
+
+.shellx-setup-guide-close {
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.shellx-setup-guide-close:hover {
+  color: var(--fg);
+  border-color: var(--ink-3);
+  background: var(--panel-3);
+}
+
+@media (max-width: 1199px) {
+  .shellx-setup-guide {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .shellx-setup-guide-title {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .shellx-setup-guide-steps {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .shellx-setup-guide-close {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .shellx-setup-guide-steps {
+    grid-template-columns: repeat(5, minmax(160px, 1fr));
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
 }
 /* tabs row sits ABOVE mid+right, NOT over the left rail.
  * Wrapper div .mid-right-wrap is a vertical flex inside the right
@@ -173,37 +298,7 @@ button .sx-icon {
 
 .top-spacer { flex: 1; }
 
-.dial-row { display: flex; align-items: center; gap: var(--space-3); }
-
-.dial {
-  display: inline-flex;
-  align-items: center;
-  font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  border: 1px solid var(--hairline-2);
-  border-radius: 4px;
-  background: var(--surface);
-}
-.dial-opt {
-  padding: 7px 14px;
-  color: var(--ink-3);
-  cursor: pointer;
-  border: none;
-  border-right: 1px solid var(--hairline-2);
-  background: transparent;
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
-}
-.dial-opt:last-child { border-right: none; }
-.dial-opt:hover:not(.active) { color: var(--ink-2); }
-.dial-opt.active {
-  color: var(--bg);
-  background: var(--ink);
-}
+.header-actions { display: flex; align-items: center; gap: var(--space-3); }
 
 .tok {
   display: inline-flex;
@@ -1306,7 +1401,7 @@ button .sx-icon {
 }
 .tool.run .activity span { background: var(--orange); }
 
-/* System / thought / vendor pill rows */
+/* System / thought pill rows */
 .row-pill {
   display: flex;
   align-items: center;
@@ -1325,7 +1420,6 @@ button .sx-icon {
   background: var(--ink-4);
 }
 .row-pill.thought .pi { background: var(--ink-2); }
-.row-pill.vendor .pi { background: var(--orange); }
 .row-pill.system .pi { background: var(--green); }
 .row-pill .label {
   display: inline-flex;
@@ -1362,7 +1456,7 @@ button .sx-icon {
   letter-spacing: 0;
   text-transform: none;
 }
-.thought-body, .vendor-body {
+.thought-body {
   margin-top: var(--space-2);
   padding: var(--space-3) var(--space-4);
   background: var(--surface-2);
@@ -1381,8 +1475,7 @@ button .sx-icon {
 
 /* ─── Permission pill (issue #374) ───────────────────────────────────
  *
- * In-chat permission gate that replaces / augments PermissionModal in
- * Confirm autonomy mode. Two layouts:
+ * Compatibility-only permission gate for defensive provider requests. Two layouts:
  *   .perm-pill-pending   — two-line (header + button row).
  *   .perm-pill-allowed
  *   .perm-pill-denied    — one-line audit chip with terminal-state colour.
@@ -1689,7 +1782,7 @@ button .sx-icon {
   transition: border-color 120ms ease;
   position: relative; /* anchor for .hash-pop autocomplete */
 }
-.prompt-frame:focus-within { border-color: var(--border); }
+.prompt-frame:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent); }
 .prompt-input {
   background: transparent;
   border: none;
@@ -1999,7 +2092,7 @@ button .sx-icon {
   padding: var(--space-3) var(--space-5);
   font-family: var(--mono);
   /* tracked to the Settings font slider via
-   * --fs-mono — see Settings.applyTheme. Was hardcoded 12px. */
+   * --fs-mono — see lib/settings.applyTheme. Was hardcoded 12px. */
   font-size: var(--fs-mono);
   color: var(--ink-2);
 }
@@ -2483,44 +2576,6 @@ button .sx-icon {
   word-break: break-word;
 }
 
-.work-preview-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(0, 0, 0, 0.66);
-}
-
-.work-preview-modal {
-  width: min(1320px, calc(100vw - 40px));
-  height: min(900px, calc(100vh - 40px));
-  min-width: min(760px, calc(100vw - 40px));
-  min-height: min(620px, calc(100vh - 40px));
-  overflow: hidden;
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  background: var(--bg);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
-}
-
-.work-preview-modal-phone {
-  width: min(1320px, calc(100vw - 40px));
-  height: min(900px, calc(100vh - 40px));
-}
-
-.work-preview-modal-tablet {
-  width: min(1320px, calc(100vw - 40px));
-  height: min(900px, calc(100vh - 40px));
-}
-
-.work-preview-modal-desktop {
-  width: min(1320px, calc(100vw - 40px));
-  height: min(900px, calc(100vh - 40px));
-}
-
 .work-preview-stage {
   height: 100%;
   min-height: 0;
@@ -2928,6 +2983,40 @@ button .sx-icon {
   white-space: pre-wrap;
 }
 
+.debug-api-connection-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--orange) 42%, var(--hairline));
+  background: color-mix(in srgb, var(--orange) 8%, var(--panel));
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+}
+
+.debug-api-connection-banner button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  margin-left: auto;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.debug-api-connection-banner button:hover,
+.debug-api-connection-banner button:focus-visible {
+  border-color: var(--orange);
+  background: var(--panel-3);
+}
+
 /* ─────────────── Help modal ─────────────── */
 
 .modal-backdrop {
@@ -3011,6 +3100,9 @@ button .sx-icon {
   font-size: 14px;
   color: var(--ink);
 }
+.palette-input:focus-visible {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
 .palette-input::placeholder { color: var(--ink-3); }
 .palette-list {
   flex: 1;
@@ -3033,8 +3125,13 @@ button .sx-icon {
   cursor: pointer;
 }
 .palette-row.active {
-  background: var(--surface-2);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-2));
   color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.palette-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .palette-row .pgroup {
   font-size: 10px;
@@ -3055,6 +3152,10 @@ button .sx-icon {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.palette-row.active .pgroup,
+.palette-row.active .phint {
+  color: var(--ink-2);
 }
 .palette-empty {
   padding: var(--space-5);
@@ -3230,6 +3331,10 @@ a.settings-pill:hover {
   border-radius: 2px;
   outline: none;
   cursor: pointer;
+}
+.settings-range:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
 }
 .settings-range::-webkit-slider-thumb {
   appearance: none;
@@ -4238,7 +4343,7 @@ a.settings-pill:hover {
 .connector-provider-mode {
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -4381,6 +4486,10 @@ a.settings-pill:hover {
   padding-left: 0;
 }
 .connector-inbox-search-input:focus { outline: none; }
+.connector-inbox-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+}
 .connector-inbox-date { min-width: 0; }
 .connector-inbox-filter-count {
   justify-self: end;
@@ -4801,7 +4910,7 @@ a.settings-pill:hover {
 .bp-head .ct { color: var(--ink); }
 .bp-section {
   padding: 8px 14px 4px;
-  font-size: 9px; font-weight: 500;
+  font-size: var(--fs-ui-xs); font-weight: 500;
   letter-spacing: 0.18em; text-transform: uppercase;
   color: var(--ink-4);
 }
@@ -4863,7 +4972,7 @@ a.settings-pill:hover {
   color: var(--ink-3);
   border: 1px solid var(--hairline-2);
   padding: 1px 5px; border-radius: 3px;
-  letter-spacing: 0; text-transform: none; font-size: 9px;
+  letter-spacing: 0; text-transform: none; font-size: var(--fs-ui-xs);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -4885,7 +4994,7 @@ a.settings-pill:hover {
   overflow: visible;
   position: relative;
 }
-.composer:focus-within { border-color: var(--border); }
+.composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent); }
 /* faint blue outline when a draggable file
  * (from the right-rail Files tab) is being hovered over the composer.
  * Visual cue that the drop will be accepted as an attach. */
@@ -5415,7 +5524,7 @@ a.settings-pill:hover {
   background: var(--err);
   box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
 }
-.autonomy-chip .acaret { color: var(--ink-3); font-size: 9px; margin-left: 2px; }
+.autonomy-chip .acaret { color: var(--ink-3); font-size: var(--fs-ui-xs); margin-left: 2px; }
 .autonomy-chip:hover { border-color: var(--border); background: var(--surface-2); }
 .autonomy-chip:disabled { opacity: 0.6; cursor: not-allowed; }
 
@@ -5465,7 +5574,7 @@ a.settings-pill:hover {
 }
 .model-drop .mname { color: var(--ink); }
 .model-drop .meffort { color: var(--orange); font-family: var(--mono); font-size: 11px; letter-spacing: 0; }
-.model-drop .acaret { color: var(--ink-3); font-size: 9px; margin-left: 2px; }
+.model-drop .acaret { color: var(--ink-3); font-size: var(--fs-ui-xs); margin-left: 2px; }
 .model-drop:hover { border-color: var(--border); color: var(--ink); }
 
 .mic-btn {
@@ -5568,7 +5677,7 @@ a.settings-pill:hover {
   line-height: 1;
 }
 .scope-pill .sico { font-size: 12px; }
-.scope-pill .scaret { font-size: 9px; margin-left: 2px; }
+.scope-pill .scaret { font-size: var(--fs-ui-xs); margin-left: 2px; }
 .scope-pill .ssub {
   display: inline-flex;
   align-items: center;
@@ -6217,6 +6326,34 @@ a.settings-pill:hover {
   color: var(--ink);
   white-space: pre-wrap;
   word-break: break-word;
+}
+.agent-cli-setup-artifact {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  background: var(--surface-1);
+}
+.agent-cli-setup-artifact > div {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+}
+.agent-cli-setup-artifact dt {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 650;
+}
+.agent-cli-setup-artifact dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
 }
 .tasks-agent-runs {
   margin: 8px 10px;
@@ -6884,7 +7021,7 @@ a.settings-pill:hover {
   align-items: center;
   justify-content: center;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
   font-weight: 700;
   line-height: 1;
 }
@@ -6988,7 +7125,7 @@ a.settings-pill:hover {
   border-radius: var(--radius-pill);
   color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
   text-transform: uppercase;
 }
 .vault-request-title {
@@ -7019,9 +7156,9 @@ a.settings-pill:hover {
   line-height: 1.35;
 }
 .vault-request-details > div {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible; overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 .vault-request-actions {
   display: flex;
@@ -7205,10 +7342,7 @@ a.settings-pill:hover {
   font-family: var(--sans);
   cursor: text;
 }
-.find-bar:focus-within {
-  border-color: var(--border);
-  background: var(--surface-3);
-}
+.find-bar:focus-within { border-color: var(--accent); background: var(--surface-3); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent); }
 .find-bar .find-ic {
   display: inline-grid;
   place-items: center;
@@ -7343,7 +7477,7 @@ a.settings-pill:hover {
   color: var(--ink-3);
   border: 1px solid var(--hairline-2);
   padding: 1px 5px; border-radius: 3px;
-  letter-spacing: 0; text-transform: none; font-size: 9px;
+  letter-spacing: 0; text-transform: none; font-size: var(--fs-ui-xs);
 }
 
 /* ─── Plugins modal (Phase 11 reviewer-pass-3 H-NEW3-4 fix) ───
@@ -7470,7 +7604,7 @@ a.settings-pill:hover {
 }
 .plugin-kind {
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -8918,6 +9052,11 @@ video.asset-board-thumb {
   border: 0;
   background: #fff;
 }
+.preview-html-safe-state {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
 .preview-html-iframe {
   display: block;
   width: 100%;
@@ -9361,7 +9500,7 @@ video.asset-board-thumb {
   white-space: nowrap;
   color: var(--ink-4);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
   line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -9572,7 +9711,7 @@ video.asset-board-thumb {
   border-radius: 4px;
   color: var(--ink-4);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
   line-height: 1.4;
   text-transform: uppercase;
   text-align: center;
@@ -10282,6 +10421,7 @@ video.asset-board-thumb {
 
 /* ShellX Browser module window. */
 .shellx-browser-app {
+  position: relative;
   min-height: 100vh;
   height: 100vh;
   overflow: hidden;
@@ -10290,6 +10430,12 @@ video.asset-board-thumb {
   background: var(--bg);
   color: var(--ink);
   font-family: var(--sans);
+}
+.shellx-browser-chrome-shell {
+  position: relative;
+  z-index: 90;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 .shellx-browser-app[data-color-mode="light"] {
   --bg: #f5f6f4;
@@ -10347,9 +10493,9 @@ video.asset-board-thumb {
   position: relative;
   z-index: 90;
   overflow: visible;
-  min-height: 90px;
+  min-height: 112px;
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-rows: auto auto auto;
   gap: 8px;
   padding: 8px 14px 10px;
   border-bottom: 1px solid var(--hairline);
@@ -10373,6 +10519,41 @@ video.asset-board-thumb {
   font-size: 13px;
   font-weight: 650;
   white-space: nowrap;
+}
+.shellx-browser-ownership-banner {
+  min-width: 0;
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1;
+}
+.shellx-browser-ownership-banner span {
+  color: var(--ink);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.shellx-browser-ownership-banner small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-ownership-banner.agent,
+.shellx-browser-ownership-banner.delegated {
+  border-color: rgba(116, 185, 151, 0.36);
+  background: rgba(43, 89, 68, 0.18);
+}
+.shellx-browser-ownership-banner.disposable {
+  border-color: rgba(179, 151, 88, 0.36);
+  background: rgba(93, 74, 39, 0.2);
 }
 .shellx-browser-address-row {
   width: 100%;
@@ -10506,6 +10687,10 @@ video.asset-board-thumb {
 .shellx-browser-address-shell input:focus-visible {
   outline: none;
 }
+.shellx-browser-address-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+}
 .shellx-browser-address-copy {
   width: 24px;
   height: 24px;
@@ -10584,7 +10769,7 @@ video.asset-board-thumb {
   padding: 0 4px;
   background: var(--surface-2);
   color: var(--ink);
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
   font-weight: 800;
   line-height: 1;
 }
@@ -10620,7 +10805,7 @@ video.asset-board-thumb {
   padding: 0 4px;
   background: var(--ok);
   color: #07130b;
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
   font-weight: 800;
   line-height: 1;
 }
@@ -10751,9 +10936,11 @@ video.asset-board-thumb {
   box-shadow: 0 18px 56px rgba(0, 0, 0, 0.4);
 }
 .shellx-browser-chrome-menu-dock {
-  position: relative;
-  z-index: 86;
-  flex: 0 0 auto;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 120;
   display: flex;
   padding: 8px 14px 10px;
   pointer-events: none;
@@ -10769,10 +10956,10 @@ video.asset-board-thumb {
   pointer-events: auto;
 }
 .shellx-browser-docked-popover {
-  position: static;
+  position: relative;
   top: auto;
   right: auto;
-  max-height: min(420px, calc(100vh - 190px));
+  max-height: min(420px, calc(100vh - 140px));
 }
 .shellx-browser-left-sidecar,
 .shellx-browser-bookmark-manager-dock {
@@ -11244,6 +11431,10 @@ button.shellx-browser-bookmark-list-row:hover {
 .shellx-browser-bookmark-row-main input:focus {
   outline: none;
 }
+.shellx-browser-bookmark-row-main:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+}
 .shellx-browser-bookmark-row-main span,
 .shellx-browser-bookmark-row-main small {
   min-width: 0;
@@ -11671,7 +11862,7 @@ button.shellx-browser-bookmark-list-row:hover {
 .shellx-browser-tab-profile-marker {
   width: 15px;
   height: 15px;
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
 }
 .shellx-browser-tab-actions {
   display: flex;
@@ -11689,6 +11880,14 @@ button.shellx-browser-bookmark-list-row:hover {
   background: rgba(239, 68, 68, 0.08);
   color: var(--err);
   font-size: var(--fs-ui-sm);
+}
+.shellx-browser-native-security-notice {
+  padding: 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 42%, var(--hairline));
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.4;
 }
 .shellx-browser-lock-notice {
   display: flex;
@@ -11710,7 +11909,7 @@ button.shellx-browser-bookmark-list-row:hover {
   min-height: 0;
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) var(--shellx-browser-right-sidebar-width, 360px);
   gap: 1px;
   background: var(--hairline);
 }
@@ -11765,30 +11964,6 @@ button.shellx-browser-bookmark-list-row:hover {
 .shellx-browser-right-controls .shellx-browser-panel-toggle {
   position: static;
   flex: 0 0 auto;
-}
-.shellx-browser-sidebar-autonomy {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--ink-3);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-.shellx-browser-sidebar-autonomy span {
-  flex: 0 0 auto;
-}
-.shellx-browser-sidebar-autonomy select {
-  min-width: 0;
-  width: clamp(118px, 16vw, 164px);
-  height: 28px;
-  border: 1px solid var(--hairline-2);
-  border-radius: var(--radius-button);
-  background: var(--surface);
-  color: var(--ink);
-  font-family: var(--sans);
-  font-size: 11px;
 }
 .shellx-browser-vault-prompt {
   min-width: 0;
@@ -12171,9 +12346,9 @@ button.shellx-browser-bookmark-list-row:hover {
   overflow: hidden;
   padding: 0;
   background:
-    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    #050505;
+    linear-gradient(var(--shellx-browser-viewport-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--shellx-browser-viewport-grid) 1px, transparent 1px),
+    var(--shellx-browser-viewport-surface);
   background-size: 28px 28px;
 }
 .shellx-browser-viewport-inner {
@@ -12186,7 +12361,7 @@ button.shellx-browser-bookmark-list-row:hover {
   border: 1px solid var(--hairline-2);
   border-radius: var(--radius-card);
   padding: 24px;
-  background: rgba(9, 9, 9, 0.92);
+  background: var(--shellx-browser-viewport-card);
   box-shadow: 0 20px 80px rgba(0, 0, 0, 0.32);
   pointer-events: none;
 }
@@ -12222,7 +12397,7 @@ button.shellx-browser-bookmark-list-row:hover {
   border-radius: var(--radius-chip);
   padding: 3px 7px;
   background: rgba(59, 130, 246, 0.09);
-  color: #9cc6ff;
+  color: var(--shellx-browser-ref-ink);
   font-family: var(--mono);
   font-size: 12px;
 }
@@ -12252,7 +12427,7 @@ button.shellx-browser-bookmark-list-row:hover {
 .shellx-browser-right-tabs {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(58px, 1fr));
+  grid-template-columns: repeat(5, minmax(54px, 1fr));
   gap: 3px;
   overflow-x: auto;
   scrollbar-width: none;
@@ -12266,7 +12441,7 @@ button.shellx-browser-bookmark-list-row:hover {
   display: none;
 }
 .shellx-browser-right-tabs button {
-  min-width: 58px;
+  min-width: 54px;
   height: 26px;
   display: inline-flex;
   align-items: center;
@@ -12287,7 +12462,7 @@ button.shellx-browser-bookmark-list-row:hover {
   background: rgba(245, 158, 11, 0.18);
   color: #fbbf24;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: var(--fs-ui-xs);
   line-height: 1;
 }
 .shellx-browser-requests-panel {
@@ -12324,6 +12499,16 @@ button.shellx-browser-bookmark-list-row:hover {
   min-height: 0;
   display: grid;
   gap: 10px;
+}
+.shellx-browser-agent-quick-actions {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.shellx-browser-agent-quick-actions .shellx-browser-secondary {
+  height: 28px;
 }
 .shellx-browser-agent-panel.chat-expanded .shellx-browser-agent-compose {
   align-self: end;
@@ -12693,3 +12878,33 @@ button.shellx-browser-bookmark-list-row:hover {
 .plan-md h1 { font-size: 16px; }
 .plan-md h2 { font-size: 14px; }
 .plan-md h3 { font-size: var(--right-body-size); }
+
+/* Interactive control boundaries need non-text contrast; hairline tokens are
+ * reserved for separators. Focused controls still promote to --accent. */
+.prompt-frame,
+.composer,
+.find-bar,
+.palette-input,
+.settings-input,
+.plan-edit-input,
+.fv-search input,
+.fv-select,
+.provider-runner-select,
+.shellx-browser-field-row select,
+.shellx-browser-download-folder input,
+.shellx-browser-history-filters input,
+.shellx-browser-history-filters select,
+.shellx-browser-bookmark-editor select,
+.shellx-browser-bookmark-editor input,
+.shellx-browser-bookmark-manager-row select,
+.shellx-browser-bookmark-row-main input,
+.shellx-browser-options-section input[type="url"],
+.shellx-browser-options-section input[type="password"],
+.shellx-browser-options-section select,
+.shellx-browser-address-row input,
+.shellx-browser-agent-compose textarea,
+.shellx-browser-agent-compose select,
+.shellx-browser-dev-select select,
+.shellx-browser-personal-lock-overlay input {
+  border-color: var(--control-border);
+}

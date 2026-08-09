@@ -1,15 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AgentId } from "./agent-selection";
-import type { ConnectionPreset, ConnectionProviderScanEntry } from "../components/ConnectionPicker";
+import type {
+  ConnectionPreset,
+  ConnectionProviderScanEntry,
+  ConnectionProviderScanStatus,
+} from "../components/ConnectionPicker";
 
-export const AGENT_CLI_SETUP_PROVIDER_IDS = [
-  "grok",
-  "claude-code",
-  "codex-cli",
-  "antigravity-cli",
-] as const;
-
-export type AgentCliSetupStatus = "ready" | "missing" | string;
+export type AgentCliSetupStatus = ConnectionProviderScanStatus;
 
 export interface AgentCliInstallMethod {
   id: string;
@@ -18,6 +15,8 @@ export interface AgentCliInstallMethod {
   shell: string;
   transportKinds: string[];
   requiresNode?: boolean;
+  installerUrl?: string;
+  installerKind?: string;
 }
 
 export interface AgentCliSetupTarget {
@@ -36,6 +35,10 @@ export interface AgentCliSetupCard {
   canRun: boolean;
   binary?: string;
   version?: string;
+  binarySha256?: string;
+  binaryBytes?: number;
+  targetKey?: string;
+  checkedAtMs: number;
   installable: boolean;
   recommendedMethodId?: string;
   installMethods: AgentCliInstallMethod[];
@@ -67,6 +70,12 @@ export interface AgentCliInstallConfirmation {
   docsUrl: string;
   pricingUrl?: string;
   officialSourceUrl: string;
+  installerSourceUrl?: string;
+  stagedPath?: string;
+  artifactSha256?: string;
+  artifactBytes?: number;
+  detectedVersion?: string;
+  verification?: string;
   warning: string;
   requiresConfirmation: boolean;
   createdAtMs: number;
@@ -77,6 +86,7 @@ export interface AgentCliInstallResult {
   providerId: AgentId | string;
   target: AgentCliSetupTarget;
   command: string;
+  artifactSha256?: string;
   exitCode?: number | null;
   success: boolean;
   stdoutTail: string;
@@ -105,6 +115,10 @@ export async function confirmAgentCliInstall(confirmationId: string): Promise<Ag
   return invoke<AgentCliInstallResult>("agent_cli_setup_confirm_install", { confirmationId });
 }
 
+export async function cancelAgentCliInstall(confirmationId: string): Promise<boolean> {
+  return invoke<boolean>("agent_cli_setup_cancel_install", { confirmationId });
+}
+
 export async function recheckAgentCliSetup(preset: ConnectionPreset): Promise<AgentCliSetupState> {
   return invoke<AgentCliSetupState>("agent_cli_setup_recheck", { preset });
 }
@@ -113,8 +127,13 @@ export function setupStateToProviderScan(state: AgentCliSetupState): ConnectionP
   return state.providers.map((provider) => ({
     providerId: provider.providerId as AgentId,
     canRun: provider.canRun,
+    status: provider.status,
     binary: provider.binary,
     version: provider.version,
-    checkedAtMs: state.generatedAtMs,
+    binarySha256: provider.binarySha256,
+    binaryBytes: provider.binaryBytes,
+    targetKey: provider.targetKey,
+    detail: provider.detail,
+    checkedAtMs: provider.checkedAtMs,
   }));
 }

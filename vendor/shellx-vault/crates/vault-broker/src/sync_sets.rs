@@ -60,8 +60,19 @@ impl Default for SyncSetPolicy {
                 "dist/**".to_string(),
                 ".next/**".to_string(),
                 ".env".to_string(),
+                ".env.*".to_string(),
+                "**/.env".to_string(),
+                "**/.env.*".to_string(),
                 "*.pem".to_string(),
                 "*.p12".to_string(),
+                "*.p8".to_string(),
+                "*.keystore".to_string(),
+                "id_rsa".to_string(),
+                "id_ed25519".to_string(),
+                "**/id_rsa".to_string(),
+                "**/id_ed25519".to_string(),
+                "credentials*.json".to_string(),
+                "**/credentials*.json".to_string(),
             ],
         }
     }
@@ -410,11 +421,23 @@ impl SyncSetRegistry {
 }
 
 fn glob_match(pattern: &str, path: &str) -> bool {
+    if let Some(inner) = pattern.strip_prefix("**/") {
+        return path
+            .split('/')
+            .any(|component| glob_match(inner, component));
+    }
     if let Some(prefix) = pattern.strip_suffix("/**") {
         return path == prefix || path.starts_with(&format!("{prefix}/"));
     }
-    if let Some(suffix) = pattern.strip_prefix('*') {
-        return path.ends_with(suffix);
+    if let Some((prefix, suffix)) = pattern.split_once('*') {
+        if !pattern.contains('/') {
+            return path
+                .rsplit('/')
+                .next()
+                .map(|name| name.starts_with(prefix) && name.ends_with(suffix))
+                .unwrap_or(false);
+        }
+        return path.starts_with(prefix) && path.ends_with(suffix);
     }
     path == pattern
 }

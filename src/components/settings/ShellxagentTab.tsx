@@ -22,15 +22,16 @@
 import { useEffect, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ShellIcon } from "../icons";
+import { inTauri } from "../../lib/tauri-bridge";
 
 /** Default port the debug-api server prefers — used as a display fallback
  * ONLY when the Tauri command hasn't returned yet or the server isn't
  * bound. The actually-bound port may differ (env override or
  * orphan-socket fallback to 5759/5761/5763/5765). */
 const DEFAULT_DEBUG_API_PORT = 5757;
+export const OWNED_DEBUG_TOKEN = "03503503503503503503503503503503";
 
-const inTauri = (): boolean =>
-  typeof (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined";
+export type ShellxagentDebugFixture = "owned-safe" | "owned-clipboard" | null;
 
 async function invokeCmd<T>(cmd: string): Promise<T> {
   if (!inTauri()) {
@@ -51,7 +52,11 @@ interface BoundPorts {
   mcpHttp: number | null;
 }
 
-export function ShellxagentTab(): JSX.Element {
+export function ShellxagentTab({
+  debugFixture = null,
+}: {
+  debugFixture?: ShellxagentDebugFixture;
+}): JSX.Element {
   const [token, setToken] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -62,8 +67,21 @@ export function ShellxagentTab(): JSX.Element {
  // 5757 default when env-overridden or when an orphan socket forced
  // a fallback step (5759/5761/5763/5765).
   const [boundPort, setBoundPort] = useState<number | null>(null);
+  const fixtureActive = debugFixture === "owned-safe" || debugFixture === "owned-clipboard";
+  const clipboardFixtureActive = debugFixture === "owned-clipboard";
+  const desktopAgentAvailable = fixtureActive || inTauri();
 
   useEffect(() => {
+    if (fixtureActive) {
+      setToken(OWNED_DEBUG_TOKEN);
+      setBoundPort(DEFAULT_DEBUG_API_PORT);
+      setRevealed(false);
+      setJustRotated(false);
+      setCopied(false);
+      setError(null);
+      return;
+    }
+    if (!desktopAgentAvailable) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -88,7 +106,7 @@ export function ShellxagentTab(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [desktopAgentAvailable, fixtureActive]);
 
  // auto-mask the token after 60 s of Reveal mode.
  // Without this, an idle Settings → shellXagent panel exposes the
@@ -102,7 +120,7 @@ export function ShellxagentTab(): JSX.Element {
   }, [revealed]);
 
   async function regenerate() {
-    if (loading) return;
+    if (loading || fixtureActive) return;
     setLoading(true);
     setError(null);
     try {
@@ -120,7 +138,7 @@ export function ShellxagentTab(): JSX.Element {
   }
 
   async function copyToClipboard() {
-    if (!token) return;
+    if (!token || (fixtureActive && !clipboardFixtureActive)) return;
     try {
       await navigator.clipboard.writeText(token);
       setCopied(true);
@@ -147,7 +165,9 @@ export function ShellxagentTab(): JSX.Element {
 
  // Display string for the masked / revealed / loading token.
   const displayed =
-    token == null
+    !desktopAgentAvailable
+      ? "desktop only"
+      : token == null
       ? "loading…"
       : revealed || justRotated
       ? token
@@ -166,8 +186,22 @@ export function ShellxagentTab(): JSX.Element {
         Orchestration API for external agents. Lets a CI bot or another
         orchestrator drive shellX over HTTP+WS on
         <code> 127.0.0.1:{displayedPort}</code>
-        {portIsLive ? null : " (default — server not yet bound)"}.
+        {portIsLive
+          ? null
+          : desktopAgentAvailable
+            ? " (default — server not yet bound)"
+            : " (desktop app required)"}.
       </p>
+
+      {!desktopAgentAvailable && (
+        <div
+          role="status"
+          className="vault-empty"
+        >
+          shellXagent token and bound-port controls are unavailable in browser preview.
+          Open ShellX desktop to inspect or rotate credentials.
+        </div>
+      )}
 
       <div className="settings-row">
         <label className="settings-label">Bearer token</label>
@@ -183,19 +217,22 @@ export function ShellxagentTab(): JSX.Element {
           {displayed}
         </code>
         <div style={{ display: "flex", gap: 8 }}>
-          <button
+          <button data-debug-id="surface-components-settings-shellxagenttab-1"
             type="button"
             className="settings-pill"
             onClick={() => setRevealed((v) => !v)}
             disabled={!token}
+            aria-pressed={revealed}
+            data-shellx-release-observe="pressed"
           >
             {revealed ? "Hide" : "Reveal"}
           </button>
-          <button
+          <button data-debug-id="surface-components-settings-shellxagenttab-2"
             type="button"
             className="settings-pill"
             onClick={copyToClipboard}
-            disabled={!token}
+            disabled={!token || (fixtureActive && !clipboardFixtureActive)}
+            data-shellx-release-observe="disabled"
           >
             {copied ? "Copied" : "Copy"}
           </button>
@@ -214,14 +251,15 @@ export function ShellxagentTab(): JSX.Element {
             "Issues a new 32-char hex token and persists to disk."
           )}
         </span>
-        <button
+        <button data-debug-id="surface-components-settings-shellxagenttab-3"
           type="button"
           className="settings-pill"
           onClick={regenerate}
-          disabled={loading}
+          disabled={loading || !desktopAgentAvailable || fixtureActive}
+          data-shellx-release-observe="disabled"
           style={{
-            borderColor: "var(--fg-error, #f55)",
-            color: "var(--fg-error, #f55)",
+            borderColor: "var(--fg-error)",
+            color: "var(--fg-error)",
           }}
         >
           {loading ? "Regenerating…" : "Regenerate"}
@@ -249,7 +287,7 @@ export function ShellxagentTab(): JSX.Element {
           Bearer header: <code>Authorization: Bearer &lt;token&gt;</code>
         </li>
         <li>
-          Endpoints span every UI surface — see <code>docs/API.md</code> in
+          Endpoints span every UI surface — see <code>docs/public/API.md</code> in
           the repo for the full route inventory.
         </li>
         <li>

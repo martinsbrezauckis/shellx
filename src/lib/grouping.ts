@@ -47,10 +47,9 @@ export type UiGroupKind =
   | "message"
   | "tool"
   | "system"
-  | "vendor"
   | "ui"
- /* Dedicated group kinds for the two lifecycle markers carried on
- * `_x.ai/*` vendor events. Distinct from the generic "system" pill
+  /* Dedicated group kinds for the two lifecycle markers carried on
+   * named `_x.ai/*` events. Distinct from the generic "system" pill
  * so ChatOutput can give them their own visual treatment
  * (turn-complete checkmark, MCP-init progress spinner). */
   | "marker"
@@ -167,12 +166,6 @@ export interface SystemGroup extends UiGroupBase {
   detail?: string;
 }
 
-export interface VendorGroup extends UiGroupBase {
-  kind: "vendor";
-  method: string;          // e.g. "_x.ai/mcp/init_progress"
-  detail: string;
-}
-
 /**
  * turn-complete marker. Emitted when the
  * wire delivers `_x.ai/session/prompt_complete` (carries
@@ -253,7 +246,7 @@ export interface HostMcpUnreachableGroup extends UiGroupBase {
  * • In bypassPermissions/auto modes the same event carries
  * `autoApproved: true` (or `autoDenied: true`) — we initialise the
  * group already-resolved so it renders as a passive audit chip.
- * • In confirm/acceptEdits mode the user clicks one of the pill
+ * • For a legacy or defensive interactive request the user clicks one of the pill
  * buttons; PermissionPill posts a synthetic `permission-resolved`
  * event into the events ring, which on the next groupEvents run
  * mutates the matching group to pending:false + decision + decisionAt.
@@ -320,7 +313,6 @@ export type UiGroup =
   | MessageGroup
   | ToolGroup
   | SystemGroup
-  | VendorGroup
   | UiTextGroup
   | MarkerGroup
   | McpInitGroup
@@ -1543,14 +1535,6 @@ function pickDiff(update: SessionUpdatePayload | undefined): {
     }
   }
   return undefined;
-}
-
-function summarizeVendorParams(ev: RawEventFrame): string {
-  const p = (ev.payload as any)?.params;
-  if (!p) return "";
- // Strip sessionId (every event has it; not interesting in summary).
-  const { sessionId: _drop, ...rest } = p;
-  return safeJson(rest).slice(0, 160);
 }
 
 function safeJson(v: unknown): string {

@@ -3,6 +3,32 @@ import type { RawEventFrame } from "../types/acp";
 export type ProviderId = "codex-cli" | "claude-code" | "antigravity-cli";
 
 export type ProviderExecutionTransport = "local" | "wsl" | "ssh";
+export type SshRemoteRuntime = "posix" | "windows" | "windows_wsl";
+
+export interface ProviderExecutionTargetLabelInput {
+  transport: ProviderExecutionTransport;
+  wslDistro?: string | null;
+  sshHost?: string | null;
+  sshRemoteRuntime?: SshRemoteRuntime;
+  sshWslDistro?: string | null;
+}
+
+export function providerExecutionTargetLabel(
+  input: ProviderExecutionTargetLabelInput,
+): string {
+  if (input.transport === "local") return "Local";
+  if (input.transport === "wsl") {
+    return `WSL ${input.wslDistro?.trim() || "unknown"}`;
+  }
+  const host = input.sshHost?.trim() || "unknown";
+  if (input.sshRemoteRuntime === "windows") {
+    return `native Windows over SSH ${host}`;
+  }
+  if (input.sshRemoteRuntime === "windows_wsl") {
+    return `WSL ${input.sshWslDistro?.trim() || "unknown"} via Windows OpenSSH ${host}`;
+  }
+  return `SSH ${host}`;
+}
 
 export type ProviderPermissionMode =
   | "auto"
@@ -10,6 +36,8 @@ export type ProviderPermissionMode =
   | "acceptEdits"
   | "bypassPermissions"
   | "readOnly";
+
+export type ProviderCodexDriver = "execJson" | "appServer";
 
 export type ProviderShellxToolExposure =
   | "nativeFirst"
@@ -39,6 +67,8 @@ export type ProviderSessionEventKind =
   | "fileChange"
   | "command"
   | "mcpTool"
+  | "subagent"
+  | "thinking"
   | "completed"
   | "failed"
   | "aborted"
@@ -46,6 +76,7 @@ export type ProviderSessionEventKind =
 
 export interface ProviderRunSnapshot {
   runId: string;
+  processTaskId?: string;
   tabId: string;
   providerId: ProviderId;
   cwd: string;
@@ -55,6 +86,8 @@ export interface ProviderRunSnapshot {
   sshHost?: string;
   sshPort?: number;
   sshKeyVaultRef?: string;
+  sshRemoteRuntime?: SshRemoteRuntime;
+  sshWslDistro?: string;
   phase: ProviderRunPhase;
   promptPreview: string;
   startedAtMs: number;
@@ -80,6 +113,8 @@ export interface ProviderSessionState {
   sshHost?: string;
   sshPort?: number;
   sshKeyVaultRef?: string;
+  sshRemoteRuntime?: SshRemoteRuntime;
+  sshWslDistro?: string;
   activeRun?: ProviderRunSnapshot;
   recentRuns: ProviderRunSnapshot[];
   storedConversations: Partial<Record<ProviderId, string>>;
@@ -108,6 +143,8 @@ export interface AgentRunRow {
   providerId?: ProviderId | string;
   runId?: string;
   subagentId?: string;
+  parentSubagentId?: string;
+  toolCallId?: string;
   persona?: string;
   label?: string;
   taskPreview?: string;
@@ -134,8 +171,26 @@ export interface AgentRunRow {
     inputTokens?: number | null;
     outputTokens?: number | null;
     totalTokens?: number | null;
+    reasoningTokens?: number | null;
+    cacheReadTokens?: number | null;
+    cacheWriteTokens?: number | null;
     updatedAtMs?: number;
   } | number | null;
+  metrics?: {
+    firstResponseAtMs?: number | null;
+    firstTextAtMs?: number | null;
+    firstActionAtMs?: number | null;
+    firstSuccessfulActionAtMs?: number | null;
+    timeToFirstResponseMs?: number | null;
+    timeToFirstTextMs?: number | null;
+    timeToFirstActionMs?: number | null;
+    timeToFirstSuccessfulActionMs?: number | null;
+    toolCallCount: number;
+    toolSuccessCount: number;
+    toolFailureCount: number;
+    subagentCount: number;
+    lineageLinkedEventCount: number;
+  };
   nativeVisibility?: AgentRunNativeVisibility | string;
 }
 
@@ -173,17 +228,6 @@ export interface ProviderAdapterSummary {
   lastError?: string;
 }
 
-export interface ProviderCommandSpec {
-  providerId: ProviderId;
-  program: string;
-  args: string[];
-  streamKind: string;
-  execution: ProviderExecutionTransport;
-  wslDistro?: string;
-  sshHost?: string;
-  notes: string[];
-}
-
 export interface ProviderAdapterState {
   providers: ProviderAdapterSummary[];
 }
@@ -203,11 +247,18 @@ export interface ProviderSessionStartRequest {
   resumeLast?: boolean;
   providerConversationId?: string;
   permissionMode?: ProviderPermissionMode;
+  codexDriver?: ProviderCodexDriver;
   transport?: ProviderExecutionTransport;
   wslDistro?: string;
   sshHost?: string;
   sshPort?: number;
   sshKeyVaultRef?: string;
+  sshRemoteRuntime?: SshRemoteRuntime;
+  sshWslDistro?: string;
+  releaseFixture?: {
+    id: "provider-action-lifecycle";
+    action: string;
+  };
 }
 
 export interface ProviderSessionAbortRequest {
@@ -218,6 +269,8 @@ export interface ProviderSessionAbortRequest {
   sshHost?: string;
   sshPort?: number;
   sshKeyVaultRef?: string;
+  sshRemoteRuntime?: SshRemoteRuntime;
+  sshWslDistro?: string;
 }
 
 export interface ProviderSessionStartResponse {
@@ -234,10 +287,30 @@ export interface ProviderSessionAbortResponse {
 }
 
 export interface ProviderSessionEventPayload {
+  schemaVersion?: number;
+  eventId?: string;
+  sequence?: number;
+  occurredAtMs?: number;
   tabId: string;
   runId: string;
   providerId: ProviderId;
   kind: ProviderSessionEventKind;
+  status?: ProviderEventStatus;
+  turnId?: string;
+  itemId?: string;
+  parentItemId?: string;
+  toolCallId?: string;
+  toolName?: string;
+  toolArguments?: ProviderEventContentReference;
+  toolResult?: ProviderEventContentReference;
+  subagentId?: string;
+  parentSubagentId?: string;
+  model?: string;
+  protocol?: string;
+  protocolVersion?: string;
+  binaryVersion?: string;
+  capabilities?: string[];
+  target?: ProviderEventTargetSnapshot;
   text?: string;
   rawType?: string;
   exitCode?: number;
@@ -246,6 +319,53 @@ export interface ProviderSessionEventPayload {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  usage?: ProviderEventUsage;
+  artifacts?: ProviderEventArtifact[];
+  rawReference?: ProviderEventContentReference;
+}
+
+export type ProviderEventStatus =
+  | "started"
+  | "inProgress"
+  | "completed"
+  | "failed"
+  | "aborted"
+  | "waitingForApproval";
+
+export interface ProviderEventTargetSnapshot {
+  transport: ProviderExecutionTransport;
+  transportKey: string;
+  wslDistro?: string;
+  sshHost?: string;
+  sshPort?: number;
+  sshRemoteRuntime?: SshRemoteRuntime;
+  sshWslDistro?: string;
+  providerToolShell?: string;
+}
+
+export interface ProviderEventUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
+export interface ProviderEventContentReference {
+  sha256: string;
+  byteLength: number;
+  redacted: boolean;
+  artifactId?: string;
+}
+
+export interface ProviderEventArtifact {
+  artifactId: string;
+  kind: string;
+  uri?: string;
+  mimeType?: string;
+  sha256?: string;
+  byteLength?: number;
 }
 
 export type ProviderSessionGroupShape =
@@ -281,6 +401,8 @@ export interface ProviderAdapterStateRequest {
   sshHost?: string | null;
   sshPort?: number | null;
   sshKeyVaultRef?: string | null;
+  sshRemoteRuntime?: SshRemoteRuntime;
+  sshWslDistro?: string | null;
 }
 
 export interface ProviderSessionStateRequest {
@@ -289,6 +411,8 @@ export interface ProviderSessionStateRequest {
   sshHost?: string | null;
   sshPort?: number | null;
   sshKeyVaultRef?: string | null;
+  sshRemoteRuntime?: SshRemoteRuntime;
+  sshWslDistro?: string | null;
 }
 
 function appendProviderExecutionParams(
@@ -307,6 +431,10 @@ function appendProviderExecutionParams(
   }
   if (request.sshKeyVaultRef && request.sshKeyVaultRef.trim()) {
     params.set("sshKeyVaultRef", request.sshKeyVaultRef.trim());
+  }
+  if (request.sshRemoteRuntime) params.set("sshRemoteRuntime", request.sshRemoteRuntime);
+  if (request.sshWslDistro && request.sshWslDistro.trim()) {
+    params.set("sshWslDistro", request.sshWslDistro.trim());
   }
 }
 
@@ -367,6 +495,7 @@ export function providerStartRequestBody(
     body.providerConversationId = request.providerConversationId.trim();
   }
   if (request.permissionMode) body.permissionMode = request.permissionMode;
+  if (request.codexDriver) body.codexDriver = request.codexDriver;
   if (request.transport) body.transport = request.transport;
   if (request.wslDistro && request.wslDistro.trim()) body.wslDistro = request.wslDistro.trim();
   if (request.sshHost && request.sshHost.trim()) body.sshHost = request.sshHost.trim();
@@ -374,6 +503,11 @@ export function providerStartRequestBody(
   if (request.sshKeyVaultRef && request.sshKeyVaultRef.trim()) {
     body.sshKeyVaultRef = request.sshKeyVaultRef.trim();
   }
+  if (request.sshRemoteRuntime) body.sshRemoteRuntime = request.sshRemoteRuntime;
+  if (request.sshWslDistro && request.sshWslDistro.trim()) {
+    body.sshWslDistro = request.sshWslDistro.trim();
+  }
+  if (request.releaseFixture) body.releaseFixture = { ...request.releaseFixture };
   return body;
 }
 
@@ -428,6 +562,10 @@ export function providerAbortRequestBody(
   }
   if (request.sshKeyVaultRef && request.sshKeyVaultRef.trim()) {
     body.sshKeyVaultRef = request.sshKeyVaultRef.trim();
+  }
+  if (request.sshRemoteRuntime) body.sshRemoteRuntime = request.sshRemoteRuntime;
+  if (request.sshWslDistro && request.sshWslDistro.trim()) {
+    body.sshWslDistro = request.sshWslDistro.trim();
   }
   return body;
 }
@@ -486,6 +624,10 @@ export function providerSessionLabel(payload: unknown): string {
       return `${provider} MCP tool`;
     case "tool":
       return `${provider} tool`;
+    case "subagent":
+      return `${provider} subagent`;
+    case "thinking":
+      return `${provider} thinking`;
     case "started":
       return `${provider} started`;
     case "completed":
@@ -504,6 +646,19 @@ export function providerSessionLabel(payload: unknown): string {
 
 export function providerSessionToolStatus(payload: unknown): string {
   if (!isProviderSessionPayload(payload)) return "?";
+  switch (payload.status) {
+    case "completed":
+      return "success";
+    case "failed":
+      return "error";
+    case "aborted":
+      return "aborted";
+    case "waitingForApproval":
+      return "waiting";
+    case "started":
+    case "inProgress":
+      return "running";
+  }
   if (payload.rawType?.startsWith("item.completed/")) return "success";
   switch (payload.kind) {
     case "completed":
@@ -593,7 +748,7 @@ export function providerPermissionModeOptions(
       {
         mode: "readOnly",
         label: "Read-only",
-        detail: "Codex runs in read-only sandbox mode.",
+        detail: "Runs in read-only sandbox mode.",
         native: "--sandbox read-only -a never",
       },
     ];
@@ -642,34 +797,6 @@ export function providerPermissionModeOptions(
   ];
 }
 
-export function providerPermissionModeDetail(
-  providerId: ProviderId,
-  mode: ProviderPermissionMode,
-): string {
-  const option = providerPermissionModeOptions(providerId).find((item) => item.mode === mode);
-  if (option) return option.detail;
-  if (providerId === "claude-code") {
-    const mapped = mode === "readOnly" ? "plan" : mode === "auto" ? "bypassPermissions" : mode;
-    return `Claude --permission-mode ${mapped}`;
-  }
-  if (providerId === "codex-cli") {
-    switch (mode) {
-      case "auto":
-      case "bypassPermissions":
-        return "Codex bypass approvals and sandbox";
-      case "readOnly":
-        return "Codex read-only sandbox";
-      case "default":
-        return "Codex workspace-write with native approval";
-      case "acceptEdits":
-        return "Codex workspace-write without approval prompts";
-    }
-  }
-  return mode === "auto" || mode === "bypassPermissions" || mode === "acceptEdits"
-    ? "Antigravity skip permissions"
-    : "Antigravity sandbox";
-}
-
 export function shortProviderConversationId(id: string): string {
   const trimmed = id.trim();
   if (trimmed.length <= 12) return trimmed;
@@ -678,7 +805,7 @@ export function shortProviderConversationId(id: string): string {
 
 export function providerSessionGroupShape(payload: unknown): ProviderSessionGroupShape | null {
   if (!isProviderSessionPayload(payload)) return null;
-  if (payload.kind === "raw") return null;
+  if (payload.kind === "raw" || payload.kind === "thinking") return null;
   if (isLowSignalProviderToolPayload(payload)) return null;
   if (isLowSignalProviderCommandPayload(payload)) return null;
 
@@ -690,12 +817,13 @@ export function providerSessionGroupShape(payload: unknown): ProviderSessionGrou
     payload.kind === "command" ||
     payload.kind === "fileChange" ||
     payload.kind === "mcpTool" ||
-    payload.kind === "tool"
+    payload.kind === "tool" ||
+    payload.kind === "subagent"
   ) {
     return {
       kind: "tool",
       label: providerSessionLabel(payload),
-      detail: payload.text ?? payload.rawType ?? "",
+      detail: payload.text ?? payload.toolName ?? payload.rawType ?? "",
       status: providerSessionToolStatus(payload),
     };
   }
@@ -826,6 +954,8 @@ function isProviderSessionEventKind(value: unknown): value is ProviderSessionEve
     value === "fileChange" ||
     value === "command" ||
     value === "mcpTool" ||
+    value === "subagent" ||
+    value === "thinking" ||
     value === "completed" ||
     value === "failed" ||
     value === "aborted" ||

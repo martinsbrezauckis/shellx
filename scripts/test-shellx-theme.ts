@@ -12,9 +12,13 @@ function assertIncludes(haystack: string, needle: string, label: string): void {
   }
 }
 
-const settings = read("src/components/Settings.tsx");
+const settings = read("src/lib/settings.ts");
 assertIncludes(settings, 'export type ThemeMode = "black" | "black_warm" | "bright";', "bright theme enum");
-assertIncludes(settings, 'obj.theme === "black_warm" || obj.theme === "black" || obj.theme === "bright"', "bright theme normalization");
+assertIncludes(
+  settings,
+  'themeValue === "black_warm" || themeValue === "black" || themeValue === "bright"',
+  "bright theme normalization",
+);
 
 const generalTab = read("src/components/settings/GeneralTab.tsx");
 assertIncludes(generalTab, 's.theme === "bright"', "bright settings active state");
@@ -39,8 +43,46 @@ assertIncludes(app, 'theme: settings.theme === "bright" ? "black" : "bright"', "
 assertIncludes(app, "onThemeToggle={handleThemeToggle}", "header theme handler wiring");
 
 const css = read("src/App.css");
+const browserCss = read("src/browser/browserShell.css");
+const tokensCss = read("src/styles/tokens.css");
+const interactionCss = read("src/styles/interactionAccessibility.css");
 assertIncludes(css, '[data-theme="bright"]', "bright CSS theme block");
 assertIncludes(css, "color-scheme: light;", "bright color scheme");
 assertIncludes(css, ".hdr-theme-toggle.active", "header bright active style");
+assertIncludes(browserCss, "--shellx-browser-viewport-card: rgba(255, 255, 255, 0.94)", "light Browser placeholder surface");
+assertIncludes(browserCss, "background: var(--shellx-browser-viewport-card)", "Browser placeholder token use");
+assertIncludes(browserCss, "color: var(--shellx-browser-ref-ink)", "Browser reference contrast token");
+assertIncludes(browserCss, "var(--shellx-browser-right-sidebar-width, 360px)", "Browser resizable right sidebar width");
+assertIncludes(browserCss, "var(--shellx-browser-left-sidecar-width, 312px)", "Browser left sidecar width");
+assertIncludes(browserCss, "grid-template-rows: minmax(0, 220px) minmax(320px, 1fr) minmax(0, 220px)", "Browser narrow three-surface layout");
+assertIncludes(browserCss, "overflow: auto;", "Browser narrow layout scroll containment");
+assertIncludes(interactionCss, "@media (prefers-reduced-motion: reduce)", "main renderer reduced-motion preference");
+assertIncludes(interactionCss, "animation-iteration-count: 1 !important", "bounded reduced-motion animation iterations");
+
+for (const foreground of ["--ink-3", "--ink-4"]) {
+  for (const background of ["--bg", "--surface", "--surface-2", "--surface-3"]) {
+    const ratio = contrastRatio(cssHexToken(tokensCss, foreground), cssHexToken(tokensCss, background));
+    if (ratio < 4.5) {
+      throw new Error(`${foreground} on ${background} contrast ${ratio.toFixed(2)} is below WCAG AA 4.5:1`);
+    }
+  }
+}
 
 console.log("shellx theme wiring test passed");
+
+function cssHexToken(source: string, name: string): string {
+  const match = source.match(new RegExp(`${name.replace("-", "\\-")}\\s*:\\s*(#[0-9a-fA-F]{6})`));
+  if (!match?.[1]) throw new Error(`missing hex token ${name}`);
+  return match[1];
+}
+
+function contrastRatio(left: string, right: string): number {
+  const [lighter, darker] = [relativeLuminance(left), relativeLuminance(right)].sort((a, b) => b - a);
+  return (lighter! + 0.05) / (darker! + 0.05);
+}
+
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  const linear = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+}

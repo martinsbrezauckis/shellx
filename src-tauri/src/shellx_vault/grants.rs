@@ -41,6 +41,8 @@ pub struct GrantRequest {
     pub secret_ref: String,
     pub actor_scope: GrantScope,
     pub operation: GrantOperation,
+    #[serde(default)]
+    pub origin: Option<String>,
     pub expires_at_ms: Option<i64>,
 }
 
@@ -51,6 +53,7 @@ pub struct GrantSummary {
     pub secret_ref: String,
     pub actor_scope: String,
     pub operation: String,
+    pub origin: Option<String>,
     pub created_at_ms: i64,
     pub expires_at_ms: Option<i64>,
     pub revoked: bool,

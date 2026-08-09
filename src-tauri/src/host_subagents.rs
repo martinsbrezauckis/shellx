@@ -27,7 +27,7 @@
 // The SQLite mirror is a SECONDARY index for cross-process observability
 // only.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OpenFlags};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -40,23 +40,26 @@ thread_local! {
 
 /// Default file location: `~/.shellx/subagents.db`. Lives alongside
 /// the existing memory.db so backup/cleanup tools see them together.
-fn resolve_db_path() -> Result<PathBuf, String> {
+fn configured_db_path() -> Result<PathBuf, String> {
     #[cfg(test)]
     {
         if let Some(p) = TEST_DB_PATH.with(|slot| slot.borrow().clone()) {
-            if let Some(parent) = p.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("create override parent: {}", e))?;
-            }
             return Ok(p);
         }
     }
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "neither HOME nor USERPROFILE is set".to_string())?;
-    let dir = PathBuf::from(home).join(".shellx");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {}", dir.display(), e))?;
-    Ok(dir.join("subagents.db"))
+    Ok(PathBuf::from(home).join(".shellx").join("subagents.db"))
+}
+
+fn resolve_db_path() -> Result<PathBuf, String> {
+    let path = configured_db_path()?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| format!("subagents db has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {}", dir.display(), e))?;
+    Ok(path)
 }
 
 /// Open the connection + run idempotent schema init. WAL mode chosen
@@ -107,13 +110,12 @@ fn now_ms() -> i64 {
 
 #[cfg(unix)]
 fn pid_is_alive(pid: u32) -> bool {
-    if pid == 0 || pid > i32::MAX as u32 {
-        return false;
-    }
     use nix::errno::Errno;
     use nix::sys::signal::kill;
-    use nix::unistd::Pid;
-    match kill(Pid::from_raw(pid as i32), None) {
+    let Ok(pid) = crate::process_registry::checked_unix_process_id(pid) else {
+        return false;
+    };
+    match kill(pid, None) {
         Ok(()) => true,
         Err(Errno::EPERM) => true,
         Err(_) => false,
@@ -261,7 +263,8 @@ pub fn upsert(
 /// Returns JSON-friendly rows matching the same wire shape as the
 /// old `subagent::list_summaries` (camelCase keys, optional fields
 /// serialized as null when None).
-pub fn list_recent(max_age_ms: Option<i64>) -> Result<Vec<Value>, String> {
+#[cfg(test)]
+fn list_recent(max_age_ms: Option<i64>) -> Result<Vec<Value>, String> {
     let conn = open_db()?;
     match reconcile_dead_running_rows(&conn) {
         Ok(updated) if updated > 0 => {
@@ -275,6 +278,24 @@ pub fn list_recent(max_age_ms: Option<i64>) -> Result<Vec<Value>, String> {
             tracing::warn!("subagents stale-state reconciliation failed: {}", e);
         }
     }
+    query_recent(&conn, max_age_ms)
+}
+
+/// Pure diagnostic snapshot for GET/read surfaces. It never creates the
+/// profile directory or database, initializes/migrates schema, reconciles
+/// process state, or deletes rows. App startup performs those maintenance
+/// duties before the Debug API becomes available.
+pub fn list_recent_read_only(max_age_ms: Option<i64>) -> Result<Vec<Value>, String> {
+    let path = configured_db_path()?;
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|e| format!("open read-only {}: {}", path.display(), e))?;
+    query_recent(&conn, max_age_ms)
+}
+
+fn query_recent(conn: &Connection, max_age_ms: Option<i64>) -> Result<Vec<Value>, String> {
     let cutoff = now_ms() - max_age_ms.unwrap_or(24 * 60 * 60 * 1000);
     let mut stmt = conn
         .prepare(
@@ -431,9 +452,11 @@ pub fn force_kill_running(id: &str) -> Result<Option<Value>, String> {
 #[cfg(unix)]
 fn force_kill_pid(pid: u32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
-    use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGKILL)
-        .map_err(|e| format!("SIGKILL {} failed: {}", pid, e))
+    kill(
+        crate::process_registry::checked_unix_process_id(pid)?,
+        Signal::SIGKILL,
+    )
+    .map_err(|e| format!("SIGKILL {} failed: {}", pid, e))
 }
 
 #[cfg(not(unix))]
@@ -450,20 +473,28 @@ fn force_kill_pid(pid: u32) -> Result<(), String> {
 }
 
 /// GC: delete rows whose mtime is older than `older_than_ms` cutoff.
-/// Returns deleted-row count. Wired into `subagent::spawn_subagent` so
-/// every new spawn opportunistically reaps stale rows — keeps the db
-/// small without a dedicated background task.
+/// Returns deleted-row count. App startup runs the combined maintenance
+/// operation so diagnostic GETs can remain pure reads.
+pub fn maintain_store(older_than_ms: i64) -> Result<(usize, usize), String> {
+    let conn = open_db()?;
+    let reconciled = reconcile_dead_running_rows(&conn)?;
+    let deleted = gc_with_connection(&conn, older_than_ms)?;
+    Ok((reconciled, deleted))
+}
+
 #[allow(dead_code)]
 pub fn gc_older_than_ms(older_than_ms: i64) -> Result<usize, String> {
     let conn = open_db()?;
+    gc_with_connection(&conn, older_than_ms)
+}
+
+fn gc_with_connection(conn: &Connection, older_than_ms: i64) -> Result<usize, String> {
     let cutoff = now_ms() - older_than_ms;
-    let n = conn
-        .execute(
-            "DELETE FROM subagents WHERE mtime_unix_ms < ?1",
-            params![cutoff],
-        )
-        .map_err(|e| format!("subagents gc: {}", e))?;
-    Ok(n)
+    conn.execute(
+        "DELETE FROM subagents WHERE mtime_unix_ms < ?1",
+        params![cutoff],
+    )
+    .map_err(|e| format!("subagents gc: {}", e))
 }
 
 #[cfg(test)]
@@ -546,6 +577,42 @@ mod tests {
     }
 
     #[test]
+    fn read_only_snapshot_does_not_create_an_absent_store() {
+        let td = TempDb::new("read-only-absent");
+        let parent = td.path.parent().expect("temp db has parent").to_path_buf();
+
+        let rows = list_recent_read_only(Some(60_000)).expect("read-only empty snapshot");
+
+        assert!(rows.is_empty());
+        assert!(!td.path.exists(), "read-only snapshot created the database");
+        assert!(
+            !parent.exists(),
+            "read-only snapshot created the profile directory"
+        );
+    }
+
+    #[test]
+    fn read_only_snapshot_does_not_reconcile_process_state() {
+        let _td = TempDb::new("read-only-running");
+        insert_row("dead-read-only", "running", Some(u32::MAX));
+
+        let rows = list_recent_read_only(Some(60_000)).expect("read-only running snapshot");
+        let row = rows
+            .iter()
+            .find(|row| row["id"] == json!("dead-read-only"))
+            .expect("dead row present before maintenance");
+        assert_eq!(row["status"], json!("running"), "row: {}", row);
+
+        maintain_store(24 * 60 * 60 * 1000).expect("startup maintenance");
+        let rows = list_recent_read_only(Some(60_000)).expect("read-only reconciled snapshot");
+        let row = rows
+            .iter()
+            .find(|row| row["id"] == json!("dead-read-only"))
+            .expect("dead row present after maintenance");
+        assert_eq!(row["status"], json!("failed"), "row: {}", row);
+    }
+
+    #[test]
     fn list_recent_marks_dead_pid_running_rows_failed() {
         let _td = TempDb::new("dead-pid");
         insert_row("dead", "running", Some(u32::MAX));
@@ -561,6 +628,15 @@ mod tests {
             "elapsedMs should be reconciled: {}",
             row
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_invalid_pids_never_reach_sigkill() {
+        for pid in [0, 1, i32::MAX as u32 + 1, u32::MAX] {
+            let error = force_kill_pid(pid).expect_err("unsafe pid must fail before kill(2)");
+            assert!(error.contains("unsafe process id"), "{error}");
+        }
     }
 
     #[test]

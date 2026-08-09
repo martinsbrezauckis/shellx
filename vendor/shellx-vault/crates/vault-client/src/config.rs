@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -24,6 +25,10 @@ use vault_core::{ChunkRef, Keyfile, MasterKey};
 pub const STATE_DIR: &str = ".sxvault";
 /// Prefix of our own temp files during apply — excluded from scans.
 pub const TMP_PREFIX: &str = ".sxvault-tmp-";
+/// Maximum size accepted for the small JSON/configuration files handled here.
+/// This keeps a corrupted or same-user-tampered file from causing an
+/// unbounded allocation before deserialization.
+pub const MAX_PRIVATE_CONFIG_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -77,7 +82,7 @@ impl Paths {
 const CONFLICTS_KEEP: usize = 200;
 
 pub fn load_conflicts(paths: &Paths) -> Vec<crate::engine::ConflictEvent> {
-    fs::read_to_string(&paths.conflicts)
+    read_string_limited(&paths.conflicts, MAX_PRIVATE_CONFIG_BYTES)
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
@@ -143,8 +148,38 @@ pub fn write_private(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Read at most `max_bytes` from a local state file. `take(max + 1)` keeps the
+/// bound true even if the file grows between a metadata check and the read.
+pub fn read_limited(path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let limit = u64::try_from(max_bytes)
+        .context("file-size limit does not fit u64")?
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(limit).read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        bail!(
+            "{} is too large (maximum {} bytes)",
+            path.display(),
+            max_bytes
+        );
+    }
+    Ok(bytes)
+}
+
+pub fn read_string_limited(path: &Path, max_bytes: usize) -> Result<String> {
+    String::from_utf8(read_limited(path, max_bytes)?)
+        .with_context(|| format!("{} is not valid UTF-8", path.display()))
+}
+
+pub fn is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
+
 pub fn load_config(paths: &Paths) -> Result<ClientConfig> {
-    let raw = fs::read_to_string(&paths.config) // nosemgrep
+    let raw = read_string_limited(&paths.config, MAX_PRIVATE_CONFIG_BYTES) // nosemgrep
         .with_context(|| {
             format!(
                 "not a ShellX Vault root — run `sbx init` first ({})",
@@ -157,7 +192,8 @@ pub fn load_config(paths: &Paths) -> Result<ClientConfig> {
 pub fn load_keyfile(paths: &Paths) -> Result<Keyfile> {
     // FP (actix tainted-path): fixed filename inside the root's own
     // .sxvault state dir — no untrusted input reaches the path.
-    let raw = fs::read_to_string(&paths.keyfile).context("missing keyfile.json")?; // nosemgrep
+    let raw = read_string_limited(&paths.keyfile, MAX_PRIVATE_CONFIG_BYTES)
+        .context("missing keyfile.json")?; // nosemgrep
     Ok(serde_json::from_str(&raw)?)
 }
 
@@ -169,7 +205,9 @@ pub fn resolve_passphrase(passphrase_file: Option<&Path>, confirm: bool) -> Resu
         }
     }
     if let Some(f) = passphrase_file {
-        let p = fs::read_to_string(f)?.trim_end_matches('\n').to_string();
+        let p = read_string_limited(f, MAX_PRIVATE_CONFIG_BYTES)?
+            .trim_end_matches('\n')
+            .to_string();
         if p.is_empty() {
             bail!("passphrase file {} is empty", f.display());
         }
@@ -270,5 +308,17 @@ mod private_write_tests {
         // Overwrite path works too (rename over existing).
         write_private(&dest, b"sealed v2").unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), b"sealed v2");
+    }
+
+    #[test]
+    fn limited_read_rejects_oversized_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oversized.json");
+        std::fs::write(&path, b"12345").unwrap();
+        assert_eq!(read_limited(&path, 5).unwrap(), b"12345");
+        assert!(read_limited(&path, 4)
+            .unwrap_err()
+            .to_string()
+            .contains("too large"));
     }
 }

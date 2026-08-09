@@ -17,6 +17,7 @@ import { api } from "../lib/debug-api";
 import { PROJECTS_COLLAPSE_KEY, persistUserData } from "../lib/userStore";
 import { ShellIcon, TransportIcon, transportTitle } from "./icons";
 import { RowActions } from "./RowActions";
+import { useModalFocus } from "../lib/useModalFocus";
 
 type ChatStatus = "run" | "done" | "idle" | "input";
 
@@ -31,6 +32,15 @@ interface ProjectMeta {
   id: string;
   name: string;
   chats: ChatMeta[];
+}
+
+function isKeyboardContextMenu(key: string, shiftKey: boolean): boolean {
+  return key === "ContextMenu" || (shiftKey && key === "F10");
+}
+
+function keyboardContextMenuPosition(element: HTMLElement): { x: number; y: number } {
+  const rect = element.getBoundingClientRect();
+  return { x: Math.max(8, rect.left + 16), y: Math.min(window.innerHeight - 8, rect.bottom) };
 }
 
 // Projects flow in as a prop from App.tsx (localStorage-backed store);
@@ -165,6 +175,11 @@ export function LeftRail({
     null | { kind: "tab"; tabId: string; title: string }
             | { kind: "past"; sessionId: string; title: string }
   >(null);
+  const deleteDialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(Boolean(projectDeleteCtx || sessionDeleteCtx), deleteDialogRef, () => {
+    setProjectDeleteCtx(null);
+    setSessionDeleteCtx(null);
+  });
 
  // Persist collapse state on every change.
   useEffect(() => {
@@ -284,24 +299,34 @@ export function LeftRail({
  // Past-chat right-click context menu (sessionId-keyed, no live tab
  // required).
   const [sessionCtx, setSessionCtx] = useState<{ x: number; y: number; sessionId: string } | null>(null);
+  const sessionMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!sessionCtx) return;
+    const focusFrame = window.requestAnimationFrame(() => {
+      sessionMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    });
     const onDoc = () => setSessionCtx(null);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSessionCtx(null); };
     window.addEventListener("mousedown", onDoc);
     window.addEventListener("keydown", onKey);
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       window.removeEventListener("mousedown", onDoc);
       window.removeEventListener("keydown", onKey);
     };
   }, [sessionCtx]);
+  const chatMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!chatCtx) return;
+    const focusFrame = window.requestAnimationFrame(() => {
+      chatMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    });
     const onDoc = () => setChatCtx(null);
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setChatCtx(null); };
     window.addEventListener("mousedown", onDoc);
     window.addEventListener("keydown", onKey);
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       window.removeEventListener("mousedown", onDoc);
       window.removeEventListener("keydown", onKey);
     };
@@ -312,16 +337,19 @@ export function LeftRail({
 
  {/* Panel header — collapse-all toggle + project count + add button. */}
       <div className="left-hdr">
-        <span
+        <button
+          type="button"
+          className="left-collapse-all"
           onClick={() => setAllCollapsed((v) => !v)}
-          style={{ cursor: "pointer", userSelect: "none" }}
           title={allCollapsed ? "Expand all projects" : "Collapse all projects"}
+          aria-expanded={!allCollapsed}
+          data-shellx-release-observe="expanded"
         >
           <span style={{ display: "inline-block", width: 12, fontSize: 10, color: "var(--ink-3)" }}>
             <ShellIcon name={allCollapsed ? "chevron-right" : "chevron-down"} size={12} />
           </span>
           Projects <span className="ct">· {projects.length}</span>
-        </span>
+        </button>
         <button
           type="button"
           className="plus-btn"
@@ -340,18 +368,11 @@ export function LeftRail({
           const isExpanded = !projCollapsed;
           const isRenaming = renamingProj === p.id;
           return (
-            <div key={p.id}>
+            <div key={p.id} className="project-block" data-project-id={p.id}>
               <div
                 className={`proj-row ${dragOverKey === p.id ? "drag-over" : ""}`}
                 data-debug-id="left-project-row"
                 data-project-id={p.id}
-                onClick={isRenaming ? undefined : () => onClickProjectRow(p)}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  setRenamingProj(p.id);
-                  setRenameDraft(p.name);
-                }}
  /* Drop target for open-tab and past-chat drags.
  * onDragOver must preventDefault to enable drop; we
  * gate the .drag-over highlight on a shellX MIME so
@@ -377,45 +398,62 @@ export function LeftRail({
                   setDragOverKey(null);
                   if (payload) dropOntoProject(payload, p.id);
                 }}
-                title={isRenaming ? "" : `Open "${p.name}" in a new tab — double-click to rename — drop a chat here to file it`}
-                style={{ cursor: isRenaming ? "text" : "pointer" }}
               >
-                <span
+                <button data-debug-id="surface-components-leftrail-3"
+                  type="button"
                   className="pcaret"
-                  onClick={(e) => { e.stopPropagation(); toggleProject(p.id); }}
+                  onClick={() => toggleProject(p.id)}
                   title={isExpanded ? "Collapse project" : "Expand project"}
-                  style={{ cursor: "pointer" }}
+                  aria-label={`${isExpanded ? "Collapse" : "Expand"} ${p.name}`}
+                  aria-expanded={isExpanded}
                 >
                   <ShellIcon name={isExpanded ? "chevron-down" : "chevron-right"} size={12} />
-                </span>
-                <span className="pico"><ShellIcon name="folder" size={14} /></span>
+                </button>
                 {isRenaming ? (
-                  <input
-                    ref={inputRef}
-                    className="pname-input"
-                    data-debug-id="left-project-rename-input"
-                    data-project-id={p.id}
-                    type="text"
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onBlur={commitProjectRename}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") { e.preventDefault(); commitProjectRename(); }
-                      else if (e.key === "Escape") { e.preventDefault(); cancelProjectRename(); }
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    placeholder="Project name (empty = delete)"
-                    style={{
-                      flex: 1, background: "transparent",
-                      border: "1px solid var(--ink-4)", borderRadius: 4,
-                      color: "var(--ink-1)", font: "inherit",
-                      padding: "1px 4px", outline: "none",
-                    }}
-                  />
+                  <>
+                    <span className="pico"><ShellIcon name="folder" size={14} /></span>
+                    <input
+                      ref={inputRef}
+                      className="pname-input"
+                      data-debug-id="left-project-rename-input"
+                      data-shellx-release-observe="nonempty"
+                      data-project-id={p.id}
+                      type="text"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={commitProjectRename}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); commitProjectRename(); }
+                        else if (e.key === "Escape") { e.preventDefault(); cancelProjectRename(); }
+                      }}
+                      placeholder="Project name (empty = delete)"
+                      style={{
+                        flex: 1, background: "transparent",
+                        border: "1px solid var(--ink-4)", borderRadius: 4,
+                        color: "var(--ink-1)", font: "inherit",
+                        padding: "1px 4px", outline: "none",
+                      }}
+                    />
+                    <span className="pcount">{p.chats.length}</span>
+                  </>
                 ) : (
-                  <span className="pname">{p.name}</span>
+                  <button
+                    type="button"
+                    className="proj-row-main"
+                    onClick={() => onClickProjectRow(p)}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      setRenamingProj(p.id);
+                      setRenameDraft(p.name);
+                    }}
+                    title={`${isExpanded ? "Collapse" : "Expand"} ${p.name} — double-click to rename — drop a chat here to file it`}
+                    aria-expanded={isExpanded}
+                  >
+                    <span className="pico"><ShellIcon name="folder" size={14} /></span>
+                    <span className="pname">{p.name}</span>
+                    <span className="pcount">{p.chats.length}</span>
+                  </button>
                 )}
-                <span className="pcount">{p.chats.length}</span>
  {/* Project delete ✕ — visible on row hover. Opens the
  * confirmation modal so the user can pick "keep
  * chats" (drop label only) or "delete sessions"
@@ -450,33 +488,34 @@ export function LeftRail({
  * reliably in WebView2 (no dragstart fires). */
                 <div
                   key={c.id}
-                  role="button"
-                  tabIndex={0}
                   className="chat-row"
+                  data-tab-id={c.id}
                   draggable
                   onDragStart={(e) => {
                     e.dataTransfer.setData(DRAG_TAB_MIME, c.id);
                     e.dataTransfer.effectAllowed = "move";
                   }}
-                  onClick={() => onClickChat(c.id, p.id, c.transport)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onClickChat(c.id, p.id, c.transport);
-                    }
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setChatCtx({ x: e.clientX, y: e.clientY, tabId: c.id });
-                  }}
-                  title={`Open chat "${c.title}" in a new tab — hover for edit, right-click or drag to move`}
-                  style={{ cursor: "pointer" }}
                 >
-                  <span className="ttr" title={transportTitle(c.transport)}>
-                    <TransportIcon value={c.transport} />
-                  </span>
-                  <span className="ctitle">{c.title}</span>
+                  <button
+                    type="button"
+                    className="chat-row-main"
+                    onClick={() => onClickChat(c.id, p.id, c.transport)}
+                    onKeyDown={(e) => {
+                      if (!isKeyboardContextMenu(e.key, e.shiftKey)) return;
+                      e.preventDefault();
+                      setChatCtx({ ...keyboardContextMenuPosition(e.currentTarget), tabId: c.id });
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setChatCtx({ x: e.clientX, y: e.clientY, tabId: c.id });
+                    }}
+                    title={`Open chat "${c.title}" — use Shift+F10 to move it, or drag it to another project`}
+                  >
+                    <span className="ttr" title={transportTitle(c.transport)}>
+                      <TransportIcon value={c.transport} />
+                    </span>
+                    <span className="ctitle">{c.title}</span>
+                  </button>
  {/* project-row rename + delete affordances.
  * Mirrors the unfiled/open-chat rows: hover-revealed
  * ✎ opens inline rename; 🗑 opens the delete modal.
@@ -505,29 +544,38 @@ export function LeftRail({
                 <div
                   key={`past-${c.id}`}
                   className="chat-row"
+                  data-session-id={c.id}
                   draggable
                   onDragStart={(e) => {
                     e.dataTransfer.setData(DRAG_SESSION_MIME, c.id);
                     e.dataTransfer.effectAllowed = "move";
                   }}
-                  onClick={() => onOpenPastChat?.(c.id, c.title)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setSessionCtx({ x: e.clientX, y: e.clientY, sessionId: c.id });
-                  }}
-                  title={`Reopen "${c.title}" — hover for edit, right-click to move — drag to file under another project`}
-                  style={{ cursor: "pointer" }}
                 >
  {/* Recorded transport emoji (falls back to 💬) so
  * project-filed past chats match the unfiled
  * past-chat list visually. */}
-                  <span className="ttr" title={transportTitle(c.connectionTransport)}>
-                    <TransportIcon value={c.connectionTransport} />
-                  </span>
-                  <span className="ctitle" style={{
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>{c.title}</span>
+                  <button
+                    type="button"
+                    className="chat-row-main"
+                    onClick={() => onOpenPastChat?.(c.id, c.title)}
+                    onKeyDown={(e) => {
+                      if (!isKeyboardContextMenu(e.key, e.shiftKey)) return;
+                      e.preventDefault();
+                      setSessionCtx({ ...keyboardContextMenuPosition(e.currentTarget), sessionId: c.id });
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setSessionCtx({ x: e.clientX, y: e.clientY, sessionId: c.id });
+                    }}
+                    title={`Reopen "${c.title}" — use Shift+F10 to move it, or drag it to another project`}
+                  >
+                    <span className="ttr" title={transportTitle(c.connectionTransport)}>
+                      <TransportIcon value={c.connectionTransport} />
+                    </span>
+                    <span className="ctitle" style={{
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>{c.title}</span>
+                  </button>
  {/* project past-chat affordances. Mirrors
  * the unfiled past-chat list (lines ~735-770). */}
                   <RowActions
@@ -582,6 +630,8 @@ export function LeftRail({
                 if (payload) dropOntoProject(payload, null);
               }}
               title={unfiledCollapsed ? "Show open chats — drop here to unfile" : "Hide open chats — drop here to unfile"}
+              aria-expanded={!unfiledCollapsed}
+              data-shellx-release-observe="expanded"
             >
               <span className="pcaret"><ShellIcon name={unfiledCollapsed ? "chevron-right" : "chevron-down"} size={12} /></span>
               Open chats · {openChats.length}
@@ -592,6 +642,7 @@ export function LeftRail({
               <div
                 key={c.tabId}
                 className={`unfiled-row ${c.isActive ? "active" : ""}`}
+                data-tab-id={c.tabId}
  /* open-chat rows are draggable — drop on a
  * project assigns the live tab to that project. */
                 draggable={!isRenamingThisChat}
@@ -600,47 +651,59 @@ export function LeftRail({
                   e.dataTransfer.setData(DRAG_TAB_MIME, c.tabId);
                   e.dataTransfer.effectAllowed = "move";
                 }}
-                onClick={isRenamingThisChat ? undefined : () => onFocusTab?.(c.tabId)}
  /* double-click
  * removed — it conflicted with focus-tab single-click
  * timing and was unintuitive for past-chat reopen flow.
  * Rename is triggered by the hover-revealed ✎ icon. */
  /* Right-click → "Move to project ▸" menu. */
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setChatCtx({ x: e.clientX, y: e.clientY, tabId: c.tabId });
-                }}
-                title={isRenamingThisChat ? "" : `Focus tab: ${c.title} — hover for edit, right-click or drag to move`}
-                style={{ cursor: isRenamingThisChat ? "text" : "pointer" }}
               >
-                <span className="ttr" title={transportTitle(c.connectionTransport)}>
-                  <TransportIcon value={c.connectionTransport} />
-                </span>
                 {isRenamingThisChat ? (
-                  <input
-                    ref={inputRef}
-                    className="ctitle-input"
-                    type="text"
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onBlur={commitChatRename}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") { e.preventDefault(); commitChatRename(); }
-                      else if (e.key === "Escape") { e.preventDefault(); cancelChatRename(); }
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    placeholder="Chat title"
-                    style={{
-                      flex: 1, background: "transparent",
-                      border: "1px solid var(--ink-4)", borderRadius: 4,
-                      color: "var(--ink-1)", font: "inherit",
-                      padding: "1px 4px", outline: "none",
-                    }}
-                  />
+                  <>
+                    <span className="ttr" title={transportTitle(c.connectionTransport)}>
+                      <TransportIcon value={c.connectionTransport} />
+                    </span>
+                    <input
+                      ref={inputRef}
+                      className="ctitle-input"
+                      type="text"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={commitChatRename}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); commitChatRename(); }
+                        else if (e.key === "Escape") { e.preventDefault(); cancelChatRename(); }
+                      }}
+                      placeholder="Chat title"
+                      style={{
+                        flex: 1, background: "transparent",
+                        border: "1px solid var(--ink-4)", borderRadius: 4,
+                        color: "var(--ink-1)", font: "inherit",
+                        padding: "1px 4px", outline: "none",
+                      }}
+                    />
+                  </>
                 ) : (
                   <>
-                    <span className="ctitle">{c.title || "(untitled)"}</span>
+                    <button
+                      type="button"
+                      className="unfiled-row-main"
+                      onClick={() => onFocusTab?.(c.tabId)}
+                      onKeyDown={(e) => {
+                        if (!isKeyboardContextMenu(e.key, e.shiftKey)) return;
+                        e.preventDefault();
+                        setChatCtx({ ...keyboardContextMenuPosition(e.currentTarget), tabId: c.tabId });
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setChatCtx({ x: e.clientX, y: e.clientY, tabId: c.tabId });
+                      }}
+                      title={`Focus tab: ${c.title} — use Shift+F10 to move it, or drag it to another project`}
+                    >
+                      <span className="ttr" title={transportTitle(c.connectionTransport)}>
+                        <TransportIcon value={c.connectionTransport} />
+                      </span>
+                      <span className="ctitle">{c.title || "(untitled)"}</span>
+                    </button>
  {/* Hover-revealed edit pencil — clicks start
  * inline rename. Trash glyph opens the
  * session-delete modal. CSS hides .row-edit /
@@ -682,6 +745,8 @@ export function LeftRail({
                 data-debug-id="left-past-chats-toggle"
                 onClick={() => setPastCollapsed((v) => !v)}
                 title={pastCollapsed ? "Show past chats" : "Hide past chats"}
+                aria-expanded={!pastCollapsed}
+                data-shellx-release-observe="expanded"
               >
                 <span className="pcaret"><ShellIcon name={pastCollapsed ? "chevron-right" : "chevron-down"} size={12} /></span>
                 Past chats · {closed.length}
@@ -727,53 +792,65 @@ export function LeftRail({
                     e.dataTransfer.setData(DRAG_SESSION_MIME, c.id);
                     e.dataTransfer.effectAllowed = "move";
                   }}
-                  onClick={isRenamingThisPast ? undefined : () => onOpenPastChat?.(c.id, c.title)}
  /* Right-click → "Move to project ▸" menu without
  * opening the chat first. */
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (c.id.startsWith("closed-")) return; // synthetic ids
-                    setSessionCtx({ x: e.clientX, y: e.clientY, sessionId: c.id });
-                  }}
-                  title={isRenamingThisPast ? "" : `Reopen "${c.title}" — ${c.connectionTransport ? `transport: ${c.connectionTransport} — ` : ""}right-click or drag to move (last touched ${new Date(c.mtime_ms).toLocaleString()})`}
-                  style={{ cursor: isRenamingThisPast ? "text" : "pointer" }}
                 >
  {/* Transport emoji (falls back to 💬 for legacy
  * entries) so closed sessions show Local / WSL /
  * SSH at a glance. */}
-                  <span className="ttr" title={transportTitle(c.connectionTransport)}>
-                    <TransportIcon value={c.connectionTransport} />
-                  </span>
                   {isRenamingThisPast ? (
-                    <input
-                      ref={inputRef}
-                      className="ctitle-input"
-                      data-debug-id="left-chat-rename-input"
-                      data-session-id={c.id}
-                      type="text"
-                      value={renameDraft}
-                      onChange={(e) => setRenameDraft(e.target.value)}
-                      onBlur={commitPastRename}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") { e.preventDefault(); commitPastRename(); }
-                        else if (e.key === "Escape") { e.preventDefault(); cancelPastRename(); }
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="Chat title"
-                      style={{
-                        flex: 1, background: "transparent",
-                        border: "1px solid var(--ink-4)", borderRadius: 4,
-                        color: "var(--ink-1)", font: "inherit",
-                        padding: "1px 4px", outline: "none",
-                      }}
-                    />
+                    <>
+                      <span className="ttr" title={transportTitle(c.connectionTransport)}>
+                        <TransportIcon value={c.connectionTransport} />
+                      </span>
+                      <input
+                        ref={inputRef}
+                        className="ctitle-input"
+                        data-debug-id="left-chat-rename-input"
+                        data-session-id={c.id}
+                        type="text"
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onBlur={commitPastRename}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); commitPastRename(); }
+                          else if (e.key === "Escape") { e.preventDefault(); cancelPastRename(); }
+                        }}
+                        placeholder="Chat title"
+                        style={{
+                          flex: 1, background: "transparent",
+                          border: "1px solid var(--ink-4)", borderRadius: 4,
+                          color: "var(--ink-1)", font: "inherit",
+                          padding: "1px 4px", outline: "none",
+                        }}
+                      />
+                    </>
                   ) : (
                     <>
-                      <span className="ctitle" style={{
-                        overflow: "hidden", textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}>{c.title}</span>
+                      <button
+                        type="button"
+                        className="unfiled-row-main"
+                        onClick={() => onOpenPastChat?.(c.id, c.title)}
+                        onKeyDown={(e) => {
+                          if (c.id.startsWith("closed-") || !isKeyboardContextMenu(e.key, e.shiftKey)) return;
+                          e.preventDefault();
+                          setSessionCtx({ ...keyboardContextMenuPosition(e.currentTarget), sessionId: c.id });
+                        }}
+                        onContextMenu={(e) => {
+                          if (c.id.startsWith("closed-")) return;
+                          e.preventDefault();
+                          setSessionCtx({ x: e.clientX, y: e.clientY, sessionId: c.id });
+                        }}
+                        title={`Reopen "${c.title}" — ${c.connectionTransport ? `transport: ${c.connectionTransport} — ` : ""}${c.id.startsWith("closed-") ? "archived session" : "use Shift+F10 to move it, or drag it to another project"} (last touched ${new Date(c.mtime_ms).toLocaleString()})`}
+                      >
+                        <span className="ttr" title={transportTitle(c.connectionTransport)}>
+                          <TransportIcon value={c.connectionTransport} />
+                        </span>
+                        <span className="ctitle" style={{
+                          overflow: "hidden", textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}>{c.title}</span>
+                      </button>
  {/* #391 — hover-revealed rename pencil and delete
  * trash. Pencil only when the host wired
  * onRenamePastChat AND the row maps to a real
@@ -827,7 +904,10 @@ export function LeftRail({
  * mousedown dismiss handler doesn't close it. */}
       {chatCtx && (
         <div
+          ref={chatMenuRef}
           className="ctxmenu"
+          role="menu"
+          aria-label="Move chat to project"
           style={{
             position: "fixed", top: chatCtx.y, left: chatCtx.x, zIndex: 1000,
             background: "var(--surface)", border: "1px solid var(--hairline)",
@@ -845,37 +925,31 @@ export function LeftRail({
             </div>
           )}
           {projects.map((p) => (
-            <div
+            <button data-debug-id="surface-components-leftrail-15"
+              type="button"
+              role="menuitem"
+              className="ctxmenu-action"
               key={p.id}
               onClick={() => {
                 onAssignChatToProject?.(chatCtx.tabId, p.id);
                 setChatCtx(null);
               }}
-              style={{
-                padding: "5px 10px", fontSize: "var(--fs-ui-sm)", cursor: "pointer",
-                borderRadius: 4,
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--hairline)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
             >
               <ShellIcon name="folder" size={13} /> {p.name}
-            </div>
+            </button>
           ))}
-          <div style={{ borderTop: "1px solid var(--hairline)", margin: "4px 0" }} />
-          <div
+          <div role="separator" style={{ borderTop: "1px solid var(--hairline)", margin: "4px 0" }} />
+          <button
+            type="button"
+            role="menuitem"
+            className="ctxmenu-action secondary"
             onClick={() => {
               onAssignChatToProject?.(chatCtx.tabId, null);
               setChatCtx(null);
             }}
-            style={{
-              padding: "5px 10px", fontSize: "var(--fs-ui-sm)", cursor: "pointer",
-              borderRadius: 4, color: "var(--ink-2)",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--hairline)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
           >
             <ShellIcon name="close" size={13} /> Unfile (remove from project)
-          </div>
+          </button>
         </div>
       )}
 
@@ -883,7 +957,10 @@ export function LeftRail({
  * chatCtx but routes through onAssignSessionToProject. */}
       {sessionCtx && (
         <div
+          ref={sessionMenuRef}
           className="ctxmenu"
+          role="menu"
+          aria-label="Move past chat to project"
           style={{
             position: "fixed", top: sessionCtx.y, left: sessionCtx.x, zIndex: 1000,
             background: "var(--surface)", border: "1px solid var(--hairline)",
@@ -901,47 +978,43 @@ export function LeftRail({
             </div>
           )}
           {projects.map((p) => (
-            <div
+            <button data-debug-id="surface-components-leftrail-17"
+              type="button"
+              role="menuitem"
+              className="ctxmenu-action"
               key={p.id}
               onClick={() => {
                 onAssignSessionToProject?.(sessionCtx.sessionId, p.id);
                 setSessionCtx(null);
               }}
-              style={{
-                padding: "5px 10px", fontSize: "var(--fs-ui-sm)", cursor: "pointer", borderRadius: 4,
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--hairline)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
             >
               <ShellIcon name="folder" size={13} /> {p.name}
-            </div>
+            </button>
           ))}
-          <div style={{ borderTop: "1px solid var(--hairline)", margin: "4px 0" }} />
-          <div
+          <div role="separator" style={{ borderTop: "1px solid var(--hairline)", margin: "4px 0" }} />
+          <button
+            type="button"
+            role="menuitem"
+            className="ctxmenu-action secondary"
             onClick={() => {
               onAssignSessionToProject?.(sessionCtx.sessionId, null);
               setSessionCtx(null);
             }}
-            style={{
-              padding: "5px 10px", fontSize: "var(--fs-ui-sm)", cursor: "pointer",
-              borderRadius: 4, color: "var(--ink-2)",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--hairline)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
           >
             <ShellIcon name="close" size={13} /> Unfile (remove from project)
-          </div>
+          </button>
         </div>
       )}
 
  {/* 3-option project-delete modal: marker-only / marker +
  * sessions / cancel. */}
       {projectDeleteCtx && onDeleteProject && (
-        <div
+        <div data-debug-id="surface-components-leftrail-19"
           className="modal-backdrop"
           onClick={() => setProjectDeleteCtx(null)}
         >
-          <div
+          <div data-debug-id="surface-components-leftrail-20"
+            ref={deleteDialogRef}
             className="modal proj-delete-modal"
             role="alertdialog"
             aria-modal="true"
@@ -973,7 +1046,7 @@ export function LeftRail({
               <button
                 type="button"
                 className="settings-pill"
-                style={{ borderColor: "var(--fg-error, #f55)", color: "var(--fg-error, #f55)" }}
+                style={{ borderColor: "var(--fg-error)", color: "var(--fg-error)" }}
                 onClick={() => {
  // Wipe: marker + the underlying JSONL session files.
                   onDeleteProject(projectDeleteCtx.id, true);
@@ -987,6 +1060,7 @@ export function LeftRail({
                 type="button"
                 className="settings-pill"
                 onClick={() => setProjectDeleteCtx(null)}
+                data-dialog-initial-focus="true"
               >
                 Cancel
               </button>
@@ -997,11 +1071,12 @@ export function LeftRail({
 
  {/* Single-session delete confirmation modal. */}
       {sessionDeleteCtx && onDeleteSession && (
-        <div
+        <div data-debug-id="surface-components-leftrail-24"
           className="modal-backdrop"
           onClick={() => setSessionDeleteCtx(null)}
         >
-          <div
+          <div data-debug-id="surface-components-leftrail-25"
+            ref={deleteDialogRef}
             className="modal proj-delete-modal"
             role="alertdialog"
             aria-modal="true"
@@ -1017,7 +1092,7 @@ export function LeftRail({
               <button
                 type="button"
                 className="settings-pill"
-                style={{ borderColor: "var(--fg-error, #f55)", color: "var(--fg-error, #f55)" }}
+                style={{ borderColor: "var(--fg-error)", color: "var(--fg-error)" }}
                 onClick={() => {
                   if (sessionDeleteCtx.kind === "tab") {
                     onDeleteSession({ kind: "tab", tabId: sessionDeleteCtx.tabId });
@@ -1033,6 +1108,7 @@ export function LeftRail({
                 type="button"
                 className="settings-pill"
                 onClick={() => setSessionDeleteCtx(null)}
+                data-dialog-initial-focus="true"
               >
                 Cancel
               </button>
@@ -1057,8 +1133,11 @@ interface GhInfo {
 function GitHubStrip({ cwd, activeTabId }: { cwd: string; activeTabId?: string | null }): JSX.Element | null {
   const [info, setInfo] = useState<GhInfo | null>(null);
   useEffect(() => {
-    const qs = activeTabId ? `?tabId=${encodeURIComponent(activeTabId)}` : "";
-    void api(`/state/github${qs}`)
+    const query = new URLSearchParams();
+    if (activeTabId) query.set("tabId", activeTabId);
+    if (cwd.trim()) query.set("cwd", cwd.trim());
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    void api(`/state/github${suffix}`)
       .then((r) => r.json())
       .then((j: GhInfo) => setInfo(j))
       .catch(() => { /* debug API offline — leave empty */ });
@@ -1119,10 +1198,11 @@ function shortRemote(remote: string): string {
 }
 
 function LeftFooter(): JSX.Element {
- // Resolve the session-log path from get_home_dir so the displayed
- // path matches the running OS. Outside Tauri (browser preview) we
- // fall back to "~/.shellx/sessions/".
-  const [sessionLogPath, setSessionLogPath] = useState<string>("~/.shellx/sessions/");
+  const historyDisplayPath = "~/.shellx/sessions/";
+ // Resolve the native location for the tooltip only. Keeping the compact
+ // home-relative path in visible UI avoids exposing the operator's account
+ // name or an isolated release-profile path in screenshots and screen shares.
+  const [sessionLogPath, setSessionLogPath] = useState<string>(historyDisplayPath);
   useEffect(() => {
  // Live path resolution — only meaningful inside Tauri.
     if (typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ === "undefined") return;
@@ -1140,8 +1220,8 @@ function LeftFooter(): JSX.Element {
       <div className="left-foot-row" style={{ color: "var(--ink-4)" }} title={sessionLogPath}>
         <span>history</span>
         <span className="v" style={{
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl",
-        }}>{sessionLogPath}</span>
+          minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>{historyDisplayPath}</span>
       </div>
     </div>
   );

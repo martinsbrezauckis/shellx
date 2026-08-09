@@ -163,7 +163,12 @@ export function SessionTabs({
           <ShellIcon name="chevrons-left" size={15} />
         </button>
       )}
-      <div className="session-tabs-rail" ref={railRef} onScroll={measure}>
+      <div
+        className="session-tabs-rail"
+        ref={railRef}
+        onScroll={measure}
+        data-shellx-release-observe="scrollLeft scrollWidth clientWidth"
+      >
         {sessions.map((s, index) => {
           const isRenaming = renamingId === s.id;
           const sessionNo = index + 1;
@@ -216,6 +221,7 @@ export function SessionTabs({
                 ref={inputRef}
                 className="stab-title stab-rename-input"
                 data-debug-id="session-rename-input"
+                data-shellx-release-observe="value"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onBlur={commitRename}
@@ -236,7 +242,7 @@ export function SessionTabs({
               <span className="stab-title">{truncTitle(s.title || "(untitled)")}</span>
             )}
             {s.preview && !isRenaming && (
-              <button
+              <button data-debug-id="surface-components-sessiontabs-4"
                 type="button"
                 className="stab-preview"
                 onClick={(e) => { e.stopPropagation(); onOpenPreview?.(s.id); }}
@@ -282,6 +288,7 @@ export function SessionTabs({
           className="stab-new"
           onClick={onNew}
           title="New session (⌘T)"
+          aria-label="New session"
         >
           <ShellIcon name="plus" size={16} />
         </button>
@@ -304,6 +311,8 @@ export function SessionTabs({
           onClick={() => setDropdownOpen((v) => !v)}
           title="All open sessions"
           aria-label="All sessions"
+          aria-expanded={dropdownOpen}
+          data-shellx-release-observe="expanded"
         >
           <ShellIcon name="chevron-down" size={15} />
         </button>
@@ -334,7 +343,7 @@ export function SessionTabs({
                 )}
                 <span className="stab-dropdown-title">{s.title || "(untitled)"}</span>
                 {s.preview && (
-                  <button
+                  <button data-debug-id="surface-components-sessiontabs-11"
                     type="button"
                     className="stab-dropdown-preview"
                     onClick={(e) => {

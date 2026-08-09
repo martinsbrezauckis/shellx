@@ -30,6 +30,7 @@
 
 use subtle::ConstantTimeEq;
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 use crate::crypto::{self, CryptoError, NONCE_LEN, TAG_LEN};
 
@@ -76,14 +77,16 @@ pub fn seal_deposit(
     // it is still used once and dropped (zeroized by dalek) right here.
     let eph_sk = StaticSecret::from(crate::keys::random_bytes::<32>());
     let eph_pk = PublicKey::from(&eph_sk).to_bytes();
-    let shared = eph_sk
-        .diffie_hellman(&PublicKey::from(*recipient_pk))
-        .to_bytes();
+    let shared = Zeroizing::new(
+        eph_sk
+            .diffie_hellman(&PublicKey::from(*recipient_pk))
+            .to_bytes(),
+    );
     if shared_is_zero(&shared) {
         // Recipient key is a low-order point — refuse rather than seal to nobody.
         return Err(CryptoError::OpenFailed);
     }
-    let key = deposit_key(&shared, &eph_pk, recipient_pk);
+    let key = Zeroizing::new(deposit_key(&shared, &eph_pk, recipient_pk));
     let sealed = crypto::seal(&key, DEPOSIT_AAD, plaintext);
     let mut out = Vec::with_capacity(DEPOSIT_PK_LEN + sealed.len());
     out.extend_from_slice(&eph_pk);
@@ -101,11 +104,11 @@ pub fn open_deposit(secret: &[u8; 32], wire: &[u8]) -> Result<Vec<u8>, CryptoErr
     let eph_pk: [u8; 32] = eph_pk_bytes.try_into().expect("split_at length");
     let sk = StaticSecret::from(*secret);
     let recipient_pk = PublicKey::from(&sk).to_bytes();
-    let shared = sk.diffie_hellman(&PublicKey::from(eph_pk)).to_bytes();
+    let shared = Zeroizing::new(sk.diffie_hellman(&PublicKey::from(eph_pk)).to_bytes());
     if shared_is_zero(&shared) {
         return Err(CryptoError::OpenFailed);
     }
-    let key = deposit_key(&shared, &eph_pk, &recipient_pk);
+    let key = Zeroizing::new(deposit_key(&shared, &eph_pk, &recipient_pk));
     crypto::open(&key, DEPOSIT_AAD, sealed)
 }
 
@@ -181,5 +184,11 @@ mod tests {
         assert_eq!(master.deposit_secret(), master.deposit_secret());
         assert_ne!(master.deposit_secret(), master.manifest_key());
         assert_ne!(master.deposit_secret(), master.chunk_enc_root());
+    }
+
+    #[test]
+    fn deposit_working_secret_material_uses_zeroizing() {
+        let source = include_str!("deposit.rs");
+        assert!(source.matches("Zeroizing::new").count() >= 2);
     }
 }

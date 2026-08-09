@@ -30,8 +30,9 @@ export function DesktopTab(): JSX.Element {
   const [status, setStatus] = useState<DesktopIntegrationStatus>(DEFAULT_STATUS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [manualRefreshReceipt, setManualRefreshReceipt] = useState({ sequence: 0, completedAtMs: 0 });
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (manual = false) => {
     if (!inTauri()) {
       setStatus({
         ...DEFAULT_STATUS,
@@ -43,6 +44,12 @@ export function DesktopTab(): JSX.Element {
     try {
       setStatus(await invoke<DesktopIntegrationStatus>("desktop_integration_status"));
       setError(null);
+      if (manual) {
+        setManualRefreshReceipt((current) => ({
+          sequence: current.sequence + 1,
+          completedAtMs: Date.now(),
+        }));
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -50,7 +57,7 @@ export function DesktopTab(): JSX.Element {
     }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(false); }, [refresh]);
 
   const install = useCallback(async () => {
     if (!inTauri()) return;
@@ -89,7 +96,12 @@ export function DesktopTab(): JSX.Element {
 
       <div className="settings-row">
         <label className="settings-label">Send files to shellX</label>
-        <span className="settings-suffix">
+        <span
+          className="settings-suffix"
+          data-desktop-integration-status={installed ? "installed" : "absent"}
+          data-shellx-release-observe="title"
+          title={`Desktop integration state: supported=${status.supported ? "yes" : "no"}; os=${status.os}; installed=${installed ? "yes" : "no"}`}
+        >
           <ShellIcon
             name={installed ? "check" : status.supported ? "circle" : "ban"}
             size={13}
@@ -97,16 +109,20 @@ export function DesktopTab(): JSX.Element {
           {status.message}
         </span>
         <div style={{ display: "flex", gap: 8 }}>
-          <button
+          <button data-debug-id="surface-components-settings-desktoptab-1"
+            data-desktop-integration-action="refresh"
+            data-shellx-release-observe="disabled title"
+            title={`Refresh desktop integration status; sequence=${manualRefreshReceipt.sequence}; completedAtMs=${manualRefreshReceipt.completedAtMs}`}
             type="button"
             className="settings-pill"
-            onClick={() => void refresh()}
+            onClick={() => void refresh(true)}
             disabled={busy || !inTauri()}
           >
             {busy ? "…" : "Refresh"}
           </button>
-          {installed ? (
+          {status.supported && (installed ? (
             <button
+              data-desktop-integration-action="remove"
               type="button"
               className="settings-pill settings-pill-danger"
               onClick={() => void remove()}
@@ -116,6 +132,7 @@ export function DesktopTab(): JSX.Element {
             </button>
           ) : (
             <button
+              data-desktop-integration-action="install"
               type="button"
               className="settings-pill"
               onClick={() => void install()}
@@ -123,21 +140,27 @@ export function DesktopTab(): JSX.Element {
             >
               Install
             </button>
-          )}
+          ))}
         </div>
       </div>
 
       <div className="settings-row">
         <label className="settings-label">Installed parts</label>
         <div className="settings-pills">
-          <span className={`settings-pill ${status.explorerContextMenuInstalled ? "active" : ""}`}>
+          <span
+            className={`settings-pill ${status.explorerContextMenuInstalled ? "active" : ""}`}
+            data-desktop-integration-part="explorer-context-menu"
+          >
             Context menu
           </span>
-          <span className={`settings-pill ${status.sendToShortcutInstalled ? "active" : ""}`}>
+          <span
+            className={`settings-pill ${status.sendToShortcutInstalled ? "active" : ""}`}
+            data-desktop-integration-part="send-to-shortcut"
+          >
             SendTo shortcut
           </span>
         </div>
-        <span className="settings-readonly">{status.os}</span>
+        <span className="settings-readonly" data-desktop-integration-os={status.os}>{status.os}</span>
       </div>
 
       {error && <div role="alert" className="vault-error">{error}</div>}

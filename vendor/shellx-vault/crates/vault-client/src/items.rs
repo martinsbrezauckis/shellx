@@ -10,8 +10,8 @@
 //! - Item plaintext exists ONLY in the caller's memory. Nothing here ever
 //!   writes a secret to disk, stdout, or a log — and there is deliberately
 //!   NO CLI command exposing these reads (a `sbx vault read` would put
-//!   plaintext into terminals and agent transcripts; see the browser
-//!   integration plan, PLAN_FABLE_2026-06-11_VAULT_BROWSER_INTEGRATION.md).
+//!   plaintext into terminals and agent transcripts; Browser integrations use
+//!   mediated fill/capture operations instead of a raw-read CLI).
 //! - Like the web client (and unlike `sbx sync`), there is no local base,
 //!   so no parent-chain walk — head-id cross-check + AEAD + keyed-id
 //!   re-verification are the integrity gates.

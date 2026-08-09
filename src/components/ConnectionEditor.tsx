@@ -24,7 +24,7 @@
  * Selecting "(none)" clears the field. We DO NOT expose vault values
  * here — only the references.
  */
-import { useEffect, useState, type CSSProperties, type JSX } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ConnectionPreset,
@@ -33,7 +33,9 @@ import type {
   TestResult,
 } from "./ConnectionPicker";
 import { agentDisplayName } from "../lib/agent-selection";
+import { scanConnectionProviderCapabilities } from "../lib/connection-provider-capabilities";
 import { AgentCliSetupDialog } from "./AgentCliSetupAssistant";
+import { useModalFocus } from "../lib/useModalFocus";
 
 export function ConnectionEditor({
   open,
@@ -55,6 +57,8 @@ export function ConnectionEditor({
   const [sshHost, setSshHost] = useState("");
   const [sshPort, setSshPort] = useState<string>("");
   const [sshKeyVaultRef, setSshKeyVaultRef] = useState<string>("");
+  const [sshRemoteRuntime, setSshRemoteRuntime] = useState<"posix" | "windows" | "windows_wsl">("posix");
+  const [sshWslDistro, setSshWslDistro] = useState("");
  // Vault key dropdown content.
   const [vaultKeys, setVaultKeys] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +78,8 @@ export function ConnectionEditor({
   const [providerScanning, setProviderScanning] = useState(false);
   const [providerScanError, setProviderScanError] = useState<string | null>(null);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(open, dialogRef, onClose);
 
  // Hydrate fields when editing an existing preset.
   useEffect(() => {
@@ -95,6 +101,8 @@ export function ConnectionEditor({
         setSshHost(initial.transport.host);
         setSshPort(initial.transport.port?.toString() ?? "");
         setSshKeyVaultRef(initial.transport.keyVaultRef ?? "");
+        setSshRemoteRuntime(initial.transport.remoteRuntime ?? "posix");
+        setSshWslDistro(initial.transport.wslDistro ?? "");
       }
     } else {
       setLabel("");
@@ -103,6 +111,8 @@ export function ConnectionEditor({
       setSshHost("");
       setSshPort("");
       setSshKeyVaultRef("");
+      setSshRemoteRuntime("posix");
+      setSshWslDistro("");
     }
  // Always refresh vault key list when the modal opens.
     invoke<string[]>("vault_list_keys", { prefix: "connections." })
@@ -125,6 +135,9 @@ export function ConnectionEditor({
       };
     }
     if (!sshHost.trim()) return "SSH host required";
+    if (sshRemoteRuntime === "windows_wsl" && !sshWslDistro.trim()) {
+      return "WSL distro required for the Windows + WSL SSH runtime";
+    }
     const portNum = sshPort.trim() ? Number(sshPort.trim()) : undefined;
     if (portNum !== undefined && (!Number.isFinite(portNum) || portNum < 1 || portNum > 65535)) {
       return "SSH port must be 1..65535";
@@ -133,9 +146,11 @@ export function ConnectionEditor({
       kind: "ssh",
       host: sshHost.trim(),
       remoteGrokPath: "grok",
+      remoteRuntime: sshRemoteRuntime,
     };
     if (portNum !== undefined) t.port = portNum;
     if (sshKeyVaultRef) t.keyVaultRef = sshKeyVaultRef;
+    if (sshRemoteRuntime === "windows_wsl") t.wslDistro = sshWslDistro.trim();
     return t;
   }
 
@@ -246,8 +261,9 @@ export function ConnectionEditor({
         lastUsedMs: initial?.lastUsedMs ?? 0,
         providerScan: currentProviderScan,
       };
-      const providers = await invoke<ConnectionProviderScanEntry[]>("connection_provider_scan", { preset: draft });
-      const checkedAtMs = providers[0]?.checkedAtMs ?? Date.now();
+      const snapshot = await scanConnectionProviderCapabilities(draft);
+      const providers = snapshot.providers;
+      const checkedAtMs = snapshot.generatedAtMs;
       setLastProviderScan(providers);
       setLastProviderScanSignature(transportSignatureForScan);
       setProviderScan({
@@ -266,10 +282,7 @@ export function ConnectionEditor({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="conn-editor-title"
+    <div data-debug-id="surface-components-connectioneditor-1"
       onClick={onClose}
       style={{
         position: "fixed",
@@ -281,12 +294,16 @@ export function ConnectionEditor({
         zIndex: 950,
       }}
     >
-      <div
+      <div data-debug-id="surface-components-connectioneditor-2"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="conn-editor-title"
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: "var(--bg-elev, #111)",
-          color: "var(--fg, #eee)",
-          border: "1px solid var(--border, #333)",
+          background: "var(--bg-elev)",
+          color: "var(--fg)",
+          border: "1px solid var(--border)",
           borderRadius: 8,
           padding: 20,
           width: "min(720px, calc(100vw - 32px))",
@@ -301,10 +318,10 @@ export function ConnectionEditor({
           <h2 id="conn-editor-title" style={{ margin: 0, fontSize: 16 }}>
             {initial ? "Edit connection" : "New connection"}
           </h2>
-          <button onClick={onClose}>×</button>
+          <button aria-label="Close connection editor" onClick={onClose}>×</button>
         </div>
         {error && (
-          <div role="alert" style={{ color: "#f55", fontSize: "var(--fs-ui-sm)" }}>
+          <div role="alert" style={{ color: "var(--err)", fontSize: "var(--fs-ui-sm)" }}>
             {error}
           </div>
         )}
@@ -312,6 +329,7 @@ export function ConnectionEditor({
           <input
             type="text"
             data-debug-id="connection-label-input"
+            data-shellx-release-observe="value"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder="prod-server"
@@ -325,6 +343,7 @@ export function ConnectionEditor({
                 <input
                   type="radio"
                   data-debug-id={`connection-transport-${k}`}
+                  data-shellx-release-observe="checked"
                   name="transport"
                   value={k}
                   checked={kind === k}
@@ -341,6 +360,7 @@ export function ConnectionEditor({
               <input
                 type="text"
                 data-debug-id="connection-wsl-distro-input"
+                data-shellx-release-observe="value"
                 value={wslDistro}
                 onChange={(e) => setWslDistro(e.target.value)}
                 placeholder="Ubuntu-24.04"
@@ -355,6 +375,7 @@ export function ConnectionEditor({
               <input
                 type="text"
                 data-debug-id="connection-ssh-host-input"
+                data-shellx-release-observe="value"
                 value={sshHost}
                 onChange={(e) => setSshHost(e.target.value)}
                 placeholder="user@example-host"
@@ -365,6 +386,7 @@ export function ConnectionEditor({
               <input
                 type="number"
                 data-debug-id="connection-ssh-port-input"
+                data-shellx-release-observe="value"
                 value={sshPort}
                 onChange={(e) => setSshPort(e.target.value)}
                 placeholder="22"
@@ -388,6 +410,38 @@ export function ConnectionEditor({
                 ))}
               </select>
             </Labeled>
+            <Labeled label="Remote runtime">
+              <select
+                data-debug-id="connection-ssh-runtime-select"
+                data-shellx-release-observe="value"
+                value={sshRemoteRuntime}
+                onChange={(e) => setSshRemoteRuntime(e.target.value as "posix" | "windows" | "windows_wsl")}
+                style={inputStyle}
+              >
+                <option value="posix">Linux, macOS, or WSL SSH server</option>
+                <option value="windows">Windows OpenSSH, run Windows agents</option>
+                <option value="windows_wsl">Windows OpenSSH, run agents in WSL</option>
+              </select>
+            </Labeled>
+            {sshRemoteRuntime === "windows_wsl" && (
+              <Labeled label="WSL distro on remote Windows PC">
+                <input
+                  type="text"
+                  data-debug-id="connection-ssh-wsl-distro-input"
+                  data-shellx-release-observe="value"
+                  value={sshWslDistro}
+                  onChange={(e) => setSshWslDistro(e.target.value)}
+                  placeholder="Ubuntu"
+                  style={inputStyle}
+                />
+              </Labeled>
+            )}
+            <div className="settings-tab-hint" data-debug-id="connection-ssh-platform-hint">
+              Each connection has one primary path frame. Native Windows runs
+              Windows-installed agents with Windows paths and does not require
+              WSL. Windows + WSL is a separate optional runtime that launches
+              agents and project commands inside the selected distro.
+            </div>
           </>
         )}
         <Labeled label="Agent CLIs in this environment">
@@ -400,7 +454,7 @@ export function ConnectionEditor({
                     ? "Scan installed agent CLIs inside this WSL distro."
                     : "Scan installed agent CLIs on this machine."}
               </div>
-              <button
+              <button data-debug-id="surface-components-connectioneditor-12"
                 type="button"
                 onClick={() => void handleProviderScan()}
                 disabled={providerScanning}
@@ -410,12 +464,16 @@ export function ConnectionEditor({
               </button>
             </div>
             {providerScanError && (
-              <div role="alert" style={{ color: "#f88", fontSize: "var(--fs-ui-sm)" }}>
+              <div role="alert" style={{ color: "var(--err)", fontSize: "var(--fs-ui-sm)" }}>
                 {providerScanError}
               </div>
             )}
             {providerScan && (
-              <div style={providerScanListStyle}>
+              <div
+                style={providerScanListStyle}
+                data-shellx-release-control="connection-provider-scan-receipt"
+                title={`Provider scan · transport=${providerScan.transport} · providers=${providerScan.providers.length} · ready=${providerScan.providers.filter((provider) => provider.canRun).length}`}
+              >
                 {providerScan.providers.map((provider) => (
                   <div key={provider.providerId} style={providerScanRowStyle}>
                     <span style={{
@@ -495,6 +553,8 @@ export function ConnectionEditor({
         {testResult && (
           <div
             role="status"
+            data-shellx-release-control="connection-test-receipt"
+            title={`Connection test · reachable=${testResult.reachable} · latencyMs=${testResult.latencyMs ?? "none"} · error=${testResult.error ? "present" : "none"}`}
             style={{
               fontSize: "var(--fs-ui-sm)",
               color: testResult.reachable ? "#7c7" : "#f88",
@@ -509,11 +569,11 @@ export function ConnectionEditor({
           </div>
         )}
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }}>
-          <button onClick={handleTest} disabled={testing || !initial?.id}>
+          <button data-debug-id="surface-components-connectioneditor-14" onClick={handleTest} disabled={testing || !initial?.id}>
             {testing ? "Testing…" : "Test"}
           </button>
-          <button onClick={onClose}>Cancel</button>
-          <button onClick={handleSave} disabled={saving}>
+          <button aria-label="Cancel connection changes" onClick={onClose}>Cancel</button>
+          <button data-debug-id="surface-components-connectioneditor-16" onClick={handleSave} disabled={saving}>
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
@@ -525,7 +585,7 @@ export function ConnectionEditor({
 function Labeled({ label, children }: { label: string; children: JSX.Element }): JSX.Element {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
-      <span style={{ color: "var(--fg-muted, #888)" }}>{label}</span>
+      <span style={{ color: "var(--fg-muted)" }}>{label}</span>
       {children}
     </label>
   );
@@ -586,6 +646,8 @@ function transportSignature(transport: TransportSpec): string {
         transport.port?.toString() ?? "",
         transport.keyVaultRef ?? "",
         transport.remoteGrokPath ?? "",
+        transport.remoteRuntime ?? "posix",
+        transport.wslDistro ?? "",
       ].join("|");
     case "ws_direct":
       return ["ws_direct", transport.url, transport.secretVaultRef ?? ""].join("|");

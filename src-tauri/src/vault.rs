@@ -1,6 +1,9 @@
 // src-tauri/src/vault.rs
 //
-// Local encrypted secrets vault.
+// Legacy local encrypted secrets vault reader.
+//
+// Active ShellX surfaces use `shellx_vault::ShellxVaultBackend`. This
+// module remains only for explicit import/migration from vault.enc.
 //
 // Threat model
 // - Disk-rest attacker: someone with read access to the user's
@@ -44,10 +47,9 @@
 //
 // Concurrency
 // The Vault holds a tokio Mutex as an operation lock only. Plaintext is
-// not cached in the Vault handle: each operation decrypts vault.enc,
-// performs the requested read or mutation, then zeroizes transient map
-// values before returning. set/delete re-encrypt and atomically write
-// the file (write-temp-then-rename).
+// not cached in the Vault handle: each import read decrypts vault.enc,
+// returns the requested legacy value or key metadata, then zeroizes
+// transient map values. Production writes belong to ShellxVaultBackend.
 //
 // LOGGING POLICY
 // This module NEVER logs vault values. It logs (a) the file path on
@@ -176,38 +178,6 @@ impl Vault {
         Ok(value)
     }
 
-    /// Insert or overwrite. Re-encrypts the full envelope and writes
-    /// atomically to disk (write-temp-then-rename).
-    pub async fn set(&self, key: &str, value: &str) -> Result<(), String> {
-        validate_key(key)?;
-        if value.len() > 64 * 1024 {
-            return Err("vault: value exceeds 64KB cap".to_string());
-        }
-        let _guard = self.io_lock.lock().await;
-        let mut state = self.read_plaintext()?;
-        state.insert(key.to_string(), value.to_string());
-        let total = state.len();
-        persist_plaintext_then_zeroize(&mut state, |state| self.persist(state))?;
-        // SAFE: key + count, not value.
-        info!("vault: set key={} (total {} keys)", key, total);
-        Ok(())
-    }
-
-    /// Remove a key. Returns Ok regardless of prior presence (idempotent).
-    pub async fn delete(&self, key: &str) -> Result<(), String> {
-        validate_key(key)?;
-        let _guard = self.io_lock.lock().await;
-        let mut state = self.read_plaintext()?;
-        let had = state.remove(key).is_some();
-        let total = state.len();
-        persist_plaintext_then_zeroize(&mut state, |state| self.persist(state))?;
-        info!(
-            "vault: delete key={} (existed={}; total {} keys)",
-            key, had, total
-        );
-        Ok(())
-    }
-
     /// List keys with per-entry metadata for the
     /// Settings vault viewer. NEVER returns values. The `last_modified_ms`
     /// is the on-disk vault.enc mtime — see VaultKeyMeta doc for why all
@@ -280,54 +250,6 @@ impl Vault {
     fn read_plaintext(&self) -> Result<Plaintext, String> {
         read_plaintext_from_path(&self.path, &self.cipher)
     }
-
-    /// Encrypt + write the current map. Caller holds the operation lock.
-    fn persist(&self, state: &Plaintext) -> Result<(), String> {
-        let env = encrypt_envelope(&self.cipher, state)?;
-        let json = serde_json::to_string_pretty(&env)
-            .map_err(|e| format!("vault: serialize failed: {}", e))?;
-        let tmp = self.path.with_extension("enc.tmp");
-        #[cfg(unix)]
-        {
-            use std::io::Write as _;
-            use std::os::unix::fs::OpenOptionsExt;
-            match std::fs::remove_file(&tmp) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    return Err(format!(
-                        "vault: remove stale tmp {} failed: {}",
-                        tmp.display(),
-                        e
-                    ))
-                }
-            }
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&tmp)
-                .map_err(|e| format!("vault: open tmp {} failed: {}", tmp.display(), e))?;
-            f.write_all(json.as_bytes())
-                .map_err(|e| format!("vault: write tmp {} failed: {}", tmp.display(), e))?;
-            f.sync_all()
-                .map_err(|e| format!("vault: sync tmp {} failed: {}", tmp.display(), e))?;
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::write(&tmp, &json)
-                .map_err(|e| format!("vault: write tmp {} failed: {}", tmp.display(), e))?;
-        }
-        // Atomic rename so a crash between the two operations either
-        // leaves the old envelope or the new one — never a torn write.
-        std::fs::rename(&tmp, &self.path).map_err(|e| format!("vault: rename failed: {}", e))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
-        }
-        Ok(())
-    }
 }
 
 #[allow(dead_code)]
@@ -366,6 +288,7 @@ fn zeroize_plaintext_values(state: &mut Plaintext) {
     }
 }
 
+#[cfg(test)]
 fn persist_plaintext_then_zeroize<T, F>(state: &mut Plaintext, persist: F) -> Result<T, String>
 where
     F: FnOnce(&Plaintext) -> Result<T, String>,
@@ -377,6 +300,7 @@ where
 
 /// Encrypt a plaintext map under the given AEAD cipher. Generates a
 /// fresh 96-bit nonce via OsRng on every call.
+#[cfg(test)]
 fn encrypt_envelope(cipher: &ChaCha20Poly1305, state: &Plaintext) -> Result<Envelope, String> {
     let plaintext = Zeroizing::new(
         serde_json::to_vec(state).map_err(|e| format!("vault: plaintext serialize: {}", e))?,
@@ -655,12 +579,13 @@ fn keyfile_path() -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
-    fn temp_vault_path(name: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!("shellx-vault-{}-{}", name, std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).unwrap();
-        path.join("vault.enc")
+    fn temp_vault_path(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("shellx-vault-{name}-"))
+            .tempdir()
+            .expect("create isolated Vault directory");
+        let path = dir.path().join("vault.enc");
+        (dir, path)
     }
 
     fn test_cipher() -> ChaCha20Poly1305 {
@@ -691,7 +616,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_reads_latest_envelope_instead_of_cached_plaintext() {
-        let path = temp_vault_path("latest-envelope");
+        let (_temp_dir, path) = temp_vault_path("latest-envelope");
         let cipher = test_cipher();
         let mut initial = Plaintext::new();
         initial.insert("service/token".to_string(), "old".to_string());
@@ -704,8 +629,6 @@ mod tests {
 
         let value = vault.get("service/token").await.unwrap();
         assert_eq!(value.as_deref(), Some("new"));
-
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]

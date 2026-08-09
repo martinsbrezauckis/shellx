@@ -10,7 +10,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::Command;
 use tokio::sync::{oneshot, Mutex};
@@ -287,6 +287,20 @@ impl WorkPreviewManager {
         tab_id: &str,
         request: WorkPreviewDiagnoseRequest,
     ) -> WorkPreviewDiagnostic {
+        self.diagnose_internal(tab_id, request, true).await
+    }
+
+    pub async fn diagnose_snapshot(&self, tab_id: &str) -> WorkPreviewDiagnostic {
+        self.diagnose_internal(tab_id, WorkPreviewDiagnoseRequest::default(), false)
+            .await
+    }
+
+    async fn diagnose_internal(
+        &self,
+        tab_id: &str,
+        request: WorkPreviewDiagnoseRequest,
+        collect_live_evidence: bool,
+    ) -> WorkPreviewDiagnostic {
         let state = self.state(tab_id).await;
         let browser_events: Vec<WorkPreviewBrowserEvent> = request
             .browser_events
@@ -330,19 +344,27 @@ impl WorkPreviewManager {
             }
         }
 
-        if let Some(url) = state.url.as_deref() {
-            match probe_preview_url(url).await {
-                Ok(probe) => {
-                    http_status = Some(probe.status);
-                    response_bytes = Some(probe.response_bytes);
-                    title = probe.title;
-                    issues.extend(probe.issues);
+        if collect_live_evidence {
+            if let Some(url) = state.url.as_deref() {
+                match probe_preview_url(url).await {
+                    Ok(probe) => {
+                        http_status = Some(probe.status);
+                        response_bytes = Some(probe.response_bytes);
+                        title = probe.title;
+                        issues.extend(probe.issues);
+                    }
+                    Err(error) => {
+                        issues.push(diagnostic_issue("error", "http", error));
+                    }
                 }
-                Err(error) => {
-                    issues.push(diagnostic_issue("error", "http", error));
-                }
+            } else {
+                issues.push(diagnostic_issue(
+                    "error",
+                    "preview",
+                    "preview has no URL to inspect",
+                ));
             }
-        } else {
+        } else if state.url.is_none() {
             issues.push(diagnostic_issue(
                 "error",
                 "preview",
@@ -350,7 +372,7 @@ impl WorkPreviewManager {
             ));
         }
 
-        if screenshot_path.is_none() {
+        if collect_live_evidence && screenshot_path.is_none() {
             if let Some(url) = state.url.as_deref() {
                 match capture_preview_screenshot(tab_id, url, state.kind.as_ref()).await {
                     Ok(capture) => {
@@ -714,6 +736,8 @@ impl WorkPreviewManager {
                                 port: run.ssh_port,
                                 key_vault_ref: run.ssh_key_vault_ref.clone(),
                                 remote_grok_path: String::new(),
+                                remote_runtime: run.ssh_remote_runtime,
+                                wsl_distro: run.ssh_wsl_distro.clone(),
                             },
                         };
                         let root_text = self
@@ -826,6 +850,7 @@ impl WorkPreviewManager {
             transport,
             cwd,
             "test -d . && pwd -P",
+            "$item=Get-Item -LiteralPath . -Force -ErrorAction Stop;if(-not $item.PSIsContainer){throw 'preview cwd is not a directory'};[Console]::Out.WriteLine($item.FullName)",
             Duration::from_secs(8),
         )
         .await?;
@@ -1104,17 +1129,35 @@ impl WorkPreviewManager {
             .and_then(static_url_path_for_relative)
             .unwrap_or_else(|| "/".to_string());
         let local_url = format!("http://127.0.0.1:{}{}", local_port, url_path);
-        let command_text = remote_command_for_kind(&detected.kind, remote_port);
-        let command_label = command_label_for_kind(&detected.kind);
-        let script = remote_preview_script(
-            &detected.root_text,
-            remote_port,
-            &command_text,
-            matches!(transport, RemotePreviewTransport::Wsl { .. }),
+        let native_windows = matches!(
+            &transport,
+            RemotePreviewTransport::Ssh { ssh }
+                if ssh.remote_runtime == crate::acp::SshRemoteRuntime::Windows
         );
-        let mut command =
+        let command_text = if native_windows {
+            remote_windows_command_for_kind(&detected.kind, remote_port)
+        } else {
+            remote_command_for_kind(&detected.kind, remote_port)
+        };
+        let command_label = command_label_for_kind(&detected.kind);
+        let script = if native_windows {
+            remote_windows_preview_script(&detected.root_text, remote_port, &command_text)
+        } else {
+            remote_preview_script(
+                &detected.root_text,
+                remote_port,
+                &command_text,
+                matches!(transport, RemotePreviewTransport::Wsl { .. }),
+            )
+        };
+        let (mut command, setup_stdin) =
             remote_shell_command(&transport, &script, local_port, remote_port).await?;
         command
+            .stdin(if setup_stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -1126,6 +1169,21 @@ impl WorkPreviewManager {
         let pid = child.id();
         if let Some(pid) = pid {
             crate::winproc::tie_to_parent_lifetime(pid);
+        }
+        if let Some(setup_stdin) = setup_stdin {
+            use tokio::io::AsyncWriteExt as _;
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| "preview setup stdin was not piped".to_string())?;
+            if let Err(error) = stdin.write_all(&setup_stdin).await {
+                let _ = child.kill().await;
+                return Err(format!("preview setup write failed: {error}"));
+            }
+            if let Err(error) = stdin.shutdown().await {
+                let _ = child.kill().await;
+                return Err(format!("preview setup close failed: {error}"));
+            }
         }
         let task_id = self
             .process_registry
@@ -1794,10 +1852,16 @@ fn browser_event_matches_state(event: &WorkPreviewBrowserEvent, state: &WorkPrev
 }
 
 fn remote_path_within(root: &str, candidate: &str) -> bool {
-    let root = normalize_remote_path(root);
-    let candidate = normalize_remote_path(candidate);
+    let mut root = normalize_remote_path(root);
+    let mut candidate = normalize_remote_path(candidate);
     if root.is_empty() || candidate.is_empty() {
         return false;
+    }
+    if crate::acp::is_windows_absolute_remote_path(&root)
+        && crate::acp::is_windows_absolute_remote_path(&candidate)
+    {
+        root.make_ascii_lowercase();
+        candidate.make_ascii_lowercase();
     }
     if root == "/" {
         return candidate.starts_with('/');
@@ -2047,20 +2111,21 @@ fn static_preview_viewport_hint(root: &Path) -> Option<String> {
 async fn run_remote_preview_script(
     transport: &PreviewTransport,
     cwd: &str,
-    script: &str,
+    posix_script: &str,
+    windows_script: &str,
     command_timeout: Duration,
 ) -> Result<std::process::Output, String> {
-    let remote = format!(
+    let posix_remote = format!(
         "cd -- {} && sh -lc {}",
         crate::acp::shell_quote_for_remote(cwd),
-        crate::acp::shell_quote_for_remote(script),
+        crate::acp::shell_quote_for_remote(posix_script),
     );
-    let mut cmd = match transport {
+    let (mut cmd, setup_stdin) = match transport {
         PreviewTransport::Wsl { distro } => {
             #[cfg(not(target_os = "windows"))]
             {
                 let _ = distro;
-                let _ = remote;
+                let _ = posix_remote;
                 return Err("WSL preview requires the Windows shellX host".to_string());
             }
             #[cfg(target_os = "windows")]
@@ -2071,8 +2136,8 @@ async fn run_remote_preview_script(
                     .arg("-e")
                     .arg("sh")
                     .arg("-lc")
-                    .arg(remote);
-                c
+                    .arg(posix_remote);
+                (c, None)
             }
         }
         PreviewTransport::Ssh { ssh } => {
@@ -2091,8 +2156,37 @@ async fn run_remote_preview_script(
             {
                 c.arg("-i").arg(key_path);
             }
-            c.arg("--").arg(&ssh.host).arg(remote);
-            c
+            let (remote_command, setup_stdin) = if ssh.remote_runtime
+                == crate::acp::SshRemoteRuntime::Windows
+            {
+                let work = crate::acp::powershell_single_quote(cwd);
+                let script = windows_preview_session_guard_script(&format!(
+                    "{prelude}$work={work};if(-not(Test-Path -LiteralPath $work -PathType Container)){{throw ('ShellX Windows SSH cwd is not a directory: '+$work)}};Set-Location -LiteralPath $work;{windows_script}",
+                    prelude = crate::acp::windows_remote_shell_prelude(),
+                ));
+                use base64::Engine as _;
+                let mut setup = base64::engine::general_purpose::STANDARD
+                    .encode(script.as_bytes())
+                    .into_bytes();
+                setup.push(b'\n');
+                (
+                    crate::acp::wrap_ssh_windows_command(
+                        &crate::acp::windows_native_ssh_dispatch_command(),
+                    ),
+                    Some(setup),
+                )
+            } else {
+                (
+                    crate::acp::wrap_ssh_posix_command(
+                        ssh.remote_runtime,
+                        ssh.wsl_distro.as_deref(),
+                        &posix_remote,
+                    )?,
+                    None,
+                )
+            };
+            c.arg("--").arg(&ssh.host).arg(remote_command);
+            (c, setup_stdin)
         }
         PreviewTransport::Local => {
             return Err("remote preview command requires WSL or SSH transport".to_string());
@@ -2100,18 +2194,52 @@ async fn run_remote_preview_script(
     };
     use crate::winproc::NoWindowExt as _;
     cmd.no_window();
+    cmd.stdin(if setup_stdin.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.kill_on_drop(true);
-    timeout(command_timeout, cmd.output())
-        .await
-        .map_err(|_| {
-            format!(
-                "remote preview command timed out after {} ms",
-                command_timeout.as_millis()
-            )
-        })?
-        .map_err(|e| format!("remote preview command spawn failed: {}", e))
+    if let Some(setup_stdin) = setup_stdin {
+        use tokio::io::AsyncWriteExt as _;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("remote preview command spawn failed: {}", e))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "remote preview setup stdin was not piped".to_string())?;
+        stdin
+            .write_all(&setup_stdin)
+            .await
+            .map_err(|e| format!("remote preview setup write failed: {}", e))?;
+        stdin
+            .shutdown()
+            .await
+            .map_err(|e| format!("remote preview setup close failed: {}", e))?;
+        drop(stdin);
+        timeout(command_timeout, child.wait_with_output())
+            .await
+            .map_err(|_| {
+                format!(
+                    "remote preview command timed out after {} ms",
+                    command_timeout.as_millis()
+                )
+            })?
+            .map_err(|e| format!("remote preview command wait failed: {}", e))
+    } else {
+        timeout(command_timeout, cmd.output())
+            .await
+            .map_err(|_| {
+                format!(
+                    "remote preview command timed out after {} ms",
+                    command_timeout.as_millis()
+                )
+            })?
+            .map_err(|e| format!("remote preview command spawn failed: {}", e))
+    }
 }
 
 async fn detect_remote_preview(
@@ -2199,7 +2327,55 @@ fi
 rm -f $tmp
 exit 2
 "#;
-    let out = run_remote_preview_script(transport, cwd, script, Duration::from_secs(10)).await?;
+    let windows_script = r#"
+function Read-Package($path) {
+  try { return (Get-Content -LiteralPath $path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop) } catch { return $null }
+}
+function Is-Expo($dir, $package) {
+  if (Test-Path -LiteralPath (Join-Path $dir 'app.json') -PathType Leaf) { return $true }
+  if ($null -eq $package) { return $false }
+  return ($null -ne $package.dependencies.expo) -or ($null -ne $package.devDependencies.expo)
+}
+function Has-Dev($package) { return ($null -ne $package) -and ($null -ne $package.scripts.dev) }
+$root=(Get-Location).Path
+$rootPackage=Join-Path $root 'package.json'
+if(Test-Path -LiteralPath $rootPackage -PathType Leaf){
+  $package=Read-Package $rootPackage
+  if(Is-Expo $root $package){[Console]::Out.WriteLine('expo|.');exit 0}
+  if(Has-Dev $package){[Console]::Out.WriteLine('web|.');exit 0}
+}
+$packages=[Collections.Generic.List[string]]::new()
+$html=[Collections.Generic.List[string]]::new()
+$queue=[Collections.Generic.Queue[object]]::new()
+$queue.Enqueue([PSCustomObject]@{Path=$root;Depth=0})
+while($queue.Count -gt 0){
+  $current=$queue.Dequeue()
+  $package=Join-Path $current.Path 'package.json'
+  if(Test-Path -LiteralPath $package -PathType Leaf){$packages.Add($package)}
+  foreach($file in (Get-ChildItem -LiteralPath $current.Path -File -Force -ErrorAction SilentlyContinue)){if($file.Extension -ieq '.html' -or $file.Extension -ieq '.htm'){$html.Add($file.FullName)}}
+  if($current.Depth -ge 4){continue}
+  foreach($dir in (Get-ChildItem -LiteralPath $current.Path -Directory -Force -ErrorAction SilentlyContinue)){
+    if($dir.Name -in @('node_modules','.git','target','src-tauri')){continue}
+    if(($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){continue}
+    $queue.Enqueue([PSCustomObject]@{Path=$dir.FullName;Depth=($current.Depth+1)})
+  }
+}
+foreach($packagePath in @($packages|Sort-Object)){$dir=Split-Path -Parent $packagePath;if($dir -eq $root){continue};$package=Read-Package $packagePath;if(Is-Expo $dir $package){$relative=$dir.Substring($root.Length).TrimStart('\').Replace('\','/');[Console]::Out.WriteLine(('expo|'+$relative));exit 0}}
+foreach($packagePath in @($packages|Sort-Object)){$dir=Split-Path -Parent $packagePath;if($dir -eq $root){continue};$package=Read-Package $packagePath;if(Has-Dev $package){$relative=$dir.Substring($root.Length).TrimStart('\').Replace('\','/');[Console]::Out.WriteLine(('web|'+$relative));exit 0}}
+$prefix=if(Test-Path -LiteralPath (Join-Path $root '_expo\.routes.json') -PathType Leaf){'static-expo'}else{'static'}
+if(Test-Path -LiteralPath (Join-Path $root 'index.html') -PathType Leaf){[Console]::Out.WriteLine(($prefix+'|index.html'));exit 0}
+$first=@($html|Sort-Object)|Select-Object -First 1
+if($null -ne $first){$relative=$first.Substring($root.Length).TrimStart('\').Replace('\','/');[Console]::Out.WriteLine(($prefix+'|'+$relative));exit 0}
+exit 2
+"#;
+    let out = run_remote_preview_script(
+        transport,
+        cwd,
+        script,
+        windows_script,
+        Duration::from_secs(10),
+    )
+    .await?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
@@ -2222,7 +2398,18 @@ async fn remote_static_entry_hint(
         "if [ -f {q} ]; then printf '%s\\n' {q}; else exit 2; fi",
         q = quoted
     );
-    let out = run_remote_preview_script(transport, cwd, &script, Duration::from_secs(10)).await?;
+    let windows_entry = crate::acp::powershell_single_quote(&rel.replace('/', "\\"));
+    let windows_script = format!(
+        "$entry={windows_entry};if(Test-Path -LiteralPath $entry -PathType Leaf){{[Console]::Out.WriteLine($entry.Replace('\\','/'))}}else{{exit 2}}"
+    );
+    let out = run_remote_preview_script(
+        transport,
+        cwd,
+        &script,
+        &windows_script,
+        Duration::from_secs(10),
+    )
+    .await?;
     if !out.status.success() {
         return Err(format!("requested static preview entry not found: {}", rel));
     }
@@ -2246,7 +2433,22 @@ if [ -f index.html ]; then
 fi
 find . -maxdepth 4 \( -path './node_modules' -o -path './.git' -o -path './target' -o -path './src-tauri' \) -prune -o -type f \( -iname '*.html' -o -iname '*.htm' \) -print | sort | sed -n '1{s#^\./##;p;q;}'
 "#;
-    let out = run_remote_preview_script(transport, cwd, script, Duration::from_secs(10)).await?;
+    let windows_script = r#"
+if(Test-Path -LiteralPath 'index.html' -PathType Leaf){[Console]::Out.WriteLine('index.html');exit 0}
+$root=(Get-Location).Path
+$html=Get-ChildItem -LiteralPath $root -File -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
+  $relative=$_.FullName.Substring($root.Length).TrimStart('\');$parts=$relative -split '\\';$lower='\'+$relative.ToLowerInvariant()+'\';$parts.Count -le 4 -and $lower -notmatch '\\(node_modules|\.git|target|src-tauri)\\' -and ($_.Extension -ieq '.html' -or $_.Extension -ieq '.htm')
+} | Sort-Object FullName | Select-Object -First 1
+if($null -ne $html){[Console]::Out.WriteLine($html.FullName.Substring($root.Length).TrimStart('\').Replace('\','/'))}
+"#;
+    let out = run_remote_preview_script(
+        transport,
+        cwd,
+        script,
+        windows_script,
+        Duration::from_secs(10),
+    )
+    .await?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
@@ -2272,7 +2474,15 @@ if [ -f _expo/.routes.json ]; then
   printf 'phone\n'
 fi
 "#;
-    let out = run_remote_preview_script(transport, cwd, script, Duration::from_secs(10)).await?;
+    let windows_script = "if(Test-Path -LiteralPath '_expo\\.routes.json' -PathType Leaf){[Console]::Out.WriteLine('phone')}";
+    let out = run_remote_preview_script(
+        transport,
+        cwd,
+        script,
+        windows_script,
+        Duration::from_secs(10),
+    )
+    .await?;
     if !out.status.success() {
         return Ok(None);
     }
@@ -2390,7 +2600,15 @@ fn remote_preview_root(cwd: &str, rel: &str) -> Result<String, String> {
     }) {
         return Err("remote preview package root contains an unsafe path component".to_string());
     }
-    Ok(format!("{}/{}", cwd.trim_end_matches('/'), parts.join("/")))
+    if crate::acp::is_windows_absolute_remote_path(cwd) {
+        Ok(format!(
+            "{}\\{}",
+            cwd.trim_end_matches(['/', '\\']),
+            parts.join("\\")
+        ))
+    } else {
+        Ok(format!("{}/{}", cwd.trim_end_matches('/'), parts.join("/")))
+    }
 }
 
 fn static_html_entry(root: &Path) -> Option<PathBuf> {
@@ -2919,6 +3137,68 @@ fn remote_command_for_kind(kind: &WorkPreviewKind, port: u16) -> String {
     }
 }
 
+fn remote_windows_command_for_kind(kind: &WorkPreviewKind, port: u16) -> String {
+    match kind {
+        WorkPreviewKind::StaticHtml => remote_windows_static_command(port),
+        WorkPreviewKind::WebApp => format!(
+            "$package=Get-Content -LiteralPath 'package.json' -Raw -ErrorAction Stop|ConvertFrom-Json -ErrorAction Stop;$dev=[string]$package.scripts.dev;if(Test-Path -LiteralPath 'pnpm-lock.yaml' -PathType Leaf){{$program='pnpm';$a=@('run','dev')}}elseif(Test-Path -LiteralPath 'yarn.lock' -PathType Leaf){{$program='yarn';$a=@('dev')}}else{{$program='npm';$a=@('run','dev')}};if($dev -match 'next'){{$a+=@('--','--hostname','127.0.0.1','--port','{port}')}}elseif($dev -match 'vite|astro|svelte-kit|webpack-dev-server'){{$a+=@('--','--host','127.0.0.1','--port','{port}')}}else{{$env:HOST='127.0.0.1';$env:PORT='{port}';$env:SHELLX_PREVIEW_HOST='127.0.0.1';$env:SHELLX_PREVIEW_PORT='{port}'}};& $program @a;exit $LASTEXITCODE"
+        ),
+        WorkPreviewKind::ExpoWeb => format!(
+            "if(Test-Path -LiteralPath '.\\node_modules\\.bin\\expo.cmd' -PathType Leaf){{$program=(Resolve-Path -LiteralPath '.\\node_modules\\.bin\\expo.cmd').Path;$a=@('start','--clear','--web','--host','localhost','--port','{port}')}}elseif(Test-Path -LiteralPath 'pnpm-lock.yaml' -PathType Leaf){{$program='pnpm';$a=@('exec','expo','start','--clear','--web','--host','localhost','--port','{port}')}}elseif(Test-Path -LiteralPath 'yarn.lock' -PathType Leaf){{$program='yarn';$a=@('expo','start','--clear','--web','--host','localhost','--port','{port}')}}else{{$program='npx';$a=@('expo','start','--clear','--web','--host','localhost','--port','{port}')}};& $program @a;exit $LASTEXITCODE"
+        ),
+    }
+}
+
+fn remote_windows_static_command(port: u16) -> String {
+    use base64::Engine as _;
+
+    let python_source =
+        base64::engine::general_purpose::STANDARD.encode(remote_static_python_source().as_bytes());
+    let python_bootstrap = crate::acp::powershell_single_quote(
+        "import os,base64;exec(base64.b64decode(os.environ.pop('SHELLX_STATIC_PYTHON_SOURCE_B64')).decode('utf-8'))",
+    );
+    let node_source =
+        base64::engine::general_purpose::STANDARD.encode(remote_static_node_source().as_bytes());
+    let node_bootstrap = crate::acp::powershell_single_quote(
+        "const s=Buffer.from(process.env.SHELLX_STATIC_NODE_SOURCE_B64,'base64').toString('utf8');delete process.env.SHELLX_STATIC_NODE_SOURCE_B64;(0,eval)(s)",
+    );
+    format!(
+        "$env:SHELLX_STATIC_PYTHON_SOURCE_B64='{python_source}';$python=Get-Command 'python' -CommandType Application -ErrorAction SilentlyContinue|Where-Object {{$_.Source -notlike '*\\WindowsApps\\*'}}|Select-Object -First 1;if($null -eq $python){{$python=Get-Command 'python3' -CommandType Application -ErrorAction SilentlyContinue|Where-Object {{$_.Source -notlike '*\\WindowsApps\\*'}}|Select-Object -First 1}};if($null -ne $python){{& $python.Source '-c' {python_bootstrap} '{port}';exit $LASTEXITCODE}};Remove-Item Env:SHELLX_STATIC_PYTHON_SOURCE_B64 -ErrorAction SilentlyContinue;$env:SHELLX_STATIC_NODE_SOURCE_B64='{node_source}';$node=Get-Command 'node' -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1;if($null -eq $node){{throw 'python or node is required for static preview'}};& $node.Source '-e' {node_bootstrap} '{port}';exit $LASTEXITCODE"
+    )
+}
+
+fn remote_static_node_source() -> &'static str {
+    r#"
+const http=require('http');
+const fs=require('fs');
+const path=require('path');
+const ROOT=fs.realpathSync(process.cwd());
+const PORT=Number(process.argv[1]);
+const ALLOWED=new Set(['html','htm','css','js','mjs','cjs','wasm','png','jpg','jpeg','gif','svg','webp','avif','bmp','ico','webmanifest','xml','woff','woff2','ttf','otf','eot','mp4','webm','ogg','mp3','wav']);
+const BLOCKED=new Set(['node_modules','target','src-tauri','.git','.grok','.shellx','.ssh','.aws','.config','package.json','package-lock.json','pnpm-lock.yaml','yarn.lock','bun.lock','bun.lockb','deno.lock','cargo.toml','cargo.lock','tauri.conf.json','settings.json','auth.json','credentials','credentials.json','secrets.json']);
+const TYPES={'.js':'text/javascript','.mjs':'text/javascript','.cjs':'text/javascript','.css':'text/css','.html':'text/html; charset=utf-8','.htm':'text/html; charset=utf-8','.svg':'image/svg+xml','.wasm':'application/wasm','.webmanifest':'application/json','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.ico':'image/x-icon','.woff':'font/woff','.woff2':'font/woff2','.mp4':'video/mp4','.webm':'video/webm','.mp3':'audio/mpeg','.wav':'audio/wav'};
+const DOCTOR=`<script data-shellx-preview-doctor>(function(){if(window.__shellxPreviewDoctorInstalled)return;window.__shellxPreviewDoctorInstalled=true;function send(level,message,detail){try{parent.postMessage(Object.assign({kind:"shellx-preview-doctor",level:level,message:String(message||""),url:location.href,t:Date.now()},detail||{}),"*")}catch(_){}}["error","warn"].forEach(function(level){var original=console[level];console[level]=function(){try{send(level,Array.prototype.map.call(arguments,function(item){return item&&item.stack?item.stack:String(item)}).join(" "))}catch(_){}return original&&original.apply?original.apply(console,arguments):undefined}});window.addEventListener("error",function(event){send("error",event.message||"window error",{source:event.filename||"window.onerror",line:event.lineno||null,column:event.colno||null,stack:event.error&&event.error.stack?String(event.error.stack):null})});window.addEventListener("unhandledrejection",function(event){var reason=event.reason;send("error",reason&&reason.message?reason.message:String(reason||"unhandled rejection"),{source:"unhandledrejection",stack:reason&&reason.stack?String(reason.stack):null})})})();</script>`;
+function fail(res,code){res.writeHead(code,{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});res.end(code===404?'Not found':'Method not allowed')}
+function insideRoot(candidate){const root=ROOT.toLowerCase();const value=candidate.toLowerCase();return value===root||value.startsWith(root+path.sep)}
+function inject(html){if(html.includes('data-shellx-preview-doctor'))return html;const lower=html.toLowerCase();let i=lower.indexOf('</head>');if(i>=0)return html.slice(0,i)+DOCTOR+html.slice(i);i=lower.indexOf('</body>');if(i>=0)return html.slice(0,i)+DOCTOR+html.slice(i);return DOCTOR+html}
+http.createServer((req,res)=>{try{
+  if(req.method!=='GET'&&req.method!=='HEAD')return fail(res,405);
+  const raw=decodeURIComponent(new URL(req.url,'http://127.0.0.1').pathname);
+  if(raw.includes('\\'))return fail(res,404);
+  const parts=raw.split('/').filter(Boolean);
+  if(parts.some(part=>part==='.'||part==='..'||part.startsWith('.')||part.toLowerCase().startsWith('.env')||BLOCKED.has(part.toLowerCase())))return fail(res,404);
+  let candidate=path.resolve(ROOT,...parts);if(!insideRoot(candidate))return fail(res,404);
+  if(fs.existsSync(candidate)&&fs.statSync(candidate).isDirectory())candidate=path.join(candidate,'index.html');
+  if(!fs.existsSync(candidate)||!fs.statSync(candidate).isFile())return fail(res,404);
+  candidate=fs.realpathSync(candidate);if(!insideRoot(candidate))return fail(res,404);
+  const relative=path.relative(ROOT,candidate).split(path.sep);if(relative.some(part=>part.startsWith('.')||part.toLowerCase().startsWith('.env')||BLOCKED.has(part.toLowerCase())))return fail(res,404);
+  const name=relative[relative.length-1].toLowerCase();const ext=path.extname(name).slice(1);if(name!=='manifest.json'&&!ALLOWED.has(ext))return fail(res,404);
+  let body=fs.readFileSync(candidate);if(ext==='html'||ext==='htm')body=Buffer.from(inject(body.toString('utf8')),'utf8');
+  res.writeHead(200,{'Content-Type':TYPES['.'+ext]||'application/octet-stream','Content-Length':body.length,'Cache-Control':'no-store'});if(req.method==='HEAD')res.end();else res.end(body);
+}catch(_){fail(res,404)}}).listen(PORT,'127.0.0.1');
+"#
+}
+
 fn remote_static_command(port: u16) -> String {
     let source = crate::acp::shell_quote_for_remote(remote_static_python_source());
     format!(
@@ -3120,12 +3400,20 @@ fn remote_preview_script(root: &str, port: u16, command_text: &str, is_wsl: bool
     )
 }
 
+fn remote_windows_preview_script(root: &str, port: u16, command_text: &str) -> String {
+    let root = crate::acp::powershell_single_quote(root);
+    format!(
+        "{prelude}$work={root};if(-not(Test-Path -LiteralPath $work -PathType Container)){{throw ('ShellX Windows SSH preview root is not a directory: '+$work)}};Set-Location -LiteralPath $work;$env:PORT='{port}';$env:HOST='127.0.0.1';$env:BROWSER='none';$env:NO_COLOR='1';Remove-Item Env:FORCE_COLOR -ErrorAction SilentlyContinue;{command_text}",
+        prelude = crate::acp::windows_remote_shell_prelude(),
+    )
+}
+
 async fn remote_shell_command(
     transport: &RemotePreviewTransport,
     script: &str,
     local_port: u16,
     remote_port: u16,
-) -> Result<Command, String> {
+) -> Result<(Command, Option<Vec<u8>>), String> {
     match transport {
         RemotePreviewTransport::Wsl { distro } => {
             #[cfg(not(target_os = "windows"))]
@@ -3145,7 +3433,7 @@ async fn remote_shell_command(
                     .arg("-lc")
                     .arg(script);
                 cmd.no_window();
-                Ok(cmd)
+                Ok((cmd, None))
             }
         }
         RemotePreviewTransport::Ssh { ssh } => {
@@ -3169,15 +3457,59 @@ async fn remote_shell_command(
             {
                 cmd.arg("-i").arg(key_path);
             }
-            cmd.arg("--").arg(&ssh.host).arg(script);
+            let (remote_command, setup_stdin) =
+                if ssh.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+                    use base64::Engine as _;
+                    let guarded_script = windows_preview_session_guard_script(script);
+                    let mut setup = base64::engine::general_purpose::STANDARD
+                        .encode(guarded_script.as_bytes())
+                        .into_bytes();
+                    setup.push(b'\n');
+                    (
+                        crate::acp::wrap_ssh_windows_command(
+                            &crate::acp::windows_native_ssh_dispatch_command(),
+                        ),
+                        Some(setup),
+                    )
+                } else {
+                    (
+                        crate::acp::wrap_ssh_posix_command(
+                            ssh.remote_runtime,
+                            ssh.wsl_distro.as_deref(),
+                            script,
+                        )?,
+                        None,
+                    )
+                };
+            cmd.arg("--").arg(&ssh.host).arg(remote_command);
             #[cfg(target_os = "windows")]
             {
                 use crate::winproc::NoWindowExt as _;
                 cmd.no_window();
             }
-            Ok(cmd)
+            Ok((cmd, setup_stdin))
         }
     }
+}
+
+fn windows_preview_session_guard_script(script: &str) -> String {
+    use base64::Engine as _;
+
+    let payload = base64::engine::general_purpose::STANDARD.encode(script.as_bytes());
+    let child_bootstrap = format!(
+        "{prelude}$b=$env:SHELLX_PREVIEW_SCRIPT_B64;Remove-Item Env:SHELLX_PREVIEW_SCRIPT_B64 -ErrorAction SilentlyContinue;if([string]::IsNullOrWhiteSpace($b)){{throw 'missing ShellX preview payload'}};$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b));&([ScriptBlock]::Create($s));if($null -ne $LASTEXITCODE){{exit $LASTEXITCODE}};exit 0",
+        prelude = crate::acp::windows_remote_shell_prelude(),
+    );
+    let child_bootstrap = crate::acp::powershell_single_quote(&child_bootstrap);
+    format!(
+        "{prelude}$env:SHELLX_PREVIEW_SCRIPT_B64='{payload}';$childCode={child_bootstrap};$childEncoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childCode));{parent_helper}$commandShellPid=Get-ShellXParentProcessId $PID;$sessionPid=Get-ShellXParentProcessId $commandShellPid;if($sessionPid -le 0){{throw 'ShellX could not resolve the Windows SSH session process'}};$child=Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',$childEncoded) -NoNewWindow -PassThru;Remove-Item Env:SHELLX_PREVIEW_SCRIPT_B64 -ErrorAction SilentlyContinue;try{{while(-not $child.WaitForExit(250)){{if($null -eq (Get-Process -Id $sessionPid -ErrorAction SilentlyContinue)){{& taskkill.exe /PID $child.Id /T /F|Out-Null;throw 'ShellX Windows SSH preview session disconnected'}}}};$code=$child.ExitCode;exit $code}}finally{{if(-not $child.HasExited){{& taskkill.exe /PID $child.Id /T /F|Out-Null}}}}",
+        prelude = crate::acp::windows_remote_shell_prelude(),
+        parent_helper = windows_process_parent_helper(),
+    )
+}
+
+fn windows_process_parent_helper() -> &'static str {
+    r#"$parentMembers='[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] public struct Pbi { public System.IntPtr Reserved1; public System.IntPtr PebBaseAddress; public System.IntPtr Reserved2_0; public System.IntPtr Reserved2_1; public System.IntPtr UniqueProcessId; public System.IntPtr InheritedFromUniqueProcessId; } [System.Runtime.InteropServices.DllImport("ntdll.dll")] private static extern int NtQueryInformationProcess(System.IntPtr processHandle, int informationClass, ref Pbi information, int informationLength, out int returnLength); public static int ParentId(System.IntPtr handle) { Pbi information=new Pbi(); int returned; int status=NtQueryInformationProcess(handle,0,ref information,System.Runtime.InteropServices.Marshal.SizeOf(typeof(Pbi)),out returned); if(status!=0) throw new System.ComponentModel.Win32Exception(status); return information.InheritedFromUniqueProcessId.ToInt32(); }';Add-Type -Namespace ShellXRelease -Name ProcessParentNative -MemberDefinition $parentMembers;function Get-ShellXParentProcessId([int]$ProcessId){$process=Get-Process -Id $ProcessId -ErrorAction Stop;return [ShellXRelease.ProcessParentNative]::ParentId($process.Handle)};"#
 }
 
 fn package_run_dev(root: &Path) -> String {
@@ -3453,16 +3785,24 @@ fn spawn_output_reader<R>(
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
-        let mut lines = BufReader::new(reader).lines();
+        let mut lines = BufReader::new(reader);
         loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
+            match read_preview_bounded_line(&mut lines, 64 * 1024).await {
+                Ok(PreviewBoundedLine::Line(bytes)) => {
+                    let line = String::from_utf8_lossy(&bytes).into_owned();
                     registry.push_line(&task_id, stream, line.clone()).await;
                     manager
                         .append_log(&tab_id, Some(&task_id), stream, line)
                         .await;
                 }
-                Ok(None) => break,
+                Ok(PreviewBoundedLine::Overflow) => {
+                    let line = "<preview output line omitted: exceeded 65536 byte cap>".to_string();
+                    registry.push_line(&task_id, stream, line.clone()).await;
+                    manager
+                        .append_log(&tab_id, Some(&task_id), stream, line)
+                        .await;
+                }
+                Ok(PreviewBoundedLine::Eof) => break,
                 Err(err) => {
                     manager
                         .append_log(
@@ -3477,6 +3817,46 @@ fn spawn_output_reader<R>(
             }
         }
     });
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PreviewBoundedLine {
+    Line(Vec<u8>),
+    Overflow,
+    Eof,
+}
+
+async fn read_preview_bounded_line<R>(
+    reader: &mut R,
+    max_line_bytes: usize,
+) -> std::io::Result<PreviewBoundedLine>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut bytes = Vec::new();
+    let mut limited = reader.take(max_line_bytes as u64);
+    let read = limited.read_until(b'\n', &mut bytes).await?;
+    if read == 0 {
+        return Ok(PreviewBoundedLine::Eof);
+    }
+    if bytes.last() == Some(&b'\n') {
+        bytes.pop();
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+        return Ok(PreviewBoundedLine::Line(bytes));
+    }
+    if bytes.len() < max_line_bytes {
+        return Ok(PreviewBoundedLine::Line(bytes));
+    }
+    loop {
+        let mut scratch = Vec::new();
+        let mut limited = reader.take(max_line_bytes as u64);
+        let read = limited.read_until(b'\n', &mut scratch).await?;
+        if read == 0 || scratch.last() == Some(&b'\n') {
+            return Ok(PreviewBoundedLine::Overflow);
+        }
+    }
 }
 
 fn readiness_timing(kind: &WorkPreviewKind) -> (Duration, Duration, Duration) {
@@ -3509,18 +3889,199 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn preview_output_reader_bounds_and_resynchronizes_lines() {
+        let input = b"12345678overflow\nnext\r\n";
+        let mut reader = BufReader::new(input.as_slice());
+        assert_eq!(
+            read_preview_bounded_line(&mut reader, 8).await.unwrap(),
+            PreviewBoundedLine::Overflow
+        );
+        assert_eq!(
+            read_preview_bounded_line(&mut reader, 8).await.unwrap(),
+            PreviewBoundedLine::Line(b"next".to_vec())
+        );
+        assert_eq!(
+            read_preview_bounded_line(&mut reader, 8).await.unwrap(),
+            PreviewBoundedLine::Eof
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
+    async fn live_native_windows_ssh_work_preview_detection() {
+        let host = std::env::var("SHELLX_WINDOWS_SSH_HOST")
+            .expect("SHELLX_WINDOWS_SSH_HOST must name a test Windows endpoint");
+        let home = std::env::var("SHELLX_WINDOWS_SSH_HOME")
+            .expect("SHELLX_WINDOWS_SSH_HOME must be an absolute Windows user profile");
+        let fixture = format!(
+            r"{}\shellx-preview-live-{}",
+            home.trim_end_matches('\\'),
+            std::process::id()
+        );
+        let ssh = crate::acp::SshSpawnConfig {
+            host,
+            port: None,
+            key_vault_ref: None,
+            remote_grok_path: "grok".to_string(),
+            remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+            wsl_distro: None,
+        };
+        let transport = PreviewTransport::Ssh { ssh };
+        let fixture_q = crate::acp::powershell_single_quote(&fixture);
+        let create = format!(
+            "$fixture={fixture_q};New-Item -ItemType Directory -Force -Path $fixture|Out-Null;[IO.File]::WriteAllText((Join-Path $fixture 'index.html'),'<html>ShellX Windows preview</html>',[Text.UTF8Encoding]::new($false))"
+        );
+        let created =
+            run_remote_preview_script(&transport, &home, "true", &create, Duration::from_secs(10))
+                .await
+                .expect("create remote preview fixture");
+        assert!(
+            created.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+
+        let result = detect_remote_preview(&transport, &fixture, None, None).await;
+        let cleanup = format!(
+            "$fixture={fixture_q};if(Test-Path -LiteralPath $fixture){{Remove-Item -LiteralPath $fixture -Recurse -Force}}"
+        );
+        let _ =
+            run_remote_preview_script(&transport, &home, "true", &cleanup, Duration::from_secs(10))
+                .await;
+
+        let detected = result.expect("detect native Windows preview");
+        assert_eq!(detected.kind, WorkPreviewKind::StaticHtml);
+        assert_eq!(detected.static_entry.as_deref(), Some("index.html"));
+        assert_eq!(detected.root_text, fixture);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
+    async fn live_native_windows_ssh_static_preview_tunnel() {
+        use tokio::io::AsyncWriteExt as _;
+
+        let host = std::env::var("SHELLX_WINDOWS_SSH_HOST")
+            .expect("SHELLX_WINDOWS_SSH_HOST must name a test Windows endpoint");
+        let home = std::env::var("SHELLX_WINDOWS_SSH_HOME")
+            .expect("SHELLX_WINDOWS_SSH_HOME must be an absolute Windows user profile");
+        let fixture = format!(
+            r"{}\shellx-preview-server-live-{}",
+            home.trim_end_matches('\\'),
+            std::process::id()
+        );
+        let ssh = crate::acp::SshSpawnConfig {
+            host,
+            port: None,
+            key_vault_ref: None,
+            remote_grok_path: "grok".to_string(),
+            remote_runtime: crate::acp::SshRemoteRuntime::Windows,
+            wsl_distro: None,
+        };
+        let preview_transport = PreviewTransport::Ssh { ssh: ssh.clone() };
+        let fixture_q = crate::acp::powershell_single_quote(&fixture);
+        let create = format!(
+            "$fixture={fixture_q};New-Item -ItemType Directory -Force -Path $fixture|Out-Null;[IO.File]::WriteAllText((Join-Path $fixture 'index.html'),'<html>ShellX Windows preview server</html>',[Text.UTF8Encoding]::new($false))"
+        );
+        let created = run_remote_preview_script(
+            &preview_transport,
+            &home,
+            "true",
+            &create,
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("create remote static preview fixture");
+        assert!(created.status.success());
+
+        let local_port = reserve_loopback_port().await.expect("local port");
+        let remote_port = reserve_loopback_port()
+            .await
+            .expect("remote port candidate");
+        let command_text =
+            remote_windows_command_for_kind(&WorkPreviewKind::StaticHtml, remote_port);
+        let script = remote_windows_preview_script(&fixture, remote_port, &command_text);
+        let transport = RemotePreviewTransport::Ssh { ssh };
+        let (mut command, setup_stdin) =
+            remote_shell_command(&transport, &script, local_port, remote_port)
+                .await
+                .expect("build remote preview command");
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = command.spawn().expect("spawn remote preview command");
+        let mut stdin = child.stdin.take().expect("preview setup stdin");
+        stdin
+            .write_all(setup_stdin.as_deref().expect("Windows setup payload"))
+            .await
+            .expect("write preview setup");
+        stdin.shutdown().await.expect("close preview setup");
+        drop(stdin);
+
+        let url = format!("http://127.0.0.1:{local_port}/index.html");
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_millis(250))
+            .timeout(Duration::from_millis(500))
+            .build()
+            .expect("HTTP client");
+        let mut body = None;
+        for _ in 0..30 {
+            if let Ok(response) = client.get(&url).send().await {
+                if response.status().is_success() {
+                    body = response.text().await.ok();
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        let _ = child.kill().await;
+        let output = child
+            .wait_with_output()
+            .await
+            .expect("collect preview output");
+        let cleanup = format!(
+            "$fixture={fixture_q};if(Test-Path -LiteralPath $fixture){{Remove-Item -LiteralPath $fixture -Recurse -Force}}"
+        );
+        let _ = run_remote_preview_script(
+            &preview_transport,
+            &home,
+            "true",
+            &cleanup,
+            Duration::from_secs(10),
+        )
+        .await;
+
+        assert!(
+            body.as_deref()
+                .is_some_and(|value| value.contains("ShellX Windows preview server")),
+            "preview did not become ready; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
     use std::fs;
 
-    fn temp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "shellx-work-preview-{}-{}-{}",
-            label,
-            std::process::id(),
-            now_ms()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("temp dir");
-        dir
+    struct TestDir(tempfile::TempDir);
+
+    impl std::ops::Deref for TestDir {
+        type Target = Path;
+
+        fn deref(&self) -> &Self::Target {
+            self.0.path()
+        }
+    }
+
+    fn temp_dir(label: &str) -> TestDir {
+        TestDir(
+            tempfile::Builder::new()
+                .prefix(&format!("shellx-work-preview-{label}-"))
+                .tempdir()
+                .expect("temp dir"),
+        )
     }
 
     fn canonical_string(path: &Path) -> String {
@@ -4298,6 +4859,45 @@ http.createServer((req, res) => res.end('RETRY_PREVIEW_OK'))
     }
 
     #[tokio::test]
+    async fn preview_diagnose_snapshot_never_probes_or_captures() {
+        let root = temp_dir("diagnose-snapshot");
+        fs::write(
+            root.join("index.html"),
+            "<html><head><title>Snapshot</title></head><body>ok</body></html>",
+        )
+        .expect("index");
+        let manager = Arc::new(WorkPreviewManager::new(Arc::new(ProcessRegistry::new())));
+        let state = manager
+            .start(WorkPreviewStartRequest {
+                tab_id: Some("diagnose-snapshot-tab".to_string()),
+                cwd: root.to_string_lossy().to_string(),
+                kind: Some("static".to_string()),
+                entry: None,
+                session_id: None,
+                session_cwd: None,
+                transport: None,
+            })
+            .await
+            .expect("static start");
+        assert_eq!(state.status, WorkPreviewStatus::Running);
+
+        let diagnostic = manager.diagnose_snapshot("diagnose-snapshot-tab").await;
+        assert_eq!(diagnostic.status, "passed");
+        assert_eq!(diagnostic.url, state.url);
+        assert_eq!(diagnostic.http_status, None);
+        assert_eq!(diagnostic.response_bytes, None);
+        assert_eq!(diagnostic.title, None);
+        assert_eq!(diagnostic.screenshot_path, None);
+        assert_eq!(diagnostic.screenshot_error, None);
+        assert!(diagnostic
+            .issues
+            .iter()
+            .all(|issue| issue.source != "http" && issue.source != "screenshot"));
+
+        manager.stop("diagnose-snapshot-tab").await.expect("stop");
+    }
+
+    #[tokio::test]
     async fn preview_diagnose_filters_stale_browser_events() {
         let root = temp_dir("diagnose-stale");
         fs::write(root.join("index.html"), "<html><body>ok</body></html>").expect("index");
@@ -4520,6 +5120,14 @@ http.createServer((req, res) => res.end('RETRY_PREVIEW_OK'))
     }
 
     #[test]
+    fn remote_detection_keeps_native_windows_package_root() {
+        let detected =
+            parse_remote_detection(r"C:\Users\Fixture\Project", "web|apps/site\n").expect("detect");
+        assert_eq!(detected.kind, WorkPreviewKind::WebApp);
+        assert_eq!(detected.root_text, r"C:\Users\Fixture\Project\apps\site");
+    }
+
+    #[test]
     fn remote_static_expo_export_carries_phone_viewport_hint() {
         let detected =
             parse_remote_detection("/home/user/project/dist", "static-expo|index.html\n")
@@ -4555,6 +5163,45 @@ http.createServer((req, res) => res.end('RETRY_PREVIEW_OK'))
         assert!(script.contains("base64 -d"));
         assert!(script.contains("exec sh -lc \"$command_payload\""));
         assert!(!script.contains("require('./package.json')"));
+    }
+
+    #[test]
+    fn native_windows_remote_preview_uses_powershell_without_posix_shell() {
+        let command = remote_windows_command_for_kind(&WorkPreviewKind::WebApp, 4321);
+        let script = remote_windows_preview_script(r"C:\Users\Fixture\Project", 4321, &command);
+
+        assert!(script.contains(r"C:\Users\Fixture\Project"));
+        assert!(script.contains("ConvertFrom-Json"));
+        assert!(script.contains("$env:PORT='4321'"));
+        assert!(!script.contains("sh -lc"));
+        let encoded = crate::acp::wrap_ssh_windows_command(&script);
+        assert!(encoded.starts_with("powershell.exe "));
+        assert!(!encoded.contains(r"C:\Users\Fixture\Project"));
+    }
+
+    #[test]
+    fn native_windows_static_preview_avoids_store_aliases_and_native_argv_requoting() {
+        let command = remote_windows_static_command(4321);
+
+        assert!(command.contains("-notlike '*\\WindowsApps\\*'"));
+        assert!(command.contains("SHELLX_STATIC_PYTHON_SOURCE_B64"));
+        assert!(command.contains("SHELLX_STATIC_NODE_SOURCE_B64"));
+        assert!(command.contains("os.environ.pop"));
+        assert!(command.contains("Buffer.from"));
+        assert!(!command.contains("const http=require"));
+    }
+
+    #[test]
+    fn native_windows_preview_guard_tracks_the_ssh_session_and_kills_the_child_tree() {
+        let guarded = windows_preview_session_guard_script("Write-Output 'preview-ready'");
+
+        assert!(guarded.contains("NtQueryInformationProcess"));
+        assert!(guarded.contains("Get-ShellXParentProcessId $PID"));
+        assert!(!guarded.contains("Get-CimInstance"));
+        assert!(guarded.contains("Start-Process"));
+        assert!(guarded.contains("WaitForExit(250)"));
+        assert!(guarded.contains("taskkill.exe /PID $child.Id /T /F"));
+        assert!(!guarded.contains("preview-ready"));
     }
 
     #[test]

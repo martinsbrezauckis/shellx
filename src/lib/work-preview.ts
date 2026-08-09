@@ -189,6 +189,71 @@ export async function diagnoseWorkPreview(input: WorkPreviewDiagnoseInput): Prom
   );
 }
 
+export function formatPreviewDoctorReport(diagnostic: WorkPreviewDiagnostic): string {
+  const issues = diagnostic.issues.length > 0
+    ? diagnostic.issues.map((issue) => `- ${issue.severity} ${issue.source}: ${issue.message}`).join("\n")
+    : "- none";
+  const browserEvents = diagnostic.browserEvents.length > 0
+    ? diagnostic.browserEvents.slice(-20).map((event) => {
+        const location = [event.url, event.line, event.column]
+          .filter((part) => part !== null && part !== undefined && part !== "")
+          .join(":");
+        return `- ${event.level}: ${event.message}${location ? ` (${location})` : ""}`;
+      }).join("\n")
+    : "- none";
+  const logs = diagnostic.logs.length > 0
+    ? diagnostic.logs.slice(-80).map((line) => `[${line.stream}] ${line.line}`).join("\n")
+    : "(no logs)";
+
+  return [
+    "shellX Preview Doctor report",
+    "",
+    `Status: ${diagnostic.status}`,
+    `Summary: ${diagnostic.summary}`,
+    `URL: ${diagnostic.url ?? "(none)"}`,
+    `CWD: ${diagnostic.cwd ?? "(none)"}`,
+    `Command: ${diagnostic.command ?? "(none)"}`,
+    `HTTP: ${diagnostic.httpStatus ?? "(none)"}`,
+    `Title: ${diagnostic.title ?? "(none)"}`,
+    `Screenshot: ${diagnostic.screenshotPath ?? diagnostic.screenshotError ?? "(none)"}`,
+    "",
+    "Issues:",
+    issues,
+    "",
+    "Browser events:",
+    browserEvents,
+    "",
+    "Recent logs:",
+    "```text",
+    logs,
+    "```",
+  ].join("\n");
+}
+
+export function buildOwnedClipboardPreviewDiagnostic(state: WorkPreviewState): WorkPreviewDiagnostic {
+  return {
+    tabId: state.tabId,
+    ok: true,
+    status: "passed",
+    summary: "Owned clipboard fixture: preview state is running and no live diagnostic was invoked.",
+    url: state.url,
+    cwd: state.cwd,
+    command: state.command,
+    httpStatus: 200,
+    responseBytes: null,
+    title: "ShellX owned clipboard fixture",
+    screenshotPath: null,
+    screenshotWidth: null,
+    screenshotHeight: null,
+    screenshotBrowser: null,
+    screenshotError: null,
+    issues: [],
+    browserEvents: [],
+    logs: state.logs,
+    state,
+  };
+}
+
 export function recordWorkPreviewBrowserEvent(tabId: string, event: WorkPreviewBrowserEvent): void {
   const safeTabId = tabId || "default";
   const current = browserEventsByTab.get(safeTabId) ?? [];

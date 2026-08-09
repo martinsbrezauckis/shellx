@@ -19,6 +19,7 @@
  * - One section per concept. Short.
  */
 import CHANGELOG from "../../CHANGELOG.md?raw";
+import THIRD_PARTY_NOTICES from "../../THIRD-PARTY-NOTICES.txt?raw";
 
 export interface BuiltinDoc {
  /** Filename-style id ("features", "quickstart"). Stable key for
@@ -57,8 +58,12 @@ projects, tools, previews, Git, and local automation in one app.
 
 - Local Windows sessions.
 - WSL sessions with Linux path handling.
-- SSH sessions with the shellX host toolset tunneled to the remote
-  environment.
+- SSH sessions to Linux, macOS, or WSL targets with the shellX host toolset
+  tunneled to the remote environment.
+- Native Windows OpenSSH can run Windows-installed CLI agents directly with
+  PowerShell commands and Windows paths. WSL is not required.
+- Windows OpenSSH can also launch the tab inside an explicitly selected WSL
+  distro. This keeps one Linux path frame for agents, files, previews, and Git.
 
 Switch connection per tab from the composer footer.
 
@@ -165,9 +170,10 @@ agent's advertised commands. Provider tabs only show commands that are
 available in the selected environment; they do not inherit stale Grok
 commands from other tabs.
 Custom Grok skills under \`~/.grok/skills/\` are loaded on Grok session
-start. shellX installs the compact \`shellx-host\` skill so hosted agents
-know about ShellX Vault, the native Browser, MCP tools, Debug API,
-\`/build\`, provider handoffs, and local UI evidence surfaces.
+start. ShellX does not install its host guidance there: agents launched by
+ShellX receive compact session rules and the host MCP surface, while direct
+CLI sessions remain unchanged. The full reference copy lives under
+\`~/.shellx/agent-docs/\` and the authenticated Debug API.
 When Grok advertises upstream skills such as \`/check-work\`,
 \`/best-of-n\`, or \`/execute-plan\`, treat them as manual commands; shellX
 \`/build\` uses its own Agent receipts for release-grade gates.
@@ -181,7 +187,7 @@ When Grok advertises upstream skills such as \`/check-work\`,
 | Enter          | Send prompt                     |
 | Shift+Enter    | Newline                         |
 | Ctrl+C         | Abort current turn              |
-| Ctrl+K         | Quick search                    |
+| Ctrl+K         | Open command palette            |
 | Ctrl+,         | Open Settings                   |
 | Esc            | Close modal / cancel            |
 | /              | Slash-command picker            |
@@ -193,7 +199,9 @@ When Grok advertises upstream skills such as \`/check-work\`,
 
 - Config + sessions: \`%USERPROFILE%\\.shellx\\\` (Windows),
   \`~/.shellx/\` (Linux / macOS)
-- Vault: \`<config>/vault.enc\`
+- Vault profile: the platform application-config directory's
+  \`shellx-vault/profile.json\`; **Settings → Vault** shows the active profile.
+  Legacy \`<config>/vault.enc\` is import-only.
 - Grok auth token: \`~/.grok/auth.json\`
 
 Use **Settings → Data** to manage projects, session names, and
@@ -213,7 +221,8 @@ const README = `# shellX — quick start
 
 For Grok sessions, shellX talks to xAI's Grok Build CLI. You need either:
 
-- **\`grok login\`** in a terminal once — stores an OAuth token at
+- **\`grok login\`** in a terminal once (or **\`grok login --device-auth\`**
+  on a remote/headless target) — stores an OAuth token at
   \`~/.grok/auth.json\` that shellX picks up automatically. *(Recommended.)*
 - **Or** an xAI API key stored in **Settings -> Vault**.
 
@@ -294,7 +303,14 @@ Open **Settings → Connections** and add a connection preset:
   \`wsl.exe -d <distro> -- grok\`; provider tabs launch the selected CLI
   in that WSL distro. Filesystem reads route via UNC paths.
 - **SSH** — host + user using your SSH config, key file, or ssh-agent.
-  Optional pre-set cwd; if missing, shellX auto-creates it.
+  Choose direct POSIX for Linux, macOS, or a WSL sshd endpoint. Choose
+  **Windows OpenSSH, run Windows agents** when the CLI and project live on
+  Windows, and use an absolute Windows project path. Choose **Windows OpenSSH,
+  run agents in WSL** only when the CLI and project live in an explicitly
+  selected WSL distro, then use Linux paths for that tab. Mirrored WSL
+  networking is required for the WSL process to reach ShellX's reverse
+  host-tool tunnel; connection testing reports an actionable error when the
+  loopback path is unavailable.
 
 The connection pill in the composer footer lets you switch a tab
 between presets. Each tab can have a different transport.
@@ -310,6 +326,9 @@ any required API keys. After a session connects, open the right rail's
 Open **Settings -> Connectors** to add bot tokens and allowlisted sender
 ids. Telegram direct chats and Discord DMs can land in the connector
 inbox or route into Session chat and return the active session reply.
+For Telegram, allowlisting a group chat authorizes every participant in
+that group; keep per-message approval enabled or use a private chat when
+Session chat can dispatch agent work.
 
 ## Useful panels
 
@@ -371,4 +390,5 @@ export const BUILTIN_DOCS: Record<string, BuiltinDoc> = {
   features: { id: "features", title: "Features", body: FEATURES },
   readme: { id: "readme", title: "Quick start", body: README },
   changelog: { id: "changelog", title: "Changelog", body: CHANGELOG },
+  notices: { id: "notices", title: "Third-party notices", body: `\`\`\`text\n${THIRD_PARTY_NOTICES}\n\`\`\`` },
 };

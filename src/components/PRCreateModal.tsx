@@ -16,8 +16,9 @@
  * No `gh` shelling here — the Rust handler owns that. We just POST
  * JSON + handle the response.
  */
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import { api } from "../lib/debug-api";
+import { useModalFocus } from "../lib/useModalFocus";
 
 export function PRCreateModal({
   open,
@@ -28,6 +29,7 @@ export function PRCreateModal({
   transcriptAppendix,
   activeTabId,
   onCreated,
+  releaseTestBoundary = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -38,6 +40,7 @@ export function PRCreateModal({
   transcriptAppendix: string;
   activeTabId?: string | null;
   onCreated: (url: string) => void;
+  releaseTestBoundary?: boolean;
 }): JSX.Element | null {
   const [base, setBase] = useState(defaultBase);
   const [title, setTitle] = useState(defaultTitle);
@@ -47,6 +50,8 @@ export function PRCreateModal({
   const [confirmRemoteCreate, setConfirmRemoteCreate] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(open, dialogRef, onClose);
 
   useEffect(() => {
     if (!open) {
@@ -59,13 +64,6 @@ export function PRCreateModal({
     setBody(defaultBody);
     setConfirmRemoteCreate(false);
   }, [open, defaultBase, defaultTitle, defaultBody]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -88,10 +86,26 @@ export function PRCreateModal({
           draft,
           tabId: activeTabId ?? null,
           confirmRemoteCreate,
+          ...(releaseTestBoundary ? { releaseTestBoundary: "stop-before-remote" } : {}),
         }),
       });
       if (!r.ok) {
         const text = await r.text();
+        if (releaseTestBoundary && r.status === 412) {
+          let receipt = "";
+          let errorCode = "";
+          try {
+            const parsed = JSON.parse(text) as { error?: unknown; receipt?: unknown };
+            errorCode = typeof parsed.error === "string" ? parsed.error : "";
+            receipt = typeof parsed.receipt === "string" ? parsed.receipt : "";
+          } catch {
+            // The exact release boundary below remains fail-closed.
+          }
+          if (errorCode === "release_test_remote_mutation_blocked"
+            && receipt === "release fixture PR create stopped before remote mutation") {
+            throw new Error(receipt);
+          }
+        }
         throw new Error(`HTTP ${r.status}: ${text}`);
       }
       const j = await r.json();
@@ -106,8 +120,9 @@ export function PRCreateModal({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div data-debug-id="surface-components-prcreatemodal-1" className="modal-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal pr-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
@@ -122,6 +137,7 @@ export function PRCreateModal({
             className="settings-input"
             type="text"
             data-debug-id="pr-base-input"
+            data-shellx-release-observe="value"
             value={base}
             onChange={(e) => setBase(e.target.value)}
           />
@@ -133,6 +149,7 @@ export function PRCreateModal({
             className="settings-input"
             type="text"
             data-debug-id="pr-title-input"
+            data-shellx-release-observe="value"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Concise title (less than 70 chars)"
@@ -144,6 +161,7 @@ export function PRCreateModal({
           <textarea
             className="settings-input"
             data-debug-id="pr-body-input"
+            data-shellx-release-observe="value"
             rows={8}
             value={body}
             onChange={(e) => setBody(e.target.value)}
@@ -159,6 +177,8 @@ export function PRCreateModal({
               type="button"
               className={`settings-pill ${draft ? "active" : ""}`}
               onClick={() => setDraft((v) => !v)}
+              aria-pressed={draft}
+              data-shellx-release-observe="pressed"
             >
               Draft
             </button>
@@ -167,6 +187,8 @@ export function PRCreateModal({
               className={`settings-pill ${includeTranscript ? "active" : ""}`}
               onClick={() => setIncludeTranscript((v) => !v)}
               disabled={!transcriptAppendix}
+              aria-pressed={includeTranscript}
+              data-shellx-release-observe="pressed disabled title"
               title={transcriptAppendix ? "Append the session transcript as an appendix" : "No transcript captured yet"}
             >
               + transcript
@@ -177,25 +199,33 @@ export function PRCreateModal({
         <div className="settings-row">
           <label className="settings-label">Approval</label>
           <label className="settings-check">
-            <input
+            <input data-debug-id="surface-components-prcreatemodal-8"
               type="checkbox"
               checked={confirmRemoteCreate}
               onChange={(e) => setConfirmRemoteCreate(e.target.checked)}
+              data-shellx-release-observe="checked"
             />
             <span>I approve creating this GitHub PR</span>
           </label>
         </div>
 
         {error && (
-          <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>
+          <div
+            className="error-banner"
+            data-release-pr-create-receipt="boundary"
+            data-shellx-release-observe="title"
+            title={error}
+            style={{ marginTop: 8 }}
+          >{error}</div>
         )}
 
         <div className="hardcap-buttons">
           <button type="button" className="settings-pill" onClick={onClose} disabled={submitting}>
             Cancel
           </button>
-          <button
+          <button data-debug-id="surface-components-prcreatemodal-10"
             type="button"
+            data-shellx-release-observe="disabled"
             className="settings-pill active"
             onClick={() => void submit()}
             disabled={submitting || !title.trim() || !base.trim() || !confirmRemoteCreate}

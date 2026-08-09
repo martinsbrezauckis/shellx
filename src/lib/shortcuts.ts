@@ -20,7 +20,7 @@
  * No React imports at the top — this file is pure data + helpers
  * usable from tests. The hook wrapper lives at the bottom.
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 /** Cross-platform "command" key (⌘ on mac, Ctrl elsewhere). */
 export function isCmd(e: KeyboardEvent): boolean {
@@ -131,16 +131,6 @@ export const SHORTCUTS: ShortcutDef[] = [
     skipInInput: false,
   },
 
- // Autonomy
-  {
-    id: "cycle-autonomy",
-    group: "Autonomy",
-    keys: "⇧Tab",
-    desc: "Cycle autonomy mode (Confirm → Auto)",
-    match: (e) => e.key === "Tab" && e.shiftKey,
-    skipInInput: true,
-  },
-
  // Diff navigation (handled per-card; the dispatch still uses this id)
   {
     id: "diff-next",
@@ -203,13 +193,18 @@ export function isInEditable(target: EventTarget | null): boolean {
  * (textarea Enter, native browser shortcuts) untouched.
  */
 export function useKeyboardShortcuts(handlers: ShortcutHandlers): void {
+  const handlersRef = useRef(handlers);
+  useEffect(() => {
+    handlersRef.current = handlers;
+  }, [handlers]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const inEditable = isInEditable(e.target);
       for (const sc of SHORTCUTS) {
         if (sc.skipInInput && inEditable) continue;
         if (!sc.match(e)) continue;
-        const fn = handlers[sc.id];
+        const fn = handlersRef.current[sc.id];
         if (!fn) continue;
         e.preventDefault();
  // preventDefault only — DO NOT stopPropagation. The bubble
@@ -222,5 +217,5 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers): void {
     };
     window.addEventListener("keydown", onKey, true); // capture phase so we win vs browser shortcuts where possible
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [handlers]);
+  }, []);
 }

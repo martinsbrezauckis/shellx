@@ -44,6 +44,10 @@ declare module "*.toml?raw" {
   const raw: string;
   export default raw;
 }
+declare module "*.txt?raw" {
+  const raw: string;
+  export default raw;
+}
 declare module "*.json?raw" {
   const raw: string;
   export default raw;

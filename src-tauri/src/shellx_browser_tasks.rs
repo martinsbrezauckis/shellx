@@ -5,25 +5,275 @@ use crate::shellx_browser::{
     now_ms, push_network_entry, push_receipt, record_history_visit, set_active_tab,
     sync_tabs_for_task, validate_browser_navigation_target, BrowserActionRequest,
     BrowserActionResponse, BrowserActionabilityCheck, BrowserAgentStepSummary,
-    BrowserNetworkRecordRequest, BrowserObservation, BrowserState,
-    BrowserTaskAutonomyUpdateRequest, BrowserTaskControlRequest, BrowserTaskControlResponse,
-    BrowserTaskSnapshot, BrowserVerificationResult, ShellxBrowserRegistry, StartBrowserTaskRequest,
+    BrowserNetworkRecordRequest, BrowserObservation, BrowserReceipt, BrowserState,
+    BrowserTabCloseRequest, BrowserTabSnapshot, BrowserTaskSnapshot, BrowserVerificationResult,
+    ShellxBrowserRegistry, StartBrowserTaskRequest,
+};
+use crate::shellx_browser_caller::{
+    normalize_browser_task_owner_session_id, BrowserTaskControlAuthority,
 };
 use crate::shellx_browser_protected_values::{
     browser_protected_values_for_task, redact_browser_option,
 };
 use crate::shellx_browser_tabs::resolve_action_tab_index;
 
+pub(crate) const BROWSER_TASK_TERMINAL_HISTORY_LIMIT: usize = 100;
+pub(crate) const BROWSER_TASK_TERMINAL_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
+pub(crate) const BROWSER_TASK_OPERATOR_CONTROL_REQUIRED: &str =
+    "browser_task_operator_control_required";
+pub(crate) const BROWSER_TASK_OWNER_CONTROL_REQUIRED: &str = "browser_task_owner_control_required";
+
+pub(crate) fn browser_task_is_terminal(status: &str) -> bool {
+    matches!(status, "completed" | "blocked" | "aborted")
+}
+
+fn browser_task_has_owned_tab(state: &BrowserState, task_id: &str) -> bool {
+    state
+        .tabs
+        .iter()
+        .any(|tab| tab.task_id.as_deref() == Some(task_id))
+}
+
+pub(crate) fn repair_active_task_id_locked(state: &mut BrowserState) {
+    state.active_task_id = state
+        .active_browser_tab_id
+        .as_deref()
+        .and_then(|active_tab_id| {
+            state
+                .tabs
+                .iter()
+                .find(|tab| tab.browser_tab_id == active_tab_id)
+        })
+        .and_then(|tab| tab.task_id.as_deref())
+        .and_then(|task_id| {
+            state
+                .tasks
+                .iter()
+                .find(|task| task.task_id == task_id && !browser_task_is_terminal(&task.status))
+        })
+        .map(|task| task.task_id.clone());
+}
+
+fn prune_terminal_task_history_locked(state: &mut BrowserState) -> usize {
+    let cutoff = now_ms().saturating_sub(BROWSER_TASK_TERMINAL_RETENTION_MS);
+    let mut removable = state
+        .tasks
+        .iter()
+        .filter(|task| {
+            browser_task_is_terminal(&task.status)
+                && !browser_task_has_owned_tab(state, &task.task_id)
+        })
+        .map(|task| (task.updated_at_ms, task.task_id.clone()))
+        .collect::<Vec<_>>();
+    removable.sort_by(|left, right| right.cmp(left));
+
+    let remove_ids = removable
+        .iter()
+        .enumerate()
+        .filter(|(index, (updated_at_ms, _))| {
+            *updated_at_ms < cutoff || *index >= BROWSER_TASK_TERMINAL_HISTORY_LIMIT
+        })
+        .map(|(_, (_, task_id))| task_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    if remove_ids.is_empty() {
+        return 0;
+    }
+    let before = state.tasks.len();
+    state
+        .tasks
+        .retain(|task| !remove_ids.contains(&task.task_id));
+    before - state.tasks.len()
+}
+
+fn record_task_history_prune_locked(state: &mut BrowserState, pruned: usize) {
+    if pruned == 0 {
+        return;
+    }
+    push_receipt(
+        state,
+        "browserTaskHistoryPruned",
+        None,
+        None,
+        "Browser terminal task history pruned".to_string(),
+        json!({
+            "prunedTasks": pruned,
+            "terminalHistoryLimit": BROWSER_TASK_TERMINAL_HISTORY_LIMIT,
+            "terminalRetentionMs": BROWSER_TASK_TERMINAL_RETENTION_MS,
+        }),
+    );
+}
+
+pub(crate) struct BrowserTaskTransition {
+    pub(crate) task: BrowserTaskSnapshot,
+    pub(crate) receipt: BrowserReceipt,
+}
+
+pub(crate) struct BrowserTaskStartRollback {
+    pub(crate) task: BrowserTaskSnapshot,
+    pub(crate) closed_tabs: Vec<BrowserTabSnapshot>,
+    pub(crate) engine_ids_to_close: Vec<String>,
+    pub(crate) restored_active_browser_tab_id: Option<String>,
+    pub(crate) receipt: BrowserReceipt,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn transition_task_status_locked(
+    state: &mut BrowserState,
+    task_id: &str,
+    next_status: &str,
+    status_reason: &str,
+    receipt_kind: &str,
+    summary: &str,
+    requested_by: &str,
+    cancel_grants: bool,
+    cancel_dialogs: bool,
+) -> Result<BrowserTaskTransition, String> {
+    let idx = find_task_index(state, task_id)?;
+    state.tasks[idx].status = next_status.to_string();
+    state.tasks[idx].status_reason = Some(status_reason.to_string());
+    state.tasks[idx].updated_at_ms = now_ms();
+    let task = state.tasks[idx].clone();
+    sync_tabs_for_task(state, &task.task_id, |tab| {
+        tab.status = next_status.to_string();
+    });
+    let cancelled_grants = if cancel_grants {
+        cancel_requested_session_grants_for_task(state, &task.task_id)
+    } else {
+        0
+    };
+    let cancelled_dialogs = if cancel_dialogs {
+        cancel_pending_dialogs_for_task(state, &task.task_id)
+    } else {
+        0
+    };
+    let cancelled_permissions = if browser_task_is_terminal(next_status) {
+        cancel_pending_permissions_for_task(state, &task.task_id)
+    } else {
+        0
+    };
+    repair_active_task_id_locked(state);
+    let receipt = push_receipt(
+        state,
+        receipt_kind,
+        Some(task.task_id.clone()),
+        Some(task.profile_id.clone()),
+        summary.to_string(),
+        json!({
+            "status": next_status,
+            "reason": status_reason,
+            "requestedBy": requested_by,
+            "cancelledGrants": cancelled_grants,
+            "cancelledDialogs": cancelled_dialogs,
+            "cancelledPermissions": cancelled_permissions,
+        }),
+    );
+    if cancelled_grants > 0 {
+        push_receipt(
+            state,
+            "browserSessionGrantCancelled",
+            Some(task.task_id.clone()),
+            Some(task.profile_id.clone()),
+            "Pending Browser session grants closed with task".to_string(),
+            json!({
+                "status": next_status,
+                "reason": status_reason,
+                "cancelledGrants": cancelled_grants,
+            }),
+        );
+    }
+    if cancelled_dialogs > 0 {
+        push_receipt(
+            state,
+            "browserDialogCancelled",
+            Some(task.task_id.clone()),
+            Some(task.profile_id.clone()),
+            "Pending Browser dialogs closed with task".to_string(),
+            json!({
+                "status": next_status,
+                "reason": status_reason,
+                "cancelledDialogs": cancelled_dialogs,
+            }),
+        );
+    }
+    if cancelled_permissions > 0 {
+        push_receipt(
+            state,
+            "browserPermissionCancelled",
+            Some(task.task_id.clone()),
+            Some(task.profile_id.clone()),
+            "Pending Browser permissions closed with task".to_string(),
+            json!({
+                "status": next_status,
+                "reason": status_reason,
+                "cancelledPermissions": cancelled_permissions,
+            }),
+        );
+    }
+    let pruned = prune_terminal_task_history_locked(state);
+    record_task_history_prune_locked(state, pruned);
+    Ok(BrowserTaskTransition { task, receipt })
+}
+
+pub(crate) fn repair_browser_task_invariants_locked(state: &mut BrowserState) -> usize {
+    let normalized_autonomy = state
+        .tasks
+        .iter_mut()
+        .map(|task| {
+            usize::from(
+                crate::shellx_browser_policy::normalize_browser_task_autonomy(&mut task.autonomy),
+            )
+        })
+        .sum::<usize>();
+    let orphaned_task_ids = state
+        .tasks
+        .iter()
+        .filter(|task| {
+            !browser_task_is_terminal(&task.status)
+                && !browser_task_has_owned_tab(state, &task.task_id)
+        })
+        .map(|task| task.task_id.clone())
+        .collect::<Vec<_>>();
+    for task_id in &orphaned_task_ids {
+        let _ = transition_task_status_locked(
+            state,
+            task_id,
+            "aborted",
+            "orphanedTask",
+            "browserTaskAborted",
+            "Browser task aborted because it had no owned tabs",
+            "browserInvariantRepair",
+            true,
+            true,
+        );
+    }
+    repair_active_task_id_locked(state);
+    let pruned = prune_terminal_task_history_locked(state);
+    record_task_history_prune_locked(state, pruned);
+    normalized_autonomy + orphaned_task_ids.len() + pruned
+}
+
 impl ShellxBrowserRegistry {
     pub fn start_task(
         &self,
         request: StartBrowserTaskRequest,
     ) -> Result<BrowserTaskSnapshot, String> {
+        self.start_task_for_agent_session(request, None)
+    }
+
+    pub(crate) fn start_task_for_agent_session(
+        &self,
+        request: StartBrowserTaskRequest,
+        owner_session_id: Option<&str>,
+    ) -> Result<BrowserTaskSnapshot, String> {
         let goal = clean_string(request.goal);
         if goal.is_empty() {
             return Err("browser task goal is required".to_string());
         }
+        let autonomy =
+            crate::shellx_browser_policy::effective_browser_task_autonomy(request.autonomy)?;
+        let owner_session_id = normalize_browser_task_owner_session_id(owner_session_id)?;
         let mut state = lock_or_recover(&self.state);
+        repair_browser_task_invariants_locked(&mut state);
         let profile_id = request
             .profile_id
             .as_deref()
@@ -55,13 +305,20 @@ impl ShellxBrowserRegistry {
             );
         }
         let expected_domains = normalize_string_list(request.expected_domains.unwrap_or_default());
+        let blocked_domains = normalize_string_list(request.blocked_domains.unwrap_or_default());
         let current_url = request
             .start_url
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|url| {
-                validate_browser_navigation_target(url, &expected_domains, &profile_id, true)
+                validate_browser_navigation_target(
+                    url,
+                    &expected_domains,
+                    &blocked_domains,
+                    &profile_id,
+                    true,
+                )
             })
             .transpose()?;
 
@@ -69,15 +326,22 @@ impl ShellxBrowserRegistry {
         let task = BrowserTaskSnapshot {
             task_id: browser_id("browser-task"),
             profile_id: profile_id.clone(),
+            owner_actor_id: BrowserTaskControlAuthority::Agent.actor_id().to_string(),
+            owner_surface: BrowserTaskControlAuthority::Agent.surface_id().to_string(),
+            owner_session_id,
             goal,
             status: "running".to_string(),
-            autonomy: request.autonomy.unwrap_or_default(),
+            status_reason: None,
+            autonomy,
             current_url,
             last_observation: None,
             expected_domains,
-            blocked_domains: normalize_string_list(request.blocked_domains.unwrap_or_default()),
+            blocked_domains,
             created_at_ms: now,
             updated_at_ms: now,
+            retention_dropped_console_events: 0,
+            retention_dropped_network_events: 0,
+            retention_dropped_receipts: 0,
         };
         state.active_task_id = Some(task.task_id.clone());
         let tab = create_browser_tab(
@@ -101,6 +365,9 @@ impl ShellxBrowserRegistry {
                 "goal": task.goal,
                 "startUrl": task.current_url,
                 "autonomy": task.autonomy,
+                "ownerActorId": task.owner_actor_id,
+                "ownerSurface": task.owner_surface,
+                "ownerSessionId": task.owner_session_id,
                 "browserTabId": tab.browser_tab_id,
             }),
         );
@@ -163,180 +430,98 @@ impl ShellxBrowserRegistry {
         Ok(task)
     }
 
-    pub fn finish_task(
+    pub(crate) fn rollback_failed_task_start(
         &self,
-        task_id: Option<String>,
-        status: Option<String>,
-    ) -> Result<BrowserTaskSnapshot, String> {
-        let mut state = lock_or_recover(&self.state);
-        let task_id = resolve_task_id(&state, task_id)?;
-        let idx = find_task_index(&state, &task_id)?;
-        let next_status = status
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("completed")
-            .to_string();
-        state.tasks[idx].status = next_status.clone();
-        state.tasks[idx].updated_at_ms = now_ms();
-        let task = state.tasks[idx].clone();
-        sync_tabs_for_task(&mut state, &task.task_id, |tab| {
-            tab.status = next_status.clone();
-        });
-        let cancelled_grants = cancel_requested_session_grants_for_task(&mut state, &task.task_id);
-        let cancelled_dialogs = cancel_pending_dialogs_for_task(&mut state, &task.task_id);
-        let kind = if next_status == "completed" {
-            "browserWorkflowCompleted"
-        } else {
-            "browserWorkflowBlocked"
+        task_id: &str,
+        previous_active_browser_tab_id: Option<&str>,
+        failure: &str,
+    ) -> Result<BrowserTaskStartRollback, String> {
+        let task_id = clean_string(task_id);
+        if task_id.is_empty() {
+            return Err("browser task rollback requires taskId".to_string());
+        }
+        let (tab_ids, provisional_task_was_active) = {
+            let state = lock_or_recover(&self.state);
+            find_task_index(&state, &task_id)?;
+            let tab_ids = state
+                .tabs
+                .iter()
+                .filter(|tab| tab.task_id.as_deref() == Some(task_id.as_str()))
+                .map(|tab| tab.browser_tab_id.clone())
+                .collect::<Vec<_>>();
+            let provisional_task_was_active = state
+                .active_browser_tab_id
+                .as_ref()
+                .is_some_and(|active| tab_ids.contains(active));
+            (tab_ids, provisional_task_was_active)
         };
-        push_receipt(
-            &mut state,
-            kind,
-            Some(task.task_id.clone()),
-            Some(task.profile_id.clone()),
-            format!("Browser task marked {}", next_status),
-            json!({ "status": next_status }),
-        );
-        if cancelled_grants > 0 {
-            push_receipt(
-                &mut state,
-                "browserSessionGrantCancelled",
-                Some(task.task_id.clone()),
-                Some(task.profile_id.clone()),
-                "Pending Browser session grants closed with task".to_string(),
-                json!({
-                    "status": next_status,
-                    "cancelledGrants": cancelled_grants,
-                }),
-            );
+        if tab_ids.is_empty() {
+            return Err(format!(
+                "browser task '{}' rollback found no provisional tabs",
+                task_id
+            ));
         }
-        if cancelled_dialogs > 0 {
-            push_receipt(
-                &mut state,
-                "browserDialogCancelled",
-                Some(task.task_id.clone()),
-                Some(task.profile_id.clone()),
-                "Pending Browser dialogs closed with task".to_string(),
-                json!({
-                    "status": next_status,
-                    "cancelledDialogs": cancelled_dialogs,
-                }),
-            );
-        }
-        Ok(task)
-    }
 
-    pub fn update_task_autonomy(
-        &self,
-        request: BrowserTaskAutonomyUpdateRequest,
-    ) -> Result<BrowserTaskSnapshot, String> {
-        let mut state = lock_or_recover(&self.state);
-        let task_id = resolve_task_id(&state, request.task_id)?;
-        let idx = find_task_index(&state, &task_id)?;
-        state.tasks[idx].autonomy = request.autonomy.clone();
-        state.tasks[idx].updated_at_ms = now_ms();
-        let task = state.tasks[idx].clone();
-        push_receipt(
-            &mut state,
-            "browserTaskAutonomyUpdated",
-            Some(task.task_id.clone()),
-            Some(task.profile_id.clone()),
-            "Browser task autonomy updated".to_string(),
-            json!({
-                "autonomy": task.autonomy,
-            }),
-        );
-        Ok(task)
-    }
-
-    pub fn control_task(
-        &self,
-        request: BrowserTaskControlRequest,
-    ) -> Result<BrowserTaskControlResponse, String> {
-        let action = clean_string(&request.action);
-        if action.is_empty() {
-            return Err("browser task control action is required".to_string());
-        }
-        let normalized_action = match action.as_str() {
-            "pause" => "pause",
-            "resume" => "resume",
-            "abort" => "abort",
-            "takeover" | "userTakeover" | "user_takeover" => "userTakeover",
-            other => {
-                return Err(format!("unsupported browser task control '{}'", other));
+        let mut closed_tabs = Vec::with_capacity(tab_ids.len());
+        for browser_tab_id in tab_ids {
+            let response = self.close_tab(BrowserTabCloseRequest {
+                browser_tab_id,
+                lock_lease_id: None,
+                owner_agent_id: None,
+                owner_run_id: None,
+            })?;
+            if !response.ok {
+                return Err(format!(
+                    "browser task '{}' rollback could not close provisional tab '{}'",
+                    task_id, response.tab.browser_tab_id
+                ));
             }
-        };
-        let mut state = lock_or_recover(&self.state);
-        let task_id = resolve_task_id(&state, request.task_id)?;
-        let idx = find_task_index(&state, &task_id)?;
-        let (next_status, receipt_kind, summary) = match normalized_action {
-            "pause" => (
-                "paused",
-                "browserTaskPaused",
-                "Browser task paused by operator",
-            ),
-            "resume" => (
-                "running",
-                "browserTaskResumed",
-                "Browser task resumed by operator",
-            ),
-            "abort" => (
-                "aborted",
-                "browserTaskAborted",
-                "Browser task aborted by operator",
-            ),
-            "userTakeover" => (
-                "userTakeover",
-                "browserTaskUserTakeover",
-                "Browser task handed to the user",
-            ),
-            _ => unreachable!("browser task control action was normalized"),
-        };
-        state.tasks[idx].status = next_status.to_string();
-        state.tasks[idx].updated_at_ms = now_ms();
-        let task = state.tasks[idx].clone();
-        sync_tabs_for_task(&mut state, &task.task_id, |tab| {
-            tab.status = next_status.to_string();
-        });
-        if normalized_action == "resume" {
-            state.active_task_id = Some(task.task_id.clone());
+            closed_tabs.push(response.tab);
         }
-        let cancelled_grants = if matches!(normalized_action, "abort" | "userTakeover") {
-            cancel_requested_session_grants_for_task(&mut state, &task.task_id)
-        } else {
-            0
-        };
-        let reason = request
-            .reason
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty());
-        let requested_by = request
-            .requested_by
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "operator".to_string());
+
+        let mut state = lock_or_recover(&self.state);
+        if provisional_task_was_active {
+            if let Some(previous_tab_id) = previous_active_browser_tab_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .filter(|value| state.tabs.iter().any(|tab| tab.browser_tab_id == *value))
+            {
+                set_active_tab(&mut state, previous_tab_id);
+            }
+        }
+        let task = state.tasks[find_task_index(&state, &task_id)?].clone();
+        let mut engine_ids_to_close = Vec::new();
+        for tab in &closed_tabs {
+            if !state
+                .tabs
+                .iter()
+                .any(|remaining| remaining.engine_id == tab.engine_id)
+                && !engine_ids_to_close.contains(&tab.engine_id)
+            {
+                engine_ids_to_close.push(tab.engine_id.clone());
+            }
+        }
+        let restored_active_browser_tab_id = state.active_browser_tab_id.clone();
         let receipt = push_receipt(
             &mut state,
-            receipt_kind,
+            "browserTaskStartRolledBack",
             Some(task.task_id.clone()),
             Some(task.profile_id.clone()),
-            summary.to_string(),
+            "Browser task start rolled back after engine synchronization failed".to_string(),
             json!({
-                "action": normalized_action,
-                "status": next_status,
-                "requestedBy": requested_by,
-                "reason": reason,
-                "cancelledGrants": cancelled_grants,
+                "failure": clean_string(failure),
+                "closedBrowserTabIds": closed_tabs
+                    .iter()
+                    .map(|tab| tab.browser_tab_id.clone())
+                    .collect::<Vec<_>>(),
+                "restoredActiveBrowserTabId": restored_active_browser_tab_id.clone(),
             }),
         );
-        Ok(BrowserTaskControlResponse {
-            ok: true,
-            status: next_status.to_string(),
-            action: normalized_action.to_string(),
+        Ok(BrowserTaskStartRollback {
             task,
+            closed_tabs,
+            engine_ids_to_close,
+            restored_active_browser_tab_id,
             receipt,
         })
     }
@@ -396,6 +581,19 @@ fn cancel_pending_dialogs_for_task(state: &mut BrowserState, task_id: &str) -> u
         if dialog.task_id.as_deref() == Some(task_id) && dialog.status == "pending" {
             dialog.status = "cancelled".to_string();
             dialog.resolved_at_ms = Some(resolved_at_ms);
+            count += 1;
+        }
+    }
+    count
+}
+
+fn cancel_pending_permissions_for_task(state: &mut BrowserState, task_id: &str) -> usize {
+    let resolved_at_ms = now_ms();
+    let mut count = 0;
+    for permission in &mut state.permissions {
+        if permission.task_id.as_deref() == Some(task_id) && permission.status == "pending" {
+            permission.status = "cancelled".to_string();
+            permission.resolved_at_ms = Some(resolved_at_ms);
             count += 1;
         }
     }
@@ -594,7 +792,10 @@ pub(crate) fn task_control_blocked_response(
     action: &str,
 ) -> Option<BrowserActionResponse> {
     let task_status = state.tasks[task_idx].status.clone();
-    if !matches!(task_status.as_str(), "paused" | "aborted" | "userTakeover") {
+    if !matches!(
+        task_status.as_str(),
+        "paused" | "aborted" | "blocked" | "completed" | "userTakeover"
+    ) {
         return None;
     }
     let task = state.tasks[task_idx].clone();
@@ -604,6 +805,8 @@ pub(crate) fn task_control_blocked_response(
     let response_status = match task_status.as_str() {
         "paused" => "taskPaused",
         "aborted" => "taskAborted",
+        "blocked" => "taskBlocked",
+        "completed" => "taskCompleted",
         "userTakeover" => "userTakeover",
         _ => "taskBlocked",
     };

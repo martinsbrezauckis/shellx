@@ -1,20 +1,26 @@
 use axum::{
-    extract::State,
-    http::StatusCode,
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
+use std::sync::Arc;
+use tokio::time::{sleep, Duration, Instant};
 
-use crate::debug_api::{
-    browser_registry, emit_browser_latest, emit_browser_receipt, emit_browser_recent_for_task,
-    sync_browser_active_tab_to_engine, ApiState,
+use crate::debug_api::{browser_registry, sync_browser_active_tab_to_engine, ApiState};
+use crate::debug_api_browser_caller::browser_mcp_caller_id;
+use crate::debug_api_browser_events::{
+    emit_browser_latest, emit_browser_receipt, emit_browser_recent_for_task,
 };
 
 pub(crate) fn browser_state_routes() -> Router<ApiState> {
     Router::new()
         .route("/browser/state", get(browser_state_http))
+        .route("/browser/summary", get(browser_summary_http))
+        .route("/browser/check", get(browser_check_http))
+        .route("/browser/settle", get(browser_settle_http))
         .route("/browser/tabs", get(browser_tabs_http))
         .route("/browser/tabs/open", post(browser_tab_open_http))
         .route("/browser/tabs/focus", post(browser_tab_focus_http))
@@ -25,11 +31,45 @@ pub(crate) fn browser_state_routes() -> Router<ApiState> {
         .route("/browser/tabs/unlock", post(browser_tab_unlock_http))
         .route("/browser/profiles", get(browser_profiles_http))
         .route("/browser/tasks", get(browser_tasks_http))
+        .route("/browser/history", get(browser_history_http))
+        .route("/browser/requests", get(browser_requests_http))
         .route("/browser/open", post(browser_open_http))
         .route("/browser/task/start", post(browser_task_start_http))
         .route("/browser/task/finish", post(browser_task_finish_http))
         .route("/browser/task/autonomy", post(browser_task_autonomy_http))
         .route("/browser/task/control", post(browser_task_control_http))
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct BrowserStateQuery {
+    view: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct BrowserTasksQuery {
+    detail: Option<String>,
+    #[serde(rename = "includeObservation", alias = "include_observation")]
+    include_observation: Option<bool>,
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct BrowserListQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct BrowserSettleQuery {
+    #[serde(rename = "taskId", alias = "task_id")]
+    task_id: Option<String>,
+    #[serde(rename = "browserTabId", alias = "browser_tab_id")]
+    browser_tab_id: Option<String>,
+    #[serde(rename = "timeoutMs", alias = "timeout_ms")]
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -45,14 +85,178 @@ pub(crate) struct BrowserTaskFinishBody {
     #[serde(rename = "taskId", alias = "task_id")]
     task_id: Option<String>,
     status: Option<String>,
+    reason: Option<String>,
+    #[serde(rename = "requestedBy", alias = "requested_by")]
+    requested_by: Option<String>,
 }
 
-pub(crate) async fn browser_state_http(State(s): State<ApiState>) -> Response {
+fn browser_task_mutation_error_response(error: String) -> Response {
+    let code = [
+        crate::shellx_browser_tasks::BROWSER_TASK_OPERATOR_CONTROL_REQUIRED,
+        crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED,
+        crate::shellx_browser_policy::BROWSER_TASK_AUTONOMY_POLICY_FIXED,
+    ]
+    .into_iter()
+    .find(|code| error.starts_with(code));
+    let status = if code.is_some() {
+        StatusCode::FORBIDDEN
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    (
+        status,
+        Json(serde_json::json!({ "ok": false, "code": code, "error": error })),
+    )
+        .into_response()
+}
+
+pub(crate) async fn browser_state_http(
+    State(s): State<ApiState>,
+    Query(q): Query<BrowserStateQuery>,
+) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    Json(registry.state()).into_response()
+    if q.view
+        .as_deref()
+        .is_some_and(|view| view.eq_ignore_ascii_case("core"))
+    {
+        Json(registry.core_state()).into_response()
+    } else {
+        Json(registry.state()).into_response()
+    }
+}
+
+pub(crate) async fn browser_summary_http(State(s): State<ApiState>) -> Response {
+    let registry = match browser_registry(&s) {
+        Ok(registry) => registry,
+        Err(response) => return *response,
+    };
+    Json(registry.summary()).into_response()
+}
+
+pub(crate) async fn browser_check_http(
+    State(s): State<ApiState>,
+    Query(q): Query<BrowserSettleQuery>,
+) -> Response {
+    let registry = match browser_registry(&s) {
+        Ok(registry) => registry,
+        Err(response) => return *response,
+    };
+    let settle = if q.task_id.is_none() && q.browser_tab_id.is_none() {
+        match browser_idle_settle_snapshot(&registry) {
+            Some(snapshot) => Ok(snapshot),
+            None => browser_settle_snapshot(&registry, &q).await,
+        }
+    } else {
+        browser_settle_snapshot(&registry, &q).await
+    };
+    match settle {
+        Ok(settle) => Json(browser_quiet_check_value(&registry, settle)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+fn browser_quiet_check_value(
+    registry: &crate::shellx_browser::ShellxBrowserRegistry,
+    settle: crate::shellx_browser::BrowserSettleSnapshot,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema": "shellx/browser-quiet-check@1",
+        "ok": true,
+        "mode": "quiet",
+        "effects": {
+            "uiMutation": false,
+            "windowOpened": false,
+            "taskCreated": false,
+            "engineMounted": false,
+            "receiptEmitted": false,
+        },
+        "summary": registry.summary(),
+        "settle": settle,
+    })
+}
+
+fn browser_idle_settle_snapshot(
+    registry: &crate::shellx_browser::ShellxBrowserRegistry,
+) -> Option<crate::shellx_browser::BrowserSettleSnapshot> {
+    let summary = registry.summary();
+    summary
+        .active_tab
+        .is_none()
+        .then(|| crate::shellx_browser::BrowserSettleSnapshot {
+            settled: true,
+            task_id: None,
+            browser_tab_id: None,
+            task_status: None,
+            tab_status: Some("idle".to_string()),
+            engine_id: None,
+            engine_load_status: Some("idle".to_string()),
+            engine_url: None,
+            pending_url: None,
+            revision: summary.revisions.engine,
+        })
+}
+
+pub(crate) async fn browser_settle_http(
+    State(s): State<ApiState>,
+    Query(q): Query<BrowserSettleQuery>,
+) -> Response {
+    let registry = match browser_registry(&s) {
+        Ok(registry) => registry,
+        Err(response) => return *response,
+    };
+    match browser_settle_snapshot(&registry, &q).await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+async fn browser_settle_snapshot(
+    registry: &crate::shellx_browser::ShellxBrowserRegistry,
+    q: &BrowserSettleQuery,
+) -> Result<crate::shellx_browser::BrowserSettleSnapshot, String> {
+    let timeout_ms = q.timeout_ms.unwrap_or_default().min(120_000);
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        let snapshot = registry.settle_state(q.task_id.as_deref(), q.browser_tab_id.as_deref())?;
+        if snapshot.settled || Instant::now() >= deadline {
+            return Ok(snapshot);
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_quiet_check_reports_no_effects_and_preserves_revisions() {
+        let registry = crate::shellx_browser::ShellxBrowserRegistry::default();
+        let before = serde_json::to_value(registry.summary().revisions).expect("revisions");
+        let settle = browser_idle_settle_snapshot(&registry).expect("idle settle snapshot");
+        let check = browser_quiet_check_value(&registry, settle);
+        let after = serde_json::to_value(registry.summary().revisions).expect("revisions");
+
+        assert_eq!(check["schema"], "shellx/browser-quiet-check@1");
+        assert_eq!(check["mode"], "quiet");
+        assert!(check["effects"]
+            .as_object()
+            .is_some_and(|effects| effects.values().all(|value| value == false)));
+        assert_eq!(check["summary"]["revisions"], before);
+        assert_eq!(after, before);
+    }
 }
 
 pub(crate) async fn browser_tabs_http(State(s): State<ApiState>) -> Response {
@@ -79,6 +283,7 @@ pub(crate) async fn browser_tab_open_http(
             if response.ok {
                 if let Err(e) =
                     crate::shellx_browser::sync_engine_to_tab(s.app(), &registry, &response.tab)
+                        .await
                 {
                     return (
                         StatusCode::BAD_REQUEST,
@@ -113,7 +318,9 @@ pub(crate) async fn browser_tab_focus_http(
                     s.app(),
                     &registry,
                     &response.tab,
-                ) {
+                )
+                .await
+                {
                     return (
                         StatusCode::BAD_REQUEST,
                         Json(serde_json::json!({ "ok": false, "error": e, "tab": response.tab })),
@@ -181,7 +388,9 @@ pub(crate) async fn browser_tab_close_http(
                     if let Err(e) = crate::shellx_browser::close_browser_engine_webview(
                         s.app(),
                         &closed_engine_id,
-                    ) {
+                    )
+                    .await
+                    {
                         return (
                             StatusCode::BAD_REQUEST,
                             Json(
@@ -193,7 +402,7 @@ pub(crate) async fn browser_tab_close_http(
                 }
             }
             if response.ok && closing_active_tab {
-                if let Err(e) = sync_browser_active_tab_to_engine(s.app(), &registry) {
+                if let Err(e) = sync_browser_active_tab_to_engine(s.app(), &registry).await {
                     return (
                         StatusCode::BAD_REQUEST,
                         Json(serde_json::json!({ "ok": false, "error": e, "tab": response.tab })),
@@ -201,7 +410,11 @@ pub(crate) async fn browser_tab_close_http(
                         .into_response();
                 }
             }
-            emit_browser_receipt(&s, &response.receipt);
+            if let Some(task_id) = response.tab.task_id.as_deref() {
+                emit_browser_recent_for_task(&s, &registry, task_id, 8);
+            } else {
+                emit_browser_receipt(&s, &response.receipt);
+            }
             Json(response).into_response()
         }
         Err(e) => (
@@ -286,13 +499,69 @@ pub(crate) async fn browser_profiles_http(State(s): State<ApiState>) -> Response
     .into_response()
 }
 
-pub(crate) async fn browser_tasks_http(State(s): State<ApiState>) -> Response {
+pub(crate) async fn browser_tasks_http(
+    State(s): State<ApiState>,
+    Query(q): Query<BrowserTasksQuery>,
+) -> Response {
+    let registry = match browser_registry(&s) {
+        Ok(registry) => registry,
+        Err(response) => return *response,
+    };
+    let limit = q.limit.unwrap_or(200).min(500);
+    let detail = q.detail.as_deref().unwrap_or("summary");
+    let revision = registry.summary().revisions.tasks;
+    if detail.eq_ignore_ascii_case("full") {
+        let mut tasks = registry.task_details(q.include_observation.unwrap_or(false));
+        tasks.truncate(limit);
+        Json(serde_json::json!({
+            "detail": "full",
+            "includeObservation": q.include_observation.unwrap_or(false),
+            "revision": revision,
+            "tasks": tasks,
+        }))
+        .into_response()
+    } else {
+        let mut tasks = registry.task_summaries();
+        tasks.truncate(limit);
+        Json(serde_json::json!({
+            "detail": "summary",
+            "includeObservation": false,
+            "revision": revision,
+            "tasks": tasks,
+        }))
+        .into_response()
+    }
+}
+
+pub(crate) async fn browser_history_http(
+    State(s): State<ApiState>,
+    Query(q): Query<BrowserListQuery>,
+) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
     Json(serde_json::json!({
-        "tasks": registry.tasks(),
+        "revision": registry.summary().revisions.activity,
+        "history": registry.history(q.limit),
+    }))
+    .into_response()
+}
+
+pub(crate) async fn browser_requests_http(
+    State(s): State<ApiState>,
+    Query(q): Query<BrowserListQuery>,
+) -> Response {
+    let registry = match browser_registry(&s) {
+        Ok(registry) => registry,
+        Err(response) => return *response,
+    };
+    Json(serde_json::json!({
+        "revision": registry.summary().revisions.requests,
+        "sessionGrants": registry.session_grants(q.limit),
+        "vaultDeposits": registry.vault_deposits(q.limit),
+        "dialogs": registry.dialogs(q.limit),
+        "permissions": registry.permissions(q.limit),
     }))
     .into_response()
 }
@@ -306,109 +575,148 @@ pub(crate) async fn browser_open_http(
         Err(response) => return *response,
     };
     let body = body.map(|Json(body)| body).unwrap_or_default();
-    let response = registry.open_window_record(body.start_url);
-    if let Err(e) = crate::shellx_browser::open_or_focus_browser_window(s.app()) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "ok": false,
-                "error": e,
-                "receipt": response.receipt,
-            })),
-        )
-            .into_response();
+    match crate::shellx_browser::open_or_focus_browser_window_bounded(
+        s.app().clone(),
+        Arc::clone(&registry),
+        body.start_url,
+    )
+    .await
+    {
+        Ok(response) => {
+            emit_browser_receipt(&s, &response.receipt);
+            Json(response).into_response()
+        }
+        Err(failure) => {
+            emit_browser_receipt(&s, &failure.receipt);
+            let status = match failure.code.as_str() {
+                "browser_window_open_timeout" => StatusCode::GATEWAY_TIMEOUT,
+                "browser_window_open_in_progress" => StatusCode::CONFLICT,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (
+                status,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": failure.as_json(),
+                    "receipt": failure.receipt,
+                })),
+            )
+                .into_response()
+        }
     }
-    emit_browser_receipt(&s, &response.receipt);
-    Json(response).into_response()
 }
 
 pub(crate) async fn browser_task_start_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::StartBrowserTaskRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    match registry.start_task(body) {
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    let previous_active_browser_tab_id = registry.state().active_browser_tab_id;
+    match registry.start_task_for_agent_session(body, caller_session_id.as_deref()) {
         Ok(task) => {
-            if let Err(e) = crate::shellx_browser::sync_engine_to_task(s.app(), &registry, &task) {
+            if let Err(e) =
+                crate::shellx_browser::sync_engine_to_task(s.app(), &registry, &task).await
+            {
+                let rollback = crate::shellx_browser::rollback_failed_task_engine_sync(
+                    s.app(),
+                    &registry,
+                    &task.task_id,
+                    previous_active_browser_tab_id.as_deref(),
+                    &e,
+                )
+                .await
+                .unwrap_or_else(|rollback_error| {
+                    serde_json::json!({
+                        "ok": false,
+                        "taskId": task.task_id.clone(),
+                        "cleanupErrors": [rollback_error],
+                    })
+                });
+                emit_browser_recent_for_task(&s, &registry, &task.task_id, 8);
                 return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "ok": false, "error": e, "task": task })),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "ok": false,
+                        "error": {
+                            "code": "browser_task_engine_sync_failed",
+                            "message": e,
+                            "retryable": true,
+                        },
+                        "rollback": rollback,
+                    })),
                 )
                     .into_response();
             }
             emit_browser_recent_for_task(&s, &registry, &task.task_id, 3);
             Json(task).into_response()
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+        Err(e) => browser_task_mutation_error_response(e),
     }
 }
 
 pub(crate) async fn browser_task_finish_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<BrowserTaskFinishBody>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    match registry.finish_task(body.task_id, body.status) {
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    match registry.finish_task_for_agent_session(
+        body.task_id,
+        body.status,
+        body.reason,
+        caller_session_id.as_deref(),
+    ) {
         Ok(task) => {
             emit_browser_recent_for_task(&s, &registry, &task.task_id, 1);
             Json(task).into_response()
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+        Err(e) => browser_task_mutation_error_response(e),
     }
 }
 
 pub(crate) async fn browser_task_autonomy_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::BrowserTaskAutonomyUpdateRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    match registry.update_task_autonomy(body) {
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    match registry.update_task_autonomy_for_agent_session(body, caller_session_id.as_deref()) {
         Ok(task) => {
             emit_browser_recent_for_task(&s, &registry, &task.task_id, 1);
             Json(task).into_response()
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+        Err(e) => browser_task_mutation_error_response(e),
     }
 }
 
 pub(crate) async fn browser_task_control_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::BrowserTaskControlRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    match registry.control_task(body) {
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    match registry.control_task_for_agent_session(body, caller_session_id.as_deref()) {
         Ok(response) => {
             emit_browser_receipt(&s, &response.receipt);
             Json(response).into_response()
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+        Err(e) => browser_task_mutation_error_response(e),
     }
 }

@@ -18,8 +18,8 @@
 //!
 //! Auth: token hashes only are held server-side; comparison is
 //! blake3(presented) vs stored via `subtle::ConstantTimeEq`, iterating ALL
-//! entries with no early exit. tower-http's bearer layer is deprecated for
-//! exactly this gap, hence the custom middleware.
+//! entries with no early exit. The custom middleware keeps that constant-
+//! time behavior explicit.
 //!
 //! Bodies: chunks are ≤ CHUNK_MAX_SIZE by construction, so blob uploads fit
 //! in memory; route-level DefaultBodyLimit enforces caps.

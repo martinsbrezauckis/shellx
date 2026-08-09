@@ -53,6 +53,20 @@ export interface TaskSnapshot {
   tabId: string | null;
 }
 
+export const OWNED_CLIPBOARD_TASK_OUTPUT = "owned clipboard task output";
+export const OWNED_CLIPBOARD_TASK: TaskSnapshot = {
+  taskId: "release-owned-clipboard-task",
+  origin: "user_term",
+  commandDisplay: "owned clipboard fixture",
+  pid: 35035,
+  cpuPct: 0,
+  rssMb: 1,
+  status: "running",
+  startedAtMs: 0,
+  recentOutputTail: OWNED_CLIPBOARD_TASK_OUTPUT,
+  tabId: null,
+};
+
 const POLL_MS = 500;
 const SHOW_COMPLETED_KEY = "tasks-panel-show-completed";
 const SHOW_ALL_TABS_KEY = "tasks-panel-show-all-tabs";
@@ -61,6 +75,7 @@ export function TasksPanel({
   activeTabId,
   activeAgentId,
   onAskAgent,
+  debugClipboardFixture = null,
 }: {
  /** when set, the panel filters out rows
  * whose tabId does NOT match. Current host_mcp children carry the
@@ -71,6 +86,7 @@ export function TasksPanel({
  /** Optional bridge back into the active Grok tab. Used for "inspect
  * this task/output" without forcing the user to copy logs manually. */
   onAskAgent?: (prompt: string) => void;
+  debugClipboardFixture?: "owned-safe" | null;
 } = {}): JSX.Element {
   const [tasks, setTasks] = useState<TaskSnapshot[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -100,24 +116,41 @@ export function TasksPanel({
     }
   });
   const [copiedReport, setCopiedReport] = useState(false);
+  const [manualRefreshSequence, setManualRefreshSequence] = useState(0);
+  const [cleanupMcpArmed, setCleanupMcpArmed] = useState(false);
   const onToggleShowCompleted = useCallback((next: boolean) => {
     setShowCompleted(next);
     try {
-      localStorage.setItem(SHOW_COMPLETED_KEY, next ? "1" : "0");
+      if (next) localStorage.setItem(SHOW_COMPLETED_KEY, "1");
+      else localStorage.removeItem(SHOW_COMPLETED_KEY);
     } catch { /* localStorage disabled — ignore */ }
   }, []);
   const onToggleShowAllTabs = useCallback((next: boolean) => {
     setShowAllTabs(next);
     try {
-      localStorage.setItem(SHOW_ALL_TABS_KEY, next ? "1" : "0");
+      if (next) localStorage.setItem(SHOW_ALL_TABS_KEY, "1");
+      else localStorage.removeItem(SHOW_ALL_TABS_KEY);
     } catch { /* localStorage disabled — ignore */ }
   }, []);
   const cancelledRef = useRef(false);
 
-  const refresh = useCallback(async () => {
+  useEffect(() => {
+    if (debugClipboardFixture !== "owned-safe") return;
+    setFilter("");
+    setShowCompleted(false);
+    setShowAllTabs(false);
+    setExpanded(new Set());
+  }, [debugClipboardFixture]);
+
+  const refresh = useCallback(async (): Promise<boolean> => {
+    if (debugClipboardFixture === "owned-safe") {
+      setTasks([{ ...OWNED_CLIPBOARD_TASK }]);
+      setError(null);
+      return true;
+    }
     if (!inTauri()) {
       setError("Background-tasks unavailable outside Tauri (browser preview).");
-      return;
+      return false;
     }
     try {
       const rows = await invoke<TaskSnapshot[]>("list_background_tasks");
@@ -125,10 +158,16 @@ export function TasksPanel({
         setTasks(rows);
         setError(null);
       }
+      return true;
     } catch (e) {
       if (!cancelledRef.current) setError(String(e));
+      return false;
     }
-  }, []);
+  }, [debugClipboardFixture]);
+
+  async function handleManualRefresh(): Promise<void> {
+    if (await refresh()) setManualRefreshSequence((value) => value + 1);
+  }
 
  /* Mount + poll. The cancelledRef sentinel prevents stale setState
  * from a still-in-flight invoke after unmount. */
@@ -187,9 +226,11 @@ export function TasksPanel({
 
   async function handleCleanupMcpChildren() {
     if (!activeTabId) return;
-    if (!window.confirm("Clean Host MCP child processes for this tab? Sends SIGTERM, then SIGKILL after 3s if needed.")) {
+    if (!cleanupMcpArmed) {
+      setCleanupMcpArmed(true);
       return;
     }
+    setCleanupMcpArmed(false);
     setBusy(true);
     try {
       await invoke<number>("cleanup_mcp_children_for_tab", { tabId: activeTabId });
@@ -200,6 +241,16 @@ export function TasksPanel({
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    setCleanupMcpArmed(false);
+  }, [activeTabId]);
+
+  useEffect(() => {
+    if (!cleanupMcpArmed) return;
+    const id = window.setTimeout(() => setCleanupMcpArmed(false), 5_000);
+    return () => window.clearTimeout(id);
+  }, [cleanupMcpArmed]);
 
   function toggleExpanded(taskId: string) {
     setExpanded((prev) => {
@@ -309,7 +360,7 @@ export function TasksPanel({
           alignItems: "stretch",
           gap: 8,
           padding: "8px 10px",
-          borderBottom: "1px solid var(--border, #222)",
+          borderBottom: "1px solid var(--border)",
         }}
         >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -321,10 +372,11 @@ export function TasksPanel({
               onClick={copyVisibleReport}
               disabled={busy}
               title="Copy a compact report for visible tasks"
+              aria-label="Copy a compact report for visible tasks"
               style={{
                 padding: "2px 8px",
                 background: "transparent",
-                border: "1px solid var(--border, #333)",
+                border: "1px solid var(--border)",
                 color: "inherit",
                 borderRadius: 4,
                 fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
@@ -340,10 +392,11 @@ export function TasksPanel({
               onClick={askAboutVisibleTasks}
               disabled={busy}
               title="Ask the active agent to inspect the visible background tasks"
+              aria-label="Ask the active agent to inspect the visible background tasks"
               style={{
                 padding: "2px 8px",
                 background: "transparent",
-                border: "1px solid var(--border, #333)",
+                border: "1px solid var(--border)",
                 color: "inherit",
                 borderRadius: 4,
                 fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
@@ -353,14 +406,17 @@ export function TasksPanel({
               <ShellIcon name="message" size={13} />
             </button>
           )}
-          <button
+          <button data-debug-id="surface-components-taskspanel-3"
             type="button"
-            onClick={() => void refresh()}
+            onClick={() => void handleManualRefresh()}
             disabled={busy}
+            title={`Refresh background tasks — ${manualRefreshSequence} manual refresh${manualRefreshSequence === 1 ? "" : "es"} completed in this view`}
+            aria-label="Refresh background tasks"
+            data-shellx-release-observe="title"
             style={{
               padding: "2px 8px",
               background: "transparent",
-              border: "1px solid var(--border, #333)",
+              border: "1px solid var(--border)",
               color: "inherit",
               borderRadius: 4,
               fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
@@ -375,12 +431,19 @@ export function TasksPanel({
               onClick={() => void handleCleanupMcpChildren()}
               disabled={busy}
               aria-label="Clean Host MCP children for this tab"
-              title={`Clean ${scopedHostMcpCount} Host MCP child process${scopedHostMcpCount === 1 ? "" : "es"} for this tab`}
+              aria-pressed={cleanupMcpArmed}
+              title={cleanupMcpArmed
+                ? `Click again to clean ${scopedHostMcpCount} Host MCP child process${scopedHostMcpCount === 1 ? "" : "es"} for this tab`
+                : `Clean ${scopedHostMcpCount} Host MCP child process${scopedHostMcpCount === 1 ? "" : "es"} for this tab`}
               style={{
                 padding: "2px 8px",
                 background: "transparent",
-                border: "1px solid var(--fg-error, #f55)",
-                color: "var(--fg-error, #f55)",
+                border: cleanupMcpArmed
+                  ? "1px solid var(--fg-warning)"
+                  : "1px solid var(--fg-error)",
+                color: cleanupMcpArmed
+                  ? "var(--fg-warning)"
+                  : "var(--fg-error)",
                 borderRadius: 4,
                 fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
                 cursor: busy ? "wait" : "pointer",
@@ -392,12 +455,13 @@ export function TasksPanel({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <label
-            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted, #888)", userSelect: "none", whiteSpace: "nowrap" }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted)", userSelect: "none", whiteSpace: "nowrap" }}
             title="Show tasks from every open session tab"
           >
             <input
               type="checkbox"
               data-debug-id="tasks-show-all-tabs-checkbox"
+              data-shellx-release-observe="checked"
               checked={showAllTabs}
               onChange={(e) => onToggleShowAllTabs(e.target.checked)}
               style={{ margin: 0 }}
@@ -408,12 +472,13 @@ export function TasksPanel({
  * rail only renders live (running) tasks — finished rows hide
  * as soon as the next poll sees them as exited/killed. */}
           <label
-            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted, #888)", userSelect: "none", whiteSpace: "nowrap" }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted)", userSelect: "none", whiteSpace: "nowrap" }}
             title="Include finished (exited/killed) rows in the list"
           >
             <input
               type="checkbox"
               data-debug-id="tasks-show-completed-checkbox"
+              data-shellx-release-observe="checked"
               checked={showCompleted}
               onChange={(e) => onToggleShowCompleted(e.target.checked)}
               style={{ margin: 0 }}
@@ -424,6 +489,7 @@ export function TasksPanel({
           <input
             type="text"
             data-debug-id="tasks-filter-input"
+            data-shellx-release-observe="value"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="filter…"
@@ -431,7 +497,7 @@ export function TasksPanel({
             style={{
               padding: "2px 6px",
               background: "transparent",
-              border: "1px solid var(--border, #333)",
+              border: "1px solid var(--border)",
               color: "inherit",
               borderRadius: 4,
               fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
@@ -445,11 +511,11 @@ export function TasksPanel({
         <div
           role="alert"
           style={{
-            color: "var(--fg-error, #f55)",
+            color: "var(--fg-error)",
             fontSize: "var(--right-body-size, 13px)",
             padding: "6px 10px",
             background: "rgba(255, 85, 85, 0.05)",
-            borderBottom: "1px solid var(--border, #222)",
+            borderBottom: "1px solid var(--border)",
           }}
         >
           {error}
@@ -461,8 +527,8 @@ export function TasksPanel({
           display: "grid",
           gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
           gap: 1,
-          borderBottom: "1px solid var(--border, #222)",
-          background: "var(--border, #222)",
+          borderBottom: "1px solid var(--border)",
+          background: "var(--border)",
         }}
       >
         <TaskMetric label="running" value={health.running} tone={health.running > 0 ? "ok" : "muted"} />
@@ -472,11 +538,11 @@ export function TasksPanel({
       </div>
       <div style={{ flex: 1, overflow: "auto" }}>
         {tasks.length === 0 ? (
-          <div style={{ padding: 16, fontSize: "var(--right-body-size, 13px)", color: "var(--fg-muted, #888)" }}>
+          <div style={{ padding: 16, fontSize: "var(--right-body-size, 13px)", color: "var(--fg-muted)" }}>
             No live background tasks. Start an agent session or open a terminal to see them here.
           </div>
         ) : filteredTasks.length === 0 ? (
-          <div style={{ padding: 16, fontSize: "var(--right-body-size, 13px)", color: "var(--fg-muted, #888)" }}>
+          <div style={{ padding: 16, fontSize: "var(--right-body-size, 13px)", color: "var(--fg-muted)" }}>
             No tasks match this scope and filter.
           </div>
         ) : (
@@ -489,7 +555,7 @@ export function TasksPanel({
                     textTransform: "uppercase",
                     letterSpacing: 0.6,
                     padding: "6px 10px 2px",
-                    color: "var(--fg-muted, #666)",
+                    color: "var(--fg-muted)",
                   }}
                 >
                   {originLabel(sec.origin)} ({sec.rows.length})
@@ -554,7 +620,7 @@ function TaskMetric({
     tone === "ok" ? "var(--ok)" :
     tone === "warn" ? "var(--warn)" :
     tone === "err" ? "var(--err)" :
-    "var(--fg-muted, #888)";
+    "var(--fg-muted)";
   return (
     <div
       style={{
@@ -562,13 +628,13 @@ function TaskMetric({
         display: "grid",
         gap: 2,
         padding: "7px 8px",
-        background: "var(--bg, #0a0a0a)",
+        background: "var(--bg)",
       }}
     >
       <span style={{ color, fontFamily: "var(--mono, monospace)", fontSize: 13, fontWeight: 700 }}>
         {value}
       </span>
-      <span style={{ color: "var(--fg-muted, #888)", fontSize: "var(--right-meta-size, var(--fs-ui-xs))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <span style={{ color: "var(--fg-muted)", fontSize: "var(--right-meta-size, var(--fs-ui-xs))", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {label}
       </span>
     </div>
@@ -657,29 +723,32 @@ function TaskRow({
  * (.tool-hdr .run/.done/.fail classes). Stopped uses a muted amber to
  * distinguish it from "exited" which is grey. */
   const statusColor =
-    task.status === "running" ? "var(--ok, #4ade80)" :
+    task.status === "running" ? "var(--ok)" :
     task.status === "stopped" ? "#fbbf24" :
-    task.status === "exited"  ? "var(--fg-muted, #888)" :
-    "var(--fg-error, #f55)";
+    task.status === "exited"  ? "var(--fg-muted)" :
+    "var(--fg-error)";
 
   return (
     <div
+      data-task-id={task.taskId}
       style={{
-        borderBottom: "1px solid var(--border, #222)",
+        borderBottom: "1px solid var(--border)",
         padding: "6px 10px",
         opacity: isDead ? 0.55 : 1,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--right-body-size, 13px)" }}>
-        <button
+        <button data-debug-id="surface-components-taskspanel-8"
           type="button"
           onClick={onToggle}
           aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} task ${task.commandDisplay}`}
+          data-shellx-release-observe="expanded"
           style={{
             width: 16,
             background: "transparent",
             border: "none",
-            color: "var(--fg-muted, #888)",
+            color: "var(--fg-muted)",
             cursor: "pointer",
             padding: 0,
           }}
@@ -711,7 +780,7 @@ function TaskRow({
         >
           {task.commandDisplay}
         </span>
-        <span style={{ fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted, #888)", flexShrink: 0 }}>
+        <span style={{ fontSize: "var(--right-meta-size, var(--fs-ui-xs))", color: "var(--fg-muted)", flexShrink: 0 }}>
           {task.pid !== null ? `pid ${task.pid}` : "no pid"}
         </span>
       </div>
@@ -723,7 +792,7 @@ function TaskRow({
           marginLeft: 24,
           marginTop: 3,
           fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
-          color: "var(--fg-muted, #888)",
+          color: "var(--fg-muted)",
         }}
       >
         <span>{task.tabId ? `tab ${task.tabId.slice(0, 8)}` : "—"}</span>
@@ -787,7 +856,7 @@ function TaskRow({
             onClick={onKill}
             disabled={!canKill}
             title={isTerminalTask(task) ? "Kill terminal and remove its task row" : "Kill (SIGTERM then SIGKILL after 3s)"}
-            style={{ ...btnStyle, borderColor: "var(--fg-error, #f55)", color: "var(--fg-error, #f55)" }}
+            style={{ ...btnStyle, borderColor: "var(--fg-error)", color: "var(--fg-error)" }}
           >
             <ShellIcon name="close" size={12} /> Kill
           </button>
@@ -801,8 +870,8 @@ function TaskRow({
             padding: 6,
             fontSize: "var(--right-code-size, 12px)",
             lineHeight: 1.35,
-            background: "var(--bg-elev, #0d0d0d)",
-            border: "1px solid var(--border, #222)",
+            background: "var(--bg-elev)",
+            border: "1px solid var(--border)",
             borderRadius: 4,
             maxHeight: 200,
             overflow: "auto",
@@ -819,7 +888,7 @@ function TaskRow({
             marginLeft: 24,
             marginTop: 4,
             fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
-            color: "var(--fg-muted, #666)",
+            color: "var(--fg-muted)",
             fontStyle: "italic",
           }}
         >
@@ -896,7 +965,7 @@ function buildTasksInspectionPrompt(
   ].join("\n");
 }
 
-function buildTasksReport(
+export function buildTasksReport(
   tasks: TaskSnapshot[],
   context: { activeTabId?: string | null; showAllTabs: boolean; filter: string },
 ): string {
@@ -946,7 +1015,7 @@ const btnStyle: React.CSSProperties = {
   padding: "2px 6px",
   fontSize: "var(--right-meta-size, var(--fs-ui-xs))",
   background: "transparent",
-  border: "1px solid var(--border, #333)",
+  border: "1px solid var(--border)",
   color: "inherit",
   borderRadius: 3,
   cursor: "pointer",

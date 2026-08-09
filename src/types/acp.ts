@@ -2,8 +2,8 @@
  * src/types/acp.ts
  *
  * TypeScript types for the events `acp.rs` emits to the renderer.
- * Derived from real captures in `evidence/session-NNN.jsonl`, not from
- * any ACP spec docs or prior project assumptions.
+ * Provider extensions are grounded in real captures under `evidence/`;
+ * standard events are also checked against the current ACP specification.
  *
  * Anchor for changes: if you find a wire shape this doesn't model,
  * grep the new event type in `evidence/wire-shape.md` first — if it's
@@ -22,6 +22,7 @@ export type SessionUpdateKind =
   | "current_mode_update"
   | "plan"
   | "session_summary_generated"
+  | "session_info_update"
   | "verification_started"
   | "verification_completed"
   | "best_of_n_started"
@@ -60,32 +61,6 @@ export type AcpContent =
   | AcpContentImage
   | { type: string; [k: string]: unknown };
 
-/**
- * `_meta` envelope. **Lives at `params._meta` (sibling of `update`)**,
- * NOT inside `update`. See `evidence/wire-shape.md` for samples.
- */
-export interface AcpMeta {
-  totalTokens?: number;
-  eventId?: string;
-  agentTimestampMs?: number;
-  promptId?: string;
-  streamStartMs?: number;
-  turnStartMs?: number;
-  updateType?: string;
-  chunkId?: number;
- /**
- * For `tool_call` notifications, status/kind live here (not on `update`).
- * For `tool_call_update`, status is usually inline on `update`.
- */
-  updateParams?: {
-    toolCallId?: string;
-    title?: string;
-    kind?: string;
-    status?: string;
-  };
-  [k: string]: unknown;
-}
-
 /** Inner `update` payload of a `session/update` notification. */
 export interface SessionUpdatePayload {
   sessionUpdate: SessionUpdateKind;
@@ -93,7 +68,7 @@ export interface SessionUpdatePayload {
   content?: AcpContent | AcpContent[];
  // tool_call-style
   toolCallId?: string;
-  title?: string;
+  title?: string | null;
   status?: string;
   kind?: string;
   rawInput?: unknown;
@@ -107,6 +82,8 @@ export interface SessionUpdatePayload {
   availableCommands?: AcpCommand[];
  // session_summary_generated
   session_summary?: string;
+ // session_info_update
+  updatedAt?: string | null;
  // locations on tool_call_update content
   locations?: unknown[];
  // Fallback for unmapped fields.
@@ -123,42 +100,6 @@ export interface AcpCommand {
   };
 }
 
-// ──────────────────────────── Tauri events ────────────────────────────
-
-/** Raw ACP frame as emitted on the "grok-acp-event" Tauri event. */
-export interface GrokAcpEvent {
-  type: "notification" | string;
-  method: string; // "session/update", "_x.ai/...", "fs/read_text_file", etc.
-  params: {
-    sessionId?: string;
-    update?: SessionUpdatePayload;
-    [k: string]: unknown;
-  };
-}
-
-/** "session-update" Tauri event — convenience wrap with .update set. */
-export interface WrappedSessionUpdate {
-  update: {
-    sessionId?: string;
-    update?: SessionUpdatePayload;
-    [k: string]: unknown;
-  };
-}
-
-export interface GrokStderr {
-  line: string;
-}
-
-export interface ToolCallEvent {
-  type: string;
-  status?: "running" | "success" | "error" | string;
-  path?: string;
-  command?: string;
-  stdout?: string;
-  stderr?: string;
-  [k: string]: unknown;
-}
-
 // ──────────────────────────── Debug API frames ────────────────────────────
 
 /**
@@ -172,48 +113,15 @@ export interface RawEventFrame {
   payload: unknown;
 }
 
-// ──────────────────────────── Helpers ────────────────────────────
-
-/** Extract { method, sessionUpdate, contentText } from any frame. */
-export function classifyFrame(frame: unknown): {
-  method?: string;
-  sessionUpdate?: string;
-  textChunk?: string;
-  promptId?: string;
-  chunkId?: number;
-  toolCallId?: string;
-} {
-  if (frame == null || typeof frame !== "object") return {};
-  const p = frame as any;
-  const method: string | undefined = p.method;
-  const params = p.params;
-  let update: SessionUpdatePayload | undefined;
-  if (params && typeof params === "object" && params.update && typeof params.update === "object") {
-    update = params.update as SessionUpdatePayload;
-  }
-  const su = update?.sessionUpdate;
-  let textChunk: string | undefined;
-  const c = update?.content;
-  if (c && typeof c === "object" && !Array.isArray(c) && (c as any).type === "text") {
-    textChunk = (c as AcpContentText).text;
-  } else if (Array.isArray(c) && c.length > 0 && (c[0] as any).type === "text") {
-    textChunk = (c[0] as AcpContentText).text;
-  }
+export function parseRawEventFrame(value: unknown): RawEventFrame | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const t = Reflect.get(value, "t");
+  const kind = Reflect.get(value, "kind");
+  if (typeof t !== "number" || !Number.isFinite(t)) return null;
+  if (typeof kind !== "string" || !kind.trim()) return null;
   return {
-    method,
-    sessionUpdate: typeof su === "string" ? su : undefined,
-    textChunk,
-    promptId: typeof p?.params?._meta?.promptId === "string"
-      ? p.params._meta.promptId
-      : undefined,
-    chunkId: typeof p?.params?._meta?.chunkId === "number"
-      ? p.params._meta.chunkId
-      : undefined,
-    toolCallId:
-      typeof update?.toolCallId === "string"
-        ? update.toolCallId
-        : typeof update?.tool_call_id === "string"
-          ? (update.tool_call_id as string)
-          : undefined,
+    t,
+    kind,
+    payload: Reflect.get(value, "payload"),
   };
 }

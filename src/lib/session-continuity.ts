@@ -25,6 +25,7 @@ export interface SessionResumeTranscript {
 export interface SessionResumeTranscriptOptions {
   tailLines?: number;
   rawTailLines?: number;
+  omittedRawLines?: number;
   maxChars?: number;
   loopThreshold?: number;
 }
@@ -89,6 +90,7 @@ export function buildSessionResumeTranscript(
   options: SessionResumeTranscriptOptions = {},
 ): SessionResumeTranscript {
   const rawTailLines = Math.max(1, options.rawTailLines ?? DEFAULT_RESUME_RAW_TAIL_LINES);
+  const omittedRawLines = Math.max(0, Math.floor(options.omittedRawLines ?? 0));
   const tailLines = Math.max(1, options.tailLines ?? DEFAULT_RESUME_TAIL_LINES);
   const maxChars = Math.max(1000, options.maxChars ?? DEFAULT_RESUME_MAX_CHARS);
   const loopThreshold = Math.max(2, options.loopThreshold ?? DEFAULT_LOOP_THRESHOLD);
@@ -117,10 +119,10 @@ export function buildSessionResumeTranscript(
 
   return {
     text: capped.lines.join("\n"),
-    rawLineCount: jsonlLines.length,
+    rawLineCount: omittedRawLines + jsonlLines.length,
     normalizedLineCount: normalized.length,
     includedLineCount: capped.lines.length,
-    omittedLineCount: omittedBeforeTail + capped.omittedLineCount,
+    omittedLineCount: omittedRawLines + omittedBeforeTail + capped.omittedLineCount,
     compressedLoopLineCount: compressed.compressedLineCount,
   };
 }
@@ -150,8 +152,7 @@ function resumeLineForGroup(group: UiGroup): string | null {
     case "mcp-init":
     case "doom-loop":
     case "host-mcp-unreachable":
-    case "system":
-    case "vendor": {
+    case "system": {
       const label = "label" in group ? group.label : group.kind;
       const detail = "detail" in group && group.detail ? ` - ${group.detail}` : "";
       const line = `${label}${detail}`;

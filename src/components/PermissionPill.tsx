@@ -35,23 +35,27 @@
  * `groupEvents` run mutates the matching PermissionGroup to
  * pending:false + decision:"allow" + decisionAt:Date.now.
  *
- * Allow-always currently posts allow=true. Grok's `session/request_
- * permission` `options` array selects `allow_always` over `allow_once`
- * by default in `pick_option` (see acp.rs); a future refinement could
- * thread an explicit `optionId` through the Tauri command, but the
- * existing wire already does the right thing for the common case.
+ * The command also receives the exact UI decision. Grok keeps its existing
+ * ACP option-selection behavior, while provider-native drivers can preserve
+ * Allow once versus Allow always in their own response vocabulary.
  */
 import { useCallback, useState, type JSX, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PermissionGroup } from "../lib/grouping";
 import { ShellIcon } from "./icons";
 import { isTrustedShellxUserEvent } from "../lib/trusted-user-event";
+import {
+  DEBUG_PERMISSION_DECISION_FIXTURE,
+  DEBUG_PERMISSION_FIXTURE_META_KEY,
+  type DebugPermissionDecisionFixture,
+} from "../lib/debug-permission-decision-fixture";
 
 interface Props {
   g: PermissionGroup;
  /** Active tab id so the synthetic event carries `_meta.tabId` and
  * routes to the correct chat view in multi-tab installs. */
   tabId?: string;
+  debugFixture?: DebugPermissionDecisionFixture | null;
 }
 
 /** Post a synthetic event into the events ring. App.tsx subscribes to
@@ -73,7 +77,7 @@ function dispatchSynthetic(
   );
 }
 
-export function PermissionPill({ g, tabId }: Props): JSX.Element {
+export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.Element {
  /* Optimistic local state — set as soon as the user clicks, even
  * before the synthetic-event round-trip mutates the group. Without
  * this the button row would linger for one render frame after a
@@ -90,19 +94,32 @@ export function PermissionPill({ g, tabId }: Props): JSX.Element {
       if (!isTrustedShellxUserEvent(event)) {
         return;
       }
+      if (
+        debugFixture
+        && (
+          debugFixture.surface !== "pill"
+          || debugFixture.requestId !== g.requestId
+          || debugFixture.expectedDecision !== decision
+        )
+      ) {
+        return;
+      }
       setOptimistic(decision);
       const allow = decision === "allow" || decision === "allow_always";
-      try {
-        await invoke<boolean>("resolve_permission_request", {
-          requestId: g.requestId,
-          allow,
-        });
-      } catch (err) {
+      if (!debugFixture) {
+        try {
+          await invoke<boolean>("resolve_permission_request", {
+            requestId: g.requestId,
+            allow,
+            decision,
+          });
+        } catch (err) {
  // Logged but non-fatal — the Rust side times out at 60s and
  // treats as Deny. We still flip the pill to its visual
  // resolved state so the user gets feedback.
  // eslint-disable-next-line no-console
-        console.warn("[PermissionPill] resolve invoke failed:", err);
+          console.warn("[PermissionPill] resolve invoke failed:", err);
+        }
       }
       dispatchSynthetic(
         "permission-resolved",
@@ -110,11 +127,16 @@ export function PermissionPill({ g, tabId }: Props): JSX.Element {
           requestId: g.requestId,
           decision,
           decisionAt: Date.now(),
+          ...(debugFixture ? {
+            _meta: {
+              [DEBUG_PERMISSION_FIXTURE_META_KEY]: DEBUG_PERMISSION_DECISION_FIXTURE,
+            },
+          } : {}),
         },
         tabId,
       );
     },
-    [g.requestId, tabId],
+    [debugFixture, g.requestId, tabId],
   );
 
  /* Effective pill state. `pending` is the source-of-truth flag set by
@@ -149,10 +171,12 @@ export function PermissionPill({ g, tabId }: Props): JSX.Element {
             </span>
           ) : null}
         </div>
+
         <div className="perm-pill-actions">
-          <button
+          <button data-debug-id="surface-components-permissionpill-1"
             type="button"
             className="perm-pill-btn perm-pill-allow"
+            disabled={Boolean(debugFixture && debugFixture.expectedDecision !== "allow")}
             onClick={(event) => void respond("allow", event)}
           >
             <ShellIcon name="check" size={13} />
@@ -161,15 +185,18 @@ export function PermissionPill({ g, tabId }: Props): JSX.Element {
           <button
             type="button"
             className="perm-pill-btn perm-pill-allow-always"
+            data-shellx-release-control="permission-pill-always"
+            disabled={Boolean(debugFixture && debugFixture.expectedDecision !== "allow_always")}
             onClick={(event) => void respond("allow_always", event)}
             title="Allow this tool every time without asking"
           >
             <ShellIcon name="circle-check" size={13} />
             <span>Allow always</span>
           </button>
-          <button
+          <button data-debug-id="surface-components-permissionpill-3"
             type="button"
             className="perm-pill-btn perm-pill-deny"
+            disabled={Boolean(debugFixture && debugFixture.expectedDecision !== "deny")}
             onClick={(event) => void respond("deny", event)}
           >
             <ShellIcon name="circle-x" size={13} />
@@ -198,6 +225,12 @@ export function PermissionPill({ g, tabId }: Props): JSX.Element {
     <div
       className={`row-pill perm-pill ${isAllowed ? "perm-pill-allowed" : "perm-pill-denied"}`}
       data-request-id={g.requestId}
+      data-shellx-release-control={debugFixture ? "permission-decision-receipt" : undefined}
+      data-shellx-release-observe={debugFixture ? "title" : undefined}
+      data-permission-decision={debugFixture ? decision ?? undefined : undefined}
+      title={debugFixture && decision
+        ? "Permission decision receipt — " + debugFixture.action + " — " + decision
+        : undefined}
       role="group"
       aria-label={`${verb} ${g.toolName}`}
     >

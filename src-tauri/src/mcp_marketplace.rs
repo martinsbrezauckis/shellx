@@ -1,10 +1,11 @@
 //! src-tauri/src/mcp_marketplace.rs — MCP marketplace v1.
 //!
-//! Architecture: catalog-driven UI backed by Grok's native MCP config.
-//! Installs write managed `[mcp_servers.shellx-mp-*]` sections into
-//! `~/.grok/config.toml`, so Grok owns discovery, MCP startup, and
-//! `grok mcp list/remove/doctor` visibility. ShellX keeps only the
-//! curated catalog and local vault UX.
+//! Architecture: catalog-driven UI backed by Grok's native MCP config for
+//! local sessions. Installs write managed `[mcp_servers.shellx-mp-*]`
+//! sections into `~/.grok/config.toml`, so local Grok owns discovery, MCP
+//! startup, and `grok mcp list/remove/doctor` visibility. WSL and SSH sessions
+//! project the same enabled state into ACP `mcpServers` and never copy these
+//! registrations into a remote project.
 //!
 //! Secrets never touch `config.toml`: generated sections reference
 //! environment variables such as `${SHELLX_MCP_MARKETPLACE_GITHUB_PAT}`.
@@ -22,7 +23,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// The transport mechanism the MCP server uses.
@@ -49,6 +50,15 @@ pub enum McpTier {
     A, // Tier A — power tools (one vault key)
     B, // Tier B — specialty (niche, OAuth/keys)
     C, // Tier C — advanced (databases, infra, OAuth-heavy)
+}
+
+/// Execution frame used when ShellX projects an enabled marketplace entry
+/// into ACP `session/new.mcpServers`. The MCP server must launch where the
+/// provider runs, not where the ShellX desktop process happens to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarketplaceAcpRuntime {
+    Posix,
+    Windows,
 }
 
 /// One immutable catalog entry. Defined as `&'static` in CATALOG below.
@@ -676,6 +686,24 @@ pub fn strip_managed_marketplace_config(source: &str) -> String {
     out
 }
 
+/// Remove only ShellX-owned marketplace sections from a project's Grok
+/// config. This is the migration counterpart to session-scoped ACP injection:
+/// user-authored Grok settings and MCP entries remain byte-for-byte intact.
+pub fn cleanup_project_marketplace_config(project_dir: &Path) -> Result<bool, String> {
+    let path = project_dir.join(".grok").join("config.toml");
+    let existing = match fs::read_to_string(&path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("read {}: {}", path.display(), error)),
+    };
+    let updated = strip_managed_marketplace_config(&existing);
+    if updated == existing {
+        return Ok(false);
+    }
+    write_grok_config_validated(&path, updated.trim_end())?;
+    Ok(true)
+}
+
 fn strip_toml_section(source: &str, header: &str) -> String {
     let mut out = source.to_string();
     loop {
@@ -835,7 +863,8 @@ fn config_section_for_entry_for_platform(
 
 fn posix_stdio_command_with_user_path(cmd: &str, args: &[&str]) -> (String, Vec<String>) {
     let mut command = format!(
-        "export PATH=\"$HOME/.local/bin:$HOME/bin:$HOME/.cargo/bin:$HOME/.claude/bin:$HOME/.grok/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; if [ -s \"$HOME/.nvm/nvm.sh\" ]; then . \"$HOME/.nvm/nvm.sh\" >/dev/null 2>&1; fi; exec {}",
+        "{} exec {}",
+        crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
         crate::acp::shell_quote_for_remote(cmd)
     );
     for arg in args {
@@ -846,12 +875,37 @@ fn posix_stdio_command_with_user_path(cmd: &str, args: &[&str]) -> (String, Vec<
 }
 
 fn shell_quote_catalog_arg_for_remote(arg: &str) -> String {
-    if arg.contains("${SHELLX_MCP_MARKETPLACE_") {
-        let escaped = arg.replace('\\', "\\\\").replace('"', "\\\"");
-        format!("\"{}\"", escaped)
-    } else {
-        crate::acp::shell_quote_for_remote(arg)
+    const PREFIX: &str = "${SHELLX_MCP_MARKETPLACE_";
+    let mut rest = arg;
+    let mut fragments = Vec::new();
+    let mut found_reference = false;
+    while let Some(offset) = rest.find(PREFIX) {
+        let (literal, reference) = rest.split_at(offset);
+        if !literal.is_empty() {
+            fragments.push(crate::acp::shell_quote_for_remote(literal));
+        }
+        let Some(close) = reference.find('}') else {
+            return crate::acp::shell_quote_for_remote(arg);
+        };
+        let name = &reference[2..close];
+        if name.len() <= "SHELLX_MCP_MARKETPLACE_".len()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return crate::acp::shell_quote_for_remote(arg);
+        }
+        fragments.push(format!("\"${{{name}}}\""));
+        found_reference = true;
+        rest = &reference[close + 1..];
     }
+    if !found_reference {
+        return crate::acp::shell_quote_for_remote(arg);
+    }
+    if !rest.is_empty() {
+        fragments.push(crate::acp::shell_quote_for_remote(rest));
+    }
+    fragments.join("")
 }
 
 fn upsert_grok_config_entry(entry: &McpCatalogEntry, enabled: bool) -> Result<(), String> {
@@ -998,7 +1052,7 @@ pub async fn list_marketplace() -> Result<Vec<McpEntryStatus>, String> {
     // generated), entries with required keys simply show
     // `keysAvailable: [false, …]` and the UI renders the "key needed"
     // pill. Tier S entries (no keys) still list as `+ available`.
-    let vault_opt = crate::vault::Vault::open().ok();
+    let backend = crate::shellx_vault::shared_backend();
     let mut out = Vec::with_capacity(CATALOG.len());
     for entry in CATALOG {
         let st = file.entries.get(entry.id).cloned().unwrap_or_default();
@@ -1011,10 +1065,11 @@ pub async fn list_marketplace() -> Result<Vec<McpEntryStatus>, String> {
             .unwrap_or(st.enabled);
         let mut keys_available = Vec::with_capacity(entry.vault_keys.len());
         for key in entry.vault_keys {
-            let has = match vault_opt.as_ref() {
-                Some(v) => v.get(key).await.ok().flatten().is_some(),
-                None => false,
-            };
+            let has = crate::shellx_vault::resolve_internal_secret(&backend, key)
+                .await
+                .ok()
+                .flatten()
+                .is_some();
             keys_available.push(has);
         }
         let all_keys_present = keys_available.iter().all(|b| *b);
@@ -1180,36 +1235,13 @@ fn migrate_legacy_state_to_grok_config_locked() {
     }
 }
 
-/// Enabled marketplace config blocks for project-scoped remote config.
-/// Local sessions use `~/.grok/config.toml` directly, but WSL/SSH Grok
-/// reads the project config shellX writes just before spawn.
-pub fn enabled_project_config_blocks() -> String {
-    migrate_legacy_state_to_grok_config();
-    let mut out = String::new();
-    for entry in CATALOG {
-        let Some((installed, enabled)) = installed_enabled_from_grok_config(entry.id) else {
-            continue;
-        };
-        if installed && enabled {
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str(&config_section_for_entry_for_platform(entry, true, false));
-        }
-    }
-    out
-}
-
 /// Environment variables needed by Grok-native marketplace config blocks.
 /// Config stores `${SHELLX_MCP_MARKETPLACE_*}` placeholders, while this
 /// returns plaintext values resolved from the local vault just before Grok
 /// is spawned.
 pub async fn marketplace_env_vars() -> Vec<(String, String)> {
     migrate_legacy_state_to_grok_config();
-    let vault_opt = crate::vault::Vault::open().ok();
-    let Some(vault) = vault_opt.as_ref() else {
-        return Vec::new();
-    };
+    let backend = crate::shellx_vault::shared_backend();
     let mut out = Vec::new();
     for entry in CATALOG {
         let Some((installed, enabled)) = installed_enabled_from_grok_config(entry.id) else {
@@ -1219,7 +1251,11 @@ pub async fn marketplace_env_vars() -> Vec<(String, String)> {
             continue;
         }
         for key in entry.vault_keys {
-            match vault.get(key).await.ok().flatten() {
+            match crate::shellx_vault::resolve_internal_secret(&backend, key)
+                .await
+                .ok()
+                .flatten()
+            {
                 Some(v) if !v.is_empty() => {
                     out.push((vault_env_name(key), v));
                 }
@@ -1234,6 +1270,239 @@ pub async fn marketplace_env_vars() -> Vec<(String, String)> {
         }
     }
     out
+}
+
+/// Build enabled marketplace entries in the portable ACP MCP shape.
+///
+/// WSL and SSH Grok sessions consume these values directly from
+/// `session/new`/`session/load`; no project or user Grok configuration is
+/// written on the provider host. Secret values live only in the ACP pipe and
+/// the provider-spawned MCP child environment. An entry whose required vault
+/// values are missing remains visible as "key needed" in the UI but is not
+/// offered as a broken session tool.
+pub async fn enabled_acp_servers(runtime: MarketplaceAcpRuntime) -> Vec<serde_json::Value> {
+    migrate_legacy_state_to_grok_config();
+    let backend = crate::shellx_vault::shared_backend();
+    let mut out = Vec::new();
+
+    for entry in CATALOG {
+        let Some((installed, enabled)) = installed_enabled_from_grok_config(entry.id) else {
+            continue;
+        };
+        if !(installed && enabled) {
+            continue;
+        }
+
+        let mut secrets = HashMap::new();
+        let mut missing = None;
+        for key in entry.vault_keys {
+            match crate::shellx_vault::resolve_internal_secret(&backend, key)
+                .await
+                .ok()
+                .flatten()
+            {
+                Some(value) if !value.is_empty() => {
+                    secrets.insert((*key).to_string(), value);
+                }
+                _ => {
+                    missing = Some(*key);
+                    break;
+                }
+            }
+        }
+        if let Some(key) = missing {
+            tracing::warn!(
+                "mcp_marketplace: session entry '{}' omitted; vault key '{}' is missing",
+                entry.id,
+                key
+            );
+            continue;
+        }
+
+        if let Some(server) = acp_server_for_entry(entry, runtime, &secrets) {
+            out.push(server);
+        }
+    }
+
+    out
+}
+
+fn acp_server_for_entry(
+    entry: &McpCatalogEntry,
+    runtime: MarketplaceAcpRuntime,
+    secrets: &HashMap<String, String>,
+) -> Option<serde_json::Value> {
+    let name = server_name_for_entry(entry.id);
+    match entry.kind {
+        McpKind::Http | McpKind::Sse => {
+            let mut headers = Vec::new();
+            for raw in entry
+                .http_auth
+                .split(';')
+                .filter(|value| !value.trim().is_empty())
+            {
+                let Some((header_name, header_value)) = raw.split_once('=') else {
+                    tracing::warn!("mcp_marketplace: malformed HTTP header for '{}'", entry.id);
+                    return None;
+                };
+                headers.push(serde_json::json!({
+                    "name": header_name.trim(),
+                    "value": resolve_vault_placeholders(header_value.trim(), secrets)?,
+                }));
+            }
+            Some(serde_json::json!({
+                "type": match entry.kind {
+                    McpKind::Http => "http",
+                    McpKind::Sse => "sse",
+                    McpKind::Stdio => unreachable!(),
+                },
+                "name": name,
+                "url": resolve_vault_placeholders(entry.http_url, secrets)?,
+                "headers": headers,
+            }))
+        }
+        McpKind::Stdio => {
+            let command_parts = entry.stdio_command.split_whitespace().collect::<Vec<_>>();
+            let (program, raw_args) = command_parts.split_first()?;
+            let (command, args) = match runtime {
+                MarketplaceAcpRuntime::Posix => {
+                    let mut script = format!(
+                        "{} exec {}",
+                        crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
+                        crate::acp::shell_quote_for_remote(program)
+                    );
+                    for arg in raw_args {
+                        script.push(' ');
+                        script.push_str(&shell_quote_catalog_arg_for_remote(
+                            &expand_vault_placeholders_to_env_refs(arg),
+                        ));
+                    }
+                    (
+                        "/usr/bin/env".to_string(),
+                        vec!["bash".to_string(), "-lc".to_string(), script],
+                    )
+                }
+                MarketplaceAcpRuntime::Windows => {
+                    let mut script =
+                        crate::provider_runtime::WINDOWS_PROVIDER_SHELL_PRELUDE.to_string();
+                    script.push_str("$a=@(");
+                    script.push_str(
+                        &raw_args
+                            .iter()
+                            .map(|arg| powershell_catalog_arg(arg))
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    );
+                    script.push_str(");& ");
+                    script.push_str(&crate::acp::powershell_single_quote(program));
+                    script.push_str(" @a;exit $LASTEXITCODE");
+                    (
+                        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_string(),
+                        vec![
+                            "-NoLogo".to_string(),
+                            "-NoProfile".to_string(),
+                            "-NonInteractive".to_string(),
+                            "-Command".to_string(),
+                            script,
+                        ],
+                    )
+                }
+            };
+
+            let mut env = Vec::new();
+            for (key, value) in secrets {
+                env.push(serde_json::json!({
+                    "name": vault_env_name(key),
+                    "value": value,
+                }));
+            }
+            for (env_name, raw_value) in stdio_env_for_entry(entry) {
+                env.push(serde_json::json!({
+                    "name": env_name,
+                    "value": resolve_vault_placeholders(&raw_value, secrets)?,
+                }));
+            }
+            env.sort_by(|left, right| {
+                left["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .cmp(right["name"].as_str().unwrap_or_default())
+            });
+
+            Some(serde_json::json!({
+                "name": name,
+                "command": command,
+                "args": args,
+                "env": env,
+            }))
+        }
+    }
+}
+
+fn resolve_vault_placeholders(input: &str, secrets: &HashMap<String, String>) -> Option<String> {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index..].starts_with(b"$VAULT:") {
+            let after = &input[index + 7..];
+            let end = after
+                .find(|character: char| {
+                    character.is_whitespace()
+                        || character == '='
+                        || character == '"'
+                        || character == '\''
+                })
+                .unwrap_or(after.len());
+            let key = &after[..end];
+            out.push_str(secrets.get(key)?);
+            index += 7 + end;
+        } else {
+            let character = input[index..].chars().next()?;
+            out.push(character);
+            index += character.len_utf8();
+        }
+    }
+    Some(out)
+}
+
+fn powershell_catalog_arg(arg: &str) -> String {
+    if !arg.contains("$VAULT:") {
+        return crate::acp::powershell_single_quote(arg);
+    }
+
+    let expanded = expand_vault_placeholders_to_env_refs(arg);
+    const PREFIX: &str = "${SHELLX_MCP_MARKETPLACE_";
+    let mut rest = expanded.as_str();
+    let mut fragments = Vec::new();
+    let mut found_reference = false;
+    while let Some(offset) = rest.find(PREFIX) {
+        let (literal, reference) = rest.split_at(offset);
+        if !literal.is_empty() {
+            fragments.push(crate::acp::powershell_single_quote(literal));
+        }
+        let Some(close) = reference.find('}') else {
+            return crate::acp::powershell_single_quote(&expanded);
+        };
+        let name = &reference[2..close];
+        if name.len() <= "SHELLX_MCP_MARKETPLACE_".len()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return crate::acp::powershell_single_quote(&expanded);
+        }
+        fragments.push(format!("($env:{name})"));
+        found_reference = true;
+        rest = &reference[close + 1..];
+    }
+    if !found_reference {
+        return crate::acp::powershell_single_quote(&expanded);
+    }
+    if !rest.is_empty() {
+        fragments.push(crate::acp::powershell_single_quote(rest));
+    }
+    format!("({})", fragments.join("+"))
 }
 
 #[cfg(test)]
@@ -1254,6 +1523,23 @@ mod tests {
             expand_vault_placeholders_to_env_refs("label=cafe\u{00e9} $VAULT:x/y snowman=\u{2603}"),
             "label=cafe\u{00e9} ${SHELLX_MCP_MARKETPLACE_X_Y} snowman=\u{2603}"
         );
+    }
+
+    #[test]
+    fn catalog_env_references_expand_without_interpreting_literal_shell_syntax() {
+        let posix = shell_quote_catalog_arg_for_remote(
+            "prefix ${SHELLX_MCP_MARKETPLACE_TOKEN} $(touch /tmp/owned) `id`",
+        );
+        assert_eq!(
+            posix,
+            "'prefix '\"${SHELLX_MCP_MARKETPLACE_TOKEN}\"' $(touch /tmp/owned) `id`'"
+        );
+
+        let powershell =
+            powershell_catalog_arg("prefix $VAULT:test/token $(Start-Process calc) `n suffix");
+        assert!(powershell.contains("($env:SHELLX_MCP_MARKETPLACE_TEST_TOKEN)"));
+        assert!(powershell.contains("' $(Start-Process calc) `n suffix'"));
+        assert!(!powershell.contains("\"prefix"));
     }
 
     #[test]
@@ -1344,6 +1630,85 @@ TELEGRAM_BOT_TOKEN = "${SHELLX_MCP_MARKETPLACE_TELEGRAM_BOT_TOKEN}"
         assert!(windows_block.contains("--stdio-proxy"));
         assert!(windows_block.contains("\"npx\""));
         assert!(!windows_block.contains("command = \"cmd.exe\""));
+    }
+
+    #[test]
+    fn acp_stdio_entries_use_absolute_cross_host_launchers() {
+        let context7 = CATALOG.iter().find(|entry| entry.id == "context7").unwrap();
+        let posix = acp_server_for_entry(context7, MarketplaceAcpRuntime::Posix, &HashMap::new())
+            .expect("POSIX ACP entry");
+        assert_eq!(posix["name"], "shellx-mp-context7");
+        assert_eq!(posix["command"], "/usr/bin/env");
+        assert_eq!(posix["args"][0], "bash");
+        assert!(posix["args"][2]
+            .as_str()
+            .unwrap_or_default()
+            .contains("exec 'npx' '-y' '@upstash/context7-mcp'"));
+        assert_eq!(posix["env"], serde_json::json!([]));
+
+        let stripe = CATALOG.iter().find(|entry| entry.id == "stripe").unwrap();
+        let secrets = HashMap::from([(
+            "stripe/secret-key".to_string(),
+            "stripe-fixture-secret".to_string(),
+        )]);
+        let windows = acp_server_for_entry(stripe, MarketplaceAcpRuntime::Windows, &secrets)
+            .expect("Windows ACP entry");
+        assert_eq!(
+            windows["command"],
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        );
+        let script = windows["args"][4].as_str().unwrap_or_default();
+        assert!(script.contains("$env:SHELLX_MCP_MARKETPLACE_STRIPE_SECRET_KEY"));
+        assert!(!script.contains("stripe-fixture-secret"));
+        assert!(windows["env"].as_array().unwrap().iter().any(|value| {
+            value["name"] == "SHELLX_MCP_MARKETPLACE_STRIPE_SECRET_KEY"
+                && value["value"] == "stripe-fixture-secret"
+        }));
+    }
+
+    #[test]
+    fn acp_http_entries_resolve_headers_without_persistent_placeholders() {
+        let github = CATALOG.iter().find(|entry| entry.id == "github").unwrap();
+        let secrets = HashMap::from([(
+            "github/pat".to_string(),
+            "github-fixture-secret".to_string(),
+        )]);
+        let server = acp_server_for_entry(github, MarketplaceAcpRuntime::Posix, &secrets)
+            .expect("HTTP ACP entry");
+        assert_eq!(server["type"], "http");
+        assert_eq!(server["headers"][0]["name"], "Authorization");
+        assert_eq!(
+            server["headers"][0]["value"],
+            "Bearer github-fixture-secret"
+        );
+        assert!(!serde_json::to_string(&server).unwrap().contains("$VAULT:"));
+    }
+
+    #[test]
+    fn project_marketplace_cleanup_preserves_user_sections() {
+        let root = std::env::temp_dir().join(format!(
+            "shellx-marketplace-cleanup-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config_dir = root.join(".grok");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let config = config_dir.join("config.toml");
+        std::fs::write(
+            &config,
+            "[mcp_servers.keep]\ncommand = \"keep\"\n\n# shellX:managed-mcp-marketplace:context7 BEGIN - do not edit by hand\n[mcp_servers.shellx-mp-context7]\ncommand = \"npx\"\n# shellX:managed-mcp-marketplace:context7 END\n",
+        )
+        .unwrap();
+
+        assert!(cleanup_project_marketplace_config(&root).unwrap());
+        let updated = std::fs::read_to_string(&config).unwrap();
+        assert!(updated.contains("[mcp_servers.keep]"));
+        assert!(!updated.contains("shellx-mp-context7"));
+        assert!(!cleanup_project_marketplace_config(&root).unwrap());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

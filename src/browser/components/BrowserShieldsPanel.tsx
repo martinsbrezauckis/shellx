@@ -24,7 +24,13 @@ export function BrowserShieldsPanel({
   onResetSite,
 }: BrowserShieldsPanelProps) {
   return (
-    <div className="shellx-browser-header-popover shellx-browser-shields-panel" data-debug-id="shellx-browser-shields-panel">
+    <div
+      id="shellx-browser-shields-panel"
+      className="shellx-browser-header-popover shellx-browser-shields-panel"
+      data-debug-id="shellx-browser-shields-panel"
+      role="region"
+      aria-labelledby="shellx-browser-trust-chip"
+    >
       <h2>Shields</h2>
       <div className="shellx-browser-shields-status">
         <span>{activeShieldState.host ?? "Current page"}</span>
@@ -37,6 +43,7 @@ export function BrowserShieldsPanel({
           checked={globalShields?.enabled ?? true}
           onChange={(event) => onUpdateGlobal({ enabled: event.currentTarget.checked })}
           data-debug-id="shellx-browser-shields-global-enabled"
+          data-shellx-release-observe="checked"
         />
       </label>
       <label className="shellx-browser-field-row">
@@ -45,6 +52,7 @@ export function BrowserShieldsPanel({
           value={activeShieldState.effectiveAdTrackerMode}
           onChange={(event) => onSaveSite({ effectiveAdTrackerMode: event.currentTarget.value as BrowserShieldAdTrackerMode })}
           data-debug-id="shellx-browser-site-shields-ad-trackers"
+          data-shellx-release-observe="value"
         >
           <option value="balanced">Balanced</option>
           <option value="strict">Strict</option>
@@ -53,7 +61,8 @@ export function BrowserShieldsPanel({
       </label>
       <label className="shellx-browser-field-row">
         <span>Cookies</span>
-        <select
+        <select data-debug-id="surface-browser-components-browsershieldspanel-3"
+          data-shellx-release-observe="value"
           value={activeShieldState.effectiveCookieMode}
           onChange={(event) => onSaveSite({ effectiveCookieMode: event.currentTarget.value as BrowserShieldCookieMode })}
         >
@@ -64,7 +73,8 @@ export function BrowserShieldsPanel({
       </label>
       <label className="shellx-browser-field-row">
         <span>Fingerprinting</span>
-        <select
+        <select data-debug-id="surface-browser-components-browsershieldspanel-4"
+          data-shellx-release-observe="value"
           value={activeShieldState.effectiveFingerprintingMode}
           onChange={(event) => onSaveSite({ effectiveFingerprintingMode: event.currentTarget.value as BrowserShieldFingerprintingMode })}
         >
@@ -74,7 +84,8 @@ export function BrowserShieldsPanel({
       </label>
       <label className="shellx-browser-toggle-row">
         <span>HTTPS upgrades</span>
-        <input
+        <input data-debug-id="surface-browser-components-browsershieldspanel-5"
+          data-shellx-release-observe="checked"
           type="checkbox"
           checked={activeShieldState.httpsUpgradeEnabled}
           onChange={(event) => onSaveSite({ httpsUpgradeEnabled: event.currentTarget.checked })}
@@ -87,6 +98,7 @@ export function BrowserShieldsPanel({
           checked={activeShieldState.scriptBlockingEnabled}
           onChange={(event) => onSaveSite({ scriptBlockingEnabled: event.currentTarget.checked })}
           data-debug-id="shellx-browser-site-shields-script-blocking"
+          data-shellx-release-observe="checked"
         />
       </label>
       <div className="shellx-browser-shields-actions">
@@ -96,6 +108,7 @@ export function BrowserShieldsPanel({
           onClick={() => onSaveSite()}
           disabled={!activeShieldState.host || busy}
           data-debug-id="shellx-browser-site-shields-save"
+          data-shellx-release-observe="disabled"
         >
           <span>Save for site</span>
         </button>
@@ -105,6 +118,7 @@ export function BrowserShieldsPanel({
           onClick={onResetSite}
           disabled={!activeShieldState.hasSiteOverride || busy}
           data-debug-id="shellx-browser-site-shields-reset"
+          data-shellx-release-observe="disabled"
         >
           <span>Reset site</span>
         </button>

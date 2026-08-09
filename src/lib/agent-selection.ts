@@ -1,4 +1,4 @@
-import type { AutonomyMode } from "../components/Header";
+import type { AutonomyMode } from "./autonomy";
 import type { ProviderId, ProviderPermissionMode } from "./provider-sessions";
 
 export type AgentId = "grok" | ProviderId;

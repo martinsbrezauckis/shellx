@@ -160,7 +160,12 @@ export function BuildRunCockpit({
   return (
     <div className="build-cockpit" title={state.objective}>
       <div className="build-cockpit-top">
-        <span className={`build-status-pill build-status-${state.status}`}>
+        <span
+          className={`build-status-pill build-status-${state.status}`}
+          data-shellx-release-control="build-run-state-receipt"
+          data-shellx-release-observe="title"
+          title={`Build run state · ${state.status} · checkpoint=${Boolean(state.checkpointId)} · blocker=${Boolean(state.openBlocker)} · receipts=${Math.min(receipts.length, 9_999)}`}
+        >
           <ShellIcon name={state.status === "paused" ? "pause" : state.status === "awaitingApproval" ? "pencil" : "activity"} size={13} />
           Build {statusText}
         </span>
@@ -299,7 +304,11 @@ export function BuildRunCockpit({
       {visibleReceipts.length > 0 && (
         <div className="build-receipts">
           <div className="build-receipts-head">
-            <span>
+            <span
+              data-shellx-release-control="build-receipt-ledger-state"
+              data-shellx-release-observe="title"
+              title={`Build receipt ledger · total=${receipts.length} · visible=${visibleReceipts.length} · mode=${showAllReceipts ? "all" : "latest"}`}
+            >
               Receipt ledger · {receipts.length}
             </span>
             {hiddenReceiptCount > 0 && (
@@ -307,6 +316,8 @@ export function BuildRunCockpit({
                 type="button"
                 className="build-receipts-toggle"
                 onClick={() => setShowAllReceipts((cur) => !cur)}
+                aria-pressed={showAllReceipts}
+                data-shellx-release-observe="pressed title"
                 title={showAllReceipts ? "Show latest receipts only" : "Show every receipt in this Build Mode run"}
               >
                 <ShellIcon name={showAllReceipts ? "chevron-down" : "activity"} size={12} />

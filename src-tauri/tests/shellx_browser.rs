@@ -4,13 +4,13 @@ use app_lib::shellx_browser::{
     BrowserConsoleLogRequest, BrowserDeveloperModeApprovalRequest,
     BrowserDeveloperModeUpdateRequest, BrowserDialogRecordRequest, BrowserDialogResolveRequest,
     BrowserDomSummary, BrowserDownloadRequest, BrowserObservation, BrowserPermissionRecordRequest,
-    BrowserPermissionResolveRequest, BrowserPrivacyUpdateRequest, BrowserSessionGrantRequest,
-    BrowserSessionGrantResolveRequest, BrowserShieldUpdateRequest,
+    BrowserPermissionResolveRequest, BrowserPrivacyUpdateRequest, BrowserSessionGrantApplyRequest,
+    BrowserSessionGrantRequest, BrowserSessionGrantResolveRequest, BrowserShieldUpdateRequest,
     BrowserSiteShieldOverrideRequest, BrowserSiteShieldRemoveRequest, BrowserTabHeartbeatRequest,
     BrowserTabLockRequest, BrowserTabUnlockRequest, BrowserTaskAutonomyUpdateRequest,
     BrowserTaskControlRequest, BrowserTransferApprovalRequest, BrowserTransferCompleteRequest,
-    BrowserUploadRequest, BrowserVaultCredentialRequest, BrowserVaultDepositRequest,
-    ShellxBrowserRegistry, StartBrowserTaskRequest, BROWSER_ENGINE_WEBVIEW_LABEL,
+    BrowserUploadRequest, BrowserVaultCredentialRequest, ShellxBrowserRegistry,
+    StartBrowserTaskRequest, BROWSER_ENGINE_WEBVIEW_LABEL,
 };
 
 #[test]
@@ -405,7 +405,7 @@ fn browser_navigation_blocks_private_networks_without_explicit_scope() {
             goal: "Use an explicitly scoped local fixture".to_string(),
             start_url: Some("http://127.0.0.1:5757/fixture".to_string()),
             profile_id: Some("agent-work".to_string()),
-            expected_domains: Some(vec!["127.0.0.1".to_string()]),
+            expected_domains: Some(vec!["127.0.0.1".to_string(), "example.com".to_string()]),
             ..StartBrowserTaskRequest::default()
         })
         .expect("explicitly scoped private host should be allowed");
@@ -423,7 +423,9 @@ fn browser_navigation_blocks_private_networks_without_explicit_scope() {
         })
         .expect_err("metadata navigation should be rejected");
     assert!(
-        blocked_nav.contains("private") || blocked_nav.contains("local"),
+        blocked_nav.contains("private")
+            || blocked_nav.contains("local")
+            || blocked_nav.contains("expectedDomains"),
         "metadata URL rejection should be explicit: {}",
         blocked_nav
     );
@@ -441,6 +443,53 @@ fn browser_navigation_blocks_private_networks_without_explicit_scope() {
         public_nav.current_url.as_deref(),
         Some("https://example.com/spec")
     );
+}
+
+#[test]
+fn browser_navigation_enforces_expected_and_blocked_domain_policies() {
+    let registry = ShellxBrowserRegistry::default();
+    let task = registry
+        .start_task(StartBrowserTaskRequest {
+            goal: "Stay within an explicit public domain scope".to_string(),
+            start_url: Some("https://app.example.com/start".to_string()),
+            profile_id: Some("agent-work".to_string()),
+            expected_domains: Some(vec!["*.example.com".to_string()]),
+            blocked_domains: Some(vec!["blocked.example.com".to_string()]),
+            ..StartBrowserTaskRequest::default()
+        })
+        .expect("allowed public start URL should be accepted");
+
+    let outside = registry
+        .apply_action(BrowserActionRequest {
+            task_id: Some(task.task_id.clone()),
+            action: "navigate".to_string(),
+            url: Some("https://attacker.test/".to_string()),
+            ..BrowserActionRequest::default()
+        })
+        .expect_err("public navigation outside expectedDomains must be rejected");
+    assert!(outside.contains("outside expectedDomains scope"));
+
+    let explicitly_blocked = registry
+        .apply_action(BrowserActionRequest {
+            task_id: Some(task.task_id),
+            action: "navigate".to_string(),
+            url: Some("https://blocked.example.com/".to_string()),
+            ..BrowserActionRequest::default()
+        })
+        .expect_err("blockedDomains must override an expectedDomains wildcard");
+    assert!(explicitly_blocked.contains("blocked by blockedDomains policy"));
+
+    let blocked_start = registry
+        .start_task(StartBrowserTaskRequest {
+            goal: "Do not start on a blocked site".to_string(),
+            start_url: Some("https://blocked.example.com/".to_string()),
+            profile_id: Some("agent-work".to_string()),
+            expected_domains: Some(vec!["*.example.com".to_string()]),
+            blocked_domains: Some(vec!["blocked.example.com".to_string()]),
+            ..StartBrowserTaskRequest::default()
+        })
+        .expect_err("blockedDomains must apply at task creation");
+    assert!(blocked_start.contains("blocked by blockedDomains policy"));
 }
 
 #[test]
@@ -726,6 +775,7 @@ fn browser_privacy_modes_and_profile_storage_are_exposed() {
             profile_id: Some("agent-work".to_string()),
             profile_ad_mode: Some(BrowserAdMode::VisualCleanCompatibility),
             operator_approved: true,
+            ..BrowserPrivacyUpdateRequest::default()
         })
         .expect("operator-approved privacy update should apply");
 
@@ -814,9 +864,17 @@ fn browser_file_transfer_requests_are_intent_backed() {
         "forged approval denial should not expose filesystem validation ordering: {}",
         rejected_forged_completion
     );
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let download_final_path = format!("{home}/.shellx/test-transfer/statement.pdf");
-    let upload_final_path = format!("{home}/.shellx/test-transfer/tax-form.pdf");
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .expect("HOME or USERPROFILE is available for transfer tests");
+    let download_final_path = std::path::Path::new(&home)
+        .join("shellx-test-transfer/statement.pdf")
+        .to_string_lossy()
+        .into_owned();
+    let upload_final_path = std::path::Path::new(&home)
+        .join("shellx-test-transfer/tax-form.pdf")
+        .to_string_lossy()
+        .into_owned();
 
     let completed_download = registry
         .grant_transfer_for_user(BrowserTransferApprovalRequest {
@@ -881,6 +939,10 @@ fn browser_file_transfer_requests_are_intent_backed() {
     assert_eq!(upload.status, "requested");
     assert_eq!(upload.direction, "upload");
     assert_eq!(upload.receipt.kind, "browserUploadRequested");
+    assert_eq!(
+        upload.file_path, None,
+        "public upload intents hide local paths"
+    );
     let completed_upload = registry
         .grant_transfer_for_user(BrowserTransferApprovalRequest {
             transfer_id: upload.transfer_id.clone(),
@@ -906,6 +968,10 @@ fn browser_file_transfer_requests_are_intent_backed() {
         .expect("host-approved upload completion should be recorded");
     assert_eq!(completed_upload.status, "completed");
     assert_eq!(completed_upload.receipt.kind, "browserUploadCompleted");
+    assert_eq!(
+        completed_upload.final_path, None,
+        "public upload completion receipts hide local paths"
+    );
     assert_eq!(completed_upload.content_kind.as_deref(), Some("document"));
     assert_eq!(
         completed_upload.destination.as_deref(),
@@ -1023,15 +1089,22 @@ fn browser_task_navigation_observation_and_sensitive_action_receipts_are_determi
 
     assert_eq!(task.profile_id, "agent-work");
     assert_eq!(task.status, "running");
-    let autonomy_update = registry
+    let autonomy_error = registry
         .update_task_autonomy(BrowserTaskAutonomyUpdateRequest {
             task_id: Some(task.task_id.clone()),
             autonomy: BrowserAutonomyMode::ApprovalFirst,
         })
-        .expect("active task autonomy should update");
-    assert_eq!(autonomy_update.autonomy, BrowserAutonomyMode::ApprovalFirst);
-    assert!(registry
-        .state()
+        .expect_err("active task autonomy must remain fixed");
+    assert!(autonomy_error.starts_with("browser_task_autonomy_policy_fixed"));
+    let fixed_state = registry.state();
+    let fixed_task = fixed_state
+        .tasks
+        .iter()
+        .find(|candidate| candidate.task_id == task.task_id)
+        .expect("task remains present after denied autonomy mutation");
+    assert_eq!(fixed_task.autonomy, BrowserAutonomyMode::AssistedAutonomous);
+    assert_eq!(fixed_task.updated_at_ms, task.updated_at_ms);
+    assert!(!fixed_state
         .receipts
         .iter()
         .any(|receipt| receipt.kind == "browserTaskAutonomyUpdated"));
@@ -1608,6 +1681,24 @@ fn browser_session_grant_resolution_markers_are_internal() {
         })
         .expect("operator-approved session grant resolution succeeds");
     assert_eq!(resolved.status, "granted");
+    let unavailable = registry
+        .apply_session_grant(BrowserSessionGrantApplyRequest {
+            grant_id: resolved.grant_id.clone(),
+            task_id: None,
+        })
+        .expect_err("approved session state must not claim application before real copying exists");
+    assert!(
+        unavailable.contains("browser_session_grant_application_unavailable"),
+        "unavailable application should return a stable code: {}",
+        unavailable
+    );
+    let preserved = registry
+        .session_grants(Some(10))
+        .into_iter()
+        .find(|grant| grant.grant_id == resolved.grant_id)
+        .expect("approved grant remains available for a future real session bridge");
+    assert_eq!(preserved.status, "granted");
+    assert_eq!(preserved.applied_at_ms, None);
 }
 
 #[test]
@@ -1633,10 +1724,21 @@ fn browser_task_terminal_states_cancel_pending_session_grants() {
             ttl_seconds: Some(900),
         })
         .expect("session grant request should be recorded");
+    let completed_permission = registry
+        .record_permission_event(BrowserPermissionRecordRequest {
+            task_id: Some(completed_task.task_id.clone()),
+            permission_kind: "camera".to_string(),
+            url: Some("https://example.com/account".to_string()),
+            requires_approval: true,
+            ..BrowserPermissionRecordRequest::default()
+        })
+        .expect("permission request should be recorded");
     registry
         .finish_task(
             Some(completed_task.task_id.clone()),
             Some("completed".to_string()),
+            None,
+            None,
         )
         .expect("task finish succeeds");
     let state = registry.state();
@@ -1649,6 +1751,17 @@ fn browser_task_terminal_states_cancel_pending_session_grants() {
     assert!(cancelled.resolved_at_ms.is_some());
     assert!(state.receipts.iter().any(|receipt| {
         receipt.kind == "browserSessionGrantCancelled"
+            && receipt.task_id.as_deref() == Some(completed_task.task_id.as_str())
+    }));
+    let cancelled_permission = state
+        .permissions
+        .iter()
+        .find(|permission| permission.permission_id == completed_permission.permission_id)
+        .expect("completed task permission should still be auditable");
+    assert_eq!(cancelled_permission.status, "cancelled");
+    assert!(cancelled_permission.resolved_at_ms.is_some());
+    assert!(state.receipts.iter().any(|receipt| {
+        receipt.kind == "browserPermissionCancelled"
             && receipt.task_id.as_deref() == Some(completed_task.task_id.as_str())
     }));
 
@@ -1742,7 +1855,7 @@ fn browser_task_terminal_states_cancel_pending_session_grants() {
         })
         .expect("takeover task grant should be recorded");
     registry
-        .control_task(BrowserTaskControlRequest {
+        .control_task_from_operator(BrowserTaskControlRequest {
             task_id: Some(takeover_task.task_id.clone()),
             action: "userTakeover".to_string(),
             reason: Some("user took over".to_string()),
@@ -1757,6 +1870,154 @@ fn browser_task_terminal_states_cancel_pending_session_grants() {
         .expect("takeover grant should still be auditable");
     assert_eq!(cancelled.status, "cancelled");
     assert!(cancelled.resolved_at_ms.is_some());
+}
+
+#[test]
+fn browser_task_takeover_requires_operator_authority_and_uses_surface_actor() {
+    let registry = ShellxBrowserRegistry::default();
+    let task = registry
+        .start_task(StartBrowserTaskRequest {
+            goal: "Keep user takeover authoritative".to_string(),
+            start_url: Some("https://example.com/takeover".to_string()),
+            profile_id: Some("agent-work".to_string()),
+            ..StartBrowserTaskRequest::default()
+        })
+        .expect("task should start");
+    assert_eq!(task.owner_actor_id, "shellxDebugApiAgent");
+    assert_eq!(task.owner_surface, "debugApiBearer");
+
+    let denied_takeover = registry
+        .control_task(BrowserTaskControlRequest {
+            task_id: Some(task.task_id.clone()),
+            action: "userTakeover".to_string(),
+            requested_by: Some("forged-operator".to_string()),
+            ..BrowserTaskControlRequest::default()
+        })
+        .expect_err("agent surface cannot claim user takeover");
+    assert!(denied_takeover.contains("browser_task_operator_control_required"));
+
+    let takeover = registry
+        .control_task_from_operator(BrowserTaskControlRequest {
+            task_id: Some(task.task_id.clone()),
+            action: "userTakeover".to_string(),
+            requested_by: Some("forged-actor".to_string()),
+            ..BrowserTaskControlRequest::default()
+        })
+        .expect("trusted operator can take over");
+    assert_eq!(takeover.status, "userTakeover");
+    assert_eq!(
+        takeover.receipt.evidence["requestedBy"].as_str(),
+        Some("shellxBrowserOperator")
+    );
+
+    let denied_resume = registry
+        .control_task(BrowserTaskControlRequest {
+            task_id: Some(task.task_id.clone()),
+            action: "resume".to_string(),
+            ..BrowserTaskControlRequest::default()
+        })
+        .expect_err("agent surface cannot resume user takeover");
+    assert!(denied_resume.contains("browser_task_operator_control_required"));
+    let denied_finish = registry
+        .finish_task(
+            Some(task.task_id.clone()),
+            Some("completed".to_string()),
+            None,
+            Some("forged-operator".to_string()),
+        )
+        .expect_err("agent surface cannot finish user takeover");
+    assert!(denied_finish.contains("browser_task_operator_control_required"));
+
+    let resumed = registry
+        .control_task_from_operator(BrowserTaskControlRequest {
+            task_id: Some(task.task_id),
+            action: "resume".to_string(),
+            ..BrowserTaskControlRequest::default()
+        })
+        .expect("trusted operator can return control to the agent");
+    assert_eq!(resumed.status, "running");
+    assert_eq!(
+        resumed.receipt.evidence["requestedBy"].as_str(),
+        Some("shellxBrowserOperator")
+    );
+}
+
+#[test]
+fn browser_summary_and_task_views_stay_bounded_and_observations_are_opt_in() {
+    let registry = ShellxBrowserRegistry::default();
+    let task = registry
+        .start_task(StartBrowserTaskRequest {
+            goal: "g".repeat(50_000),
+            start_url: Some(format!("https://example.com/{}", "p".repeat(8_000))),
+            profile_id: Some("agent-work".to_string()),
+            expected_domains: Some(vec!["example.com".to_string()]),
+            ..StartBrowserTaskRequest::default()
+        })
+        .expect("large task should start");
+    let observed = registry
+        .apply_action(BrowserActionRequest {
+            task_id: Some(task.task_id.clone()),
+            action: "observe".to_string(),
+            ..BrowserActionRequest::default()
+        })
+        .expect("task observation should succeed");
+    assert!(observed.observation.is_some());
+
+    for index in 0..25 {
+        registry
+            .request_session_grant(BrowserSessionGrantRequest {
+                task_id: Some(task.task_id.clone()),
+                from_profile_id: "personal".to_string(),
+                to_profile_id: "agent-work".to_string(),
+                reason: format!("{}-{index}", "request".repeat(200)),
+                ttl_seconds: Some(900),
+            })
+            .expect("pending request should be recorded");
+    }
+
+    let summary = registry.summary();
+    let summary_json = serde_json::to_string(&summary).expect("summary serializes");
+    assert!(
+        summary_json.len() < 16 * 1024,
+        "Browser summary exceeds 16 KiB: {} bytes",
+        summary_json.len()
+    );
+    assert!(!summary_json.contains("lastObservation"));
+    assert_eq!(summary.pending_requests.len(), 10);
+    assert_eq!(summary.counts.pending_requests, 25);
+    assert!(summary.revisions.state.starts_with("state-"));
+    assert_eq!(registry.session_grants(Some(5)).len(), 5);
+    let previous_revision = summary.revisions.state.clone();
+    registry
+        .request_session_grant(BrowserSessionGrantRequest {
+            task_id: Some(task.task_id.clone()),
+            from_profile_id: "personal".to_string(),
+            to_profile_id: "agent-work".to_string(),
+            reason: "revision identity must not depend on millisecond uniqueness".to_string(),
+            ttl_seconds: Some(900),
+        })
+        .expect("another pending request should advance the state revision");
+    assert_ne!(registry.summary().revisions.state, previous_revision);
+
+    let task_summaries = registry.task_summaries();
+    let task_summary_json =
+        serde_json::to_string(&task_summaries).expect("task summaries serialize");
+    assert!(!task_summary_json.contains("lastObservation"));
+    assert!(registry.task_details(false)[0].last_observation.is_none());
+    assert!(registry.task_details(true)[0].last_observation.is_some());
+
+    let core = registry.core_state();
+    assert!(core.history.is_empty());
+    assert!(core.receipts.is_empty());
+    assert!(core.console_logs.is_empty());
+    assert!(core.session_grants.is_empty());
+    assert!(core.tasks[0].last_observation.is_none());
+
+    let settle = registry
+        .settle_state(Some(&task.task_id), None)
+        .expect("settle snapshot should resolve the task engine");
+    assert!(settle.settled);
+    assert_eq!(settle.task_id.as_deref(), Some(task.task_id.as_str()));
 }
 
 #[test]
@@ -1822,51 +2083,6 @@ fn browser_console_logs_are_visible_for_debug_api_drivers() {
 }
 
 #[test]
-fn browser_vault_deposit_is_write_only_and_does_not_echo_secret() {
-    let registry = ShellxBrowserRegistry::default();
-    let task = registry
-        .start_task(StartBrowserTaskRequest {
-            goal: "Create an AWS API key and deposit it to Vault".to_string(),
-            profile_id: Some("agent-work".to_string()),
-            autonomy: Some(BrowserAutonomyMode::AssistedAutonomous),
-            ..StartBrowserTaskRequest::default()
-        })
-        .expect("task should start");
-
-    let deposit = registry
-        .create_vault_deposit(BrowserVaultDepositRequest {
-            task_id: Some(task.task_id),
-            label: "AWS API key from signup".to_string(),
-            secret_value: "AKIA_TEST_SECRET_SHOULD_NOT_ECHO".to_string(),
-            source_url: Some("https://console.aws.amazon.com/".to_string()),
-        })
-        .expect("deposit should be accepted");
-
-    assert!(deposit.deposit_id.starts_with("browser-deposit-"));
-    assert_ne!(
-        deposit.storage_commit_hash,
-        "AKIA_TEST_SECRET_SHOULD_NOT_ECHO"
-    );
-    assert_eq!(deposit.server_receipt.id, deposit.deposit_id);
-    assert_eq!(
-        deposit.server_receipt.payload_hash,
-        deposit.storage_commit_hash
-    );
-    assert!(deposit.server_receipt.created_ms > 0);
-    assert!(deposit
-        .server_receipt
-        .from_token
-        .starts_with("browser-agent-token:"));
-    let serialized = serde_json::to_string(&deposit).expect("serialize deposit response");
-    assert!(!serialized.contains("AKIA_TEST_SECRET_SHOULD_NOT_ECHO"));
-    assert_eq!(deposit.receipt.kind, "browserVaultDepositCreated");
-    assert!(!deposit
-        .receipt
-        .summary
-        .contains("AKIA_TEST_SECRET_SHOULD_NOT_ECHO"));
-}
-
-#[test]
 fn browser_vault_fill_receipt_does_not_include_secret() {
     let registry = ShellxBrowserRegistry::default();
     let task = registry
@@ -1916,67 +2132,36 @@ fn browser_vault_fill_receipt_does_not_include_secret() {
 }
 
 #[test]
-fn browser_vault_generate_receipt_does_not_include_secret() {
+fn browser_agent_wallet_unavailable_receipt_does_not_claim_checkout() {
     let registry = ShellxBrowserRegistry::default();
     let task = registry
         .start_task(StartBrowserTaskRequest {
-            goal: "Generate a password".to_string(),
-            start_url: Some("https://signup.example.test/".to_string()),
+            goal: "Attempt agent wallet checkout".to_string(),
+            start_url: Some("https://shop.example.test/".to_string()),
             profile_id: Some("agent-work".to_string()),
             autonomy: Some(BrowserAutonomyMode::AssistedAutonomous),
-            expected_domains: Some(vec!["signup.example.test".to_string()]),
+            expected_domains: Some(vec!["shop.example.test".to_string()]),
             ..StartBrowserTaskRequest::default()
         })
         .expect("task should start");
     let receipt = registry
-        .record_vault_generate_receipt(BrowserVaultCredentialRequest {
+        .record_agent_wallet_unavailable_receipt(BrowserVaultCredentialRequest {
             task_id: Some(task.task_id),
-            origin: "https://signup.example.test".to_string(),
-            item_id: "item-new-login".to_string(),
-            grant_id: Some("grant-generate".to_string()),
+            origin: "https://shop.example.test".to_string(),
+            item_id: "wallet-agent-1".to_string(),
+            grant_id: Some("grant-wallet".to_string()),
         })
-        .expect("generate receipt should be recorded");
+        .expect("unavailable receipt should be recorded");
     assert!(receipt.ok);
     assert!(!receipt.secret_exposed);
-    assert_eq!(receipt.action, "generate");
+    assert_eq!(receipt.action, "agentWalletUnavailable");
 
     let receipt_json = serde_json::to_string(&receipt).unwrap();
     let state_json = serde_json::to_string(&registry.state()).unwrap();
     assert!(!receipt_json.contains("SXV_BROWSER_SECRET_123"));
     assert!(!state_json.contains("SXV_BROWSER_SECRET_123"));
-}
-
-#[test]
-fn browser_vault_deposit_uses_storage_commit_receipt_shape() {
-    let registry = ShellxBrowserRegistry::default();
-    let deposit = registry
-        .create_vault_deposit(BrowserVaultDepositRequest {
-            task_id: Some("task-vault-deposit".to_string()),
-            label: "Generated password".to_string(),
-            secret_value: "SXV_BROWSER_SECRET_123".to_string(),
-            source_url: Some("https://signup.example.test/".to_string()),
-        })
-        .expect("deposit should be accepted");
-    let serialized = serde_json::to_string(&deposit).expect("serialize deposit response");
-    assert!(!serialized.contains("SXV_BROWSER_SECRET_123"));
-    assert!(deposit
-        .receipt
-        .evidence
-        .get("storageCommitHash")
-        .and_then(|value| value.as_str())
-        .is_some());
-    assert_eq!(
-        deposit
-            .receipt
-            .evidence
-            .get("secretExposed")
-            .and_then(|value| value.as_bool()),
-        Some(false)
-    );
-    assert!(deposit.receipt.evidence.get("secretValue").is_none());
-    assert!(!serde_json::to_string(&registry.state())
-        .unwrap()
-        .contains("SXV_BROWSER_SECRET_123"));
+    assert!(state_json.contains("browserAgentWalletCheckoutUnavailable"));
+    assert!(!state_json.contains("browserAgentWalletCheckoutPrepared"));
 }
 
 #[test]
@@ -2011,6 +2196,7 @@ fn browser_engine_observation_records_requested_task_context() {
         BrowserObservation {
             task_id: first.task_id.clone(),
             snapshot_id: String::new(),
+            delta: None,
             url: Some("https://first.example.test/".to_string()),
             title: "First page".to_string(),
             text: "First page".to_string(),
@@ -2021,6 +2207,7 @@ fn browser_engine_observation_records_requested_task_context() {
                 ..BrowserDomSummary::default()
             },
             form_fields: Vec::new(),
+            form_field_groups: Vec::new(),
             accessibility_tree: Vec::new(),
             privacy_stats: None,
             untrusted_input: true,

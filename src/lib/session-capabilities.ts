@@ -1,7 +1,15 @@
 import type { RawEventFrame } from "../types/acp";
 
 export interface SearchCapability {
-  id: "web_search" | "web_fetch" | "x_search" | "desktop_control" | "code_intelligence";
+  id:
+    | "web_search"
+    | "web_fetch"
+    | "x_search"
+    | "image_generation"
+    | "browser_control"
+    | "subagents"
+    | "desktop_control"
+    | "code_intelligence";
   name: string;
   toolName: string;
   source: "native" | "shellx";
@@ -64,7 +72,17 @@ export function extractProviderSessionToolNames(events: RawEventFrame[]): Set<st
   for (const event of events) {
     if (!event || event.kind !== "provider-session-event") continue;
     const payload = event.payload as any;
+    if (Array.isArray(payload?.capabilities)) {
+      for (const capability of payload.capabilities) {
+        if (typeof capability === "string" && capability.trim()) {
+          names.add(capability.trim());
+        }
+      }
+    }
     if (payload?.kind !== "mcpTool" && payload?.kind !== "tool") continue;
+    if (typeof payload.toolName === "string" && payload.toolName.trim()) {
+      names.add(payload.toolName.trim());
+    }
     const text = typeof payload.text === "string" ? payload.text : "";
     const rawType = typeof payload.rawType === "string" ? payload.rawType : "";
     for (const value of [text, rawType]) {
@@ -106,8 +124,16 @@ export function grokSearchCapabilities(
       tool.replace(/[-_]/g, "").toLowerCase() === normalized
     );
   };
-  const webSearchReady = hasProviderContext ? providerToolReady("web_search") : tools.has("web_search");
-  const webFetchReady = hasProviderContext ? providerToolReady("web_fetch") : tools.has("web_fetch");
+  const providerToolAlias = (...names: string[]): string | null =>
+    names.find((name) => providerToolReady(name)) ?? null;
+  const providerWebSearch = hasProviderContext
+    ? providerToolAlias("web_search", "search_web")
+    : null;
+  const providerWebFetch = hasProviderContext
+    ? providerToolAlias("web_fetch", "read_url_content")
+    : null;
+  const webSearchReady = hasProviderContext ? providerWebSearch !== null : tools.has("web_search");
+  const webFetchReady = hasProviderContext ? providerWebFetch !== null : tools.has("web_fetch");
   const xSearchReady = tools.has("grok-shell-host__x_search")
     || tools.has("x_search")
     || hasMcpBridge
@@ -116,27 +142,27 @@ export function grokSearchCapabilities(
     {
       id: "web_search",
       name: "Web Search",
-      toolName: "web_search",
+      toolName: providerWebSearch ?? "web_search",
       source: "native",
       ready: webSearchReady,
       description: hasProviderContext
         ? "Provider-native web search when the selected provider exposes it in the ShellX stream."
         : "Native real-time web search with citations when the selected agent advertises it.",
       unavailableHint: hasProviderContext
-        ? "No provider-native web_search call has appeared in this session yet."
+        ? "The provider has not advertised a native web-search capability for this session."
         : "Waiting for the active agent to advertise web_search.",
     },
     {
       id: "web_fetch",
       name: "Web Fetch",
-      toolName: "web_fetch",
+      toolName: providerWebFetch ?? "web_fetch",
       source: "native",
       ready: webFetchReady,
       description: hasProviderContext
         ? "Provider-native page fetch/browse when the selected provider exposes it in the ShellX stream."
         : "Native page fetch/browse tool when the selected agent advertises it.",
       unavailableHint: hasProviderContext
-        ? "No provider-native web_fetch call has appeared in this session yet."
+        ? "The provider has not advertised a native page-fetch capability for this session."
         : "Waiting for the active agent to advertise web_fetch.",
     },
     {
@@ -154,10 +180,43 @@ export function grokSearchCapabilities(
 export function shellxRuntimeCapabilities(events: RawEventFrame[]): SearchCapability[] {
   const tools = extractAdvertisedToolNames(events);
   const providerTools = extractProviderSessionToolNames(events);
-  const leafTools = [...tools, ...providerTools].map(toolLeafName);
+  const allTools = [...tools, ...providerTools];
+  const leafTools = allTools.map(toolLeafName);
+  const nativeProviderTools = allTools.filter((name) => !isShellxToolName(name));
+  const nativeImageTool = nativeProviderTools.find((name) => isImageGenerationTool(toolLeafName(name)));
+  const nativeBrowserTool = nativeProviderTools.find((name) => isBrowserControlTool(toolLeafName(name)));
+  const nativeSubagentTool = nativeProviderTools.find((name) => isSubagentTool(toolLeafName(name)));
+  const nativeCodeTool = nativeProviderTools.find((name) => isCodeIntelligenceTool(toolLeafName(name)));
   const desktopTools = leafTools.filter((name) => name.startsWith("desktop_"));
-  const codeTools = leafTools.filter(isCodeIntelligenceTool);
+  const hostCodeTool = allTools.find((name) => isShellxToolName(name) && isCodeIntelligenceTool(toolLeafName(name)));
   return [
+    {
+      id: "image_generation",
+      name: "Image Generation",
+      toolName: nativeImageTool ?? "generate_image",
+      source: "native",
+      ready: nativeImageTool !== undefined,
+      description: "Provider-native image generation when the selected CLI advertises it in this session.",
+      unavailableHint: "The selected provider has not advertised a native image-generation tool for this session.",
+    },
+    {
+      id: "browser_control",
+      name: "Browser Control",
+      toolName: nativeBrowserTool ?? "browser_*",
+      source: "native",
+      ready: nativeBrowserTool !== undefined,
+      description: "Provider-native Browser navigation, inspection, and interaction when advertised by the selected CLI.",
+      unavailableHint: "The selected provider has not advertised native Browser controls for this session.",
+    },
+    {
+      id: "subagents",
+      name: "Native Subagents",
+      toolName: nativeSubagentTool ?? "invoke_subagent",
+      source: "native",
+      ready: nativeSubagentTool !== undefined,
+      description: "Provider-native delegation and subagent orchestration when advertised by the selected CLI.",
+      unavailableHint: "The selected provider has not advertised native subagent controls for this session.",
+    },
     {
       id: "desktop_control",
       name: "Desktop Control",
@@ -170,11 +229,13 @@ export function shellxRuntimeCapabilities(events: RawEventFrame[]): SearchCapabi
     {
       id: "code_intelligence",
       name: "Code Intelligence",
-      toolName: codeTools[0] ?? "lsp_*",
-      source: "shellx",
-      ready: codeTools.length > 0,
-      description: "Language-aware tools for symbols, definitions, references, and diagnostics.",
-      unavailableHint: "Waiting for an LSP/code-intelligence tool provider in this session.",
+      toolName: nativeCodeTool ?? hostCodeTool ?? "lsp_*",
+      source: nativeCodeTool ? "native" : "shellx",
+      ready: Boolean(nativeCodeTool || hostCodeTool),
+      description: nativeCodeTool
+        ? "Provider-native repository search or language-aware code intelligence advertised for this session."
+        : "ShellX-hosted language-aware tools for symbols, definitions, references, and diagnostics.",
+      unavailableHint: "Waiting for provider-native code search or a ShellX LSP/code-intelligence tool in this session.",
     },
   ];
 }
@@ -184,11 +245,51 @@ function toolLeafName(name: string): string {
   return raw.trim();
 }
 
+function isShellxToolName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.includes("shellx-host")
+    || lower.includes("shellx_host")
+    || lower.includes("mcp__shellx")
+    || lower.includes("grok-shell-host");
+}
+
+function isImageGenerationTool(name: string): boolean {
+  const normalized = name.replace(/[-.]/g, "_").toLowerCase();
+  return normalized === "generate_image"
+    || normalized === "image_generation"
+    || normalized === "image_gen"
+    || normalized === "imagegen"
+    || normalized === "gpt_image";
+}
+
+function isBrowserControlTool(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.startsWith("browser_")
+    || [
+      "open_browser_url",
+      "read_browser_page",
+      "execute_browser_javascript",
+      "capture_browser_screenshot",
+      "capture_browser_console_logs",
+      "click_browser_pixel",
+      "list_browser_pages",
+    ].includes(lower);
+}
+
+function isSubagentTool(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower === "subagent"
+    || lower.includes("subagent")
+    || ["delegate", "delegate_task", "manage_agents", "task"].includes(lower);
+}
+
 function isCodeIntelligenceTool(name: string): boolean {
   const lower = name.toLowerCase();
   return lower.startsWith("lsp_")
     || lower.includes("code_intelligence")
     || lower === "symbol_search"
+    || lower === "code_search"
+    || lower === "find_by_name"
     || lower === "find_references"
     || lower === "goto_definition";
 }

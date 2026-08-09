@@ -6,8 +6,8 @@
 //! the vault is the account, the repo just lives on local disk. The VPS
 //! binary (main.rs) wraps this lib + the embedded web SPA.
 //!
-//! Loopback security note: bound to
-//! 127.0.0.1 only, bearer-token-gated; browsers can't reach it cross-
+//! Loopback security note: bound to 127.0.0.1 only,
+//! bearer-token-gated; browsers can't reach it cross-
 //! origin without the token. The master key already lives in the same
 //! process — the loopback hop adds no new exposure class on a
 //! single-user desktop.

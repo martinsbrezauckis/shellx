@@ -2,13 +2,11 @@
 use base64::Engine as _;
 use serde_json::json;
 use std::sync::Arc;
-#[cfg(windows)]
-use std::sync::Mutex;
 use std::time::Duration;
-use tauri::webview::DownloadEvent;
+use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{
     AppHandle, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Url, WebviewBuilder,
-    WebviewUrl, WebviewWindowBuilder,
+    WebviewUrl,
 };
 
 #[cfg(windows)]
@@ -22,129 +20,43 @@ use crate::shellx_browser_engine::{
     browser_background_engine_bounds, browser_engine_bounds_are_background,
     browser_engine_webview_label,
 };
+use crate::shellx_browser_initialization::browser_page_context_menu_initialization_script;
 use crate::shellx_browser_profiles::browser_profile_storage_root;
 use crate::shellx_browser_security::{
-    browser_host_matches_expected_domains, browser_url_uses_private_network,
+    browser_host_matches_blocked_domains, browser_host_matches_expected_domains,
+    browser_url_uses_private_network,
 };
 #[cfg(windows)]
 use crate::shellx_browser_shields::browser_ad_decision_for_url;
 use crate::shellx_browser_shields::{
     browser_privacy_initialization_script, browser_requires_native_request_filter,
 };
+use crate::shellx_browser_webview_runtime::navigate_browser_webview;
+#[cfg(windows)]
+use crate::shellx_browser_webview_runtime::{
+    with_windows_browser_webview, SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS,
+};
+use crate::shellx_browser_window_open_runtime::ensure_browser_window_for_engine;
 
 #[cfg(windows)]
-const SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS: &str = concat!(
-    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
-    " --disable-background-timer-throttling",
-    " --disable-backgrounding-occluded-windows",
-    " --disable-renderer-backgrounding",
-);
+const BROWSER_ENGINE_WEBVIEW2_RELEASE_QUIESCENCE: Duration = Duration::from_millis(500);
 
-pub fn open_or_focus_browser_window(app: &AppHandle) -> Result<(), String> {
-    if focus_existing_browser_window(app) {
-        return Ok(());
-    }
-
-    build_browser_window(app)
-}
-
-fn ensure_browser_window_for_engine(
-    app: &AppHandle,
-    restore_visible_geometry: bool,
-) -> Result<(), String> {
-    if let Some(window) = app.get_window(BROWSER_WINDOW_LABEL) {
-        if restore_visible_geometry {
-            restore_browser_window_geometry(&window);
-        }
-        return Ok(());
-    }
-    if let Some(window) = app.get_webview_window(BROWSER_WINDOW_LABEL) {
-        if restore_visible_geometry {
-            restore_browser_webview_window_geometry(&window);
-        }
-        return Ok(());
-    }
-
-    build_browser_window(app)
-}
-
-fn build_browser_window(app: &AppHandle) -> Result<(), String> {
-    WebviewWindowBuilder::new(
-        app,
-        BROWSER_WINDOW_LABEL,
-        WebviewUrl::App("index.html".into()),
-    )
-    .title("ShellX Browser")
-    .inner_size(1280.0, 860.0)
-    .min_inner_size(860.0, 560.0)
-    .center()
-    .resizable(true)
-    .build()
-    .map_err(|e| format!("failed to open ShellX Browser window: {}", e))?;
-    Ok(())
-}
-
-fn focus_existing_browser_window(app: &AppHandle) -> bool {
-    if let Some(window) = app.get_window(BROWSER_WINDOW_LABEL) {
-        restore_browser_window_geometry(&window);
-        let _ = window.show();
-        let _ = window.set_focus();
-        return true;
-    }
-    if let Some(window) = app.get_webview_window(BROWSER_WINDOW_LABEL) {
-        restore_browser_webview_window_geometry(&window);
-        let _ = window.show();
-        let _ = window.set_focus();
-        return true;
-    }
-    false
-}
-
-fn restore_browser_window_geometry<R: tauri::Runtime>(window: &tauri::Window<R>) {
-    let _ = window.show();
-    let _ = window.unminimize();
-    let too_small = window
-        .outer_size()
-        .map(|size| size.width < 860 || size.height < 560)
-        .unwrap_or(false);
-    let far_offscreen = window
-        .outer_position()
-        .map(|position| position.x < -8000 || position.y < -8000)
-        .unwrap_or(false);
-    if too_small || far_offscreen {
-        let _ = window.set_size(Size::Logical(LogicalSize::new(1280.0, 860.0)));
-        let _ = window.set_position(Position::Logical(LogicalPosition::new(160.0, 120.0)));
-        let _ = window.center();
-    }
-}
-
-fn restore_browser_webview_window_geometry<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
-    let _ = window.show();
-    let _ = window.unminimize();
-    let too_small = window
-        .outer_size()
-        .map(|size| size.width < 860 || size.height < 560)
-        .unwrap_or(false);
-    let far_offscreen = window
-        .outer_position()
-        .map(|position| position.x < -8000 || position.y < -8000)
-        .unwrap_or(false);
-    if too_small || far_offscreen {
-        let _ = window.set_size(Size::Logical(LogicalSize::new(1280.0, 860.0)));
-        let _ = window.set_position(Position::Logical(LogicalPosition::new(160.0, 120.0)));
-        let _ = window.center();
-    }
-}
-
-pub(crate) fn wait_for_browser_engine_label_release(
+pub(crate) async fn wait_for_browser_engine_label_release(
     app: &AppHandle,
     webview_label: &str,
 ) -> Result<(), String> {
     for _ in 0..20 {
         if app.get_webview(webview_label).is_none() {
+            // WebView2 can release Tauri's label before its profile runtime is
+            // ready for an immediate child-webview recreation. Without this
+            // bounded Windows-only quiescence, a rapid task close/start pair
+            // can mount the replacement engine but never deliver its first
+            // page-load callback.
+            #[cfg(windows)]
+            tokio::time::sleep(BROWSER_ENGINE_WEBVIEW2_RELEASE_QUIESCENCE).await;
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(25));
+        tokio::time::sleep(Duration::from_millis(25)).await;
     }
     Err(format!(
         "Browser engine webview label '{}' is still releasing; retry sync shortly",
@@ -153,7 +65,7 @@ pub(crate) fn wait_for_browser_engine_label_release(
 }
 
 #[cfg(windows)]
-fn install_strict_browser_request_filter<R: tauri::Runtime>(
+async fn install_strict_browser_request_filter<R: tauri::Runtime>(
     webview: &tauri::Webview<R>,
     registry: Arc<ShellxBrowserRegistry>,
     engine_id: String,
@@ -164,11 +76,14 @@ fn install_strict_browser_request_filter<R: tauri::Runtime>(
     use windows::core::{HSTRING, PWSTR};
     use windows::Win32::System::Com::IStream;
 
-    let install_result: Arc<Mutex<Result<(), String>>> = Arc::new(Mutex::new(Ok(())));
-    let install_result_for_hook = Arc::clone(&install_result);
-    webview
-        .with_webview(move |platform| {
-            let result = (|| -> windows::core::Result<()> {
+    with_windows_browser_webview(
+        webview,
+        "installing Browser strict request filter",
+        move |platform| {
+            (|| -> windows::core::Result<()> {
+                // SAFETY: Tauri invokes this closure with the live WebView2
+                // controller for `webview`; COM interface calls stay within
+                // the closure and all returned HRESULTs are propagated.
                 unsafe {
                     let controller = platform.controller();
                     let native = controller.CoreWebView2()?;
@@ -222,18 +137,14 @@ fn install_strict_browser_request_filter<R: tauri::Runtime>(
                 }
                 Ok(())
             })()
-            .map_err(|err| {
-                format!("failed to install Browser strict request filter: {}", err)
-            });
-            *lock_or_recover(&install_result_for_hook) = result;
-        })
-        .map_err(|err| format!("failed to access Browser WebView2 handle: {}", err))?;
-    let result = lock_or_recover(&install_result).clone();
-    result
+            .map_err(|err| format!("failed to install Browser strict request filter: {err}"))
+        },
+    )
+    .await
 }
 
 #[cfg(not(windows))]
-fn install_strict_browser_request_filter<R: tauri::Runtime>(
+async fn install_strict_browser_request_filter<R: tauri::Runtime>(
     _webview: &tauri::Webview<R>,
     _registry: Arc<ShellxBrowserRegistry>,
     _engine_id: String,
@@ -243,115 +154,7 @@ fn install_strict_browser_request_filter<R: tauri::Runtime>(
 }
 
 #[cfg(windows)]
-fn install_browser_page_tab_behavior<R: tauri::Runtime>(
-    webview: &tauri::Webview<R>,
-    registry: Arc<ShellxBrowserRegistry>,
-    engine_id: String,
-    profile_id: String,
-) -> Result<(), String> {
-    use webview2_com::{take_pwstr, NewWindowRequestedEventHandler};
-    use windows::core::PWSTR;
-
-    let install_result: Arc<Mutex<Result<(), String>>> = Arc::new(Mutex::new(Ok(())));
-    let install_result_for_hook = Arc::clone(&install_result);
-    webview
-        .with_webview(move |platform| {
-            let result = (|| -> windows::core::Result<()> {
-                unsafe {
-                    let controller = platform.controller();
-                    let native = controller.CoreWebView2()?;
-                    let settings = native.Settings()?;
-                    settings.SetAreDefaultContextMenusEnabled(false)?;
-                    let event_registry = Arc::clone(&registry);
-                    let event_engine_id = engine_id.clone();
-                    let event_profile_id = profile_id.clone();
-                    let mut token = 0i64;
-                    native.add_NewWindowRequested(
-                        &NewWindowRequestedEventHandler::create(Box::new(move |_sender, args| {
-                            let Some(args) = args else {
-                                return Ok(());
-                            };
-                            args.SetHandled(true)?;
-                            let mut uri = PWSTR::null();
-                            args.Uri(&mut uri)?;
-                            let uri = take_pwstr(uri);
-                            let target_url = normalize_browser_new_window_target_url(uri.trim());
-                            if target_url.is_empty() {
-                                return Ok(());
-                            }
-                            let mut is_user_initiated = windows::core::BOOL::from(false);
-                            args.IsUserInitiated(&mut is_user_initiated as *mut _)?;
-                            let opener = {
-                                let state = event_registry.state();
-                                state
-                                    .engine_pool
-                                    .engines
-                                    .iter()
-                                    .find(|engine| engine.engine_id == event_engine_id)
-                                    .or_else(|| {
-                                        (state.engine.engine_id == event_engine_id)
-                                            .then_some(&state.engine)
-                                    })
-                                    .cloned()
-                            };
-                            let opener_url = opener.as_ref().and_then(|engine| engine.url.clone());
-                            let opener_tab_id = opener
-                                .as_ref()
-                                .and_then(|engine| engine.browser_tab_id.clone());
-                            let opener_task_id =
-                                opener.as_ref().and_then(|engine| engine.task_id.clone());
-                            let opener_profile_id = opener
-                                .as_ref()
-                                .and_then(|engine| engine.profile_id.clone())
-                                .unwrap_or_else(|| event_profile_id.clone());
-                            let user_initiated = is_user_initiated.as_bool();
-                            let _ = event_registry.record_popup_event(
-                                crate::shellx_browser::BrowserPopupRecordRequest {
-                                    task_id: opener_task_id.clone(),
-                                    browser_tab_id: opener_tab_id,
-                                    opener_url,
-                                    target_url: target_url.clone(),
-                                    disposition: Some("new-tab".to_string()),
-                                    requires_approval: !user_initiated,
-                                },
-                            );
-                            if user_initiated {
-                                let _ = event_registry.open_tab(
-                                    crate::shellx_browser::BrowserTabOpenRequest {
-                                        task_id: opener_task_id,
-                                        profile_id: Some(opener_profile_id),
-                                        url: Some(target_url),
-                                        expected_domains: None,
-                                    },
-                                );
-                            }
-                            Ok(())
-                        })),
-                        &mut token,
-                    )?;
-                }
-                Ok(())
-            })()
-            .map_err(|err| format!("failed to install Browser tab context behavior: {}", err));
-            *lock_or_recover(&install_result_for_hook) = result;
-        })
-        .map_err(|err| format!("failed to access Browser WebView2 handle: {}", err))?;
-    let result = lock_or_recover(&install_result).clone();
-    result
-}
-
-#[cfg(not(windows))]
-fn install_browser_page_tab_behavior<R: tauri::Runtime>(
-    _webview: &tauri::Webview<R>,
-    _registry: Arc<ShellxBrowserRegistry>,
-    _engine_id: String,
-    _profile_id: String,
-) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(windows)]
-fn install_browser_permission_gate<R: tauri::Runtime>(
+async fn install_browser_permission_gate<R: tauri::Runtime>(
     webview: &tauri::Webview<R>,
     registry: Arc<ShellxBrowserRegistry>,
     engine_id: String,
@@ -425,11 +228,14 @@ fn install_browser_permission_gate<R: tauri::Runtime>(
         }
     }
 
-    let install_result: Arc<Mutex<Result<(), String>>> = Arc::new(Mutex::new(Ok(())));
-    let install_result_for_hook = Arc::clone(&install_result);
-    webview
-        .with_webview(move |platform| {
-            let result = (|| -> windows::core::Result<()> {
+    with_windows_browser_webview(
+        webview,
+        "installing Browser permission gate",
+        move |platform| {
+            (|| -> windows::core::Result<()> {
+                // SAFETY: Tauri supplies the live WebView2 controller and the
+                // event handler captures owned state. COM interface and event
+                // registration failures are propagated through `Result`.
                 unsafe {
                     let controller = platform.controller();
                     let native = controller.CoreWebView2()?;
@@ -463,16 +269,14 @@ fn install_browser_permission_gate<R: tauri::Runtime>(
                 }
                 Ok(())
             })()
-            .map_err(|err| format!("failed to install Browser permission gate: {}", err));
-            *lock_or_recover(&install_result_for_hook) = result;
-        })
-        .map_err(|err| format!("failed to access Browser WebView2 handle: {}", err))?;
-    let result = lock_or_recover(&install_result).clone();
-    result
+            .map_err(|err| format!("failed to install Browser permission gate: {err}"))
+        },
+    )
+    .await
 }
 
 #[cfg(not(windows))]
-fn install_browser_permission_gate<R: tauri::Runtime>(
+async fn install_browser_permission_gate<R: tauri::Runtime>(
     _webview: &tauri::Webview<R>,
     _registry: Arc<ShellxBrowserRegistry>,
     _engine_id: String,
@@ -554,98 +358,34 @@ fn browser_permission_report_initialization_script() -> &'static str {
 "#
 }
 
-fn browser_page_context_menu_initialization_script() -> &'static str {
-    r#"
-(() => {
-  if (window.__shellxBrowserContextMenuInstalled) return;
-  window.__shellxBrowserContextMenuInstalled = true;
-  const MENU_ID = "__shellx_browser_context_menu";
-  const removeMenu = () => document.getElementById(MENU_ID)?.remove?.();
-  const linkHrefForEvent = (event) => {
-    const target = event.target instanceof Element ? event.target : null;
-    const anchor = target?.closest?.("a[href]");
-    const href = anchor?.href || "";
-    if (!href || /^javascript:/i.test(href)) return "";
-    return href;
-  };
-  const positionMenu = (menu, event) => {
-    const x = Math.max(8, Math.min(event.clientX, window.innerWidth - 190));
-    const y = Math.max(8, Math.min(event.clientY, window.innerHeight - 46));
-    menu.style.left = `${x}px`;
-    menu.style.top = `${y}px`;
-  };
-  document.addEventListener("contextmenu", (event) => {
-    const href = linkHrefForEvent(event);
-    if (!href) return;
-    event.preventDefault();
-    event.stopPropagation();
-    removeMenu();
-    const menu = document.createElement("div");
-    menu.id = MENU_ID;
-    menu.setAttribute("data-shellx-browser-context-menu", "true");
-    menu.style.cssText = [
-      "position:fixed",
-      "z-index:2147483647",
-      "min-width:180px",
-      "padding:4px",
-      "border:1px solid rgba(120,130,150,.35)",
-      "border-radius:6px",
-      "background:rgba(18,20,24,.98)",
-      "color:#f5f7fb",
-      "box-shadow:0 12px 32px rgba(0,0,0,.35)",
-      "font:13px system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
-    ].join(";");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "Open link in new tab";
-    button.setAttribute("data-shellx-browser-context-action", "open-link-new-tab");
-    button.style.cssText = [
-      "display:block",
-      "width:100%",
-      "border:0",
-      "border-radius:4px",
-      "padding:7px 10px",
-      "background:transparent",
-      "color:inherit",
-      "text-align:left",
-      "cursor:pointer",
-      "font:inherit"
-    ].join(";");
-    button.addEventListener("mouseenter", () => { button.style.background = "rgba(255,255,255,.12)"; });
-    button.addEventListener("mouseleave", () => { button.style.background = "transparent"; });
-    button.addEventListener("click", (clickEvent) => {
-      clickEvent.preventDefault();
-      clickEvent.stopPropagation();
-      removeMenu();
-      window.open(href, "_blank", "noopener,noreferrer");
-    });
-    menu.appendChild(button);
-    positionMenu(menu, event);
-    document.documentElement.appendChild(menu);
-  }, true);
-  document.addEventListener("pointerdown", (event) => {
-    if (!(event.target instanceof Element) || !event.target.closest(`#${MENU_ID}`)) removeMenu();
-  }, true);
-  window.addEventListener("blur", removeMenu);
-  window.addEventListener("scroll", removeMenu, true);
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") removeMenu();
-  }, true);
-})()
-"#
-}
-
 #[allow(dead_code)]
 fn normalize_browser_new_window_target_url(raw: &str) -> String {
     crate::shellx_browser_security::normalize_browser_external_redirect_url(raw)
 }
 
-pub(crate) fn sync_native_browser_engine(
+fn browser_runtime_urls_match(current: &str, target: &Url) -> bool {
+    Url::parse(current)
+        .map(|current| current == *target)
+        .unwrap_or_else(|_| current == target.as_str())
+}
+
+fn browser_webview_should_navigate(
+    preserve_existing_page: bool,
+    current_url: Option<&str>,
+    pending_url: Option<&str>,
+    target_url: &Url,
+) -> bool {
+    !preserve_existing_page
+        && !current_url.is_some_and(|current| browser_runtime_urls_match(current, target_url))
+        && !pending_url.is_some_and(|pending| browser_runtime_urls_match(pending, target_url))
+}
+
+pub(crate) async fn sync_native_browser_engine(
     app: &AppHandle,
     registry: &Arc<ShellxBrowserRegistry>,
     request: &BrowserEngineSyncRequest,
 ) -> Result<Option<String>, String> {
-    let _engine_sync_guard = lock_or_recover(&registry.engine_sync_lock);
+    let _engine_sync_guard = registry.engine_sync_lock.lock().await;
     ensure_browser_window_for_engine(app, !browser_engine_bounds_are_background(request.bounds))?;
     let window = app
         .get_window(BROWSER_WINDOW_LABEL)
@@ -664,12 +404,10 @@ pub(crate) fn sync_native_browser_engine(
         park_inactive_browser_engine_webviews(app, registry, &engine_id)?;
     }
     let storage_root = browser_profile_storage_root(&profile_id);
-    std::fs::create_dir_all(&storage_root).map_err(|e| {
-        format!(
-            "failed to create Browser profile storage {}: {}",
-            storage_root, e
-        )
-    })?;
+    crate::session_git::ensure_strict_private_dir(
+        std::path::Path::new(&storage_root),
+        "Browser profile storage",
+    )?;
     let privacy_mode =
         registry.effective_ad_mode_for_profile_id(Some(&profile_id), Some(target_url.as_str()));
     let strict_native_filter = browser_requires_native_request_filter(&privacy_mode);
@@ -707,7 +445,7 @@ pub(crate) fn sync_native_browser_engine(
             webview
                 .close()
                 .map_err(|e| format!("failed to recreate Browser engine for profile: {}", e))?;
-            wait_for_browser_engine_label_release(app, &engine_label)?;
+            wait_for_browser_engine_label_release(app, &engine_label).await?;
         } else {
             if !browser_engine_bounds_are_background(request.bounds) {
                 webview
@@ -717,20 +455,29 @@ pub(crate) fn sync_native_browser_engine(
             webview
                 .set_bounds(rect)
                 .map_err(|e| format!("failed to resize Browser engine: {}", e))?;
-            let current_webview_url = webview.url().ok().map(|current| current.to_string());
-            let should_navigate = !preserve_existing_page
-                && current_webview_url
-                    .as_deref()
-                    .map(|current| current != target_url.as_str())
-                    .unwrap_or(true);
+            // Keep URL reads in ShellX's lifecycle-owned registry. On macOS,
+            // Tauri dispatches `Webview::url()` to the event loop and Wry 0.55
+            // unconditionally unwraps `WKWebView.URL`. A concurrent close can
+            // leave that property nil before the queued getter runs, panicking
+            // the main thread. Page-load and action callbacks already commit
+            // the observed live URL to this engine snapshot.
+            let current_engine_url = current_engine
+                .as_ref()
+                .and_then(|engine| engine.url.clone());
+            let should_navigate = browser_webview_should_navigate(
+                preserve_existing_page,
+                current_engine_url.as_deref(),
+                current_engine
+                    .as_ref()
+                    .and_then(|engine| engine.pending_url.as_deref()),
+                &target_url,
+            );
             if should_navigate {
-                webview
-                    .navigate(target_url)
-                    .map_err(|e| format!("failed to navigate Browser engine: {}", e))?;
+                navigate_browser_webview(&webview, target_url).await?;
                 return Ok(None);
             }
             return Ok(if preserve_existing_page {
-                current_webview_url
+                current_engine_url
             } else {
                 None
             });
@@ -745,21 +492,22 @@ pub(crate) fn sync_native_browser_engine(
         let page_load_registry = Arc::clone(registry);
         let title_registry = Arc::clone(registry);
         let download_registry = Arc::clone(registry);
-        let initial_url = if strict_native_filter {
-            Url::parse("about:blank")
-                .map_err(|e| format!("failed to prepare strict Browser bootstrap URL: {}", e))?
-        } else {
-            target_url.clone()
-        };
+        let popup_registry = Arc::clone(registry);
+        let engine_id_for_popup = engine_id.clone();
+        let initial_url = Url::parse("about:blank")
+            .map_err(|e| format!("failed to prepare Browser bootstrap URL: {}", e))?;
         let webview_builder =
             browser_engine_webview_builder(engine_label.clone(), WebviewUrl::External(initial_url))
                 .data_directory(std::path::PathBuf::from(storage_root.clone()))
-                .initialization_script_for_all_frames(format!(
-                    "{}\n{}\n{}",
-                    browser_privacy_initialization_script(&privacy_mode),
-                    browser_permission_report_initialization_script(),
-                    browser_page_context_menu_initialization_script(),
+                .initialization_script_for_all_frames(browser_privacy_initialization_script(
+                    &privacy_mode,
                 ))
+                .initialization_script_for_all_frames(
+                    browser_permission_report_initialization_script(),
+                )
+                .initialization_script_for_all_frames(
+                    browser_page_context_menu_initialization_script(),
+                )
                 .disable_drag_drop_handler()
                 .on_navigation(move |url| {
                     browser_engine_url_allowed_for_registry_engine(
@@ -767,6 +515,37 @@ pub(crate) fn sync_native_browser_engine(
                         &engine_id_for_navigation,
                         url,
                     )
+                })
+                .on_new_window(move |url, _features| {
+                    let target_url = normalize_browser_new_window_target_url(url.as_str());
+                    if !target_url.is_empty() {
+                        let opener = {
+                            let state = popup_registry.state();
+                            state
+                                .engine_pool
+                                .engines
+                                .iter()
+                                .find(|engine| engine.engine_id == engine_id_for_popup)
+                                .or_else(|| {
+                                    (state.engine.engine_id == engine_id_for_popup)
+                                        .then_some(&state.engine)
+                                })
+                                .cloned()
+                        };
+                        let _ = popup_registry.record_popup_event(
+                            crate::shellx_browser::BrowserPopupRecordRequest {
+                                task_id: opener.as_ref().and_then(|engine| engine.task_id.clone()),
+                                browser_tab_id: opener
+                                    .as_ref()
+                                    .and_then(|engine| engine.browser_tab_id.clone()),
+                                opener_url: opener.as_ref().and_then(|engine| engine.url.clone()),
+                                target_url,
+                                disposition: Some("new-tab".to_string()),
+                                requires_approval: true,
+                            },
+                        );
+                    }
+                    NewWindowResponse::Deny
                 })
                 .on_page_load(move |_webview, payload| {
                     page_load_registry.record_engine_load_for_engine(
@@ -823,39 +602,59 @@ pub(crate) fn sync_native_browser_engine(
             LogicalSize::new(request.bounds.width, request.bounds.height),
         ) {
             Ok(webview) => {
-                install_browser_page_tab_behavior(
-                    &webview,
-                    Arc::clone(registry),
-                    engine_id.clone(),
-                    profile_id.clone(),
-                )?;
-                install_browser_permission_gate(&webview, Arc::clone(registry), engine_id.clone())?;
-                if strict_native_filter {
-                    install_strict_browser_request_filter(
+                let initialization: Result<(), String> = async {
+                    install_browser_native_credential_controls(&webview).await?;
+                    install_browser_permission_gate(
                         &webview,
                         Arc::clone(registry),
                         engine_id.clone(),
-                        profile_id.clone(),
-                    )?;
-                    webview
-                        .navigate(target_url.clone())
-                        .map_err(|e| format!("failed to navigate strict Browser engine: {}", e))?;
+                    )
+                    .await?;
+                    if strict_native_filter {
+                        install_strict_browser_request_filter(
+                            &webview,
+                            Arc::clone(registry),
+                            engine_id.clone(),
+                            profile_id.clone(),
+                        )
+                        .await?;
+                    }
+                    navigate_browser_webview(&webview, target_url.clone()).await?;
+                    if browser_engine_bounds_are_background(request.bounds) {
+                        webview.hide().map_err(|e| {
+                            format!("failed to hide background Browser engine: {}", e)
+                        })?;
+                    } else {
+                        webview
+                            .show()
+                            .map_err(|e| format!("failed to show Browser engine: {}", e))?;
+                    }
+                    Ok(())
                 }
-                if browser_engine_bounds_are_background(request.bounds) {
-                    webview
-                        .hide()
-                        .map_err(|e| format!("failed to hide background Browser engine: {}", e))?;
-                } else {
-                    webview
-                        .show()
-                        .map_err(|e| format!("failed to show Browser engine: {}", e))?;
+                .await;
+                if let Err(initialization_error) = initialization {
+                    let close_error = webview.close().err().map(|error| error.to_string());
+                    let release_error = wait_for_browser_engine_label_release(app, &engine_label)
+                        .await
+                        .err();
+                    let rollback_detail = match (close_error, release_error) {
+                        (None, None) => "rollback closed the partial Browser engine".to_string(),
+                        (close_error, release_error) => format!(
+                            "rollback incomplete (close: {}; release: {})",
+                            close_error.as_deref().unwrap_or("ok"),
+                            release_error.as_deref().unwrap_or("ok")
+                        ),
+                    };
+                    return Err(format!(
+                        "Browser engine initialization failed: {initialization_error}; {rollback_detail}"
+                    ));
                 }
                 return Ok(None);
             }
             Err(e) => {
                 let message = e.to_string();
                 if attempt == 0 && message.contains("already exists") {
-                    wait_for_browser_engine_label_release(app, &engine_label)?;
+                    wait_for_browser_engine_label_release(app, &engine_label).await?;
                     continue;
                 }
                 return Err(format!("failed to mount Browser engine webview: {}", e));
@@ -872,12 +671,55 @@ fn browser_engine_webview_builder<R: tauri::Runtime>(
     #[cfg(windows)]
     {
         WebviewBuilder::new(label, url)
+            .general_autofill_enabled(false)
             .additional_browser_args(SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS)
     }
     #[cfg(not(windows))]
     {
-        WebviewBuilder::new(label, url)
+        WebviewBuilder::new(label, url).general_autofill_enabled(false)
     }
+}
+
+#[cfg(windows)]
+async fn install_browser_native_credential_controls<R: tauri::Runtime>(
+    webview: &tauri::Webview<R>,
+) -> Result<(), String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
+    use windows::core::Interface;
+
+    with_windows_browser_webview(
+        webview,
+        "applying Browser credential controls",
+        move |platform| {
+            (|| -> windows::core::Result<()> {
+                // SAFETY: the platform value is Tauri's live WebView2
+                // controller. The queried settings interface is used only in
+                // this closure and each COM call propagates its HRESULT.
+                unsafe {
+                    let native = platform.controller().CoreWebView2()?;
+                    let settings = native.Settings()?;
+                    let settings4 = settings.cast::<ICoreWebView2Settings4>()?;
+                    settings4.SetIsGeneralAutofillEnabled(false)?;
+                    settings4.SetIsPasswordAutosaveEnabled(false)?;
+                }
+                Ok(())
+            })()
+            .map_err(|err| {
+                format!(
+                    "failed to disable native Browser credential autofill and password autosave: {}",
+                    err
+                )
+            })
+        },
+    )
+    .await
+}
+
+#[cfg(not(windows))]
+async fn install_browser_native_credential_controls<R: tauri::Runtime>(
+    _webview: &tauri::Webview<R>,
+) -> Result<(), String> {
+    Ok(())
 }
 
 fn park_inactive_browser_engine_webviews(
@@ -953,7 +795,7 @@ fn browser_engine_url_allowed_for_registry_engine(
     if !matches!(url.scheme(), "http" | "https" | "about") {
         return false;
     }
-    if url.scheme() == "about" || !browser_url_uses_private_network(url) {
+    if url.scheme() == "about" {
         return true;
     }
     let Some(host) = url.host_str() else {
@@ -961,17 +803,34 @@ fn browser_engine_url_allowed_for_registry_engine(
     };
     if let Some(task_id) = engine.task_id.as_deref() {
         if let Some(task) = state.tasks.iter().find(|task| task.task_id == task_id) {
-            return browser_host_matches_expected_domains(host, &task.expected_domains);
+            if browser_host_matches_blocked_domains(host, &task.blocked_domains) {
+                return false;
+            }
+            let matches_expected =
+                browser_host_matches_expected_domains(host, &task.expected_domains);
+            if !task.expected_domains.is_empty() && !matches_expected {
+                return false;
+            }
+            if browser_url_uses_private_network(url) {
+                return matches_expected;
+            }
+            return true;
         }
     }
     if let Some(tab_id) = engine.browser_tab_id.as_deref() {
         if let Some(tab) = state.tabs.iter().find(|tab| tab.browser_tab_id == tab_id) {
-            if browser_host_matches_expected_domains(host, &tab.expected_domains) {
-                return true;
+            let matches_expected =
+                browser_host_matches_expected_domains(host, &tab.expected_domains);
+            if !tab.expected_domains.is_empty() && !matches_expected {
+                return false;
             }
+            if browser_url_uses_private_network(url) {
+                return matches_expected;
+            }
+            return true;
         }
     }
-    profile_id == "personal"
+    !browser_url_uses_private_network(url) || profile_id == "personal"
 }
 
 fn browser_engine_url_allowed_for_registry_profile(
@@ -1035,6 +894,36 @@ pub(crate) fn engine_bounds_rect(bounds: BrowserEngineBounds) -> Result<Rect, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_navigation_is_not_reissued_during_layout_sync() {
+        let target = Url::parse("https://example.com/pending?step=1").expect("target parses");
+
+        assert!(!browser_webview_should_navigate(
+            false,
+            Some("about:blank"),
+            Some("https://example.com/pending?step=1"),
+            &target,
+        ));
+        assert!(!browser_webview_should_navigate(
+            false,
+            Some("https://example.com/pending?step=1"),
+            None,
+            &target,
+        ));
+        assert!(!browser_webview_should_navigate(
+            true,
+            Some("https://example.com/previous"),
+            None,
+            &target,
+        ));
+        assert!(browser_webview_should_navigate(
+            false,
+            Some("https://example.com/previous"),
+            Some("https://example.com/previous"),
+            &target,
+        ));
+    }
 
     #[test]
     fn new_window_google_redirect_targets_destination_url() {

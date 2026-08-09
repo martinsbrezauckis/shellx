@@ -32,15 +32,51 @@
  * │ [new value (password)] [ Save ][ ✕ ] │
  * └────────────────────────────────────────────────────┘
  */
-import { useCallback, useEffect, useMemo, useState, type JSX, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ShellIcon } from "../icons";
 import { VaultPasswordGenerator } from "../VaultPasswordGenerator";
 import { VaultGrantsPanel, type GrantOperation, type GrantSummary } from "./VaultGrantsPanel";
-import { VaultSetupPanel } from "./VaultSetupPanel";
+import { OWNED_DEBUG_VAULT_RECOVERY_WORDS, VaultSetupPanel } from "./VaultSetupPanel";
+import "./vaultFields.css";
 import { isTrustedShellxUserEvent, type ShellxUserEventLike } from "../../lib/trusted-user-event";
 import { generateVaultPassword } from "../../lib/vault-password-generator";
+import {
+  PERMISSION_LEVELS,
+  VAULT_RESOURCE_FORM_TABS,
+  activeGrantsBySecretRef,
+  countActiveGrants,
+  desiredGrantOperationsForLevel,
+  groupVaultEntriesByResourceKind,
+  normalizeGrantOperation,
+  permissionLevelForEntry,
+  permissionLevelLabel,
+  profileResourceSummary,
+  resourceFieldsFromObject,
+  resourceKindOf,
+  resourceKindTitle,
+  slug,
+  splitCsv,
+  type PermissionLevel,
+  type VaultResourceFormTab,
+  type VaultResourceKind,
+  type VaultWorkspaceTab,
+} from "../../lib/vault-resource-model";
 import type { VaultPanelIntent } from "../../lib/vault-ui";
+import { inTauri } from "../../lib/tauri-bridge";
+import {
+  OWNED_DEBUG_VAULT_SECRET_KEY,
+  OWNED_DEBUG_VAULT_SECRET_VALUE,
+} from "../../lib/debug-vault-clipboard-fixture";
 
 /** Mirrors shellx_vault::ShellxVaultStatus on the Rust side. camelCase wire. */
 interface VaultStatus {
@@ -70,23 +106,29 @@ interface VaultKeyMeta {
   lastModifiedMs?: number;
 }
 
+const VAULT_WORKSPACE_TABS: readonly VaultWorkspaceTab[] = ["secrets", "grants", "setup"];
+
+function handleVaultTabKeyDown<T extends string>(
+  event: KeyboardEvent<HTMLButtonElement>,
+  tabs: readonly T[],
+  current: T,
+  select: (tab: T) => void,
+  controlId: (tab: T) => string,
+): void {
+  const currentIndex = tabs.indexOf(current);
+  let next: T | undefined;
+  if (event.key === "ArrowRight") next = tabs[(currentIndex + 1) % tabs.length];
+  else if (event.key === "ArrowLeft") next = tabs[(currentIndex - 1 + tabs.length) % tabs.length];
+  else if (event.key === "Home") next = tabs[0];
+  else if (event.key === "End") next = tabs[tabs.length - 1];
+  if (!next) return;
+  event.preventDefault();
+  select(next);
+  window.setTimeout(() => document.getElementById(controlId(next))?.focus(), 0);
+}
+
 /** Toast surface — single line, auto-dismissed, success or error. */
 type Toast = { kind: "ok" | "err"; text: string } | null;
-
-type PermissionLevel = "userOnly" | "visible" | "browserFillAlways" | "toolUseAlways";
-type VaultResourceKind = "secret" | "profileCard" | "emailInbox" | "stripeAgentWallet";
-type VaultResourceFormTab = "secret" | "profileCard" | "stripeAgentWallet";
-type VaultWorkspaceTab = "secrets" | "grants" | "setup";
-
-const VAULT_RESOURCE_FORM_TABS: Array<{
-  id: VaultResourceFormTab;
-  label: string;
-  countKind: VaultResourceKind;
-}> = [
-  { id: "secret", label: "Secrets", countKind: "secret" },
-  { id: "profileCard", label: "Profile cards", countKind: "profileCard" },
-  { id: "stripeAgentWallet", label: "Agent wallets", countKind: "stripeAgentWallet" },
-];
 
 /** Per-row local state for the inline "Replace value" + "Delete?" flows. */
 type RowState = {
@@ -117,12 +159,14 @@ export function VaultTab({
   externalStatus,
   statusRefreshSeq = 0,
   onStatusChange,
+  debugClipboardFixture = null,
 }: {
   intent?: VaultPanelIntent;
   intentSeq?: number;
   externalStatus?: VaultStatus | null;
   statusRefreshSeq?: number;
   onStatusChange?: (status: VaultStatus) => void;
+  debugClipboardFixture?: "owned-safe" | null;
 } = {}): JSX.Element {
   const [entries, setEntries] = useState<VaultKeyMeta[]>([]);
   const [grants, setGrants] = useState<GrantSummary[]>([]);
@@ -174,9 +218,32 @@ export function VaultTab({
   const [secretGeneratorOpen, setSecretGeneratorOpen] = useState(false);
  // Per-row inline UI state, keyed by secret name.
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
+  const clipboardFixtureActive = debugClipboardFixture === "owned-safe";
+  const desktopVaultAvailable = clipboardFixtureActive || inTauri();
 
  /** Load both the key list and the status badge in parallel. */
   const refresh = useCallback(async () => {
+    if (!desktopVaultAvailable) return;
+    if (clipboardFixtureActive) {
+      setEntries([{
+        key: OWNED_DEBUG_VAULT_SECRET_KEY,
+        description: "Synthetic release clipboard fixture",
+        userOnly: true,
+        resourceKind: "secret",
+      }]);
+      setGrants([]);
+      setStatus({
+        mode: "local",
+        unlocked: true,
+        recoveryConfirmed: true,
+        initialized: true,
+        keyCount: 1,
+        lastError: "Synthetic release fixture: canonical and legacy Vault profiles differ.",
+      });
+      setBusy(false);
+      setToast(null);
+      return;
+    }
     setBusy(true);
     try {
       const [k, s, g] = await Promise.all([
@@ -194,7 +261,7 @@ export function VaultTab({
     } finally {
       setBusy(false);
     }
-  }, [onStatusChange]);
+  }, [clipboardFixtureActive, desktopVaultAvailable, onStatusChange]);
 
   useEffect(() => {
     void refresh();
@@ -209,6 +276,11 @@ export function VaultTab({
   }, [refresh, statusRefreshSeq]);
 
   useEffect(() => {
+    if (intent === "setup") {
+      setWorkspaceTab("setup");
+      setSecretGeneratorOpen(false);
+      return;
+    }
     if (intent === "newSecret" || intent === "generatePassword") {
       setWorkspaceTab("secrets");
       setResourceFormTab("secret");
@@ -231,19 +303,7 @@ export function VaultTab({
 
   const keys = useMemo(() => entries.map((entry) => entry.key), [entries]);
 
-  const activeGrantsBySecretRef = useMemo(() => {
-    const now = Date.now();
-    const grouped = new Map<string, GrantSummary[]>();
-    for (const grant of grants) {
-      if (!grant.approved) continue;
-      if (grant.revoked) continue;
-      if (grant.expiresAtMs && grant.expiresAtMs <= now) continue;
-      const existing = grouped.get(grant.secretRef) ?? [];
-      existing.push(grant);
-      grouped.set(grant.secretRef, existing);
-    }
-    return grouped;
-  }, [grants]);
+  const activeGrantsByRef = useMemo(() => activeGrantsBySecretRef(grants), [grants]);
 
   const filtered = useMemo(
     () => {
@@ -260,18 +320,7 @@ export function VaultTab({
     [entries, filter],
   );
 
-  const groupedEntries = useMemo(() => {
-    const groups: Record<VaultResourceKind, VaultKeyMeta[]> = {
-      secret: [],
-      profileCard: [],
-      emailInbox: [],
-      stripeAgentWallet: [],
-    };
-    for (const entry of filtered) {
-      groups[resourceKindOf(entry)].push(entry);
-    }
-    return groups;
-  }, [filtered]);
+  const groupedEntries = useMemo(() => groupVaultEntriesByResourceKind(filtered), [filtered]);
 
  /** Update one row's inline state without disturbing the others. */
   const patchRow = useCallback((key: string, patch: Partial<RowState>) => {
@@ -282,6 +331,28 @@ export function VaultTab({
       return { ...prev, [key]: { ...cur, ...patch } };
     });
   }, []);
+  const revealTimers = useRef(new Map<string, number>());
+
+  const hideRevealedValue = useCallback((key: string) => {
+    const timer = revealTimers.current.get(key);
+    if (timer !== undefined) window.clearTimeout(timer);
+    revealTimers.current.delete(key);
+    patchRow(key, { revealValue: null });
+  }, [patchRow]);
+
+  useEffect(() => () => {
+    for (const timer of revealTimers.current.values()) window.clearTimeout(timer);
+    revealTimers.current.clear();
+  }, []);
+
+  useEffect(() => {
+    if (status?.unlocked !== false) return;
+    for (const timer of revealTimers.current.values()) window.clearTimeout(timer);
+    revealTimers.current.clear();
+    setRowState((previous) => Object.fromEntries(
+      Object.entries(previous).map(([key, row]) => [key, { ...row, revealValue: null }]),
+    ));
+  }, [status?.unlocked]);
 
  /** Save flow for the top "Add a secret" row. */
   async function handleAdd(): Promise<void> {
@@ -474,6 +545,9 @@ export function VaultTab({
       setToast({ kind: "err", text: "Secret reveal requires a direct user click." });
       return null;
     }
+    if (clipboardFixtureActive && key === OWNED_DEBUG_VAULT_SECRET_KEY) {
+      return OWNED_DEBUG_VAULT_SECRET_VALUE;
+    }
     try {
       const value = await invoke<string | null>("vault_get", { key });
       if (value === null || value === undefined) {
@@ -501,12 +575,15 @@ export function VaultTab({
   async function handleRevealValue(key: string, event?: ShellxUserEventLike): Promise<void> {
     const current = rowState[key];
     if (current?.revealValue !== null && current?.revealValue !== undefined) {
-      patchRow(key, { revealValue: null });
+      hideRevealedValue(key);
       return;
     }
     const value = await loadSecretForUser(key, event);
     if (value === null) return;
     patchRow(key, { revealValue: value });
+    const previousTimer = revealTimers.current.get(key);
+    if (previousTimer !== undefined) window.clearTimeout(previousTimer);
+    revealTimers.current.set(key, window.setTimeout(() => hideRevealedValue(key), 45_000));
     setToast({ kind: "ok", text: `Revealed ${key}` });
   }
 
@@ -538,12 +615,29 @@ export function VaultTab({
       setToast({ kind: "err", text: "Permission changes require a direct user click." });
       return;
     }
+    let browserGrantOrigin: string | null = null;
+    if (level === "browserFillAlways") {
+      const entered = window.prompt(
+        "Exact website origin allowed to use this Vault item (for example https://accounts.example.com)",
+      );
+      if (entered === null) return;
+      try {
+        browserGrantOrigin = normalizeBrowserGrantOriginInput(entered);
+      } catch (error) {
+        setToast({ kind: "err", text: formatErr(error) });
+        return;
+      }
+    }
     const key = entry.key;
     const desiredOps = desiredGrantOperationsForLevel(level, resourceKindOf(entry));
-    const activeGrants = activeGrantsBySecretRef.get(key) ?? [];
+    const activeGrants = activeGrantsByRef.get(key) ?? [];
     const persistentOps = new Set(
       activeGrants
         .filter((grant) => !grant.expiresAtMs)
+        .filter((grant) => {
+          const operation = normalizeGrantOperation(grant.operation);
+          return !isBrowserGrantOperation(operation) || grant.origin === browserGrantOrigin;
+        })
         .map((grant) => normalizeGrantOperation(grant.operation))
         .filter((operation): operation is GrantOperation => Boolean(operation)),
     );
@@ -556,7 +650,9 @@ export function VaultTab({
       });
       for (const grant of activeGrants) {
         const operation = normalizeGrantOperation(grant.operation);
-        if (!operation || !desiredOps.includes(operation)) {
+        const wrongBrowserOrigin =
+          isBrowserGrantOperation(operation) && grant.origin !== browserGrantOrigin;
+        if (!operation || !desiredOps.includes(operation) || wrongBrowserOrigin) {
           await invoke("shellx_vault_revoke_grant", { grantId: grant.grantId });
         }
       }
@@ -567,6 +663,7 @@ export function VaultTab({
             secretRef: key,
             actorScope: { kind: "allShellxAgents" },
             operation,
+            origin: isBrowserGrantOperation(operation) ? browserGrantOrigin : null,
             expiresAtMs: null,
           },
         });
@@ -630,35 +727,79 @@ export function VaultTab({
   const canAdd = addKey.trim().length > 0 && addValue.length > 0 && !adding;
   const activeGrantCount = countActiveGrants(grants);
 
+  if (!desktopVaultAvailable) {
+    return (
+      <div className="settings-tab-body vault-tab">
+        <div
+          className="vault-empty"
+          role="status"
+        >
+          Desktop Vault is unavailable in browser preview. Open ShellX desktop to view or
+          change encrypted items, grants, and setup.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="settings-tab-body vault-tab">
       <div className="vault-workspace-tabs" role="tablist" aria-label="Vault workspace">
         <button
           type="button"
+          id="vault-tab-secrets"
           className={`vault-workspace-tab ${workspaceTab === "secrets" ? "active" : ""}`}
           role="tab"
           aria-selected={workspaceTab === "secrets"}
+          aria-controls="vault-workspace-panel-secrets"
+          tabIndex={workspaceTab === "secrets" ? 0 : -1}
           onClick={() => setWorkspaceTab("secrets")}
+          onKeyDown={(event) => handleVaultTabKeyDown(
+            event,
+            VAULT_WORKSPACE_TABS,
+            workspaceTab,
+            setWorkspaceTab,
+            (tab) => `vault-tab-${tab}`,
+          )}
           data-debug-id="vault-tab-secrets"
         >
-          Secrets
+          Passwords & keys
         </button>
         <button
           type="button"
+          id="vault-tab-grants"
           className={`vault-workspace-tab ${workspaceTab === "grants" ? "active" : ""}`}
           role="tab"
           aria-selected={workspaceTab === "grants"}
+          aria-controls="vault-workspace-panel-grants"
+          tabIndex={workspaceTab === "grants" ? 0 : -1}
           onClick={() => setWorkspaceTab("grants")}
+          onKeyDown={(event) => handleVaultTabKeyDown(
+            event,
+            VAULT_WORKSPACE_TABS,
+            workspaceTab,
+            setWorkspaceTab,
+            (tab) => `vault-tab-${tab}`,
+          )}
           data-debug-id="vault-tab-grants"
         >
           Active grants <span>{activeGrantCount} active</span>
         </button>
         <button
           type="button"
+          id="vault-tab-setup"
           className={`vault-workspace-tab ${workspaceTab === "setup" ? "active" : ""}`}
           role="tab"
           aria-selected={workspaceTab === "setup"}
+          aria-controls="vault-workspace-panel-setup"
+          tabIndex={workspaceTab === "setup" ? 0 : -1}
           onClick={() => setWorkspaceTab("setup")}
+          onKeyDown={(event) => handleVaultTabKeyDown(
+            event,
+            VAULT_WORKSPACE_TABS,
+            workspaceTab,
+            setWorkspaceTab,
+            (tab) => `vault-tab-${tab}`,
+          )}
           data-debug-id="vault-tab-setup"
         >
           Setup
@@ -701,12 +842,17 @@ export function VaultTab({
       )}
 
       {workspaceTab === "secrets" && (
-        <>
+        <div
+          id="vault-workspace-panel-secrets"
+          role="tabpanel"
+          aria-labelledby="vault-tab-secrets"
+        >
           <div className="vault-filter-row">
             <input
               type="text"
               className="settings-input"
               data-debug-id="vault-filter-input"
+              data-shellx-release-observe="nonempty"
               placeholder={`Filter ${keys.length} key${keys.length === 1 ? "" : "s"}…`}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
@@ -720,11 +866,21 @@ export function VaultTab({
                 <button
                   key={tab.id}
                   type="button"
+                  id={`vault-resource-form-tab-${tab.id}`}
                   className={`vault-resource-form-tab ${resourceFormTab === tab.id ? "active" : ""}`}
                   role="tab"
                   aria-selected={resourceFormTab === tab.id}
+                  aria-controls={`vault-resource-form-panel-${tab.id}`}
+                  tabIndex={resourceFormTab === tab.id ? 0 : -1}
                   data-debug-id={`vault-resource-form-tab-${tab.id}`}
                   onClick={() => setResourceFormTab(tab.id)}
+                  onKeyDown={(event) => handleVaultTabKeyDown(
+                    event,
+                    VAULT_RESOURCE_FORM_TABS.map(({ id }) => id),
+                    resourceFormTab,
+                    setResourceFormTab,
+                    (resourceTab) => `vault-resource-form-tab-${resourceTab}`,
+                  )}
                 >
                   <span>{tab.label}</span>
                   <span className="vault-resource-form-tab-count">
@@ -733,7 +889,12 @@ export function VaultTab({
                 </button>
               ))}
             </div>
-            <div className="vault-resource-form-panel" role="tabpanel">
+            <div
+              id={`vault-resource-form-panel-${resourceFormTab}`}
+              className="vault-resource-form-panel"
+              role="tabpanel"
+              aria-labelledby={`vault-resource-form-tab-${resourceFormTab}`}
+            >
               {resourceFormTab === "secret" && (
                 <SecretForm
                   keyName={addKey}
@@ -786,16 +947,16 @@ export function VaultTab({
             {filtered.length === 0 ? (
               <div className="vault-empty">
                 {keys.length === 0
-                  ? "Vault is empty. Add your first secret above."
+                  ? "Vault is empty. Add your first password or key above."
                   : "No matches."}
               </div>
             ) : (
               <>
                 <VaultResourceSection
                   debugId="vault-resource-section-secrets"
-                  title="Secrets"
+                  title="Passwords & keys"
                   entries={groupedEntries.secret}
-                  emptyText="No plain secrets match this filter."
+                  emptyText="No passwords or keys match this filter."
                   renderEntry={renderVaultEntry}
                 />
                 <VaultResourceSection
@@ -815,20 +976,36 @@ export function VaultTab({
               </>
             )}
           </div>
-        </>
+        </div>
       )}
 
       {workspaceTab === "grants" && (
-        <VaultGrantsPanel
-          grants={grants}
-          busy={busy}
-          onRefresh={() => void refresh()}
-          onRevoke={(grantId) => void handleRevokeGrant(grantId)}
-        />
+        <div
+          id="vault-workspace-panel-grants"
+          role="tabpanel"
+          aria-labelledby="vault-tab-grants"
+        >
+          <VaultGrantsPanel
+            grants={grants}
+            busy={busy}
+            onRefresh={() => void refresh()}
+            onRevoke={(grantId) => void handleRevokeGrant(grantId)}
+          />
+        </div>
       )}
 
       {workspaceTab === "setup" && (
-        <VaultSetupPanel status={status} onRefresh={() => void refresh()} />
+        <div
+          id="vault-workspace-panel-setup"
+          role="tabpanel"
+          aria-labelledby="vault-tab-setup"
+        >
+          <VaultSetupPanel
+            status={status}
+            onRefresh={() => void refresh()}
+            debugRecoveryWords={clipboardFixtureActive ? OWNED_DEBUG_VAULT_RECOVERY_WORDS : null}
+          />
+        </div>
       )}
     </div>
   );
@@ -838,7 +1015,7 @@ export function VaultTab({
     const r = rowState[key] ?? {
       ...defaultRowState(),
     };
-    const activeGrants = activeGrantsBySecretRef.get(key) ?? [];
+    const activeGrants = activeGrantsByRef.get(key) ?? [];
     const permissionLevel = permissionLevelForEntry(entry, activeGrants);
     return (
       <VaultRow
@@ -861,7 +1038,7 @@ export function VaultTab({
         onSubmitReplace={() => void handleReplace(key)}
         onCopyValue={(event) => void handleCopyValue(key, event)}
         onRevealValue={(event) => void handleRevealValue(key, event)}
-        onHideReveal={() => patchRow(key, { revealValue: null })}
+        onHideReveal={() => hideRevealedValue(key)}
         onStartMetadataEdit={() =>
           patchRow(key, {
             editingMetadata: true,
@@ -1011,7 +1188,7 @@ function VaultRow({
             {userOnly && (
               <span
                 className="vault-user-only-badge"
-                style={{ marginLeft: 8, color: "var(--accent-warn, #d9a441)" }}
+                style={{ marginLeft: 8, color: "var(--accent-warn)" }}
               >
                 user-only
               </span>
@@ -1088,7 +1265,7 @@ function VaultRow({
         </div>
       </div>
       {row.revealValue !== null && (
-        <div className="vault-row-reveal" data-debug-id="vault-row-reveal">
+        <div className="vault-row-reveal" data-debug-id="vault-row-reveal" data-shellx-sensitive="true">
           <input
             className="settings-input vault-revealed-value"
             value={row.revealValue}
@@ -1096,7 +1273,7 @@ function VaultRow({
             spellCheck={false}
             aria-label={`Revealed value for ${name}`}
           />
-          <button type="button" className="settings-pill" onClick={onHideReveal} title="Hide value">
+          <button type="button" className="settings-pill" onClick={onHideReveal} title="Hide value" aria-label="Hide value">
             <ShellIcon name="eye-off" size={13} />
           </button>
         </div>
@@ -1118,6 +1295,7 @@ function VaultRow({
           <textarea
             className="settings-input"
             data-debug-id="vault-description-input"
+            data-shellx-release-observe="value"
             placeholder="description visible to agents unless marked user-only"
             value={row.descriptionValue}
             onChange={(e) => onChangeDescriptionValue(e.target.value)}
@@ -1131,6 +1309,7 @@ function VaultRow({
             <input
               type="checkbox"
               data-debug-id="vault-user-only-toggle"
+              data-shellx-release-observe="checked"
               checked={row.userOnlyValue}
               onChange={(e) => onChangeUserOnlyValue(e.target.checked)}
             />
@@ -1139,7 +1318,7 @@ function VaultRow({
           <button type="submit" className="settings-pill active">
             Save
           </button>
-          <button type="button" className="settings-pill" onClick={onCancelMetadata}>
+          <button data-debug-id="surface-components-settings-vaulttab-18" type="button" className="settings-pill" onClick={onCancelMetadata} aria-label={`Cancel metadata changes for ${name}`}>
             <ShellIcon name="close" size={13} />
           </button>
         </form>
@@ -1147,6 +1326,7 @@ function VaultRow({
       {row.replacing && (
         <form
           className="vault-row-edit"
+          data-shellx-sensitive="true"
           onSubmit={(e) => {
             e.preventDefault();
             if (canSubmitReplace) onSubmitReplace();
@@ -1183,10 +1363,11 @@ function VaultRow({
             type="submit"
             className={`settings-pill ${canSubmitReplace ? "active" : ""}`}
             disabled={!canSubmitReplace}
+            data-shellx-release-observe="disabled"
           >
             Save
           </button>
-          <button type="button" className="settings-pill" onClick={onCancelReplace}>
+          <button data-debug-id="surface-components-settings-vaulttab-22" type="button" className="settings-pill" onClick={onCancelReplace} aria-label={`Cancel value replacement for ${name}`}>
             <ShellIcon name="close" size={13} />
           </button>
         </form>
@@ -1271,12 +1452,13 @@ function SecretForm({
         if (canSubmit) onSubmit();
       }}
     >
-      <h3>Secrets</h3>
+      <h3>Passwords & keys</h3>
       <div className="vault-resource-grid">
         <input
           type="text"
           className="settings-input"
           data-debug-id="vault-secret-key-input"
+          data-shellx-release-observe="nonempty"
           placeholder="namespace/name (e.g. accounts/example-password)"
           value={keyName}
           onChange={(event) => onChange({ keyName: event.target.value })}
@@ -1289,6 +1471,8 @@ function SecretForm({
             type={valueVisible ? "text" : "password"}
             className="settings-input"
             data-debug-id="vault-secret-value-input"
+            data-shellx-sensitive="true"
+            data-shellx-release-observe="nonempty"
             placeholder="value"
             value={value}
             onChange={(event) => onChange({ value: event.target.value })}
@@ -1321,6 +1505,7 @@ function SecretForm({
             onClick={onCopyGenerated}
             disabled={!value}
             title="Copy without revealing"
+            aria-label="Copy without revealing"
           >
             <ShellIcon name="copy" size={13} />
           </button>
@@ -1333,13 +1518,14 @@ function SecretForm({
           onUsePassword={onUseGenerated}
           usePasswordLabel="Use in field"
           onSavePassword={onSaveGenerated}
-          savePasswordLabel="Save secret"
+          savePasswordLabel="Save password/key"
           savePasswordDisabled={!keyName.trim() || busy}
         />
       )}
       <textarea
         className="settings-input"
         data-debug-id="vault-description-input"
+        data-shellx-release-observe="value"
         placeholder="description visible to agents unless marked user-only"
         value={description}
         onChange={(event) => onChange({ description: event.target.value })}
@@ -1353,20 +1539,30 @@ function SecretForm({
           <input
             type="checkbox"
             data-debug-id="vault-user-only-toggle"
+            data-shellx-release-observe="checked"
             checked={userOnly}
             onChange={(event) => onChange({ userOnly: event.target.checked })}
           />
           <span>User-only</span>
         </label>
-        <button
+        <button data-debug-id="surface-components-settings-vaulttab-30"
           type="submit"
           className={`settings-pill ${canSubmit ? "active" : ""}`}
           disabled={!canSubmit}
         >
-          {busy ? "Saving…" : "Save secret"}
+          {busy ? "Saving…" : "Save password/key"}
         </button>
       </div>
     </form>
+  );
+}
+
+function VaultField({ label, children }: { label: string; children: JSX.Element }): JSX.Element {
+  return (
+    <label className="vault-field">
+      <span className="vault-field-label">{label}</span>
+      {children}
+    </label>
   );
 }
 
@@ -1408,24 +1604,52 @@ function ProfileCardForm({
     >
       <h3>Profile cards</h3>
       <div className="vault-resource-grid">
-        <input className="settings-input" placeholder="Card label" value={form.label} onChange={(event) => onChange({ label: event.target.value })} />
-        <input className="settings-input" placeholder="Full name" value={form.fullName} onChange={(event) => onChange({ fullName: event.target.value })} autoComplete="name" />
-        <input className="settings-input" placeholder="Email" value={form.email} onChange={(event) => onChange({ email: event.target.value })} autoComplete="email" />
-        <input className="settings-input" placeholder="Username" value={form.username} onChange={(event) => onChange({ username: event.target.value })} autoComplete="username" />
-        <input className="settings-input" placeholder="Company" value={form.company} onChange={(event) => onChange({ company: event.target.value })} autoComplete="organization" />
-        <input className="settings-input" placeholder="Role" value={form.role} onChange={(event) => onChange({ role: event.target.value })} />
-        <input className="settings-input" placeholder="Phone" value={form.phone} onChange={(event) => onChange({ phone: event.target.value })} autoComplete="tel" />
-        <input className="settings-input" placeholder="Address line 1" value={form.addressLine1} onChange={(event) => onChange({ addressLine1: event.target.value })} autoComplete="address-line1" />
-        <input className="settings-input" placeholder="Address line 2" value={form.addressLine2} onChange={(event) => onChange({ addressLine2: event.target.value })} autoComplete="address-line2" />
-        <input className="settings-input" placeholder="City" value={form.city} onChange={(event) => onChange({ city: event.target.value })} autoComplete="address-level2" />
-        <input className="settings-input" placeholder="Region" value={form.region} onChange={(event) => onChange({ region: event.target.value })} autoComplete="address-level1" />
-        <input className="settings-input" placeholder="Postal code" value={form.postalCode} onChange={(event) => onChange({ postalCode: event.target.value })} autoComplete="postal-code" />
-        <input className="settings-input" placeholder="Country" value={form.country} onChange={(event) => onChange({ country: event.target.value })} autoComplete="country-name" />
+        <VaultField label="Card label">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Card label" value={form.label} onChange={(event) => onChange({ label: event.target.value })} />
+        </VaultField>
+        <VaultField label="Full name">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Full name" value={form.fullName} onChange={(event) => onChange({ fullName: event.target.value })} autoComplete="name" />
+        </VaultField>
+        <VaultField label="Email">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Email" value={form.email} onChange={(event) => onChange({ email: event.target.value })} autoComplete="email" />
+        </VaultField>
+        <VaultField label="Username">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Username" value={form.username} onChange={(event) => onChange({ username: event.target.value })} autoComplete="username" />
+        </VaultField>
+        <VaultField label="Company">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Company" value={form.company} onChange={(event) => onChange({ company: event.target.value })} autoComplete="organization" />
+        </VaultField>
+        <VaultField label="Role">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Role" value={form.role} onChange={(event) => onChange({ role: event.target.value })} />
+        </VaultField>
+        <VaultField label="Phone">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Phone" value={form.phone} onChange={(event) => onChange({ phone: event.target.value })} autoComplete="tel" />
+        </VaultField>
+        <VaultField label="Address line 1">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Address line 1" value={form.addressLine1} onChange={(event) => onChange({ addressLine1: event.target.value })} autoComplete="address-line1" />
+        </VaultField>
+        <VaultField label="Address line 2">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Address line 2" value={form.addressLine2} onChange={(event) => onChange({ addressLine2: event.target.value })} autoComplete="address-line2" />
+        </VaultField>
+        <VaultField label="City">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="City" value={form.city} onChange={(event) => onChange({ city: event.target.value })} autoComplete="address-level2" />
+        </VaultField>
+        <VaultField label="Region">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Region" value={form.region} onChange={(event) => onChange({ region: event.target.value })} autoComplete="address-level1" />
+        </VaultField>
+        <VaultField label="Postal code">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Postal code" value={form.postalCode} onChange={(event) => onChange({ postalCode: event.target.value })} autoComplete="postal-code" />
+        </VaultField>
+        <VaultField label="Country">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Country" value={form.country} onChange={(event) => onChange({ country: event.target.value })} autoComplete="country-name" />
+        </VaultField>
       </div>
-      <textarea className="settings-input" placeholder="description visible to agents unless marked user-only" value={form.description} onChange={(event) => onChange({ description: event.target.value })} rows={2} />
+      <VaultField label="Description">
+        <textarea className="settings-input" data-shellx-release-observe="nonempty" placeholder="description visible to agents unless marked user-only" value={form.description} onChange={(event) => onChange({ description: event.target.value })} rows={2} />
+      </VaultField>
       <div className="vault-resource-form-actions">
         <label className="settings-pill">
-          <input type="checkbox" checked={form.userOnly} onChange={(event) => onChange({ userOnly: event.target.checked })} />
+          <input data-debug-id="surface-components-settings-vaulttab-45" data-shellx-release-observe="checked" type="checkbox" checked={form.userOnly} onChange={(event) => onChange({ userOnly: event.target.checked })} />
           <span>User-only</span>
         </label>
         <button type="submit" className="settings-pill active" disabled={busy || !form.label.trim()}>
@@ -1472,29 +1696,53 @@ function AgentWalletForm({
     >
       <h3>Agent wallets</h3>
       <div className="vault-resource-grid">
-        <input className="settings-input" placeholder="Wallet label" value={form.label} onChange={(event) => onChange({ label: event.target.value })} />
-        <select className="settings-input" value={form.stripeMode} onChange={(event) => onChange({ stripeMode: event.target.value })}>
-          <option value="test">Stripe test</option>
-          <option value="live">Stripe live</option>
-        </select>
-        <input className="settings-input" placeholder="Stripe API secret ref" value={form.stripeApiKeyRef} onChange={(event) => onChange({ stripeApiKeyRef: event.target.value })} />
-        <input className="settings-input" placeholder="Webhook signing secret ref" value={form.webhookSecretRef} onChange={(event) => onChange({ webhookSecretRef: event.target.value })} />
-        <input className="settings-input" placeholder="Stripe account ref" value={form.accountRef} onChange={(event) => onChange({ accountRef: event.target.value })} />
-        <input className="settings-input" placeholder="Stripe cardholder ref" value={form.cardholderRef} onChange={(event) => onChange({ cardholderRef: event.target.value })} />
-        <input className="settings-input" placeholder="Stripe card ref" value={form.cardRef} onChange={(event) => onChange({ cardRef: event.target.value })} />
-        <input className="settings-input" placeholder="Budget summary" value={form.budgetSummary} onChange={(event) => onChange({ budgetSummary: event.target.value })} />
-        <input className="settings-input" placeholder="Allowed origins, comma-separated" value={form.allowedOrigins} onChange={(event) => onChange({ allowedOrigins: event.target.value })} />
-        <input className="settings-input" placeholder="Allowed categories, comma-separated" value={form.allowedCategories} onChange={(event) => onChange({ allowedCategories: event.target.value })} />
-        <select className="settings-input" value={form.status} onChange={(event) => onChange({ status: event.target.value })}>
-          <option value="dryRun">Dry-run</option>
-          <option value="active">Active</option>
-          <option value="frozen">Frozen</option>
-        </select>
+        <VaultField label="Wallet label">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Wallet label" value={form.label} onChange={(event) => onChange({ label: event.target.value })} />
+        </VaultField>
+        <VaultField label="Stripe mode">
+          <select data-debug-id="surface-components-settings-vaulttab-48" data-shellx-release-observe="value" className="settings-input" value={form.stripeMode} onChange={(event) => onChange({ stripeMode: event.target.value })}>
+            <option value="test">Stripe test</option>
+            <option value="live">Stripe live</option>
+          </select>
+        </VaultField>
+        <VaultField label="Stripe API secret ref">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Stripe API secret ref" value={form.stripeApiKeyRef} onChange={(event) => onChange({ stripeApiKeyRef: event.target.value })} />
+        </VaultField>
+        <VaultField label="Webhook signing secret ref">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Webhook signing secret ref" value={form.webhookSecretRef} onChange={(event) => onChange({ webhookSecretRef: event.target.value })} />
+        </VaultField>
+        <VaultField label="Stripe account ref">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Stripe account ref" value={form.accountRef} onChange={(event) => onChange({ accountRef: event.target.value })} />
+        </VaultField>
+        <VaultField label="Stripe cardholder ref">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Stripe cardholder ref" value={form.cardholderRef} onChange={(event) => onChange({ cardholderRef: event.target.value })} />
+        </VaultField>
+        <VaultField label="Stripe card ref">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Stripe card ref" value={form.cardRef} onChange={(event) => onChange({ cardRef: event.target.value })} />
+        </VaultField>
+        <VaultField label="Budget summary">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Budget summary" value={form.budgetSummary} onChange={(event) => onChange({ budgetSummary: event.target.value })} />
+        </VaultField>
+        <VaultField label="Allowed origins">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Allowed origins, comma-separated" value={form.allowedOrigins} onChange={(event) => onChange({ allowedOrigins: event.target.value })} />
+        </VaultField>
+        <VaultField label="Allowed categories">
+          <input className="settings-input" data-shellx-release-observe="nonempty" placeholder="Allowed categories, comma-separated" value={form.allowedCategories} onChange={(event) => onChange({ allowedCategories: event.target.value })} />
+        </VaultField>
+        <VaultField label="Wallet status">
+          <select data-debug-id="surface-components-settings-vaulttab-57" data-shellx-release-observe="value" className="settings-input" value={form.status} onChange={(event) => onChange({ status: event.target.value })}>
+            <option value="dryRun">Dry-run</option>
+            <option value="active">Active</option>
+            <option value="frozen">Frozen</option>
+          </select>
+        </VaultField>
       </div>
-      <textarea className="settings-input" placeholder="description visible to agents unless marked user-only" value={form.description} onChange={(event) => onChange({ description: event.target.value })} rows={2} />
+      <VaultField label="Description">
+        <textarea className="settings-input" data-shellx-release-observe="nonempty" placeholder="description visible to agents unless marked user-only" value={form.description} onChange={(event) => onChange({ description: event.target.value })} rows={2} />
+      </VaultField>
       <div className="vault-resource-form-actions">
         <label className="settings-pill">
-          <input type="checkbox" checked={form.userOnly} onChange={(event) => onChange({ userOnly: event.target.checked })} />
+          <input data-debug-id="surface-components-settings-vaulttab-59" data-shellx-release-observe="checked" type="checkbox" checked={form.userOnly} onChange={(event) => onChange({ userOnly: event.target.checked })} />
           <span>User-only</span>
         </label>
         <button type="submit" className="settings-pill active" disabled={busy || !form.label.trim()}>
@@ -1528,6 +1776,7 @@ function PermissionBar({
           type="button"
           className={`vault-permission-choice ${level === option.level ? "active" : ""}`}
           data-debug-id={`vault-permission-${option.level}`}
+          data-shellx-release-observe="pressed"
           aria-pressed={level === option.level}
           title={option.title}
           disabled={disabled || level === option.level}
@@ -1545,130 +1794,6 @@ function PermissionBar({
   );
 }
 
-const PERMISSION_LEVELS: Array<{
-  level: PermissionLevel;
-  label: string;
-  title: string;
-}> = [
-  {
-    level: "userOnly",
-    label: "User only",
-    title: "Only the user can see this secret. Agents cannot see its name, description, or value.",
-  },
-  {
-    level: "visible",
-    label: "Visible / ask",
-    title: "Agents can see safe metadata for planning and can ask to use this secret. Values stay hidden until approved.",
-  },
-  {
-    level: "browserFillAlways",
-    label: "Fill always",
-    title: "Agents may use this resource through ShellX Browser fill flows without seeing the value.",
-  },
-  {
-    level: "toolUseAlways",
-    label: "Tool use always",
-    title: "Agents may use this resource through mediated ShellX tools without raw reveal.",
-  },
-];
-
-function permissionLevelForEntry(entry: VaultKeyMeta, activeGrants: GrantSummary[]): PermissionLevel {
-  if (entry.userOnly) return "userOnly";
-  const operations = new Set(
-    activeGrants
-      .map((grant) => normalizeGrantOperation(grant.operation))
-      .filter((operation): operation is GrantOperation => Boolean(operation)),
-  );
-  if (
-    operations.has("providerUse") ||
-    operations.has("connectorUse") ||
-    operations.has("injectEnv") ||
-    operations.has("deposit")
-  ) {
-    return "toolUseAlways";
-  }
-  if (
-    operations.has("fill") ||
-    operations.has("profileFill") ||
-    operations.has("emailCodeRead") ||
-    operations.has("agentWalletUse")
-  ) return "browserFillAlways";
-  return "visible";
-}
-
-function desiredGrantOperationsForLevel(level: PermissionLevel, resourceKind: VaultResourceKind = "secret"): GrantOperation[] {
-  switch (level) {
-    case "browserFillAlways":
-      switch (resourceKind) {
-        case "profileCard":
-          return ["profileFill"];
-        case "emailInbox":
-          return ["emailCodeRead"];
-        case "stripeAgentWallet":
-          return ["agentWalletUse"];
-        case "secret":
-          return ["fill"];
-      }
-    case "toolUseAlways":
-      switch (resourceKind) {
-        case "profileCard":
-          return ["profileFill", "providerUse"];
-        case "emailInbox":
-          return ["emailCodeRead", "providerUse"];
-        case "stripeAgentWallet":
-          return ["agentWalletUse", "connectorUse"];
-        case "secret":
-          return ["fill", "providerUse"];
-      }
-    case "userOnly":
-    case "visible":
-      return [];
-  }
-}
-
-function normalizeGrantOperation(operation: string): GrantOperation | null {
-  switch (operation) {
-    case "Fill":
-    case "fill":
-      return "fill";
-    case "ProfileFill":
-    case "profileFill":
-      return "profileFill";
-    case "EmailCodeRead":
-    case "emailCodeRead":
-      return "emailCodeRead";
-    case "AgentWalletUse":
-    case "agentWalletUse":
-      return "agentWalletUse";
-    case "InjectEnv":
-    case "injectEnv":
-      return "injectEnv";
-    case "ProviderUse":
-    case "providerUse":
-      return "providerUse";
-    case "ConnectorUse":
-    case "connectorUse":
-      return "connectorUse";
-    case "Deposit":
-    case "deposit":
-      return "deposit";
-    case "RawReveal":
-    case "rawReveal":
-      return "rawReveal";
-    default:
-      return null;
-  }
-}
-
-function countActiveGrants(grants: GrantSummary[]): number {
-  const now = Date.now();
-  return grants.filter((grant) => grant.approved && !grant.revoked && (!grant.expiresAtMs || grant.expiresAtMs > now)).length;
-}
-
-function permissionLevelLabel(level: PermissionLevel): string {
-  return PERMISSION_LEVELS.find((option) => option.level === level)?.label ?? level;
-}
-
 function formatErr(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === "string") return e;
@@ -1679,79 +1804,32 @@ function formatErr(e: unknown): string {
   }
 }
 
+function isBrowserGrantOperation(operation: GrantOperation | null): boolean {
+  return operation === "fill" || operation === "profileFill" || operation === "emailCodeRead" || operation === "agentWalletUse";
+}
+
+function normalizeBrowserGrantOriginInput(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw.trim());
+  } catch {
+    throw new Error("Enter an exact http/https website origin, such as https://accounts.example.com.");
+  }
+  if (
+    !["http:", "https:"].includes(parsed.protocol) ||
+    !parsed.hostname ||
+    parsed.username ||
+    parsed.password ||
+    (parsed.pathname && parsed.pathname !== "/") ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error("Origin must be exactly scheme://host[:port], without a path, query, fragment, or credentials.");
+  }
+  return parsed.origin;
+}
+
 function descriptionOrNull(value: string): string | null {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function resourceKindOf(entry: VaultKeyMeta): VaultResourceKind {
-  switch (entry.resourceKind) {
-    case "profileCard":
-    case "stripeAgentWallet":
-    case "secret":
-      return entry.resourceKind;
-    case "emailInbox":
-      return "secret";
-    default:
-      return "secret";
-  }
-}
-
-function resourceKindTitle(kind: VaultResourceKind): string {
-  switch (kind) {
-    case "profileCard":
-      return "profile card";
-    case "emailInbox":
-      return "email inbox";
-    case "stripeAgentWallet":
-      return "agent wallet";
-    case "secret":
-      return "secret";
-  }
-}
-
-function slug(value: string): string {
-  const slugged = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slugged || "resource";
-}
-
-function splitCsv(value: string): string[] {
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function resourceFieldsFromObject(values: Record<string, string>): string[] {
-  return Object.entries(values)
-    .filter(([, value]) => value.trim().length > 0)
-    .map(([key]) => key);
-}
-
-function profileResourceSummary(values: Record<string, string | boolean>): string {
-  const fields = resourceFieldsFromObject({
-    fullName: String(values.fullName ?? ""),
-    email: String(values.email ?? ""),
-    username: String(values.username ?? ""),
-    company: String(values.company ?? ""),
-    role: String(values.role ?? ""),
-    phone: String(values.phone ?? ""),
-    address: [
-      values.addressLine1,
-      values.addressLine2,
-      values.city,
-      values.region,
-      values.postalCode,
-      values.country,
-    ]
-      .map((value) => String(value ?? ""))
-      .join(" "),
-  });
-  return fields.length > 0
-    ? `Profile card fields: ${fields.join(", ")}`
-    : "Profile card";
 }

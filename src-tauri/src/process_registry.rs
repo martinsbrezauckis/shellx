@@ -28,10 +28,11 @@
 // the lock.
 //
 // Buffer policy
-// Each task keeps the last 1024 stdout+stderr lines in a ring. Lines
-// beyond that are dropped from the tail buffer but still broadcast live
-// to anyone subscribed via the broadcast channel — so a late attach
-// sees the last 1024 lines + every new line from that moment on.
+// Each task keeps at most 1024 stdout+stderr lines and 2 MiB in a ring.
+// Individual lines are bounded before both storage and broadcast so one
+// newline-free child payload cannot force an unbounded allocation through
+// the process surfaces. A late attach sees the bounded tail plus every new
+// bounded line from that moment on.
 //
 // Dependencies: `sysinfo` for cpu/rss/threads stats, `tokio::sync` for
 // the mutex + broadcast, `nix` (Unix only) for sending real signals.
@@ -48,6 +49,11 @@ use tracing::{debug, info};
 /// Maximum number of lines kept per task in the tail buffer.
 /// Live subscribers still receive everything via the broadcast channel.
 const TAIL_BUFFER_LINES: usize = 1024;
+/// Maximum retained bytes per process across the tail ring.
+const TAIL_BUFFER_BYTES: usize = 2 * 1024 * 1024;
+/// Maximum bytes exposed by one captured line, including its marker.
+const CAPTURED_LINE_BYTES: usize = 64 * 1024;
+const CAPTURED_LINE_TRUNCATION_MARKER: &str = "… [truncated by ShellX]";
 /// Bound on the broadcast channel — slow subscribers will get a Lagged err.
 const BROADCAST_CAPACITY: usize = 256;
 /// Finished-process records are useful for short postmortems, but keeping
@@ -69,6 +75,10 @@ pub enum ProcessSource {
     /// the right-rail TasksPanel under origin="host_mcp" so the user can
     /// see fan-out subagents at a glance.
     HostMcp,
+    /// Spawned by a provider-session adapter (Codex, Claude, or
+    /// Antigravity). The provider registry remains the conversation
+    /// authority; this row adds host-process supervision and stats.
+    Provider,
 }
 
 /// Lifecycle status of a tracked process.
@@ -111,6 +121,8 @@ pub struct ProcessRecord {
     pub exit_code: Option<i32>,
     /// Ring of recent output lines, capped at TAIL_BUFFER_LINES.
     pub tail: VecDeque<ProcessLine>,
+    /// Exact UTF-8 bytes currently retained in `tail`.
+    tail_bytes: usize,
     /// Broadcast for live attach. Subscribers receive every new line.
     pub tx: broadcast::Sender<ProcessLine>,
     /// Owning tab — populated for host_mcp subagents so TasksPanel can
@@ -135,6 +147,7 @@ impl ProcessRecord {
             exited_at_ms: None,
             exit_code: None,
             tail: VecDeque::with_capacity(TAIL_BUFFER_LINES),
+            tail_bytes: 0,
             tx,
             tab_id: None,
         }
@@ -147,14 +160,36 @@ impl ProcessRecord {
     }
 
     /// Append a line of output to the tail buffer and broadcast it.
-    fn push_line(&mut self, line: ProcessLine) {
-        if self.tail.len() >= TAIL_BUFFER_LINES {
-            self.tail.pop_front();
+    fn push_line(&mut self, mut line: ProcessLine) {
+        line.line = bounded_process_line(line.line);
+        let line_bytes = line.line.len();
+        while self.tail.len() >= TAIL_BUFFER_LINES
+            || self.tail_bytes.saturating_add(line_bytes) > TAIL_BUFFER_BYTES
+        {
+            let Some(dropped) = self.tail.pop_front() else {
+                break;
+            };
+            self.tail_bytes = self.tail_bytes.saturating_sub(dropped.line.len());
         }
+        self.tail_bytes = self.tail_bytes.saturating_add(line_bytes);
         self.tail.push_back(line.clone());
         // Errors only happen when there are no receivers — that's fine.
         let _ = self.tx.send(line);
     }
+}
+
+fn bounded_process_line(mut line: String) -> String {
+    if line.len() <= CAPTURED_LINE_BYTES {
+        return line;
+    }
+    let content_budget = CAPTURED_LINE_BYTES.saturating_sub(CAPTURED_LINE_TRUNCATION_MARKER.len());
+    let mut boundary = content_budget.min(line.len());
+    while boundary > 0 && !line.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    line.truncate(boundary);
+    line.push_str(CAPTURED_LINE_TRUNCATION_MARKER);
+    line
 }
 
 /// JSON-shaped snapshot returned by `process_list` and the debug HTTP
@@ -342,6 +377,34 @@ impl ProcessRegistry {
         }
     }
 
+    /// Remove one exact finished release-test Host MCP record after its
+    /// isolated installed-candidate lifecycle has been proven. Production
+    /// callers cannot use this to hide arbitrary task history: identity,
+    /// source, tab, command label, and terminal status must all match.
+    pub async fn release_test_forget_owned_host_mcp(
+        &self,
+        task_id: &str,
+        tab_id: &str,
+        command: &str,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        let record = inner
+            .records
+            .get(task_id)
+            .ok_or_else(|| format!("unknown release-test taskId: {task_id}"))?;
+        if record.source != ProcessSource::HostMcp
+            || record.tab_id.as_deref() != Some(tab_id)
+            || record.cmd != command
+        {
+            return Err("release-test Host MCP record ownership did not match".to_string());
+        }
+        if record.status == ProcessStatus::Running {
+            return Err("release-test Host MCP record is still running".to_string());
+        }
+        inner.records.remove(task_id);
+        Ok(())
+    }
+
     /// Return JSON snapshots for every registered process. The list
     /// includes both live and finished tasks; the consumer can filter.
     /// cpu_pct / rss_kb are filled in via a sysinfo refresh.
@@ -372,7 +435,9 @@ impl ProcessRegistry {
         if pids.is_empty() {
             return snaps;
         }
-        let stats = sysinfo_for_pids(&pids);
+        let stats = tokio::task::spawn_blocking(move || sysinfo_for_pids(&pids))
+            .await
+            .unwrap_or_default();
         for s in snaps.iter_mut() {
             if let Some(pid) = s.pid {
                 if let Some((cpu, rss, _vsz, _threads, _start_ms)) = stats.get(&pid).cloned() {
@@ -394,7 +459,9 @@ impl ProcessRegistry {
         drop(inner);
 
         let (cpu_pct, rss_kb, vsz_kb, threads, open_fds) = if let Some(pid) = pid {
-            let stats = sysinfo_for_pids(&[pid]);
+            let stats = tokio::task::spawn_blocking(move || sysinfo_for_pids(&[pid]))
+                .await
+                .unwrap_or_default();
             if let Some((cpu, rss, vsz, threads, _start_ms_unused)) = stats.get(&pid).cloned() {
                 let open_fds = open_fds_for_pid(pid);
                 (cpu, rss, Some(vsz), threads, open_fds)
@@ -473,8 +540,18 @@ impl ProcessRegistry {
                 task_id, rec.status
             ));
         }
-        rec.pid
-            .ok_or_else(|| format!("unknown taskId: {}", task_id))
+        let pid = rec
+            .pid
+            .ok_or_else(|| format!("unknown taskId: {}", task_id))?;
+        if !(2..=i32::MAX as u32).contains(&pid) {
+            return Err(format!(
+                "taskId {} has unsafe process id {} (expected 2..={})",
+                task_id,
+                pid,
+                i32::MAX
+            ));
+        }
+        Ok(pid)
     }
 
     /// Send a signal to the task. Refuses if task_id is unknown.
@@ -567,12 +644,30 @@ fn open_fds_for_pid(_pid: u32) -> Option<u32> {
     None
 }
 
+/// Convert an externally stored or cross-module process id into the signed
+/// representation expected by Unix signal APIs.  PID 0 targets the caller's
+/// process group, PID 1 is the system/session init process, and values above
+/// `i32::MAX` wrap negative when cast.  None of those values may reach
+/// `kill(2)` from a ShellX lifecycle path.
+#[cfg(unix)]
+pub(crate) fn checked_unix_process_id(pid: u32) -> Result<nix::unistd::Pid, String> {
+    if !(2..=i32::MAX as u32).contains(&pid) {
+        return Err(format!(
+            "unsafe process id {} (expected 2..={})",
+            pid,
+            i32::MAX
+        ));
+    }
+    let raw_pid =
+        i32::try_from(pid).map_err(|_| format!("unsafe process id {} (exceeds i32::MAX)", pid))?;
+    Ok(nix::unistd::Pid::from_raw(raw_pid))
+}
+
 #[cfg(unix)]
 fn send_signal(pid: u32, signal_name: &str) -> Result<(), String> {
     use nix::sys::signal::kill;
-    use nix::unistd::Pid;
     let sig = parse_unix_signal(signal_name)?;
-    kill(Pid::from_raw(pid as i32), sig).map_err(|e| format!("kill failed: {}", e))?;
+    kill(checked_unix_process_id(pid)?, sig).map_err(|e| format!("kill failed: {}", e))?;
     Ok(())
 }
 
@@ -581,7 +676,8 @@ fn send_signal_tree(pid: u32, signal_name: &str) -> Result<(), String> {
     use nix::sys::signal::kill;
     use nix::unistd::Pid;
     let sig = parse_unix_signal(signal_name)?;
-    kill(Pid::from_raw(-(pid as i32)), sig).map_err(|e| format!("killpg failed: {}", e))?;
+    let pid = checked_unix_process_id(pid)?;
+    kill(Pid::from_raw(-pid.as_raw()), sig).map_err(|e| format!("killpg failed: {}", e))?;
     Ok(())
 }
 
@@ -675,6 +771,23 @@ mod tests {
         assert!(err.contains("unknown taskId"));
     }
 
+    #[tokio::test]
+    async fn invalid_process_ids_never_reach_direct_or_group_signaling() {
+        for pid in [0, 1, i32::MAX as u32 + 1, u32::MAX] {
+            let reg = ProcessRegistry::new();
+            let task_id = reg
+                .register("unsafe pid fixture", ProcessSource::Terminal, Some(pid))
+                .await;
+            for result in [
+                reg.signal(&task_id, "SIGTERM").await,
+                reg.signal_tree(&task_id, "SIGKILL").await,
+            ] {
+                let error = result.expect_err("unsafe pid must fail before OS signaling");
+                assert!(error.contains("unsafe process id"), "{error}");
+            }
+        }
+    }
+
     #[test]
     fn process_signal_accepts_short_and_sig_prefixed_names() {
         let cases = [
@@ -705,6 +818,36 @@ mod tests {
         assert_eq!(tail.len(), 2);
         assert_eq!(tail[0].line, "line1");
         assert_eq!(tail[1].line, "line2");
+    }
+
+    #[tokio::test]
+    async fn process_output_is_byte_bounded_before_tail_and_broadcast() {
+        let reg = ProcessRegistry::new();
+        let id = reg.register("noisy", ProcessSource::Provider, None).await;
+        let (_initial, mut rx) = reg.attach_stdout(&id, 1).await.unwrap();
+        let oversized = "界".repeat(CAPTURED_LINE_BYTES);
+        reg.push_line(&id, "stdout", oversized).await;
+
+        let broadcast = rx.recv().await.expect("bounded broadcast line");
+        assert!(broadcast.line.len() <= CAPTURED_LINE_BYTES);
+        assert!(broadcast.line.ends_with(CAPTURED_LINE_TRUNCATION_MARKER));
+        assert!(std::str::from_utf8(broadcast.line.as_bytes()).is_ok());
+
+        for index in 0..64 {
+            reg.push_line(
+                &id,
+                "stderr",
+                format!("{index:02}{}", "x".repeat(CAPTURED_LINE_BYTES)),
+            )
+            .await;
+        }
+        let (tail, _rx) = reg.attach_stdout(&id, TAIL_BUFFER_LINES).await.unwrap();
+        assert!(
+            tail.len() < 64,
+            "byte cap evicts old lines before the line cap"
+        );
+        assert!(tail.iter().map(|line| line.line.len()).sum::<usize>() <= TAIL_BUFFER_BYTES);
+        assert!(tail.last().unwrap().line.starts_with("63"));
     }
 
     #[tokio::test]
@@ -746,6 +889,35 @@ mod tests {
             .running_task_ids_for_tab_source("tab-a", ProcessSource::HostMcp)
             .await;
         assert_eq!(ids, vec![owned]);
+    }
+
+    #[tokio::test]
+    async fn release_test_forget_host_mcp_requires_exact_finished_ownership() {
+        let reg = ProcessRegistry::new();
+        let command = "ShellX release-owned Host MCP child";
+        let owned = reg
+            .register(command, ProcessSource::HostMcp, Some(std::process::id()))
+            .await;
+        reg.set_tab_id(&owned, "release-tab".to_string()).await;
+
+        let running_error = reg
+            .release_test_forget_owned_host_mcp(&owned, "release-tab", command)
+            .await
+            .expect_err("a running record must not be forgotten");
+        assert!(running_error.contains("still running"));
+
+        reg.mark_exited(&owned, None, ProcessStatus::Killed).await;
+        let ownership_error = reg
+            .release_test_forget_owned_host_mcp(&owned, "other-tab", command)
+            .await
+            .expect_err("a different tab must not match the release-owned record");
+        assert!(ownership_error.contains("ownership did not match"));
+        assert_eq!(reg.list().await.len(), 1);
+
+        reg.release_test_forget_owned_host_mcp(&owned, "release-tab", command)
+            .await
+            .expect("the exact finished release-owned record is removable");
+        assert!(reg.list().await.is_empty());
     }
 
     #[tokio::test]

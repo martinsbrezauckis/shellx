@@ -1,3 +1,4 @@
+# Dependencies and generated output
 node_modules/
 dist/
 build/
@@ -5,74 +6,49 @@ build/
 target/
 src-tauri/target/
 src-tauri/gen/
+coverage/
 
-*.log
-.DS_Store
-
-# Local-only development state — not shipped but kept for forensics
-logs/
+# Local configuration and runtime state
 .env
-.env.local
+.env.*
+!.env.example
+.grok/
+.shellx/
+.config/
 
-# Editor / OS
-.vscode/
-.idea/
-*.swp
-*~
-
-# Evidence/ holds session-replay calibration data. Kept local only —
-# regenerate from a fresh test user before any public push.
-evidence/
-artifacts/shellx-browser-saas-matrix/
-
-# Operational notes — local-only dev memory; public skill bundles now live
-# under skills/ and other shipped docs live under docs/.
+# Workspace-only state and temporary artifacts
 .project/
+.worktrees
+.worktrees/
+.shellx-scratch/
+.claude/
+evidence/
+artifacts/
+screenshots/
+tmp/
+logs/
 
-# Internal multi-agent planning notes and lab-only utilities stay out of
-# the public release tree.
-docs/superpowers/
-docs/health-agent.md
-scripts/health-agent.ts
-
-# Internal release runners and evidence stay outside the public repo.
-# Public release readiness keeps only the generic checklist and safe tests.
+# Private release audit tooling and evidence
 scripts/release-docs-audit.ts
 scripts/release-quality-receipt.ts
 scripts/test-release-docs-audit.ts
 src/lib/release-docs-audit.ts
 release-evidence/
-.shellx-release/
 
-# Dev-history artifacts were moved out of the release tree during
-# public-push cleanup. Preserved on disk, never re-added.
-# If anyone tries to commit these paths again, .gitignore wins.
-.project/mockups/
-.project/test-reports/
-.project/MEMORY.md
-.project/UX_RESEARCH.md
-.project/P_VERIFY_DESIGN.md
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
 
-# Verification screenshots from agent sessions — kept locally for review
-screenshots/
-tmp/
+# Logs, backups, and scratch files
+*.log
+*.bak
+*.orig
 pnpm.cmd
-.claude/worktrees/
 
-# L3: archived scraps moved out of the repo root — kept locally for
-# reference but never shipped publicly.
-.project/archive/scraps/
-
-# 12.74 pre-deploy: .grok/config.toml carries an auto-managed Bearer
-# token for the shellx-host-http MCP. It rotates per install and must
-# never be committed. Also covers grok-build's session caches that
-# would otherwise pollute the repo with per-user state.
-.grok/
-.shellx/
-.config/
-
-# Installer + signed artifacts — keep them outside git; published
-# only via GitHub Releases.
+# Locally assembled or signed release artifacts
 *.exe
 *.msi
 *.dmg
@@ -80,13 +56,3 @@ pnpm.cmd
 *.sig
 latest.json
 *-setup-*.sig
-
-# Backup / scratch
-*.bak
-*.orig
-
-# Claude Code worktrees + agent scratch — never want in public repo
-.claude/
-.worktrees
-.worktrees/
-.shellx-scratch/

@@ -2,14 +2,14 @@
  * src/components/PluginsModal.tsx — Plugins management modal.
  *
  * Sections:
- *   1. Built-in — shellx-host MCP on/off toggle.
+ *   1. Built-in — session-scoped shellx-host MCP status.
  *   2. Marketplace — Tier S/A/B/C with per-entry Enable/Remove +
  *      Enable/Disable. Vault-aware: rows whose required keys aren't in
  *      the vault show "key needed".
  *
  * Grok-native config: installs write managed `shellx-mp-*` entries into
  * `~/.grok/config.toml`; grok owns MCP discovery/list/doctor at session
- * start. shellx-host toggle still stays built-in and shellX-managed.
+ * start. shellx-host is injected only into sessions launched by ShellX.
  *
  * Backend Tauri commands (src-tauri/src/mcp_marketplace.rs):
  *   - mcp_marketplace_list → McpEntryStatus[]
@@ -17,10 +17,11 @@
  *   - mcp_marketplace_uninstall(id)
  *   - mcp_marketplace_set_enabled(id, enabled)
  */
-import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
 import { ShellIcon } from "./icons";
+import { useModalFocus } from "../lib/useModalFocus";
 
 type McpKind = "stdio" | "http" | "sse";
 type McpTier = "s" | "a" | "b" | "c";
@@ -38,6 +39,53 @@ interface McpEntryStatus {
   keysAvailable: boolean[];
   allKeysPresent: boolean;
 }
+
+const OWNED_DEBUG_MARKETPLACE: readonly McpEntryStatus[] = [
+  {
+    id: "release-owned-recommended",
+    name: "Release-owned recommended connector",
+    tier: "s",
+    kind: "stdio",
+    description: "Synthetic in-memory row for installed UI verification.",
+    category: "release-fixture",
+    vaultKeys: [],
+    installed: false,
+    enabled: false,
+    keysAvailable: [],
+    allKeysPresent: true,
+  },
+  {
+    id: "release-owned-installed-key",
+    name: "Release-owned installed connector",
+    tier: "a",
+    kind: "stdio",
+    description: "Synthetic installed row with one intentionally absent fixture key.",
+    category: "release-fixture",
+    vaultKeys: ["release-owned/installed-key"],
+    installed: true,
+    enabled: false,
+    keysAvailable: [false],
+    allKeysPresent: false,
+  },
+  {
+    id: "release-owned-uninstalled-key",
+    name: "Release-owned available connector",
+    tier: "a",
+    kind: "http",
+    description: "Synthetic available row with one intentionally absent fixture key.",
+    category: "release-fixture",
+    vaultKeys: ["release-owned/available-key"],
+    installed: false,
+    enabled: false,
+    keysAvailable: [false],
+    allKeysPresent: false,
+  },
+] as const;
+
+// The production lifecycle fixture filters the immutable catalog to two
+// offline rows while keeping every real Tauri mutation path enabled. The
+// Debug API accepts this mode only for an isolated final-candidate profile.
+const OWNED_PRODUCTION_MARKETPLACE_IDS = new Set(["context7", "github"]);
 
 const TIER_TITLES: Record<McpTier, string> = {
   s: "Recommended",
@@ -60,30 +108,20 @@ const DEFAULT_COLLAPSED: Set<McpTier> = new Set<McpTier>(["c"]);
 export function PluginsModal({
   open,
   onClose,
+  debugFixture,
 }: {
   open: boolean;
   onClose: () => void;
+  /** Release-driver projection. `owned-safe` is inert/in-memory;
+   * `owned-production` filters the real catalog inside an isolated candidate
+   * while retaining production marketplace and Vault mutations. */
+  debugFixture?: "owned-safe" | "owned-production" | null;
   /** Kept for caller compatibility. Session-scoped tool health now
    *  lives in the right-rail Tooling tab, not this global modal. */
   activeTabId?: string | null;
 }): JSX.Element | null {
-  // Esc-to-close. Click outside is handled by the backdrop's onClick.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  // ─── shellx-host (built-in) toggle state ──────────────────────────
-  const [hostMcpEnabled, setHostMcpEnabled] = useState<boolean>(true);
-  const [hostMcpStatus, setHostMcpStatus] = useState<"idle" | "loading" | "error">("idle");
-  const [hostMcpError, setHostMcpError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(open, dialogRef, onClose);
 
   // ─── marketplace state ────────────────────────────────────────────
   const [marketplace, setMarketplace] = useState<McpEntryStatus[]>([]);
@@ -96,58 +134,28 @@ export function PluginsModal({
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
 
   const refetchMarketplace = useCallback(async () => {
+    if (debugFixture === "owned-safe") return;
     if (!inTauri()) return;
     setMpLoading(true);
     setMpError(null);
     try {
       const list = await invoke<McpEntryStatus[]>("mcp_marketplace_list");
-      setMarketplace(list);
+      setMarketplace(debugFixture === "owned-production"
+        ? list.filter((entry) => OWNED_PRODUCTION_MARKETPLACE_IDS.has(entry.id))
+        : list);
     } catch (err) {
       setMpError(typeof err === "string" ? err : String(err));
     } finally {
       setMpLoading(false);
     }
-  }, []);
+  }, [debugFixture]);
 
-  // Fetch host MCP state + marketplace list on modal open.
+  // Fetch marketplace state on modal open.
   useEffect(() => {
     if (!open) return;
-    if (!inTauri()) return;
-    let cancelled = false;
-    setHostMcpStatus("loading");
-    setHostMcpError(null);
-    void (async () => {
-      try {
-        const cur = await invoke<boolean>("read_host_mcp_enabled");
-        if (cancelled) return;
-        setHostMcpEnabled(cur);
-        setHostMcpStatus("idle");
-      } catch (err) {
-        if (cancelled) return;
-        setHostMcpEnabled(true);
-        setHostMcpStatus("error");
-        setHostMcpError(typeof err === "string" ? err : String(err));
-      }
-    })();
+    if (!inTauri() || debugFixture === "owned-safe") return;
     void refetchMarketplace();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, refetchMarketplace]);
-
-  const onToggleHostMcp = useCallback(async (next: boolean) => {
-    if (!inTauri()) return;
-    setHostMcpStatus("loading");
-    setHostMcpError(null);
-    try {
-      const result = await invoke<boolean>("set_host_mcp_enabled", { enabled: next });
-      setHostMcpEnabled(result);
-      setHostMcpStatus("idle");
-    } catch (err) {
-      setHostMcpStatus("error");
-      setHostMcpError(typeof err === "string" ? err : String(err));
-    }
-  }, []);
+  }, [open, debugFixture, refetchMarketplace]);
 
   // Generic Tauri-call wrapper that flips pending state + refetches.
   const runMpAction = useCallback(
@@ -175,13 +183,16 @@ export function PluginsModal({
   );
 
   // ─── derived: marketplace grouped by tier ─────────────────────────
+  const effectiveMarketplace = debugFixture === "owned-safe"
+    ? OWNED_DEBUG_MARKETPLACE
+    : marketplace;
   const tiers = useMemo<Record<McpTier, McpEntryStatus[]>>(() => {
     const out: Record<McpTier, McpEntryStatus[]> = { s: [], a: [], b: [], c: [] };
-    for (const e of marketplace) {
+    for (const e of effectiveMarketplace) {
       out[e.tier].push(e);
     }
     return out;
-  }, [marketplace]);
+  }, [effectiveMarketplace]);
 
   // First-run helper: show "Enable Recommended" hero if nothing in
   // Tier S has been enabled yet.
@@ -214,12 +225,27 @@ export function PluginsModal({
   if (!open) return null;
 
   return (
-    <div className="pmodal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Plugins">
-      <div className="pmodal plugins-modal" onClick={(e) => e.stopPropagation()}>
+    <div data-debug-id="surface-components-pluginsmodal-1" className="pmodal-backdrop" onClick={onClose}>
+      <div
+        ref={dialogRef}
+        className="pmodal plugins-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Plugins"
+        tabIndex={-1}
+      >
         <header className="pmodal-hdr">
           <span className="pmodal-title">Plugins</span>
           <span className="pmodal-sub">MCP servers and connectors</span>
-          <button className="pmodal-x" onClick={onClose} aria-label="Close" title="Close (Esc)">
+          <button
+            type="button"
+            className="pmodal-x"
+            onClick={onClose}
+            aria-label="Close"
+            title="Close (Esc)"
+            data-dialog-initial-focus="true"
+          >
             <ShellIcon name="close" size={14} />
           </button>
         </header>
@@ -243,28 +269,14 @@ export function PluginsModal({
                 <p className="mp-desc">Native Browser, Vault Request Center, fs/process/screenshot, provider handoffs, Agent, and memory tools.</p>
                 <div className="mp-row-foot">
                   <span className="mp-source">built into ShellX provider sessions</span>
-                  <label className="plugin-toggle">
-                    <input
-                      type="checkbox"
-                      data-debug-id="plugins-shellx-host-toggle"
-                      checked={hostMcpEnabled}
-                      disabled={hostMcpStatus === "loading"}
-                      onChange={(e) => void onToggleHostMcp(e.target.checked)}
-                    />
-                    <span className="plugin-toggle-track">
-                      <span className="plugin-toggle-thumb" />
-                    </span>
-                    <span className="plugin-toggle-lbl">{hostMcpEnabled ? "Enabled" : "Disabled"}</span>
-                  </label>
+                  <span className="plugin-toggle-lbl" data-debug-id="plugins-shellx-host-scope">
+                    Session-scoped
+                  </span>
                 </div>
                 <div className="plugin-row-hint">
-                  {hostMcpStatus === "error" && hostMcpError ? (
-                    <span className="plugin-row-hint-err">{hostMcpError}</span>
-                  ) : (
-                    <span className="plugin-row-hint-info">
-                      Restart connected agent sessions for the change to take effect.
-                    </span>
-                  )}
+                  <span className="plugin-row-hint-info">
+                    Available only to agents launched from ShellX; direct CLI sessions stay unchanged.
+                  </span>
                 </div>
               </div>
             </div>
@@ -274,13 +286,13 @@ export function PluginsModal({
           {tierSNoneInstalled && (
             <section className="pmodal-section mp-hero">
               <div className="mp-hero-text">
-                <strong>First time?</strong> Enable the {tiers.s.length} recommended zero-config connectors —
-                Context7, Playwright, Fetch, Git, Memory. No keys required.
+                <strong>First time?</strong> Enable {tiers.s.length === 1 ? "the" : `the ${tiers.s.length}`} recommended zero-config connector{tiers.s.length === 1 ? "" : "s"} —
+                {" "}{tiers.s.map((entry) => entry.name).join(", ")}. No keys required.
               </div>
               <button
                 className="mp-action-btn mp-action-btn-primary"
                 onClick={() => void installTierSDefaults()}
-                disabled={mpLoading}
+                disabled={mpLoading || debugFixture === "owned-safe"}
               >
                 Enable Recommended
               </button>
@@ -306,21 +318,28 @@ export function PluginsModal({
               <section key={tier} className="pmodal-section mp-tier-section">
                 <h3
                   className="pmodal-section-hdr mp-tier-hdr"
-                  onClick={() => toggleTier(tier)}
-                  style={{ cursor: "pointer" }}
-                  title={collapsed ? "Click to expand" : "Click to collapse"}
                 >
-                  <span className="mp-tier-toggle">
-                    <ShellIcon name={collapsed ? "chevron-right" : "chevron-down"} size={13} />
-                  </span>
-                  {TIER_TITLES[tier]}
-                  <span className="ct">
-                    · {installedCount}/{list.length}
-                  </span>
-                  <span className="mp-tier-hint">{TIER_HINT[tier]}</span>
+                  <button
+                    type="button"
+                    className="mp-tier-button"
+                    onClick={() => toggleTier(tier)}
+                    aria-expanded={!collapsed}
+                    aria-controls={`mcp-tier-${tier}`}
+                    title={collapsed ? "Expand tier" : "Collapse tier"}
+                    data-shellx-release-observe="expanded"
+                  >
+                    <span className="mp-tier-toggle">
+                      <ShellIcon name={collapsed ? "chevron-right" : "chevron-down"} size={13} />
+                    </span>
+                    {TIER_TITLES[tier]}
+                    <span className="ct">
+                      · {installedCount}/{list.length}
+                    </span>
+                    <span className="mp-tier-hint">{TIER_HINT[tier]}</span>
+                  </button>
                 </h3>
                 {!collapsed && (
-                  <div className="mp-list">
+                  <div className="mp-list" id={`mcp-tier-${tier}`}>
                     {list.map((e) => (
                       <MarketplaceRow
                         key={e.id}
@@ -332,6 +351,7 @@ export function PluginsModal({
                           void runMpAction(e.id, "mcp_marketplace_set_enabled", { enabled: en })
                         }
                         onRefresh={refetchMarketplace}
+                        debugFixture={debugFixture === "owned-safe"}
                       />
                     ))}
                   </div>
@@ -368,6 +388,7 @@ function MarketplaceRow({
   onUninstall,
   onSetEnabled,
   onRefresh,
+  debugFixture,
 }: {
   entry: McpEntryStatus;
   pending: boolean;
@@ -377,6 +398,7 @@ function MarketplaceRow({
   /** Refetches marketplace status after a vault write so the row
    *  re-evaluates `allKeysPresent` and the Add-key form collapses. */
   onRefresh: () => Promise<void> | void;
+  debugFixture: boolean;
 }): JSX.Element {
   const needsKey = entry.vaultKeys.length > 0 && !entry.allKeysPresent;
   // Inline key entry form. Each missing key gets its own
@@ -389,7 +411,9 @@ function MarketplaceRow({
   const [saving, setSaving] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const keyFormId = `mcp-key-form-${entry.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const saveKey = useCallback(async (k: string) => {
+    if (debugFixture) return;
     const v = values[k];
     if (!v) return;
     setSaving(k);
@@ -405,7 +429,7 @@ function MarketplaceRow({
     } finally {
       setSaving(null);
     }
-  }, [values, onRefresh]);
+  }, [values, onRefresh, debugFixture]);
 
   let statusPill: JSX.Element;
   if (entry.installed && !entry.enabled) {
@@ -459,6 +483,9 @@ function MarketplaceRow({
               });
             }}
             title={adding ? "Cancel adding key (clears input)" : "Enter your API key inline"}
+            aria-expanded={adding}
+            aria-controls={keyFormId}
+            data-shellx-release-observe="expanded"
           >
             {adding ? "Cancel" : "Add key"}
           </button>
@@ -468,7 +495,7 @@ function MarketplaceRow({
             type="checkbox"
             data-debug-id="plugins-entry-toggle"
             checked={entry.enabled}
-            disabled={pending}
+            disabled={pending || debugFixture}
             onChange={(e) => onSetEnabled(e.target.checked)}
           />
           <span className="plugin-toggle-track">
@@ -476,7 +503,7 @@ function MarketplaceRow({
           </span>
           <span className="plugin-toggle-lbl">{entry.enabled ? "On" : "Off"}</span>
         </label>
-        <button className="mp-action-btn mp-action-btn-secondary" onClick={onUninstall} disabled={pending}>
+        <button className="mp-action-btn mp-action-btn-secondary" onClick={onUninstall} disabled={pending || debugFixture}>
           Remove
         </button>
       </div>
@@ -504,10 +531,13 @@ function MarketplaceRow({
             });
           }}
           title={adding ? "Cancel adding key (clears input)" : "Enter your API key inline"}
+          aria-expanded={adding}
+          aria-controls={keyFormId}
+          data-shellx-release-observe="expanded"
         >
           {adding ? "Cancel" : "Add key"}
         </button>
-        <button className="mp-action-btn mp-action-btn-secondary" onClick={onInstall} disabled={pending}>
+        <button data-debug-id="surface-components-pluginsmodal-10" className="mp-action-btn mp-action-btn-secondary" onClick={onInstall} disabled={pending || debugFixture}>
           {pending ? "Enabling…" : "Enable anyway"}
         </button>
       </div>
@@ -515,7 +545,7 @@ function MarketplaceRow({
   } else {
     action = (
       <div className="mp-row-actions">
-        <button className="mp-action-btn mp-action-btn-primary" onClick={onInstall} disabled={pending}>
+        <button data-debug-id="surface-components-pluginsmodal-11" className="mp-action-btn mp-action-btn-primary" onClick={onInstall} disabled={pending || debugFixture}>
           {pending ? "Enabling…" : "Enable"}
         </button>
       </div>
@@ -523,7 +553,7 @@ function MarketplaceRow({
   }
 
   return (
-    <div className="mp-row">
+    <div className="mp-row" data-marketplace-entry-id={entry.id}>
       <div className="mp-row-main">
         <span className="mp-name">{entry.name}</span>
         <span className={`mp-kind mp-kind-${entry.kind}`}>{entry.kind.toUpperCase()}</span>
@@ -544,7 +574,10 @@ function MarketplaceRow({
       )}
       {needsKey && adding && (
         <div
+          id={keyFormId}
           className="mp-key-form"
+          title={entry.vaultKeys.some((key) => Boolean(values[key])) ? "Draft present" : "Draft empty"}
+          data-shellx-release-observe="title"
           style={{
             display: "flex",
             flexDirection: "column",
@@ -578,13 +611,13 @@ function MarketplaceRow({
                     padding: "4px 8px",
                     font: "12px var(--mono, monospace)",
                   }}
-                  onKeyDown={(e) => { if (e.key === "Enter") void saveKey(k); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !debugFixture) void saveKey(k); }}
                 />
-                <button
+                <button data-debug-id="surface-components-pluginsmodal-13"
                   type="button"
                   className="mp-action-btn mp-action-btn-secondary"
                   onClick={() => void saveKey(k)}
-                  disabled={!values[k] || saving === k}
+                  disabled={debugFixture || !values[k] || saving === k}
                   style={{ minWidth: 60 }}
                 >
                   {saving === k
@@ -597,7 +630,7 @@ function MarketplaceRow({
             );
           })}
           {error && (
-            <div style={{ color: "#d97757", fontSize: "var(--fs-ui-xs)", padding: "2px 4px" }}>
+            <div style={{ color: "var(--warn)", fontSize: "var(--fs-ui-xs)", padding: "2px 4px" }}>
               {error}
             </div>
           )}

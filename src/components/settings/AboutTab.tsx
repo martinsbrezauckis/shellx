@@ -20,18 +20,26 @@
  * (set up in App.tsx) so in-repo docs render in the FilePreviewModal
  * instead of an external browser tab.
  */
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, useEffect, useState } from "react";
 import type { JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import pkg from "../../../package.json";
 import cargoToml from "../../../src-tauri/Cargo.toml?raw";
+import { AUTHOR_EMAIL } from "../../lib/about";
 import tauriConfRaw from "../../../src-tauri/tauri.conf.json?raw";
 import { SafeMarkdownLink } from "../../lib/markdown-links";
 import { updateErrorIsQuiet } from "../../lib/update-diagnostics";
-import { cleanUpdateNotes } from "../../lib/update-notes";
+import {
+  cleanUpdateNotes,
+  DEBUG_UPDATE_CHECK_RECEIPT,
+  DEBUG_UPDATE_FIXTURE,
+  DEBUG_UPDATE_INSTALL_RECEIPT,
+  type DebugUpdateFixtureMode,
+} from "../../lib/update-notes";
 import { ShellIcon } from "../icons";
+import { LazySurface } from "../LazySurface";
 
 /**
  * Open `url` in the user's external default browser via the Tauri
@@ -58,7 +66,7 @@ const TAURI_VERSION = (() => {
     return VERSION;
   }
 })();
-const AUTHOR_EMAIL = "martins.brezauckis@gmail.com";
+const MANUAL_URL = "https://docs.theshellx.com/manual/shellx/";
 const RELEASE_INTERNAL_TOOLS = import.meta.env.VITE_SHELLX_INTERNAL_TOOLS;
 const SHOW_RELEASE_READINESS =
   import.meta.env.DEV ||
@@ -80,8 +88,13 @@ interface BoundPorts {
   mcpHttp: number | null;
 }
 
-export function AboutTab(): JSX.Element {
+export function AboutTab({
+  debugFixture = "live",
+}: {
+  debugFixture?: DebugUpdateFixtureMode;
+} = {}): JSX.Element {
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "idle" });
+  const [releaseReceipt, setReleaseReceipt] = useState<string | null>(null);
   const [ports, setPorts] = useState<BoundPorts | null>(null);
   const [emailCopied, setEmailCopied] = useState(false);
 
@@ -96,7 +109,29 @@ export function AboutTab(): JSX.Element {
       .catch(() => { /* command absent on older shellX builds */ });
   }, []);
 
+  useEffect(() => {
+    setReleaseReceipt(null);
+    if (debugFixture === "owned-available") {
+      setUpdateState({
+        kind: "available",
+        remoteVersion: DEBUG_UPDATE_FIXTURE.version,
+        message: cleanUpdateNotes(DEBUG_UPDATE_FIXTURE.body),
+      });
+    } else if (debugFixture === "owned-check" || debugFixture === "owned-cleared") {
+      setUpdateState({ kind: "idle" });
+    }
+  }, [debugFixture]);
+
   async function checkForUpdates(): Promise<void> {
+    if (debugFixture === "owned-check" || debugFixture === "owned-available") {
+      setUpdateState({
+        kind: "available",
+        remoteVersion: DEBUG_UPDATE_FIXTURE.version,
+        message: cleanUpdateNotes(DEBUG_UPDATE_FIXTURE.body),
+      });
+      setReleaseReceipt(DEBUG_UPDATE_CHECK_RECEIPT);
+      return;
+    }
     setUpdateState({ kind: "checking" });
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
@@ -130,6 +165,11 @@ export function AboutTab(): JSX.Element {
   }
 
   async function installUpdate(): Promise<void> {
+    if (debugFixture === "owned-available") {
+      setUpdateState({ kind: "current", message: "Release fixture stopped before download and relaunch." });
+      setReleaseReceipt(DEBUG_UPDATE_INSTALL_RECEIPT);
+      return;
+    }
     setUpdateState((prev) => ({ ...prev, kind: "installing", progress: 0 }));
     try {
       const [{ check }, { relaunch }] = await Promise.all([
@@ -171,7 +211,7 @@ export function AboutTab(): JSX.Element {
  // App.tsx, which mounts BuiltinDocModal with curated in-app docs.
  // The docs live in src/lib/builtin-docs.ts as TypeScript constants
  // so they ship inside the installer with no filesystem dependency.
-  function openBuiltinDoc(docId: "features" | "readme" | "changelog"): void {
+  function openBuiltinDoc(docId: "features" | "readme" | "changelog" | "notices"): void {
     try {
       window.dispatchEvent(new CustomEvent("shellx:open-builtin-doc", { detail: { docId } }));
     } catch { /* no-op */ }
@@ -184,7 +224,12 @@ export function AboutTab(): JSX.Element {
   }
 
   return (
-    <div className="settings-tab-body about-tab">
+    <div
+      className="settings-tab-body about-tab"
+      data-release-update-receipt="about"
+      data-shellx-release-observe="title"
+      title={releaseReceipt ?? "About and updates"}
+    >
       <div className="about-brand">
         <div className="about-name">shellX</div>
         <div className="about-tag">
@@ -196,7 +241,8 @@ export function AboutTab(): JSX.Element {
         <dt>Version</dt>
         <dd>
           <code>{VERSION}</code>{" "}
-          <button
+          <button data-debug-id="surface-components-settings-abouttab-1"
+            data-release-update-control="about-check"
             type="button"
             className="settings-pill"
             onClick={() => void checkForUpdates()}
@@ -210,6 +256,7 @@ export function AboutTab(): JSX.Element {
           {updateState.kind === "available" && (
             <button
               type="button"
+              data-release-update-control="about-install"
               className="settings-pill"
               onClick={() => void installUpdate()}
               style={{ marginLeft: 8 }}
@@ -248,7 +295,7 @@ export function AboutTab(): JSX.Element {
         <dt>Author</dt>
         <dd>
           Martins Brezauckis <code>{AUTHOR_EMAIL}</code>{" "}
-          <button
+          <button data-debug-id="surface-components-settings-abouttab-3"
             type="button"
             className="settings-pill"
             onClick={copyAuthorEmail}
@@ -260,8 +307,9 @@ export function AboutTab(): JSX.Element {
 
         <dt>Homepage</dt>
         <dd>
-          <a
-            href="#"
+          <a data-debug-id="surface-components-settings-abouttab-4"
+            href="https://theshellx.com"
+            data-shellx-release-observe="href"
             onClick={(e) => { e.preventDefault(); openExternal("https://theshellx.com"); }}
             className="about-link"
           >
@@ -272,8 +320,9 @@ export function AboutTab(): JSX.Element {
 
         <dt>X / Twitter</dt>
         <dd>
-          <a
-            href="#"
+          <a data-debug-id="surface-components-settings-abouttab-5"
+            href="https://x.com/theshellx"
+            data-shellx-release-observe="href"
             onClick={(e) => { e.preventDefault(); openExternal("https://x.com/theshellx"); }}
             className="about-link"
           >
@@ -283,7 +332,18 @@ export function AboutTab(): JSX.Element {
         </dd>
 
         <dt>License</dt>
-        <dd>MIT</dd>
+        <dd>
+          MIT{" "}
+          <button
+            type="button"
+            className="settings-pill"
+            onClick={() => openBuiltinDoc("notices")}
+            title="Read bundled third-party notices"
+            style={{ marginLeft: 8 }}
+          >
+            Third-party notices
+          </button>
+        </dd>
 
         <dt>Bound ports</dt>
         <dd>
@@ -317,15 +377,27 @@ export function AboutTab(): JSX.Element {
           <span>Quick start</span>
         </button>
         <a
-          href="#"
+          href={MANUAL_URL}
+          onClick={(e) => { e.preventDefault(); openExternal(MANUAL_URL); }}
+          className="settings-pill"
+          data-debug-id="about-full-manual-link"
+          data-shellx-release-observe="href"
+        >
+          <span>Full manual</span>
+          <ShellIcon name="external-link" size={13} />
+        </a>
+        <a data-debug-id="surface-components-settings-abouttab-9"
+          href="https://github.com/martinsbrezauckis/shellx"
+          data-shellx-release-observe="href"
           onClick={(e) => { e.preventDefault(); openExternal("https://github.com/martinsbrezauckis/shellx"); }}
           className="settings-pill"
         >
           <span>GitHub</span>
           <ShellIcon name="external-link" size={13} />
         </a>
-        <a
-          href="#"
+        <a data-debug-id="surface-components-settings-abouttab-10"
+          href="https://github.com/martinsbrezauckis/shellx/issues"
+          data-shellx-release-observe="href"
           onClick={(e) => { e.preventDefault(); openExternal("https://github.com/martinsbrezauckis/shellx/issues"); }}
           className="settings-pill"
         >
@@ -344,13 +416,13 @@ export function AboutTab(): JSX.Element {
       </div>
 
       {ReleaseReadinessPanel ? (
-        <Suspense fallback={null}>
+        <LazySurface label="Release readiness" variant="inline">
           <ReleaseReadinessPanel
             version={VERSION}
             cargoVersion={CARGO_VERSION}
             tauriVersion={TAURI_VERSION}
           />
-        </Suspense>
+        </LazySurface>
       ) : null}
 
       <p className="about-fineprint" style={{ marginTop: 16 }}>

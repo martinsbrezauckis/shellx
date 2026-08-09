@@ -11,10 +11,10 @@ use vault_broker::sync_sets::{
 #[test]
 fn sync_sets_default_policy_excludes_artifacts_and_blocks_large_files() {
     let set = SyncSet::new(
-        "release-studio",
-        "Release Studio",
+        "design-tooling",
+        "Design tooling",
         SyncSetKind::Tooling,
-        "/work/release-studio",
+        "/work/design-tooling",
     );
 
     assert!(set.policy.user_writable);
@@ -23,13 +23,21 @@ fn sync_sets_default_policy_excludes_artifacts_and_blocks_large_files() {
     assert!(set.policy.excludes_path("node_modules/react/index.js"));
     assert!(set.policy.excludes_path("target/debug/app"));
     assert!(set.policy.excludes_path(".env"));
+    assert!(set.policy.excludes_path(".env.local"));
+    assert!(set.policy.excludes_path("apps/api/.env"));
+    assert!(set.policy.excludes_path("apps/api/.env.production"));
+    assert!(set.policy.excludes_path("keys/id_rsa"));
+    assert!(set.policy.excludes_path("keys/id_ed25519"));
+    assert!(set.policy.excludes_path("keys/apple-signing.p8"));
+    assert!(set.policy.excludes_path("mobile/release.keystore"));
+    assert!(set.policy.excludes_path("config/credentials.prod.json"));
     assert!(set.policy.excludes_path("certs/dev.pem"));
 
     let mut registry = SyncSetRegistry::default();
     registry.insert(set);
     let dry_run = registry
         .dry_run_push(
-            "release-studio",
+            "design-tooling",
             vec![
                 SyncCandidate::file("src/main.rs", 1200),
                 SyncCandidate::file("node_modules/react/index.js", 100),
@@ -164,14 +172,14 @@ fn sync_sets_record_pull_push_conflict_and_user_writes_without_agent_grant() {
         .record_user_push("resources", "assets/logo.png", 30)
         .unwrap();
     registry
-        .record_pull("resources", "templates/readme.md", "mac-mini", 31)
+        .record_pull("resources", "templates/readme.md", "remote-macos", 31)
         .unwrap();
     registry
         .record_conflict(
             "resources",
             "templates/readme.md",
             "workstation",
-            "mac-mini",
+            "remote-macos",
             32,
         )
         .unwrap();
@@ -206,10 +214,10 @@ fn sync_sets_manage_devices_pause_resume_and_dry_run_diff() {
     ));
 
     registry.add_device("tools", "workstation").unwrap();
-    registry.add_device("tools", "mac-mini").unwrap();
+    registry.add_device("tools", "remote-macos").unwrap();
     assert_eq!(
         registry.get("tools").unwrap().devices,
-        vec!["mac-mini", "workstation"]
+        vec!["remote-macos", "workstation"]
     );
 
     registry.pause("tools").unwrap();
@@ -223,7 +231,7 @@ fn sync_sets_manage_devices_pause_resume_and_dry_run_diff() {
         SyncSetMode::Manual
     );
 
-    registry.remove_device("tools", "mac-mini").unwrap();
+    registry.remove_device("tools", "remote-macos").unwrap();
     assert_eq!(registry.get("tools").unwrap().devices, vec!["workstation"]);
 }
 

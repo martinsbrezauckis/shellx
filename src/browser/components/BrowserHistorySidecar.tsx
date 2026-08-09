@@ -71,7 +71,12 @@ export function BrowserHistorySidecar({
   if (!open) return null;
 
   return (
-    <aside className="shellx-browser-left-sidecar shellx-browser-history-sidecar" data-debug-id="shellx-browser-history-sidecar">
+    <aside
+      id="shellx-browser-history-sidecar"
+      className="shellx-browser-left-sidecar shellx-browser-history-sidecar"
+      data-debug-id="shellx-browser-history-sidecar"
+      aria-labelledby="shellx-browser-history-menu"
+    >
       <div className="shellx-browser-history-head">
         <h2>History</h2>
         <button
@@ -90,6 +95,8 @@ export function BrowserHistorySidecar({
             className={historyScope === "user" ? "active" : ""}
             onClick={() => onHistoryScopeChange("user")}
             data-debug-id="shellx-browser-history-user"
+            aria-pressed={historyScope === "user"}
+            data-shellx-release-observe="pressed"
           >
             User
           </button>
@@ -98,6 +105,8 @@ export function BrowserHistorySidecar({
             className={historyScope === "agent" ? "active" : ""}
             onClick={() => onHistoryScopeChange("agent")}
             data-debug-id="shellx-browser-history-agent"
+            aria-pressed={historyScope === "agent"}
+            data-shellx-release-observe="pressed"
           >
             Agent
           </button>
@@ -110,12 +119,14 @@ export function BrowserHistorySidecar({
             placeholder="Search history"
             aria-label="Search history"
             data-debug-id="shellx-browser-history-search"
+            data-shellx-release-observe="value"
           />
           <select
             value={historyDateFilter}
             onChange={(event) => onHistoryDateFilterChange(event.currentTarget.value as BrowserHistoryDateFilter)}
             aria-label="History date filter"
             data-debug-id="shellx-browser-history-date-filter"
+            data-shellx-release-observe="value"
           >
             <option value="all">All dates</option>
             <option value="today">Today</option>
@@ -142,7 +153,7 @@ export function BrowserHistorySidecar({
             type="button"
             className="shellx-browser-history-list-row"
             onClick={() => onNavigateToUrl(entry.url)}
-            data-debug-id={`shellx-browser-history-${entry.historyId}`}
+            data-debug-id={`shellx-browser-history-entry-${entry.historyId}`}
           >
             <ShellIcon name="history" size={13} />
             <span title={entry.title || "Untitled page"}>{entry.title || "Untitled page"}</span>

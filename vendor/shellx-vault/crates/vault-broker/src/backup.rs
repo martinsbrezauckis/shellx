@@ -18,7 +18,7 @@ pub const BROKER_BACKUP_PAYLOAD_KIND: &str = "shellx-vault-broker-state";
 pub const PLAINTEXT_SAFE_FOLDER_EXPORT_WARNING: &str =
     "Safe Folder plaintext export copies decrypted file contents outside the protected safe space. Continue only for explicit user-requested export.";
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultBackupBundle {
     pub schema_version: String,
@@ -32,6 +32,54 @@ pub struct VaultBackupBundle {
     pub sync_sets: SyncSetRegistrySnapshot,
     pub project_capsules: CapsuleRegistrySnapshot,
     pub safe_folder: SafeFolderSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct VaultBackupPayload {
+    schema_version: String,
+    exported_at_ms: i64,
+    resources: Vec<VaultResource>,
+    #[serde(default)]
+    device_registry: DeviceRegistry,
+    grant_policy: GrantPolicySnapshot,
+    #[serde(default)]
+    grant_receipts: Vec<VaultReceipt>,
+    sync_sets: SyncSetRegistrySnapshot,
+    project_capsules: CapsuleRegistrySnapshot,
+    safe_folder: SafeFolderSnapshot,
+}
+
+impl From<&VaultBackupBundle> for VaultBackupPayload {
+    fn from(bundle: &VaultBackupBundle) -> Self {
+        Self {
+            schema_version: bundle.schema_version.clone(),
+            exported_at_ms: bundle.exported_at_ms,
+            resources: bundle.resources.clone(),
+            device_registry: bundle.device_registry.clone(),
+            grant_policy: bundle.grant_policy.clone(),
+            grant_receipts: bundle.grant_receipts.clone(),
+            sync_sets: bundle.sync_sets.clone(),
+            project_capsules: bundle.project_capsules.clone(),
+            safe_folder: bundle.safe_folder.clone(),
+        }
+    }
+}
+
+impl From<VaultBackupPayload> for VaultBackupBundle {
+    fn from(payload: VaultBackupPayload) -> Self {
+        Self {
+            schema_version: payload.schema_version,
+            exported_at_ms: payload.exported_at_ms,
+            resources: payload.resources,
+            device_registry: payload.device_registry,
+            grant_policy: payload.grant_policy,
+            grant_receipts: payload.grant_receipts,
+            sync_sets: payload.sync_sets,
+            project_capsules: payload.project_capsules,
+            safe_folder: payload.safe_folder,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,9 +163,19 @@ where
 }
 
 pub fn seal_backup_bundle(bundle: &VaultBackupBundle, backup_passphrase: &str) -> Result<Vec<u8>> {
-    vault_client::export::seal_backup_payload(BROKER_BACKUP_PAYLOAD_KIND, bundle, backup_passphrase)
+    let payload = VaultBackupPayload::from(bundle);
+    vault_client::export::seal_backup_payload(
+        BROKER_BACKUP_PAYLOAD_KIND,
+        &payload,
+        backup_passphrase,
+    )
 }
 
 pub fn open_backup_bundle(bytes: &[u8], backup_passphrase: &str) -> Result<VaultBackupBundle> {
-    vault_client::export::open_backup_payload(bytes, backup_passphrase, BROKER_BACKUP_PAYLOAD_KIND)
+    let payload: VaultBackupPayload = vault_client::export::open_backup_payload(
+        bytes,
+        backup_passphrase,
+        BROKER_BACKUP_PAYLOAD_KIND,
+    )?;
+    Ok(payload.into())
 }

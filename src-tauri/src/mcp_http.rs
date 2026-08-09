@@ -176,8 +176,15 @@ fn is_legacy_low_entropy_token(t: &str) -> bool {
 
 pub fn resolve_or_create_mcp_token() -> String {
     if let Ok(t) = std::env::var("SHELLX_MCP_SECRET") {
-        if !t.trim().is_empty() {
-            return t;
+        let token = t.trim();
+        if token.len() >= 32 {
+            return token.to_string();
+        }
+        if !token.is_empty() {
+            warn!(
+                token_length = token.len(),
+                "mcp_http: ignoring configured bearer token shorter than 32 characters"
+            );
         }
     }
     let home = shellx_home().unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
@@ -854,6 +861,14 @@ mod scrub_tests {
     }
 
     #[test]
+    fn preserves_release_health_marker() {
+        let marker = "release-health-macos-g16";
+        let mut v = json!({"patch": {"source": marker}});
+        scrub_credentials(&mut v);
+        assert_eq!(v["patch"]["source"], marker);
+    }
+
+    #[test]
     fn leaves_long_camelcase_identifiers_alone() {
         let mut v = json!({"name": "ThisIsALongCamelCaseIdentifierName"});
         scrub_credentials(&mut v);
@@ -945,13 +960,14 @@ async fn require_auth(
     if !loopback_host_allowed(&headers) {
         return (StatusCode::FORBIDDEN, "host not allowed").into_response();
     }
-    // Always allow /health for liveness probes — no sensitive data.
-    if req.uri().path() == "/health" {
-        return next.run(req).await;
-    }
-    // Server-side Origin check BEFORE token.
+    // Browser origins are checked on every route, including unauthenticated
+    // liveness, so a local page cannot use /health as a product fingerprint.
     if !origin_allowed(&headers) {
         return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
+    // Allow /health without a bearer after the Host and Origin boundaries.
+    if req.uri().path() == "/health" {
+        return next.run(req).await;
     }
     let header_token = bearer_token_from_headers(&headers);
     // Constant-time compare avoids the timing-leak class even though
@@ -985,12 +1001,41 @@ struct McpState {
 #[derive(Serialize)]
 struct HealthResponse {
     ok: bool,
+    #[serde(rename = "processId")]
+    process_id: u32,
+    #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
+    instance_id: Option<String>,
+    #[serde(rename = "appVersion")]
+    app_version: &'static str,
+    #[serde(rename = "buildCommit")]
+    build_commit: &'static str,
     mcp_port: u16,
+    #[serde(rename = "mcpPort")]
+    mcp_port_camel: u16,
     token_source: &'static str,
+    #[serde(rename = "tokenSource")]
+    token_source_camel: &'static str,
+}
+
+fn health_response(port: u16, token_source: &'static str) -> HealthResponse {
+    HealthResponse {
+        ok: true,
+        process_id: std::process::id(),
+        instance_id: std::env::var("SHELLX_TEST_INSTANCE_ID")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        app_version: env!("CARGO_PKG_VERSION"),
+        build_commit: crate::build_metadata::SHELLX_BUILD_COMMIT,
+        mcp_port: port,
+        mcp_port_camel: port,
+        token_source,
+        token_source_camel: token_source,
+    }
 }
 
 async fn health(State(_s): State<McpState>) -> impl IntoResponse {
-    let source = if std::env::var("SHELLX_MCP_SECRET").is_ok() {
+    let token_source = if std::env::var("SHELLX_MCP_SECRET").is_ok() {
         "env SHELLX_MCP_SECRET"
     } else {
         "~/.shellx/mcp.token"
@@ -1003,11 +1048,7 @@ async fn health(State(_s): State<McpState>) -> impl IntoResponse {
     // the bound port when set (post-bind) and falls back to the
     // preferred port pre-bind (so a probe arriving before the binder
     // wrote BOUND_MCP_HTTP_PORT still gets a sane non-zero value).
-    Json(HealthResponse {
-        ok: true,
-        mcp_port: effective_mcp_port(),
-        token_source: source,
-    })
+    Json(health_response(effective_mcp_port(), token_source))
 }
 
 /// POST /mcp — single Streamable HTTP turn.
@@ -1230,7 +1271,7 @@ async fn mcp_post(
     // Host-MCP-layer permission gate for WRITE-CLASS tools. Grok 0.1.21x
     // bypasses its native session/request_permission flow for host-MCP
     // tools, so the HTTP edge enforces shellX's autonomy contract:
-    // Observe denies, Confirm/Propose prompts, Auto allows.
+    // Plan/Observe denies, legacy provider modes prompt, and Auto allows.
     let gate_tool_name = if req.method.as_deref() == Some("tools/call") {
         req.params
             .as_ref()
@@ -1313,7 +1354,7 @@ async fn mcp_post(
                         -32603,
                         format!(
                             "host-MCP: '{}' rejected — tab '{}' autonomy is Observe (plan). \
-                             Switch to Confirm/Auto to allow write-class tools, \
+                             Switch the ShellX tab to Auto to allow write-class tools, \
                              or use read-only ones (fs_read/fs_list_dir/fs_grep/fs_stat).",
                             tname, tab_id
                         ),
@@ -1973,6 +2014,24 @@ mod tests {
         assert!(!token_matches_tab(&tab_a, base, "tab-b"));
     }
 
+    #[test]
+    fn health_identifies_the_exact_candidate_process_and_bound_port() {
+        let value = serde_json::to_value(health_response(31_024, "~/.shellx/mcp.token"))
+            .expect("health response serializes");
+
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["processId"], std::process::id());
+        assert_eq!(value["appVersion"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            value["buildCommit"],
+            crate::build_metadata::SHELLX_BUILD_COMMIT
+        );
+        assert_eq!(value["mcp_port"], 31_024);
+        assert_eq!(value["mcpPort"], 31_024);
+        assert_eq!(value["token_source"], "~/.shellx/mcp.token");
+        assert_eq!(value["tokenSource"], "~/.shellx/mcp.token");
+    }
+
     // ──────────────────────────────────────────────────────────────
     // H2 token strategy tests (2026-05-20).
     // // Goal: prove the snippet writer no longer bakes a literal Bearer
@@ -2132,6 +2191,7 @@ mod tests {
         use std::collections::BTreeSet;
 
         let expected: BTreeSet<&str> = [
+            "host_act",
             "fs_write",
             "fs_append",
             "fs_copy",
@@ -2159,23 +2219,30 @@ mod tests {
             "build_complete",
             "send_prompt_to_session",
             "send_prompt_to_provider",
+            "browser_act",
             "browser_navigate",
             "browser_click_ref",
             "browser_click_at",
             "browser_fill_ref",
             "browser_type_text",
             "browser_clear_site_data",
+            "browser_run_steps",
             "browser_fill_from_vault",
             "browser_fill_profile_card",
             "browser_capture_secret_to_vault",
             "browser_read_email_code",
             "browser_use_agent_wallet",
+            "browser_screenshot",
             "browser_save_page",
             "browser_resolve_dialog",
             "browser_trace_open",
+            "browser_flight_recorder_export",
+            "browser_evaluation_write",
             "browser_workflow_save",
             "browser_workflow_replay",
             "vault_request_grant",
+            "vault_agent_request",
+            "vault_generate",
         ]
         .into_iter()
         .collect();
@@ -2196,6 +2263,7 @@ mod tests {
             "mem_list",
             "clock_now",
             "search_tool",
+            "browser_read",
         ] {
             assert!(
                 !is_write_class_tool(r),
@@ -2205,7 +2273,15 @@ mod tests {
     }
 
     #[test]
-    fn write_class_gate_action_prompts_confirm_and_allows_auto() {
+    fn write_class_gate_action_prompts_legacy_modes_and_allows_auto() {
+        assert_eq!(
+            write_class_gate_action("host_act", Some("tab-a"), Some("plan")),
+            WriteClassGateAction::RejectObserve
+        );
+        assert_eq!(
+            write_class_gate_action("host_read", Some("tab-a"), Some("plan")),
+            WriteClassGateAction::Allow
+        );
         assert_eq!(
             write_class_gate_action("fs_write", Some("tab-a"), Some("default")),
             WriteClassGateAction::Prompt

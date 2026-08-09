@@ -16,6 +16,7 @@ export type GrantSummary = {
   secretRef: string;
   actorScope: string;
   operation: string;
+  origin?: string | null;
   expiresAtMs?: number | null;
   revoked: boolean;
   approved: boolean;
@@ -36,7 +37,12 @@ export function VaultGrantsPanel({
   const activeGrants = grants.filter((grant) => grant.approved && !grant.revoked && (!grant.expiresAtMs || grant.expiresAtMs > now));
 
   return (
-    <section className="vault-grants-panel" data-debug-id="shellx-vault-grants">
+    <section
+      className="vault-grants-panel"
+      data-debug-id="shellx-vault-grants"
+      data-shellx-release-observe="title"
+      title={`Vault grants state: active=${activeGrants.length}; revocable=${activeGrants.length > 0 ? "yes" : "no"}`}
+    >
       <div className="vault-panel-head">
         <strong>Active grants</strong>
         <span>{activeGrants.length} active</span>
@@ -59,6 +65,7 @@ export function VaultGrantsPanel({
             <span className="vault-hint">{formatOperation(grant.operation)}</span>
             <span className="vault-hint">{formatExpiry(grant.expiresAtMs)}</span>
             <span className="vault-hint">{formatScope(grant.actorScope)}</span>
+            {grant.origin && <span className="vault-hint" title="Exact browser origin">{grant.origin}</span>}
             <button
               type="button"
               className="settings-pill"

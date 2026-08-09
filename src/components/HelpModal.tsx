@@ -5,17 +5,13 @@
  * never drifts from what App.tsx actually wires. Esc closes. Backdrop
  * click closes.
  */
-import { useEffect, type JSX } from "react";
+import { useRef, type JSX } from "react";
 import { SHORTCUTS } from "../lib/shortcuts";
+import { useModalFocus } from "../lib/useModalFocus";
 
 export function HelpModal({ onClose }: { onClose: () => void }): JSX.Element {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(true, dialogRef, onClose);
 
  // Group shortcuts by `group` field so the modal renders in sections.
   const grouped = new Map<string, typeof SHORTCUTS>();
@@ -26,8 +22,9 @@ export function HelpModal({ onClose }: { onClose: () => void }): JSX.Element {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div data-debug-id="surface-components-helpmodal-1" className="modal-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"

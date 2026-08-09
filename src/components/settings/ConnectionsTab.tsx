@@ -10,7 +10,7 @@
  * The shared `ConnectionEditor` handles every transport variant
  * (Local / WSL / SSH) and the vault-key dropdown for SSH keys.
  */
-import { useCallback, useEffect, useState, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../../lib/tauri-bridge";
 import type { ConnectionPreset } from "../ConnectionPicker";
@@ -20,12 +20,17 @@ export function ConnectionsTab(): JSX.Element {
   const [presets, setPresets] = useState<ConnectionPreset[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<ConnectionPreset | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement | null>(null);
+  const deleteConfirmRef = useRef<HTMLButtonElement | null>(null);
  // Editor state: null = closed; {initial: undefined} = creating new;
  // {initial: preset} = editing existing.
   const [editing, setEditing] = useState<{ initial?: ConnectionPreset } | null>(null);
+  const desktopConnectionsAvailable = inTauri();
 
   const refresh = useCallback(async () => {
-    if (!inTauri()) {
+    if (!desktopConnectionsAvailable) {
       setError("Connections unavailable outside Tauri (browser preview mode).");
       return;
     }
@@ -44,28 +49,34 @@ export function ConnectionsTab(): JSX.Element {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [desktopConnectionsAvailable]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  useEffect(() => {
+    if (pendingDelete) {
+      contentRef.current?.setAttribute("inert", "");
+      deleteCancelRef.current?.focus();
+    } else {
+      contentRef.current?.removeAttribute("inert");
+    }
+  }, [pendingDelete]);
+
   const handleDelete = useCallback(async (preset: ConnectionPreset) => {
- // Simple confirm — connection presets are recoverable (re-add via
- // editor); typed-name gate would be overkill here.
-    if (!window.confirm(
-      `Delete connection "${preset.label}"? Existing tabs already ` +
-      `connected via it stay live until you close them.`
-    )) return;
+    if (pendingDelete?.id !== preset.id) return;
+    setPendingDelete(null);
     try {
       await invoke("connections_delete", { id: preset.id });
       await refresh();
     } catch (e) {
       setError(`Delete failed: ${e}`);
     }
-  }, [refresh]);
+  }, [pendingDelete, refresh]);
 
   return (
-    <div className="settings-tab-body">
-      <div className="connections-header">
+    <div className="settings-tab-body" style={{ position: "relative" }}>
+      <div ref={contentRef} aria-hidden={pendingDelete ? true : undefined}>
+        <div className="connections-header">
         <p className="settings-tab-hint">
           Saved environments used to launch ShellX agent sessions. The
           same store is reachable from the connection pill in the
@@ -76,23 +87,30 @@ export function ConnectionsTab(): JSX.Element {
             type="button"
             className="settings-pill"
             onClick={() => setEditing({ initial: undefined })}
-            disabled={!inTauri()}
+            disabled={!desktopConnectionsAvailable}
             title="Add a new connection preset"
           >
             + Add
           </button>
-          <button
+          <button data-debug-id="surface-components-settings-connectionstab-2"
             type="button"
             className="settings-pill"
             onClick={() => void refresh()}
-            disabled={busy}
+            disabled={busy || !desktopConnectionsAvailable}
           >
             {busy ? "…" : "Refresh"}
           </button>
         </div>
-      </div>
+        </div>
 
-      {error && <div role="alert" className="vault-error">{error}</div>}
+      {error && (
+        <div
+          role={desktopConnectionsAvailable ? "alert" : "status"}
+          className={desktopConnectionsAvailable ? "vault-error" : "vault-empty"}
+        >
+          {error}
+        </div>
+      )}
 
       {!error && presets.length === 0 && (
         <div className="vault-empty">
@@ -108,7 +126,7 @@ export function ConnectionsTab(): JSX.Element {
               key={p.id}
               preset={p}
               onEdit={() => setEditing({ initial: p })}
-              onDelete={() => void handleDelete(p)}
+              onDelete={() => setPendingDelete(p)}
             />
           ))}
         </div>
@@ -125,6 +143,70 @@ export function ConnectionsTab(): JSX.Element {
         }}
         onClose={() => setEditing(null)}
       />
+      </div>
+
+      {pendingDelete && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-label="Delete saved connection"
+          aria-describedby="settings-connection-delete-confirmation-copy"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              setPendingDelete(null);
+              return;
+            }
+            if (event.key !== "Tab") return;
+            const next = event.shiftKey ? deleteCancelRef.current : deleteConfirmRef.current;
+            const wrap = event.shiftKey ? deleteConfirmRef.current : deleteCancelRef.current;
+            if (document.activeElement === next) {
+              event.preventDefault();
+              wrap?.focus();
+            }
+          }}
+          style={{
+            position: "absolute",
+            inset: 8,
+            zIndex: 2,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            gap: 12,
+            padding: 16,
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            background: "var(--panel)",
+            boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+          }}
+        >
+          <strong style={{ overflowWrap: "anywhere" }}>Delete {pendingDelete.label}?</strong>
+          <span id="settings-connection-delete-confirmation-copy">
+            This removes the saved preset. Existing tabs using it stay live until you close them.
+          </span>
+          <span style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button
+              ref={deleteCancelRef}
+              type="button"
+              className="settings-pill"
+              aria-label="Cancel delete connection"
+              onClick={() => setPendingDelete(null)}
+            >
+              Cancel
+            </button>
+            <button
+              ref={deleteConfirmRef}
+              type="button"
+              className="settings-pill settings-pill-danger"
+              aria-label="Confirm delete saved connection"
+              onClick={() => void handleDelete(pendingDelete)}
+            >
+              Delete
+            </button>
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -144,7 +226,7 @@ function ConnectionItem({
     ? "never"
     : new Date(preset.lastUsedMs).toLocaleString();
   return (
-    <div className="connection-row" role="listitem">
+    <div className="connection-row" role="listitem" data-connection-id={preset.id}>
       <div className="connection-row-main">
         <span className="connection-label">{preset.label}</span>
         <span className="connection-target" title={target}>{target}</span>

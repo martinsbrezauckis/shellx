@@ -1,9 +1,8 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -12,9 +11,10 @@ use serde::Deserialize;
 use tracing::warn;
 
 use crate::debug_api::{
-    browser_registry, emit_browser_latest, emit_browser_receipt, shellx_vault_from_state, ApiState,
-    BrowserEventListQuery,
+    browser_registry, shellx_vault_from_state, ApiState, BrowserEventListQuery,
 };
+use crate::debug_api_browser_caller::browser_mcp_caller_id;
+use crate::debug_api_browser_events::{emit_browser_latest, emit_browser_receipt};
 
 pub(crate) fn browser_security_routes() -> Router<ApiState> {
     Router::new()
@@ -98,12 +98,25 @@ pub(crate) async fn browser_dialogs_post_http(
 
 pub(crate) async fn browser_dialog_resolve_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::BrowserDialogResolveRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    if let Some(task_id) = body.task_id.as_deref() {
+        if let Err(e) =
+            registry.ensure_agent_session_for_task_id(task_id, caller_session_id.as_deref())
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "ok": false, "error": e })),
+            )
+                .into_response();
+        }
+    }
     match registry.resolve_dialog_event(body) {
         Ok(event) => {
             if let Err(e) = crate::shellx_browser::apply_beforeunload_dialog_resolution(
@@ -325,6 +338,32 @@ pub(crate) async fn browser_vault_resource_receipt_action_http(
             return vault_grant_denied_response(&reason);
         }
     }
+    if action == "useAgentWalletGrant" {
+        let receipt = registry.record_agent_wallet_unavailable_receipt(
+            crate::shellx_browser::BrowserVaultCredentialRequest {
+                task_id: body.task_id.clone(),
+                origin: origin.clone(),
+                item_id: resource_ref.clone(),
+                grant_id: Some(grant_id.clone()),
+            },
+        );
+        emit_browser_latest(s, registry);
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(serde_json::json!({
+                "ok": false,
+                "status": "unavailable",
+                "code": "browser_agent_wallet_checkout_unavailable",
+                "error": "Agent-wallet checkout requires a real provider transaction bridge; grant approval alone does not prepare payment",
+                "resourceRef": resource_ref,
+                "origin": origin,
+                "grantId": grant_id,
+                "secretExposed": false,
+                "receiptId": receipt.ok().map(|value| value.receipt_id),
+            })),
+        )
+            .into_response();
+    }
     let resource_value = match vault.compat_get(&resource_ref).await {
         Ok(Some(value)) => value,
         Ok(None) => {
@@ -354,7 +393,6 @@ pub(crate) async fn browser_vault_resource_receipt_action_http(
     };
     let receipt = match action {
         "readEmailCodeGrant" => registry.record_email_code_receipt(request),
-        "useAgentWalletGrant" => registry.record_agent_wallet_receipt(request),
         _ => Err(format!("unsupported vault resource action: {action}")),
     };
     match receipt {
@@ -485,73 +523,55 @@ pub(crate) async fn browser_vault_deposit_http(
         Ok(registry) => registry,
         Err(response) => return *response,
     };
+    let prepared = match registry.prepare_vault_deposit(body) {
+        Ok(prepared) => prepared,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": e, "secretExposed": false })),
+            )
+                .into_response();
+        }
+    };
+    let vault_ref = crate::shellx_browser_vault::browser_vault_deposit_key(
+        prepared.label(),
+        prepared.deposit_id(),
+    );
     let vault = match shellx_vault_from_state(&s) {
         Ok(vault) => vault,
         Err(response) => return *response,
     };
-    let vault_ref = browser_vault_deposit_key(&body.label);
     let description = Some(format!(
         "ShellX Browser deposit: {}",
-        clean_string_for_receipt(&body.label)
+        clean_string_for_receipt(prepared.label())
     ));
-    if let Err(e) = vault
-        .compat_set_with_description(&vault_ref, &body.secret_value, description)
+    match vault
+        .compat_create_with_description(&vault_ref, prepared.secret_value(), description)
         .await
     {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e, "secretExposed": false })),
-        )
-            .into_response();
-    }
-    match registry.create_vault_deposit(body) {
-        Ok(mut response) => {
-            response.vault_ref = Some(vault_ref.clone());
-            if let Some(evidence) = response.receipt.evidence.as_object_mut() {
-                evidence.insert("vaultRef".to_string(), serde_json::json!(vault_ref));
-                evidence.insert("vaultWriteCommitted".to_string(), serde_json::json!(true));
-            }
-            emit_browser_receipt(&s, &response.receipt);
-            Json(response).into_response()
+        Ok(true) => {}
+        Ok(false) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "browser Vault deposit key collision",
+                    "secretExposed": false,
+                })),
+            )
+                .into_response();
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": e, "secretExposed": false })),
+            )
+                .into_response();
+        }
     }
-}
-
-fn browser_vault_deposit_key(label: &str) -> String {
-    let slug = label
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .take(6)
-        .collect::<Vec<_>>()
-        .join("-");
-    let slug = if slug.is_empty() { "secret" } else { &slug };
-    format!(
-        "browser-deposits/{}-{}-{}",
-        now_ms(),
-        slug,
-        hex::encode(vault_core::random_bytes::<4>())
-    )
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    let response = registry.commit_prepared_vault_deposit(prepared, vault_ref, None);
+    emit_browser_receipt(&s, &response.receipt);
+    Json(response).into_response()
 }
 
 fn clean_string_for_receipt(value: &str) -> String {
@@ -566,42 +586,39 @@ fn clean_string_for_receipt(value: &str) -> String {
 
 pub(crate) async fn browser_vault_fill_receipt_http(
     State(s): State<ApiState>,
-    Json(body): Json<crate::shellx_browser::BrowserVaultCredentialRequest>,
+    Json(_body): Json<crate::shellx_browser::BrowserVaultCredentialRequest>,
 ) -> Response {
-    let registry = match browser_registry(&s) {
-        Ok(registry) => registry,
+    match browser_registry(&s) {
+        Ok(_) => {}
         Err(response) => return *response,
-    };
-    match registry.record_vault_fill_receipt(body) {
-        Ok(response) => {
-            emit_browser_latest(&s, &registry);
-            Json(response).into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
     }
+    browser_vault_receipt_requires_verified_operation(
+        "Vault fill receipts are emitted only after an installed Browser engine confirms the mediated fill",
+    )
 }
 
 pub(crate) async fn browser_vault_generate_receipt_http(
     State(s): State<ApiState>,
-    Json(body): Json<crate::shellx_browser::BrowserVaultCredentialRequest>,
+    Json(_body): Json<crate::shellx_browser::BrowserVaultCredentialRequest>,
 ) -> Response {
-    let registry = match browser_registry(&s) {
-        Ok(registry) => registry,
+    match browser_registry(&s) {
+        Ok(_) => {}
         Err(response) => return *response,
-    };
-    match registry.record_vault_generate_receipt(body) {
-        Ok(response) => {
-            emit_browser_latest(&s, &registry);
-            Json(response).into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
     }
+    browser_vault_receipt_requires_verified_operation(
+        "Password generation must run through ShellX Vault; callers cannot self-issue generation receipts",
+    )
+}
+
+fn browser_vault_receipt_requires_verified_operation(message: &str) -> Response {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "ok": false,
+            "code": "browser_vault_receipt_requires_verified_operation",
+            "error": message,
+            "secretExposed": false,
+        })),
+    )
+        .into_response()
 }

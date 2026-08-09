@@ -1,9 +1,8 @@
 //! Content-defined chunking (FastCDC v2020) and chunk identity.
 //!
 //! Parameters: min 16 KiB / target 64 KiB / max 256 KiB — the `fastcdc`
-//! crate defaults and the right zone for sync over home upload links
-//! Files smaller than the minimum
-//! become a single chunk.
+//! crate defaults and the right zone for personal sync workloads. Files
+//! smaller than the minimum become a single chunk.
 //!
 //! Chunk identity is `blake3::keyed_hash(chunk_id_key, plaintext)`:
 //! deterministic (dedup across snapshots, renames, and devices sharing a
@@ -61,7 +60,7 @@ pub fn chunk_id(chunk_id_key: &[u8; 32], plaintext: &[u8]) -> ChunkId {
 /// Convergent per-chunk encryption key (format v2):
 /// `keyed-BLAKE3(chunk_enc_root, chunk_id)`.
 ///
-/// Properties this buys:
+/// Properties this buys (see the Vault architecture documentation):
 /// - **Dedup preserved**: the key depends only on (repo secret, content),
 ///   so identical chunks across files/devices encrypt under the same key
 ///   and one stored blob serves every reference. Naive per-FILE keys

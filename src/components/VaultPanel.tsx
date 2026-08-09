@@ -6,6 +6,7 @@ import { VaultTab } from "./settings/VaultTab";
 import { ShellIcon } from "./icons";
 import { inTauri } from "../lib/tauri-bridge";
 import type { VaultPanelIntent } from "../lib/vault-ui";
+import { useModalFocus } from "../lib/useModalFocus";
 
 interface VaultStatus {
   mode?: "unconfigured" | "legacyLimited" | "local" | "external";
@@ -25,12 +26,14 @@ export function VaultPanel({
   onClose: () => void;
 }): JSX.Element | null {
   const backdropPointerStartedOnBackdrop = useRef(false);
+  const dialogRef = useRef<HTMLElement | null>(null);
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [statusSeq, setStatusSeq] = useState(0);
   const [passphrase, setPassphrase] = useState("");
   const [unlocking, setUnlocking] = useState(false);
   const [locking, setLocking] = useState(false);
   const [unlockError, setUnlockError] = useState("");
+  useModalFocus(open, dialogRef, onClose);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -92,7 +95,7 @@ export function VaultPanel({
         request: {
           passphrase,
           keyfileJson: null,
-          rememberDevice: true,
+          rememberDevice: false,
         },
       });
       setPassphrase("");
@@ -131,12 +134,13 @@ export function VaultPanel({
   }
 
   return (
-    <div
+    <div data-debug-id="surface-components-vaultpanel-1"
       className="modal-backdrop vault-workspace-backdrop"
       onPointerDownCapture={handleBackdropPointerDown}
       onClick={handleBackdropClick}
     >
       <section
+        ref={dialogRef}
         className="modal vault-modal vault-workspace-modal"
         data-debug-id="vault-workspace-modal"
         role="dialog"
@@ -189,9 +193,10 @@ export function VaultPanel({
                   onChange={(event) => setPassphrase(event.currentTarget.value)}
                   placeholder="Master passphrase"
                   autoComplete="current-password"
-                  aria-label="Vault master passphrase"
+              aria-label="Vault master passphrase"
+              data-shellx-release-observe="nonempty"
                 />
-                <button
+                <button data-debug-id="surface-components-vaultpanel-5"
                   type="submit"
                   className={`settings-pill ${canQuickUnlock ? "active" : ""}`}
                   disabled={!canQuickUnlock}

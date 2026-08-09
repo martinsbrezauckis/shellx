@@ -90,7 +90,7 @@ Status: TODO\n\
 ## Phase 4 - Verification\n\
 Status: TODO\n\
 - [ ] Dispatch a `test-writer` Agent using `wait=true` for meaningful test coverage when behavior changed\n\
-- [ ] For UI, web, HTML, Vite, Next, or Expo work, call `preview_start` to activate shellX Work Preview, then run `preview_diagnose`; if it returns `screenshotPath`, inspect it with `vision_describe`; fix every reported error and record the screenshot/log evidence\n\
+- [ ] For UI, web app, website, HTML, Vite, Next, or Expo work, call `preview_start` to activate shellX Work Preview, then run `preview_diagnose`; if it returns `screenshotPath`, inspect it with `vision_describe`; fix every reported error and record the screenshot/log evidence. For SDK/API/CLI/backend/library work, do not create placeholder UI just to satisfy Preview Doctor\n\
 - [ ] Dispatch a `verifier` Agent using `wait=true` or run real checks and record evidence\n\n\
 ## Phase 5 - Complete\n\
 Status: TODO\n\
@@ -109,7 +109,9 @@ Status: TODO\n\
             must include `preview_start` plus the `preview_diagnose` tool; \
             if Preview Doctor returns `screenshotPath`, inspect it with \
             `vision_describe`; if Preview Doctor reports errors, fix them \
-            before `build_complete`. Do not ask an Agent to start preview \
+            before `build_complete`. Do not create placeholder UI/HTML for \
+            SDK/API/CLI/backend/library work just to satisfy Preview Doctor. \
+            Do not ask an Agent to start preview \
             servers through shell commands for this gate; Work Preview must \
             be shellX-owned so Preview Doctor sees the same URL and logs. \
             The reviewer task must check \
@@ -217,16 +219,22 @@ Status: TODO\n\
             last_receipt_id: None,
         };
 
-        if ssh_config.is_none() && transport_kind != "ssh" {
+        if ssh_config.is_none() && !transport_kind.trim().eq_ignore_ascii_case("ssh") {
             let stub = format!(
                 "# Build: {objective}\n\nStatus: DRAFTING\n\n_grok is drafting the build plan..._\n"
             );
-            if let Err(e) =
-                crate::goal_orchestrator::write_scratchboard_text(&scratchboard_path, &stub).await
+            if let Err(e) = crate::goal_orchestrator::write_scratchboard_text_for_transport(
+                &scratchboard_path,
+                &stub,
+                transport_kind,
+                None,
+            )
+            .await
             {
                 warn!(
-                    "build_orchestrator: build.md stub write failed for tab='{}' path={} err={}",
+                    "build_orchestrator: build.md stub write failed for tab='{}' transport='{}' path={} err={}",
                     tab_id,
+                    transport_kind,
                     scratchboard_path.display(),
                     e
                 );
@@ -294,11 +302,14 @@ Status: TODO\n\
         };
 
         let path = PathBuf::from(&state.scratchboard_path);
-        let ready =
-            crate::goal_orchestrator::read_scratchboard_text_for_path(&path, ssh_config.as_ref())
-                .await
-                .map(|text| validate_build_approval_ready(&text).is_ok())
-                .unwrap_or(false);
+        let ready = crate::goal_orchestrator::read_scratchboard_text_for_transport(
+            &path,
+            &state.transport_kind,
+            ssh_config.as_ref(),
+        )
+        .await
+        .map(|text| validate_build_approval_ready(&text).is_ok())
+        .unwrap_or(false);
         if !ready {
             return Some(state);
         }
@@ -346,12 +357,28 @@ Status: TODO\n\
         self.states.write().await.remove(tab_id);
     }
 
+    /// Remove one exact isolated release-test Build slot and its persisted
+    /// run namespace. Normal Build history is durable; only the guarded Debug
+    /// API cleanup path calls this helper for a `release-build-run-*` tab.
+    #[cfg(feature = "debug-api")]
+    pub async fn release_test_clear_tab(&self, tab_id: &str) -> Result<(), String> {
+        self.states.write().await.remove(tab_id);
+        crate::build_store::remove_release_test_tab(&self.store_base, tab_id)
+    }
+
     pub async fn get_receipts(&self, tab_id: &str) -> Result<Vec<BuildReceipt>, String> {
         let state = self
             .get_state(tab_id)
             .await
             .ok_or_else(|| "no build run for this tab".to_string())?;
-        crate::build_store::read_receipts(&self.store_base, tab_id, &state.run_id)
+        let store_base = self.store_base.clone();
+        let tab_id = tab_id.to_string();
+        let run_id = state.run_id;
+        tokio::task::spawn_blocking(move || {
+            crate::build_store::read_receipts(&store_base, &tab_id, &run_id)
+        })
+        .await
+        .map_err(|error| format!("build receipts reader join failed: {error}"))?
     }
 
     pub async fn in_flight_agent_summaries(&self, tab_id: &str) -> Result<Vec<String>, String> {
@@ -379,17 +406,19 @@ Status: TODO\n\
             return Ok(false);
         }
         let path = PathBuf::from(&runtime.state.scratchboard_path);
-        let text = crate::goal_orchestrator::read_scratchboard_text_for_path(
+        let text = crate::goal_orchestrator::read_scratchboard_text_for_transport(
             &path,
+            &runtime.state.transport_kind,
             runtime.ssh_config.as_ref(),
         )
         .await
         .map_err(|e| format!("cannot approve build plan: build.md is not readable: {}", e))?;
         validate_build_approval_ready(&text)?;
         let patched = mark_build_plan_in_progress(&text)?;
-        crate::goal_orchestrator::write_scratchboard_text_for_path(
+        crate::goal_orchestrator::write_scratchboard_text_for_transport(
             &path,
             &patched,
+            &runtime.state.transport_kind,
             runtime.ssh_config.as_ref(),
         )
         .await
@@ -747,7 +776,7 @@ Status: TODO\n\
             }
         }
         let plan_approval_ready = if receipt.kind == BuildReceiptKind::PlanWritten {
-            let (path, ssh_config) = {
+            let (path, transport_kind, ssh_config) = {
                 let map = self.states.read().await;
                 if let Some(runtime) = map
                     .get(&receipt.tab_id)
@@ -759,14 +788,19 @@ Status: TODO\n\
                         .and_then(|v| v.as_str())
                         .unwrap_or(&runtime.state.scratchboard_path)
                         .to_string();
-                    (Some(PathBuf::from(path)), runtime.ssh_config.clone())
+                    (
+                        Some(PathBuf::from(path)),
+                        runtime.state.transport_kind.clone(),
+                        runtime.ssh_config.clone(),
+                    )
                 } else {
-                    (None, None)
+                    (None, "local".to_string(), None)
                 }
             };
             if let Some(path) = path {
-                match crate::goal_orchestrator::read_scratchboard_text_for_path(
+                match crate::goal_orchestrator::read_scratchboard_text_for_transport(
                     &path,
+                    &transport_kind,
                     ssh_config.as_ref(),
                 )
                 .await
@@ -789,7 +823,13 @@ Status: TODO\n\
             false
         };
 
-        crate::build_store::append_receipt(&self.store_base, &receipt)?;
+        let store_base = self.store_base.clone();
+        let receipt_for_store = receipt.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::build_store::append_receipt(&store_base, &receipt_for_store)
+        })
+        .await
+        .map_err(|error| format!("build receipt writer join failed: {error}"))??;
         let mut map = self.states.write().await;
         let Some(runtime) = map.get_mut(&receipt.tab_id) else {
             return Ok(());
@@ -924,8 +964,9 @@ Status: TODO\n\
             .map(|r| format!("{:?}: {}", r.kind, r.summary))
             .unwrap_or_else(|| "none".to_string());
 
-        let text = crate::goal_orchestrator::read_scratchboard_text_for_path(
+        let text = crate::goal_orchestrator::read_scratchboard_text_for_transport(
             Path::new(&runtime.state.scratchboard_path),
+            &runtime.state.transport_kind,
             runtime.ssh_config.as_ref(),
         )
         .await
@@ -983,9 +1024,11 @@ Status: TODO\n\
         let forward_nudge_block =
             format_build_forward_nudge_block(runtime.state.no_progress_cycles);
         Some(if completion_nudge {
+            let required_gates = format_required_build_gates(&runtime.state);
             format!(
-                "<build_completion_check>\nThe Build Mode scratchboard appears complete, but shellX has not accepted completion for objective `{}`.\nCall `build_complete` now if checkpoint, review, verification, and Preview Doctor receipt gates are satisfied. If a gate is missing, reopen the relevant phase and satisfy it.{}\nContinuation #{}.\n</build_completion_check>",
+                "<build_completion_check>\nThe Build Mode scratchboard appears complete, but shellX has not accepted completion for objective `{}`.\nCall `build_complete` now if the required gates are satisfied: {}. If a gate is missing, reopen the relevant phase and satisfy it.{}\nContinuation #{}.\n</build_completion_check>",
                 runtime.state.objective,
+                required_gates,
                 operator_notes_block,
                 injection_count
             )
@@ -1051,8 +1094,9 @@ Status: TODO\n\
                 blocker
             ));
         }
-        let text = crate::goal_orchestrator::read_scratchboard_text_for_path(
+        let text = crate::goal_orchestrator::read_scratchboard_text_for_transport(
             Path::new(&runtime.state.scratchboard_path),
+            &runtime.state.transport_kind,
             runtime.ssh_config.as_ref(),
         )
         .await
@@ -1200,30 +1244,111 @@ fn pick_build_scratchboard_path(cwd: &Path, tab_id: &str, run_id: &str) -> PathB
 }
 
 fn build_objective_requires_preview(objective: &str) -> bool {
-    let lower = objective.to_ascii_lowercase();
-    if lower == "ui" || lower.starts_with("ui ") {
+    let words = build_objective_words(objective);
+    if words.is_empty() {
+        return false;
+    }
+
+    let has_word = |needle: &str| words.iter().any(|word| word == needle);
+    let has_phrase = |phrase: &[&str]| build_objective_has_phrase(&words, phrase);
+
+    let explicitly_non_visual = has_phrase(&["no", "ui"])
+        || has_phrase(&["non", "ui"])
+        || has_phrase(&["not", "ui"])
+        || has_phrase(&["without", "ui"])
+        || has_word("headless");
+
+    let library_or_service_work = has_word("sdk")
+        || has_word("api")
+        || has_word("library")
+        || has_word("package")
+        || has_word("cli")
+        || has_word("backend")
+        || has_word("server")
+        || has_phrase(&["debug", "api"])
+        || has_phrase(&["browser", "debug", "api"]);
+
+    let explicit_visual_surface = (has_word("ui") && !explicitly_non_visual)
+        || has_word("frontend")
+        || has_phrase(&["front", "end"])
+        || has_phrase(&["user", "interface"])
+        || has_word("html")
+        || has_word("vite")
+        || has_word("react")
+        || has_word("expo")
+        || has_phrase(&["next", "js"])
+        || has_word("nextjs")
+        || has_word("preview")
+        || has_word("screen")
+        || has_word("dashboard")
+        || has_word("form")
+        || has_word("website")
+        || has_word("webpage")
+        || has_phrase(&["web", "page"])
+        || has_phrase(&["web", "app"])
+        || has_phrase(&["landing", "page"]);
+
+    if explicitly_non_visual && library_or_service_work {
+        return false;
+    }
+    if library_or_service_work && !explicit_visual_surface {
+        return false;
+    }
+    if explicit_visual_surface {
         return true;
     }
-    [
-        " ui",
-        "web",
-        "html",
-        "frontend",
-        "front-end",
-        "page",
-        "screen",
-        "browser",
-        "preview",
-        "vite",
-        "next.js",
-        "nextjs",
-        "react",
-        "expo",
-        "landing",
-        "website",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
+
+    // A bare "web" usually means the operator expects a browser-visible
+    // result, but do not let "browser" alone trigger Preview Doctor. Browser
+    // SDK/API/control work is often non-visual and should not be nudged into
+    // creating placeholder HTML just to satisfy a false UI gate.
+    has_word("web") || has_word("page")
+}
+
+fn build_objective_words(objective: &str) -> Vec<String> {
+    objective
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .map(|word| word.to_string())
+        .collect()
+}
+
+fn build_objective_has_phrase(words: &[String], phrase: &[&str]) -> bool {
+    if phrase.is_empty() || words.len() < phrase.len() {
+        return false;
+    }
+    words
+        .windows(phrase.len())
+        .any(|window| window.iter().zip(phrase.iter()).all(|(a, b)| a == b))
+}
+
+fn format_required_build_gates(state: &BuildRunState) -> String {
+    let mut gates = Vec::new();
+    if state.code_changed {
+        gates.push("checkpoint");
+    }
+    if state.review_required {
+        gates.push("review");
+    }
+    if state.verification_required {
+        gates.push("verification");
+    }
+    if state.preview_required {
+        gates.push("Preview Doctor");
+    }
+    if gates.is_empty() {
+        "scratchboard completion".to_string()
+    } else {
+        gates.join(", ")
+    }
 }
 
 fn build_receipt_path_matches(a: &str, b: &str) -> bool {
@@ -2812,6 +2937,26 @@ Status: AWAITING_APPROVAL
         let _ = std::fs::remove_dir_all(store);
     }
 
+    #[cfg(feature = "debug-api")]
+    #[tokio::test]
+    async fn release_test_clear_tab_removes_runtime_and_persisted_state() {
+        let cwd = temp_base("release-clear-cwd");
+        let store = temp_base("release-clear-store");
+        let orch = BuildOrchestrator::new(store.clone());
+        orch.start_run("release-build-run-owned", "test", &cwd, "local")
+            .await
+            .unwrap();
+        assert!(orch.get_state("release-build-run-owned").await.is_some());
+
+        orch.release_test_clear_tab("release-build-run-owned")
+            .await
+            .unwrap();
+
+        assert!(orch.get_state("release-build-run-owned").await.is_none());
+        let _ = std::fs::remove_dir_all(cwd);
+        let _ = std::fs::remove_dir_all(store);
+    }
+
     #[tokio::test]
     async fn start_run_stays_draft_until_valid_plan_written() {
         let cwd = temp_base("draft-plan-cwd");
@@ -3117,6 +3262,49 @@ Status: AWAITING_APPROVAL
             "summary": "Preview Doctor passed"
         });
         orch.append_receipt(preview).await.unwrap();
+        orch.validate_complete("tab1", "done").await.unwrap();
+
+        let _ = std::fs::remove_dir_all(cwd);
+        let _ = std::fs::remove_dir_all(store);
+    }
+
+    #[test]
+    fn preview_gate_ignores_non_visual_browser_sdk_objectives() {
+        assert!(!build_objective_requires_preview(
+            "Create a standalone TypeScript package called shellx-browser-driver-sdk for the Browser Debug API over HTTP. No UI."
+        ));
+        assert!(!build_objective_requires_preview(
+            "Build a browser automation SDK with CLI examples"
+        ));
+        assert!(build_objective_requires_preview("build a web page"));
+        assert!(build_objective_requires_preview(
+            "build a browser settings screen"
+        ));
+    }
+
+    #[tokio::test]
+    async fn browser_debug_api_sdk_build_can_complete_without_preview_gate() {
+        let cwd = temp_base("browser-sdk-no-preview-cwd");
+        let store = temp_base("browser-sdk-no-preview-store");
+        let orch = BuildOrchestrator::new(store.clone());
+        let state = orch
+            .start_run(
+                "tab1",
+                "Create a standalone TypeScript package called shellx-browser-driver-sdk for the Browser Debug API over HTTP. No UI.",
+                &cwd,
+                "local",
+            )
+            .await
+            .unwrap();
+        assert!(
+            !state.preview_required,
+            "Browser Debug API SDK work must not require Preview Doctor"
+        );
+        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
+        {
+            let mut map = orch.states.write().await;
+            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
+        }
         orch.validate_complete("tab1", "done").await.unwrap();
 
         let _ = std::fs::remove_dir_all(cwd);

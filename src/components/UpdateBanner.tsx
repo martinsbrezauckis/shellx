@@ -22,7 +22,13 @@ import { useEffect, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
 import { updateErrorIsQuiet } from "../lib/update-diagnostics";
-import { cleanUpdateNotes, firstUpdateNotesUrl } from "../lib/update-notes";
+import {
+  DEBUG_UPDATE_FIXTURE,
+  DEBUG_UPDATE_INSTALL_RECEIPT,
+  cleanUpdateNotes,
+  firstUpdateNotesUrl,
+  type DebugUpdateFixtureMode,
+} from "../lib/update-notes";
 
 interface UpdateState {
   available: boolean;
@@ -47,10 +53,37 @@ function openExternal(url: string): void {
     });
 }
 
-export function UpdateBanner(): JSX.Element | null {
+export function UpdateBanner({
+  debugFixture = "live",
+}: {
+  debugFixture?: DebugUpdateFixtureMode;
+} = {}): JSX.Element | null {
   const [state, setState] = useState<UpdateState>(INITIAL);
+  const [releaseReceipt, setReleaseReceipt] = useState<string | null>(null);
 
   useEffect(() => {
+    if (debugFixture === "owned-available") {
+      setReleaseReceipt(null);
+      setState({
+        available: true,
+        version: DEBUG_UPDATE_FIXTURE.version,
+        body: DEBUG_UPDATE_FIXTURE.body,
+        downloading: false,
+        progress: 0,
+        error: null,
+      });
+      return;
+    }
+    if (debugFixture === "owned-cleared") {
+      setReleaseReceipt(null);
+      setState(INITIAL);
+      return;
+    }
+    if (debugFixture === "owned-check") {
+      setReleaseReceipt(null);
+      setState(INITIAL);
+      return;
+    }
     if (!inTauri()) return; // browser-only preview: no updater plugin
     let cancelled = false;
 
@@ -91,9 +124,14 @@ export function UpdateBanner(): JSX.Element | null {
     void checkOnce();
     const id = window.setInterval(() => void checkOnce(), 30 * 60 * 1000);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [debugFixture]);
 
   async function install(): Promise<void> {
+    if (debugFixture === "owned-available") {
+      setReleaseReceipt(DEBUG_UPDATE_INSTALL_RECEIPT);
+      setState((prev) => ({ ...prev, downloading: true, progress: 1 }));
+      return;
+    }
     setState((prev) => ({ ...prev, downloading: true, progress: 0, error: null }));
     try {
       const [{ check }, { relaunch }] = await Promise.all([
@@ -128,6 +166,9 @@ export function UpdateBanner(): JSX.Element | null {
   return (
     <div
       role="status"
+      data-release-update-receipt="banner"
+      data-shellx-release-observe="title"
+      title={releaseReceipt ?? "Update status"}
       style={{
         display: "flex",
         alignItems: "center",
@@ -153,6 +194,7 @@ export function UpdateBanner(): JSX.Element | null {
           {releaseNotesUrl && (
             <button
               type="button"
+              data-release-update-control="banner-notes"
               onClick={() => openExternal(releaseNotesUrl)}
               style={{
                 fontFamily: "var(--sans)",
@@ -177,12 +219,13 @@ export function UpdateBanner(): JSX.Element | null {
           ) : (
             <button
               type="button"
+              data-release-update-control="banner-install"
               onClick={() => void install()}
               style={{
                 fontFamily: "var(--sans)",
                 fontSize: "var(--fs-ui-sm)",
                 background: "var(--accent)",
-                color: "#0a0a0a",
+                color: "var(--ink-on-accent)",
                 border: "none",
                 borderRadius: "var(--radius-button)",
                 padding: "4px 12px",

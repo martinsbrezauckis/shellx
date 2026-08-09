@@ -12,6 +12,10 @@ export function AgentRunsMonitor(): JSX.Element {
   const [state, setState] = useState<AgentRunManagerState | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [manualRefreshReceipt, setManualRefreshReceipt] = useState({
+    sequence: 0,
+    generatedAtMs: null as number | null,
+  });
 
   async function refresh(showLoading = true): Promise<void> {
     if (!inTauri()) return;
@@ -19,6 +23,10 @@ export function AgentRunsMonitor(): JSX.Element {
     try {
       const next = await getAgentRunsState();
       setState(next);
+      setManualRefreshReceipt((current) => ({
+        sequence: current.sequence + 1,
+        generatedAtMs: next.generatedAtMs,
+      }));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -66,7 +74,12 @@ export function AgentRunsMonitor(): JSX.Element {
     : "Provider-native subagents are shown only when the provider exposes them in the stream.";
 
   return (
-    <section className="tasks-agent-runs agent-runs-card" data-debug-id="tasks-agent-runs">
+    <section
+      className="tasks-agent-runs agent-runs-card"
+      data-debug-id="tasks-agent-runs"
+      data-agent-runs-manual-refresh-sequence={manualRefreshReceipt.sequence}
+      data-agent-runs-manual-refresh-generated-at-ms={manualRefreshReceipt.generatedAtMs ?? ""}
+    >
       <div className="tooling-row-top">
         <span className="tooling-name">Agent runs</span>
         <span className={`tooling-status ${status.className}`}>{status.label}</span>
@@ -97,6 +110,9 @@ export function AgentRunsMonitor(): JSX.Element {
         <button
           type="button"
           className="mp-action-btn mp-action-btn-secondary"
+          data-debug-id="tasks-agent-runs-refresh"
+          data-shellx-release-observe="disabled title"
+          title={`Agent runs refresh receipt · sequence=${manualRefreshReceipt.sequence} · generatedAtMs=${manualRefreshReceipt.generatedAtMs ?? "none"}`}
           onClick={() => void refresh()}
           disabled={loading}
         >
@@ -138,14 +154,33 @@ function agentRunTitle(run: AgentRunRow): string {
 }
 
 function agentRunDetail(run: AgentRunRow): string {
+  const totalTokens = typeof run.tokens === "object" && run.tokens !== null
+    ? run.tokens.totalTokens
+    : typeof run.tokens === "number"
+      ? run.tokens
+      : null;
   const parts = [
     run.status,
     run.surface?.transport ? String(run.surface.transport) : null,
     run.tabId ? `tab ${shortId(run.tabId)}` : null,
     run.runId ? `run ${shortId(run.runId)}` : null,
+    run.subagentId ? `subagent ${shortId(run.subagentId)}` : null,
+    run.parentSubagentId ? `parent ${shortId(run.parentSubagentId)}` : null,
+    run.metrics?.timeToFirstResponseMs != null
+      ? `first response ${formatElapsedMs(run.metrics.timeToFirstResponseMs)}`
+      : null,
+    run.metrics && run.metrics.toolCallCount > 0
+      ? `${run.metrics.toolSuccessCount}/${run.metrics.toolCallCount} actions completed`
+      : null,
+    totalTokens != null ? `${totalTokens.toLocaleString()} tokens` : null,
     run.nativeVisibility === "notExposed" ? "native subagents not exposed" : null,
   ].filter((part): part is string => Boolean(part));
   return parts.join(" · ");
+}
+
+function formatElapsedMs(value: number): string {
+  if (value < 1_000) return `${value} ms`;
+  return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)} s`;
 }
 
 function providerLabelFromId(providerId: AgentRunRow["providerId"]): string {

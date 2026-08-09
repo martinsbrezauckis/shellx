@@ -1,4 +1,4 @@
-export type BrowserAutonomy = "approvalFirst" | "assistedAutonomous" | "autonomous" | "unattendedWithPolicy";
+export type BrowserAutonomy = "assistedAutonomous";
 export type BrowserAdMode = "off" | "balanced" | "strict" | "visualCleanCompatibility";
 export type BrowserVisibleAdMode = Exclude<BrowserAdMode, "visualCleanCompatibility">;
 export type BrowserShieldAdTrackerMode = "off" | "balanced" | "strict";
@@ -7,6 +7,15 @@ export type BrowserShieldFingerprintingMode = "compatibility" | "strict";
 export type BrowserBookmarkKind = "link" | "folder";
 export type BrowserTabOwnerKind = "user" | "agent" | "delegatedToAgent";
 export type BrowserPersonalLockAuthMode = "deviceAuthPreferred" | "pinOnly";
+export type BrowserPageSaveKind =
+  | "screenshot"
+  | "fullPageScreenshot"
+  | "markdown"
+  | "linksJson"
+  | "snapshotJson"
+  | "media"
+  | "code"
+  | "site";
 
 export function browserVisibleAdMode(mode?: BrowserAdMode | null): BrowserVisibleAdMode {
   return mode === "off" || mode === "strict" ? mode : "balanced";
@@ -100,10 +109,15 @@ export interface BrowserTab {
 export interface BrowserTask {
   taskId: string;
   profileId: string;
+  ownerActorId: string;
+  ownerSurface: string;
+  ownerSessionId?: string | null;
   goal: string;
   status: string;
+  statusReason?: string | null;
   autonomy: BrowserAutonomy;
   currentUrl?: string | null;
+  createdAtMs: number;
   updatedAtMs: number;
 }
 
@@ -116,8 +130,45 @@ export interface BrowserBookmark {
   parentId?: string | null;
   toolbarPinned: boolean;
   toolbarOrder?: number | null;
+  agentWorkflow?: BrowserBookmarkAgentWorkflow | null;
   createdAtMs: number;
   updatedAtMs: number;
+}
+
+export interface BrowserBookmarkAgentWorkflow {
+  siteKey?: string | null;
+  taskType?: string | null;
+  target?: string | null;
+  surface?: string | null;
+  aliases?: string[];
+  contractProfile?: string | null;
+  contractId?: string | null;
+  contractVersion?: number | null;
+  contractHash?: string | null;
+  contractOverlayId?: string | null;
+  contractAuditStatus?: string | null;
+  contractAuditReason?: string | null;
+  lastContractAuditAtMs?: number | null;
+  permissionsNeeded?: string[];
+  secretKinds?: string[];
+  recipeId?: string | null;
+  recipePath?: string | null;
+  goal?: string | null;
+  steps?: number | null;
+  source?: string | null;
+  createdAtMs?: number | null;
+  health?: string | null;
+  lastRunAtMs?: number | null;
+  lastEvaluationReportPath?: string | null;
+  lastImprovementScore?: number | null;
+  lastImprovementRating?: string | null;
+  lastAttemptId?: string | null;
+  lastAttemptPath?: string | null;
+  lastReplayStatus?: string | null;
+  lastReplayAtMs?: number | null;
+  driftStatus?: string | null;
+  refreshReason?: string | null;
+  refreshCandidateRecipePath?: string | null;
 }
 
 export interface BrowserBookmarkToolbarItem {
@@ -125,6 +176,7 @@ export interface BrowserBookmarkToolbarItem {
   label: string;
   kind: BrowserBookmarkKind;
   url?: string | null;
+  agentWorkflow?: BrowserBookmarkAgentWorkflow | null;
   children: BrowserBookmark[];
 }
 
@@ -275,6 +327,16 @@ export interface BrowserEnginePoolSnapshot {
   automationMode: string;
 }
 
+export interface BrowserNativeSecurityCapabilities {
+  platform: string;
+  strictRequestFilter: boolean;
+  popupGate: boolean;
+  permissionGate: boolean;
+  passwordAutosaveDisabled: boolean;
+  generalAutofillDisabled: boolean;
+  fullNativeProtection: boolean;
+}
+
 export interface BrowserState {
   profiles: BrowserProfile[];
   tabs: BrowserTab[];
@@ -288,6 +350,7 @@ export interface BrowserState {
   pendingStartUrl?: string | null;
   engine?: BrowserEngineSnapshot | null;
   enginePool?: BrowserEnginePoolSnapshot | null;
+  nativeSecurity?: BrowserNativeSecurityCapabilities | null;
   privacy: BrowserPrivacySettings;
   personalLock?: BrowserPersonalLockSettings;
   downloadFolder?: string | null;
@@ -298,4 +361,39 @@ export interface BrowserState {
   uploads: BrowserTransferEntry[];
   consoleLogs: BrowserConsoleLog[];
   receipts: BrowserReceipt[];
+}
+
+export interface BrowserSummary {
+  browserProtocolVersion: string;
+  browserSchemaRevision: string;
+  revisions: {
+    state: string;
+    tasks: string;
+    tabs: string;
+    engine: string;
+    requests: string;
+    activity: string;
+  };
+  counts: {
+    profiles: number;
+    tabs: number;
+    tasks: number;
+    runningTasks: number;
+    bookmarks: number;
+    history: number;
+    receipts: number;
+    consoleLogs: number;
+    downloads: number;
+    uploads: number;
+    pendingRequests: number;
+    waitingEngines: number;
+  };
+  pendingRequests: Array<{
+    requestId: string;
+    kind: string;
+    taskId?: string | null;
+    status: string;
+    summary: string;
+    createdAtMs: number;
+  }>;
 }

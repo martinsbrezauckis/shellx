@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { takeShellxReleasePickerClaim } from "../../lib/shellx-dialog";
 
 type SetupMode = "local" | "external";
 
@@ -22,12 +23,28 @@ type LegacyImportReceipt = {
   skipped: boolean;
 };
 
+export const OWNED_DEBUG_VAULT_RECOVERY_WORDS = [
+  "shellx", "release", "owned", "recovery", "fixture", "never",
+  "operator", "secret", "vault", "copy", "proof", "zero",
+] as const;
+
+function VaultField({ label, children }: { label: string; children: JSX.Element }): JSX.Element {
+  return (
+    <label className="vault-field">
+      <span className="vault-field-label">{label}</span>
+      {children}
+    </label>
+  );
+}
+
 export function VaultSetupPanel({
   status,
   onRefresh,
+  debugRecoveryWords = null,
 }: {
   status: VaultStatus | null;
   onRefresh: () => void;
+  debugRecoveryWords?: readonly string[] | null;
 }): JSX.Element {
   const [mode, setMode] = useState<SetupMode>("local");
   const [passphrase, setPassphrase] = useState("");
@@ -63,6 +80,16 @@ export function VaultSetupPanel({
   useEffect(() => {
     setRememberDevice(status?.rememberedDeviceEnabled ?? true);
   }, [status?.rememberedDeviceEnabled]);
+
+  useEffect(() => {
+    if (!debugRecoveryWords?.length) return;
+    setRecoveryKit({
+      confirmationId: "release-owned-recovery-clipboard-fixture",
+      words: [...debugRecoveryWords],
+      warning: "Synthetic release fixture. No operator recovery material is loaded.",
+    });
+    setMessage("Synthetic release fixture. No operator recovery material is loaded.");
+  }, [debugRecoveryWords]);
 
   async function beginSetup(): Promise<void> {
     if (passphrase !== confirmPassphrase) {
@@ -186,15 +213,41 @@ export function VaultSetupPanel({
         setMessage("Selected keyfile is too large.");
         return;
       }
-      const raw = (await file.text()).trim();
-      const parsed = JSON.parse(raw) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        setMessage("Selected file is not a Vault keyfile JSON.");
+      acceptKeyfileText(await file.text(), file.name);
+    } catch {
+      setKeyfileJson("");
+      setSelectedKeyfileName("");
+      setMessage("Selected file is not valid JSON.");
+    }
+  }
+
+  function acceptKeyfileText(value: string, name: string): void {
+    const raw = value.trim();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      setMessage("Selected file is not a Vault keyfile JSON.");
+      return;
+    }
+    setKeyfileJson(raw);
+    setSelectedKeyfileName(name);
+    setMessage("Existing keyfile selected.");
+  }
+
+  async function chooseKeyfile(): Promise<void> {
+    setMessage("");
+    try {
+      const claim = await takeShellxReleasePickerClaim("file");
+      if (!claim) {
+        keyfileInputRef.current?.click();
         return;
       }
-      setKeyfileJson(raw);
-      setSelectedKeyfileName(file.name);
-      setMessage("Existing keyfile selected.");
+      if (typeof claim.syntheticText !== "string" || claim.syntheticText.length > 16 * 1024) {
+        throw new Error("isolated keyfile picker result omitted bounded synthetic text");
+      }
+      acceptKeyfileText(
+        claim.syntheticText,
+        claim.path.split(/[\\/]/).filter(Boolean).at(-1) ?? "vault-keyfile.json",
+      );
     } catch {
       setKeyfileJson("");
       setSelectedKeyfileName("");
@@ -241,15 +294,18 @@ export function VaultSetupPanel({
                 void unlockVault();
               }}
             >
-              <input
-                className="settings-input"
-                data-debug-id="shellx-vault-unlock-passphrase"
-                type="password"
-                value={passphrase}
-                onChange={(event) => setPassphrase(event.target.value)}
-                placeholder="Master passphrase"
-                autoComplete="current-password"
-              />
+              <VaultField label="Master passphrase">
+                <input
+                  className="settings-input"
+                  data-debug-id="shellx-vault-unlock-passphrase"
+                  data-shellx-release-observe="nonempty"
+                  type="password"
+                  value={passphrase}
+                  onChange={(event) => setPassphrase(event.target.value)}
+                  placeholder="Master passphrase"
+                  autoComplete="current-password"
+                />
+              </VaultField>
               <button
                 type="submit"
                 className={`settings-pill ${canUnlock ? "active" : ""}`}
@@ -283,15 +339,18 @@ export function VaultSetupPanel({
                 </button>
               ) : (
                 <>
-                  <input
-                    className="settings-input"
-                    data-debug-id="shellx-vault-remember-passphrase"
-                    type="password"
-                    value={rememberPassphrase}
-                    onChange={(event) => setRememberPassphrase(event.target.value)}
-                    placeholder="Master passphrase"
-                    autoComplete="current-password"
-                  />
+                  <VaultField label="Master passphrase">
+                    <input
+                      className="settings-input"
+                      data-debug-id="shellx-vault-remember-passphrase"
+                      data-shellx-release-observe="nonempty"
+                      type="password"
+                      value={rememberPassphrase}
+                      onChange={(event) => setRememberPassphrase(event.target.value)}
+                      placeholder="Master passphrase"
+                      autoComplete="current-password"
+                    />
+                  </VaultField>
                   <button
                     type="button"
                     className={`settings-pill ${rememberPassphrase.trim() ? "active" : ""}`}
@@ -321,6 +380,7 @@ export function VaultSetupPanel({
             <button
               type="button"
               aria-pressed={mode === "local"}
+              data-shellx-release-observe="pressed"
               onClick={() => setMode("local")}
             >
               Local
@@ -328,6 +388,7 @@ export function VaultSetupPanel({
             <button
               type="button"
               aria-pressed={mode === "external"}
+              data-shellx-release-observe="pressed"
               onClick={() => setMode("external")}
             >
               External
@@ -335,63 +396,77 @@ export function VaultSetupPanel({
           </div>
           {mode === "external" && (
             <div className="vault-setup-grid">
-              <input
-                className="settings-input"
-                type="url"
-                value={serverUrl}
-                onChange={(event) => setServerUrl(event.target.value)}
-                placeholder="Server URL"
-                autoComplete="off"
-              />
-              <input
-                className="settings-input"
-                value={repo}
-                onChange={(event) => setRepo(event.target.value)}
-                placeholder="Repo"
-                autoComplete="off"
-              />
-              <input
-                className="settings-input"
-                type="password"
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
-                placeholder="Access token"
-                autoComplete="off"
-              />
+              <VaultField label="Server URL">
+                <input
+                  className="settings-input"
+                  type="url"
+                  value={serverUrl}
+                  onChange={(event) => setServerUrl(event.target.value)}
+                  placeholder="Server URL"
+                  data-shellx-release-observe="nonempty"
+                  autoComplete="off"
+                />
+              </VaultField>
+              <VaultField label="Repository">
+                <input
+                  className="settings-input"
+                  value={repo}
+                  onChange={(event) => setRepo(event.target.value)}
+                  placeholder="Repo"
+                  data-shellx-release-observe="nonempty"
+                  autoComplete="off"
+                />
+              </VaultField>
+              <VaultField label="Access token">
+                <input
+                  className="settings-input"
+                  type="password"
+                  value={token}
+                  onChange={(event) => setToken(event.target.value)}
+                  placeholder="Access token"
+                  data-shellx-release-observe="nonempty"
+                  autoComplete="off"
+                />
+              </VaultField>
             </div>
           )}
           <div className="vault-setup-grid">
-            <input
-              className="settings-input"
-              data-debug-id="shellx-vault-master-passphrase"
-              type="password"
-              value={passphrase}
-              onChange={(event) => setPassphrase(event.target.value)}
-              placeholder="Master passphrase"
-              autoComplete="new-password"
-            />
-            <input
-              className="settings-input"
-              data-debug-id="shellx-vault-confirm-passphrase"
-              type="password"
-              value={confirmPassphrase}
-              onChange={(event) => setConfirmPassphrase(event.target.value)}
-              placeholder="Confirm master passphrase"
-              autoComplete="new-password"
-            />
+            <VaultField label="Master passphrase">
+              <input
+                className="settings-input"
+                data-debug-id="shellx-vault-master-passphrase"
+                data-shellx-release-observe="nonempty"
+                type="password"
+                value={passphrase}
+                onChange={(event) => setPassphrase(event.target.value)}
+                placeholder="Master passphrase"
+                autoComplete="new-password"
+              />
+            </VaultField>
+            <VaultField label="Confirm master passphrase">
+              <input
+                className="settings-input"
+                data-debug-id="shellx-vault-confirm-passphrase"
+                data-shellx-release-observe="nonempty"
+                type="password"
+                value={confirmPassphrase}
+                onChange={(event) => setConfirmPassphrase(event.target.value)}
+                placeholder="Confirm master passphrase"
+                autoComplete="new-password"
+              />
+            </VaultField>
             <div className="vault-keyfile-picker">
               <input
                 ref={keyfileInputRef}
-                data-debug-id="shellx-vault-keyfile-file"
                 type="file"
                 accept="application/json,.json"
                 onChange={(event) => void handleKeyfileFile(event)}
                 hidden
               />
-              <button
+              <button data-debug-id="surface-components-settings-vaultsetuppanel-17"
                 type="button"
                 className={`settings-pill ${keyfileJson ? "active" : ""}`}
-                onClick={() => keyfileInputRef.current?.click()}
+                onClick={() => void chooseKeyfile()}
                 disabled={busy}
               >
                 {keyfileJson ? "Change keyfile" : "Use existing keyfile"}
@@ -431,6 +506,7 @@ export function VaultSetupPanel({
               <input
                 type="checkbox"
                 data-debug-id="shellx-vault-remember-device-setup"
+                data-shellx-release-observe="checked"
                 checked={rememberDevice}
                 onChange={(event) => setRememberDevice(event.currentTarget.checked)}
               />
@@ -453,6 +529,7 @@ export function VaultSetupPanel({
               <label className="vault-check-row">
                 <input
                   type="checkbox"
+                  data-shellx-release-observe="checked"
                   checked={importLegacy}
                   onChange={(event) => setImportLegacy(event.currentTarget.checked)}
                 />

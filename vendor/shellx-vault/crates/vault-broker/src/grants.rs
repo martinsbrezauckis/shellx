@@ -296,7 +296,7 @@ impl GrantPolicy {
                         .constraints
                         .path_prefix
                         .as_deref()
-                        .map(|prefix| path.starts_with(prefix) || prefix == path)
+                        .map(|prefix| path_matches_prefix(path, prefix))
                         .unwrap_or(false))
         })
     }
@@ -464,7 +464,7 @@ impl GrantPolicy {
             if !request
                 .path
                 .as_deref()
-                .map(|path| path.starts_with(path_prefix))
+                .map(|path| path_matches_prefix(path, path_prefix))
                 .unwrap_or(false)
             {
                 return Some(GrantDenyReason::PathMismatch);
@@ -532,6 +532,11 @@ impl GrantPolicy {
         self.receipts.push(receipt.clone());
         receipt
     }
+}
+
+fn path_matches_prefix(path: &str, prefix: &str) -> bool {
+    let prefix = prefix.trim_end_matches('/');
+    prefix.is_empty() || path == prefix || path.starts_with(&format!("{prefix}/"))
 }
 
 #[derive(Debug, Clone, Deserialize)]

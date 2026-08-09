@@ -93,10 +93,12 @@ export function HashAutocomplete({
         <div className="hash-empty">No matching PRs/issues.</div>
       ) : (
         filtered.map((it, i) => (
-          <button
+          <button data-debug-id="surface-components-hashautocomplete-1"
             key={`${it.kind}-${it.number}`}
             type="button"
             className={`hash-row ${i === idx ? "active" : ""}`}
+            data-shellx-release-observe="title"
+            title={`${it.kind === "pr" ? "PR" : "Issue"} #${it.number}: ${it.title}`}
             onMouseEnter={() => setIdx(i)}
             onClick={() => onSelect(it)}
           >

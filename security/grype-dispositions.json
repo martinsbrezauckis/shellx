@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "shellx.grype-dispositions.v1",
+  "entries": [
+    {
+      "advisoryId": "GHSA-wrw7-89jp-8q8g",
+      "package": "glib",
+      "versions": ["0.18.5"],
+      "expiresOn": "2026-09-05",
+      "reason": "The affected VariantStrIter implementation is present only in the Linux GTK dependency stack, but ShellX and its active dependency owners do not call Variant::array_iter_str or VariantStrIter.",
+      "evidence": [
+        "A source scan of ShellX, the vendored Vault, and downloaded active Rust dependency sources found VariantStrIter and array_iter_str only inside glib 0.18.5 itself and its own tests/examples.",
+        "glib 0.18.5 enters through Tauri's Linux GTK/WebKit stack; the fixed glib 0.20 line requires an upstream GTK/Tauri dependency migration rather than an isolated lockfile update."
+      ],
+      "upgradeCondition": "Remove when the Tauri Linux dependency stack accepts glib 0.20 or later, or immediately if ShellX or an active dependency begins using VariantStrIter/array_iter_str."
+    }
+  ]
+}
+

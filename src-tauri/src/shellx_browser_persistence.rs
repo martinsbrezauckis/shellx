@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::shellx_browser::{
-    now_ms, BrowserPersonalLockAuthMode, BrowserPersonalLockSettings, BrowserPrivacySettings,
-    BrowserShieldSettings, BrowserState, ShellxBrowserRegistry,
+    lock_or_recover, now_ms, BrowserPersonalLockAuthMode, BrowserPersonalLockSettings,
+    BrowserPrivacySettings, BrowserShieldSettings, BrowserState, ShellxBrowserRegistry,
 };
 
 const BROWSER_SETTINGS_VERSION: u32 = 1;
@@ -42,7 +42,8 @@ impl ShellxBrowserRegistry {
         }
         Self {
             state: std::sync::Mutex::new(state),
-            engine_sync_lock: std::sync::Mutex::new(()),
+            window_open_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            engine_sync_lock: tokio::sync::Mutex::new(()),
             engine_action_locks: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             settings_path,
         }
@@ -66,6 +67,21 @@ impl ShellxBrowserRegistry {
         };
         write_browser_settings(path, &settings)
     }
+
+    /// Removes only the Personal Browser Lock settings and verifier owned by
+    /// an attested isolated release-test profile. Shipping callers cannot
+    /// reach this method: the sole HTTP bridge is gated by
+    /// `isolated_test_instance_requested` and accepts no secret material.
+    pub(crate) fn reset_personal_lock_for_isolated_test(
+        &self,
+    ) -> Result<BrowserPersonalLockSettings, String> {
+        let mut state = lock_or_recover(&self.state);
+        state.personal_lock = BrowserPersonalLockSettings::default();
+        state.personal_lock_pin_salt = None;
+        state.personal_lock_pin_hash = None;
+        self.persist_browser_settings_locked(&state)?;
+        Ok(state.personal_lock.clone())
+    }
 }
 
 fn default_browser_settings_path() -> PathBuf {
@@ -84,23 +100,22 @@ fn default_browser_settings_path() -> PathBuf {
 }
 
 fn read_browser_settings(path: &Path) -> Option<BrowserPersistedSettings> {
+    if let Some(parent) = path.parent() {
+        let _ = crate::session_git::ensure_private_dir(parent, "Browser settings");
+    }
+    #[cfg(unix)]
+    if path.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
     let raw = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&raw).ok()
 }
 
 fn write_browser_settings(path: &Path, settings: &BrowserPersistedSettings) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("create Browser settings dir failed: {error}"))?;
-    }
     let json = serde_json::to_string_pretty(settings)
         .map_err(|error| format!("serialize Browser settings failed: {error}"))?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)
-        .map_err(|error| format!("write Browser settings tmp failed: {error}"))?;
-    std::fs::rename(&tmp, path)
-        .map_err(|error| format!("persist Browser settings failed: {error}"))?;
-    Ok(())
+    crate::session_git::atomic_write_private_file(path, json, "Browser settings")
 }
 
 fn apply_persisted_browser_settings(state: &mut BrowserState, settings: BrowserPersistedSettings) {
@@ -174,11 +189,13 @@ mod tests {
     use crate::shellx_browser_shields::mark_browser_shields_operator_approved;
     use crate::shellx_browser_transfers::BrowserDownloadFolderUpdateRequest;
 
-    fn temp_settings_path(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "shellx-browser-settings-{label}-{}.json",
-            uuid::Uuid::new_v4()
-        ))
+    fn temp_settings_path(label: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("shellx-browser-settings-{label}-"))
+            .tempdir()
+            .expect("create isolated settings directory");
+        let path = dir.path().join("browser-settings.json");
+        (dir, path)
     }
 
     fn json_contains_string_value(value: &serde_json::Value, needle: &str) -> bool {
@@ -196,7 +213,7 @@ mod tests {
 
     #[test]
     fn browser_settings_persist_personal_lock_without_raw_pin() {
-        let path = temp_settings_path("personal-lock");
+        let (_temp_dir, path) = temp_settings_path("personal-lock");
         let registry = ShellxBrowserRegistry::new_with_settings_path(Some(path.clone()));
         registry
             .update_personal_lock(mark_browser_personal_lock_operator_approved(
@@ -222,6 +239,26 @@ mod tests {
         assert!(!persisted_personal_lock.contains_key("newPin"));
         assert!(raw.contains("optInConfirmedAtMs"));
         assert!(raw.contains("personalLockPinHash"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path)
+                    .expect("settings metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(path.parent().expect("settings parent"))
+                    .expect("settings directory metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
 
         let restored = ShellxBrowserRegistry::new_with_settings_path(Some(path.clone()));
         let state = restored.state();
@@ -261,8 +298,53 @@ mod tests {
     }
 
     #[test]
+    fn isolated_personal_lock_reset_removes_only_settings_and_verifier() {
+        const SYNTHETIC_PIN: &str = "539174";
+        let (_temp_dir, path) = temp_settings_path("personal-lock-reset");
+        let registry = ShellxBrowserRegistry::new_with_settings_path(Some(path.clone()));
+        registry
+            .update_personal_lock(mark_browser_personal_lock_operator_approved(
+                BrowserPersonalLockUpdateRequest {
+                    enabled: Some(true),
+                    auth_mode: Some(BrowserPersonalLockAuthMode::PinOnly),
+                    new_pin: Some(SYNTHETIC_PIN.to_string()),
+                    ..BrowserPersonalLockUpdateRequest::default()
+                },
+            ))
+            .expect("configure isolated lock verifier");
+        assert!(registry.state().personal_lock.pin_configured);
+
+        let mut reset = registry
+            .reset_personal_lock_for_isolated_test()
+            .expect("reset isolated lock verifier");
+        let expected = BrowserPersonalLockSettings::default();
+        reset.updated_at_ms = expected.updated_at_ms;
+        assert_eq!(reset, expected);
+        let state = lock_or_recover(&registry.state);
+        assert!(state.personal_lock_pin_salt.is_none());
+        assert!(state.personal_lock_pin_hash.is_none());
+
+        let raw = std::fs::read_to_string(&path).expect("reset settings written");
+        assert!(!raw.contains(SYNTHETIC_PIN));
+        let persisted: serde_json::Value =
+            serde_json::from_str(&raw).expect("reset settings json is readable");
+        assert!(persisted
+            .get("personalLockPinSalt")
+            .is_some_and(serde_json::Value::is_null));
+        assert!(persisted
+            .get("personalLockPinHash")
+            .is_some_and(serde_json::Value::is_null));
+        assert_eq!(
+            persisted
+                .pointer("/personalLock/pinConfigured")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn browser_settings_ignore_legacy_unconfirmed_personal_lock_opt_in() {
-        let path = temp_settings_path("legacy-personal-lock");
+        let (_temp_dir, path) = temp_settings_path("legacy-personal-lock");
         std::fs::write(
             &path,
             r#"{
@@ -297,7 +379,7 @@ mod tests {
 
     #[test]
     fn browser_settings_persist_privacy_and_shields_without_runtime_state() {
-        let path = temp_settings_path("privacy-shields");
+        let (_temp_dir, path) = temp_settings_path("privacy-shields");
         let registry = ShellxBrowserRegistry::new_with_settings_path(Some(path.clone()));
         registry
             .update_privacy(mark_browser_privacy_operator_approved(
@@ -329,7 +411,7 @@ mod tests {
 
     #[test]
     fn browser_settings_persist_download_folder_for_agent_artifacts() {
-        let path = temp_settings_path("download-folder");
+        let (_temp_dir, path) = temp_settings_path("download-folder");
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
             .expect("home env");

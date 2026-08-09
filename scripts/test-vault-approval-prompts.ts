@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { readRustModuleFamily } from "./read-rust-module-family";
 
 import { buildVaultApprovalPrompts, vaultPromptSummaryText } from "../src/lib/vault-approval-prompts";
 
@@ -118,7 +119,7 @@ assert.ok(
   "Browser prompt cards should be scoped to the active Browser task so stale prompts do not hide current task requests",
 );
 
-const browserRust = readFileSync("src-tauri/src/shellx_browser.rs", "utf8");
+const browserRust = readRustModuleFamily("src-tauri/src/shellx_browser.rs");
 assert.ok(
   browserRust.includes("shellx_browser_resolve_session_grant"),
   "Browser registry should expose an operator-only Tauri session grant resolver",
@@ -128,7 +129,7 @@ assert.ok(
   "Browser registry should expose a Tauri bridge that opens the main Vault panel",
 );
 
-const debugApi = readFileSync("src-tauri/src/debug_api.rs", "utf8");
+const debugApi = readRustModuleFamily("src-tauri/src/debug_api.rs");
 const debugApiBrowserSecurity = readFileSync("src-tauri/src/debug_api_browser_security.rs", "utf8");
 assert.ok(
   [debugApi, debugApiBrowserSecurity].some((source) =>

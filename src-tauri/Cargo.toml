@@ -7,13 +7,12 @@
 # small enough that hand-rolling stays simple and gives us full visibility
 # (every frame is logged + emitted, not abstracted away).
 #
-# debug-api feature (off by default for now) will enable the axum-based
-# HTTP/WS surface in P2b — the agent-first protocol that lets scripts
-# and external orchestrators drive the running app end-to-end.
+# The default `debug-api` feature enables the loopback axum HTTP/WS surface
+# used by ShellX-launched agents, diagnostics, and release verification.
 
 [package]
-name = "app"
-version = "0.3.4"
+name = "shellx"
+version = "0.3.5"
 description = "shellX — cross-platform desktop host for Grok Build, Claude Code, Codex CLI, and ACP-speaking agents"
 authors = ["Martins Brezauckis <martins.brezauckis@gmail.com>"]
 license = "MIT"
@@ -26,10 +25,11 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.2", features = [] }
+tauri-build = { version = "2.6.3", features = [] }
+cc = "1"
 
 [dependencies]
-tauri = { version = "2.11.2", features = ["protocol-asset", "unstable"] }
+tauri = { version = "2.11.5", features = ["protocol-asset", "unstable"] }
 tauri-plugin-log = "2"
 # P-UX-Impl §10.1: file picker dialog for Attach + workspace-folder
 # picker. Loaded unconditionally — same low cost as plugin-log.
@@ -38,6 +38,7 @@ tauri-plugin-dialog = "2"
 # JSON-RPC frames + general (de)serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+url = "2"
 
 # Async runtime for spawning grok + piping stdio
 tokio = { version = "1", features = ["full"] }
@@ -49,9 +50,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # log facade — tauri-plugin-log uses it; keep for compatibility
 log = "0.4"
 
-# Agent-first debug surface (HTTP+WS server). OFF by default — enable in
-# P2b with `cargo tauri dev --features debug-api`. The acp.rs module
-# already has #[cfg(feature = "debug-api")] gates ready.
+# Agent-first loopback debug surface (HTTP+WS server). This is enabled by the
+# default feature set below; `--no-default-features` is the explicit opt-out.
 axum = { version = "0.7", features = ["ws", "json"], optional = true }
 # CORS preflight handling. Windows WebView2 origin is
 # `http://tauri.localhost`; fetches to `http://127.0.0.1:5757` with the
@@ -103,6 +103,7 @@ vault-broker = { path = "../vendor/shellx-vault/crates/vault-broker" }
 blake3 = "1"
 hex = "0.4"
 tauri-plugin-updater = "2"
+minisign-verify = "0.2.5"
 tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
 # Single-instance guard (#311): ensures only ONE shellX runs. Second-
@@ -192,12 +193,19 @@ walkdir = "2"
 # 0.1.1 fails to compile on current Apple Rust toolchains.
 [target.'cfg(target_os = "macos")'.dependencies]
 xcap = "0.9.5"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xcap = "0.1.1"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.27", features = ["signal"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11rb = "0.13"
+webkit2gtk = "2.0.2"
+cairo-rs = { version = "0.18.5", features = ["png"] }
 
 # Tauri-HWND screenshot capture (#262). xcap's
 # Window::all() does NOT enumerate shellX's window on Windows
@@ -225,6 +233,8 @@ windows-sys = { version = "0.61", features = [
     # Windows. Pairs with PR_SET_PDEATHSIG on Unix (via nix crate).
     "Win32_System_JobObjects",
     "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+    "Win32_System_DataExchange",
     "Win32_Security",
     # #365: dynamic LoadLibraryW + GetProcAddress to resolve
     # NtSuspendProcess / NtResumeProcess from ntdll for proper
@@ -246,6 +256,9 @@ windows-sys = { version = "0.61", features = [
 # only for a hand-rolled minimal binary.
 default = ["debug-api"]
 debug-api = ["dep:axum", "dep:tower-http"]
+# Test-only Windows linker support. CI and native Windows acceptance commands
+# enable this explicitly; production builds must not need or select it.
+windows-test-manifest = []
 
 [dev-dependencies]
 tempfile = "3"

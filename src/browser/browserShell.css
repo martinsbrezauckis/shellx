@@ -1,0 +1,160 @@
+/* Browser-only refinements kept out of the legacy global stylesheet. */
+.shellx-browser-app {
+  --shellx-browser-viewport-grid: rgba(255, 255, 255, 0.025);
+  --shellx-browser-viewport-surface: #050505;
+  --shellx-browser-viewport-card: rgba(9, 9, 9, 0.92);
+  --shellx-browser-ref-ink: #9cc6ff;
+}
+
+.shellx-browser-app[data-color-mode="light"] {
+  --ink-3: #62695e;
+  --ink-4: #727a6f;
+  --shellx-browser-viewport-grid: rgba(20, 21, 18, 0.055);
+  --shellx-browser-viewport-surface: #e9ece7;
+  --shellx-browser-viewport-card: rgba(255, 255, 255, 0.94);
+  --shellx-browser-ref-ink: #245ca6;
+}
+
+.shellx-browser-app[data-color-mode="dark"] {
+  --ink-3: #8f8f8b;
+  --ink-4: #7d7d79;
+}
+
+@media (prefers-color-scheme: light) {
+  .shellx-browser-app[data-color-mode="system"] {
+    --ink-3: #62695e;
+    --ink-4: #727a6f;
+    --shellx-browser-viewport-grid: rgba(20, 21, 18, 0.055);
+    --shellx-browser-viewport-surface: #e9ece7;
+    --shellx-browser-viewport-card: rgba(255, 255, 255, 0.94);
+    --shellx-browser-ref-ink: #245ca6;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .shellx-browser-app[data-color-mode="system"] {
+    --ink-3: #8f8f8b;
+    --ink-4: #7d7d79;
+  }
+}
+
+.shellx-browser-grid {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) var(--shellx-browser-right-sidebar-width, 360px);
+}
+
+.shellx-browser-grid.with-left-sidecar {
+  grid-template-columns:
+    var(--shellx-browser-left-sidecar-width, 312px)
+    minmax(0, 1fr)
+    var(--shellx-browser-right-sidebar-width, 360px);
+}
+
+.shellx-browser-grid.with-left-sidecar.hide-right {
+  grid-template-columns: var(--shellx-browser-left-sidecar-width, 312px) minmax(0, 1fr);
+}
+
+.shellx-browser-section-heading.static,
+.shellx-browser-list-row {
+  cursor: default;
+}
+
+.shellx-browser-section-heading.static:hover {
+  color: var(--ink-2);
+}
+
+.shellx-browser-list-row:hover:not(.active) {
+  border-color: transparent;
+  background: transparent;
+}
+
+.shellx-browser-kicker,
+.shellx-browser-ref-strip span {
+  color: var(--ink-3);
+}
+
+.shellx-browser-viewport-inner {
+  border-color: var(--hairline-2);
+  background: var(--shellx-browser-viewport-card);
+  color: var(--ink);
+}
+
+.shellx-browser-viewport-inner h2 {
+  color: var(--ink);
+}
+
+.shellx-browser-viewport-inner p {
+  color: var(--ink-2);
+}
+
+.shellx-browser-ref-strip code {
+  color: var(--shellx-browser-ref-ink);
+}
+
+.shellx-browser-address-row input::placeholder,
+.shellx-browser-agent-compose textarea::placeholder,
+.shellx-browser-history-filters input::placeholder,
+.shellx-browser-download-folder input::placeholder {
+  color: var(--ink-3);
+  opacity: 1;
+}
+
+@media (max-width: 980px) {
+  .shellx-browser-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 1fr) minmax(0, 220px);
+    overflow: auto;
+  }
+
+  .shellx-browser-grid.hide-right {
+    grid-template-rows: minmax(320px, 1fr);
+  }
+
+  .shellx-browser-grid.with-left-sidecar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 220px) minmax(320px, 1fr) minmax(0, 220px);
+  }
+
+  .shellx-browser-grid.with-left-sidecar.hide-right {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 220px) minmax(320px, 1fr);
+  }
+
+  .shellx-browser-sidebar-resize {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .shellx-browser-address-row {
+    grid-template-columns: repeat(4, 32px) minmax(0, 1fr);
+  }
+
+  .shellx-browser-address-actions {
+    grid-column: 1 / -1;
+    min-width: 0;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 420px) {
+  .shellx-browser-address-row {
+    gap: 4px;
+  }
+
+  .shellx-browser-address-actions {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shellx-browser-app *,
+  .shellx-browser-app *::before,
+  .shellx-browser-app *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

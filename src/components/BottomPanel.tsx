@@ -22,8 +22,7 @@ import { BranchPicker } from "./BranchPicker";
 // PTY-backed terminal view, keyed by activeTabId in the Rust registry.
 // <TerminalView/> is also reused for attached ACP terminals when grok
 // spawns terminal/* PTYs.
-import { TerminalTab } from "./TerminalTab";
-import { TerminalView } from "./TerminalView";
+import { LazyTerminalView, preloadTerminalView } from "./LazyTerminalView";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 // Push-to-talk dictation via xAI Grok STT.
 import { MicButton, type MicButtonHandle } from "./MicButton";
@@ -39,6 +38,9 @@ import {
   normalizeAgentSelection,
 } from "../lib/agent-selection";
 import { providerDisplayName, type ProviderId } from "../lib/provider-sessions";
+import { providerScanStatus } from "../lib/connection-provider-capabilities";
+import { isBottomTab, type BottomTab, type ComposerDebugMenu } from "../lib/ui-navigation";
+import type { DebugBottomPanelTerminalFixture } from "../lib/debug-renderer-fixture";
 
 export interface SlashCommandItem {
   name: string;
@@ -49,8 +51,7 @@ export interface SlashCommandItem {
   };
 }
 
-export type BottomTab = "Chat" | "Terminal" | "Images" | "Videos" | "Logs" | "Stderr";
-export type ComposerDebugMenu = "connection" | "agent" | "branch" | "close";
+export type { BottomTab, ComposerDebugMenu } from "../lib/ui-navigation";
 
 const TAB_KEY = "shellX.bottomTab.v2";
 const LEGACY_TAB_KEY = "grok-shell.bottomTab";
@@ -215,15 +216,8 @@ export function highlightSlashTokens(text: string): React.ReactNode[] {
  */
 export function readPersistedBottomTab(): BottomTab {
   try {
-    const v = readMigratedLocalStorage(TAB_KEY, [LEGACY_TAB_KEY]) as BottomTab | null;
-    if (
-      v === "Chat" ||
-      v === "Terminal" ||
-      v === "Images" ||
-      v === "Videos" ||
-      v === "Logs" ||
-      v === "Stderr"
-    ) return v;
+    const value = readMigratedLocalStorage(TAB_KEY, [LEGACY_TAB_KEY]);
+    if (isBottomTab(value)) return value;
   } catch { /* no-op */ }
   return "Chat";
 }
@@ -314,6 +308,8 @@ export function BottomPanel({
   voiceSessionTabs = [],
   debugOpenMenu,
   debugOpenMenuSeq,
+  debugAcpTerminals = [],
+  releaseTestVoiceRecording = false,
 }: {
   prompt: string;
   onPromptChange: (s: string) => void;
@@ -375,6 +371,9 @@ export function BottomPanel({
   voiceSessionTabs?: VoiceSessionTab[];
   debugOpenMenu?: ComposerDebugMenu | null;
   debugOpenMenuSeq?: number;
+  debugAcpTerminals?: DebugBottomPanelTerminalFixture[];
+  /** Isolated release fixture forwarded to the voice-chat MicButton. */
+  releaseTestVoiceRecording?: boolean;
 }): JSX.Element {
   const [localTab, setLocalTab] = useState<BottomTab>(readPersistedBottomTab);
   const tab = controlledTab ?? localTab;
@@ -393,16 +392,47 @@ export function BottomPanel({
   }, [tab]);
 
   useEffect(() => {
-    if (tab === "Images" && imageCount === 0) setTab("Chat");
-    if (tab === "Videos" && videoCount === 0) setTab("Chat");
-  }, [tab, imageCount, videoCount]);
+    const preload = window.setTimeout(preloadTerminalView, 1_000);
+    return () => window.clearTimeout(preload);
+  }, []);
 
  /** Defer Terminal mount until the user clicks the Terminal tab.
  * Once shown, TerminalView stays mounted across tab switches so
  * xterm.js state survives. Lazy first-mount avoids running
  * pty_create against a zero-size hidden container on every boot. */
-  const terminalEverShown = useRef<boolean>(tab === "Terminal");
-  if (tab === "Terminal") terminalEverShown.current = true;
+  const [terminalEverShown, setTerminalEverShown] = useState<boolean>(tab === "Terminal");
+  const [mountedTerminalTabIds, setMountedTerminalTabIds] = useState<string[]>([]);
+  const terminalFixtureWasActive = useRef(false);
+  const terminalOpenedOutsideFixture = useRef(tab === "Terminal" && debugAcpTerminals.length === 0);
+
+  useEffect(() => {
+    if (debugAcpTerminals.length > 0) {
+      terminalFixtureWasActive.current = true;
+      setTerminalEverShown(true);
+      return;
+    }
+    if (tab === "Terminal") {
+      terminalOpenedOutsideFixture.current = true;
+      setTerminalEverShown(true);
+      return;
+    }
+    if (terminalFixtureWasActive.current) {
+      terminalFixtureWasActive.current = false;
+      if (!terminalOpenedOutsideFixture.current) setTerminalEverShown(false);
+    }
+  }, [debugAcpTerminals.length, tab]);
+
+  useEffect(() => {
+    const openTabIds = new Set(voiceSessionTabs.map((entry) => entry.tabId));
+    setMountedTerminalTabIds((current) => current.filter((tabId) => openTabIds.has(tabId)));
+  }, [voiceSessionTabs]);
+
+  useEffect(() => {
+    if (!activeTabId || !terminalEverShown) return;
+    setMountedTerminalTabIds((current) => (
+      current.includes(activeTabId) ? current : [...current, activeTabId]
+    ));
+  }, [activeTabId, tab, terminalEverShown]);
 
   const stderrCount = events
     .map(stderrLineFromEvent)
@@ -410,7 +440,11 @@ export function BottomPanel({
     .length;
 
   return (
-    <div className="bottom-panel">
+    <div
+      className="bottom-panel"
+      data-shellx-release-observe="mounted"
+      data-shellx-release-mounted={terminalEverShown ? "true" : "false"}
+    >
       <div className="bottom-tabs">
         <button
           type="button"
@@ -466,8 +500,6 @@ export function BottomPanel({
           className={`btab ${tab === "Images" ? "active" : ""}`}
           data-debug-id="bottom-tab-images"
           onClick={() => setTab("Images")}
-          disabled={imageCount === 0}
-          aria-disabled={imageCount === 0}
           title={imageCount === 0 ? "Images - none in this session" : `Images - ${imageCount} in this session`}
           aria-label={imageCount === 0 ? "Images - none in this session" : `Images - ${imageCount} in this session`}
         >
@@ -480,8 +512,6 @@ export function BottomPanel({
           className={`btab ${tab === "Videos" ? "active" : ""}`}
           data-debug-id="bottom-tab-videos"
           onClick={() => setTab("Videos")}
-          disabled={videoCount === 0}
-          aria-disabled={videoCount === 0}
           title={videoCount === 0 ? "Videos - none in this session" : `Videos - ${videoCount} in this session`}
           aria-label={videoCount === 0 ? "Videos - none in this session" : `Videos - ${videoCount} in this session`}
         >
@@ -559,6 +589,7 @@ export function BottomPanel({
             voiceSessionTabs={voiceSessionTabs}
             debugOpenMenu={debugOpenMenu}
             debugOpenMenuSeq={debugOpenMenuSeq}
+            releaseTestVoiceRecording={releaseTestVoiceRecording}
           />
         )}
  {/* Terminal MUST stay mounted
@@ -570,11 +601,25 @@ export function BottomPanel({
  * VISIBILITY via inline display style. Logs/Stderr are cheap
  * and stateless so they stay conditional. */}
         {activeTabId
-          ? (terminalEverShown.current && (
-            <div className="terminal-mount" style={{ display: tab === "Terminal" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
-              <BottomTerminalSurface sessionTabId={activeTabId} />
+          ? (terminalEverShown && mountedTerminalTabIds.map((terminalTabId) => (
+            <div
+              key={terminalTabId}
+              className="terminal-mount"
+              data-terminal-session-tab-id={terminalTabId}
+              style={{
+                display: tab === "Terminal" && terminalTabId === activeTabId ? "flex" : "none",
+                flexDirection: "column",
+                flex: 1,
+                minHeight: 0,
+              }}
+            >
+              <BottomTerminalSurface
+                sessionTabId={terminalTabId}
+                fixtureAcpTerms={terminalTabId === activeTabId ? debugAcpTerminals : []}
+                fixtureProjection={terminalTabId === activeTabId && debugAcpTerminals.length > 0}
+              />
             </div>
-          ))
+          )))
           : (tab === "Terminal" && <TerminalPlaceholder />)}
         {tab === "Images" && (
           <MediaGallery
@@ -664,7 +709,7 @@ function MediaCard({
   const time = formatMediaTime(item.t);
 
   return (
-    <div
+    <div data-debug-id="surface-components-bottompanel-9"
       className="media-card"
       role={onOpen ? "button" : undefined}
       tabIndex={onOpen ? 0 : -1}
@@ -743,6 +788,7 @@ function PromptComposer({
   voiceSessionTabs = [],
   debugOpenMenu,
   debugOpenMenuSeq,
+  releaseTestVoiceRecording = false,
 }: {
   prompt: string;
   onPromptChange: (s: string) => void;
@@ -786,6 +832,8 @@ function PromptComposer({
   voiceSessionTabs?: VoiceSessionTab[];
   debugOpenMenu?: ComposerDebugMenu | null;
   debugOpenMenuSeq?: number;
+  /** Isolated release fixture forwarded to the real voice-chat MicButton. */
+  releaseTestVoiceRecording?: boolean;
 }): JSX.Element {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
  // imperative handle to MicButton so the Send button
@@ -813,7 +861,7 @@ function PromptComposer({
   const selectableAgentOptions = useMemo((): AgentOption[] => {
     return AGENT_OPTIONS.filter((option) => {
       const scan = agentProviderScanById.get(option.id);
-      return scan?.canRun === true;
+      return scan ? providerScanStatus(scan) === "ready" : false;
     });
   }, [agentProviderScanById]);
  // Voice chat mode is per tab, but only one open tab may own it at a
@@ -1238,6 +1286,8 @@ function PromptComposer({
     setConnectionPickerOpen(false);
     setAgentPickerOpen(false);
     setBranchPickerOpen(false);
+    setSlashOpen(false);
+    setSlashAnchor(null);
     if (debugOpenMenu === "close") return;
     if (debugOpenMenu === "connection") {
       if (!connectionLocked) setConnectionPickerOpen(true);
@@ -1249,6 +1299,13 @@ function PromptComposer({
     }
     if (debugOpenMenu === "branch") {
       setBranchPickerOpen(true);
+      return;
+    }
+    if (debugOpenMenu === "slash") {
+      setHashOpen(false);
+      setSlashQuery("");
+      setSlashAnchor(0);
+      setSlashOpen(true);
     }
   }, [agentLocked, connectionLocked, debugOpenMenu, debugOpenMenuSeq, onAgentChange]);
 
@@ -1378,6 +1435,7 @@ function PromptComposer({
                 key={attachment.id}
                 className={`composer-attachment-chip composer-attachment-${attachment.kind}`}
                 title={attachment.path}
+                data-shellx-release-observe="title"
               >
                 <ShellIcon name={attachmentIcon(attachment.kind)} size={13} />
                 <span className="composer-attachment-name">
@@ -1435,6 +1493,7 @@ function PromptComposer({
             ref={taRef}
             className="composer-input composer-input-transparent"
             data-debug-id="composer-prompt"
+            data-shellx-release-observe="value"
             placeholder="Ask shellX — @ to mention files, / for slash-commands, # for PR/issue"
             value={prompt}
             onChange={onChange}
@@ -1591,6 +1650,7 @@ function PromptComposer({
             debugId="composer-voice-chat"
             label={voiceChatMode ? "Voice chat · ON" : "Voice chat"}
             onBeforeStart={guardVoiceStart}
+            releaseTestRecording={releaseTestVoiceRecording}
             onRecordingChange={(rec) => {
               setVoiceChatRecording(rec);
  // Pressing the voice-chat mic flips the session-wide
@@ -1842,14 +1902,15 @@ function PromptComposer({
               const active = selectedAgentId === option.id;
               const scan = agentProviderScanById.get(option.id);
               const detail = scan
-                ? scan.canRun
-                  ? `Last scan: ready${scan.version ? ` - ${scan.version}` : scan.binary ? ` - ${scan.binary}` : ""}.`
-                  : "Last scan: missing CLI."
+                ? providerScanStatus(scan) === "ready"
+                  ? `Fresh scan: ready${scan.version ? ` - ${scan.version}` : scan.binary ? ` - ${scan.binary}` : ""}.`
+                  : `Fresh scan: ${providerScanStatus(scan)}.`
                 : option.kind === "provider"
                   ? `${option.detail} Not scanned in this connection yet.`
                   : option.detail;
               return (
-                <button
+                <button data-debug-id="surface-components-bottompanel-23"
+                  data-agent-id={option.id}
                   key={option.id}
                   type="button"
                   role="menuitemradio"
@@ -1896,7 +1957,7 @@ function PromptComposer({
               {filteredSkills.length} command{filteredSkills.length === 1 ? "" : "s"}
             </div>
             {filteredSkills.map((s, i) => (
-              <div
+              <div data-debug-id="surface-components-bottompanel-24"
                 key={s.name}
                 role="option"
                 aria-selected={i === slashActiveIdx}
@@ -1955,12 +2016,17 @@ function TerminalPlaceholder(): JSX.Element {
 interface AcpTerminalRef {
   terminalId: string;
   label: string;
+  fixtureOnly?: boolean;
 }
 
 function BottomTerminalSurface({
   sessionTabId,
+  fixtureAcpTerms,
+  fixtureProjection,
 }: {
   sessionTabId: string;
+  fixtureAcpTerms: DebugBottomPanelTerminalFixture[];
+  fixtureProjection: boolean;
 }): JSX.Element {
  // List of ACP-origin terminals associated with the current session.
  // Each one becomes a tab in the strip. We don't proactively remove
@@ -1968,7 +2034,12 @@ function BottomTerminalSurface({
  // user may still want to scroll the xterm.js buffer. Press the [x]
  // button to dismiss a closed tab.
   const [acpTerms, setAcpTerms] = useState<AcpTerminalRef[]>([]);
+  const [dismissedFixtureIds, setDismissedFixtureIds] = useState<Set<string>>(() => new Set());
   const [active, setActive] = useState<string>("user");
+  const visibleAcpTerms = useMemo(() => [
+    ...acpTerms.filter((term) => !fixtureAcpTerms.some((fixture) => fixture.terminalId === term.terminalId)),
+    ...fixtureAcpTerms.filter((term) => !dismissedFixtureIds.has(term.terminalId)),
+  ], [acpTerms, dismissedFixtureIds, fixtureAcpTerms]);
 
   useEffect(() => {
     let unl: UnlistenFn | null = null;
@@ -2006,17 +2077,29 @@ function BottomTerminalSurface({
  // When the session tab changes (different chat tab selected) reset.
   useEffect(() => {
     setAcpTerms([]);
+    setDismissedFixtureIds(new Set());
     setActive("user");
   }, [sessionTabId]);
 
+  useEffect(() => {
+    setDismissedFixtureIds(new Set());
+    if (fixtureAcpTerms.length === 0 && !acpTerms.some((term) => term.terminalId === active)) {
+      setActive("user");
+    }
+  }, [fixtureAcpTerms]);
+
   function dismiss(terminalId: string) {
-    setAcpTerms((prev) => prev.filter((t) => t.terminalId !== terminalId));
+    if (fixtureAcpTerms.some((term) => term.terminalId === terminalId)) {
+      setDismissedFixtureIds((current) => new Set(current).add(terminalId));
+    } else {
+      setAcpTerms((prev) => prev.filter((t) => t.terminalId !== terminalId));
+    }
     setActive("user");
   }
 
   return (
     <div className="terminal-surface" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {acpTerms.length > 0 && (
+      {visibleAcpTerms.length > 0 && (
         <div
           className="terminal-substrip"
           style={{
@@ -2031,24 +2114,32 @@ function BottomTerminalSurface({
           <button
             type="button"
             className={`substrip-tab ${active === "user" ? "active" : ""}`}
+            aria-pressed={active === "user"}
+            data-shellx-release-observe="pressed"
             onClick={() => setActive("user")}
             style={tabStyle(active === "user")}
           >
             shell
           </button>
-          {acpTerms.map((t) => (
-            <span key={t.terminalId} style={{ display: "inline-flex", alignItems: "center" }}>
+          {visibleAcpTerms.map((t) => (
+            <span
+              key={t.terminalId}
+              data-release-terminal-id={t.terminalId}
+              style={{ display: "inline-flex", alignItems: "center" }}
+            >
               <button
                 type="button"
                 className={`substrip-tab ${active === t.terminalId ? "active" : ""}`}
+                aria-pressed={active === t.terminalId}
+                data-shellx-release-observe="pressed"
                 onClick={() => setActive(t.terminalId)}
                 style={tabStyle(active === t.terminalId)}
                 title={`ACP terminal ${t.terminalId}`}
               >
                 <span style={{
                   background: "rgba(120,180,255,0.18)",
-                  color: "#8fbcff",
-                  fontSize: 9,
+                  color: "var(--info)",
+                  fontSize: "var(--fs-ui-xs)",
                   padding: "0 4px",
                   marginRight: 4,
                   borderRadius: 2,
@@ -2073,21 +2164,40 @@ function BottomTerminalSurface({
           ))}
         </div>
       )}
-      <div style={{ flex: 1, minHeight: 0 }}>
-        {active === "user"
-          ? <TerminalTab tabId={sessionTabId} />
-          : (() => {
-              const t = acpTerms.find((x) => x.terminalId === active);
-              if (!t) return <TerminalTab tabId={sessionTabId} />;
-              return (
-                <TerminalView
-                  tabId={sessionTabId}
-                  terminalId={t.terminalId}
-                  attachOnly
-                  readOnly={false}
-                />
-              );
-            })()}
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <div style={{ display: active === "user" ? "block" : "none", height: "100%" }}>
+          {fixtureProjection
+            ? (
+                <div data-release-bottom-panel-user-terminal-fixture className="tab-placeholder">
+                  Owned release fixture user-terminal projection
+                </div>
+              )
+            : <LazyTerminalView tabId={sessionTabId} />}
+        </div>
+        {visibleAcpTerms.map((terminal) => (
+          <div
+            key={terminal.terminalId}
+            style={{ display: active === terminal.terminalId ? "block" : "none", height: "100%" }}
+          >
+            {terminal.fixtureOnly
+              ? (
+                  <div
+                    data-release-bottom-panel-terminal-fixture={terminal.terminalId}
+                    className="tab-placeholder"
+                  >
+                    Owned release fixture terminal projection
+                  </div>
+                )
+              : (
+                  <LazyTerminalView
+                    tabId={sessionTabId}
+                    terminalId={terminal.terminalId}
+                    attachOnly
+                    readOnly={false}
+                  />
+                )}
+          </div>
+        ))}
       </div>
     </div>
   );

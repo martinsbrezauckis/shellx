@@ -193,7 +193,7 @@ export function buildReleaseReadinessChecks(input: ReleaseReadinessInput): Relea
       input.tauriWebdriverVerified,
       "Tauri WebDriver smoke passed for app launch, DOM/source read, JS execution, and screenshot capture.",
       "Run the Tauri WebDriver smoke on Linux and Windows release surfaces.",
-      "pnpm test:tauri-webdriver -- --linux && pnpm test:tauri-webdriver -- --windows --close-existing",
+      "pnpm run test:tauri-webdriver -- --linux && SHELLX_WEBDRIVER_AUTO_INSTALL=1 pnpm run test:tauri-webdriver -- --windows",
     ),
     check(
       "preview-qa-studio",
@@ -201,7 +201,7 @@ export function buildReleaseReadinessChecks(input: ReleaseReadinessInput): Relea
       input.previewQaStudioVerified,
       "Preview QA receipt was recorded for representative Work Preview flows, screenshots, console state, links, and layout checks.",
       "Run Preview QA Studio against representative preview targets and record its JSON/Markdown receipt.",
-      "pnpm release:preview-qa",
+      "pnpm release:preview-qa -- --receipt <live-receipt.json>",
     ),
     check(
       "js-tests",

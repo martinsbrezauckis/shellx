@@ -1,10 +1,15 @@
 use app_lib::provider_adapters::{ProviderExecutionTransport, ProviderId, ProviderPermissionMode};
 use app_lib::provider_sessions::{
-    normalize_provider_stdout_line, start_provider_session_with_command_for_test, ProviderRunPhase,
-    ProviderRunSnapshot, ProviderSessionAbortRequest, ProviderSessionEmit,
-    ProviderSessionEventKind, ProviderSessionRegistry, ProviderSessionRunTarget,
-    ProviderSessionStart, ProviderSessionStartRequest, ProviderShellxToolExposure,
+    normalize_provider_stdout_line, ProviderRunPhase, ProviderRunSnapshot,
+    ProviderSessionAbortRequest, ProviderSessionEventKind, ProviderSessionRegistry,
+    ProviderSessionRunTarget, ProviderSessionStart, ProviderSessionStartRequest,
+    ProviderShellxToolExposure,
 };
+#[cfg(unix)]
+use app_lib::provider_sessions::{
+    start_provider_session_with_command_for_test, ProviderSessionEmit,
+};
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -247,7 +252,7 @@ fn registry_tracks_ssh_runs_by_host_target() {
             Some(" deploy@203.0.113.10 ".to_string()),
             None,
         )
-        .with_ssh_key_vault_ref(Some("connections/macmini-key".to_string())),
+        .with_ssh_key_vault_ref(Some("connections/remote-macos-key".to_string())),
     );
 
     assert!(registry.state_for_tab("tab-a").active_run.is_none());
@@ -257,24 +262,24 @@ fn registry_tracks_ssh_runs_by_host_target() {
         None,
         Some("deploy@203.0.113.10".to_string()),
         None,
-        Some("connections/macmini-key".to_string()),
+        Some("connections/remote-macos-key".to_string()),
     );
     let active = state.active_run.as_ref().expect("ssh active run");
     assert_eq!(state.transport, ProviderExecutionTransport::Ssh);
     assert_eq!(
         state.transport_key,
-        "ssh:deploy@203.0.113.10|key=connections/macmini-key"
+        "ssh:deploy@203.0.113.10|key=connections/remote-macos-key"
     );
     assert_eq!(state.ssh_host.as_deref(), Some("deploy@203.0.113.10"));
     assert_eq!(
         state.ssh_key_vault_ref.as_deref(),
-        Some("connections/macmini-key")
+        Some("connections/remote-macos-key")
     );
     assert_eq!(active.run_id, run.run_id);
     assert_eq!(active.ssh_host.as_deref(), Some("deploy@203.0.113.10"));
     assert_eq!(
         active.ssh_key_vault_ref.as_deref(),
-        Some("connections/macmini-key")
+        Some("connections/remote-macos-key")
     );
 }
 
@@ -437,13 +442,19 @@ fn claude_result_usage_does_not_count_cache_tokens_as_context_tokens() {
 }
 
 #[test]
-fn antigravity_line_normalizes_plain_text() {
-    let ev = normalize_provider_stdout_line(ProviderId::AntigravityCli, "run-1", "tab-a", "done")
-        .expect("plain text should normalize");
+fn antigravity_line_normalizes_typed_text_delta() {
+    let ev = normalize_provider_stdout_line(
+        ProviderId::AntigravityCli,
+        "run-1",
+        "tab-a",
+        r#"{"event":"step_update","step_update":{"conversation_id":"conv-1","step_type":"agent_response","text_delta":"done"}}"#,
+    )
+    .expect("typed text delta should normalize");
 
-    assert_eq!(ev.kind, ProviderSessionEventKind::Text);
+    assert_eq!(ev.kind, ProviderSessionEventKind::TextDelta);
     assert_eq!(ev.text.as_deref(), Some("done"));
-    assert_eq!(ev.raw_type.as_deref(), Some("plain-text"));
+    assert_eq!(ev.raw_type.as_deref(), Some("step_update"));
+    assert_eq!(ev.provider_conversation_id.as_deref(), Some("conv-1"));
 }
 
 #[test]
@@ -992,6 +1003,139 @@ fn registry_scopes_provider_conversation_ids_by_ssh_key_ref() {
             )
             .as_deref(),
         Some("conversation-b")
+    );
+}
+
+#[tokio::test]
+async fn registry_separates_windows_native_and_windows_wsl_on_the_same_ssh_host() {
+    let registry = ProviderSessionRegistry::default();
+    let native_target = ProviderSessionRunTarget::new(
+        ProviderExecutionTransport::Ssh,
+        None,
+        Some("operator@windows.example.test".to_string()),
+        Some(2222),
+    )
+    .with_ssh_key_vault_ref(Some("connections/windows-test".to_string()))
+    .with_ssh_runtime(
+        serde_json::from_value(serde_json::json!("windows")).expect("Windows runtime"),
+        None,
+    );
+    let wsl_target = ProviderSessionRunTarget::new(
+        ProviderExecutionTransport::Ssh,
+        None,
+        Some("operator@windows.example.test".to_string()),
+        Some(2222),
+    )
+    .with_ssh_key_vault_ref(Some("connections/windows-test".to_string()))
+    .with_ssh_runtime(
+        serde_json::from_value(serde_json::json!("windows_wsl")).expect("Windows WSL runtime"),
+        Some("Ubuntu-24.04".to_string()),
+    );
+
+    let native = registry.record_started_with_target(
+        ProviderSessionStart {
+            tab_id: "tab-windows".to_string(),
+            provider_id: ProviderId::CodexCli,
+            cwd: r"C:\work\native".to_string(),
+            prompt: "native Windows".to_string(),
+        },
+        None,
+        true,
+        ProviderPermissionMode::ReadOnly,
+        native_target.clone(),
+    );
+    let wsl = registry.record_started_with_target(
+        ProviderSessionStart {
+            tab_id: "tab-windows".to_string(),
+            provider_id: ProviderId::ClaudeCode,
+            cwd: "/home/operator/wsl".to_string(),
+            prompt: "Windows WSL".to_string(),
+        },
+        None,
+        true,
+        ProviderPermissionMode::ReadOnly,
+        wsl_target.clone(),
+    );
+
+    assert_eq!(
+        native.transport_key,
+        "ssh:windows:operator@windows.example.test:2222|key=connections/windows-test"
+    );
+    assert_eq!(
+        wsl.transport_key,
+        "ssh:windows_wsl:wsl=ubuntu-24.04:operator@windows.example.test:2222|key=connections/windows-test"
+    );
+    assert_ne!(native.transport_key, wsl.transport_key);
+
+    let native_state = registry.state_for_tab_with_run_target("tab-windows", native_target.clone());
+    assert_eq!(
+        native_state
+            .active_run
+            .as_ref()
+            .map(|run| run.run_id.as_str()),
+        Some(native.run_id.as_str())
+    );
+    assert_eq!(
+        serde_json::to_value(native_state.ssh_remote_runtime).expect("serialize native runtime"),
+        serde_json::json!("windows")
+    );
+    assert_eq!(native_state.ssh_wsl_distro, None);
+
+    let wsl_state = registry.state_for_tab_with_run_target("tab-windows", wsl_target.clone());
+    assert_eq!(
+        wsl_state.active_run.as_ref().map(|run| run.run_id.as_str()),
+        Some(wsl.run_id.as_str())
+    );
+    assert_eq!(
+        serde_json::to_value(wsl_state.ssh_remote_runtime).expect("serialize WSL runtime"),
+        serde_json::json!("windows_wsl")
+    );
+    assert_eq!(wsl_state.ssh_wsl_distro.as_deref(), Some("Ubuntu-24.04"));
+
+    assert!(registry.record_provider_conversation_id(
+        "tab-windows",
+        &native.run_id,
+        ProviderId::CodexCli,
+        "native-conversation".to_string(),
+    ));
+    assert!(registry.record_provider_conversation_id(
+        "tab-windows",
+        &wsl.run_id,
+        ProviderId::ClaudeCode,
+        "wsl-conversation".to_string(),
+    ));
+    assert_eq!(
+        registry
+            .stored_conversation_id_for_target("tab-windows", ProviderId::CodexCli, &native_target)
+            .as_deref(),
+        Some("native-conversation")
+    );
+    assert_eq!(
+        registry
+            .stored_conversation_id_for_target("tab-windows", ProviderId::ClaudeCode, &wsl_target)
+            .as_deref(),
+        Some("wsl-conversation")
+    );
+
+    assert!(!registry
+        .abort_active_child_for_target("tab-windows", Some(&native.run_id), wsl_target.clone())
+        .await
+        .expect("a mismatched runtime target should be a safe no-op"));
+    assert!(registry
+        .abort_active_child_for_target("tab-windows", None, native_target.clone())
+        .await
+        .expect("native Windows target should abort"));
+    assert!(registry
+        .state_for_tab_with_run_target("tab-windows", native_target)
+        .active_run
+        .is_none());
+    assert_eq!(
+        registry
+            .state_for_tab_with_run_target("tab-windows", wsl_target)
+            .active_run
+            .as_ref()
+            .map(|run| run.run_id.as_str()),
+        Some(wsl.run_id.as_str())
     );
 }
 
@@ -1649,7 +1793,10 @@ async fn provider_session_runner_emits_events_and_records_completion() {
         wsl_distro: None,
         ssh_host: None,
         ssh_port: None,
+        ssh_remote_runtime: Default::default(),
+        ssh_wsl_distro: None,
         notes: Vec::new(),
+        setup_stdin: Default::default(),
     };
 
     let run = start_provider_session_with_command_for_test(

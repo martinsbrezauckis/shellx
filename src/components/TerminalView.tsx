@@ -7,7 +7,7 @@
  * forwarding keystrokes + output bytes between them.
  *
  * Two render modes:
- * - "owned" (default, used by <TerminalTab/> in the bottom panel):
+ * - "owned" (default, used directly by BottomPanel):
  * calls `pty_create` on mount and `pty_kill` on unmount. Owns
  * the PTY lifecycle.
  * - "attach" (used by ChatOutput's inline ACP-terminal view):
@@ -23,7 +23,7 @@
  * @tauri-apps/api/core, /event — invoke + event listening
  *
  * Callers
- * - TerminalTab.tsx (mode="owned")
+ * - BottomPanel.tsx (mode="owned")
  * - ChatOutput.tsx (mode="attach", attachOnly prop)
  * - Future: BottomPanel "ACP" tab strip rendering attached views
  * for ACP-origin terminals.
@@ -130,7 +130,7 @@ export function TerminalView(props: TerminalViewProps): JSX.Element {
 
     const host = hostRef.current;
  /* pick up the runtime --fs-mono CSS var set by
- * Settings.applyTheme so the user's chat-font slider also resizes
+ * lib/settings.applyTheme so the user's chat-font slider also resizes
  * terminals. Falls back to 13 if the var isn't a parseable px (e.g.
  * tests / non-Tauri renders). */
     const readMonoPx = (): number => {
@@ -143,7 +143,7 @@ export function TerminalView(props: TerminalViewProps): JSX.Element {
     };
     const term = new Terminal({
       theme: {
-        background: "#0a0a0a",
+        background: "var(--bg)",
         foreground: "#e8e8e8",
         cursor: "#e8e8e8",
         selectionBackground: "rgba(255,255,255,0.18)",
