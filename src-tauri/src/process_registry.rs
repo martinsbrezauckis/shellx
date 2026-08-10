@@ -39,7 +39,6 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -59,6 +58,103 @@ const BROADCAST_CAPACITY: usize = 256;
 /// Finished-process records are useful for short postmortems, but keeping
 /// every subagent forever pins broadcast senders and tail buffers.
 const EXITED_RECORD_TTL_MS: i64 = 10 * 60 * 1000;
+
+/// Stable identity for a ShellX-owned process. Numeric PIDs are reusable, so
+/// delayed termination must also bind to the OS-reported process start token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OwnedProcessIdentity {
+    pid: u32,
+    start_token: u64,
+}
+
+impl OwnedProcessIdentity {
+    pub(crate) fn pid(self) -> u32 {
+        self.pid
+    }
+}
+
+pub(crate) fn capture_owned_process_identity(pid: u32) -> Option<OwnedProcessIdentity> {
+    if !(2..=i32::MAX as u32).contains(&pid) {
+        return None;
+    }
+    Some(OwnedProcessIdentity {
+        pid,
+        start_token: process_start_token(pid)?,
+    })
+}
+
+pub(crate) fn owned_process_identity_is_current(identity: OwnedProcessIdentity) -> bool {
+    process_start_token(identity.pid) == Some(identity.start_token)
+}
+
+#[cfg(target_os = "linux")]
+fn process_start_token(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let fields = stat.rsplit_once(") ")?.1;
+    // `/proc/<pid>/stat` field 22 is the process start time in clock ticks.
+    // The suffix starts at field 3 (`state`), so start time is index 19.
+    fields.split_whitespace().nth(19)?.parse().ok()
+}
+
+#[cfg(target_os = "macos")]
+fn process_start_token(pid: u32) -> Option<u64> {
+    use nix::libc;
+
+    let mut info = unsafe { std::mem::zeroed::<libc::proc_bsdinfo>() };
+    let info_size = std::mem::size_of::<libc::proc_bsdinfo>();
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid as i32,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut _ as *mut _,
+            info_size as i32,
+        )
+    };
+    if read != info_size as i32 {
+        return None;
+    }
+    info.pbi_start_tvsec
+        .checked_mul(1_000_000)?
+        .checked_add(info.pbi_start_tvusec)
+}
+
+#[cfg(target_os = "windows")]
+fn process_start_token(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return None;
+    }
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    let ok = unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
+    unsafe {
+        CloseHandle(handle);
+    }
+    if ok == 0 {
+        return None;
+    }
+    Some((u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn process_start_token(pid: u32) -> Option<u64> {
+    use sysinfo::{Pid, System};
+
+    let pid = Pid::from(pid as usize);
+    let mut system = System::new();
+    if !system.refresh_process(pid) {
+        return None;
+    }
+    system.process(pid).map(|process| process.start_time())
+}
 
 /// Origin of a tracked process — useful for debugging and for the
 /// process_list response. We may grow this enum as new host spawns appear.
@@ -106,11 +202,13 @@ pub struct ProcessLine {
 ///
 /// We intentionally keep the raw PID separate from `pid: Option<u32>` so
 /// callers don't have to thread a process handle around — the registry
-/// owns the handle implicitly via the spawn site, and signals are sent by
-/// PID through `nix::sys::signal::kill` (Unix) or `taskkill` (Windows).
+/// owns the handle implicitly via the spawn site. Before any PID-based signal
+/// reaches `kill` or `taskkill`, the registry rechecks the captured process
+/// start token so PID reuse fails closed.
 pub struct ProcessRecord {
     pub task_id: String,
     pub pid: Option<u32>,
+    process_identity: Option<OwnedProcessIdentity>,
     pub cmd: String,
     pub source: ProcessSource,
     pub started_at_ms: i64,
@@ -129,8 +227,8 @@ pub struct ProcessRecord {
     /// scope rows to the active tab. fix for #363 cross-tab
     /// subagent leak: previously every host_mcp row carried `None` and
     /// TasksPanel's null-fold made one tab's subagents visible in every
-    /// other tab. ACP-driven processes (grok, acp_term) leave this
-    /// `None` because they're already tab-tracked by acp.rs.
+    /// other tab. Provider processes leave this `None` because they are
+    /// already tab-tracked by their provider registry.
     pub tab_id: Option<String>,
 }
 
@@ -140,6 +238,7 @@ impl ProcessRecord {
         Self {
             task_id,
             pid,
+            process_identity: pid.and_then(capture_owned_process_identity),
             cmd,
             source,
             started_at_ms: now_ms(),
@@ -214,9 +313,8 @@ pub struct ProcessSnapshot {
     #[serde(rename = "rssKb", skip_serializing_if = "Option::is_none")]
     pub rss_kb: Option<u64>,
     ///  owning tab for host_mcp subagents; lets the
-    /// frontend Tasks panel scope rows to the active tab. None for
-    /// ACP-tracked processes (grok, acp_term) which carry their tab
-    /// elsewhere.
+    /// frontend Tasks panel scope rows to the active tab. None for provider
+    /// processes that carry their tab elsewhere.
     #[serde(rename = "tabId", skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<String>,
 }
@@ -529,26 +627,35 @@ impl ProcessRegistry {
     }
 
     async fn running_pid_for_signal(&self, task_id: &str) -> Result<u32, String> {
-        let inner = self.inner.lock().await;
-        let rec = inner
-            .records
-            .get(task_id)
-            .ok_or_else(|| format!("unknown taskId: {}", task_id))?;
-        if rec.status != ProcessStatus::Running {
+        let (status, pid, identity) = {
+            let inner = self.inner.lock().await;
+            let rec = inner
+                .records
+                .get(task_id)
+                .ok_or_else(|| format!("unknown taskId: {}", task_id))?;
+            (rec.status.clone(), rec.pid, rec.process_identity)
+        };
+        if status != ProcessStatus::Running {
             return Err(format!(
                 "taskId {} is not running (status={:?})",
-                task_id, rec.status
+                task_id, status
             ));
         }
-        let pid = rec
-            .pid
-            .ok_or_else(|| format!("unknown taskId: {}", task_id))?;
+        let pid = pid.ok_or_else(|| format!("unknown taskId: {}", task_id))?;
         if !(2..=i32::MAX as u32).contains(&pid) {
             return Err(format!(
                 "taskId {} has unsafe process id {} (expected 2..={})",
                 task_id,
                 pid,
                 i32::MAX
+            ));
+        }
+        let identity = identity.ok_or_else(|| {
+            format!("taskId {task_id} has no stable process identity for PID {pid}")
+        })?;
+        if identity.pid() != pid || !owned_process_identity_is_current(identity) {
+            return Err(format!(
+                "taskId {task_id} no longer owns PID {pid}; refusing to signal a reused process id"
             ));
         }
         Ok(pid)
@@ -741,16 +848,24 @@ fn normalize_signal_name(signal_name: &str) -> Result<&'static str, String> {
     }
 }
 
-#[allow(dead_code)]
-pub fn registry_arc(reg: ProcessRegistry) -> Arc<ProcessRegistry> {
-    Arc::new(reg)
-}
-
 // ───── tests ─────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_process_identity_rejects_pid_reuse_generation() {
+        let identity = capture_owned_process_identity(std::process::id())
+            .expect("current process has a stable OS identity");
+        assert!(owned_process_identity_is_current(identity));
+
+        let stale = OwnedProcessIdentity {
+            start_token: identity.start_token.wrapping_add(1),
+            ..identity
+        };
+        assert!(!owned_process_identity_is_current(stale));
+    }
 
     #[tokio::test]
     async fn register_and_list_roundtrip() {
@@ -786,6 +901,38 @@ mod tests {
                 assert!(error.contains("unsafe process id"), "{error}");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn registry_refuses_a_reused_pid_generation_before_signaling() {
+        let reg = ProcessRegistry::new();
+        let task_id = reg
+            .register(
+                "stale process generation",
+                ProcessSource::Terminal,
+                Some(std::process::id()),
+            )
+            .await;
+        {
+            let mut inner = reg.inner.lock().await;
+            let record = inner
+                .records
+                .get_mut(&task_id)
+                .expect("registered process record");
+            let identity = record
+                .process_identity
+                .expect("current process identity captured");
+            record.process_identity = Some(OwnedProcessIdentity {
+                start_token: identity.start_token.wrapping_add(1),
+                ..identity
+            });
+        }
+
+        let error = reg
+            .running_pid_for_signal(&task_id)
+            .await
+            .expect_err("stale process generation must fail before OS signaling");
+        assert!(error.contains("no longer owns PID"), "{error}");
     }
 
     #[test]

@@ -17,6 +17,7 @@
  * setter for `/skill` insertion.
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import "./CommandPalette.css";
 import type { AcpCommand } from "../types/acp";
 import { useModalFocus } from "../lib/useModalFocus";
 

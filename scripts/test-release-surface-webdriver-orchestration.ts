@@ -16,6 +16,7 @@ import { RELEASE_SURFACE_DRIVER_RUN_SCHEMA } from "./lib/release-surface-driver-
 import { validateCreateOnlyEvidenceDirectory } from "./lib/release-surface-evidence-paths";
 
 const root = resolve(import.meta.dirname, "..");
+const tsxImport = import.meta.resolve("tsx");
 const fixturePath = resolve(root, "scripts/fixtures/release-surface-webdriver-lifecycle-driver-fixture.ts");
 const temp = mkdtempSync(join(tmpdir(), "shellx-webdriver-orchestration-"));
 // This fixture proves the WebDriver orchestration used by Windows and Linux.
@@ -222,20 +223,22 @@ async function orchestrationInput(
 ): Promise<ReleaseSurfaceWebDriverOrchestrationInput> {
   const ports = await distinctPorts();
   const runId = Buffer.from(name).toString("hex").padEnd(16, "0").slice(0, 16);
+  const profilePath = join(temp, `shellx-final-webdriver-${runId}`);
   return {
     platform: fixturePlatform,
     runId,
-    profileNodePath: join(temp, `shellx-final-webdriver-${runId}`),
-    profileLaunchPath: join(temp, `shellx-final-webdriver-${runId}`),
+    profileNodePath: profilePath,
+    profileLaunchPath: profilePath,
     debugPort: ports.debugPort,
     mcpPort: ports.mcpPort,
     lifecycle: {
       tauriDriverCommand: process.execPath,
       tauriDriverNodePath: process.execPath,
       tauriDriverArgsPrefix: [
-        "--import", "tsx", fixturePath,
+        "--import", tsxImport, fixturePath,
         "--audit-out", join(temp, `${name}-audit.json`),
         "--expected-application", process.execPath,
+        "--expected-working-directory", profilePath,
         "--session-id", `fixture-${name}-session-0001`,
         ...fixtureArgs,
       ],

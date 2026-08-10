@@ -534,24 +534,13 @@ func postMouseClick(at point: CGPoint) throws -> Int {
     guard let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
           let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)
     else { throw fail("EVENT_CREATE_FAILED", "CoreGraphics could not create a mouse event pair") }
+    // WKWebView can report a successful AXPress on its web area without
+    // delivering a DOM click. The caller binds the point to the candidate
+    // window and verifies that candidate is frontmost immediately beforehand.
     down.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.025)
     up.post(tap: .cghidEventTap)
     return 2
-}
-
-func postAccessibilityPress(processId: Int32, at point: CGPoint) -> Bool {
-    let application = AXUIElementCreateApplication(pid_t(processId))
-    var hit: AXUIElement?
-    guard AXUIElementCopyElementAtPosition(
-        application,
-        Float(point.x),
-        Float(point.y),
-        &hit
-    ) == .success,
-          let hit,
-          AXUIElementPerformAction(hit, kAXPressAction as CFString) == .success
-    else { return false }
-    return true
 }
 
 func postContextClick(at point: CGPoint) throws -> Int {
@@ -559,6 +548,7 @@ func postContextClick(at point: CGPoint) throws -> Int {
           let up = CGEvent(mouseEventSource: nil, mouseType: .rightMouseUp, mouseCursorPosition: point, mouseButton: .right)
     else { throw fail("EVENT_CREATE_FAILED", "CoreGraphics could not create a context-click event pair") }
     down.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.025)
     up.post(tap: .cghidEventTap)
     return 2
 }
@@ -583,18 +573,19 @@ func postMouseDrag(from source: CGPoint, to destination: CGPoint) throws -> Int 
     return 8
 }
 
-func postKey(code: CGKeyCode, flags: CGEventFlags = []) throws -> Int {
+func postKey(processId: Int32, code: CGKeyCode, flags: CGEventFlags = []) throws -> Int {
     guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
           let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false)
     else { throw fail("EVENT_CREATE_FAILED", "CoreGraphics could not create a keyboard event pair") }
     down.flags = flags
     up.flags = flags
-    down.post(tap: .cghidEventTap)
-    up.post(tap: .cghidEventTap)
+    down.postToPid(pid_t(processId))
+    Thread.sleep(forTimeInterval: 0.025)
+    up.postToPid(pid_t(processId))
     return 2
 }
 
-func postUnicode(_ text: String) throws -> Int {
+func postUnicode(processId: Int32, _ text: String) throws -> Int {
     guard text.utf16.count <= 65_536 else { throw fail("TEXT_TOO_LARGE", "text exceeds 65536 UTF-16 code units") }
     guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
           let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)
@@ -605,8 +596,9 @@ func postUnicode(_ text: String) throws -> Int {
         down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
         up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: base)
     }
-    down.post(tap: .cghidEventTap)
-    up.post(tap: .cghidEventTap)
+    down.postToPid(pid_t(processId))
+    Thread.sleep(forTimeInterval: 0.025)
+    up.postToPid(pid_t(processId))
     return 2
 }
 
@@ -627,7 +619,7 @@ func keyCode(_ key: String) -> (CGKeyCode, CGEventFlags)? {
     return (code, [])
 }
 
-func postKeyChord(_ keys: [String]) throws -> Int {
+func postKeyChord(processId: Int32, _ keys: [String]) throws -> Int {
     guard !keys.isEmpty, keys.count <= 8 else { throw fail("INVALID_KEY_CHORD", "key chord must contain one to eight keys") }
     var flags: CGEventFlags = []
     var target: String?
@@ -649,7 +641,7 @@ func postKeyChord(_ keys: [String]) throws -> Int {
         throw fail("UNSUPPORTED_KEY", "key chord target is not in the bounded release key map")
     }
     flags.formUnion(mapped.1)
-    return try postKey(code: mapped.0, flags: flags)
+    return try postKey(processId: processId, code: mapped.0, flags: flags)
 }
 
 func emit(_ response: HelperResponse, exitCode: Int32) -> Never {
@@ -777,14 +769,16 @@ do {
         throw fail("ACTIVATION_FAILED", "the exact candidate application could not be activated")
     }
     Thread.sleep(forTimeInterval: 0.08)
+    guard boundProcess.application.isActive,
+          NSWorkspace.shared.frontmostApplication?.processIdentifier == request.candidate.processId else {
+        throw fail("ACTIVATION_LOST", "the exact candidate was not frontmost immediately before native input")
+    }
     var eventsPosted = 0
     var pickerResponse: PickerResponse? = nil
     switch request.action {
     case "click":
         guard let point else { throw fail("TARGET_REQUIRED", "click requires a mapped renderer target") }
-        eventsPosted += postAccessibilityPress(processId: request.candidate.processId, at: point)
-            ? 1
-            : try postMouseClick(at: point)
+        eventsPosted += try postMouseClick(at: point)
     case "contextClick":
         guard let point else { throw fail("TARGET_REQUIRED", "contextClick requires a mapped renderer target") }
         eventsPosted += try postContextClick(at: point)
@@ -795,16 +789,16 @@ do {
         guard let point, let text = request.text else { throw fail("TARGET_REQUIRED", "typeText requires a mapped target and text") }
         eventsPosted += try postMouseClick(at: point)
         if request.replaceAll == true {
-            eventsPosted += try postKey(code: 0, flags: .maskCommand)
+            eventsPosted += try postKey(processId: request.candidate.processId, code: 0, flags: .maskCommand)
         }
-        eventsPosted += try postUnicode(text)
+        eventsPosted += try postUnicode(processId: request.candidate.processId, text)
     case "clear":
         guard let point else { throw fail("TARGET_REQUIRED", "clear requires a mapped renderer target") }
         eventsPosted += try postMouseClick(at: point)
-        eventsPosted += try postKey(code: 0, flags: .maskCommand)
-        eventsPosted += try postKey(code: 51)
+        eventsPosted += try postKey(processId: request.candidate.processId, code: 0, flags: .maskCommand)
+        eventsPosted += try postKey(processId: request.candidate.processId, code: 51)
     case "keyChord":
-        eventsPosted += try postKeyChord(request.keys ?? [])
+        eventsPosted += try postKeyChord(processId: request.candidate.processId, request.keys ?? [])
     case "selectPickerPath":
         guard let rootPath = request.ownedRootPath,
               let pickerPath = request.pickerPath,
@@ -813,12 +807,12 @@ do {
         }
         try validateOwnedPickerPath(rootPath: rootPath, pickerPath: pickerPath, kind: pickerKind)
         let picker = try bindPicker(request.candidate)
-        eventsPosted += try postKeyChord(["meta", "shift", "g"])
+        eventsPosted += try postKeyChord(processId: request.candidate.processId, ["meta", "shift", "g"])
         Thread.sleep(forTimeInterval: 0.12)
-        eventsPosted += try postUnicode(pickerPath)
-        eventsPosted += try postKey(code: 36)
+        eventsPosted += try postUnicode(processId: request.candidate.processId, pickerPath)
+        eventsPosted += try postKey(processId: request.candidate.processId, code: 36)
         Thread.sleep(forTimeInterval: 0.16)
-        eventsPosted += try postKey(code: 36)
+        eventsPosted += try postKey(processId: request.candidate.processId, code: 36)
         Thread.sleep(forTimeInterval: 0.12)
         pickerResponse = PickerResponse(
             role: picker.role,

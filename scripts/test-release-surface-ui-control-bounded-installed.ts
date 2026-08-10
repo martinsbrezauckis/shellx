@@ -110,7 +110,7 @@ assert.deepEqual(driver?.platforms, {
 const bounded = plan.assignments
   .filter((row) => row.driverId === UI_CONTROL_BOUNDED_INSTALLED_DRIVER_ID)
   .map(assignmentWithSurface);
-assert.equal(bounded.length, 362);
+assert.equal(bounded.length, 364);
 assert(bounded.every(supportsBoundedInstalledUiControl));
 assert.doesNotThrow(() => assertBoundedInstalledUiControlAssignments(bounded));
 
@@ -184,7 +184,7 @@ assert.equal(pluginsSource.match(/data-shellx-release-observe="expanded"/g)?.len
 assert.equal(connectionEditorSource.match(/data-shellx-release-observe="value"/g)?.length, 6);
 assert.equal(connectionEditorSource.match(/data-shellx-release-observe="checked"/g)?.length, 1);
 assert.equal(connectorsTabSource.match(/data-shellx-release-observe="selected"/g)?.length, 1);
-assert.equal(connectorsTabSource.match(/data-shellx-release-observe="pressed"/g)?.length, 4);
+assert.equal(connectorsTabSource.match(/data-shellx-release-observe="pressed"/g)?.length, 6);
 assert.equal(connectorsTabSource.match(/data-shellx-release-observe="value"/g)?.length, 3);
 assert.equal(connectorsTabSource.match(/data-shellx-release-observe="disabled"/g)?.length, 4);
 assert.equal(connectorsTabSource.match(/data-shellx-release-observe="mounted"/g)?.length, 1);
@@ -274,7 +274,7 @@ for (const [relativePath, expectedCount] of boundedTextObservationSources) {
   );
 }
 
-console.log("Release surface bounded installed UI routing tests passed (362 cross-platform bounded assignments, 0 generic assignments)");
+console.log("Release surface bounded installed UI routing tests passed (364 cross-platform bounded assignments, 0 generic assignments)");
 
 function requiredSurface(id: string): ReleaseSurfaceItem {
   const surface = surfaceById.get(id);

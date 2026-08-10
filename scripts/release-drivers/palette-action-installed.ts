@@ -4,7 +4,6 @@ import {
   clickReleaseSurfaceInstalledInputElement as clickReleaseSurfaceWebDriverElement,
   createReleaseSurfaceInstalledInputSession,
   findReleaseSurfaceInstalledInputElement as findReleaseSurfaceWebDriverElement,
-  observeReleaseSurfaceInstalledInputElement,
   performReleaseSurfaceInstalledInputKeyChord as performReleaseSurfaceWebDriverKeyChord,
   waitForReleaseSurfaceInstalledInputElement as waitForReleaseSurfaceWebDriverElement,
   waitForReleaseSurfaceInstalledInputElementAbsent as waitForReleaseSurfaceWebDriverElementAbsent,

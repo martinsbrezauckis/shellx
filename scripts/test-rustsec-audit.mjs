@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 
-import { evaluateRustsecReport } from "./check-rustsec.mjs";
+import { evaluateRustsecReport, validateWinrtPatch } from "./check-rustsec.mjs";
 
 const NOW = new Date("2026-07-10T12:00:00Z");
+
+assert.deepEqual(validateWinrtPatch(), [], "reviewed Windows notification dependency patch stays intact");
 
 function vulnerability(id = "RUSTSEC-2026-0194", version = "0.39.4") {
   return {

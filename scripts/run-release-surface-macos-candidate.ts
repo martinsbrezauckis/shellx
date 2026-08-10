@@ -9,7 +9,10 @@ import {
   type ReleaseSurfaceFileIdentity,
 } from "./lib/release-surface-candidate-attestation";
 import { loadFinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
-import { runReleaseSurfaceDrivers } from "./lib/release-surface-driver-runner";
+import {
+  releaseSurfaceDriverRunFailedDriverIds,
+  runReleaseSurfaceDrivers,
+} from "./lib/release-surface-driver-runner";
 import type { ReleaseSurfaceHealthEvidence } from "./lib/release-surface-health-evidence";
 import {
   createReleaseSurfaceMacosInstalledInputSession,
@@ -63,7 +66,12 @@ if (process.platform !== "darwin") {
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
-requireFinalWindow(args);
+const selectedDriverIds = readArgs(args, "--driver-id")
+  .flatMap((value) => value.split(","))
+  .map((value) => value.trim())
+  .filter(Boolean);
+const targetedClosure = selectedDriverIds.length > 0;
+requireExecutionWindow(args, targetedClosure);
 const runId = requiredArg(args, "--run-id");
 const preparationPath = regularFile(requiredArg(args, "--preparation"), "candidate preparation");
 const artifactPath = regularFile(requiredArg(args, "--artifact"), "distribution artifact");
@@ -259,6 +267,7 @@ try {
     candidateAttestationPath: candidatePath,
     installationReceiptPath,
     outputDir: driverOutputDir,
+    ...(targetedClosure ? { selectedDriverIds } : {}),
     macosNativeInput: {
       helperPath,
       bindingReceiptPath: bindingPath,
@@ -272,6 +281,7 @@ try {
     token,
     outputDir: providerOutputDir,
   });
+  const failedDriverIds = releaseSurfaceDriverRunFailedDriverIds(manifest, driverOutputDir);
   const shutdownRequestedAt = healthCollector.beginShutdown();
   const finalizer = spawnSync(process.execPath, releaseSurfaceControllerNodeArguments(
     resolve(root, "scripts/finalize-release-surface-macos-candidate.ts"), [
@@ -307,7 +317,7 @@ try {
   const orchestration = {
     schema: RELEASE_SURFACE_MACOS_CANDIDATE_ORCHESTRATION_SCHEMA,
     mode: "final-frozen-candidate",
-    status: "pass",
+    status: failedDriverIds.length === 0 ? "pass" : "failed",
     platform: "macos-installed",
     runId,
     sourceCommit,
@@ -329,6 +339,11 @@ try {
     mode: 0o600,
   });
   finalized = true;
+  if (failedDriverIds.length > 0) {
+    throw new Error(
+      `complete discovery matrix recorded failed driver sections: ${failedDriverIds.join(", ")}`,
+    );
+  }
   console.log(
     `Final macOS candidate passed ${manifest.driverReports.reduce((sum, report) => sum + report.outcomes, 0)} `
     + `exact surfaces and ${providerRoutes.batch.routes.length} provider routes: ${orchestrationPath}`,
@@ -578,12 +593,18 @@ function emptyDirectory(path: string, label: string): string {
   return absolute;
 }
 
-function requireFinalWindow(values: string[]): void {
+function requireExecutionWindow(values: string[], targetedClosure: boolean): void {
+  const expectedExecutionWindow = targetedClosure
+    ? "targeted-post-matrix"
+    : "immediately-before-publish";
   if (readArg(values, "--candidate-stage") !== "signed-and-frozen"
-    || readArg(values, "--execution-window") !== "immediately-before-publish") {
+    || readArg(values, "--execution-window") !== expectedExecutionWindow) {
     throw new Error(
-      "refusing routine execution: pass --candidate-stage signed-and-frozen "
-      + "--execution-window immediately-before-publish for the final candidate only",
+      targetedClosure
+        ? "refusing targeted execution: pass --candidate-stage signed-and-frozen "
+          + "--execution-window targeted-post-matrix with one or more --driver-id values"
+        : "refusing routine execution: pass --candidate-stage signed-and-frozen "
+          + "--execution-window immediately-before-publish for the final candidate only",
     );
   }
 }
@@ -598,6 +619,14 @@ function readArg(values: string[], name: string): string | undefined {
   const index = values.indexOf(name);
   if (index >= 0) return values[index + 1];
   return values.find((value) => value.startsWith(`${name}=`))?.slice(name.length + 1);
+}
+
+function readArgs(values: string[], name: string): string[] {
+  const prefix = `${name}=`;
+  return values.flatMap((value, index) => {
+    if (value === name) return values[index + 1] ? [values[index + 1]!] : [];
+    return value.startsWith(prefix) ? [value.slice(prefix.length)] : [];
+  });
 }
 
 function sha256(value: string | Buffer): string {

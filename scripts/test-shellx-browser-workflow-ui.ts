@@ -69,6 +69,7 @@ const nativeEngineSync = readFileSync(new URL("../src/browser/hooks/useNativeEng
 const browserTasks = readFileSync(new URL("../src/browser/hooks/useBrowserTasks.ts", import.meta.url), "utf8");
 const sidebarResize = readFileSync(new URL("../src/browser/hooks/useBrowserSidebarResize.ts", import.meta.url), "utf8");
 const browserShellCss = readFileSync(new URL("../src/browser/browserShell.css", import.meta.url), "utf8");
+const browserLayoutCss = readFileSync(new URL("../src/browser/browserLayout.css", import.meta.url), "utf8");
 
 assert(sidecar.includes("browserWorkflowBadgeLabel") && sidecar.includes("Refresh suggested"), "renders compact workflow health and refresh badges");
 assert(sidecar.includes('data-debug-id="shellx-browser-workflow-preview"'), "renders a dedicated preview result surface");
@@ -76,8 +77,52 @@ assert(sidecar.includes("live recovery") && sidecar.includes("decisions"), "expl
 assert(!sidecar.includes("{workflow.refreshReason}") && !sidecar.includes("{workflow.refreshCandidateRecipePath}"), "does not render raw refresh reasons or private recipe paths");
 assert(hook.includes('browserApiPostJson<unknown>("/browser/recipes/replay"'), "uses the existing guarded recipe replay route");
 assert(hook.includes("dryRun: true") && !hook.includes("apply: true"), "workflow clicks always request preview mode and never silent apply");
+assert(
+  hook.includes('status: "error"') && !hook.includes("throw cause"),
+  "contains handled preview failures in the dedicated workflow status surface",
+);
 assert(backend.includes('"safety-regression"') && backend.includes('"incomplete-evaluation"'), "bookmark normalization preserves current fail-closed ratings");
 assert(css.includes(".shellx-browser-bookmark-workflow-badge") && css.includes(".shellx-browser-workflow-preview"), "styles status and preview surfaces");
+assert(
+  sidecar.includes('workflowPreview ? "has-workflow-preview" : ""')
+    && css.includes(".shellx-browser-bookmark-sidecar.has-workflow-preview")
+    && css.includes("grid-template-rows: auto auto minmax(0, 1fr);"),
+  "keeps workflow preview compact without displacing the bookmark list",
+);
+assert(
+  css.includes("color: var(--shellx-browser-workflow-warn-ink);")
+    && css.includes("border-left: 3px solid var(--shellx-browser-ref-ink);")
+    && css.includes("border-left-color: var(--err);")
+    && !css.includes("color: #fbbf24;")
+    && !css.includes("rgba(59, 130, 246"),
+  "uses Browser semantic tokens for workflow warning, information, and error states",
+);
+const lightBrowserSurface = cssHexToken(
+  cssSelectorBlock(browserLayoutCss, '.shellx-browser-app[data-color-mode="light"]'),
+  "--surface-2",
+);
+const darkBrowserSurface = cssHexToken(
+  cssSelectorBlock(browserLayoutCss, '.shellx-browser-app[data-color-mode="dark"]'),
+  "--surface-2",
+);
+const workflowRootTokens = cssSelectorBlock(browserShellCss, ".shellx-browser-app");
+const workflowLightTokens = cssSelectorBlock(browserShellCss, '.shellx-browser-app[data-color-mode="light"]');
+const workflowWarningContrast = [
+  {
+    label: "light",
+    foreground: cssHexToken(workflowLightTokens, "--shellx-browser-workflow-warn-ink"),
+    background: lightBrowserSurface,
+  },
+  {
+    label: "dark",
+    foreground: cssHexToken(workflowRootTokens, "--shellx-browser-workflow-warn-ink"),
+    background: darkBrowserSurface,
+  },
+];
+for (const { label, foreground, background } of workflowWarningContrast) {
+  const ratio = contrastRatio(foreground, background);
+  assert(ratio >= 4.5, `${label} workflow warning contrast ${ratio.toFixed(2)} meets WCAG AA`);
+}
 assert(
   browserApp.includes('"--shellx-browser-right-sidebar-width"') && !browserApp.includes("gridTemplateColumns"),
   "keeps runtime widths in CSS variables so responsive rules can stack the Browser layout",
@@ -118,6 +163,13 @@ assert(
   "keeps the native engine placeholder readable in light and dark modes",
 );
 assert(
+  cssSelectorBlock(browserShellCss, '.shellx-browser-app[data-color-mode="light"]').includes("color-scheme: light;")
+    && cssSelectorBlock(browserShellCss, '.shellx-browser-app[data-color-mode="dark"]').includes("color-scheme: dark;")
+    && browserShellCss.includes('@media (prefers-color-scheme: light) {\n  .shellx-browser-app[data-color-mode="system"] {\n    color-scheme: light;')
+    && browserShellCss.includes('@media (prefers-color-scheme: dark) {\n  .shellx-browser-app[data-color-mode="system"] {\n    color-scheme: dark;'),
+  "keeps native Browser form controls aligned with explicit and system color modes",
+);
+assert(
   browserTasks.includes("runTaskControl")
     && agentSidebar.includes("taskControlBusy")
     && agentSidebar.includes('activeTask.status === "aborted" || taskControlBusy'),
@@ -135,3 +187,30 @@ assert(
 );
 
 console.log("ShellX Browser saved workflow UI checks passed");
+
+function cssHexToken(source: string, name: string): string {
+  const match = source.match(new RegExp(`${name.replace("-", "\\-")}\\s*:\\s*(#[0-9a-fA-F]{6})`));
+  if (!match?.[1]) throw new Error(`missing hex token ${name}`);
+  return match[1];
+}
+
+function cssSelectorBlock(source: string, selector: string): string {
+  const marker = `${selector} {`;
+  const start = source.indexOf(marker);
+  if (start < 0) throw new Error(`missing CSS selector: ${selector}`);
+  const bodyStart = start + marker.length;
+  const bodyEnd = source.indexOf("}", bodyStart);
+  if (bodyEnd < 0) throw new Error(`unterminated CSS selector: ${selector}`);
+  return source.slice(bodyStart, bodyEnd);
+}
+
+function contrastRatio(left: string, right: string): number {
+  const [lighter, darker] = [relativeLuminance(left), relativeLuminance(right)].sort((a, b) => b - a);
+  return (lighter! + 0.05) / (darker! + 0.05);
+}
+
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  const linear = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+}

@@ -47,6 +47,18 @@ const incompleteCommand = ciSurfaceCoverageErrors({
 });
 assert(incompleteCommand.some((error) => error.includes("inventory, driver plan")));
 
+const nonStrictTypecheck = ciSurfaceCoverageErrors({
+  ...input,
+  packageScripts: { ...packageData.scripts, typecheck: "tsc --noEmit" },
+});
+assert(nonStrictTypecheck.some((error) => error.includes("unused locals and parameters")));
+
+const missingTypecheckJob = ciSurfaceCoverageErrors({
+  ...input,
+  ciSource: ciSource.replace("run: pnpm run typecheck", "run: pnpm exec tsc --noEmit"),
+});
+assert(missingTypecheckJob.some((error) => error.includes("canonical strict TypeScript gate")));
+
 const staleNodeBaseline = ciSurfaceCoverageErrors({
   ...input,
   ciSource: ciSource.replaceAll("node-version: 22", "node-version: 20"),

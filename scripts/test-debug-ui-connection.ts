@@ -10,6 +10,7 @@ import {
   debugUiPollDelay,
   debugUiPollingEnabled,
   debugUiRetryDelay,
+  debugUiStateTargetsBrowser,
 } from "../src/lib/debug-ui-connection";
 
 assert.equal(debugUiRetryDelay(0, () => 0), 800);
@@ -26,6 +27,15 @@ assert.equal(debugUiPollingEnabled("disconnected"), true);
 assert.equal(debugUiPollDelay("connected"), DEBUG_UI_POLL_MS);
 assert.equal(debugUiPollDelay("disconnected"), DEBUG_UI_DISCONNECTED_POLL_MS);
 assert(DEBUG_UI_DISCONNECTED_POLL_MS > DEBUG_UI_POLL_MS);
+assert.equal(debugUiStateTargetsBrowser({ lastUiPatchSource: "renderer" }), true);
+assert.equal(debugUiStateTargetsBrowser({ lastUiPatchSource: "shellx-browser-ui" }), true);
+assert.equal(debugUiStateTargetsBrowser({ debugSurface: "browser", lastUiPatchSource: "release-driver" }), true);
+assert.equal(
+  debugUiStateTargetsBrowser({ debugSurface: "app", lastUiPatchSource: "renderer" }),
+  false,
+  "an explicit app target must survive a later renderer-owned metadata revision",
+);
+assert.equal(debugUiStateTargetsBrowser({ lastUiPatchSource: "release-driver" }), false);
 
 const readSource = (path: string): string => readFileSync(path, "utf8").replaceAll("\r\n", "\n");
 const app = readSource("src/App.tsx");

@@ -58,8 +58,7 @@ export type UiGroupKind =
  * chip rendered when grok detects it's stuck repeating a tool. */
   | "doom-loop"
   | "host-mcp-unreachable"
- /* issue #374 — in-chat permission pill that replaces (or augments)
- * the PermissionModal popup. Pending pill carries Allow / Allow-always
+ /* issue #374 — in-chat permission pill. Pending state carries Allow / Allow-always
  * / Deny buttons; resolved pill shrinks to a one-line audit chip.
  * In bypassPermissions / always-approve modes the pill arrives
  * already-resolved (autoApproved=true on the wire) so the user gets
@@ -126,16 +125,6 @@ export interface ToolGroup extends UiGroupBase {
  * rawOutput.text or as a raw `<video>` markdown blob in the assistant
  * message. ToolCard renders an inline `<video controls>` element. */
   videoPath?: string;
- /** when grok runs a shell command via the
- * ACP `terminal/*` surface, the corresponding tool_call (or any of its
- * subsequent tool_call_update events) carries a content block of
- * shape `{type: "terminal", terminalId: "gs-term-NNNNNNNN"}`. We
- * extract that id so ChatOutput can render a live xterm.js view
- * bound to it via <TerminalView terminalId attachOnly readOnly={false}/>.
- * The defense-in-depth scan (mirrors imagePath/videoPath) looks at both
- * the initial tool_call's `content` array AND every tool_call_update's
- * `content` — grok occasionally inserts the terminal block late. */
-  terminalId?: string;
  /** when grok writes a `plan.md` (the right rail
  * PlanPane source), we ALSO want to surface the rendered markdown
  * in the chat output below the diff card. Populated when the
@@ -246,23 +235,22 @@ export interface HostMcpUnreachableGroup extends UiGroupBase {
  * • In bypassPermissions/auto modes the same event carries
  * `autoApproved: true` (or `autoDenied: true`) — we initialise the
  * group already-resolved so it renders as a passive audit chip.
- * • For a legacy or defensive interactive request the user clicks one of the pill
+ * • For an interactive request the user clicks one of the pill
  * buttons; PermissionPill posts a synthetic `permission-resolved`
  * event into the events ring, which on the next groupEvents run
  * mutates the matching group to pending:false + decision + decisionAt.
  *
  * `toolName` / `toolArgs` / `cwd` are best-effort summaries pulled from
- * the ACP `params.toolCall` object (when present). Legacy
- * `terminal/create` payloads (request_id + command/args/cwd at the top
- * level) are also accepted so the existing modal-only wire is covered.
+ * the ACP `params.toolCall` object (when present). Provider adapters that
+ * still emit a top-level command/request_id shape remain readable without
+ * restoring the retired popup path.
  */
 export interface PermissionGroup extends UiGroupBase {
   kind: "permission";
  /** Stable id used to reconcile with `permission-resolved` follow-ups
  * and to invoke `resolve_permission_request(requestId, allow)`. */
   requestId: string;
- /** Display name for the tool grok wants to invoke. Falls back to the
- * raw method name (e.g. "terminal/create") when no toolCall info. */
+ /** Display name for the tool the provider wants to invoke. */
   toolName: string;
  /** One-line preview of the args/command; truncated to keep the pill
  * compact. Full payload remains in the events ring for forensic view. */
@@ -771,12 +759,6 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
         sourceFirstIndex: evIdx,
         sourceLastIndex: evIdx,
       };
- // defense-in-depth scan for a {type:"terminal",
- // terminalId} block on the initial tool_call. Grok usually emits
- // it on the first tool_call_update, but inline-on-open is allowed
- // by the ACP spec and seen in test captures.
-      const tid = extractTerminalId((update as any)?.content);
-      if (tid) grp.terminalId = tid;
       groups.push(grp);
  // index with promptId-namespaced key so
  // two prompts that both emit `call-XXX-0` don't overwrite each
@@ -895,21 +877,13 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
  * chat card. Concatenate all text fragments seen across
  * tool_call_update events into `toolText`; the renderer
  * decides whether to show the pre body based on the OTHER
- * kind-fields (image/video/diff/terminal take precedence). */
+ * kind-fields (image/video/diff take precedence). */
         if (texts.length > 0) {
           const joined = texts.join("\n").trim();
           if (joined.length > 0) {
             g.toolText = g.toolText ? `${g.toolText}\n${joined}` : joined;
           }
         }
-      }
- // extract terminalId from a `{type: "terminal",
- // terminalId}` content block. Same defense-in-depth scan as
- // imagePath/videoPath above. Tolerates the block arriving on
- // any tool_call_update, not just the initial tool_call.
-      if (!g.terminalId) {
-        const tid = extractTerminalId((update as any)?.content);
-        if (tid) g.terminalId = tid;
       }
       g.updateCount += 1;
       g.sourceLastIndex = evIdx;
@@ -1104,8 +1078,8 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
       const p: any = ev.payload ?? {};
  // Wire shape A (session/request_permission registry path):
  // { reqId, params: { toolCall: {...}, options: [...] }, autoApproved?, autoDenied?, permissionMode? }
- // Wire shape B (legacy terminal/create modal):
- // { request_id, scope: "terminal/create", command, args, cwd, env, autoApproved?, autoDenied?, permissionMode? }
+ // Wire shape B (provider-adapter compatibility):
+ // { request_id, scope, command, args, cwd, autoApproved?, autoDenied?, permissionMode? }
       const requestId: string =
         typeof p.reqId === "string"
           ? p.reqId
@@ -1149,12 +1123,12 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
           toolArgs = s.length > 200 ? s.slice(0, 200) + "…" : s;
         }
       }
- // terminal/create legacy payload (no toolCall) — read command/args/cwd
- // off the top-level so terminal-modal events also get a useful pill.
+ // Provider-adapter payload without toolCall: read command/args/cwd from the
+ // top level so the in-chat pill remains useful.
       if (!toolName) {
         const scope = typeof params.scope === "string" ? params.scope : "";
-        if (scope === "terminal/create" || typeof params.command === "string") {
-          toolName = scope || "terminal/create";
+        if (typeof params.command === "string") {
+          toolName = scope || "tool";
           const cmd = typeof params.command === "string" ? params.command : "";
           const args = Array.isArray(params.args) ? params.args.map(String) : [];
           const joined = [cmd, ...args].filter(Boolean).join(" ");
@@ -1408,27 +1382,6 @@ function extractText(update: SessionUpdatePayload | undefined): string | undefin
   }
   if (Array.isArray(c) && c.length > 0 && (c[0] as any).type === "text") {
     return (c[0] as any).text;
-  }
-  return undefined;
-}
-
-/**
- * extract the first `{type: "terminal", terminalId: "..."}`
- * block from a tool_call's content array. Returns undefined when no
- * such block is present.
- *
- * The ACP `tool_call_content[]` array can carry many block types
- * ("text" | "image" | "diff" | "terminal" | ...). Grok will at most emit
- * one terminal block per tool_call (the matched terminalId comes back via
- * grok's own `terminal/output` polling), so we stop at the first match.
- */
-function extractTerminalId(content: unknown): string | undefined {
-  if (!Array.isArray(content)) return undefined;
-  for (const b of content) {
-    if (b && typeof b === "object" && (b as any).type === "terminal") {
-      const tid = (b as any).terminalId;
-      if (typeof tid === "string" && tid.length > 0) return tid;
-    }
   }
   return undefined;
 }

@@ -67,7 +67,7 @@ export interface ReleaseSurfaceWebDriverOrchestrationInput {
   profileLaunchPath: string;
   debugPort: number;
   mcpPort: number;
-  lifecycle: Omit<ReleaseSurfaceWebDriverLifecycleInput, "environment">;
+  lifecycle: Omit<ReleaseSurfaceWebDriverLifecycleInput, "environment" | "workingDirectory">;
   profileCleanupEvidencePath: string;
   candidateTeardownEvidencePath: string;
   orchestrationEvidencePath: string;
@@ -149,7 +149,11 @@ export async function withReleaseSurfaceWebDriverOrchestration<T>(
   let primaryError: unknown = null;
   try {
     const lifecycleResult = await withReleaseSurfaceWebDriverSession(
-      { ...input.lifecycle, environment: profile.environment },
+      {
+        ...input.lifecycle,
+        environment: profile.environment,
+        workingDirectory: profile.nodePath,
+      },
       async (session, lifecycleContext) => {
         value = await work(session, {
           profile,

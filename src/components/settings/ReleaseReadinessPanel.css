@@ -1,0 +1,99 @@
+.release-readiness {
+  margin-top: 16px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+.release-readiness-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.release-readiness-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.release-readiness-title {
+  font-family: var(--sans);
+  font-size: var(--fs-ui-sm);
+  font-weight: 650;
+  color: var(--ink);
+}
+.release-readiness-meta {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-3);
+}
+.release-version-chip {
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-2);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 3px 7px;
+  background: var(--surface-2);
+}
+.release-readiness-list {
+  display: flex;
+  flex-direction: column;
+}
+.release-readiness-progress {
+  height: 3px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--hairline);
+}
+.release-readiness-progress span {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  transition: width 140ms ease;
+}
+.release-readiness-warn .release-readiness-progress span {
+  background: var(--orange);
+}
+.release-readiness-bad .release-readiness-progress span {
+  background: var(--danger);
+}
+.release-check {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.release-check:last-child {
+  border-bottom: 0;
+}
+.release-check-main {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.release-check-pass .sx-icon { color: var(--green); }
+.release-check-warn .sx-icon { color: var(--orange); }
+.release-check-fail .sx-icon { color: var(--danger); }
+.release-check-label {
+  font-size: var(--fs-ui-sm);
+  color: var(--ink);
+  font-weight: 600;
+}
+.release-check-detail {
+  margin-top: 2px;
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-3);
+  line-height: 1.35;
+}
+.release-check-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

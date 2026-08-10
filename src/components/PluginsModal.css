@@ -1,0 +1,206 @@
+.plugin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+.plugin-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.plugin-toggle-track {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--hairline-2);
+  position: relative;
+  transition: background 120ms ease;
+}
+.plugin-toggle-thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: left 120ms ease;
+}
+.plugin-toggle input:checked + .plugin-toggle-track { background: var(--green); }
+.plugin-toggle input:checked + .plugin-toggle-track .plugin-toggle-thumb { left: 16px; }
+.plugin-toggle-lbl {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.plugin-row-hint {
+  margin-top: 4px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--hairline-2);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.plugin-row-hint-info {
+  display: block;
+}
+
+.plugin-row-hint-err {
+  border: 1px solid color-mix(in oklab, var(--err) 36%, var(--hairline));
+  border-radius: var(--radius-card);
+  background: color-mix(in oklab, var(--err) 7%, var(--surface));
+  color: var(--err);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mp-row {
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-card);
+  padding: 10px 12px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mp-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mp-name {
+  font-family: var(--sans);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+}
+.mp-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+.mp-vault-hint {
+  margin: 2px 0 0 0;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.mp-vault-hint code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.mp-row-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.mp-source {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--mono);
+}
+.mp-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Status pill — colored dot + label */
+.mp-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-family: var(--sans);
+  letter-spacing: 0.04em;
+  padding: 1px 7px;
+  border-radius: 3px;
+  margin-left: auto;
+}
+.mp-status-ready     { color: var(--green, #6dd07b); }
+.mp-status-disabled  { color: var(--ink-3); }
+.mp-status-keyneeded { color: #d8a55a; }
+.mp-status-available { color: var(--ink-2); }
+.mp-status-builtin   { color: #c8423a; }
+
+/* Tier section header — clickable to collapse */
+.mp-tier-hdr {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mp-tier-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.mp-tier-button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+}
+.mp-tier-toggle {
+  display: inline-grid;
+  place-items: center;
+  font-size: 10px;
+  color: var(--ink-3);
+  width: 12px;
+}
+.mp-tier-hint {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* Hero "first time?" callout */
+.mp-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, rgba(200, 66, 58, 0.10), rgba(200, 66, 58, 0.04));
+  border: 1px solid rgba(200, 66, 58, 0.30);
+  border-radius: var(--radius-card);
+  margin-bottom: 6px;
+}
+.mp-hero-text {
+  flex: 1;
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.45;
+}
+.mp-hero-text strong { color: #e0a39d; }
+
+/* Compact toggle variant used inside the action area */
+.plugin-toggle-compact .plugin-toggle-lbl {
+  font-size: 10px;
+}

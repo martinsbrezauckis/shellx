@@ -19,11 +19,8 @@ use tokio::sync::{oneshot, Mutex as TokioMutex, Notify, Semaphore};
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
 
-// Tauri trait imports — Emitter for .emit, Manager for .try_state /
-// .state. Both are needed unconditionally now that host_mcp's
-// terminal/* handler in this file reads ProcessRegistry via try_state
-// outside the debug-api feature gate (the parallel agent added the
-// access path; the import wasn't widened with it, causing build break).
+// Tauri trait imports — Emitter for .emit, Manager for managed session,
+// permission, host-MCP, and debug state lookups.
 use tauri::{Emitter, Manager};
 
 #[path = "acp_requests.rs"]
@@ -449,24 +446,24 @@ impl Default for SessionRegistry {
 }
 
 /// Pending synchronous permission requests, keyed by request_id (uuid v4).
-/// Retained for defensive requests from migrated sessions and diagnostics.
+/// Shared by provider-native approvals, MCP HTTP, Codex app-server requests,
+/// and defensive requests from migrated sessions and diagnostics.
 ///
 /// Flow:
-/// 1. acp.rs::handle_terminal_create creates a `oneshot::channel`,
-/// stores the Sender here under a fresh uuid, and emits a
-/// `permission-request` event carrying that uuid.
-/// 2. The frontend renders a modal. User clicks Allow / Deny / Esc.
+/// 1. A provider or host-tool approval path creates a `oneshot::channel`,
+/// stores the Sender here under a fresh uuid, and emits a matched
+/// `permission-request` event.
+/// 2. The frontend renders the provider-owned permission control.
 /// 3. Frontend calls the `resolve_permission_request` Tauri command
 /// with the uuid + a bool. The command pops the Sender from this
 /// registry and `.send(allow)` it.
-/// 4. acp.rs awaits the Receiver (with a 60s timeout). On allow=true
-/// the spawn proceeds; on allow=false (or timeout) the handler
-/// responds with -32001 just like Observe/Propose mode.
+/// 4. The originating request awaits the Receiver with a bounded timeout
+/// and either continues or returns the provider-appropriate denial.
 ///
 /// Why a registry + oneshot (not e.g. a global semaphore): each pending
 /// request must carry its own decision channel, and multiple concurrent
-/// confirm-prompts can be in flight (one per tab, or per nested
-/// terminal/create). The oneshot Sender is single-use, which matches
+/// prompts can be in flight across tabs and provider/tool requests. The
+/// oneshot Sender is single-use, which matches
 /// the "user decides once per prompt" model exactly.
 pub struct PendingPermissionRegistry {
     pending: TokioMutex<HashMap<String, oneshot::Sender<bool>>>,
@@ -506,9 +503,8 @@ impl PendingPermissionRegistry {
         false
     }
 
-    /// Forget a pending request without resolving it. Used by
-    /// `handle_terminal_create`'s timeout arm to evict the entry so
-    /// memory doesn't grow if many requests time out. The sender is
+    /// Forget a pending request without resolving it. Used by timeout and
+    /// cancellation paths so memory doesn't grow if requests never resolve. The sender is
     /// dropped on removal which causes the matching Receiver to error;
     /// we ignore that error (we already chose Deny via timeout).
     pub async fn forget(&self, request_id: &str) {
@@ -1345,9 +1341,8 @@ impl GrokAcpSession {
         self.permission_mode.as_deref()
     }
 
-    /// Which transport the spawn used. Mirrors the
-    /// is_ssh / is_wsl gates in `start`. Used by handle_terminal_create
-    /// to pick a transport-aware redirect message. Every current transport
+    /// Which transport the spawn used. Mirrors the is_ssh / is_wsl gates in
+    /// `start` and selects transport-aware provider redirects. Every transport
     /// can use the session-scoped `shellx-host-http__Agent`; its child is
     /// launched in the parent provider's exact target frame.
     /// #427 — true when a grok child process is alive for this session.
@@ -1451,6 +1446,7 @@ impl GrokAcpSession {
     /// - WSL bridge via wsl.exe when `wsl_distro` + `wsl_grok_path`
     /// are set.
     /// - Local spawn otherwise, preferring the preset's exact executable.
+    #[deny(clippy::expect_used, clippy::unwrap_used)]
     pub async fn start(
         &mut self,
         cwd: &str,
@@ -1536,7 +1532,10 @@ impl GrokAcpSession {
         // problem via the spawn error later — better than silently
         // injecting a stale path.
         let ssh_remote_home: Option<String> = if use_ssh {
-            let ssh = self.ssh_config.as_ref().expect("use_ssh guard");
+            let ssh = self
+                .ssh_config
+                .as_ref()
+                .ok_or_else(|| "SSH transport selected without SSH configuration".to_string())?;
             use crate::winproc::NoWindowExt as _;
             let mut probe = std::process::Command::new("ssh");
             probe.arg("-o").arg("BatchMode=yes");
@@ -1602,7 +1601,10 @@ impl GrokAcpSession {
         let agent_cwd = if use_wsl {
             windows_to_wsl_path(cwd)
         } else if use_ssh {
-            let ssh = self.ssh_config.as_ref().expect("use_ssh guard");
+            let ssh = self
+                .ssh_config
+                .as_ref()
+                .ok_or_else(|| "SSH transport selected without SSH configuration".to_string())?;
             if ssh.remote_runtime == SshRemoteRuntime::Windows {
                 if is_windows_absolute_remote_path(cwd) {
                     normalize_windows_remote_path(cwd)
@@ -1654,7 +1656,10 @@ impl GrokAcpSession {
         // failure is non-fatal — the probe will surface the issue
         // with a clearer "is not a directory" error.
         if use_ssh && ssh_remote_home.is_some() {
-            let ssh = self.ssh_config.as_ref().expect("use_ssh guard");
+            let ssh = self
+                .ssh_config
+                .as_ref()
+                .ok_or_else(|| "SSH transport selected without SSH configuration".to_string())?;
             use crate::winproc::NoWindowExt as _;
 
             if ssh.remote_runtime == SshRemoteRuntime::Windows {
@@ -1977,7 +1982,10 @@ impl GrokAcpSession {
             // Vault key references (if any) are resolved here, just before
             // spawn, so the plaintext key path never lives on the session
             // struct or anywhere else that survives the spawn call.
-            let ssh = self.ssh_config.as_ref().expect("use_ssh guard");
+            let ssh = self
+                .ssh_config
+                .as_ref()
+                .ok_or_else(|| "SSH transport selected without SSH configuration".to_string())?;
             info!(
                 "SSH Bridge: spawning via ssh {} (port={:?}) — remote grok={}, remote cwd={}",
                 ssh.host, ssh.port, ssh.remote_grok_path, agent_cwd
@@ -2007,7 +2015,10 @@ impl GrokAcpSession {
             })
             .await?
         } else if use_wsl {
-            let distro = self.wsl_distro.as_ref().unwrap();
+            let distro = self
+                .wsl_distro
+                .as_ref()
+                .ok_or_else(|| "WSL transport selected without a distro".to_string())?;
             // WSL PATH probe. When the operator didn't pin a
             // `wsl_grok_path`, the bare "grok" default ran
             // under wsl.exe's NON-INTERACTIVE PATH
@@ -2279,7 +2290,7 @@ impl GrokAcpSession {
                         host, e
                     )
                 } else if use_wsl {
-                    format!("Failed to spawn grok via WSL (wsl.exe -d {} ...): {}. Verify Test Connection succeeded and WSL distro is running.", self.wsl_distro.as_ref().unwrap(), e)
+                    format!("Failed to spawn grok via WSL (wsl.exe -d {} ...): {}. Verify Test Connection succeeded and WSL distro is running.", self.wsl_distro.as_deref().unwrap_or("<unset>"), e)
                 } else {
                     format!("Failed to spawn grok: {}", e)
                 }
@@ -2333,7 +2344,10 @@ impl GrokAcpSession {
         // Spawn the critical bidirectional reader task (stdout for protocol, stderr for logs)
         let pending = self.pending_responses.clone();
         let app = Some(app_handle.clone());
-        let writer = self.stdin.clone().unwrap();
+        let writer = self
+            .stdin
+            .clone()
+            .ok_or_else(|| "ACP stdin disappeared after successful spawn".to_string())?;
         let session_cwd_for_handlers = rust_cwd.clone();
         // Pre-clone tab_id BEFORE the spawn closure captures it (can't
         // borrow `self` across the move). Captured at spawn time —
@@ -2411,12 +2425,9 @@ impl GrokAcpSession {
                     read_text_file: true,
                     write_text_file: true,
                 },
-                // Native ACP terminal stays disabled for production until
-                // grok-build reliably follows `terminal/create` with
-                // output/wait/release. The handlers remain below as a
-                // defensive redirect for older/in-flight agents, but the
-                // advertised capability should match the supported surface:
-                // use shellX host-MCP Agent for shell execution.
+                // Provider ACP terminals are not a ShellX capability. Every
+                // terminal/* request is rejected through one transport-aware
+                // redirect; shell execution uses the ShellX host Agent.
                 terminal: false,
             },
         };
@@ -3090,13 +3101,11 @@ async fn read_loop(
     // events emitted from here (stdout protocol + stderr lines) get
     // `_meta.tabId = tab_id` tagged so the React side can route them.
     tab_id: Option<String>,
-    // When the agent is running inside WSL, terminal/create
-    // must spawn its PTY via `wsl.exe -d <distro> --cd <linux_cwd> -e bash
-    // -lic <command>` so the agent's perspective matches the spawned child.
-    // None means we're talking to a native Linux/macOS grok.
+    // WSL distro identity for ACP file-routing and provider handoff paths.
+    // None means we're talking to a native host provider.
     wsl_distro: Option<String>,
-    // Discovered Linux $HOME for ~-expansion in fs/* + terminal/*
-    // paths emitted by an agent inside WSL.
+    // Discovered Linux $HOME for ~-expansion in fs/* paths emitted by an
+    // agent inside WSL.
     linux_home: Option<String>,
     // SSH spawn config when the agent is running on a
     // remote host. fs/read_text_file + fs/write_text_file route through
@@ -5022,51 +5031,8 @@ async fn handle_agent_request(
             send_response(id, resp, stdin).await;
             return;
         }
-        // ─────────────────────────────────────────────────────────────
-        // ACP `terminal/*` dispatch.
-        // // Replaces the legacy `terminal/run_command` block (which spawned
-        // a one-shot child via `wsl.exe -- bash -c cmd` and returned the
-        // captured output as a single JSON-RPC response). The legacy
-        // shape didn't match grok's expectation for the *real* ACP
-        // terminal protocol, which is a registry of long-lived PTYs
-        // addressed by terminalId for later output/attach/release calls.
-        // // The five methods mirror the ACP spec:
-        // terminal/create → spawn PTY, return {terminalId}
-        // terminal/output → snapshot ring (non-destructive) + exitStatus
-        // terminal/wait_for_exit → block until child exits (bounded 10min)
-        // terminal/kill → SIGINT (Ctrl-C via PTY) + lazy SIGHUP; id stays valid
-        // terminal/release → kill if alive, then drop the record
-        // // Autonomy gating applies only to `terminal/create` — the other
-        // four operate on already-authorized terminals.
-        // ─────────────────────────────────────────────────────────────
-        "terminal/create" => {
-            return handle_terminal_create(
-                id, params, stdin, app_handle, wsl_distro, linux_home, tab_id, cwd,
-            )
-            .await;
-        }
-        "terminal/output" => {
-            return handle_terminal_output(id, params, stdin, app_handle, tab_id).await;
-        }
-        "terminal/wait_for_exit" => {
-            return handle_terminal_wait_for_exit(id, params, stdin, app_handle, tab_id).await;
-        }
-        "terminal/kill" => {
-            return handle_terminal_kill(id, params, stdin, app_handle, tab_id).await;
-        }
-        "terminal/release" => {
-            return handle_terminal_release(id, params, stdin, app_handle, tab_id).await;
-        }
         m if m.starts_with("terminal/") => {
-            // Unknown terminal/* method — explicit -32601 rather than
-            // synthesizing an empty success that grok might silently mistake.
-            return send_error_response(
-                id,
-                -32601,
-                format!("unknown terminal method: {}", m),
-                stdin,
-            )
-            .await;
+            return reject_provider_terminal_method(id, m, params, stdin, app_handle, tab_id).await;
         }
         m if m.starts_with("x.ai/") => {
             // Grok-specific extension requests (if any) - for now just ack
@@ -5090,35 +5056,80 @@ async fn handle_agent_request(
     send_response(id, result, stdin).await;
 }
 
-// ───────────────────────────────────────────────────────────────────
-// ACP `terminal/*` handlers
-//
-// Each function services one of the five ACP terminal methods. They all
-// share the same shape: parse params → call into TerminalRegistry via
-// crate::terminal::acp_* → emit `tool-call` event for the debug stream →
-// send_response (or send_error_response) on stdin.
-//
-// We deliberately split the handlers out of `handle_agent_request` to
-// keep the match arms small + so each function can early-return cleanly
-// on missing params via `send_error_response`.
-// ───────────────────────────────────────────────────────────────────
+const PROVIDER_TERMINAL_ERROR_CODE: i32 = -32601;
 
-/// Pull the shared TerminalRegistry out of Tauri's managed state. Returns
-/// None when the test harness runs handlers without a full Tauri context.
-fn get_terminal_registry(
+/// Provider-owned ACP terminals are deliberately not a ShellX capability.
+/// Every present and future `terminal/*` method follows this one rejection
+/// path so malformed or lifecycle follow-up calls cannot accidentally revive
+/// the retired compatibility registry.
+fn provider_terminal_rejection(method: &str, transport_kind: &str) -> (i32, &'static str) {
+    debug_assert!(method.starts_with("terminal/"));
+    let message = match transport_kind {
+        "ssh" => {
+            "The provider terminal bridge is disabled for this SSH session because it targets the wrong host frame. For files on the remote machine, use the provider's native file tools. Do not use host-MCP fs_* tools for remote files because those target the parent host. When a step requires a shell, use shellx-host-http__Agent with kind:\"general-purpose\"; ShellX launches the child through the same SSH preset. Poll with shellx-host-http__Agent_status and shellx-host-http__Agent_output. Do not instruct the user to run commands manually."
+        }
+        "wsl" => {
+            "The provider terminal bridge is disabled for this WSL session because it spawns on the wrong host side. For WSL files, use the provider's native file tools. Do not use host-MCP fs_* tools for WSL files because those target the parent Windows host. When a step requires a shell, use shellx-host-http__Agent with kind:\"general-purpose\"; ShellX launches the child in the same WSL frame. Poll with shellx-host-http__Agent_status and shellx-host-http__Agent_output. Do not instruct the user to run commands manually."
+        }
+        _ => {
+            "The provider terminal bridge is disabled in ShellX. Use shellx-host-http__Agent with kind:\"general-purpose\" for shell work, then poll shellx-host-http__Agent_status and shellx-host-http__Agent_output. Do not instruct the user to run commands manually. The operator-facing Terminal tab remains available for direct interactive work."
+        }
+    };
+    (PROVIDER_TERMINAL_ERROR_CODE, message)
+}
+
+async fn reject_provider_terminal_method(
+    id: u64,
+    method: &str,
+    params: serde_json::Value,
+    stdin: &Arc<TokioMutex<ChildStdin>>,
     app_handle: &Option<tauri::AppHandle>,
-) -> Option<Arc<crate::terminal::TerminalRegistry>> {
-    app_handle
-        .as_ref()
-        .and_then(|h| h.try_state::<Arc<crate::terminal::TerminalRegistry>>())
-        .map(|s| s.inner().clone())
+    tab_id: Option<&str>,
+) {
+    let transport_kind = if let (Some(handle), Some(tab_id)) = (app_handle, tab_id) {
+        if let Some(registry) = handle.try_state::<Arc<SessionRegistry>>() {
+            if let Some(session) = registry.get_existing(tab_id).await {
+                session.lock().await.transport_kind()
+            } else {
+                "local"
+            }
+        } else {
+            "local"
+        }
+    } else {
+        "local"
+    };
+    let (code, message) = provider_terminal_rejection(method, transport_kind);
+
+    if let Some(handle) = app_handle {
+        emit_and_debug(
+            handle,
+            "tool-call",
+            serde_json::json!({
+                "type": "provider_terminal_rejected",
+                "status": "redirect",
+                "reason": "unsupported_capability",
+                "transport": transport_kind,
+                "method": method.chars().take(80).collect::<String>(),
+                "command": params
+                    .get("command")
+                    .and_then(|value| value.as_str())
+                    .map(|command| command.chars().take(240).collect::<String>())
+                    .unwrap_or_default(),
+            }),
+            tab_id,
+        );
+    }
+
+    send_error_response(id, code, message.to_string(), stdin).await;
 }
 
 /// Lookup of the session's current permission_mode, given a tab_id. We
 /// fetch it via the SessionRegistry because the read_loop captures
 /// `permission_mode` only at start; the user may have changed it on the
-/// dial since then, and that change must apply to fresh `terminal/create`
-/// calls. Returns None if no session is registered or no mode is set.
+/// dial since then, and that change must apply to fresh provider and host-tool
+/// approval requests. Returns None if no session is registered or no mode is
+/// set.
 async fn current_permission_mode(
     app_handle: &Option<tauri::AppHandle>,
     tab_id: Option<&str>,
@@ -5143,337 +5154,20 @@ async fn current_permission_mode(
         .or_else(|| Some(SHELLX_DEFAULT_PERMISSION_MODE.to_string()))
 }
 
-/// `terminal/create` handler. Returns `{terminalId}` on success, or a JSON-RPC error:
-/// -32602: missing/invalid params (e.g. no `command`)
-/// -32001: permission denied (current autonomy mode forbids shell exec)
-/// -32000: registry or spawn failure
-/// -32601: REDIRECT — grok-build's native run_terminal_command + monitor
-/// tools both route through this method, and on a Windows
-/// shellX host the PTY spawn ends up on the wrong side of the
-/// bridge (Windows ConPTY for a command grok believes it
-/// runs on Linux/WSL/SSH). Verified hang by stress agent
-/// 2026-05-18 and confirmed via direct ACP probe. Grok now
-/// gets a structured -32601 with the exact replacement so it
-/// pivots to shellx-host-http__Agent on the next tool call.
-///
-/// Args kept positional: this handler is one of five terminal/* dispatch
-/// targets called from a single match in handle_agent_request, and they
-/// share the same parameter shape. A struct here would only move the
-/// destructuring upstream without reducing complexity.
-#[allow(clippy::too_many_arguments)]
-async fn handle_terminal_create(
-    id: u64,
-    params: serde_json::Value,
-    stdin: &Arc<TokioMutex<ChildStdin>>,
-    app_handle: &Option<tauri::AppHandle>,
-    // The spawn body is gone, so WSL/cwd/linux_home are not
-    // consulted on this path. Prefixed with `_` to silence the
-    // unused-variable warnings while keeping the call-site stable so
-    // a future un-intercept (if grok-build fixes its ACP terminal
-    // round-trip) is a one-line revert.
-    _wsl_distro: &Option<String>,
-    _linux_home: &Option<String>,
-    tab_id: Option<&str>,
-    _session_cwd: &str,
-) -> () {
-    // Hardware-level kill of run_terminal_command + monitor with a
-    // transport-aware redirect. The session-scoped HTTP host MCP is now
-    // reachable over local, WSL, and SSH routes, and Agent launches its child
-    // in the same target frame as the parent provider.
-    // // Look up the session's transport via SessionRegistry. tab_id is
-    // already in scope; the lookup is one mutex acquire on the
-    // already-running session's slot.
-    let transport_kind = {
-        let mut tk: &'static str = "local";
-        if let Some(h) = app_handle {
-            if let Some(reg) = h.try_state::<Arc<SessionRegistry>>() {
-                let key = tab_id_or_default(tab_id.map(String::from));
-                let session_arc = reg.get_or_create(&key).await;
-                let guard = session_arc.lock().await;
-                tk = guard.transport_kind();
-            }
-        }
-        tk
-    };
-    // Redirect messages must NEVER
-    // hand work BACK to the user ("ask the user to run X" / "open a PTY
-    // tab yourself"). The whole point of shellX is that grok does the
-    // work — offloading shell commands to the human breaks that contract.
-    // The WSL/SSH redirect must NOT point grok at host-MCP fs_*
-    // — those tools write to the Windows host filesystem, not the
-    // remote. Match the MCP serverInfo.instructions guidance: use
-    // NATIVE grok file tools (write, read_file, search_replace) for
-    // remote files.
-    let redirect_msg = match transport_kind {
-        "ssh" => {
-            "The native grok-build PTY bridge is disabled for this SSH \
-                  session because it targets the wrong host frame. For files on the REMOTE \
-                  machine, use NATIVE grok tools: `write`, `read_file`, \
-                  `search_replace`, `list_dir`, `grep`. The host-MCP \
-                  fs_* tools tunnel back to Windows and would write to \
-                  the parent host filesystem — do NOT use them for \
-                  remote-fs work. When a step requires a shell, use \
-                  `shellx-host-http__Agent` with `kind:\"general-purpose\"`; \
-                  ShellX launches that child through the same SSH preset. Poll \
-                  with `shellx-host-http__Agent_status` / `__Agent_output`. \
-                  Do NOT instruct the user to run commands manually."
-        }
-        "wsl" => {
-            "The native grok-build PTY bridge is disabled for this WSL \
-                  session because `terminal/create` spawns Windows-side. For files on the \
-                  WSL Linux filesystem, use NATIVE grok tools: `write`, \
-                  `read_file`, `search_replace`, `list_dir`, `grep`. The \
-                  host-MCP fs_* tools tunnel back to Windows and would \
-                  write to the parent host filesystem — do NOT use them \
-                  for WSL-fs work. \
-                  \
-                  IMPORTANT: when a step genuinely needs a shell (bash, \
-                  pip, apt, git, npm, …), use `shellx-host-http__Agent` \
-                  with `kind:\"general-purpose\"` to dispatch a shellX-managed \
-                  shell subagent — its output is captured in the shellX UI's \
-                  Tasks rail. Then poll with `shellx-host-http__Agent_status` / \
-                  `shellx-host-http__Agent_output`. \
-                  Do NOT instruct the user to run commands manually. \
-                  Same Agent fallback pattern as Local Windows. \
-                  Valid `kind` values: general-purpose, explore, \
-                  implementer, reviewer, security-auditor."
-        }
-        _ => {
-            "shellX does not support `terminal/create` on this host \
-              (the grok-build → ACP PTY bridge hangs on Windows; run_terminal_command \
-              and monitor both route through it). Use `shellx-host-http__Agent` to \
-              spawn shell tasks — then `shellx-host-http__Agent_status` / `__Agent_output` \
-              to read results. Do NOT instruct the user to run commands manually \
-              — Agent works fine here."
-        }
-    };
-    // We short-circuit BEFORE param parsing so even a malformed call gets
-    // the same actionable redirect.
-    if let Some(h) = app_handle {
-        emit_and_debug(
-            h,
-            "tool-call",
-            serde_json::json!({
-                "type": "terminal_create",
-                "status": "redirect",
-                "reason": "shellx_disabled",
-                "transport": transport_kind,
-                "command": params.get("command").and_then(|v| v.as_str()).unwrap_or(""),
-            }),
-            tab_id,
-        );
-    }
-    return send_error_response(id, -32601, redirect_msg.to_string(), stdin).await;
-
-    // NOTE: the original handler body below this line is now UNREACHABLE.
-    // Kept commented (in git history if needed) so the spawn pipeline can
-    // be re-enabled if a future grok-build version fixes its ACP terminal
-    // round-trip. To revive: delete the early-return above and `cargo
-    // check` will surface the dead-code warning for the rest.
-    // // For the record, the dead branch handled: param parsing, autonomy
-    // gating, defensive synchronous permission gate, sanitize_cwd_param,
-    // is_unix_shell_command detection + cmd.exe /c / sh -c wrap, WSL
-    // bridge wrap, ProcessRegistry insert, TerminalRegistry::spawn, and
-    // the success path returning {terminalId}. See git@HEAD~1.
-}
-
-/// `terminal/output` handler. Non-destructive; returns the current
-/// accumulated ring contents + `truncated` flag + `exitStatus` when
-/// the child has exited.
-async fn handle_terminal_output(
-    id: u64,
-    params: serde_json::Value,
-    stdin: &Arc<TokioMutex<ChildStdin>>,
-    app_handle: &Option<tauri::AppHandle>,
-    tab_id: Option<&str>,
-) {
-    let Some(terminal_id) = params.get("terminalId").and_then(|v| v.as_str()) else {
-        return send_error_response(
-            id,
-            -32602,
-            "terminal/output: missing 'terminalId' param".to_string(),
-            stdin,
-        )
-        .await;
-    };
-    let registry = match get_terminal_registry(app_handle) {
-        Some(r) => r,
-        None => {
-            return send_error_response(
-                id,
-                -32000,
-                "TerminalRegistry not managed".to_string(),
-                stdin,
-            )
-            .await;
-        }
-    };
-    let tab = tab_id.unwrap_or("default");
-    match crate::terminal::acp_output(registry, tab, terminal_id).await {
-        Ok(v) => send_response(id, v, stdin).await,
-        Err(e) => send_error_response(id, -32000, e, stdin).await,
-    }
-}
-
-/// `terminal/wait_for_exit` handler. Blocks the calling task on the
-/// per-record Notify with a 10-minute timeout.
-async fn handle_terminal_wait_for_exit(
-    id: u64,
-    params: serde_json::Value,
-    stdin: &Arc<TokioMutex<ChildStdin>>,
-    app_handle: &Option<tauri::AppHandle>,
-    tab_id: Option<&str>,
-) {
-    let Some(terminal_id) = params.get("terminalId").and_then(|v| v.as_str()) else {
-        return send_error_response(
-            id,
-            -32602,
-            "terminal/wait_for_exit: missing 'terminalId' param".to_string(),
-            stdin,
-        )
-        .await;
-    };
-    let registry = match get_terminal_registry(app_handle) {
-        Some(r) => r,
-        None => {
-            return send_error_response(
-                id,
-                -32000,
-                "TerminalRegistry not managed".to_string(),
-                stdin,
-            )
-            .await;
-        }
-    };
-    let tab = tab_id.unwrap_or("default");
-    match crate::terminal::acp_wait_for_exit(registry, tab, terminal_id).await {
-        Ok(v) => send_response(id, v, stdin).await,
-        Err(e) => send_error_response(id, -32000, e, stdin).await,
-    }
-}
-
-/// `terminal/kill` handler. Sends Ctrl-C through the PTY; terminalId
-/// stays valid afterward.
-async fn handle_terminal_kill(
-    id: u64,
-    params: serde_json::Value,
-    stdin: &Arc<TokioMutex<ChildStdin>>,
-    app_handle: &Option<tauri::AppHandle>,
-    tab_id: Option<&str>,
-) {
-    let Some(terminal_id) = params.get("terminalId").and_then(|v| v.as_str()) else {
-        return send_error_response(
-            id,
-            -32602,
-            "terminal/kill: missing 'terminalId' param".to_string(),
-            stdin,
-        )
-        .await;
-    };
-    let registry = match get_terminal_registry(app_handle) {
-        Some(r) => r,
-        None => {
-            return send_error_response(
-                id,
-                -32000,
-                "TerminalRegistry not managed".to_string(),
-                stdin,
-            )
-            .await;
-        }
-    };
-    let tab = tab_id.unwrap_or("default");
-    match crate::terminal::acp_kill(registry, tab, terminal_id).await {
-        Ok(()) => send_response(id, serde_json::json!({}), stdin).await,
-        Err(e) => send_error_response(id, -32000, e, stdin).await,
-    }
-}
-
-/// `terminal/release` handler. Drops the record; subsequent calls to
-/// any terminal/* method with the same terminalId return -32000.
-async fn handle_terminal_release(
-    id: u64,
-    params: serde_json::Value,
-    stdin: &Arc<TokioMutex<ChildStdin>>,
-    app_handle: &Option<tauri::AppHandle>,
-    tab_id: Option<&str>,
-) {
-    let Some(terminal_id) = params.get("terminalId").and_then(|v| v.as_str()) else {
-        return send_error_response(
-            id,
-            -32602,
-            "terminal/release: missing 'terminalId' param".to_string(),
-            stdin,
-        )
-        .await;
-    };
-    let registry = match get_terminal_registry(app_handle) {
-        Some(r) => r,
-        None => {
-            return send_error_response(
-                id,
-                -32000,
-                "TerminalRegistry not managed".to_string(),
-                stdin,
-            )
-            .await;
-        }
-    };
-    let tab = tab_id.unwrap_or("default");
-    match crate::terminal::acp_release(registry, tab, terminal_id).await {
-        Ok(()) => send_response(id, serde_json::json!({}), stdin).await,
-        Err(e) => send_error_response(id, -32000, e, stdin).await,
-    }
-}
-
-/// Classify a `terminal/create` program as a Unix-shell
-/// invocation that needs routing through wsl.exe when shellX runs on
-/// Windows without a configured WSL bridge. Grok-build (running native
-/// on Windows) still emits `bash`/`sh`/`zsh` because its training data
-/// is Linux-shaped; we transparently translate via wsl.exe so the
-/// agent doesn't have to platform-detect.
-#[allow(dead_code)]
-fn is_unix_shell_command(program: &str) -> bool {
-    // Strip a possible directory prefix (".../bin/bash" → "bash") and
-    // a trailing ".exe" so the match is robust.
-    let leaf = program
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(program)
-        .trim_end_matches(".exe");
-    matches!(
-        leaf,
-        "bash" | "sh" | "zsh" | "dash" | "ash" | "ksh" | "fish"
-    )
-}
-
-/// Sanitize a `cwd`
-/// parameter received from grok over the ACP wire BEFORE it can flow
-/// into `portable_pty::CommandBuilder::cwd`. The original bug surfaced
-/// as repeated `CreateProcessW os error 123 / 3` from every grok
-/// `run_terminal_command`; the cwd value that reached spawn was
-/// `Some("CUsers:\\User\0")` — a corrupted "C:\\Users\\FixtureUser" with an
-/// embedded NUL.
-///
-/// Root cause class: an agent or upstream serializer that emits a
-/// C-string interop value (zero-terminated) without stripping the NUL
-/// before encoding as JSON. portable-pty / Windows `CreateProcessW`
-/// reject the wide-string conversion of any path containing a NUL
-/// with the same generic 123/3 error, so the user sees only "system
-/// cannot find the file specified" with no hint that the input itself
-/// was malformed.
-///
-/// Strategy: reject defensively at the protocol boundary. Any cwd that
+/// Validate an externally supplied working directory before it reaches a
+/// process-spawn boundary. Provider and host-Agent requests can contain
+/// corrupted C-string or control-character data; reject those inputs with a
+/// typed message instead of surfacing a generic OS spawn failure.
+/// Any cwd that
 /// contains a NUL byte, a literal `\0` substring, a non-printable
 /// control character, or one of the Windows-reserved path chars
-/// (`<>"|?*`) returns a typed `-32602` JSON-RPC error with a clear
-/// message. The forbidden char set deliberately excludes `:` and `\`
-/// because Windows absolute paths legitimately contain those.
+/// (`<>"|?*`) returns a clear error. The forbidden char set deliberately
+/// excludes `:` and `\` because Windows absolute paths legitimately contain
+/// those.
 ///
 /// Returns `Ok(Some(cleaned))` for a valid trimmed cwd, `Ok(None)` when
 /// the caller did not supply one, or `Err(message)` describing exactly
-/// what was wrong so grok can self-correct.
-#[allow(dead_code)]
+/// what was wrong so the caller can self-correct.
 pub(crate) fn sanitize_cwd_param(raw: Option<&str>) -> Result<Option<String>, String> {
     let Some(s) = raw else {
         return Ok(None);
@@ -6840,56 +6534,52 @@ mod tests {
         );
     }
 
-    /// cwd sanitizer rejects the exact NUL-byte shape
-    /// that grok's run_terminal_command 2026-05-18 failures surfaced.
-    /// A trailing NUL was reaching portable_pty::CommandBuilder::cwd,
-    /// where Windows CreateProcessW turned it into the generic
-    /// "system cannot find the file specified" (os error 2/3/123) —
-    /// hiding the real cause behind a spawn error.
     #[test]
-    fn sanitize_cwd_rejects_trailing_nul_byte() {
-        // Real NUL byte at the end (the actual bug-shape).
-        let bad = "C:\\Users\\FixtureUser\0";
-        let err = sanitize_cwd_param(Some(bad))
-            .expect_err("trailing NUL must be rejected as a -32602-class typed error");
-        assert!(err.contains("NUL"), "error must name NUL byte: {}", err);
+    fn every_provider_terminal_method_has_one_actionable_rejection() {
+        for method in [
+            "terminal/create",
+            "terminal/output",
+            "terminal/wait_for_exit",
+            "terminal/kill",
+            "terminal/release",
+            "terminal/future_method",
+        ] {
+            for transport in ["local", "wsl", "ssh"] {
+                let (code, message) = provider_terminal_rejection(method, transport);
+                assert_eq!(code, -32601, "{method} on {transport}");
+                assert!(
+                    message.contains("shellx-host-http__Agent"),
+                    "{method} on {transport} must name the supported shell handoff: {message}"
+                );
+                assert!(
+                    message.contains("Do not instruct the user"),
+                    "{method} on {transport} must keep execution agent-owned: {message}"
+                );
+            }
+        }
+    }
 
-        // NUL embedded mid-string — same class.
-        let mid = "C:\\Users\0\\User";
-        assert!(sanitize_cwd_param(Some(mid)).is_err());
-
-        // Literal "\0" two-char escape — agents sometimes emit this
-        // shape when they fail to strip a C-string terminator before
-        // JSON-encoding. We reject it identically so the symptom is
-        // the same regardless of how it was encoded on the wire.
-        let escaped = "C:\\Users\\FixtureUser\\0";
-        let err2 = sanitize_cwd_param(Some(escaped))
-            .expect_err("literal '\\0' suffix must be rejected too");
-        assert!(
-            err2.contains("0"),
-            "error must reference the offending '\\0': {}",
-            err2
-        );
-
-        // Reserved Windows char (`|`) — must be rejected.
-        assert!(sanitize_cwd_param(Some("C:\\bad|path")).is_err());
-
-        // Control char (TAB) — must be rejected.
-        assert!(sanitize_cwd_param(Some("C:\\tab\there")).is_err());
-
-        // Valid Windows path with `:` and `\` — must pass through.
+    #[test]
+    fn external_cwd_validation_rejects_corruption_and_preserves_valid_paths() {
+        for invalid in [
+            "C:\\Users\\FixtureUser\0",
+            "C:\\Users\\FixtureUser\\0",
+            "C:\\bad|path",
+            "C:\\tab\there",
+        ] {
+            assert!(
+                sanitize_cwd_param(Some(invalid)).is_err(),
+                "corrupt cwd must be rejected: {invalid:?}"
+            );
+        }
         assert_eq!(
             sanitize_cwd_param(Some("C:\\Users\\FixtureUser")).unwrap(),
             Some("C:\\Users\\FixtureUser".to_string())
         );
-
-        // Valid POSIX path — must pass through.
         assert_eq!(
             sanitize_cwd_param(Some("/srv/test-project")).unwrap(),
             Some("/srv/test-project".to_string())
         );
-
-        // None / empty → None.
         assert_eq!(sanitize_cwd_param(None).unwrap(), None);
         assert_eq!(sanitize_cwd_param(Some("")).unwrap(), None);
     }
@@ -7925,7 +7615,7 @@ mod transport_tests {
 mod pending_permission_tests {
     //! Correctness of PendingPermissionRegistry.
     //!
-    //! Contract that handle_terminal_create relies on:
+    //! Contract shared provider and host-tool permission paths rely on:
     //! - insert(id) returns a Receiver that fires with the bool
     //! passed to resolve(id, bool).
     //! - resolve(unknown_id, _) returns false (no panic).
@@ -7993,8 +7683,7 @@ mod pending_permission_tests {
         let id = "req-forget".to_string();
         let rx = reg.insert(id.clone()).await;
         reg.forget(&id).await;
-        // Receiver must error (Sender was dropped) — exactly the path
-        // the 60s-timeout arm in handle_terminal_create uses.
+        // Receiver must error when a timeout/cancellation path drops Sender.
         let res = tokio::time::timeout(Duration::from_millis(50), rx).await;
         match res {
             Ok(Err(_)) => { /* expected: Sender dropped */ }

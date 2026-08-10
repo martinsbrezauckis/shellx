@@ -358,7 +358,6 @@ fn browser_permission_report_initialization_script() -> &'static str {
 "#
 }
 
-#[allow(dead_code)]
 fn normalize_browser_new_window_target_url(raw: &str) -> String {
     crate::shellx_browser_security::normalize_browser_external_redirect_url(raw)
 }

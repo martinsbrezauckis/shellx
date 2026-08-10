@@ -7,7 +7,7 @@ import type { FinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
 import type { ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
 import { createReleaseSurfaceInstalledInputSession } from "./lib/release-surface-installed-input-client";
 import type { ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
-import { releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 import { exerciseRightRailGitReadLifecycle } from "./release-drivers/ui-control-right-rail-git-read-lifecycle";
 
@@ -49,7 +49,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", profileRoot,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -169,7 +169,7 @@ function createRequest(candidateBase: string, webdriverBase: string, candidatePo
     driverKind: "ui-control",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: inventory.digest,
     artifact: { basename: "shellx", sha256: "d".repeat(64) },
     controller: {} as ReleaseSurfaceDriverRequest["controller"],

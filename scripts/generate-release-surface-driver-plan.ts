@@ -134,12 +134,9 @@ const SCREENSHOT_ATTACHMENT_UI_SURFACE_IDS = new Set([
 ]);
 const BOTTOM_PANEL_LIFECYCLE_UI_SURFACE_NAMES = new Set([
   "src/components/BottomPanel.tsx:[aria-label^=\"Remove \"]",
-  "src/components/BottomPanel.tsx:[aria-label=\"close terminal tab\"]",
   "src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-24\"]",
   "src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-9\"]",
-  "src/components/BottomPanel.tsx:[title^=\"ACP terminal \"]",
   "src/components/BottomPanel.tsx:role=button;name=\"Inspect\"",
-  "src/components/BottomPanel.tsx:role=button;name=\"shell\"",
   "src/components/BottomPanel.tsx:role=button;name=\"Summarize\"",
   "src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-23\"]",
   "src/components/BottomPanel.tsx:[aria-label=\"Turn voice chat off and cancel active listening\"]",
@@ -202,7 +199,6 @@ const RIGHT_RAIL_GIT_WRITE_UI_SURFACE_NAMES = new Set([
   "src/components/GitPane.tsx:role=button;name=\"Worktree\"",
 ]);
 const PERMISSION_DECISION_UI_DRIVER_ID = "ui-control-permission-decision-lifecycle-installed";
-const PERMISSION_MARKER_UI_DRIVER_ID = "ui-debug-permission-decision-lifecycle-installed";
 const PROVIDER_ACTION_UI_DRIVER_ID = "ui-control-provider-action-lifecycle-installed";
 const BROWSER_SAVE_LIFECYCLE_UI_DRIVER_ID = "ui-control-browser-save-lifecycle-installed";
 const BROWSER_SAVE_LIFECYCLE_UI_SURFACE_IDS = new Set([
@@ -216,26 +212,10 @@ const BROWSER_SAVE_LIFECYCLE_UI_SURFACE_IDS = new Set([
   'ui-control:src/browser/components/BrowserMenus.tsx:[data-debug-id="shellx-browser-save-site"]@src/browser/components/BrowserMenus.tsx#18',
 ]);
 const CONNECTORS_PRODUCTION_UI_DRIVER_ID = "ui-control-connectors-production-lifecycle-installed";
-const PERMISSION_MODAL_DEBUG_SURFACE_NAMES = new Set([
-  "surface-components-permissionmodal-1",
-  "surface-components-permissionmodal-2",
-]);
 const permissionDecisionUiControls = new Map<string, {
   action: string;
   decision: "allow" | "allow_always" | "deny";
 }>([
-  ['src/components/PermissionModal.tsx:[data-debug-id="surface-components-permissionmodal-1"]', {
-    action: "modal-backdrop-deny",
-    decision: "deny",
-  }],
-  ['src/components/PermissionModal.tsx:role=button;name="Allow"', {
-    action: "modal-allow",
-    decision: "allow",
-  }],
-  ['src/components/PermissionModal.tsx:role=button;name="Deny"', {
-    action: "modal-deny",
-    decision: "deny",
-  }],
   ['src/components/PermissionPill.tsx:[data-debug-id="surface-components-permissionpill-1"]', {
     action: "pill-allow",
     decision: "allow",
@@ -316,18 +296,6 @@ const activityPermissionBuildingBlockers = new Map<string, string>([
     "Copy summary mutates the operator clipboard, and the installed-input contract has no exact cross-platform clipboard snapshot and restoration channel",
   ],
   [
-    'src/components/PermissionModal.tsx:[data-debug-id="surface-components-permissionmodal-1"]',
-    "activating the permission backdrop denies the live pending operator request; an inert synthetic modal would not prove that declared effect",
-  ],
-  [
-    'src/components/PermissionModal.tsx:role=button;name="Deny"',
-    "Deny resolves a live pending operator permission request; release automation must not make that security decision",
-  ],
-  [
-    'src/components/PermissionModal.tsx:role=button;name="Allow"',
-    "Allow resolves a live pending operator permission request; release automation must not make that security decision",
-  ],
-  [
     'src/components/PermissionPill.tsx:[data-debug-id="surface-components-permissionpill-1"]',
     "Allow resolves the exact live inline permission request; release automation must not approve an operator security decision",
   ],
@@ -338,16 +306,6 @@ const activityPermissionBuildingBlockers = new Map<string, string>([
   [
     'src/components/PermissionPill.tsx:[data-debug-id="surface-components-permissionpill-3"]',
     "Deny resolves the exact live inline permission request; release automation must not reject an operator security decision",
-  ],
-]);
-const permissionModalDebugBuildingBlockers = new Map<string, string>([
-  [
-    "ui-debug-surface:surface-components-permissionmodal-1@src/components/PermissionModal.tsx#1",
-    "the marker renders only for a live pending Tauri permission request; creating or clearing that production state requires resolving, denying, or timing out an operator security decision",
-  ],
-  [
-    "ui-debug-surface:surface-components-permissionmodal-2@src/components/PermissionModal.tsx#2",
-    "the marker renders only for a live pending Tauri permission request; an inert debug-only modal would not prove the production request surface and exact cleanup requires an operator security decision",
   ],
 ]);
 const settingsCoreBuildingBlockers = new Map<string, string>([
@@ -1053,16 +1011,6 @@ const permissionDecisionUiDriver: FinalSurfaceDriverDefinition = {
     "linux-installed": "ready",
   },
 };
-const permissionMarkerUiDriver: FinalSurfaceDriverDefinition = {
-  id: PERMISSION_MARKER_UI_DRIVER_ID,
-  kind: "ui-debug-surface",
-  entrypoint: "scripts/release-drivers/ui-debug-permission-decision-lifecycle-installed.ts",
-  platforms: {
-    "windows-installed": "ready",
-    "macos-installed": "ready",
-    "linux-installed": "ready",
-  },
-};
 const providerActionUiDriver: FinalSurfaceDriverDefinition = {
   id: PROVIDER_ACTION_UI_DRIVER_ID,
   kind: "ui-control",
@@ -1288,7 +1236,6 @@ const promotedTauriCommands = new Set([
   "outside_connectors_test",
   "pause_build",
   "pause_goal",
-  "pty_attach",
   "pty_create",
   "pty_kill",
   "pty_resize",
@@ -1412,7 +1359,6 @@ const promotedTauriFailClosedCommands = new Set([
   "mcp_marketplace_set_enabled",
   "open_url_in_browser",
   "outside_connectors_simulate",
-  "pty_attach",
   "pty_create",
   "pty_resize",
   "pty_write",
@@ -2111,24 +2057,6 @@ const promotedUiControls = new Map<string, {
     oracleId: "ui:activation:owned-media-preview-opened",
     cleanupId: "ui:close-preview-clear-owned-events-delete-files-close-tab-restore-baseline",
   }],
-  ["src/components/BottomPanel.tsx:[title^=\"ACP terminal \"]", {
-    fixtureId: "ui:bottom-panel-owned-tab-terminal-projection",
-    expectedEffect: "A native click selects the exact owned projected ACP terminal identity without spawning or controlling a PTY.",
-    oracleId: "ui:boolean-state-transition",
-    cleanupId: "ui:clear-owned-terminal-projection-close-tab-restore-baseline",
-  }],
-  ["src/components/BottomPanel.tsx:role=button;name=\"shell\"", {
-    fixtureId: "ui:bottom-panel-owned-tab-terminal-projection",
-    expectedEffect: "A native click moves terminal-strip selection from the owned projected ACP terminal back to the shell projection without spawning or controlling a PTY.",
-    oracleId: "ui:boolean-state-transition",
-    cleanupId: "ui:clear-owned-terminal-projection-close-tab-restore-baseline",
-  }],
-  ["src/components/BottomPanel.tsx:[aria-label=\"close terminal tab\"]", {
-    fixtureId: "ui:bottom-panel-owned-tab-terminal-projection",
-    expectedEffect: "A native click dismisses exactly the owned projected ACP terminal row and returns selection to the shell projection without touching a PTY.",
-    oracleId: "ui:activation:owned-terminal-selection-transition",
-    cleanupId: "ui:clear-owned-terminal-projection-close-tab-restore-baseline",
-  }],
   ["src/components/BottomPanel.tsx:[data-debug-id=\"bottom-tab-videos\"]", {
     fixtureId: "ui:bottom-tab-opposite-baseline",
     expectedEffect: "A native click opens the Videos bottom tab from an owned opposite baseline, including its intentional empty state, before exact restoration.",
@@ -2234,6 +2162,18 @@ const promotedUiControls = new Map<string, {
   ["src/components/settings/ConnectorsTab.tsx:[title^=\"Send allowlisted \"][title$=\" messages to the active session\"]", {
     fixtureId: "ui:connectors-unsaved-draft-baseline",
     expectedEffect: "A native click selects Session chat only in the unsaved connector draft before exact Inbox restoration.",
+    oracleId: "ui:boolean-state-transition",
+    cleanupId: "ui:restore-connectors-draft-and-close-settings",
+  }],
+  ["src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"connector-approval-review-first\"]", {
+    fixtureId: "ui:connectors-unsaved-draft-baseline",
+    expectedEffect: "Native clicks prepare Auto-dispatch and select Review first only in the unsaved connector draft before exact default-state restoration.",
+    oracleId: "ui:boolean-state-transition",
+    cleanupId: "ui:restore-connectors-draft-and-close-settings",
+  }],
+  ["src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"connector-approval-auto-dispatch\"]", {
+    fixtureId: "ui:connectors-unsaved-draft-baseline",
+    expectedEffect: "A native click selects Auto-dispatch only in the unsaved connector draft before exact Review first restoration.",
     oracleId: "ui:boolean-state-transition",
     cleanupId: "ui:restore-connectors-draft-and-close-settings",
   }],
@@ -2590,7 +2530,7 @@ const promotedUiControls = new Map<string, {
     {
       fixtureId: "ui:setup-guide-destinations-closed",
       expectedEffect: `A native click opens the exact ${destination} destination from the visible Setup Guide before restoring Settings, window, overlay, and dismissal baselines.`,
-      oracleId: `ui:activation:setup-guide-${destination === "downloads" ? "download-settings" : destination === "agents" ? "agent-settings" : destination}-opened`,
+      oracleId: `ui:activation:setup-guide-${destination === "downloads" ? "download-settings" : destination === "agents" ? "agent-cli-setup" : destination}-opened`,
       cleanupId: "ui:restore-setup-guide-destinations",
     },
   ] as const),
@@ -3168,13 +3108,13 @@ const promotedUiControls = new Map<string, {
     oracleId: "ui:choice-state-transition",
     cleanupId: "ui:delete-owned-bookmarks-restore-panel-abort-task-and-window",
   }],
-  ["src/browser/components/BookmarkSidecar.tsx:[aria-label=\"New folder\"]", {
+  ["src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"shellx-browser-bookmark-create-folder\"]", {
     fixtureId: "ui:browser-bookmark-owned-create",
     expectedEffect: "A native click creates one synthetic owned bookmark folder before deleting its exact returned ID and restoring draft, mode, panel, task, and window state.",
     oracleId: "ui:activation:owned-bookmark-state-transition",
     cleanupId: "ui:delete-owned-bookmarks-restore-panel-abort-task-and-window",
   }],
-  ["src/browser/components/BookmarkSidecar.tsx:[aria-label=\"Add link\"]", {
+  ["src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"shellx-browser-bookmark-create-link\"]", {
     fixtureId: "ui:browser-bookmark-owned-create",
     expectedEffect: "A native click creates one synthetic owned bookmark link before deleting its exact returned ID and restoring draft, mode, panel, task, and window state.",
     oracleId: "ui:activation:owned-bookmark-state-transition",
@@ -3210,7 +3150,7 @@ const promotedUiControls = new Map<string, {
     oracleId: "ui:activation:owned-browser-bookmark-navigation",
     cleanupId: "ui:delete-owned-bookmark-navigation-abort-task-and-window-loopback",
   }],
-  ["src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"surface-browser-components-bookmarksidecar-5\"]", {
+  ["src/browser/components/BookmarkSidecar.tsx:[data-debug-id^=\"shellx-browser-bookmark-open-\"]", {
     fixtureId: "ui:browser-bookmark-owned-navigation",
     expectedEffect: "Native input navigates the exact owned task tab through one synthetic bookmark-manager Open action before exact bookmark, panel, task, tab, server, and window cleanup.",
     oracleId: "ui:activation:owned-browser-bookmark-navigation",
@@ -4394,10 +4334,10 @@ export function buildExpectedPlan(
       && driver.id !== CHAT_OUTPUT_JUMP_DEBUG_DRIVER_ID
       && driver.id !== BROWSER_PERSONAL_LOCK_DEBUG_DRIVER_ID
       && driver.id !== BROWSER_DELEGATION_DEBUG_DRIVER_ID
+      && driver.id !== "ui-debug-permission-decision-lifecycle-installed"
       && driver.id !== RIGHT_RAIL_GIT_READ_UI_DRIVER_ID
       && driver.id !== RIGHT_RAIL_GIT_WRITE_UI_DRIVER_ID
       && driver.id !== PERMISSION_DECISION_UI_DRIVER_ID
-      && driver.id !== PERMISSION_MARKER_UI_DRIVER_ID
       && driver.id !== PROVIDER_ACTION_UI_DRIVER_ID
       && driver.id !== BROWSER_SAVE_LIFECYCLE_UI_DRIVER_ID
       && driver.id !== CONNECTORS_PRODUCTION_UI_DRIVER_ID
@@ -4440,7 +4380,6 @@ export function buildExpectedPlan(
     rightRailGitReadUiDriver,
     rightRailGitWriteUiDriver,
     permissionDecisionUiDriver,
-    permissionMarkerUiDriver,
     providerActionUiDriver,
     browserSaveLifecycleUiDriver,
     connectorsProductionUiDriver,
@@ -4559,6 +4498,7 @@ export function buildExpectedPlan(
   const inventoryById = new Map(exactInventory.items.map((surface) => [surface.id, surface]));
   const curatedAssignments = plan.assignments.filter((assignment) => (
     !isBacklogDriverId(assignment.driverId)
+      && !isRetiredSurfaceAssignment(assignment.surfaceId)
       && !promotedSurfaceIds.has(assignment.surfaceId)
       && (
         inventorySurfaceIds.has(assignment.surfaceId)
@@ -4716,6 +4656,18 @@ function occurrenceIndependentSurfaceId(surfaceId: string): string {
   return surfaceId.replace(/#\d+$/, "");
 }
 
+function isRetiredSurfaceAssignment(surfaceId: string): boolean {
+  return surfaceId === "tauri-command:pty_attach"
+    || surfaceId.includes("@src/components/PermissionModal.tsx")
+    || surfaceId.includes('src/components/BottomPanel.tsx:[title^="ACP terminal "]')
+    || surfaceId.includes('src/components/BottomPanel.tsx:[aria-label="close terminal tab"]')
+    || surfaceId.includes('src/components/BottomPanel.tsx:role=button;name="shell"')
+    || surfaceId.includes('src/browser/components/BookmarkSidecar.tsx:[aria-label="New folder"]')
+    || surfaceId.includes('src/browser/components/BookmarkSidecar.tsx:[aria-label="Add link"]')
+    || surfaceId.includes('src/browser/components/BookmarkSidecar.tsx:[data-debug-id="surface-browser-components-bookmarksidecar-5"]')
+    || surfaceId.includes('ui-debug-surface:surface-browser-components-bookmarksidecar-5@');
+}
+
 function promotedPluginsProductionAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
   const config = PLUGINS_PRODUCTION_UI_CONTROLS.get(surface.id);
   if (!config) throw new Error(`missing promoted Plugins production control config for ${surface.id}`);
@@ -4809,17 +4761,6 @@ function promotedUiDebugAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDri
   }
   const cohort = releaseUiDebugSurfaceCohort(surface);
   if (!cohort) throw new Error(`missing promoted UI debug cohort for ${surface.id}`);
-  if (PERMISSION_MODAL_DEBUG_SURFACE_NAMES.has(surface.name)) {
-    return {
-      surfaceId: surface.id,
-      driverId: PERMISSION_MARKER_UI_DRIVER_ID,
-      fixtureId: "ui:permission-owned-modal-markers",
-      expectedEffect: surface.name
-        + " resolves through the exact renderer-owned PermissionModal fixture; no permission decision or provider action is invoked.",
-      oracleId: RELEASE_UI_DEBUG_ORACLE_ID,
-      cleanupId: "ui:clear-owned-permission-modal-markers-and-restore-view",
-    };
-  }
   return {
     surfaceId: surface.id,
     driverId: "ui-debug-surface-installed",
@@ -6399,16 +6340,6 @@ function backlogAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssig
     surfaceId: surface.id,
     driverId: backlogDriverId(surface.kind),
   };
-  const permissionModalDebugBlocker = permissionModalDebugBuildingBlockers.get(surface.id);
-  if (permissionModalDebugBlocker) {
-    return {
-      ...common,
-      fixtureId: "ui:permission-modal-excluded-live-request-state",
-      expectedEffect: `BUILDING: ${permissionModalDebugBlocker}.`,
-      oracleId: `ui:${oracleSegment(surface.name)}:building-blocker`,
-      cleanupId: "ui:not-invoked",
-    };
-  }
   const tasksPanelBlocker = tasksPanelBuildingBlockers.get(occurrenceIndependentSurfaceId(surface.id));
   if (tasksPanelBlocker) {
     return {

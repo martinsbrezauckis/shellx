@@ -291,11 +291,20 @@ function regularFile(path: string, label: string): string {
 }
 
 function requireFinalWindow(values: string[]): void {
+  const targetedClosure = readArgs(values, "--driver-id")
+    .flatMap((value) => value.split(","))
+    .some((value) => value.trim().length > 0);
+  const expectedExecutionWindow = targetedClosure
+    ? "targeted-post-matrix"
+    : "immediately-before-publish";
   if (readArg(values, "--candidate-stage") !== "signed-and-frozen"
-    || readArg(values, "--execution-window") !== "immediately-before-publish") {
+    || readArg(values, "--execution-window") !== expectedExecutionWindow) {
     throw new Error(
-      "refusing routine execution: pass --candidate-stage signed-and-frozen "
-      + "--execution-window immediately-before-publish for the final candidate only",
+      targetedClosure
+        ? "refusing targeted execution: pass --candidate-stage signed-and-frozen "
+          + "--execution-window targeted-post-matrix with one or more --driver-id values"
+        : "refusing routine execution: pass --candidate-stage signed-and-frozen "
+          + "--execution-window immediately-before-publish for the final candidate only",
     );
   }
 }
@@ -318,6 +327,14 @@ function readArg(values: string[], name: string): string | undefined {
   const index = values.indexOf(name);
   if (index >= 0) return values[index + 1];
   return values.find((value) => value.startsWith(`${name}=`))?.slice(name.length + 1);
+}
+
+function readArgs(values: string[], name: string): string[] {
+  const prefix = `${name}=`;
+  return values.flatMap((value, index) => {
+    if (value === name) return values[index + 1] ? [values[index + 1]!] : [];
+    return value.startsWith(prefix) ? [value.slice(prefix.length)] : [];
+  });
 }
 
 function sha256(value: string | Buffer): string {

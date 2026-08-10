@@ -462,11 +462,16 @@ export function sealReleaseSurfaceDriverReport(
       const requiresCandidateTeardown = Boolean(
         assignment && candidateTeardownCleanupRequired(assignment.cleanupId),
       );
-      const cleanup = requiresCandidateTeardown && outcome.cleanup === "pass"
+      let cleanup = requiresCandidateTeardown && outcome.cleanup === "pass"
         ? actionFailed
           ? "fail" as const
           : "deferred-candidate-teardown" as const
         : outcome.cleanup;
+      // A driver may complete its visible effect and then encounter a
+      // post-effect restoration or fixture error. Never let that raw error
+      // coexist with an all-pass outcome: preserve the completed action
+      // verdicts, fail cleanup, and retain only the redacted error identity.
+      if (error && !actionFailed && cleanup !== "fail") cleanup = "fail";
       const failed = actionFailed || cleanup === "fail";
       return {
         ...outcome,

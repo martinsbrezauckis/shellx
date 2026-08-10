@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import type { ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
 import type { ReleaseSurfaceItem } from "./lib/release-surface-inventory";
 import { createReleaseSurfaceInstalledInputSession } from "./lib/release-surface-installed-input-client";
-import { releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 import { exerciseBottomTabControl } from "./release-drivers/ui-control-bottom-tabs";
 
@@ -50,7 +50,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", profileRoot,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -76,6 +76,8 @@ try {
   assert.deepEqual(manifest.supportedCleanups, ["ui:restore-bottom-tab-baseline"]);
   assert.equal(manifest.supportedOracles?.length, 6);
   assert.deepEqual(manifest.controllerFiles, controllerFiles);
+  const driverSource = readFileSync(join(root, "scripts/release-drivers/ui-control-bottom-tabs.ts"), "utf8");
+  assert.match(driverSource, /tab === "Terminal" \? 15_000 : 5_000/);
 
   const request = createRequest(candidateBase, webdriverBase, ports.candidatePort);
   const input = createReleaseSurfaceInstalledInputSession(request, { base: candidateBase, token });
@@ -131,7 +133,7 @@ function createRequest(candidateBase: string, webdriverBase: string, candidatePo
     driverKind: "ui-control",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: inventory.digest,
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: {} as ReleaseSurfaceDriverRequest["controller"],

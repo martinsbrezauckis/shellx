@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ReleasePlatform } from "./lib/release-surface-inventory";
 import type { ReleaseSurfaceDriverReport, ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
-import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 
 const root = resolve(import.meta.dirname, "..");
@@ -73,7 +73,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   const ports = await waitForPorts(statePath, fixture);
@@ -164,7 +164,7 @@ function request(
     driverKind: "keyboard-shortcut",
     platform,
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: "a".repeat(64),
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture("scripts/release-drivers/keyboard-shortcut-installed.ts", [

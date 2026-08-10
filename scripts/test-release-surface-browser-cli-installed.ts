@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ReleaseSurfaceDriverReport, ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
-import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 
 const root = resolve(import.meta.dirname, "..");
@@ -67,7 +67,7 @@ try {
     "--state-out", statePath,
     "--instance-id", "fixture-browser-cli-instance-0001",
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   const port = await waitForPort(statePath, fixture);
@@ -194,7 +194,7 @@ function driverRequest(base: string): ReleaseSurfaceDriverRequest {
     driverKind: "browser-cli-command",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: "a".repeat(64),
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture(

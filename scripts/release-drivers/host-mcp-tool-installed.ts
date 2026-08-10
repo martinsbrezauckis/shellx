@@ -1687,6 +1687,16 @@ function createFixtures(request: ReleaseSurfaceDriverRequest): FixturePaths {
   }
   if (existsSync(nodeRoot)) throw new Error("Host MCP fixture root must not exist before the driver run");
   mkdirSync(nodeRoot, { mode: 0o700 });
+  // The disposable release profile normally lives beneath the canonical
+  // ShellX repository. An empty .git directory is ignored by Git, so use an
+  // intentionally unresolved gitfile to stop discovery at the owned fixture
+  // boundary. This keeps build_checkpoint's refusal proof away from an
+  // ancestor checkout on every platform.
+  writeFileSync(join(nodeRoot, ".git"), "gitdir: .shellx-release-missing-gitdir\n", {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
   const textNodePath = join(nodeRoot, "fixture.txt");
   const binaryNodePath = join(nodeRoot, "fixture.bin");
   const appendNodePath = join(nodeRoot, "append.txt");

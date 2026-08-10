@@ -3,16 +3,30 @@ import { lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ReleasePlatform, ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
 import { loadFinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
-import { runReleaseSurfaceDrivers } from "./lib/release-surface-driver-runner";
+import {
+  releaseSurfaceDriverRunFailedDriverIds,
+  runReleaseSurfaceDrivers,
+} from "./lib/release-surface-driver-runner";
 import { loadFinalSurfaceContract } from "./lib/release-surface-receipts";
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
+const selectedDriverIds = readArgs(args, "--driver-id")
+  .flatMap((value) => value.split(","))
+  .map((value) => value.trim())
+  .filter(Boolean);
+const targetedClosure = selectedDriverIds.length > 0;
+const expectedExecutionWindow = targetedClosure
+  ? "targeted-post-matrix"
+  : "immediately-before-publish";
 if (readArg(args, "--candidate-stage") !== "signed-and-frozen"
-  || readArg(args, "--execution-window") !== "immediately-before-publish") {
+  || readArg(args, "--execution-window") !== expectedExecutionWindow) {
   throw new Error(
-    "refusing routine execution: pass --candidate-stage signed-and-frozen "
-    + "--execution-window immediately-before-publish for the final candidate only",
+    targetedClosure
+      ? "refusing targeted execution: pass --candidate-stage signed-and-frozen "
+        + "--execution-window targeted-post-matrix with one or more --driver-id values"
+      : "refusing routine execution: pass --candidate-stage signed-and-frozen "
+        + "--execution-window immediately-before-publish for the final candidate only",
   );
 }
 const platform = readArg(args, "--platform") as ReleasePlatform | undefined;
@@ -54,6 +68,7 @@ const manifest = runReleaseSurfaceDrivers({
   candidateAttestationPath,
   installationReceiptPath,
   outputDir,
+  ...(targetedClosure ? { selectedDriverIds } : {}),
   nativeWebDriver,
   ...(macosNativeInputHelperPath && macosNativeInputBindingPath
     ? { macosNativeInput: {
@@ -62,7 +77,11 @@ const manifest = runReleaseSurfaceDrivers({
       } }
     : {}),
 });
-console.log(`Final surface drivers passed ${manifest.driverReports.reduce((sum, report) => sum + report.outcomes, 0)} exact surfaces on ${platform}.`);
+const failedDriverIds = releaseSurfaceDriverRunFailedDriverIds(manifest, outputDir);
+if (failedDriverIds.length > 0) {
+  throw new Error(`complete discovery matrix recorded failed driver sections: ${failedDriverIds.join(", ")}`);
+}
+console.log(`${targetedClosure ? "Targeted closure" : "Final surface drivers"} passed ${manifest.driverReports.reduce((sum, report) => sum + report.outcomes, 0)} exact surfaces on ${platform}.`);
 console.log(`Evidence: ${resolve(outputDir)}`);
 
 function readArg(values: string[], name: string): string | undefined {
@@ -70,6 +89,14 @@ function readArg(values: string[], name: string): string | undefined {
   if (index >= 0) return values[index + 1];
   const prefix = `${name}=`;
   return values.find((value) => value.startsWith(prefix))?.slice(prefix.length);
+}
+
+function readArgs(values: string[], name: string): string[] {
+  const prefix = `${name}=`;
+  return values.flatMap((value, index) => {
+    if (value === name) return values[index + 1] ? [values[index + 1]!] : [];
+    return value.startsWith(prefix) ? [value.slice(prefix.length)] : [];
+  });
 }
 
 function readNativeWebDriverSession(path: string): { base: string; sessionId: string } {

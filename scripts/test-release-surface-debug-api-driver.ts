@@ -10,7 +10,7 @@ import {
 } from "./lib/release-surface-driver-protocol";
 import { validateDebugApiVaultResetResponse } from "./release-drivers/debug-api-vault-e2e-mutation";
 import { sameProviderFixtureCwd } from "./release-drivers/debug-api-provider-lifecycle-mutation";
-import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 
 const root = resolve(import.meta.dirname, "..");
@@ -345,7 +345,7 @@ try {
     "--token", token,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--artifact-root", profileRoot,
     "--platform", fixturePlatform === "windows-installed" ? "windows" : "linux",
@@ -359,7 +359,7 @@ try {
     driverKind: "debug-api-route",
     platform: fixturePlatform,
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: "a".repeat(64),
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture("scripts/release-drivers/debug-api-route-installed.ts"),
@@ -1304,6 +1304,7 @@ try {
     ...operatorGates.flatMap(expectedOperatorGateRequestPaths),
     "/release-test/clipboard",
     "/release-test/clipboard",
+    "/release-test/clipboard",
     ...nativePickerLifecycles.flatMap((method) => method === "DELETE"
       ? [
         "/release-test/native-picker",
@@ -1417,7 +1418,6 @@ try {
     chatFontPx: 15,
     density: "default",
     githubGhBinary: "gh",
-    permissionUx: "pill",
     theme: "black",
   });
   assert.deepEqual(auditBody.connections, [{

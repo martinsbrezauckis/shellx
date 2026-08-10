@@ -56,6 +56,7 @@ function clampLogHeight(value: number): number {
 export function WorkPreviewPanel({
   activeTabId,
   cwd,
+  stateSnapshot,
   onStateChange,
   onOpenPreview,
   onAskGrokToFix,
@@ -63,13 +64,16 @@ export function WorkPreviewPanel({
 }: {
   activeTabId: string | null;
   cwd: string;
+  stateSnapshot?: WorkPreviewState;
   onStateChange?: (state: WorkPreviewState) => void;
   onOpenPreview?: (state: WorkPreviewState) => void;
   onAskGrokToFix?: (state: WorkPreviewState) => void;
   debugClipboardFixture?: "owned-safe" | null;
 }): JSX.Element {
   const tabId = activeTabId || "default";
-  const [state, setState] = useState<WorkPreviewState>(() => emptyWorkPreviewState(tabId));
+  const [state, setState] = useState<WorkPreviewState>(() => (
+    stateSnapshot?.tabId === tabId ? stateSnapshot : emptyWorkPreviewState(tabId)
+  ));
   const [kind, setKind] = useState<WorkPreviewStartKind>("auto");
   const [logHeight, setLogHeight] = useState(initialLogHeight);
   const [busy, setBusy] = useState(false);
@@ -255,6 +259,12 @@ export function WorkPreviewPanel({
   }
 
   useEffect(() => {
+    if (stateSnapshot?.tabId === tabId) {
+      setState(stateSnapshot);
+      setDiagnostic(null);
+      setError(null);
+      return;
+    }
     const next = emptyWorkPreviewState(tabId);
     setState(next);
     onStateChange?.(next);
@@ -264,10 +274,8 @@ export function WorkPreviewPanel({
   }, [tabId]);
 
   useEffect(() => {
-    if (!inTauri()) return;
-    const id = window.setInterval(() => void refresh(), running ? 1500 : 4000);
-    return () => window.clearInterval(id);
-  }, [tabId, running]);
+    if (stateSnapshot?.tabId === tabId) setState(stateSnapshot);
+  }, [stateSnapshot, tabId]);
 
   if (!inTauri()) {
     return (

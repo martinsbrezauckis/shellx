@@ -1,10 +1,8 @@
 /**
  * src/components/PermissionPill.tsx — issue #374.
  *
- * In-chat surface for ACP `session/request_permission` requests.
- * Replaces (or coexists with — see `settings.permissionUx`) the modal
- * popup in `PermissionModal.tsx`. Renders as a chat row inserted into
- * `ChatOutput` via the new `PermissionGroup` UiGroup kind.
+ * In-chat surface for ACP `session/request_permission` requests. Renders as
+ * a chat row inserted into `ChatOutput` via the `PermissionGroup` UiGroup.
  *
  * Two visual states:
  * • PENDING — two-line layout: header (tool name + args preview) +
@@ -97,8 +95,7 @@ export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.El
       if (
         debugFixture
         && (
-          debugFixture.surface !== "pill"
-          || debugFixture.requestId !== g.requestId
+          debugFixture.requestId !== g.requestId
           || debugFixture.expectedDecision !== decision
         )
       ) {

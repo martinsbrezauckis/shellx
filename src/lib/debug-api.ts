@@ -22,10 +22,9 @@
 // • If the Tauri invoke fails (e.g. running the React app in a plain
 // browser tab during dev — not inside the Tauri shell), we fall
 // back to `window.__GROK_DEBUG_TOKEN__` if present, then to no
-// token. The latter still works against the /health endpoint and
-// also against any endpoint when `SHELLX_DEBUG_SECRET`/legacy
-// `GROK_SHELL_DEBUG_SECRET` env vars are unset (auth middleware then
-// accepts requests without a token).
+// token. The unauthenticated fallback can reach only public liveness
+// endpoints; ShellX creates a bearer token at startup even when no
+// `SHELLX_DEBUG_SECRET`/legacy `GROK_SHELL_DEBUG_SECRET` override is set.
 //
 // Used by App.tsx, Header.tsx, LeftRail.tsx, PRCreateModal.tsx, and
 // Settings.tsx. RightRail uses raw fetch for external URL previews.

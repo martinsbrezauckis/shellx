@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent } from "react";
+import { lazy, useCallback, useEffect, useRef, useState, type JSX, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { inTauri } from "../lib/tauri-bridge";
+import { useEventAwarePolling, type PollCurrent } from "../lib/useEventAwarePolling";
 import type { VaultRequestCenterAction, VaultRequestCenterItem } from "../lib/vault-request-center";
 import type { VaultPanelIntent } from "../lib/vault-ui";
 import { ShellIcon } from "./icons";
-import { VaultPasswordGenerator } from "./VaultPasswordGenerator";
+import { LazySurface } from "./LazySurface";
+
+const VaultPasswordGenerator = lazy(() => import("./VaultPasswordGenerator")
+  .then((module) => ({ default: module.VaultPasswordGenerator })));
 
 interface HeaderVaultStatus {
   mode?: string;
@@ -41,19 +45,29 @@ export function HeaderVaultRequestCenter({
   const [open, setOpen] = useState(false);
   const [vaultPasswordGeneratorOpen, setVaultPasswordGeneratorOpen] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<HeaderVaultStatus | null>(null);
+  const [vaultStatusRevision, setVaultStatusRevision] = useState(0);
+  const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
   const ref = useRef<HTMLDivElement | null>(null);
   const vaultStateClass =
     vaultStatus?.unlocked === true ? "vault-open" : vaultStatus ? "vault-closed" : "vault-unknown";
   const vaultStateLabel =
     vaultStatus?.unlocked === true ? "Vault unlocked" : vaultStatus ? "Vault locked" : "Vault status unknown";
 
-  const refreshVaultStatus = useCallback(async () => {
+  const pollVaultStatus = useCallback(async (isCurrent: PollCurrent) => {
     try {
-      setVaultStatus(await invoke<HeaderVaultStatus>("vault_status"));
+      const next = await invoke<HeaderVaultStatus>("vault_status");
+      if (isCurrent()) setVaultStatus(next);
     } catch {
-      setVaultStatus(null);
+      if (isCurrent()) setVaultStatus(null);
     }
   }, []);
+  const refreshVaultStatus = useEventAwarePolling({
+    enabled: inTauri() && visible,
+    scopeKey: "header-vault-status",
+    eventRevision: vaultStatusRevision,
+    intervalMs: 10_000,
+    poll: pollVaultStatus,
+  });
 
   useEffect(() => {
     if (openSeq > 0) setOpen(true);
@@ -67,15 +81,19 @@ export function HeaderVaultRequestCenter({
   }, [closeSeq]);
 
   useEffect(() => {
-    void refreshVaultStatus();
-    const timer = window.setInterval(() => void refreshVaultStatus(), 10000);
-    const onChanged = () => void refreshVaultStatus();
+    const onVisibilityChange = () => setVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    const onChanged = () => setVaultStatusRevision((revision) => revision + 1);
     window.addEventListener("shellx:vault-status-changed", onChanged);
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
     if (inTauri()) {
       void listen("shellx:vault-status-invalidated", () => {
-        void refreshVaultStatus();
+        onChanged();
       })
         .then((fn) => {
           if (disposed) {
@@ -89,10 +107,9 @@ export function HeaderVaultRequestCenter({
     return () => {
       disposed = true;
       unlisten?.();
-      window.clearInterval(timer);
       window.removeEventListener("shellx:vault-status-changed", onChanged);
     };
-  }, [refreshVaultStatus]);
+  }, []);
 
   useEffect(() => {
     if (open) void refreshVaultStatus();
@@ -190,11 +207,17 @@ export function HeaderVaultRequestCenter({
             )}
           </div>
           {vaultPasswordGeneratorOpen ? (
-            <VaultPasswordGenerator
-              title="Password generator"
-              debugFixture={debugClipboardFixture}
-              onClose={() => setVaultPasswordGeneratorOpen(false)}
-            />
+            <LazySurface
+              label="Password generator"
+              variant="inline"
+              onDismiss={() => setVaultPasswordGeneratorOpen(false)}
+            >
+              <VaultPasswordGenerator
+                title="Password generator"
+                debugFixture={debugClipboardFixture}
+                onClose={() => setVaultPasswordGeneratorOpen(false)}
+              />
+            </LazySurface>
           ) : requests.length === 0 ? (
             <div className="vault-request-empty">No pending requests.</div>
           ) : (

@@ -438,15 +438,6 @@ interface BrowserStorageStateExportResponse {
   receipt: { kind: string };
 }
 
-interface BrowserSessionGrantApplicationResponse {
-  ok: boolean;
-  sessionStateAvailable: boolean;
-  cookieValuesExposed: boolean;
-  localStorageValuesExposed: boolean;
-  grant: { grantId: string; status: string; appliedAtMs?: number | null };
-  receipt: { kind: string };
-}
-
 interface BrowserDialogEvent {
   dialogId: string;
   taskId?: string | null;
@@ -833,23 +824,6 @@ function browserUrlMatchesExpected(actual: string | null | undefined, expected: 
   } catch {
     return actual === expected;
   }
-}
-
-async function waitForTaskTab(
-  ctx: { base: string; token: string },
-  taskId: string,
-  predicate: (tab: BrowserTab) => boolean,
-  label: string,
-): Promise<BrowserTab> {
-  const deadline = Date.now() + 10_000;
-  let last: BrowserTab | null = null;
-  while (Date.now() < deadline) {
-    const state = await api<BrowserState>(ctx, "GET", "/browser/state");
-    last = state.tabs?.find((tab) => tab.taskId === taskId) ?? null;
-    if (last && predicate(last)) return last;
-    await sleep(250);
-  }
-  throw new Error(`${label}; last=${JSON.stringify(last)}`);
 }
 
 function bodyDoesNotEchoSecret(value: unknown): boolean {

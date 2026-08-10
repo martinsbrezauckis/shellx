@@ -668,6 +668,15 @@ assert.deepEqual(
 );
 
 const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const providerApiSource = readFileSync(new URL("../src/lib/provider-session-api.ts", import.meta.url), "utf8");
+const providerContractSource = readFileSync(new URL("../src/lib/provider-sessions.ts", import.meta.url), "utf8");
+assert(
+  providerApiSource.includes('from "./debug-api"') &&
+    providerApiSource.includes("startProviderSession") &&
+    providerApiSource.includes("abortProviderSession") &&
+    !providerContractSource.includes('import("./debug-api")'),
+  "Provider contracts must stay separate from the operational Debug API client",
+);
 assert(
   appSource.includes("\"provider-session-event\""),
   "App must subscribe to provider-session-event so provider output reaches chat",

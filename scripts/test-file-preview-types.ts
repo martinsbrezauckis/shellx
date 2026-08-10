@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   previewKindForPath,
   shouldReadTextForPreviewKind,
@@ -44,6 +45,17 @@ assert(shikiLangForPath("C:\\repo\\src\\env.d.ts") === "typescript", ".d.ts high
 assert(shikiLangForPath("/repo/app.astro") === "astro", ".astro highlights as astro");
 assert(shikiLangForPath("/repo/infra/main.tf") === "terraform", ".tf highlights as terraform");
 assert(shikiLangForPath("/repo/changes/feature.diff") === "diff", ".diff highlights as diff");
+
+const shikiHighlight = readFileSync("src/components/ShikiHighlight.tsx", "utf8");
+assert(
+  shikiHighlight.includes("setHtml(null);") && shikiHighlight.includes("setError(null);"),
+  "Shiki resets rendered and error state before tokenizing changed input",
+);
+assert(
+  shikiHighlight.includes("escapes source text before inserting token markup")
+    && !shikiHighlight.includes("the input is local file"),
+  "Shiki HTML trust is attributed to source escaping rather than local provenance",
+);
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} file-preview type tests`);
 process.exit(failures === 0 ? 0 : 1);

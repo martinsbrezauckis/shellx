@@ -5,7 +5,7 @@
  * decision point. This modal gives /build the same centered review surface as
  * the legacy long-horizon planner.
  */
-import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -20,6 +20,7 @@ import {
 } from "../lib/build-run";
 import { ShellIcon } from "./icons";
 import { useModalFocus } from "../lib/useModalFocus";
+import { useEventAwarePolling, type PollCurrent } from "../lib/useEventAwarePolling";
 
 interface BuildPlanReviewModalProps {
   activeTabId?: string | null;
@@ -129,61 +130,68 @@ export function BuildPlanReviewModal({
   );
   const effectiveState = debugState ?? state;
   const effectivePlanText = debugState ? OWNED_DEBUG_PLAN_TEXT : planText;
+  const buildPollingEnabled = debugFixture !== "owned-ready" && Boolean(activeTabId) && inTauri();
+  const refreshBuildState = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
+    if (!activeTabId) return;
+    try {
+      const next = await getBuildState(activeTabId);
+      if (isCurrent()) setState(next);
+    } catch {
+      if (isCurrent()) setState(null);
+    }
+  }, [activeTabId]);
+
+  useEventAwarePolling({
+    enabled: buildPollingEnabled,
+    scopeKey: `build-review:${activeTabId ?? "none"}`,
+    eventRevision: eventsLen,
+    intervalMs: 2500,
+    poll: refreshBuildState,
+  });
 
   useEffect(() => {
     if (debugFixture === "owned-ready") return;
-    if (!activeTabId || !inTauri()) {
-      setState(null);
-      return;
-    }
-    let cancelled = false;
-    const fetchState = () => {
-      void getBuildState(activeTabId)
-        .then((next) => {
-          if (!cancelled) setState(next);
-        })
-        .catch(() => {
-          if (!cancelled) setState(null);
-        });
-    };
-    fetchState();
-    const id = window.setInterval(fetchState, 2500);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [activeTabId, eventsLen, debugFixture]);
+    if (!buildPollingEnabled) setState(null);
+  }, [buildPollingEnabled, debugFixture]);
 
   const scratchboardPath = effectiveState?.scratchboardPath ?? "";
+  const planReadEnabled = debugFixture !== "owned-ready" && Boolean(activeTabId && scratchboardPath);
+  const refreshPlanText = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
+    if (!activeTabId || !scratchboardPath) return;
+    try {
+      const text = inTauri()
+        ? await invoke<string>("read_text_file_for_path", {
+            path: scratchboardPath,
+            tabId: activeTabId,
+            sessionCwd,
+          })
+        : await fetch(convertFileSrc(scratchboardPath, "asset"))
+            .then((response) => response.ok ? response.text() : Promise.reject(`HTTP ${response.status}`));
+      if (!isCurrent()) return;
+      setReadError(null);
+      setPlanText((cur) => (cur === text ? cur : text));
+    } catch (error) {
+      if (isCurrent()) setReadError(String(error));
+    }
+  }, [activeTabId, scratchboardPath, sessionCwd]);
+
+  useEventAwarePolling({
+    enabled: planReadEnabled,
+    scopeKey: `build-review-file:${activeTabId ?? "none"}:${scratchboardPath}:${sessionCwd ?? ""}:${effectiveState?.status ?? "none"}`,
+    eventRevision: eventsLen,
+    poll: refreshPlanText,
+  });
+
   useEffect(() => {
     if (debugFixture === "owned-ready") {
       setReadError(null);
       return;
     }
-    if (!activeTabId || !scratchboardPath) {
+    if (!planReadEnabled) {
       setPlanText("");
       setReadError(null);
-      return;
     }
-    let cancelled = false;
-    const setText = (text: string) => {
-      if (cancelled) return;
-      setReadError(null);
-      setPlanText((cur) => (cur === text ? cur : text));
-    };
-    if (inTauri()) {
-      void invoke<string>("read_text_file_for_path", {
-        path: scratchboardPath,
-        tabId: activeTabId,
-        sessionCwd,
-      }).then(setText).catch((e) => {
-        if (!cancelled) setReadError(String(e));
-      });
-    } else {
-      fetch(convertFileSrc(scratchboardPath, "asset"))
-        .then((r) => (r.ok ? r.text() : Promise.reject(`HTTP ${r.status}`)))
-        .then(setText)
-        .catch((e) => { if (!cancelled) setReadError(String(e)); });
-    }
-    return () => { cancelled = true; };
-  }, [activeTabId, sessionCwd, scratchboardPath, effectiveState?.status, eventsLen, debugFixture]);
+  }, [debugFixture, planReadEnabled]);
 
   const approvalReadiness = buildApprovalReadinessFromText(effectivePlanText);
   const ready = Boolean(effectiveState && effectiveState.status === "awaitingApproval" && approvalReadiness.ready);

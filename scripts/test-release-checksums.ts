@@ -11,6 +11,8 @@ try {
   const installer = join(root, "windows", "shellX_0.3.5_x64-setup.exe");
   writeFileSync(installer, "signed-installer");
   writeFileSync(`${installer}.sig`, "updater-signature");
+  const sbom = `${installer}.cdx.json`;
+  writeFileSync(sbom, "sanitized-sbom");
   writeFileSync(join(root, "notes", "private-receipt.json"), "must not publish");
 
   const output = join(root, "SHA256SUMS");
@@ -18,6 +20,10 @@ try {
   const expected = createHash("sha256").update("signed-installer").digest("hex");
   if (!manifest.includes(`${expected}  windows/shellX_0.3.5_x64-setup.exe`)) {
     throw new Error("checksum manifest does not identify the exact installer bytes");
+  }
+  const sbomDigest = createHash("sha256").update("sanitized-sbom").digest("hex");
+  if (!manifest.includes(`${sbomDigest}  windows/shellX_0.3.5_x64-setup.exe.cdx.json`)) {
+    throw new Error("checksum manifest does not bind the artifact SBOM");
   }
   if (manifest.includes("private-receipt")) throw new Error("non-release JSON leaked into SHA256SUMS");
   if (readFileSync(output, "utf8") !== manifest) throw new Error("written checksum manifest drifted");

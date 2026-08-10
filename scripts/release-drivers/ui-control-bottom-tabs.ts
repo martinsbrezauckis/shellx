@@ -112,7 +112,11 @@ async function setBottomTab(connection: Connection, tab: BottomTab, label: strin
 }
 
 async function waitForBottomTab(connection: Connection, tab: BottomTab, label: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  // The first Terminal activation also cold-loads xterm.js and initializes
+  // the PTY surface. WKWebView can legitimately take longer than the normal
+  // state-only tabs on that first mount, so retain the strict short bound for
+  // every other tab and give Terminal one bounded cold-start window.
+  const deadline = Date.now() + (tab === "Terminal" ? 15_000 : 5_000);
   while (Date.now() < deadline) {
     const state = await apiJson<Record<string, unknown>>(connection, "GET", "/state/ui");
     if (state.bottomTab === tab) return;

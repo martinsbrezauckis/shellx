@@ -34,11 +34,21 @@ const headRule = cssRule(".fv-head");
 assert(headRule.includes("position: sticky"), "Files header stays pinned while file rows scroll");
 assert(headRule.includes("top: 0"), "Files header sticks to the top of the files pane");
 assert(cssRule(".fv-search").includes("display: inline-flex"), "Files header has an inline search control");
-assert(rightRail.includes("import { FilesPane } from \"./FilesPane\""), "Right rail wires the extracted Files pane");
+assert(
+  rightRail.includes('lazy(() => import("./FilesPane")')
+    && rightRail.includes("<FilesPane")
+    && rightRail.includes("activeTabId={activeTabId ?? null}"),
+  "Right rail lazy-loads the extracted Files pane with active-tab scope",
+);
 assert(filesPane.includes("const [fileQuery, setFileQuery]"), "Files pane stores a current-folder search query");
 assert(filesPane.includes("visibleEntries") && filesPane.includes("trimmedFileQuery"), "Files pane filters visible rows by search text");
 assert(filesPane.includes("No files match."), "Files pane renders an empty search result state");
 assert(filesPane.includes("No session folder."), "Files pane distinguishes no session folder from a pending load");
+assert(
+  filesPane.includes("Files need the desktop host.")
+    && filesPane.includes("cwdFolder && desktopHost && entries === null"),
+  "Files pane discloses the desktop boundary instead of loading forever in a plain renderer",
+);
 assert(filesPane.includes("const [currentFolder, setCurrentFolder]"), "Files pane tracks an absolute current folder");
 assert(filesPane.includes("parentFolderPath(currentFolder)"), "Files pane can move above the session cwd");
 assert(filesPane.includes("resetFolderToCwd"), "Files pane exposes a reset-to-session-folder action");

@@ -14,6 +14,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const appVersion = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).version;
+assert(typeof appVersion === "string" && /^\d+\.\d+\.\d+$/.test(appVersion), "package version must be SemVer");
 const generator = join(repoRoot, "scripts", "generate-shellx-docs.mjs");
 const surfaceCoverage = join(repoRoot, "scripts", "test-shellx-docs-surface-coverage.mjs");
 const root = mkdtempSync(join(tmpdir(), "shellx-docs-sync-"));
@@ -50,7 +52,7 @@ try {
 <a class="docs-product docs-product--available docs-product--vault" href="manual/vault/">Vault</a>
 <article class="docs-product docs-product--unavailable" aria-label="ShellX Browser manual coming later"><span>Coming later</span></article>
 `, "utf8");
-  writeFileSync(join(exportRoot, "package.json"), JSON.stringify({ name: "shellx", version: "0.3.5" }), "utf8");
+  writeFileSync(join(exportRoot, "package.json"), JSON.stringify({ name: "shellx", version: appVersion }), "utf8");
 
   run("--write-all");
   run("--check-all");
@@ -89,10 +91,10 @@ try {
     assert(existsSync(join(siteRoot, "manual/shellx", capture.file)), `docs site is missing ${capture.file}`);
   }
 
-  writeFileSync(join(exportRoot, "package.json"), JSON.stringify({ name: "shellx", version: "0.3.4" }), "utf8");
+  writeFileSync(join(exportRoot, "package.json"), JSON.stringify({ name: "shellx", version: "0.0.0" }), "utf8");
   const mismatchResult = run("--check-all", false);
   const mismatchRejected = mismatchResult.status !== 0
-    && mismatchResult.stderr.includes("does not match manual/source version 0.3.5");
+    && mismatchResult.stderr.includes(`does not match manual/source version ${appVersion}`);
   assert(mismatchRejected, "version-mismatched public export was not rejected");
 
   writeFileSync(

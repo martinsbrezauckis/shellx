@@ -216,7 +216,9 @@ export function FindPopover({
   const [previewBody, setPreviewBody] = useState<string>("");
   const [previewHits, setPreviewHits] = useState<SnippetHit[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const previewRequestSeq = useRef(0);
   useEffect(() => {
+    const requestSeq = ++previewRequestSeq.current;
  // every
  // early-return below MUST clear previewLoading. The previous code
  // only cleared it in the .finally of the disk-hit fetch — so if
@@ -274,14 +276,13 @@ export function FindPopover({
       .catch(() => {
         if (!cancelled) setPreviewBody(h.snippet || "(no snippet available)");
       })
- // ALWAYS clear loading on settle, even if the closure
- // is stale. The previous `if (!cancelled)` guard left the spinner
- // permanently stuck when a re-render cancelled this closure before
- // the fetch returned (e.g. corpus updating during an active chat).
- // setPreviewLoading is idempotent; clearing it from a stale fetch
- // is harmless because the next effect run already sets it to true
- // at the top before kicking the new fetch.
-      .finally(() => { setPreviewLoading(false); });
+ // Only the newest request owns the spinner. A slower, cancelled
+ // request must not clear loading while a newer preview is in flight.
+      .finally(() => {
+        if (previewRequestSeq.current === requestSeq) {
+          setPreviewLoading(false);
+        }
+      });
     return () => { cancelled = true; };
   }, [selectedIdx, results, q]);
 

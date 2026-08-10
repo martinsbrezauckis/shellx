@@ -20,6 +20,7 @@ import {
 import {
   releaseSurfaceControllerBindingFixture,
   releaseSurfaceFixtureSourceCommit,
+  releaseSurfaceFixtureVersion,
 } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 import { releaseSurfacePosixPathDigest } from "./lib/release-surface-posix-native-runtime";
@@ -48,7 +49,7 @@ const request: ReleaseSurfaceDriverRequest = {
   driverKind: manifest.kind,
   platform: "windows-installed",
   sourceCommit: releaseSurfaceFixtureSourceCommit,
-  version: "0.3.5",
+  version: releaseSurfaceFixtureVersion,
   inventoryDigest: "a".repeat(64),
   artifact: { basename: "ShellX.exe", sha256: "c".repeat(64) },
   controller: releaseSurfaceControllerBindingFixture("scripts/fixtures/release-surface-driver-fixture.ts"),
@@ -293,6 +294,22 @@ try {
   assert.match(sealedFailure.outcomes[0]!.error ?? "", /^redacted-error-sha256:[a-f0-9]{64}$/);
   assert(!JSON.stringify(sealedFailure).includes("private-token-value"));
   assert.deepEqual(validateReleaseSurfaceDriverReport(request, sealedFailure), []);
+
+  const rawPostEffectFailure = structuredClone(report);
+  rawPostEffectFailure.outcomes[0]!.error = "private post-effect cleanup failure";
+  const sealedPostEffectFailure = sealReleaseSurfaceDriverReport(request, rawPostEffectFailure);
+  assert.equal(
+    sealedPostEffectFailure.outcomes[0]!.cleanup,
+    "fail",
+    "a post-effect error must produce durable failed cleanup evidence",
+  );
+  assert.match(
+    sealedPostEffectFailure.outcomes[0]!.error ?? "",
+    /^redacted-error-sha256:[a-f0-9]{64}$/,
+  );
+  assert(!JSON.stringify(sealedPostEffectFailure).includes("private post-effect cleanup failure"));
+  assert.deepEqual(validateReleaseSurfaceDriverReport(request, sealedPostEffectFailure), []);
+  assert.equal(releaseSurfaceDriverPhaseReportPassed(sealedPostEffectFailure), false);
 
   const rawTeardownFailure = structuredClone(report);
   rawTeardownFailure.outcomes[0]!.effect = "fail";

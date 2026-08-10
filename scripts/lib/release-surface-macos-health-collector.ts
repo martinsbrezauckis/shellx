@@ -568,7 +568,7 @@ async function checkHttpLink(href: string): Promise<"ok" | "broken"> {
     const response = await fetch(href, {
       method: "GET",
       redirect: "follow",
-      headers: { "User-Agent": "ShellX-Release-Link-Check/0.3.5" },
+      headers: { "User-Agent": "ShellX-Release-Link-Check/1" },
       signal: AbortSignal.timeout(15_000),
     });
     await response.body?.cancel();

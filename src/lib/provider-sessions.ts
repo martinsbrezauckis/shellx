@@ -570,48 +570,6 @@ export function providerAbortRequestBody(
   return body;
 }
 
-export async function getProviderAdapterState(
-  request: ProviderAdapterStateRequest = {},
-): Promise<ProviderAdapterState> {
-  const { apiGet } = await import("./debug-api");
-  return apiGet<ProviderAdapterState>(providerAdaptersStatePath(request));
-}
-
-export async function getAgentRunsState(tabId?: string | null): Promise<AgentRunManagerState> {
-  const { apiGet } = await import("./debug-api");
-  return apiGet<AgentRunManagerState>(agentRunsStatePath(tabId));
-}
-
-export async function getProviderSessionState(
-  tabId: string,
-  request: ProviderSessionStateRequest = {},
-): Promise<ProviderSessionState> {
-  const { apiGet } = await import("./debug-api");
-  return apiGet<ProviderSessionState>(providerSessionStatePath(tabId, request));
-}
-
-export async function startProviderSession(
-  request: ProviderSessionStartRequest,
-): Promise<ProviderSessionStartResponse> {
-  const { apiPostJson } = await import("./debug-api");
-  return apiPostJson<ProviderSessionStartResponse>(
-    providerSessionsStartPath(),
-    providerStartRequestBody(request),
-  );
-}
-
-export async function abortProviderSession(
-  tabId: string,
-  runId?: string,
-  request: ProviderSessionStateRequest = {},
-): Promise<ProviderSessionAbortResponse> {
-  const { apiPostJson } = await import("./debug-api");
-  return apiPostJson<ProviderSessionAbortResponse>(
-    providerSessionsAbortPath(),
-    providerAbortRequestBody(tabId, runId, request),
-  );
-}
-
 export function providerSessionLabel(payload: unknown): string {
   if (!isProviderSessionPayload(payload)) return "Provider session";
   const provider = providerDisplayName(payload.providerId);

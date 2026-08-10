@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ReleaseSurfaceDriverReport, ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
-import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 import { UI_CONTROL_INSTALLED_CONTROLLER_FILES } from "./release-drivers/ui-control-installed-manifest";
 import {
@@ -69,7 +69,7 @@ const filePreviewRunControls = [
   { id: "file-preview-run-work", occurrence: 4 },
 ] as const;
 const setupGuideControls = [
-  { id: "agents", oracleId: "ui:activation:setup-guide-agent-settings-opened" },
+  { id: "agents", oracleId: "ui:activation:setup-guide-agent-cli-setup-opened" },
   { id: "browser", oracleId: "ui:activation:setup-guide-browser-opened" },
   { id: "downloads", oracleId: "ui:activation:setup-guide-download-settings-opened" },
   { id: "requests", oracleId: "ui:activation:setup-guide-requests-opened" },
@@ -260,6 +260,22 @@ const connectorDraftControls = [
     driverFamily: "activation",
     oracleId: "ui:boolean-state-transition",
     expectedEffect: "selects Session chat only in the unsaved connector draft before exact restoration",
+  },
+  {
+    inventorySelector: "[data-debug-id=\"connector-approval-review-first\"]",
+    occurrence: 8,
+    elementTag: "button",
+    driverFamily: "toggle",
+    oracleId: "ui:boolean-state-transition",
+    expectedEffect: "prepares Auto-dispatch and selects Review first only in the unsaved connector draft before exact restoration",
+  },
+  {
+    inventorySelector: "[data-debug-id=\"connector-approval-auto-dispatch\"]",
+    occurrence: 9,
+    elementTag: "button",
+    driverFamily: "toggle",
+    oracleId: "ui:boolean-state-transition",
+    expectedEffect: "selects Auto-dispatch only in the unsaved connector draft before exact restoration",
   },
   {
     inventorySelector: "[data-debug-id=\"surface-components-settings-connectorstab-21\"]",
@@ -710,7 +726,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", profileRoot,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -806,7 +822,7 @@ try {
     "ui:activation:setup-guide-vault-opened",
     "ui:activation:setup-guide-browser-opened",
     "ui:activation:setup-guide-download-settings-opened",
-    "ui:activation:setup-guide-agent-settings-opened",
+    "ui:activation:setup-guide-agent-cli-setup-opened",
     "ui:activation:setup-guide-requests-opened",
     "ui:activation:setup-guide-dismissed",
     "ui:value-state-transition",
@@ -1029,6 +1045,7 @@ try {
     connectorProvider: string;
     connectorEnabled: boolean;
     connectorDispatchMode: string;
+    connectorRequireApproval: boolean;
     connectorTargetMode: string;
     connectorVaultKey: string;
     connectorAllowedIds: string;
@@ -1308,7 +1325,7 @@ try {
       "[role='dialog'][aria-label='Preview Center'] [aria-label='Close']",
     ]),
     ...setupGuideControls.flatMap((control) => (
-      control.id === "agents" || control.id === "downloads"
+      control.id === "downloads"
         ? [`[data-debug-id='shellx-setup-step-${control.id}']`, "[data-debug-id='settings-tab-vault']"]
         : [control.id === "dismiss"
             ? "[data-debug-id='shellx-setup-guide-dismiss']"
@@ -1427,6 +1444,7 @@ try {
   assert.equal(audit.connectorDraftOpen, false);
   assert.equal(audit.connectorEnabled, false);
   assert.equal(audit.connectorDispatchMode, "inbox");
+  assert.equal(audit.connectorRequireApproval, true);
   assert.equal(audit.connectorTargetMode, "activeTab");
   assert.equal(audit.connectorVaultKey, "telegram/bot-token");
   assert.equal(audit.connectorAllowedIds, "");
@@ -1537,7 +1555,6 @@ try {
     chatFontPx: 19,
     density: "default",
     githubGhBinary: "gh",
-    permissionUx: "pill",
     theme: "black",
   });
   assert.deepEqual(audit.taskToggleStates, {
@@ -1572,11 +1589,11 @@ try {
     // the lifecycle from a fresh fixture instead of weakening that ownership.
     && assignment.surface.name !== "src/components/WorkPreviewPanel.tsx:[data-debug-id=\"surface-components-workpreviewpanel-3\"]"
   ));
-  // This omnibus fixture safely repeats 170 of the exact bounded cohort.
+  // This omnibus fixture safely repeats 172 of the exact bounded cohort.
   // Plan-level and focused lifecycle tests account for the remainder.
-  assert.equal(boundedRequest.assignments.length, 170);
+  assert.equal(boundedRequest.assignments.length, 172);
   const boundedReport = runBoundedDriver(boundedRequest);
-  assert.equal(boundedReport.outcomes.length, 170);
+  assert.equal(boundedReport.outcomes.length, 172);
   assert(boundedReport.outcomes.every((outcome) => (
     outcome.present === "pass"
     && outcome.invoke === "pass"
@@ -1603,7 +1620,7 @@ function request(candidateBase: string, webdriverBase: string): ReleaseSurfaceDr
     driverKind: "ui-control",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: "a".repeat(64),
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture("scripts/release-drivers/ui-control-installed.ts", [
@@ -3035,6 +3052,27 @@ function expectedConnectorDraftClicks(control: typeof connectorDraftControls[num
   const openDraft = "[aria-label='Connector editor'] .connector-editor-head > button.settings-pill:not([aria-label])";
   const cancelDraft = "[aria-label='Cancel connector draft']";
   const restore = "[data-debug-id='settings-tab-general']";
+  if (control.inventorySelector === "[data-debug-id=\"connector-approval-review-first\"]") {
+    return [
+      open,
+      openDraft,
+      "[data-debug-id='connector-approval-auto-dispatch']",
+      "[data-debug-id='connector-approval-review-first']",
+      cancelDraft,
+      restore,
+    ];
+  }
+  if (control.inventorySelector === "[data-debug-id=\"connector-approval-auto-dispatch\"]") {
+    return [
+      open,
+      openDraft,
+      "[data-debug-id='connector-approval-review-first']",
+      "[data-debug-id='connector-approval-auto-dispatch']",
+      "[data-debug-id='connector-approval-review-first']",
+      cancelDraft,
+      restore,
+    ];
+  }
   if (control.occurrence === 3) {
     return [
       open,

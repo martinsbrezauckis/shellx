@@ -39,7 +39,6 @@
 // belongs to the caller (start_grok_session integration in lib.rs,
 // landing in the next phase).
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -157,7 +156,7 @@ const AGENT_SCAN_SPECS: &[AgentScanSpec] = &[
 
 impl ConnectionPreset {
     /// Generate a fresh preset with a stable UUID-derived id.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn new(label: String, transport: Transport) -> Self {
         let now = now_ms();
         Self {
@@ -919,7 +918,7 @@ fn hash_local_provider_binary(path: &std::path::Path) -> Result<(String, u64), S
         ));
     }
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
     loop {
         let count = file
             .read(&mut buffer)
@@ -1543,13 +1542,6 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
-}
-
-// silence "unused import" warning when HashMap isn't picked up by a
-// future change that referenced it.
-#[allow(dead_code)]
-fn _unused_hashmap() -> HashMap<String, String> {
-    HashMap::new()
 }
 
 #[cfg(test)]

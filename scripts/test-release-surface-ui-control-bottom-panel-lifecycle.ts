@@ -8,6 +8,7 @@ import type { ReleaseSurfaceItem } from "./lib/release-surface-inventory";
 import {
   releaseSurfaceControllerBindingFixture,
   releaseSurfaceFixtureSourceCommit,
+  releaseSurfaceFixtureVersion,
 } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 
@@ -32,12 +33,9 @@ const controllerFiles = [
 ];
 const expectedSurfaceIds = [
   "ui-control:src/components/BottomPanel.tsx:[aria-label^=\"Remove \"]@src/components/BottomPanel.tsx#10",
-  "ui-control:src/components/BottomPanel.tsx:[aria-label=\"close terminal tab\"]@src/components/BottomPanel.tsx#27",
   "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-24\"]@src/components/BottomPanel.tsx#24",
   "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-9\"]@src/components/BottomPanel.tsx#9",
-  "ui-control:src/components/BottomPanel.tsx:[title^=\"ACP terminal \"]@src/components/BottomPanel.tsx#26",
   "ui-control:src/components/BottomPanel.tsx:role=button;name=\"Inspect\"@src/components/BottomPanel.tsx#11",
-  "ui-control:src/components/BottomPanel.tsx:role=button;name=\"shell\"@src/components/BottomPanel.tsx#25",
   "ui-control:src/components/BottomPanel.tsx:role=button;name=\"Summarize\"@src/components/BottomPanel.tsx#12",
   "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-23\"]@src/components/BottomPanel.tsx#23",
   "ui-control:src/components/BottomPanel.tsx:[aria-label=\"Turn voice chat off and cancel active listening\"]@src/components/BottomPanel.tsx#17",
@@ -72,7 +70,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", profileRoot,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -95,15 +93,15 @@ try {
   };
   assert.equal(manifest.id, driverId);
   assert.equal(manifest.invocationTransport, "native-installed-input");
-  assert.equal(manifest.supportedFixtures?.length, 7);
-  assert.equal(manifest.supportedCleanups?.length, 7);
-  assert.equal(manifest.supportedOracles?.length, 8);
+  assert.equal(manifest.supportedFixtures?.length, 6);
+  assert.equal(manifest.supportedCleanups?.length, 6);
+  assert.equal(manifest.supportedOracles?.length, 7);
   assert.deepEqual(manifest.controllerFiles, controllerFiles);
 
   const request = createRequest(candidateBase, webdriverBase, ports.candidatePort);
   assert.deepEqual(request.assignments.map((assignment) => assignment.surface.id).sort(), expectedSurfaceIds);
   const report = runDriver(request);
-  assert.equal(report.outcomes.length, 11);
+  assert.equal(report.outcomes.length, 8);
   assert(report.outcomes.every((outcome) => outcome.present === "pass"), JSON.stringify(report.outcomes, null, 2));
   assert(report.outcomes.every((outcome) => outcome.invoke === "pass"), JSON.stringify(report.outcomes, null, 2));
   assert(report.outcomes.every((outcome) => outcome.effect === "pass"), JSON.stringify(report.outcomes, null, 2));
@@ -115,8 +113,6 @@ try {
   assert.deepEqual(audit.bottomPanelAttachmentPaths, []);
   assert.equal(audit.bottomPanelComposerPrompt, "");
   assert.equal(audit.bottomPanelImagePath, null);
-  assert.deepEqual(audit.bottomPanelTerminalIds, []);
-  assert.equal(audit.bottomPanelActiveTerminal, null);
   assert.equal(audit.bottomPanelFixtureUserVisible, false);
   assert.equal(audit.previewTarget, null);
   assert.equal(audit.agentPickerFixtureActive, false);
@@ -125,7 +121,7 @@ try {
   assert.equal(audit.bottomTab, "Chat");
   assert.equal(existsSync(join(profileRoot, "ui-bottom-panel-lifecycle")), false);
 
-  console.log("Release surface native BottomPanel lifecycle tests passed (11 controls, 2 native-picker promotions, 0 BUILDING blockers, slash highlight executable)");
+  console.log("Release surface native BottomPanel lifecycle tests passed (8 controls, 2 native-picker promotions, 0 BUILDING blockers, slash highlight executable)");
 } finally {
   process.off("SIGINT", onTerminationSignal);
   process.off("SIGTERM", onTerminationSignal);
@@ -200,7 +196,7 @@ function createRequest(candidateBase: string, webdriverBase: string, candidatePo
     driverKind: "ui-control",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: inventory.digest,
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture(entrypoint, controllerFiles),

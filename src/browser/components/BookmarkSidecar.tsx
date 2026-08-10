@@ -244,13 +244,14 @@ export default function BookmarkSidecar({
           </div>
           <div className="shellx-browser-bookmark-row-actions">
             {(url || hasWorkflow) && (
-              <button data-debug-id="surface-browser-components-bookmarksidecar-5"
+              <button
                 type="button"
                 className="shellx-browser-bookmark-icon-action"
                 onClick={() => onOpenBookmark(bookmark)}
                 disabled={busy}
                 title={hasWorkflow ? `Preview ${bookmark.label}` : `Open ${bookmark.label}`}
                 aria-label={hasWorkflow ? `Preview ${bookmark.label}` : `Open ${bookmark.label}`}
+                data-debug-id={`shellx-browser-bookmark-open-${bookmark.bookmarkId}`}
               >
                 <ShellIcon name={hasWorkflow ? "play" : "external-link"} size={13} />
               </button>
@@ -291,7 +292,7 @@ export default function BookmarkSidecar({
   return (
     <aside
       id="shellx-browser-bookmark-manager-dock"
-      className="shellx-browser-left-sidecar shellx-browser-bookmark-manager-dock shellx-browser-bookmark-sidecar"
+      className={`shellx-browser-left-sidecar shellx-browser-bookmark-manager-dock shellx-browser-bookmark-sidecar ${workflowPreview ? "has-workflow-preview" : ""}`}
       data-debug-id="shellx-browser-bookmark-manager-dock"
       aria-labelledby="shellx-browser-bookmarks-menu"
     >
@@ -383,10 +384,26 @@ export default function BookmarkSidecar({
               ))}
             </select>
             <div className="shellx-browser-bookmark-editor-actions">
-              <button type="button" className="shellx-browser-icon-btn" onClick={onCreateFolder} disabled={busy} title="New folder" aria-label="New folder">
+              <button
+                type="button"
+                className="shellx-browser-icon-btn"
+                onClick={onCreateFolder}
+                disabled={busy}
+                title="New folder"
+                aria-label="New folder"
+                data-debug-id="shellx-browser-bookmark-create-folder"
+              >
                 <ShellIcon name="folder" size={13} />
               </button>
-              <button type="button" className="shellx-browser-icon-btn" onClick={onCreateLink} disabled={busy || !bookmarkDraftUrl.trim()} title="Add link" aria-label="Add link">
+              <button
+                type="button"
+                className="shellx-browser-icon-btn"
+                onClick={onCreateLink}
+                disabled={busy || !bookmarkDraftUrl.trim()}
+                title="Add link"
+                aria-label="Add link"
+                data-debug-id="shellx-browser-bookmark-create-link"
+              >
                 <ShellIcon name="plus" size={13} />
               </button>
             </div>

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   RELEASE_SURFACE_CANDIDATE_ATTESTATION_SCHEMA,
   validateReleaseSurfaceCandidateAttestation,
@@ -26,7 +26,11 @@ import {
   releaseSurfaceInstalledPayloadManifestDigest,
   type ReleaseSurfaceInstalledPayloadManifest,
 } from "./lib/release-surface-installed-payload-manifest";
-import { syntheticReleaseSurfaceControllerBinding } from "./fixtures/release-surface-controller-binding-fixture";
+import { syntheticReleaseSurfaceControllerBinding, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
+
+const packageVersion = (JSON.parse(readFileSync(resolve(import.meta.dirname, "../package.json"), "utf8")) as { version?: string }).version;
+assert(typeof packageVersion === "string" && /^\d+\.\d+\.\d+$/.test(packageVersion), "package version must be SemVer");
+const appVersion = packageVersion;
 
 const artifact: ReleaseSurfaceFileIdentity = {
   basename: "ShellX.exe",
@@ -49,7 +53,7 @@ const directAttestation: ReleaseSurfaceCandidateAttestation = {
   mode: "final-frozen-candidate",
   platform: "windows-installed",
   sourceCommit: "b".repeat(40),
-  version: "0.3.5",
+  version: releaseSurfaceFixtureVersion,
   createdAt: "2026-07-28T18:00:00.000Z",
   distributionArtifact: artifact,
   installation: {
@@ -73,7 +77,7 @@ const directAttestation: ReleaseSurfaceCandidateAttestation = {
     mcpTokenPath: "C:\\Temp\\shellx-final\\mcp.token",
     processId: 4321,
     instanceId: "fixture-instance-0001",
-    appVersion: "0.3.5",
+    appVersion: releaseSurfaceFixtureVersion,
     buildCommit: "b".repeat(40),
   },
   windowsNativeRuntime: {
@@ -98,7 +102,7 @@ assert.deepEqual(validateReleaseSurfaceCandidateAttestation({
   attestation: directAttestation,
   platform: "windows-installed",
   sourceCommit: "b".repeat(40),
-  version: "0.3.5",
+  version: releaseSurfaceFixtureVersion,
   artifact,
   installationReceipt: directReceiptIdentity,
 }), []);
@@ -109,7 +113,7 @@ assert(
     attestation: wrongPid,
     platform: "windows-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifact,
     installationReceipt: directReceiptIdentity,
   }).some((error) => error.includes("processId")),
@@ -124,7 +128,7 @@ assert(
     attestation: missingMcpBinding,
     platform: "windows-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifact,
     installationReceipt: directReceiptIdentity,
   }).some((error) => error.includes("MCP")),
@@ -138,7 +142,7 @@ assert(
     attestation: collidingMcpPort,
     platform: "windows-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifact,
     installationReceipt: directReceiptIdentity,
   }).some((error) => error.includes("distinct")),
@@ -151,7 +155,7 @@ assert(
     attestation: missingWindowsNative,
     platform: "windows-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifact,
     installationReceipt: directReceiptIdentity,
   }).some((error) => error.includes("native process and listener")),
@@ -164,7 +168,7 @@ assert(
     attestation: legacySchema as ReleaseSurfaceCandidateAttestation,
     platform: "windows-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifact,
     installationReceipt: directReceiptIdentity,
   }).some((error) => error.includes("schema")),
@@ -177,7 +181,7 @@ assert(
     attestation: foreignWindowsNative,
     platform: "linux-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifact,
     installationReceipt: directReceiptIdentity,
   }).some((error) => error.includes("not valid for a non-Windows")),
@@ -191,7 +195,7 @@ assert(
     attestation: changedStart,
     platform: "windows-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifact,
     installationReceipt: directReceiptIdentity,
   }).some((error) => error.includes("Windows candidate runtime")),
@@ -228,7 +232,7 @@ assert.deepEqual(validateReleaseSurfaceCandidateAttestation({
   attestation: linuxAttestation,
   platform: "linux-installed",
   sourceCommit: "b".repeat(40),
-  version: "0.3.5",
+  version: releaseSurfaceFixtureVersion,
   artifact,
   installationReceipt: directReceiptIdentity,
 }), []);
@@ -239,7 +243,7 @@ assert(
     attestation: missingPosixNative,
     platform: "linux-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifact,
     installationReceipt: directReceiptIdentity,
   }).some((error) => error.includes("require native process and listener")),
@@ -253,7 +257,7 @@ assert(
     attestation: replacedPosixImage,
     platform: "linux-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifact,
     installationReceipt: directReceiptIdentity,
   }).some((error) => error.includes("imageSha256 does not match")),
@@ -274,7 +278,7 @@ for (const invalidBase of [
       attestation: invalidEndpoint,
       platform: "windows-installed",
       sourceCommit: "b".repeat(40),
-      version: "0.3.5",
+      version: releaseSurfaceFixtureVersion,
       artifact,
       installationReceipt: directReceiptIdentity,
     }).some((error) => error.includes("exact http://127.0.0.1")),
@@ -282,11 +286,6 @@ for (const invalidBase of [
   );
 }
 
-const installerReceiptIdentity: ReleaseSurfaceFileIdentity = {
-  basename: "installation.json",
-  sha256: "c".repeat(64),
-  bytes: 512,
-};
 const installedFromInstaller = { ...installedPayload, sha256: "d".repeat(64), bytes: 2048 };
 const installerPayloadManifest = payloadManifest({
   platform: "windows-installed",
@@ -319,7 +318,7 @@ const installerSystemEffects: ReleaseSurfaceInstallationReceipt["systemEffects"]
     details: {
       registryPath: "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\shellX",
       displayName: "shellX",
-      displayVersion: "0.3.5",
+      displayVersion: releaseSurfaceFixtureVersion,
       publisher: "shellx",
       mainBinaryName: "shellx.exe",
       installLocation: "C:\\Program Files\\ShellX",
@@ -376,7 +375,7 @@ const installationReceipt = {
   schema: RELEASE_SURFACE_INSTALLATION_RECEIPT_SCHEMA,
   platform: "windows-installed",
   sourceCommit: "b".repeat(40),
-  version: "0.3.5",
+  version: releaseSurfaceFixtureVersion,
   createdAt: "2026-07-28T17:59:00.000Z",
   method: "installer-observed",
   status: "pass",
@@ -394,7 +393,7 @@ const installationReceipt = {
     userIsAdministratorsMember: false,
     artifact: {
       ...artifact,
-      path: "C:\\Release Evidence\\ShellX_0.3.5_x64-setup.exe",
+      path: `C:\\Release Evidence\\ShellX_${releaseSurfaceFixtureVersion}_x64-setup.exe`,
       signatureStatus: "Valid",
       signerThumbprint: approvedWindowsSignature.signerCertificate.thumbprint,
       signerSubject: approvedWindowsSignature.signerCertificate.subject,
@@ -412,7 +411,7 @@ const installationReceipt = {
     },
     targetRoot: "C:\\Program Files\\ShellX",
     mainExecutablePath: installedFromInstaller.path,
-    expectedVersion: "0.3.5",
+    expectedVersion: releaseSurfaceFixtureVersion,
     webView2Identity: [{ scope: "machine-wow6432", version: "138.0.3351.121" }],
     safety: {
       machineRegistrationsBefore: [],
@@ -454,7 +453,7 @@ assert.deepEqual(validateReleaseSurfaceInstallationReceipt({
   receipt: installationReceipt,
   platform: "windows-installed",
   sourceCommit: "b".repeat(40),
-  version: "0.3.5",
+  version: releaseSurfaceFixtureVersion,
   method: "installer-observed",
   artifact,
   installedPayload: installedFromInstaller,
@@ -466,7 +465,7 @@ assert(
     receipt: failedInstallation,
     platform: "windows-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     method: "installer-observed",
     artifact,
     installedPayload: installedFromInstaller,
@@ -478,7 +477,7 @@ assert(
     receipt: { status: "pass" } as ReleaseSurfaceInstallationReceipt,
     platform: "windows-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     method: "installer-observed",
     artifact,
     installedPayload: installedFromInstaller,
@@ -518,7 +517,7 @@ const server = createServer((request, response) => {
     ok: true,
     processId: 4321,
     instanceId: "fixture-instance-0001",
-    appVersion: "0.3.5",
+    appVersion,
     buildCommit: "b".repeat(40),
     debugApiPort: address.port,
   }));
@@ -555,7 +554,7 @@ function runtimeRequest(debugBase: string, debugTokenPath: string): ReleaseSurfa
     driverKind: "tauri-command",
     platform: "linux-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: appVersion,
     inventoryDigest: "e".repeat(64),
     artifact: { basename: artifact.basename, sha256: artifact.sha256 },
     controller: syntheticReleaseSurfaceControllerBinding("b".repeat(40)),

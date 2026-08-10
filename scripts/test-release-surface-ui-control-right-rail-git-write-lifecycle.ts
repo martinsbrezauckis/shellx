@@ -9,6 +9,7 @@ import type { ReleaseSurfaceDriverReport, ReleaseSurfaceDriverRequest } from "./
 import {
   releaseSurfaceControllerBindingFixture,
   releaseSurfaceFixtureSourceCommit,
+  releaseSurfaceFixtureVersion,
 } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 import { nativePathInsideContainer } from "./release-drivers/ui-control-right-rail-git-write-lifecycle";
@@ -63,7 +64,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", profileRoot,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -177,7 +178,7 @@ function createRequest(
     driverKind: "ui-control",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: inventory.digest,
     artifact: { basename: "shellx", sha256: "b".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture(entrypoint, controllerFiles),

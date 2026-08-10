@@ -31,6 +31,7 @@ type ControlContext = {
   userDataPath: string;
   fixture: DebugApiSessionFixture;
   fixtureBytes: Buffer;
+  ownedProjectIds: Set<string>;
   projectId: string;
   projectMarker: string;
   titleMarker: string;
@@ -111,6 +112,7 @@ export async function exerciseLeftRailLifecycleCohort(
   assignments: Assignment[],
 ): Promise<ReleaseSurfaceDriverOutcome[]> {
   assertExactCohort(assignments);
+  await wait(input, "[data-debug-id='left-rail'][data-user-data-ready='true']");
   const outcomes = new Map(assignments.map((assignment) => [assignment.surface.id, emptyOutcome(assignment)]));
   const tokenPath = nodeReadablePath(request.runtime.debugTokenPath, request.platform);
   const userDataPath = join(dirname(tokenPath), "user-data.json");
@@ -127,21 +129,29 @@ export async function exerciseLeftRailLifecycleCohort(
     throw new Error("left-rail lifecycle refuses a profile that already contains project markers");
   }
   const suffix = request.sourceCommit.slice(0, 16);
+  const projectMarker = "SHELLX_RELEASE_LEFT_RAIL_PROJECT_" + suffix;
   let fixture: DebugApiSessionFixture | null = null;
   let projectId = "";
+  const ownedProjectIds = new Set<string>();
   const cleanupErrors: string[] = [];
   try {
     fixture = prepareDebugApiSessionFixture(request, "ui_left_rail_lifecycle");
     const fixtureBytes = readFileSync(fixture.path);
     await postUi(connection, { refreshPastChats: true });
-    const projectMarker = "SHELLX_RELEASE_LEFT_RAIL_PROJECT_" + suffix;
     for (const assignment of assignments.filter((entry) => (
       entry.surface.id.includes("left-add-project") || entry.surface.id.includes("left-project-rename-input")
     ))) {
       const outcome = outcomes.get(assignment.surface.id)!;
-      await operate(outcome, () => exerciseProjectDraft(input, userDataPath, assignment, outcome, projectMarker));
+      await operate(outcome, () => exerciseProjectDraft(
+        input,
+        userDataPath,
+        assignment,
+        outcome,
+        projectMarker,
+        ownedProjectIds,
+      ));
     }
-    projectId = await createProject(input, userDataPath, projectMarker);
+    projectId = await createProject(input, userDataPath, projectMarker, ownedProjectIds);
     await ensureProjectExpanded(input, projectId);
     const context: ControlContext = {
       connection,
@@ -149,6 +159,7 @@ export async function exerciseLeftRailLifecycleCohort(
       userDataPath,
       fixture,
       fixtureBytes,
+      ownedProjectIds,
       projectId,
       projectMarker,
       titleMarker: "SHELLX_RELEASE_LEFT_RAIL_TITLE_" + suffix,
@@ -188,8 +199,15 @@ export async function exerciseLeftRailLifecycleCohort(
       try { await unfilePast(contextForCleanup(connection, input, userDataPath, fixture, projectId, baselineTab, baselineTitle), fixture.id); } catch (error) { cleanupErrors.push(message(error)); }
     }
     try { await restoreActive(connection, input, baselineActiveId, baselineTabs); } catch (error) { cleanupErrors.push(message(error)); }
-    if (projectId) {
-      try { await deleteProjectMarker(input, projectId); } catch (error) { cleanupErrors.push(message(error)); }
+    const cleanupProjectIds = new Set([
+      ...ownedProjectIds,
+      ...(projectId ? [projectId] : []),
+      ...projectsValue(readUserData(userDataPath)[PROJECTS_KEY])
+        .filter((project) => project.name === projectMarker)
+        .map((project) => project.id),
+    ]);
+    for (const ownedProjectId of cleanupProjectIds) {
+      try { await deleteProjectMarker(input, userDataPath, ownedProjectId); } catch (error) { cleanupErrors.push(message(error)); }
     }
     if (fixture) {
       const cleanup = cleanupDebugApiSessionFixture(fixture);
@@ -228,6 +246,7 @@ function contextForCleanup(
     userDataPath,
     fixture,
     fixtureBytes: existsSync(fixture.path) ? readFileSync(fixture.path) : Buffer.alloc(0),
+    ownedProjectIds: new Set(projectId ? [projectId] : []),
     projectId,
     projectMarker: "",
     titleMarker: "",
@@ -267,12 +286,15 @@ async function exerciseProjectDraft(
   assignment: Assignment,
   outcome: ReleaseSurfaceDriverOutcome,
   marker: string,
+  ownedProjectIds: Set<string>,
 ): Promise<void> {
   const add = await wait(input, "[data-debug-id='left-add-project']");
   outcome.present = "pass";
   await clickElement(input, add);
   outcome.invoke = "pass";
   const draft = await wait(input, "[data-debug-id='left-project-rename-input']");
+  const draftProject = await waitOwnedProjectDraft(userDataPath, ownedProjectIds);
+  ownedProjectIds.add(draftProject.id);
   if (assignment.surface.id.includes("left-project-rename-input")) {
     await clearReleaseSurfaceInstalledInputElement(input, draft);
     await setReleaseSurfaceInstalledInputElementValue(input, draft, marker);
@@ -284,9 +306,11 @@ async function exerciseProjectDraft(
     );
     const project = projectsValue(data[PROJECTS_KEY]).find((entry) => entry.name === marker);
     if (!project) throw new Error("owned project draft did not expose the exact persisted identity");
+    if (project.id !== draftProject.id) throw new Error("owned project rename changed its exact draft identity");
+    await waitForReleaseSurfaceInstalledInputElementAbsent(input, "[data-debug-id='left-project-rename-input']");
     outcome.observedEffect = "Native installed text entry persisted the exact isolated project name under one owned marker.";
     outcome.effect = "pass";
-    await deleteProjectMarker(input, project.id);
+    await deleteProjectMarker(input, userDataPath, project.id);
     return;
   } else {
     outcome.observedEffect = "A native installed-input click created one exact isolated inline project draft.";
@@ -295,6 +319,7 @@ async function exerciseProjectDraft(
   await clearReleaseSurfaceInstalledInputElement(input, draft);
   await performReleaseSurfaceInstalledInputKeyChord(input, [RETURN_KEY]);
   await waitForReleaseSurfaceInstalledInputElementAbsent(input, "[data-debug-id='left-project-rename-input']");
+  await waitUserData(userDataPath, (value) => projectsValue(value[PROJECTS_KEY]).length === 0, "empty project draft removal");
 }
 
 async function exerciseOwnedProjectExpansion(
@@ -345,7 +370,7 @@ async function exerciseOwnedProjectMarkerDelete(
   await waitForReleaseSurfaceInstalledInputElementAbsent(context.input, block);
   outcome.effect = "pass";
   outcome.observedEffect = "Native installed input deleted only the exact owned empty project marker.";
-  return createProject(context.input, context.userDataPath, context.projectMarker);
+  return createProject(context.input, context.userDataPath, context.projectMarker, context.ownedProjectIds);
 }
 
 async function exerciseOwnedProjectAndSessionsDelete(
@@ -369,7 +394,7 @@ async function exerciseOwnedProjectAndSessionsDelete(
   outcome.effect = "pass";
   outcome.observedEffect = "Native installed input deleted the exact owned project marker and its one explicitly assigned disposable session JSONL.";
   await restoreOwnedSession(context);
-  return createProject(context.input, context.userDataPath, context.projectMarker);
+  return createProject(context.input, context.userDataPath, context.projectMarker, context.ownedProjectIds);
 }
 
 async function exercisePastRename(context: ControlContext, outcome: ReleaseSurfaceDriverOutcome): Promise<void> {
@@ -584,14 +609,49 @@ async function exerciseSessionCancel(context: ControlContext, outcome: ReleaseSu
   outcome.observedEffect = "The session " + (backdrop ? "backdrop" : "Cancel button") + " closed the dialog without removing the baseline tab.";
 }
 
-async function createProject(input: ReleaseSurfaceInstalledInputSession, userDataPath: string, marker: string): Promise<string> {
+async function createProject(
+  input: ReleaseSurfaceInstalledInputSession,
+  userDataPath: string,
+  marker: string,
+  ownedProjectIds: Set<string>,
+): Promise<string> {
+  await waitUserData(
+    userDataPath,
+    (value) => !projectsValue(value[PROJECTS_KEY]).some((project) => project.name === marker),
+    "owned project marker absence before creation",
+  );
   await click(input, "[data-debug-id='left-add-project']");
-  await replaceAndCommit(input, await wait(input, "[data-debug-id='left-project-rename-input']"), marker);
+  const draft = await wait(input, "[data-debug-id='left-project-rename-input']");
+  const draftProject = await waitOwnedProjectDraft(userDataPath, ownedProjectIds);
+  ownedProjectIds.add(draftProject.id);
+  await replaceAndCommit(input, draft, marker);
+  await waitForReleaseSurfaceInstalledInputElementAbsent(input, "[data-debug-id='left-project-rename-input']");
   const data = await waitUserData(userDataPath, (value) => projectsValue(value[PROJECTS_KEY]).filter((project) => project.name === marker).length === 1, "owned project persistence");
   const project = projectsValue(data[PROJECTS_KEY]).find((entry) => entry.name === marker);
   if (!project || !/^[A-Za-z0-9._:-]{1,512}$/.test(project.id)) throw new Error("owned project did not expose a bounded exact id");
+  if (project.id !== draftProject.id) throw new Error("owned project persistence changed its exact draft identity");
   await wait(input, ".project-block[data-project-id='" + project.id + "']");
   return project.id;
+}
+
+async function waitOwnedProjectDraft(
+  userDataPath: string,
+  ownedProjectIds: Set<string>,
+): Promise<{ id: string; name: string }> {
+  const data = await waitUserData(
+    userDataPath,
+    (value) => projectsValue(value[PROJECTS_KEY]).some((project) => (
+      project.name === "New project" && !ownedProjectIds.has(project.id)
+    )),
+    "owned default project draft creation",
+  );
+  const project = projectsValue(data[PROJECTS_KEY]).find((entry) => (
+    entry.name === "New project" && !ownedProjectIds.has(entry.id)
+  ));
+  if (!project || !/^proj-[a-z0-9]{8}$/.test(project.id)) {
+    throw new Error("owned default project draft did not expose its bounded generated identity");
+  }
+  return project;
 }
 
 async function ensureProjectExpanded(input: ReleaseSurfaceInstalledInputSession, projectId: string): Promise<void> {
@@ -608,12 +668,22 @@ async function ensureProjectCollapsed(input: ReleaseSurfaceInstalledInputSession
   await waitForReleaseSurfaceInstalledInputElementAbsent(input, base + "[aria-expanded='true']");
 }
 
-async function deleteProjectMarker(input: ReleaseSurfaceInstalledInputSession, projectId: string): Promise<void> {
+async function deleteProjectMarker(
+  input: ReleaseSurfaceInstalledInputSession,
+  userDataPath: string,
+  projectId: string,
+): Promise<void> {
   const block = ".project-block[data-project-id='" + projectId + "']";
-  if (!await visible(input, block)) return;
-  await click(input, block + " [aria-label='Delete project']");
-  await click(input, "[role='alertdialog'][aria-labelledby='proj-del-title'] .proj-delete-actions > button:first-child");
-  await waitForReleaseSurfaceInstalledInputElementAbsent(input, block);
+  if (await visible(input, block)) {
+    await click(input, block + " [aria-label='Delete project']");
+    await click(input, "[role='alertdialog'][aria-labelledby='proj-del-title'] .proj-delete-actions > button:first-child");
+    await waitForReleaseSurfaceInstalledInputElementAbsent(input, block);
+  }
+  await waitUserData(
+    userDataPath,
+    (value) => !projectsValue(value[PROJECTS_KEY]).some((project) => project.id === projectId),
+    "owned project marker deletion",
+  );
 }
 
 async function assignOpen(context: ControlContext, tabId: string): Promise<void> {

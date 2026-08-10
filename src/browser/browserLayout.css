@@ -1,0 +1,806 @@
+/* ShellX Browser module window. */
+.shellx-browser-app {
+  position: relative;
+  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+}
+.shellx-browser-chrome-shell {
+  position: relative;
+  z-index: 90;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.shellx-browser-app[data-color-mode="light"] {
+  --bg: #f5f6f4;
+  --surface: #ffffff;
+  --surface-2: #eef0ed;
+  --surface-3: #e4e7e2;
+  --hairline: #d9ddd6;
+  --hairline-2: #c9cec6;
+  --ink: #141512;
+  --ink-2: #555b50;
+  --ink-3: #5e6459;
+  --ink-4: #62685d;
+}
+.shellx-browser-app[data-color-mode="dark"] {
+  --bg: #0a0a0a;
+  --surface: #0e0e0d;
+  --surface-2: #131312;
+  --surface-3: #1a1a18;
+  --hairline: #1f1f1d;
+  --hairline-2: #2a2a28;
+  --ink: #f5f5f4;
+  --ink-2: #a8a8a4;
+  --ink-3: #92928d;
+  --ink-4: #83837e;
+}
+@media (prefers-color-scheme: light) {
+  .shellx-browser-app[data-color-mode="system"] {
+    --bg: #f5f6f4;
+    --surface: #ffffff;
+    --surface-2: #eef0ed;
+    --surface-3: #e4e7e2;
+    --hairline: #d9ddd6;
+    --hairline-2: #c9cec6;
+    --ink: #141512;
+    --ink-2: #555b50;
+    --ink-3: #5e6459;
+    --ink-4: #62685d;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  .shellx-browser-app[data-color-mode="system"] {
+    --bg: #0a0a0a;
+    --surface: #0e0e0d;
+    --surface-2: #131312;
+    --surface-3: #1a1a18;
+    --hairline: #1f1f1d;
+    --hairline-2: #2a2a28;
+    --ink: #f5f5f4;
+    --ink-2: #a8a8a4;
+    --ink-3: #92928d;
+    --ink-4: #83837e;
+  }
+}
+.shellx-browser-top {
+  position: relative;
+  z-index: 90;
+  overflow: visible;
+  min-height: 112px;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 8px;
+  padding: 8px 14px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: linear-gradient(180deg, #080808 0%, #030303 100%);
+}
+.shellx-browser-tab-chrome {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  overflow: visible;
+}
+.shellx-browser-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.shellx-browser-ownership-banner {
+  min-width: 0;
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1;
+}
+.shellx-browser-ownership-banner span {
+  color: var(--ink);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.shellx-browser-ownership-banner small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-ownership-banner.agent,
+.shellx-browser-ownership-banner.delegated {
+  border-color: rgba(116, 185, 151, 0.36);
+  background: rgba(43, 89, 68, 0.18);
+}
+.shellx-browser-ownership-banner.disposable {
+  border-color: rgba(179, 151, 88, 0.36);
+  background: rgba(93, 74, 39, 0.2);
+}
+.shellx-browser-address-row {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 32px 32px 32px 32px minmax(160px, 1fr) max-content;
+  align-items: center;
+  gap: 6px;
+}
+.shellx-browser-address-shell {
+  min-width: 0;
+  height: 32px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) 28px 24px;
+  align-items: center;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+}
+.shellx-browser-shields-wrap {
+  position: relative;
+  min-width: 0;
+}
+.shellx-browser-trust-chip {
+  height: 22px;
+  max-width: 94px;
+  margin-left: 5px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  font-family: inherit;
+  cursor: pointer;
+}
+.shellx-browser-trust-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shellx-browser-trust-chip.secure {
+  border-color: rgba(34, 197, 94, 0.3);
+  color: var(--ok);
+}
+.shellx-browser-trust-chip.localHttp,
+.shellx-browser-trust-chip.browserInternal,
+.shellx-browser-trust-chip.unknown {
+  border-color: rgba(234, 179, 8, 0.32);
+  color: #d6a91e;
+}
+.shellx-browser-trust-chip.insecureHttp {
+  border-color: rgba(244, 63, 94, 0.38);
+  color: #f87171;
+}
+.shellx-browser-shields-panel {
+  left: 0;
+  top: calc(100% + 8px);
+  width: min(320px, 78vw);
+  display: grid;
+  gap: 10px;
+}
+.shellx-browser-shields-status {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.shellx-browser-shields-status span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+.shellx-browser-shields-status small {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.shellx-browser-toggle-row,
+.shellx-browser-field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.shellx-browser-field-row select {
+  max-width: 152px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  padding: 5px 8px;
+}
+.shellx-browser-toggle-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.shellx-browser-shields-actions {
+  display: grid;
+  gap: 6px;
+  padding-top: 2px;
+}
+@media (max-width: 720px) {
+  .shellx-browser-trust-chip {
+    width: 22px;
+    max-width: 22px;
+    padding: 0;
+    justify-content: center;
+  }
+  .shellx-browser-trust-chip span {
+    display: none;
+  }
+}
+.shellx-browser-address-shell input {
+  border: 0;
+  background: transparent;
+}
+.shellx-browser-address-shell input:focus-visible {
+  outline: none;
+}
+.shellx-browser-address-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+.shellx-browser-address-copy {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.shellx-browser-address-copy:hover {
+  border-color: var(--hairline);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.shellx-browser-address-copy:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+.shellx-browser-profile-marker,
+.shellx-browser-tab-profile-marker {
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.08);
+  color: var(--ok);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 750;
+}
+.shellx-browser-address-actions {
+  min-width: max-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.shellx-browser-options-wrap {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 140;
+  display: inline-flex;
+}
+.shellx-browser-header-menu-wrap {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 140;
+  display: inline-flex;
+}
+.shellx-browser-download-icon-status {
+  position: relative;
+  color: var(--ink-2);
+}
+.shellx-browser-download-icon-status.pending {
+  color: #f59e0b;
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--hairline-2));
+}
+.shellx-browser-download-icon-status.done {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 38%, var(--hairline-2));
+}
+.shellx-browser-download-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--surface);
+  border-radius: 999px;
+  padding: 0 4px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: var(--fs-ui-xs);
+  font-weight: 800;
+  line-height: 1;
+}
+.shellx-browser-download-icon-status.pending .shellx-browser-download-badge {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: #f59e0b;
+  color: #11110f;
+}
+.shellx-browser-download-icon-status.done .shellx-browser-download-badge {
+  border-color: rgba(34, 197, 94, 0.55);
+  background: var(--ok);
+  color: #07130b;
+}
+.shellx-browser-vault-fill-status {
+  position: relative;
+  color: var(--ink-3);
+}
+.shellx-browser-vault-fill-status.available {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 38%, var(--hairline-2));
+}
+.shellx-browser-vault-fill-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(34, 197, 94, 0.55);
+  border-radius: 999px;
+  padding: 0 4px;
+  background: var(--ok);
+  color: #07130b;
+  font-size: var(--fs-ui-xs);
+  font-weight: 800;
+  line-height: 1;
+}
+.shellx-browser-vault-fill-panel {
+  width: min(500px, 92vw);
+}
+.shellx-browser-vault-fill-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.shellx-browser-vault-fill-head strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+.shellx-browser-vault-fill-head span,
+.shellx-browser-vault-fill-empty {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.shellx-browser-vault-fill-list {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.shellx-browser-vault-fill-suggestion {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: start;
+  gap: 7px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  padding: 8px 10px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.shellx-browser-vault-fill-suggestion:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ok) 36%, var(--hairline-2));
+  color: var(--ink);
+}
+.shellx-browser-vault-fill-suggestion:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+.shellx-browser-vault-fill-kind,
+.shellx-browser-vault-fill-user-only {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.shellx-browser-vault-fill-kind,
+.shellx-browser-vault-fill-user-only {
+  justify-self: start;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: var(--surface);
+  color: var(--ink-3);
+  text-transform: uppercase;
+}
+.shellx-browser-vault-fill-user-only {
+  color: var(--ok);
+  text-transform: none;
+}
+.shellx-browser-vault-fill-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.shellx-browser-vault-fill-main strong,
+.shellx-browser-vault-fill-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-vault-fill-main strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.shellx-browser-vault-fill-main small,
+.shellx-browser-vault-fill-target {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+.shellx-browser-vault-fill-main small {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+}
+.shellx-browser-vault-fill-target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-header-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 160;
+  width: 288px;
+  max-height: min(520px, calc(100vh - 132px));
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-card);
+  padding: 10px;
+  background: var(--surface);
+  box-shadow: 0 18px 56px rgba(0, 0, 0, 0.4);
+}
+.shellx-browser-chrome-menu-dock {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 120;
+  display: flex;
+  padding: 8px 14px 10px;
+  pointer-events: none;
+}
+.shellx-browser-chrome-menu-dock.align-right {
+  justify-content: flex-end;
+}
+.shellx-browser-chrome-menu-dock.align-left {
+  justify-content: flex-start;
+  padding-left: 258px;
+}
+.shellx-browser-chrome-menu-dock > * {
+  pointer-events: auto;
+}
+.shellx-browser-docked-popover {
+  position: relative;
+  top: auto;
+  right: auto;
+  max-height: min(420px, calc(100vh - 140px));
+}
+.shellx-browser-left-sidecar,
+.shellx-browser-bookmark-manager-dock {
+  position: relative;
+  z-index: 85;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  overflow: hidden;
+  border-right: 1px solid var(--hairline);
+  padding: 10px;
+  background: var(--surface);
+}
+.shellx-browser-history-sidecar {
+  min-width: 0;
+}
+.shellx-browser-download-sidecar {
+  min-width: 0;
+}
+.shellx-browser-options-sidecar {
+  min-width: 0;
+  gap: 0;
+  padding: 0;
+}
+.shellx-browser-history-head,
+.shellx-browser-download-head,
+.shellx-browser-options-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.shellx-browser-history-head h2,
+.shellx-browser-download-head h2,
+.shellx-browser-options-head h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.shellx-browser-options-head {
+  min-height: 42px;
+  border-bottom: 1px solid var(--hairline);
+  padding: 10px;
+}
+.shellx-browser-options-body {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  overflow: auto;
+  padding: 10px;
+}
+.shellx-browser-options-section {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--hairline);
+  padding: 0 0 10px;
+}
+.shellx-browser-options-section:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.shellx-browser-options-section h3 {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.shellx-browser-personal-lock-status {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  padding: 7px 8px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-personal-lock-status span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-history-scope,
+.shellx-browser-history-filters,
+.shellx-browser-history-head .shellx-browser-utility-row,
+.shellx-browser-download-folder {
+  grid-column: 1 / -1;
+}
+.shellx-browser-download-folder {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.shellx-browser-download-folder span {
+  grid-column: 1 / -1;
+}
+.shellx-browser-download-folder input {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11.5px;
+  text-transform: none;
+}
+.shellx-browser-history-filters {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 6px;
+}
+.shellx-browser-history-filters input,
+.shellx-browser-history-filters select {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.shellx-browser-history-list {
+  min-height: 0;
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  grid-auto-rows: max-content;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.shellx-browser-download-list {
+  min-height: 0;
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  grid-auto-rows: max-content;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.shellx-browser-history-list-row {
+  min-width: 0;
+  min-height: 50px;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 7px;
+  row-gap: 3px;
+  align-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  padding: 7px;
+  text-align: left;
+  cursor: pointer;
+}
+.shellx-browser-history-list-row svg {
+  grid-row: 1 / 4;
+  color: var(--ink-3);
+}
+.shellx-browser-history-list-row span,
+.shellx-browser-history-list-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-history-list-row span {
+  color: var(--ink);
+  font-size: var(--fs-ui-sm);
+  font-weight: 650;
+}
+.shellx-browser-history-list-row small {
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+}
+.shellx-browser-history-list-row .shellx-browser-history-url {
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.shellx-browser-history-list-row:hover {
+  border-color: var(--hairline-2);
+  background: var(--surface);
+}
+.shellx-browser-download-row {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  padding: 7px;
+}
+.shellx-browser-download-row.requested {
+  border-color: rgba(245, 158, 11, 0.34);
+}
+.shellx-browser-download-row.completed {
+  border-color: rgba(34, 197, 94, 0.34);
+}
+.shellx-browser-download-row-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.shellx-browser-download-kind,
+.shellx-browser-download-status {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+.shellx-browser-download-status {
+  flex: 0 0 auto;
+}
+.shellx-browser-download-row p,
+.shellx-browser-download-row small {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-download-row p {
+  color: var(--ink);
+  font-size: var(--fs-ui-sm);
+  font-weight: 650;
+}
+.shellx-browser-download-row small {
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+}

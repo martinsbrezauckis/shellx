@@ -444,9 +444,10 @@ fn validate_provider_action_release_fixture_cwd(cwd: &str) -> Result<String, Str
     Ok(canonical_cwd.to_string_lossy().to_string())
 }
 
+#[deny(clippy::expect_used, clippy::unwrap_used)]
 fn validate_provider_action_release_fixture_request(
     body: &crate::provider_sessions::ProviderSessionStartRequest,
-) -> Result<(String, String, String), String> {
+) -> Result<(String, String, String, String), String> {
     use crate::provider_adapters::{
         ProviderExecutionTransport, ProviderId, ProviderPermissionMode, ProviderShellxToolExposure,
     };
@@ -497,30 +498,32 @@ fn validate_provider_action_release_fixture_request(
         );
     }
     let cwd = validate_provider_action_release_fixture_cwd(&body.cwd)?;
-    Ok((tab_id.to_string(), cwd, prompt.to_string()))
+    Ok((
+        tab_id.to_string(),
+        cwd,
+        prompt.to_string(),
+        fixture.action.clone(),
+    ))
 }
 
+#[deny(clippy::expect_used, clippy::unwrap_used)]
 async fn provider_action_release_fixture_start(
     s: ApiState,
     body: crate::provider_sessions::ProviderSessionStartRequest,
 ) -> Response {
     use sha2::{Digest, Sha256};
 
-    let (tab_id, cwd, prompt) = match validate_provider_action_release_fixture_request(&body) {
-        Ok(value) => value,
-        Err(error) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "ok": false, "error": error })),
-            )
-                .into_response();
-        }
-    };
-    let action = body
-        .release_fixture
-        .as_ref()
-        .map(|fixture| fixture.action.clone())
-        .expect("validated release fixture");
+    let (tab_id, cwd, prompt, action) =
+        match validate_provider_action_release_fixture_request(&body) {
+            Ok(value) => value,
+            Err(error) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "ok": false, "error": error })),
+                )
+                    .into_response();
+            }
+        };
     let digest = format!("{:x}", Sha256::digest(prompt.as_bytes()));
     let registry = s
         .app

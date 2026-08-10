@@ -15,6 +15,11 @@ import { useEffect, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { api } from "../lib/debug-api";
 import { PROJECTS_COLLAPSE_KEY, persistUserData } from "../lib/userStore";
+import {
+  projectCollapseDefaults,
+  reconcileProjectCollapse,
+  toggleProjectCollapse,
+} from "../lib/projectCollapse";
 import { ShellIcon, TransportIcon, transportTitle } from "./icons";
 import { RowActions } from "./RowActions";
 import { useModalFocus } from "../lib/useModalFocus";
@@ -65,25 +70,21 @@ export interface OpenTabRow {
  * any failure yields the default map.
  */
 function loadCollapseMap(projects: ProjectMeta[]): Record<string, boolean> {
+  let persisted: Record<string, unknown> = {};
   try {
     const raw = localStorage.getItem(PROJECTS_COLLAPSE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object") return parsed;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) persisted = parsed;
     }
   } catch { /* fallthrough */ }
-  const m: Record<string, boolean> = {};
-  projects.forEach((p, i) => {
-    m[p.id] = i !== 0; // first expanded, rest collapsed
-  });
-  return m;
+  return projectCollapseDefaults(projects, persisted);
 }
 
 export function LeftRail({
   cwd,
   activeTabId,
   onPreviewFile: _onPreviewFile,
-  onOpenProject,
   onOpenChat,
   projects = [],
   openTabs = [],
@@ -105,7 +106,6 @@ export function LeftRail({
   cwd: string;
   activeTabId?: string | null;
   onPreviewFile: (path: string) => void;
-  onOpenProject?: (projectId: string, projectName: string) => void;
   onOpenChat?: (chatId: string, projectId?: string, transport?: string) => void;
  /** Projects from App's localStorage-backed store. */
   projects?: ProjectMeta[];
@@ -189,11 +189,11 @@ export function LeftRail({
 
   useEffect(() => {
     if (!userDataReady) return;
-    setCollapse(loadCollapseMap(projects));
+    setCollapse((current) => reconcileProjectCollapse(projects, current, loadCollapseMap(projects)));
   }, [projects, userDataReady]);
 
   const toggleProject = (id: string) =>
-    setCollapse((m) => ({ ...m, [id]: !m[id] }));
+    setCollapse((current) => toggleProjectCollapse(current, id));
 
   const onClickChat = (chatId: string, projectId?: string, transport?: string) => {
     onOpenChat?.(chatId, projectId, transport);
@@ -332,8 +332,27 @@ export function LeftRail({
     };
   }, [chatCtx]);
 
+  // Disk-backed project/session metadata hydrates asynchronously on boot.
+  // Keep every mutating rail control out of the interaction tree until that
+  // first read finishes; otherwise a very fast click can be overwritten by
+  // the late hydration result.
+  if (!userDataReady) {
+    return (
+      <aside
+        className="left"
+        data-user-data-ready="false"
+        aria-busy="true"
+      />
+    );
+  }
+
   return (
-    <aside className="left" data-debug-id="left-rail">
+    <aside
+      className="left"
+      data-debug-id="left-rail"
+      data-user-data-ready="true"
+      aria-busy="false"
+    >
 
  {/* Panel header — collapse-all toggle + project count + add button. */}
       <div className="left-hdr">

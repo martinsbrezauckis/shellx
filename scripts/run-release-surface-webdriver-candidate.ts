@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import type { ReleasePlatform, ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
 import { ensureEdgeDriver, installedMicrosoftEdgeVersion } from "./edge-webdriver";
 import { loadReleaseSurfaceCandidateAttestation } from "./lib/release-surface-candidate-attestation";
 import { loadFinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
-import { runReleaseSurfaceDrivers } from "./lib/release-surface-driver-runner";
+import {
+  releaseSurfaceDriverRunFailedDriverIds,
+  runReleaseSurfaceDrivers,
+} from "./lib/release-surface-driver-runner";
 import { startReleaseSurfaceHealthCollector } from "./lib/release-surface-health-collector";
 import type { ReleaseSurfaceHealthEvidence } from "./lib/release-surface-health-evidence";
 import {
@@ -32,17 +35,29 @@ import {
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
+const selectedDriverIds = readArgs(args, "--driver-id")
+  .flatMap((value) => value.split(","))
+  .map((value) => value.trim())
+  .filter(Boolean);
+const targetedClosure = selectedDriverIds.length > 0;
+const expectedExecutionWindow = targetedClosure
+  ? "targeted-post-matrix"
+  : "immediately-before-publish";
 if (readArg(args, "--candidate-stage") !== "signed-and-frozen"
-  || readArg(args, "--execution-window") !== "immediately-before-publish") {
+  || readArg(args, "--execution-window") !== expectedExecutionWindow) {
   throw new Error(
-    "refusing routine execution: pass --candidate-stage signed-and-frozen "
-    + "--execution-window immediately-before-publish for the final candidate only",
+    targetedClosure
+      ? "refusing targeted execution: pass --candidate-stage signed-and-frozen "
+        + "--execution-window targeted-post-matrix with one or more --driver-id values"
+      : "refusing routine execution: pass --candidate-stage signed-and-frozen "
+        + "--execution-window immediately-before-publish for the final candidate only",
   );
 }
 const platform = requiredArg(args, "--platform") as ReleasePlatform;
 if (platform !== "windows-installed" && platform !== "linux-installed") {
   throw new Error("external WebDriver orchestration supports only windows-installed or linux-installed");
 }
+assertLinuxDisplayAuthority(platform);
 const runId = requiredArg(args, "--run-id");
 const artifactPath = requiredArg(args, "--artifact");
 const signatureReceiptPath = requiredArg(args, "--signature-receipt");
@@ -240,6 +255,7 @@ const result = await withReleaseSurfaceWebDriverOrchestration({
     candidateAttestationPath,
     installationReceiptPath,
     outputDir: driverOutputDir,
+    ...(targetedClosure ? { selectedDriverIds } : {}),
     nativeWebDriver: session,
   });
   const manifestPath = join(resolve(driverOutputDir), "run-manifest.json");
@@ -253,14 +269,43 @@ const result = await withReleaseSurfaceWebDriverOrchestration({
   });
   context.bindProviderRouteBatch(providerRoutes.manifestPath);
   scenarioInputs = { providerRoutes: providerRoutes.batch };
+  const failedDriverIds = releaseSurfaceDriverRunFailedDriverIds(manifest, driverOutputDir);
+  if (failedDriverIds.length > 0) {
+    throw new Error(
+      `complete discovery matrix recorded failed driver sections: ${failedDriverIds.join(", ")}`,
+    );
+  }
   return { manifest, providerRoutes: providerRoutes.batch };
 });
 
 console.log(
-  `Final ${platform} WebDriver candidate orchestration passed `
+  `${targetedClosure ? "Targeted" : "Final"} ${platform} WebDriver candidate orchestration passed `
   + `${result.value.manifest.driverReports.reduce((sum, report) => sum + report.outcomes, 0)} exact surface outcomes `
   + `and ${result.value.providerRoutes.routes.length} exact provider routes.`,
 );
+
+function assertLinuxDisplayAuthority(value: ReleasePlatform): void {
+  if (value !== "linux-installed") return;
+  const display = process.env.DISPLAY?.trim();
+  if (!display) throw new Error("Linux installed-candidate orchestration requires DISPLAY");
+  const xauthority = process.env.XAUTHORITY?.trim();
+  if (!xauthority) {
+    throw new Error(
+      "Linux installed-candidate orchestration requires XAUTHORITY whenever DISPLAY is set; "
+      + "without it exact ShellX-window capture can silently fail under Xwayland",
+    );
+  }
+  let stat;
+  try {
+    stat = lstatSync(xauthority);
+    accessSync(xauthority, constants.R_OK);
+  } catch (error) {
+    throw new Error(`Linux XAUTHORITY is not a readable file: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error("Linux XAUTHORITY must be a readable regular non-link file");
+  }
+}
 console.log(`Evidence: ${resolve(orchestrationEvidencePath)}`);
 
 async function waitForCandidateRuntime(input: {
@@ -421,6 +466,14 @@ function readArg(values: string[], name: string): string | undefined {
   const index = values.indexOf(name);
   if (index >= 0) return values[index + 1];
   return values.find((value) => value.startsWith(`${name}=`))?.slice(name.length + 1);
+}
+
+function readArgs(values: string[], name: string): string[] {
+  const prefix = `${name}=`;
+  return values.flatMap((value, index) => {
+    if (value === name) return values[index + 1] ? [values[index + 1]!] : [];
+    return value.startsWith(prefix) ? [value.slice(prefix.length)] : [];
+  });
 }
 
 function delay(ms: number): Promise<void> {

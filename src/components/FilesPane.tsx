@@ -42,12 +42,13 @@ export function FilesPane({
   const cwdFolder = normalizeFolderPath(cwd);
   const parentFolder = parentFolderPath(currentFolder);
   const atSessionFolder = folderPathsEqual(currentFolder, cwd);
+  const desktopHost = inTauri();
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
     setEntries(null);
-    if (!cwd || !inTauri()) return;
+    if (!cwd || !desktopHost) return;
     (async () => {
       try {
         const res = await invoke<FsEntry[]>("list_project_files", {
@@ -61,7 +62,7 @@ export function FilesPane({
       }
     })();
     return () => { cancelled = true; };
-  }, [fullPath, cwd, activeTabId, connectionId]);
+  }, [fullPath, cwd, activeTabId, connectionId, desktopHost]);
 
   useEffect(() => {
     setCurrentFolder(normalizeFolderPath(cwd));
@@ -173,7 +174,13 @@ export function FilesPane({
           <div className="rail-empty-hint">Open or connect a session to browse files.</div>
         </div>
       )}
-      {!error && cwdFolder && entries === null && (
+      {!error && cwdFolder && !desktopHost && (
+        <div className="rail-empty">
+          <div className="rail-empty-line">Files need the desktop host.</div>
+          <div className="rail-empty-hint">Run ShellX as a desktop app to browse the active session folder.</div>
+        </div>
+      )}
+      {!error && cwdFolder && desktopHost && entries === null && (
         <div className="rail-empty"><div className="rail-empty-line">Loading...</div></div>
       )}
       {!error && entries && entries.length === 0 && (

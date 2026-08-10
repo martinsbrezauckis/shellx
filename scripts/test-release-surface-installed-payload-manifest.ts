@@ -4,7 +4,6 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  RELEASE_SURFACE_INSTALLED_PAYLOAD_MANIFEST_SCHEMA,
   collectReleaseSurfaceInstalledPayloadManifest,
   collectReleaseSurfaceInstalledPayloadManifestForPlatform,
   isReleaseSurfacePathInsideRoot,

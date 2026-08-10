@@ -1,10 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const port = Number(requiredArg(args, "--port"));
 const auditOut = requiredArg(args, "--audit-out");
 const expectedApplication = requiredArg(args, "--expected-application");
+const expectedWorkingDirectory = requiredArg(args, "--expected-working-directory");
 const sessionId = requiredArg(args, "--session-id");
 const deleteFails = args.includes("--delete-fails");
 const exitBeforeReady = args.includes("--exit-before-ready");
@@ -12,6 +13,10 @@ const largeLog = args.includes("--large-log");
 const sessionDelayMs = optionalBoundedMilliseconds(args, "--session-delay-ms");
 let sessionCreated = false;
 let sessionDeleted = false;
+
+if (realpathSync(process.cwd()) !== realpathSync(expectedWorkingDirectory)) {
+  throw new Error("tauri-driver working directory mismatch");
+}
 
 if (exitBeforeReady) {
   console.error("fixture-private-driver-log-must-not-enter-evidence");

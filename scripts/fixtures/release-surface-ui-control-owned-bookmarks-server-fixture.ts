@@ -728,9 +728,10 @@ function dynamicToolbarSelector(selector: string): { kind: "folder" | "link" | "
 function dynamicBookmarkNavigationSelector(selector: string): { kind: "list" | "manager"; id: string } | null {
   const list = selector.match(/^\[data-debug-id='shellx-browser-bookmark-([^']+)'\]$/);
   if (list && bookmarks.has(list[1]!)) return { kind: "list", id: list[1]! };
-  const manager = selector.match(/^\[data-debug-id='surface-browser-components-bookmarksidecar-5'\]\[aria-label='Open ([^']+)'\]$/);
+  const manager = selector.match(/^\[data-debug-id='shellx-browser-bookmark-open-([^']+)'\]\[aria-label='Open ([^']+)'\]$/);
   if (!manager) return null;
-  const bookmark = [...bookmarks.values()].find((candidate) => candidate.label === manager[1]);
+  const bookmark = bookmarks.get(manager[1]!);
+  if (bookmark?.label !== manager[2]) return null;
   return bookmark ? { kind: "manager", id: bookmark.bookmarkId } : null;
 }
 
@@ -865,8 +866,8 @@ function editModeSelector() { return "[data-debug-id='shellx-browser-bookmark-ma
 function draftLabelSelector() { return "[data-debug-id='shellx-browser-bookmark-draft-label']"; }
 function draftUrlSelector() { return "[data-debug-id='shellx-browser-bookmark-draft-url']"; }
 function draftFolderSelector() { return "[data-debug-id='shellx-browser-bookmark-draft-folder']"; }
-function newFolderSelector() { return "[aria-label='New folder']"; }
-function addLinkSelector() { return "[aria-label='Add link']"; }
+function newFolderSelector() { return "[data-debug-id='shellx-browser-bookmark-create-folder']"; }
+function addLinkSelector() { return "[data-debug-id='shellx-browser-bookmark-create-link']"; }
 
 candidate.listen(0, "127.0.0.1", () => {
   webdriver.listen(0, "127.0.0.1", () => {

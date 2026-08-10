@@ -54,6 +54,7 @@ export interface ReleaseSurfaceWebDriverLifecycleInput {
   tauriDriverCommand: string;
   tauriDriverNodePath?: string;
   tauriDriverArgsPrefix?: string[];
+  workingDirectory?: string;
   applicationLaunchPath: string;
   applicationNodePath?: string;
   nativeDriverLaunchPath?: string;
@@ -256,6 +257,16 @@ function validateInput(input: ReleaseSurfaceWebDriverLifecycleInput): {
   if (input.nativeDriverNodePath && !input.nativeDriverLaunchPath) {
     throw new Error("native driver identity path requires an exact launch path");
   }
+  if (input.workingDirectory !== undefined) {
+    const workingDirectory = resolve(input.workingDirectory);
+    if (input.workingDirectory !== workingDirectory) {
+      throw new Error("tauri-driver working directory must be absolute");
+    }
+    const workingDirectoryStat = lstatSync(workingDirectory);
+    if (workingDirectoryStat.isSymbolicLink() || !workingDirectoryStat.isDirectory()) {
+      throw new Error("tauri-driver working directory must be a regular non-link directory");
+    }
+  }
   for (const arg of input.tauriDriverArgsPrefix ?? []) {
     if (typeof arg !== "string" || arg.length > 4_096 || /[\r\n\0]/.test(arg)) {
       throw new Error("tauri-driver argument prefix contains an invalid value");
@@ -305,6 +316,7 @@ function launchDriver(
   const child = spawn(input.tauriDriverCommand, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: input.environment ?? process.env,
+    ...(input.workingDirectory ? { cwd: input.workingDirectory } : {}),
   });
   child.stdout?.on("data", (chunk) => logs.append("stdout", chunk));
   child.stderr?.on("data", (chunk) => logs.append("stderr", chunk));

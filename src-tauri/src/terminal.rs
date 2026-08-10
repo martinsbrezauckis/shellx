@@ -1,48 +1,24 @@
 // src-tauri/src/terminal.rs
 //
-// P-Terminal-A: real-PTY backing for shellX's bottom-panel Terminal tab.
-// P-Terminal-B (2026-05-18): same registry now also services grok's ACP
-// `terminal/*` requests. Two origins share one registry and one xterm.js
-// stack so the chat-embedded view (rendered inside the assistant tool
-// card) and the bottom-panel view both look at the same bytes.
+// Real-PTY backing for ShellX's operator-facing bottom-panel Terminal tab.
 //
 // Role
 // Owns the lifecycle of every PTY the host has spawned on behalf of
-// either the bottom-panel `TerminalView` React component (origin =
-// `User`) or grok-side `terminal/create` ACP requests (origin = `Acp`).
-// Each PTY is keyed by (tab_id, terminal_id). For ACP-origin records
-// the `tab_id` is the session's tab_id passed by `read_loop`; for
-// user records it's the bottom-panel tab's identifier.
-//
-// Origin semantics (P-Terminal-B)
-// - `User` : record drops as soon as the child exits — bottom-panel
-// teardown is non-interactive. The frontend already saw
-// the exit event and displays a "[process exited]" marker.
-// - `Acp` : record is RETAINED after the child exits, in
-// `LifecycleState::Exited{status}`. `terminal/output`,
-// `terminal/wait_for_exit`, `terminal/kill` (no-op),
-// `terminal/release` all still work post-exit per ACP
-// spec ("the Client displays live output as it's
-// generated and continues to display it even after the
-// terminal is released"). The record is removed from
-// the registry only on `release`.
+// the bottom-panel `TerminalView` React component. Each PTY is keyed by
+// (tab_id, terminal_id), emits live output and exit events, and is removed
+// when the child exits or the operator closes the Terminal surface.
 //
 // Dependencies
 // - portable-pty 0.8 — cross-platform PTY abstraction (Unix PTY + ConPTY).
 // - tokio — runtime, spawn_blocking for the reader loop,
-// broadcast for live attach, Notify for ACP
-// `wait_for_exit`.
+// broadcast for live output, and Notify for bounded teardown.
 // - bytes — zero-copy clone for fan-out to subscribers.
-// - uuid — opaque terminal_id strings for User-origin only;
-// ACP-origin ids use the `gs-term-NNNNNNNN` form
-// minted by the registry's atomic counter, matching
-// ProcessRegistry's `gs-N` style.
+// - uuid — opaque terminal_id strings.
 //
 // Callers
 // `lib.rs` registers the `pty_*` Tauri commands defined at the bottom
 // of this file. The frontend `TerminalView.tsx`, mounted by `BottomPanel`, is
-// the user-side consumer. `acp.rs` (Phase B) calls the `acp_*` helpers
-// directly to service grok ACP `terminal/*` requests.
+// the user-side consumer.
 //
 // Concurrency
 // `TerminalRegistry` wraps a `tokio::sync::Mutex<HashMap<…>>`. Each PTY
@@ -52,17 +28,13 @@
 // via that inner mutex. Holds are short and never `.await` while held.
 //
 // Buffer policy
-// Per-PTY ring buffer with `output_byte_limit` bytes cap; default
-// `RING_BYTES_DEFAULT_USER` (64 KiB) for user terminals,
-// `RING_BYTES_DEFAULT_ACP` (1 MiB, Zed-compatible default) for ACP
-// terminals — overridden by grok's `outputByteLimit` request param.
-// Once the ring is full, oldest bytes are evicted and `truncated`
-// flips true (returned in `terminal/output`).
+// Per-PTY ring buffer capped at `RING_BYTES_DEFAULT_USER` (64 KiB). Once
+// full, oldest bytes are evicted; the tail remains available to task/debug
+// snapshots without allowing noisy terminals to grow memory without bound.
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -74,14 +46,8 @@ use tokio::sync::{broadcast, Mutex, Notify};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-/// Default ring-buffer cap for User-origin (bottom-panel) PTYs. Late-attach
-/// React mounts replay this much. Tight cap matches Phase A behavior.
+/// Default ring-buffer cap for bottom-panel PTYs.
 const RING_BYTES_DEFAULT_USER: usize = 64 * 1024;
-
-/// Default ring-buffer cap for ACP-origin terminals when grok's
-/// `terminal/create` did not specify `outputByteLimit`. 1 MiB matches Zed's
-/// reference client behavior — the value grok's wire shape expects.
-const RING_BYTES_DEFAULT_ACP: usize = 1024 * 1024;
 
 /// Bound on the fan-out broadcast. Slow subscribers receive a `Lagged`
 /// error and can resync from the ring buffer on next attach.
@@ -97,42 +63,19 @@ const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 pub const DEFAULT_COLS: u16 = 80;
 pub const DEFAULT_ROWS: u16 = 24;
 
-/// 10-minute timeout for `terminal/wait_for_exit` matching `send_request`'s
-/// global timeout. Long-running builds that exceed this surface as a
-/// JSON-RPC error to grok; grok can re-poll via `terminal/output`.
-const WAIT_FOR_EXIT_TIMEOUT: Duration = Duration::from_secs(600);
-
 /// Terminal teardown is a synchronous contract: when kill/release returns, the
 /// child and the reader/consumer tasks must no longer be live. Five seconds is
 /// deliberately generous for ConPTY/HPCON shutdown while still bounding a UI
 /// tab close if an OS primitive misbehaves.
 const KILL_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Origin of a terminal record. Drives lifetime semantics on child exit.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum TerminalOrigin {
-    /// Spawned by the user clicking the bottom-panel Terminal tab.
-    /// Record is dropped when the child exits.
-    User,
-    /// Spawned by an agent ACP `terminal/create` request. Record is
-    /// RETAINED after child exit and only removed on `terminal/release`.
-    Acp,
-}
-
-/// Lifecycle state of an ACP-origin terminal. User-origin terminals don't
-/// use this — they're simply removed from the registry on exit.
+/// Lifecycle state used by task snapshots and bounded operator teardown.
 #[derive(Clone, Debug)]
 pub enum LifecycleState {
     /// Child is currently running.
     Running,
-    /// Child has exited; subsequent `terminal/output` includes this status,
-    /// `terminal/wait_for_exit` returns it immediately. Stays in the
-    /// registry until `terminal/release` arrives.
-    Exited {
-        exit_code: Option<i32>,
-        signal: Option<String>,
-    },
+    /// Child has exited and its registry record is being removed.
+    Exited,
 }
 
 /// The composite key — every PTY belongs to exactly one session tab.
@@ -162,37 +105,19 @@ pub struct TerminalRecord {
     /// the PTY reader, so every teardown path must consume this handle first.
     child_killer: Mutex<Option<Box<dyn ChildKiller + Send + Sync>>>,
 
-    /// Ring buffer of recent output bytes. Capped at `output_byte_limit`.
-    /// Returned by `terminal/output` (ACP) and replayed on late xterm.js
-    /// attach (user).
+    /// Ring buffer of recent output bytes, capped at
+    /// `RING_BYTES_DEFAULT_USER` for task/debug snapshots.
     ring: Mutex<VecDeque<u8>>,
-
-    /// Maximum bytes the ring will hold. From grok's `outputByteLimit`
-    /// (ACP) or `RING_BYTES_DEFAULT_USER` (user).
-    output_byte_limit: usize,
-
-    /// Cumulative byte count written to the ring including dropped
-    /// (truncated) bytes. Used to compute `truncated: bool` for the
-    /// ACP `terminal/output` response.
-    total_written: Mutex<usize>,
 
     /// Broadcast channel for live subscribers (xterm.js attach via
     /// Tauri event). Slow subscribers get `Lagged` and re-sync from
     /// the ring on next attach.
     tx: broadcast::Sender<Bytes>,
 
-    /// Origin (drives child-exit retention policy).
-    origin: TerminalOrigin,
-
-    /// Lifecycle state. For User-origin records this stays `Running`
-    /// until the record is dropped; for ACP-origin it transitions to
-    /// `Exited{...}` and stays in the registry.
+    /// Lifecycle state for task snapshots and bounded teardown.
     lifecycle: Mutex<LifecycleState>,
 
-    /// Notify fired exactly once when the child exits. ACP
-    /// `terminal/wait_for_exit` awaits this. User-origin records never
-    /// expose this externally — the bottom-panel listens for the
-    /// `pty-exit` Tauri event instead.
+    /// Notify fired when the child exits so `pty_kill` can await cleanup.
     exit_notify: Arc<Notify>,
 
     /// #103 (2026-05-18): OS pid of the spawned child. Recorded at spawn
@@ -212,12 +137,12 @@ pub struct TerminalRecord {
 }
 
 impl TerminalRecord {
-    /// Append `data` to the ring, evicting oldest bytes to stay under
-    /// `output_byte_limit`. Then broadcast to live subscribers.
+    /// Append `data` to the ring, evicting oldest bytes to stay under the
+    /// fixed terminal cap. Then broadcast to live subscribers.
     async fn push_chunk(&self, data: Bytes) {
         {
             let mut ring = self.ring.lock().await;
-            let cap = self.output_byte_limit;
+            let cap = RING_BYTES_DEFAULT_USER;
             // Fast path: chunks larger than the whole cap — keep only the tail.
             if data.len() >= cap {
                 ring.clear();
@@ -231,25 +156,9 @@ impl TerminalRecord {
                 }
                 ring.extend(data.iter().copied());
             }
-            let mut tw = self.total_written.lock().await;
-            *tw = tw.saturating_add(data.len());
         }
         // Broadcast send errors only mean "no subscribers" — fine.
         let _ = self.tx.send(data);
-    }
-
-    /// Snapshot the ring as a String. Lossy UTF-8 decode is acceptable
-    /// per ACP spec — agents inspect command output as text. Non-UTF-8
-    /// (binary) bytes become U+FFFD.
-    async fn snapshot_output(&self) -> (String, bool) {
-        let ring = self.ring.lock().await;
-        let bytes: Vec<u8> = ring.iter().copied().collect();
-        let truncated = {
-            let tw = *self.total_written.lock().await;
-            tw > self.output_byte_limit
-        };
-        let s = String::from_utf8_lossy(&bytes).into_owned();
-        (s, truncated)
     }
 }
 
@@ -266,14 +175,13 @@ pub struct TerminalSnapshot {
     pub cols: u16,
     pub rows: u16,
     pub exited: bool,
-    /// P-Terminal-B: "user" or "acp".
+    /// Stable origin label retained for debug API compatibility.
     pub origin: &'static str,
 }
 
 /// #103 (2026-05-18): extended snapshot row used by the background-tasks
 /// manager. Carries pid + cmd + started-at so the panel can render a
-/// uniform task list across ACP grok subprocesses, ACP terminals, and
-/// user terminals (all surfaced via this struct's `origin` field).
+/// uniform task list across provider subprocesses and operator terminals.
 ///
 /// Why a separate type and not extra fields on TerminalSnapshot?
 /// Existing callers (debug-api `/terminals` endpoint, tests) consume
@@ -304,10 +212,6 @@ pub struct TerminalTaskRow {
 /// registry lock before doing anything substantive with a record.
 pub struct TerminalRegistry {
     inner: Mutex<HashMap<TerminalKey, Arc<TerminalRecord>>>,
-    /// P-Terminal-B: monotonic counter for ACP-origin terminal ids.
-    /// Format `gs-term-NNNNNNNN` matching ProcessRegistry's id-minting
-    /// style. Atomic so we don't need to hold the registry mutex to mint.
-    acp_seq: AtomicU64,
 }
 
 impl Default for TerminalRegistry {
@@ -320,7 +224,6 @@ impl TerminalRegistry {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            acp_seq: AtomicU64::new(1),
         }
     }
 
@@ -354,12 +257,6 @@ impl TerminalRegistry {
         self.remove(&key).await.is_some()
     }
 
-    /// Mint the next ACP terminal id (`gs-term-NNNNNNNN`).
-    fn mint_acp_id(&self) -> String {
-        let n = self.acp_seq.fetch_add(1, Ordering::Relaxed);
-        format!("gs-term-{:08}", n)
-    }
-
     /// #103 (2026-05-18): snapshot every PTY as a TerminalTaskRow for
     /// the background-tasks manager. Decodes the last 1024 bytes of the
     /// ring buffer per record so the UI can show a stable preview without
@@ -374,7 +271,7 @@ impl TerminalRegistry {
             inner.iter().map(|(k, r)| (k.clone(), r.clone())).collect();
         drop(inner);
         for (key, rec) in entries {
-            let exited = matches!(*rec.lifecycle.lock().await, LifecycleState::Exited { .. });
+            let exited = matches!(*rec.lifecycle.lock().await, LifecycleState::Exited);
             let tail = {
                 let ring = rec.ring.lock().await;
                 // Take the last 1024 bytes (or fewer). VecDeque is split
@@ -391,10 +288,7 @@ impl TerminalRegistry {
                 terminal_id: key.terminal_id,
                 pid: rec.pid,
                 cmd: rec.cmd.clone(),
-                origin: match rec.origin {
-                    TerminalOrigin::User => "user_term",
-                    TerminalOrigin::Acp => "acp_term",
-                },
+                origin: "user_term",
                 exited,
                 started_at_ms: rec.started_at_ms,
                 tail,
@@ -410,7 +304,7 @@ impl TerminalRegistry {
         let mut out = Vec::with_capacity(inner.len());
         for (k, rec) in inner.iter() {
             let ring_bytes = rec.ring.lock().await.len();
-            let exited = matches!(*rec.lifecycle.lock().await, LifecycleState::Exited { .. });
+            let exited = matches!(*rec.lifecycle.lock().await, LifecycleState::Exited);
             let size = rec
                 .master
                 .lock()
@@ -430,10 +324,7 @@ impl TerminalRegistry {
                 cols: size.cols,
                 rows: size.rows,
                 exited,
-                origin: match rec.origin {
-                    TerminalOrigin::User => "user",
-                    TerminalOrigin::Acp => "acp",
-                },
+                origin: "user",
             });
         }
         out
@@ -510,13 +401,11 @@ fn which_exe(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Configuration for a single `spawn_pty` call. Bundled into a struct so
-/// the User-origin and ACP-origin call sites don't disagree on field
-/// ordering / defaults.
+/// Configuration for a single operator-terminal `spawn_pty` call.
 pub struct SpawnConfig {
     /// PTY tab identifier — see `TerminalKey`.
     pub tab_id: String,
-    /// Pre-allocated terminal id. None means we mint via origin policy.
+    /// Pre-allocated terminal id. None mints a fresh opaque PTY id.
     pub terminal_id: Option<String>,
     /// Optional program to spawn. None = `default_shell`.
     pub program: Option<String>,
@@ -532,17 +421,11 @@ pub struct SpawnConfig {
     pub cols: u16,
     /// Initial PTY rows.
     pub rows: u16,
-    /// Ring-buffer cap in bytes. None means use the origin's default.
-    pub output_byte_limit: Option<usize>,
-    /// Record origin (drives lifetime semantics on exit).
-    pub origin: TerminalOrigin,
 }
 
 /// Spawn a PTY + child, register it, kick off the reader loop. Returns
 /// the freshly-minted (or supplied) terminal_id.
 ///
-/// Phase B: when `origin == Acp`, the record is retained after child
-/// exit. The User-origin path keeps its Phase A behavior (drop on exit).
 async fn spawn_pty(
     registry: Arc<TerminalRegistry>,
     app: AppHandle,
@@ -604,19 +487,14 @@ async fn spawn_pty(
         .take_writer()
         .map_err(|e| format!("take_writer failed: {}", e))?;
 
-    let terminal_id = cfg.terminal_id.clone().unwrap_or_else(|| match cfg.origin {
-        TerminalOrigin::User => format!("pty-{}", Uuid::new_v4()),
-        TerminalOrigin::Acp => registry.mint_acp_id(),
-    });
+    let terminal_id = cfg
+        .terminal_id
+        .clone()
+        .unwrap_or_else(|| format!("pty-{}", Uuid::new_v4()));
     let key = TerminalKey {
         tab_id: cfg.tab_id.clone(),
         terminal_id: terminal_id.clone(),
     };
-
-    let output_byte_limit = cfg.output_byte_limit.unwrap_or(match cfg.origin {
-        TerminalOrigin::User => RING_BYTES_DEFAULT_USER,
-        TerminalOrigin::Acp => RING_BYTES_DEFAULT_ACP,
-    });
 
     // #103: snapshot pid + cmd string + start time BEFORE we move `child`
     // into the blocking task that owns wait. `process_id` is None on
@@ -638,11 +516,8 @@ async fn spawn_pty(
         master: Mutex::new(Some(pair.master)),
         writer: Mutex::new(Some(writer)),
         child_killer: Mutex::new(Some(child_killer)),
-        ring: Mutex::new(VecDeque::with_capacity(output_byte_limit.min(64 * 1024))),
-        output_byte_limit,
-        total_written: Mutex::new(0),
+        ring: Mutex::new(VecDeque::with_capacity(RING_BYTES_DEFAULT_USER)),
         tx: tx.clone(),
-        origin: cfg.origin.clone(),
         lifecycle: Mutex::new(LifecycleState::Running),
         exit_notify: Arc::new(Notify::new()),
         pid,
@@ -652,8 +527,8 @@ async fn spawn_pty(
 
     registry.insert(key.clone(), rec.clone()).await;
     info!(
-        "terminal: spawned tab_id={} terminal_id={} program={} cols={} rows={} origin={:?} cap={}B",
-        cfg.tab_id, terminal_id, program, cfg.cols, cfg.rows, cfg.origin, output_byte_limit
+        "terminal: spawned tab_id={} terminal_id={} program={} cols={} rows={} cap={}B",
+        cfg.tab_id, terminal_id, program, cfg.cols, cfg.rows, RING_BYTES_DEFAULT_USER
     );
 
     // Reader loop on the blocking pool. portable-pty's `Read::read` is
@@ -663,7 +538,6 @@ async fn spawn_pty(
     let key_clone = key.clone();
     let rec_clone = rec.clone();
     let registry_clone = registry.clone();
-    let origin_for_task = cfg.origin.clone();
     let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<Bytes>(OUTPUT_CHANNEL_CAPACITY);
 
     // Async consumer — owns the per-chunk emit + ring push + broadcast.
@@ -738,7 +612,7 @@ async fn spawn_pty(
         let _ = reader_task.await;
 
         // Wait for the consumer to flush remaining chunks before we
-        // emit the exit event and drop / retain the record.
+        // emit the exit event and drop the record.
         let _ = consumer_task.await;
 
         // portable-pty 0.8 exposes `exit_code` returning u32. Map
@@ -752,19 +626,15 @@ async fn spawn_pty(
 
         {
             let mut lc = rec_clone.lifecycle.lock().await;
-            *lc = LifecycleState::Exited {
-                exit_code,
-                signal: signal.clone(),
-            };
+            *lc = LifecycleState::Exited;
         }
-        // Wake any waiter; `notify_waiters` is idempotent if no one's
-        // listening, and any future `acp_wait_for_exit` short-circuits
-        // by reading the lifecycle state directly.
+        // Wake a concurrent operator teardown waiter. `notify_waiters` is
+        // idempotent when no teardown is in flight.
         rec_clone.exit_notify.notify_waiters();
 
         debug!(
-            "terminal: reader loop ended tab_id={} terminal_id={} exit_code={:?} origin={:?}",
-            key_clone.tab_id, key_clone.terminal_id, exit_code, origin_for_task
+            "terminal: reader loop ended tab_id={} terminal_id={} exit_code={:?}",
+            key_clone.tab_id, key_clone.terminal_id, exit_code
         );
 
         // Emit the exit event for the bottom-panel xterm.js view to show
@@ -779,15 +649,7 @@ async fn spawn_pty(
             },
         );
 
-        // Origin-conditional cleanup: User drops; ACP retains.
-        match origin_for_task {
-            TerminalOrigin::User => {
-                let _ = registry_clone.remove(&key_clone).await;
-            }
-            TerminalOrigin::Acp => {
-                // Retain. `terminal/release` is the only path that drops it.
-            }
-        }
+        let _ = registry_clone.remove(&key_clone).await;
     });
 
     Ok(terminal_id)
@@ -805,8 +667,8 @@ struct PtyOutputEvent {
     data: Vec<u8>,
 }
 
-/// Wire payload for `pty-exit`. P-Terminal-B adds `exit_code`/`signal` so
-/// chat-embedded views can render the same status the bottom panel does.
+/// Wire payload for `pty-exit`, including the child status rendered by the
+/// bottom-panel Terminal.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PtyExitEvent {
     #[serde(rename = "tabId")]
@@ -819,183 +681,11 @@ struct PtyExitEvent {
     signal: Option<String>,
 }
 
-/// P-Terminal-B: payload for the `terminal-opened` Tauri event. Emitted
-/// every time grok calls `terminal/create`, lets the React BottomPanel
-/// add a new tab strip entry with an "ACP" badge.
-#[derive(Clone, Debug, Serialize)]
-#[allow(dead_code)]
-pub struct TerminalOpenedEvent {
-    #[serde(rename = "tabId")]
-    pub tab_id: String,
-    #[serde(rename = "terminalId")]
-    pub terminal_id: String,
-    /// "acp" for now — kept open for future origins.
-    pub origin: &'static str,
-    pub command: String,
-    pub args: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-}
-
-// ───────────────────────────────────────────────────────────────────
-// ACP-facing helpers (P-Terminal-B)
-// ───────────────────────────────────────────────────────────────────
-
-/// `terminal/create` implementation. Spawns a PTY via `spawn_pty` with
-/// `origin = Acp` and emits the `terminal-opened` event so the bottom
-/// panel can surface an "ACP" tab.
-///
-/// `tab_id` is the SESSION's tab_id (from `read_loop`'s context). All
-/// ACP-origin terminals for a given session collapse into that one
-/// tab_id namespace, so the bottom panel's per-session terminal listing
-/// works without extra plumbing.
-///
-/// Args (registry, app, tab_id, program, args, env, cwd, output_byte_limit)
-/// mirror the ACP `terminal/create` request shape; collapsing them into a
-/// struct would only move the field-list elsewhere without reducing the
-/// surface, so they stay positional.
-#[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
-pub async fn acp_create(
-    registry: Arc<TerminalRegistry>,
-    app: AppHandle,
-    tab_id: String,
-    program: String,
-    args: Vec<String>,
-    env: Vec<(String, String)>,
-    cwd: Option<String>,
-    output_byte_limit: Option<usize>,
-) -> Result<String, String> {
-    let id = spawn_pty(
-        registry,
-        app.clone(),
-        SpawnConfig {
-            tab_id: tab_id.clone(),
-            terminal_id: None,
-            program: Some(program.clone()),
-            args: args.clone(),
-            cwd: cwd.clone(),
-            env,
-            cols: DEFAULT_COLS,
-            rows: DEFAULT_ROWS,
-            output_byte_limit,
-            origin: TerminalOrigin::Acp,
-        },
-    )
-    .await?;
-    // Tell BottomPanel a new ACP-tab is available.
-    let _ = app.emit(
-        "terminal-opened",
-        TerminalOpenedEvent {
-            tab_id,
-            terminal_id: id.clone(),
-            origin: "acp",
-            command: program,
-            args,
-            cwd,
-        },
-    );
-    Ok(id)
-}
-
-/// `terminal/output` implementation. Non-destructive — returns the
-/// CURRENT accumulated output, not deltas (per ACP spec).
-///
-/// added the ConPTY-EOF
-/// watchdog. Windows ConPTY frequently fails to deliver EOF to the
-/// master after a fast-exit child (cmd.exe /c, python -c short scripts,
-/// etc.) — the reader-loop's `Read::read` stays blocked, the lifecycle
-/// transition in the reader-loop never fires, and grok's polling
-/// terminal/output loop sees no `exitStatus` forever. End-state: grok
-/// times out / hangs the turn. The fix probes the spawned pid via
-/// sysinfo on every `terminal/output` call; if the pid is dead but
-/// lifecycle is still Running we synthesize an `Exited{exit_code:
-/// None}` transition right here so grok's next poll sees the
-/// exitStatus. The exit_code is None because we don't own the Child
-/// handle (it lives in the reader-loop's blocking task); the actual
-/// code will land in lifecycle later when the reader EOFs / drops the
-/// master. Good enough — grok's turn completes either way.
-pub async fn acp_output(
-    registry: Arc<TerminalRegistry>,
-    tab_id: &str,
-    terminal_id: &str,
-) -> Result<serde_json::Value, String> {
-    let key = TerminalKey {
-        tab_id: tab_id.to_string(),
-        terminal_id: terminal_id.to_string(),
-    };
-    let rec = registry
-        .get(&key)
-        .await
-        .ok_or_else(|| format!("invalid terminalId: {}", terminal_id))?;
-    let (output, truncated) = rec.snapshot_output().await;
-
-    // Read-then-maybe-write on lifecycle. Drop the read lock first so
-    // the watchdog branch can re-acquire as &mut without deadlocking.
-    let initial_state = {
-        let lc = rec.lifecycle.lock().await;
-        match &*lc {
-            LifecycleState::Running => None,
-            LifecycleState::Exited { exit_code, signal } => Some(serde_json::json!({
-                "exitCode": exit_code,
-                "signal": signal,
-            })),
-        }
-    };
-
-    let exit_status = match initial_state {
-        Some(es) => Some(es),
-        None => {
-            // Lifecycle says Running. ConPTY-EOF watchdog: ask sysinfo
-            // whether the spawned pid is still alive.
-            if let Some(pid) = rec.pid {
-                if !pid_is_alive(pid) {
-                    info!(
-                        "terminal: ConPTY-EOF watchdog detected dead pid={} on terminal_id={} \
-                         while lifecycle=Running — synthesizing Exited{{exit_code: None}}",
-                        pid, terminal_id
-                    );
-                    {
-                        let mut lc = rec.lifecycle.lock().await;
-                        // Re-check under write lock to avoid racing
-                        // with the reader-loop's authoritative wait.
-                        if matches!(&*lc, LifecycleState::Running) {
-                            *lc = LifecycleState::Exited {
-                                exit_code: None,
-                                signal: None,
-                            };
-                        }
-                    }
-                    rec.exit_notify.notify_waiters();
-                    Some(serde_json::json!({
-                        "exitCode": serde_json::Value::Null,
-                        "signal": serde_json::Value::Null,
-                    }))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-    };
-
-    let mut v = serde_json::json!({
-        "output": output,
-        "truncated": truncated,
-    });
-    if let Some(es) = exit_status {
-        v["exitStatus"] = es;
-    }
-    Ok(v)
-}
-
 /// watchdog helper. True iff `pid` is currently a live process
 /// on this host. sysinfo's `Process::status` returns the kernel state;
-/// missing pid → dead. PID-recycling caveat: between child exit and
-/// next sysinfo refresh (~50-200ms) a recycled pid could re-appear as
-/// "alive". Acceptable — the worst case is one extra terminal/output
-/// poll before we see the exit. Better than hanging forever.
+/// missing pid → dead. PID-recycling caveat: between child exit and the next
+/// sysinfo refresh (~50-200ms), a recycled pid could briefly re-appear as
+/// alive; bounded teardown still waits for the authoritative child event.
 fn pid_is_alive(pid: u32) -> bool {
     use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
     let mut sys =
@@ -1014,7 +704,7 @@ async fn wait_until_exited(rec: &Arc<TerminalRecord>, timeout: Duration) -> bool
         tokio::pin!(notified);
         notified.as_mut().enable();
 
-        if matches!(*rec.lifecycle.lock().await, LifecycleState::Exited { .. }) {
+        if matches!(*rec.lifecycle.lock().await, LifecycleState::Exited) {
             return true;
         }
 
@@ -1128,7 +818,7 @@ fn terminate_pty_process_tree(
 }
 
 async fn terminate_terminal(rec: &Arc<TerminalRecord>) -> Result<(), String> {
-    if matches!(*rec.lifecycle.lock().await, LifecycleState::Exited { .. }) {
+    if matches!(*rec.lifecycle.lock().await, LifecycleState::Exited) {
         return Ok(());
     }
     let killer = rec.child_killer.lock().await.take();
@@ -1150,80 +840,6 @@ async fn terminate_terminal(rec: &Arc<TerminalRecord>) -> Result<(), String> {
             detail
         ))
     }
-}
-
-/// `terminal/wait_for_exit` implementation. Awaits the per-record Notify
-/// up to `WAIT_FOR_EXIT_TIMEOUT`; returns `{exitCode, signal}`.
-pub async fn acp_wait_for_exit(
-    registry: Arc<TerminalRegistry>,
-    tab_id: &str,
-    terminal_id: &str,
-) -> Result<serde_json::Value, String> {
-    let key = TerminalKey {
-        tab_id: tab_id.to_string(),
-        terminal_id: terminal_id.to_string(),
-    };
-    let rec = registry
-        .get(&key)
-        .await
-        .ok_or_else(|| format!("invalid terminalId: {}", terminal_id))?;
-    if !wait_until_exited(&rec, WAIT_FOR_EXIT_TIMEOUT).await {
-        return Err("wait_for_exit: timeout after 10 minutes".into());
-    }
-    let lc = rec.lifecycle.lock().await;
-    match &*lc {
-        LifecycleState::Exited { exit_code, signal } => Ok(serde_json::json!({
-            "exitCode": exit_code,
-            "signal": signal,
-        })),
-        LifecycleState::Running => {
-            Err("wait_for_exit: exit waiter completed but terminal is still running".into())
-        }
-    }
-}
-
-/// `terminal/kill` implementation. Terminates the whole PTY process
-/// session/tree, closes the master and waits for reader/consumer cleanup.
-///
-/// Important: per ACP spec, the terminalId stays VALID after kill —
-/// subsequent `terminal/output` / `terminal/wait_for_exit` calls still
-/// work and report the post-mortem state.
-pub async fn acp_kill(
-    registry: Arc<TerminalRegistry>,
-    tab_id: &str,
-    terminal_id: &str,
-) -> Result<(), String> {
-    let key = TerminalKey {
-        tab_id: tab_id.to_string(),
-        terminal_id: terminal_id.to_string(),
-    };
-    let rec = registry
-        .get(&key)
-        .await
-        .ok_or_else(|| format!("invalid terminalId: {}", terminal_id))?;
-    terminate_terminal(&rec).await
-}
-
-/// `terminal/release` implementation. Kills if still alive, then drops
-/// the record. terminalId becomes invalid; subsequent calls return
-/// a JSON-RPC error from the dispatch layer.
-pub async fn acp_release(
-    registry: Arc<TerminalRegistry>,
-    tab_id: &str,
-    terminal_id: &str,
-) -> Result<(), String> {
-    let key = TerminalKey {
-        tab_id: tab_id.to_string(),
-        terminal_id: terminal_id.to_string(),
-    };
-    acp_kill(registry.clone(), tab_id, terminal_id).await?;
-    if registry.remove(&key).await.is_some() {
-        info!(
-            "terminal: released (ACP) tab_id={} terminal_id={}",
-            tab_id, terminal_id
-        );
-    }
-    Ok(())
 }
 
 // ───── Tauri commands ─────
@@ -1259,8 +875,6 @@ pub async fn pty_create(
             env: vec![],
             cols: cols.unwrap_or(DEFAULT_COLS),
             rows: rows.unwrap_or(DEFAULT_ROWS),
-            output_byte_limit: None,
-            origin: TerminalOrigin::User,
         },
     )
     .await
@@ -1293,40 +907,6 @@ pub async fn pty_write(
         .map_err(|e| format!("write failed: {}", e))?;
     writer.flush().map_err(|e| format!("flush failed: {}", e))?;
     Ok(())
-}
-
-/// P-Terminal-B: attach a (read-only when ACP) view to an existing PTY,
-/// returning a snapshot of the current ring + lifecycle state so the
-/// chat-embedded xterm.js view can render existing scrollback before
-/// the live `pty-output` stream catches up.
-#[tauri::command]
-pub async fn pty_attach(
-    tab_id: String,
-    terminal_id: String,
-    registry: tauri::State<'_, Arc<TerminalRegistry>>,
-) -> Result<serde_json::Value, String> {
-    let key = TerminalKey {
-        tab_id: tab_id.clone(),
-        terminal_id: terminal_id.clone(),
-    };
-    let rec = registry
-        .get(&key)
-        .await
-        .ok_or_else(|| format!("unknown terminal: {:?}", key))?;
-    let (output, truncated) = rec.snapshot_output().await;
-    let exited = matches!(*rec.lifecycle.lock().await, LifecycleState::Exited { .. });
-    let origin = match rec.origin {
-        TerminalOrigin::User => "user",
-        TerminalOrigin::Acp => "acp",
-    };
-    Ok(serde_json::json!({
-        "tabId": tab_id,
-        "terminalId": terminal_id,
-        "output": output,
-        "truncated": truncated,
-        "exited": exited,
-        "origin": origin,
-    }))
 }
 
 /// Resize the PTY. Driven by the frontend ResizeObserver+FitAddon. We
@@ -1365,8 +945,7 @@ pub async fn pty_resize(
 /// Kill + remove a PTY. Called from the frontend on tab close / component
 /// unmount.
 ///
-/// This is the User-origin kill path. ACP-origin terminals use
-/// `acp_release`. Both paths terminate and wait before removing the record.
+/// Teardown terminates and waits before removing the record.
 #[tauri::command]
 pub async fn pty_kill(
     tab_id: String,
@@ -1440,26 +1019,6 @@ mod tests {
 
         assert_ne!(status.exit_code(), 0);
         assert!(!pid_is_alive(pid));
-    }
-
-    #[test]
-    fn acp_id_minting_is_monotonic_and_padded() {
-        let reg = TerminalRegistry::new();
-        let a = reg.mint_acp_id();
-        let b = reg.mint_acp_id();
-        assert!(a.starts_with("gs-term-"));
-        assert!(b.starts_with("gs-term-"));
-        assert_ne!(a, b);
-        // Format check: 8-digit zero-pad
-        let n_a: u64 = a
-            .trim_start_matches("gs-term-")
-            .parse()
-            .expect("numeric suffix");
-        let n_b: u64 = b
-            .trim_start_matches("gs-term-")
-            .parse()
-            .expect("numeric suffix");
-        assert!(n_b > n_a);
     }
 
     #[test]

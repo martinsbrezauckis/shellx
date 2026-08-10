@@ -5,8 +5,8 @@
  *  wired via the `git_branches` Tauri command (Rust calls
  * `git for-each-ref` and returns name + isCurrent + upstream). On select,
  * fires `onSelect(name)` so the parent can persist `scopeBranch` to the
- * active tab. Worktree CTA stays explicit no-op for v1; the prop is
- * kept for forward-compat.
+ * active tab. Worktree creation lives in the owned right-rail Git flow;
+ * this picker only selects an existing branch.
  *
  * Keyboard: Esc closes, Arrow/Home/End moves selection, Enter picks.
  */
@@ -28,9 +28,6 @@ export function BranchPicker({
   activeName?: string;
  /** Called when user picks a branch — sets scopeBranch on active tab. */
   onSelect: (name: string) => void;
- /** "+ Create worktree from branch" CTA — kept for forward-compat;
- * parent's handler is intentionally a no-op for v1. */
-  onCreateWorktree: (sourceBranch: string) => void;
   onClose: () => void;
  /** Working dir to pass to `git for-each-ref`. Falls back to "." if absent. */
   cwd?: string;

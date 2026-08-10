@@ -16,8 +16,8 @@
  *      (bypassPermissions / always-approve path) inserts an
  *      already-resolved PermissionGroup with `autoDecision: true`. No
  *      buttons render in this state — the audit trail is the point.
- *   3. Legacy `terminal/create` shape (request_id + command/args/cwd at
- *      top level) also produces a PermissionGroup with toolName +
+ *   3. Provider-adapter compatibility shape (request_id + command/args/cwd
+ *      at top level) also produces a PermissionGroup with toolName +
  *      toolArgs derived from the legacy fields.
  *   4. Two emits with the same reqId (registry insert + autoApproved
  *      re-emit) collapse to ONE pill that ends up resolved.
@@ -120,16 +120,16 @@ header("case 2: autoApproved at emit time → already-resolved pill");
   assert(g.permissionMode === "bypassPermissions", "permissionMode carried through");
 }
 
-/* ───────────── case 3: legacy terminal/create shape ───── */
-header("case 3: legacy terminal/create payload (no toolCall)");
+/* ───────────── case 3: provider-adapter compatibility shape ───── */
+header("case 3: provider-adapter permission payload (no toolCall)");
 {
   const evs: RawEventFrame[] = [
     {
       t: 1000,
       kind: "permission-request",
       payload: {
-        request_id: "req-term-1",
-        scope: "terminal/create",
+        request_id: "req-provider-1",
+        scope: "provider/execute",
         command: "rm",
         args: ["-rf", "/tmp/foo"],
         cwd: "/home/user",
@@ -140,8 +140,8 @@ header("case 3: legacy terminal/create payload (no toolCall)");
   const perms = groups.filter((g) => g.kind === "permission");
   assert(perms.length === 1, "one PermissionGroup emitted");
   const g = perms[0] as any;
-  assert(g.requestId === "req-term-1", "requestId from request_id");
-  assert(g.toolName === "terminal/create", "toolName from scope");
+  assert(g.requestId === "req-provider-1", "requestId from request_id");
+  assert(g.toolName === "provider/execute", "toolName from scope");
   assert(g.toolArgs.includes("rm"), "toolArgs preview includes command");
   assert(g.cwd === "/home/user", "cwd carried");
   assert(g.pending === true, "pending true");

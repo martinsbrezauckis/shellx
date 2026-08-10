@@ -1,7 +1,7 @@
 {
   "schema": "shellx/final-surface-driver-plan@2",
   "mode": "final-frozen-candidate",
-  "inventoryDigest": "744bf023c190719d5fcdab4eda832ed938b7194ac0f65e1080605d186387f46b",
+  "inventoryDigest": "fc0cbe965feb61a98eceabc772b5f4447e79a13225a0677d1b7adb10b52616ad",
   "releaseReady": true,
   "drivers": [
     {
@@ -328,16 +328,6 @@
       "id": "ui-control-permission-decision-lifecycle-installed",
       "kind": "ui-control",
       "entrypoint": "scripts/release-drivers/ui-control-permission-decision-lifecycle-installed.ts",
-      "platforms": {
-        "windows-installed": "ready",
-        "macos-installed": "ready",
-        "linux-installed": "ready"
-      }
-    },
-    {
-      "id": "ui-debug-permission-decision-lifecycle-installed",
-      "kind": "ui-debug-surface",
-      "entrypoint": "scripts/release-drivers/ui-debug-permission-decision-lifecycle-installed.ts",
       "platforms": {
         "windows-installed": "ready",
         "macos-installed": "ready",
@@ -744,7 +734,7 @@
       "surfaceId": "palette-action:act-auto-auto",
       "driverId": "palette-action-installed",
       "fixtureId": "palette:app-shell-visible",
-      "expectedEffect": "The Auto palette action changes renderer-backed autonomy from Confirm to bypassPermissions and restores the original mode after proof.",
+      "expectedEffect": "The Auto palette action restores a prepared legacy migration mode to the shipped Full Auto bypassPermissions state and preserves that state after proof.",
       "oracleId": "palette:act-auto-auto:autonomy-changed",
       "cleanupId": "palette:close-modal-and-clear-highlights"
     },
@@ -4613,14 +4603,6 @@
       "cleanupId": "tauri:clear-owned-goal-state"
     },
     {
-      "surfaceId": "tauri-command:pty_attach",
-      "driverId": "tauri-command-installed",
-      "fixtureId": "tauri:isolated-fail-closed-validation",
-      "expectedEffect": "Installed Tauri IPC pty_attach returns its exact fail-closed validation or absent-state rejection before performing the guarded operation.",
-      "oracleId": "tauri:pty_attach:fail-closed",
-      "cleanupId": "tauri:delete-invoke-state"
-    },
-    {
       "surfaceId": "tauri-command:pty_create",
       "driverId": "tauri-command-installed",
       "fixtureId": "tauri:isolated-fail-closed-validation",
@@ -5453,22 +5435,6 @@
       "cleanupId": "ui:restore-browser-sidebar-abort-task-and-restore-window"
     },
     {
-      "surfaceId": "ui-control:src/browser/components/BookmarkSidecar.tsx:[aria-label=\"Add link\"]@src/browser/components/BookmarkSidecar.tsx#15",
-      "driverId": "ui-control-bounded-installed",
-      "fixtureId": "ui:browser-bookmark-owned-create",
-      "expectedEffect": "A native click creates one synthetic owned bookmark link before deleting its exact returned ID and restoring draft, mode, panel, task, and window state.",
-      "oracleId": "ui:activation:owned-bookmark-state-transition",
-      "cleanupId": "ui:delete-owned-bookmarks-restore-panel-abort-task-and-window"
-    },
-    {
-      "surfaceId": "ui-control:src/browser/components/BookmarkSidecar.tsx:[aria-label=\"New folder\"]@src/browser/components/BookmarkSidecar.tsx#14",
-      "driverId": "ui-control-bounded-installed",
-      "fixtureId": "ui:browser-bookmark-owned-create",
-      "expectedEffect": "A native click creates one synthetic owned bookmark folder before deleting its exact returned ID and restoring draft, mode, panel, task, and window state.",
-      "oracleId": "ui:activation:owned-bookmark-state-transition",
-      "cleanupId": "ui:delete-owned-bookmarks-restore-panel-abort-task-and-window"
-    },
-    {
       "surfaceId": "ui-control:src/browser/components/BookmarkSidecar.tsx:[data-debug-id^=\"shellx-browser-bookmark-\"]@src/browser/components/BookmarkSidecar.tsx#1",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:browser-bookmark-owned-navigation",
@@ -5501,6 +5467,14 @@
       "cleanupId": "ui:delete-owned-bookmarks-restore-panel-abort-task-and-window"
     },
     {
+      "surfaceId": "ui-control:src/browser/components/BookmarkSidecar.tsx:[data-debug-id^=\"shellx-browser-bookmark-open-\"]@src/browser/components/BookmarkSidecar.tsx#5",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:browser-bookmark-owned-navigation",
+      "expectedEffect": "Native input navigates the exact owned task tab through one synthetic bookmark-manager Open action before exact bookmark, panel, task, tab, server, and window cleanup.",
+      "oracleId": "ui:activation:owned-browser-bookmark-navigation",
+      "cleanupId": "ui:delete-owned-bookmark-navigation-abort-task-and-window-loopback"
+    },
+    {
       "surfaceId": "ui-control:src/browser/components/BookmarkSidecar.tsx:[data-debug-id^=\"shellx-browser-bookmark-pin-\"]@src/browser/components/BookmarkSidecar.tsx#6",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:browser-bookmark-owned-row",
@@ -5514,6 +5488,22 @@
       "fixtureId": "ui:browser-bookmark-owned-row",
       "expectedEffect": "Native interaction changes only one synthetic owned bookmark URL before deleting that exact bookmark and restoring mode, panel, task, and window state.",
       "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:delete-owned-bookmarks-restore-panel-abort-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"shellx-browser-bookmark-create-folder\"]@src/browser/components/BookmarkSidecar.tsx#14",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:browser-bookmark-owned-create",
+      "expectedEffect": "A native click creates one synthetic owned bookmark folder before deleting its exact returned ID and restoring draft, mode, panel, task, and window state.",
+      "oracleId": "ui:activation:owned-bookmark-state-transition",
+      "cleanupId": "ui:delete-owned-bookmarks-restore-panel-abort-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"shellx-browser-bookmark-create-link\"]@src/browser/components/BookmarkSidecar.tsx#15",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:browser-bookmark-owned-create",
+      "expectedEffect": "A native click creates one synthetic owned bookmark link before deleting its exact returned ID and restoring draft, mode, panel, task, and window state.",
+      "oracleId": "ui:activation:owned-bookmark-state-transition",
       "cleanupId": "ui:delete-owned-bookmarks-restore-panel-abort-task-and-window"
     },
     {
@@ -5563,14 +5553,6 @@
       "expectedEffect": "A native click selects Browser bookmark Edit mode from an owned List baseline before exact mode, panel, task, and window restoration.",
       "oracleId": "ui:boolean-state-transition",
       "cleanupId": "ui:restore-browser-bookmark-mode-abort-task-and-window"
-    },
-    {
-      "surfaceId": "ui-control:src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"surface-browser-components-bookmarksidecar-5\"]@src/browser/components/BookmarkSidecar.tsx#5",
-      "driverId": "ui-control-bounded-installed",
-      "fixtureId": "ui:browser-bookmark-owned-navigation",
-      "expectedEffect": "Native input navigates the exact owned task tab through one synthetic bookmark-manager Open action before exact bookmark, panel, task, tab, server, and window cleanup.",
-      "oracleId": "ui:activation:owned-browser-bookmark-navigation",
-      "cleanupId": "ui:delete-owned-bookmark-navigation-abort-task-and-window-loopback"
     },
     {
       "surfaceId": "ui-control:src/browser/components/BookmarkToolbar.tsx:[data-debug-id^=\"shellx-browser-bookmark-folder-\"]@src/browser/components/BookmarkToolbar.tsx#1",
@@ -6501,15 +6483,7 @@
       "cleanupId": "ui:remove-owned-attachment-clear-prompt-delete-files-close-tab-restore-baseline"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[aria-label=\"close terminal tab\"]@src/components/BottomPanel.tsx#27",
-      "driverId": "ui-control-bottom-panel-lifecycle-installed",
-      "fixtureId": "ui:bottom-panel-owned-tab-terminal-projection",
-      "expectedEffect": "A native click dismisses exactly the owned projected ACP terminal row and returns selection to the shell projection without touching a PTY.",
-      "oracleId": "ui:activation:owned-terminal-selection-transition",
-      "cleanupId": "ui:clear-owned-terminal-projection-close-tab-restore-baseline"
-    },
-    {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[aria-label=\"Keyboard shortcuts\"]@src/components/BottomPanel.tsx#28",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[aria-label=\"Keyboard shortcuts\"]@src/components/BottomPanel.tsx#25",
       "driverId": "ui-control-local-disclosures-installed",
       "fixtureId": "ui:keyboard-hint-closed",
       "expectedEffect": "Native focus opens the Keyboard shortcuts tooltip before native focus cleanup closes it.",
@@ -6677,14 +6651,6 @@
       "cleanupId": "ui:close-preview-clear-owned-events-delete-files-close-tab-restore-baseline"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[title^=\"ACP terminal \"]@src/components/BottomPanel.tsx#26",
-      "driverId": "ui-control-bottom-panel-lifecycle-installed",
-      "fixtureId": "ui:bottom-panel-owned-tab-terminal-projection",
-      "expectedEffect": "A native click selects the exact owned projected ACP terminal identity without spawning or controlling a PTY.",
-      "oracleId": "ui:boolean-state-transition",
-      "cleanupId": "ui:clear-owned-terminal-projection-close-tab-restore-baseline"
-    },
-    {
       "surfaceId": "ui-control:src/components/BottomPanel.tsx:role=button;name=\"Find\"@src/components/BottomPanel.tsx#13",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:attachment-media-owned-lifecycle",
@@ -6699,14 +6665,6 @@
       "expectedEffect": "A native click inserts the exact Inspect helper text for the owned attachment without sending it or invoking a provider.",
       "oracleId": "ui:activation:owned-attachment-prompt-transition",
       "cleanupId": "ui:remove-owned-attachment-clear-prompt-delete-files-close-tab-restore-baseline"
-    },
-    {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:role=button;name=\"shell\"@src/components/BottomPanel.tsx#25",
-      "driverId": "ui-control-bottom-panel-lifecycle-installed",
-      "fixtureId": "ui:bottom-panel-owned-tab-terminal-projection",
-      "expectedEffect": "A native click moves terminal-strip selection from the owned projected ACP terminal back to the shell projection without spawning or controlling a PTY.",
-      "oracleId": "ui:boolean-state-transition",
-      "cleanupId": "ui:clear-owned-terminal-projection-close-tab-restore-baseline"
     },
     {
       "surfaceId": "ui-control:src/components/BottomPanel.tsx:role=button;name=\"Summarize\"@src/components/BottomPanel.tsx#12",
@@ -7773,30 +7731,6 @@
       "cleanupId": "ui:clear-owned-mic-stop-close-tab-restore-baseline"
     },
     {
-      "surfaceId": "ui-control:src/components/PermissionModal.tsx:[data-debug-id=\"surface-components-permissionmodal-1\"]@src/components/PermissionModal.tsx#1",
-      "driverId": "ui-control-permission-decision-lifecycle-installed",
-      "fixtureId": "ui:permission-owned-modal-backdrop-deny",
-      "expectedEffect": "Native installed input drives the real modal-backdrop-deny callback from pending to deny in renderer-owned memory, then exact cleanup removes only that fixture without launching a provider or changing persistent permission policy.",
-      "oracleId": "ui:activation:permission-modal-backdrop-deny-transition",
-      "cleanupId": "ui:clear-owned-permission-decision-and-restore-view"
-    },
-    {
-      "surfaceId": "ui-control:src/components/PermissionModal.tsx:role=button;name=\"Allow\"@src/components/PermissionModal.tsx#4",
-      "driverId": "ui-control-permission-decision-lifecycle-installed",
-      "fixtureId": "ui:permission-owned-modal-allow",
-      "expectedEffect": "Native installed input drives the real modal-allow callback from pending to allow in renderer-owned memory, then exact cleanup removes only that fixture without launching a provider or changing persistent permission policy.",
-      "oracleId": "ui:activation:permission-modal-allow-transition",
-      "cleanupId": "ui:clear-owned-permission-decision-and-restore-view"
-    },
-    {
-      "surfaceId": "ui-control:src/components/PermissionModal.tsx:role=button;name=\"Deny\"@src/components/PermissionModal.tsx#3",
-      "driverId": "ui-control-permission-decision-lifecycle-installed",
-      "fixtureId": "ui:permission-owned-modal-deny",
-      "expectedEffect": "Native installed input drives the real modal-deny callback from pending to deny in renderer-owned memory, then exact cleanup removes only that fixture without launching a provider or changing persistent permission policy.",
-      "oracleId": "ui:activation:permission-modal-deny-transition",
-      "cleanupId": "ui:clear-owned-permission-decision-and-restore-view"
-    },
-    {
       "surfaceId": "ui-control:src/components/PermissionPill.tsx:[data-debug-id=\"surface-components-permissionpill-1\"]@src/components/PermissionPill.tsx#1",
       "driverId": "ui-control-permission-decision-lifecycle-installed",
       "fixtureId": "ui:permission-owned-pill-allow",
@@ -8509,11 +8443,27 @@
       "cleanupId": "ui:close-connection-ui-delete-owned-record-restore-directory"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[aria-label=\"Cancel connector draft\"]@src/components/settings/ConnectorsTab.tsx#22",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[aria-label=\"Cancel connector draft\"]@src/components/settings/ConnectorsTab.tsx#24",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-unsaved-draft-open",
       "expectedEffect": "A native click cancels the unsaved Connector draft, discards bounded local text, and restores the exact closed state without saving.",
       "oracleId": "ui:activation:connectors-draft-closed",
+      "cleanupId": "ui:restore-connectors-draft-and-close-settings"
+    },
+    {
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"connector-approval-auto-dispatch\"]@src/components/settings/ConnectorsTab.tsx#9",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:connectors-unsaved-draft-baseline",
+      "expectedEffect": "A native click selects Auto-dispatch only in the unsaved connector draft before exact Review first restoration.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:restore-connectors-draft-and-close-settings"
+    },
+    {
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"connector-approval-review-first\"]@src/components/settings/ConnectorsTab.tsx#8",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:connectors-unsaved-draft-baseline",
+      "expectedEffect": "Native clicks prepare Auto-dispatch and select Review first only in the unsaved connector draft before exact default-state restoration.",
+      "oracleId": "ui:boolean-state-transition",
       "cleanupId": "ui:restore-connectors-draft-and-close-settings"
     },
     {
@@ -8525,7 +8475,7 @@
       "cleanupId": "ui:delete-owned-connectors-reset-isolated-vault-restore-settings-and-teardown-profile"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-11\"]@src/components/settings/ConnectorsTab.tsx#11",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-11\"]@src/components/settings/ConnectorsTab.tsx#13",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-owned-renderer-fixture",
       "expectedEffect": "Native selection chooses and exactly clears one synthetic renderer-only session in the unsaved connector target draft without changing a live session.",
@@ -8533,7 +8483,7 @@
       "cleanupId": "ui:clear-connectors-owned-fixture-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-12\"]@src/components/settings/ConnectorsTab.tsx#12",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-12\"]@src/components/settings/ConnectorsTab.tsx#14",
       "driverId": "ui-control-connectors-production-lifecycle-installed",
       "fixtureId": "ui:connectors-production-owned-save",
       "expectedEffect": "Native write-only token input plus Save persists one disabled Inbox connector and its synthetic credential through the isolated production Vault without returning the token.",
@@ -8541,7 +8491,7 @@
       "cleanupId": "ui:delete-owned-connectors-reset-isolated-vault-restore-settings-and-teardown-profile"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-17\"]@src/components/settings/ConnectorsTab.tsx#17",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-17\"]@src/components/settings/ConnectorsTab.tsx#19",
       "driverId": "ui-control-connectors-production-lifecycle-installed",
       "fixtureId": "ui:connectors-production-owned-simulate",
       "expectedEffect": "Native simulator input creates one production inbound event for the disabled release-owned connector and persists the expected rejected/no-dispatch status.",
@@ -8549,7 +8499,7 @@
       "cleanupId": "ui:delete-owned-connectors-reset-isolated-vault-restore-settings-and-teardown-profile"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-18\"]@src/components/settings/ConnectorsTab.tsx#18",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-18\"]@src/components/settings/ConnectorsTab.tsx#20",
       "driverId": "ui-control-connectors-production-lifecycle-installed",
       "fixtureId": "ui:connectors-production-owned-test",
       "expectedEffect": "A native Test click reads the synthetic credential through Vault, rejects its deliberate pre-network token shape, and persists the bounded test timestamp and error.",
@@ -8557,7 +8507,7 @@
       "cleanupId": "ui:delete-owned-connectors-reset-isolated-vault-restore-settings-and-teardown-profile"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-21\"]@src/components/settings/ConnectorsTab.tsx#21",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"surface-components-settings-connectorstab-21\"]@src/components/settings/ConnectorsTab.tsx#23",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-unsaved-draft-baseline",
       "expectedEffect": "Native text entry changes only the unsaved connector Vault key reference before exact restoration without retaining its contents.",
@@ -8573,7 +8523,7 @@
       "cleanupId": "ui:restore-connectors-draft-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-allowed\"]@src/components/settings/ConnectorsTab.tsx#9",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-allowed\"]@src/components/settings/ConnectorsTab.tsx#11",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-unsaved-draft-baseline",
       "expectedEffect": "Native text entry changes only the unsaved connector allowlist before exact clearing without retaining its contents.",
@@ -8581,7 +8531,7 @@
       "cleanupId": "ui:restore-connectors-draft-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-secret\"]@src/components/settings/ConnectorsTab.tsx#8",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-secret\"]@src/components/settings/ConnectorsTab.tsx#10",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-owned-renderer-fixture",
       "expectedEffect": "Native text entry changes and exactly clears only a synthetic unsaved connector token while Save stays disabled and no Vault command runs.",
@@ -8589,7 +8539,7 @@
       "cleanupId": "ui:clear-connectors-owned-fixture-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-sim-connector\"]@src/components/settings/ConnectorsTab.tsx#13",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-sim-connector\"]@src/components/settings/ConnectorsTab.tsx#15",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-owned-renderer-fixture",
       "expectedEffect": "Native selection changes between two synthetic renderer-only connector options and restores the baseline while Simulate stays disabled.",
@@ -8597,7 +8547,7 @@
       "cleanupId": "ui:clear-connectors-owned-fixture-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-sim-conversation\"]@src/components/settings/ConnectorsTab.tsx#15",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-sim-conversation\"]@src/components/settings/ConnectorsTab.tsx#17",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-unsaved-draft-baseline",
       "expectedEffect": "Native text entry changes only the unsaved inbound-simulator conversation draft before exact clearing without retaining its contents or simulating a message.",
@@ -8605,7 +8555,7 @@
       "cleanupId": "ui:restore-connectors-draft-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-sim-sender\"]@src/components/settings/ConnectorsTab.tsx#14",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-sim-sender\"]@src/components/settings/ConnectorsTab.tsx#16",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-unsaved-draft-baseline",
       "expectedEffect": "Native text entry changes only the unsaved inbound-simulator sender draft before exact clearing without retaining its contents or simulating a message.",
@@ -8613,7 +8563,7 @@
       "cleanupId": "ui:restore-connectors-draft-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-sim-text\"]@src/components/settings/ConnectorsTab.tsx#16",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-sim-text\"]@src/components/settings/ConnectorsTab.tsx#18",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-unsaved-draft-baseline",
       "expectedEffect": "Native text entry changes only the unsaved inbound-simulator message draft before exact clearing without retaining its contents or simulating a message.",
@@ -8621,7 +8571,7 @@
       "cleanupId": "ui:restore-connectors-draft-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-target\"]@src/components/settings/ConnectorsTab.tsx#10",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:[id=\"connector-target\"]@src/components/settings/ConnectorsTab.tsx#12",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-unsaved-draft-baseline",
       "expectedEffect": "Native selection changes only the unsaved connector target mode without selecting or retaining a tab identifier before exact restoration.",
@@ -8637,7 +8587,7 @@
       "cleanupId": "ui:restore-connectors-draft-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:role=button;name=\"Delete\"@src/components/settings/ConnectorsTab.tsx#20",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:role=button;name=\"Delete\"@src/components/settings/ConnectorsTab.tsx#22",
       "driverId": "ui-control-connectors-production-lifecycle-installed",
       "fixtureId": "ui:connectors-production-owned-delete",
       "expectedEffect": "A native Delete click plus exact confirmation removes only the release-owned connector and refreshes the isolated production list.",
@@ -8645,7 +8595,7 @@
       "cleanupId": "ui:delete-owned-connectors-reset-isolated-vault-restore-settings-and-teardown-profile"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:role=button;name=\"Edit\"@src/components/settings/ConnectorsTab.tsx#19",
+      "surfaceId": "ui-control:src/components/settings/ConnectorsTab.tsx:role=button;name=\"Edit\"@src/components/settings/ConnectorsTab.tsx#21",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:connectors-owned-renderer-fixture",
       "expectedEffect": "A native click opens the exact synthetic connector in the local editor and Cancel restores the closed fixture without saving or reading Vault state.",
@@ -9529,7 +9479,7 @@
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:setup-guide-destinations-closed",
       "expectedEffect": "A native click opens the exact agents destination from the visible Setup Guide before restoring Settings, window, overlay, and dismissal baselines.",
-      "oracleId": "ui:activation:setup-guide-agent-settings-opened",
+      "oracleId": "ui:activation:setup-guide-agent-cli-setup-opened",
       "cleanupId": "ui:restore-setup-guide-destinations"
     },
     {
@@ -10429,6 +10379,22 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
+      "surfaceId": "ui-debug-surface:connector-approval-auto-dispatch@src/components/settings/ConnectorsTab.tsx#4",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:settings-connectors-visible",
+      "expectedEffect": "connector-approval-auto-dispatch resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:connector-approval-review-first@src/components/settings/ConnectorsTab.tsx#3",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:settings-connectors-visible",
+      "expectedEffect": "connector-approval-review-first resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
       "surfaceId": "ui-debug-surface:connector-inbox-backdrop@src/components/ConnectorInboxModal.tsx#1",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:connector-inbox-visible",
@@ -11005,6 +10971,22 @@
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
     {
+      "surfaceId": "ui-debug-surface:shellx-browser-bookmark-create-folder@src/browser/components/BookmarkSidecar.tsx#20",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:browser-bookmark-manager-owned",
+      "expectedEffect": "shellx-browser-bookmark-create-folder resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-bookmark-create-link@src/browser/components/BookmarkSidecar.tsx#21",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:browser-bookmark-manager-owned",
+      "expectedEffect": "shellx-browser-bookmark-create-link resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
       "surfaceId": "ui-debug-surface:shellx-browser-bookmark-current@src/browser/components/BrowserChrome.tsx#20",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-chrome-owned-task",
@@ -11093,7 +11075,7 @@
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-bookmark-list@src/browser/components/BookmarkSidecar.tsx#20",
+      "surfaceId": "ui-debug-surface:shellx-browser-bookmark-list@src/browser/components/BookmarkSidecar.tsx#22",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-bookmark-list-link-owned",
       "expectedEffect": "shellx-browser-bookmark-list resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -11145,6 +11127,14 @@
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-bookmark-manager-owned",
       "expectedEffect": "shellx-browser-bookmark-manager resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-bookmark-open-*@src/browser/components/BookmarkSidecar.tsx#8",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:browser-bookmark-manager-owned",
+      "expectedEffect": "shellx-browser-bookmark-open-* resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
       "oracleId": "ui:visible-nonempty-rectangle",
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
@@ -12285,14 +12275,6 @@
       "cleanupId": "ui:reset-disposable-vault-with-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:surface-browser-components-bookmarksidecar-5@src/browser/components/BookmarkSidecar.tsx#8",
-      "driverId": "ui-debug-surface-installed",
-      "fixtureId": "ui:browser-bookmark-manager-owned",
-      "expectedEffect": "surface-browser-components-bookmarksidecar-5 resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
-      "oracleId": "ui:visible-nonempty-rectangle",
-      "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
-    },
-    {
       "surfaceId": "ui-debug-surface:surface-browser-components-browsershieldspanel-3@src/browser/components/BrowserShieldsPanel.tsx#4",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-shields-owned-task",
@@ -12805,22 +12787,6 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:surface-components-permissionmodal-1@src/components/PermissionModal.tsx#1",
-      "driverId": "ui-debug-permission-decision-lifecycle-installed",
-      "fixtureId": "ui:permission-owned-modal-markers",
-      "expectedEffect": "surface-components-permissionmodal-1 resolves through the exact renderer-owned PermissionModal fixture; no permission decision or provider action is invoked.",
-      "oracleId": "ui:visible-nonempty-rectangle",
-      "cleanupId": "ui:clear-owned-permission-modal-markers-and-restore-view"
-    },
-    {
-      "surfaceId": "ui-debug-surface:surface-components-permissionmodal-2@src/components/PermissionModal.tsx#2",
-      "driverId": "ui-debug-permission-decision-lifecycle-installed",
-      "fixtureId": "ui:permission-owned-modal-markers",
-      "expectedEffect": "surface-components-permissionmodal-2 resolves through the exact renderer-owned PermissionModal fixture; no permission decision or provider action is invoked.",
-      "oracleId": "ui:visible-nonempty-rectangle",
-      "cleanupId": "ui:clear-owned-permission-modal-markers-and-restore-view"
-    },
-    {
       "surfaceId": "ui-debug-surface:surface-components-permissionpill-1@src/components/PermissionPill.tsx#1",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:owned-renderer-event-chat-visible",
@@ -13029,7 +12995,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-11@src/components/settings/ConnectorsTab.tsx#3",
+      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-11@src/components/settings/ConnectorsTab.tsx#5",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-connectors-fixed-target-visible",
       "expectedEffect": "surface-components-settings-connectorstab-11 resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -13037,7 +13003,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-12@src/components/settings/ConnectorsTab.tsx#4",
+      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-12@src/components/settings/ConnectorsTab.tsx#6",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-connectors-visible",
       "expectedEffect": "surface-components-settings-connectorstab-12 resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -13045,7 +13011,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-17@src/components/settings/ConnectorsTab.tsx#5",
+      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-17@src/components/settings/ConnectorsTab.tsx#7",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-connectors-visible",
       "expectedEffect": "surface-components-settings-connectorstab-17 resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -13053,7 +13019,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-18@src/components/settings/ConnectorsTab.tsx#6",
+      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-18@src/components/settings/ConnectorsTab.tsx#8",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-connectors-visible",
       "expectedEffect": "surface-components-settings-connectorstab-18 resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -13061,7 +13027,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-21@src/components/settings/ConnectorsTab.tsx#7",
+      "surfaceId": "ui-debug-surface:surface-components-settings-connectorstab-21@src/components/settings/ConnectorsTab.tsx#9",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-connectors-visible",
       "expectedEffect": "surface-components-settings-connectorstab-21 resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",

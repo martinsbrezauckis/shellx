@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { ConnectionPreset } from "../../src/components/ConnectionPicker";
 import {
   collectReleaseSurfaceProviderRouteEvidence,
@@ -10,7 +10,6 @@ import type { ReleaseSurfaceCandidateAttestation } from "./release-surface-candi
 import type { ReleasePlatform } from "./release-surface-inventory";
 import {
   validateReleaseSurfaceProviderRouteEvidence,
-  type ReleaseSurfaceProviderRouteEvidence,
 } from "./release-surface-provider-route-evidence";
 import {
   releaseSurfaceProviderRouteId,

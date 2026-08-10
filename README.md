@@ -31,7 +31,7 @@ artifacts when CI passes.
 
 ## Preview
 
-These previews use UI captured from the installed 0.3.5 release candidate.
+These previews use UI captured from the installed 0.3.51 release candidate.
 The presentation backdrop and the observatory shown as session content are
 generated; ShellX controls, Browser chrome, and layout have not been repainted.
 The Browser preview opens the live public `https://theshellx.com` homepage in
@@ -39,15 +39,15 @@ the exact installed page bounds.
 
 ### ShellX workspace
 
-![ShellX 0.3.5 work session with Preview Center displaying a high-contrast generated observatory image](docs/public/assets/shellx-desktop-0.3.5.png)
+![ShellX 0.3.51 work session with Preview Center displaying a high-contrast snow-leopard image](docs/public/assets/shellx-desktop-0.3.51.png)
 
 ### ShellX Browser
 
-![ShellX Browser 0.3.5 with theshellx.com open, secure native navigation chrome, and the agent sidebar visible](docs/public/assets/shellx-browser-0.3.5.png)
+![ShellX Browser 0.3.51 with theshellx.com open, secure native navigation chrome, and the agent sidebar visible](docs/public/assets/shellx-browser-0.3.51.png)
 
 ### ShellX Vault
 
-![ShellX 0.3.5 Vault settings with password, profile-card, and agent-wallet surfaces visible](docs/public/assets/shellx-vault-0.3.5.png)
+![ShellX 0.3.51 Vault settings with password, profile-card, and agent-wallet surfaces visible](docs/public/assets/shellx-vault-0.3.51.png)
 
 ## What it does
 
@@ -90,10 +90,13 @@ the exact installed page bounds.
 - **Background task cockpit.** Watch running agent/subagent/terminal
   work with health counters, reports, latest output, and explicit
   pause/resume/kill controls.
-- **Session-scoped host guidance.** Agents launched by ShellX receive compact
-  runtime rules and the `shellx-host` MCP surface for Vault, Browser, Debug
-  API, `/build`, handoffs, and UI evidence. Direct CLI agents do not inherit a
-  global ShellX skill, MCP server, or account-wide instruction block.
+- **Session-scoped host guidance.** ShellX-launched Grok sessions and supported
+  Codex/Claude provider sessions receive compact runtime rules plus the
+  `shellx-host` MCP surface for Vault, Browser, Debug API, `/build`, handoffs,
+  and UI evidence. Antigravity receives isolated session rules, while its Host
+  MCP bridge remains disabled until the CLI can execute discovered MCP tools.
+  Direct CLI agents do not inherit a global ShellX skill, MCP server, or
+  account-wide instruction block.
 - **Light and dark appearance.** Settings offers Black, Black + warm, and
   Bright themes and persists the selected shellX UI appearance.
 - **Build Mode.** `/build "<objective>"` writes a scoped scratchboard,
@@ -107,9 +110,9 @@ the exact installed page bounds.
 - **Work Preview.** Static HTML, web apps, and Expo web apps can run in
   a loopback preview with logs, diagnostics, and passive setup checks in
   the Tools panel.
-- **Outside connectors.** Telegram can route allowlisted direct chats to
-  a shellX session and reply back. Discord bot messages can land in the
-  connector inbox.
+- **Outside connectors.** Telegram and Discord can route allowlisted direct
+  chats to the selected live Grok, Codex, Claude, or Antigravity tab and send
+  the captured reply back; Review first remains available before auto-dispatch.
 - **shellXagent HTTP API.** Authenticated loopback orchestration covers
   sessions, providers, Browser, Vault, preview, Git, settings, diagnostics,
   and release evidence. Native keyboard, palette, and OS-picker behavior is

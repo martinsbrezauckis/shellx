@@ -1564,7 +1564,7 @@ async function main(): Promise<void> {
   await sleep(250);
   await postUi(base, token, {
     source: "browser-ui-debug-smoke",
-    debugClick: "[aria-label='New folder']",
+    debugClick: "[data-debug-id='shellx-browser-bookmark-create-folder']",
     debugHighlights: expectedHighlights("browser-bookmark-create-folder", [
       "[data-debug-id='shellx-browser-bookmark-manager']",
     ]),
@@ -1598,7 +1598,7 @@ async function main(): Promise<void> {
   await sleep(250);
   await postUi(base, token, {
     source: "browser-ui-debug-smoke",
-    debugClick: "[aria-label='Add link']",
+    debugClick: "[data-debug-id='shellx-browser-bookmark-create-link']",
     debugHighlights: expectedHighlights("browser-bookmark-create-link", [
       "[data-debug-id='shellx-browser-bookmark-manager']",
     ]),

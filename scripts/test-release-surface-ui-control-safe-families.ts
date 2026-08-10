@@ -9,6 +9,7 @@ import type { ReleaseSurfaceDriverReport, ReleaseSurfaceDriverRequest } from "./
 import {
   releaseSurfaceControllerBindingFixture,
   releaseSurfaceFixtureSourceCommit,
+  releaseSurfaceFixtureVersion,
 } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 
@@ -77,12 +78,12 @@ try {
         cleanupId: assignment.cleanupId,
       };
     });
-  assert.equal(safeAssignments.length, 55, "the focused safe-family fixture must cover the exact promoted slice");
-  assert.equal(new Set(safeAssignments.map((assignment) => assignment.surface.id)).size, 55);
+  assert.equal(safeAssignments.length, 57, "the focused safe-family fixture must cover the exact promoted slice");
+  assert.equal(new Set(safeAssignments.map((assignment) => assignment.surface.id)).size, 57);
   const connectorAssignments = safeAssignments.filter((assignment) => (
     assignment.surface.source === "src/components/settings/ConnectorsTab.tsx"
   ));
-  assert.equal(connectorAssignments.length, 13);
+  assert.equal(connectorAssignments.length, 15);
   assert.deepEqual(
     new Set(connectorAssignments.map((assignment) => assignment.fixtureId)),
     new Set([
@@ -100,7 +101,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", temp,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -115,7 +116,7 @@ try {
     driverKind: "ui-control",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: inventory.digest,
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture("scripts/release-drivers/ui-control-installed.ts", [
@@ -226,7 +227,7 @@ try {
     failedReport ? JSON.stringify(failedReport, null, 2) : run.stderr || run.stdout,
   );
   const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
-  assert.equal(report.outcomes.length, 55);
+  assert.equal(report.outcomes.length, 57);
   assert(report.outcomes.every((outcome) => (
     outcome.present === "pass"
     && outcome.invoke === "pass"
@@ -266,6 +267,7 @@ try {
     connectorProvider: string;
     connectorEnabled: boolean;
     connectorDispatchMode: string;
+    connectorRequireApproval: boolean;
     connectorTargetMode: string;
     connectorVaultKey: string;
     connectorAllowedIds: string;
@@ -299,6 +301,7 @@ try {
   assert.equal(audit.connectorProvider, "telegram");
   assert.equal(audit.connectorEnabled, false);
   assert.equal(audit.connectorDispatchMode, "inbox");
+  assert.equal(audit.connectorRequireApproval, true);
   assert.equal(audit.connectorTargetMode, "activeTab");
   assert.equal(audit.connectorVaultKey, "telegram/bot-token");
   assert.equal(audit.connectorAllowedIds, "");
@@ -307,7 +310,6 @@ try {
     chatFontPx: 19,
     density: "default",
     githubGhBinary: "gh",
-    permissionUx: "pill",
     theme: "black",
   });
   assert(audit.clickedSelectors.includes("[title='Add a new connection preset']"));
@@ -352,7 +354,7 @@ try {
   ], { cwd: root, encoding: "utf8", timeout: 60_000 });
   assert.notEqual(overwrite.status, 0, "safe-family evidence output must remain create-only");
 
-  console.log("Release surface safe UI-control native WebDriver families passed: 55 exact assignments");
+  console.log("Release surface safe UI-control native WebDriver families passed: 57 exact assignments");
 } finally {
   process.off("SIGINT", onTerminationSignal);
   process.off("SIGTERM", onTerminationSignal);

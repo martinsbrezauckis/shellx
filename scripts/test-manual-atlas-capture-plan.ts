@@ -29,7 +29,12 @@ for (const panel of ["chat", "requests", "actions", "evidence", "errors"]) {
   );
 }
 assert(captureSource.includes('requiredArg(args, "--app-demo-cwd")'));
+assert(captureSource.includes('optionalArg(args, "--app-demo-cwd-launch")'));
 assert(captureSource.includes('endsWith("/shellx-manual-demo")'));
 assert(captureSource.includes("tabId: await resolveActiveAppTabId()"));
+assert(captureSource.includes("cwd: appDemoCwdLaunch"));
+assert(captureSource.includes("window.devicePixelRatio || 1"));
+assert(captureSource.includes("Math.round(width / devicePixelRatio)"));
+assert(captureSource.includes("Math.round(height / devicePixelRatio)"));
 
 console.log("Manual atlas installed-candidate capture plan passed: 37 exact UI states");

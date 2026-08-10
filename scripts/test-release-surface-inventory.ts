@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -55,7 +55,6 @@ assert(
 );
 const generated = collectReleaseSurfaceInventory(root);
 const committedText = readFileSync(resolve(root, "release", "surface-inventory.json"), "utf8");
-const committed = JSON.parse(committedText) as ReleaseSurfaceInventory;
 
 assert.equal(generated.schema, RELEASE_SURFACE_INVENTORY_SCHEMA);
 assert(
@@ -130,30 +129,30 @@ assert.deepEqual(
   ],
   "callable hidden Host MCP aliases must remain explicit compatibility surfaces",
 );
-assert.equal(generated.counts["ui-control"], 626, "inventory captures every shipping actionable UI instance, including finite mapped menus");
-assert.equal(generated.counts["ui-debug-surface"], 460, "inventory captures every shipping concrete debug marker instance without deduplication");
+assert.equal(generated.counts["ui-control"], 622, "inventory captures every shipping actionable UI instance, including finite mapped menus");
+assert.equal(generated.counts["ui-debug-surface"], 462, "inventory captures every shipping concrete debug marker instance without deduplication");
 assert.deepEqual(generated.occurrenceAccounting.uiControls, {
-  candidates: 616,
-  excludedNonActions: 24,
+  candidates: 611,
+  excludedNonActions: 23,
   finiteVariantInstances: 44,
-  inventoried: 626,
+  inventoried: 622,
 }, "event shields and statically non-addressable inputs must be excluded while finite mapped menus expand into concrete actions");
 assert.deepEqual(generated.occurrenceAccounting.uiDebugSurfaces, {
-  candidates: 423,
+  candidates: 425,
   finiteVariantInstances: 44,
-  inventoried: 460,
+  inventoried: 462,
 }, "every concrete debug marker instance must remain in the release ledger");
 assert.equal(
   new Set(generated.items.filter((item) => item.kind === "ui-control").map((item) => item.name)).size,
-  612,
+  608,
   "repeated source controls remain separate while finite menu instances use concrete names",
 );
 assert.equal(
   new Set(generated.items.filter((item) => item.kind === "ui-debug-surface").map((item) => item.name)).size,
-  453,
+  455,
   "repeated debug markers remain separate while finite menu instances use concrete names",
 );
-assert.equal(generated.copyDerivedInteractiveControls, 227, "copy-derived UI locators remain explicitly visible as brittle coverage");
+assert.equal(generated.copyDerivedInteractiveControls, 220, "copy-derived UI locators remain explicitly visible as brittle coverage");
 const headerSource = readFileSync(resolve(root, "src", "components", "Header.tsx"), "utf8");
 assert(
   !generated.items.some((item) => item.source === "src/components/Header.tsx" && item.name.includes("surface-components-header-2"))
@@ -196,12 +195,12 @@ assert(
 );
 assert.equal(
   generated.items.filter((item) => item.kind === "ui-debug-surface" && item.dynamicSelector).length,
-  23,
+  24,
   "wildcard and conditional-variant debug marker families must be classified",
 );
 assert.equal(
   generated.items.filter((item) => item.kind === "ui-debug-surface" && item.name.includes("*")).length,
-  23,
+  24,
   "runtime-owned wildcard debug marker source occurrences must remain visible in the ledger",
 );
 assert(
@@ -224,7 +223,7 @@ assert(
 );
 assert.equal(
   promotedUiDebugSurfaces.length,
-  438,
+  440,
   "only UI debug surfaces with deterministic owned renderer state may enter the executable lane",
 );
 assert.equal(
@@ -234,7 +233,7 @@ assert.equal(
 );
 assert.equal(
   promotedUiDebugSurfaces.filter((item) => item.driverFamily === "dynamic-marker").length,
-  20,
+  21,
   "only owned Activity evidence, Browser task/history, bookmark, toolbar, and Vault request-action rows currently have deterministic dynamic fixtures",
 );
 assert(
@@ -390,13 +389,13 @@ const liveDriverPlan = verifyFinalSurfaceDriverPlan(
 );
 assert.equal(liveDriverPlan.status, "ready", "every exact surface-platform cell must have an executable release lane");
 assert.equal(liveDriverPlan.counts.inventoryItems, generated.items.length);
-assert.equal(liveDriverPlan.counts.inventoryCells, 4_898);
+assert.equal(liveDriverPlan.counts.inventoryCells, 4_889);
 assert.equal(
   liveDriverPlan.counts.ready,
-  4_898,
+  4_889,
   "ready counts include every exact integrated installed lane, including the candidate-bound native-picker contracts on all applicable platforms",
 );
-assert.equal(liveDriverPlan.counts.assigned, 4_898, "every exact surface-platform cell must have an explicit driver lane");
+assert.equal(liveDriverPlan.counts.assigned, 4_889, "every exact surface-platform cell must have an explicit driver lane");
 assert.equal(liveDriverPlan.counts.missing, 0, "the implementation backlog must be typed rather than hidden as missing coverage");
 const finalSurfaceGateDoc = readFileSync(resolve(root, "release", "FINAL_SURFACE_GATE.md"), "utf8");
 assert.deepEqual(
@@ -466,11 +465,9 @@ assert.equal(
   "provider and clipboard actions moved out of the no-invocation backlog must not retain stale assignments",
 );
 assert.equal(
-  loadedLiveDriverPlan.assignments.filter((assignment) => (
-    assignment.fixtureId === "ui:permission-modal-excluded-live-request-state"
-  )).length,
+  loadedLiveDriverPlan.assignments.filter((assignment) => assignment.surfaceId.includes("PermissionModal")).length,
   0,
-  "obsolete PermissionModal live-request blockers must stay absent after exact renderer-owned pending-request coverage",
+  "retired PermissionModal surfaces must stay absent from the release plan",
 );
 assert(
   loadedLiveDriverPlan.assignments.some((assignment) => (
@@ -736,7 +733,7 @@ assert(
 const executableUiDebugAssignments = loadedLiveDriverPlan.assignments.filter(
   (assignment) => assignment.driverId === "ui-debug-surface-installed",
 );
-assert.equal(executableUiDebugAssignments.length, 435);
+assert.equal(executableUiDebugAssignments.length, 439);
 assert(
   executableUiDebugAssignments.every((assignment) => assignment.expectedEffect.includes("no control activation is claimed")),
   "debug addressability assignments must never claim the corresponding control's semantic action",
@@ -945,8 +942,8 @@ assert(
   loadedLiveDriverPlan.drivers.find((driver) => driver.id === "tauri-command-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "tauri-command-installed")?.platforms["linux-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "tauri-command-installed")?.platforms["macos-installed"] === "ready"
-    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "tauri-command-installed").length === 153
-    && liveDriverPlan.counts.readyByKind["tauri-command"] === 456
+    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "tauri-command-installed").length === 152
+    && liveDriverPlan.counts.readyByKind["tauri-command"] === 453
     && tauriCommandDriverSource.includes('invocationTransport: "debug-api-direct"')
     && tauriCommandDriverSource.includes('"/release-test/tauri-invokes"')
     && tauriCommandDriverSource.includes('"DELETE"')
@@ -1102,40 +1099,28 @@ const permissionDecisionFixtureSource = readFileSync(
   resolve(root, "src", "lib", "debug-permission-decision-fixture.ts"),
   "utf8",
 );
-const permissionModalSource = readFileSync(
-  resolve(root, "src", "components", "PermissionModal.tsx"),
-  "utf8",
-);
 const permissionPillSource = readFileSync(
   resolve(root, "src", "components", "PermissionPill.tsx"),
   "utf8",
 );
 const permissionAssignments = loadedLiveDriverPlan.assignments.filter((assignment) => (
-  assignment.surfaceId.includes("@src/components/PermissionModal.tsx")
-    || assignment.surfaceId.includes("@src/components/PermissionPill.tsx")
+  assignment.surfaceId.includes("@src/components/PermissionPill.tsx")
 ));
 const permissionControlAssignments = permissionAssignments.filter((assignment) => (
   assignment.driverId === "ui-control-permission-decision-lifecycle-installed"
-));
-const permissionModalMarkerAssignments = permissionAssignments.filter((assignment) => (
-  assignment.driverId === "ui-debug-permission-decision-lifecycle-installed"
 ));
 const permissionPillMarkerAssignments = permissionAssignments.filter((assignment) => (
   assignment.driverId === "ui-debug-surface-installed"
 ));
 assert(
-  permissionAssignments.length === 10
-    && permissionControlAssignments.length === 6
-    && permissionModalMarkerAssignments.length === 2
+  permissionAssignments.length === 5
+    && permissionControlAssignments.length === 3
     && permissionPillMarkerAssignments.length === 2
     && permissionAssignments.every((assignment) => !assignment.driverId.endsWith("-backlog-installed"))
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-permission-decision-lifecycle-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-permission-decision-lifecycle-installed")?.platforms["macos-installed"] === "ready"
-    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-permission-decision-lifecycle-installed")?.platforms["linux-installed"] === "ready"
-    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-debug-permission-decision-lifecycle-installed")?.platforms["windows-installed"] === "ready"
-    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-debug-permission-decision-lifecycle-installed")?.platforms["macos-installed"] === "ready"
-    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-debug-permission-decision-lifecycle-installed")?.platforms["linux-installed"] === "ready",
-  "all ten PermissionModal and PermissionPill source surfaces must use exact installed-native-input coverage on every platform",
+    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-permission-decision-lifecycle-installed")?.platforms["linux-installed"] === "ready",
+  "all five PermissionPill source surfaces must use exact installed coverage on every platform",
 );
 assert(
   permissionControlAssignments.every((assignment) => (
@@ -1143,16 +1128,15 @@ assert(
       && assignment.cleanupId === "ui:clear-owned-permission-decision-and-restore-view"
       && assignment.oracleId.startsWith("ui:activation:permission-")
   ))
-    && permissionModalMarkerAssignments.every((assignment) => (
-      assignment.fixtureId === "ui:permission-owned-modal-markers"
-        && assignment.cleanupId === "ui:clear-owned-permission-modal-markers-and-restore-view"
+    && permissionPillMarkerAssignments.every((assignment) => (
+      assignment.fixtureId === "ui:owned-renderer-event-chat-visible"
+        && assignment.cleanupId === "ui:clear-debug-highlight-and-restore-owned-state"
         && assignment.oracleId === "ui:visible-nonempty-rectangle"
     )),
-  "permission decision and modal marker assignments must retain their exact action-specific fixtures and cleanup",
+  "permission decision and pill marker assignments must retain their exact action-specific fixtures and cleanup",
 );
 assert(
   permissionDecisionDriverSource.includes("clickReleaseSurfaceInstalledInputElement")
-    && permissionDecisionDriverSource.includes("clickReleaseSurfaceInstalledInputElementAtFraction")
     && permissionDecisionDriverSource.includes("Permission decision receipt")
     && permissionDecisionDriverSource.includes("restore exact active-tab and bottom-tab memory")
     && !permissionDecisionDriverSource.includes("executeReleaseSurfaceInstalledInputScript")
@@ -1163,8 +1147,7 @@ assert(
     && permissionDecisionFixtureSource.includes("fixtureOnly: true")
     && permissionDecisionFixtureSource.includes("Unknown commands are")
     && !permissionDecisionFixtureSource.includes("@tauri-apps")
-    && permissionModalSource.includes("debugFixture.expectedModalSource !== source")
-    && permissionModalSource.includes('invoke<boolean>("resolve_permission_request"')
+    && !existsSync(resolve(root, "src", "components", "PermissionModal.tsx"))
     && permissionPillSource.includes("debugFixture.expectedDecision !== decision")
     && permissionPillSource.includes('invoke<boolean>("resolve_permission_request"'),
   "permission fixtures must stay fail-closed and renderer-only while production callbacks retain the normal Tauri resolution path",
@@ -1345,7 +1328,7 @@ assert(
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bounded-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bounded-installed")?.platforms["macos-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bounded-installed")?.platforms["linux-installed"] === "ready"
-    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "ui-control-bounded-installed").length === 362
+    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "ui-control-bounded-installed").length === 364
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bottom-tabs-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bottom-tabs-installed")?.platforms["macos-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bottom-tabs-installed")?.platforms["linux-installed"] === "ready"
@@ -1360,7 +1343,7 @@ assert(
       assignment.driverId === "ui-control-bottom-panel-lifecycle-installed"
       && assignment.fixtureId.startsWith("ui:bottom-panel-owned-tab-")
       && assignment.cleanupId.includes("restore-baseline")
-    )).length === 11
+    )).length === 8
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-connection-lifecycle-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-connection-lifecycle-installed")?.platforms["macos-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-connection-lifecycle-installed")?.platforms["linux-installed"] === "ready"
@@ -1456,7 +1439,7 @@ assert(
     )).length === 12
     && loadedLiveDriverPlan.assignments.filter((assignment) => (
       assignment.fixtureId === "ui:connectors-unsaved-draft-baseline"
-    )).length === 11
+    )).length === 13
     && loadedLiveDriverPlan.assignments.filter((assignment) => (
       assignment.fixtureId === "ui:attachment-media-owned-lifecycle"
       && assignment.driverId === "ui-control-bounded-installed"
@@ -1713,7 +1696,7 @@ assert(
         && assignment.oracleId === "ui:activation:owned-app-screenshot-attached"
         && assignment.cleanupId === "ui:remove-exact-screenshot-attachment-delete-owned-png-restore-view"
     )).length === 2
-    && liveDriverPlan.counts.readyByKind["ui-control"] === 1_874
+    && liveDriverPlan.counts.readyByKind["ui-control"] === 1_862
     && uiControlDriverSource.includes('invocationTransport: "native-installed-input"')
     && uiControlDriverSource.includes("createReleaseSurfaceInstalledInputSession")
     && uiControlDriverSource.includes("clickReleaseSurfaceWebDriverElement")
@@ -1727,9 +1710,9 @@ assert(
     && bottomPanelLifecycleDriverSource.includes("createOwnedTab")
     && bottomPanelLifecycleDriverSource.includes("prepareOwnedFiles")
     && bottomPanelLifecycleDriverSource.includes("debugRendererFixture")
-    && bottomPanelLifecycleDriverSource.includes("expectedTerminalBaseline")
     && bottomPanelLifecycleDriverSource.includes("observeReleaseSurfaceInstalledInputElement")
-    && bottomPanelLifecycleDriverSource.includes('["mounted"]')
+    && !bottomPanelLifecycleDriverSource.includes("expectedTerminalBaseline")
+    && !bottomPanelLifecycleDriverSource.includes("ACP terminal")
     && !bottomPanelLifecycleDriverSource.includes("executeReleaseSurfaceInstalledInputScript")
     && !bottomPanelLifecycleDriverSource.includes("window.__TAURI_INTERNALS__")
     && boundedInstalledDriverSource.includes("assertBoundedInstalledUiControlAssignments")

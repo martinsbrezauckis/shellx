@@ -164,7 +164,7 @@ const mustContain: Array<[string, string]> = [
   ["docs/public/API.md", "POST | `/vault/lock`"],
   ["skills/shellx-host/SKILL.md", "vault_request_grant"],
   ["src/browser/components/AgentSidebar.tsx", "data-debug-id=\"shellx-browser-vault-prompt\""],
-  ["src/App.css", ".vault-setup-panel"],
+  ["src/components/settings/VaultTab.css", ".vault-setup-panel"],
   ["docs/public/API.md", "/vault/setup/begin"],
   ["docs/public/API.md", "raw_secret_reveal_denied"],
   ["shellx-browser/README.md", "Vault credential"],
@@ -469,8 +469,8 @@ if (!/fillCandidate[\s\S]*isTrustedShellxUserEvent[\s\S]*fillUserVaultSecret/.te
 if (!/bestByTarget[\s\S]*candidate\.key[\s\S]*candidate\.refId/.test(browserVaultFillCandidates)) {
   throw new Error("Manual Browser Vault fill suggestions must de-duplicate duplicate matches for the same key and field");
 }
-const appCssSource = readFileSync(join(root, "src/App.css"), "utf8");
-if (!/\.shellx-browser-vault-fill-main strong[\s\S]*overflow-wrap: anywhere[\s\S]*white-space: normal/.test(appCssSource)) {
+const browserLayoutCssSource = readFileSync(join(root, "src/browser/browserLayout.css"), "utf8");
+if (!/\.shellx-browser-vault-fill-main strong[\s\S]*overflow-wrap: anywhere[\s\S]*white-space: normal/.test(browserLayoutCssSource)) {
   throw new Error("Manual Browser Vault fill suggestions must show readable full key names instead of hiding them behind ellipses");
 }
 if (!/observedContext\.origin !== pageContext\.origin[\s\S]*originScore[\s\S]*originScore <= 0[\s\S]*continue/.test(browserVaultFillCandidates)) {

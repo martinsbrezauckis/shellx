@@ -29,7 +29,6 @@ const gitUntrackedName = `untracked-${gitSegment}.txt`;
 const gitMarker = `SHELLX_RELEASE_GIT_DIFF_${gitSegment}`;
 const gitDiff = `diff --git a/${gitTrackedName} b/${gitTrackedName}\n+${gitMarker}\n`;
 const historySegment = sourceCommit.slice(0, 16);
-const historySessionId = `release_session_${historySegment}`;
 const historyMarker = `SHELLX_RELEASE_SESSION_CANARY_${historySegment}`;
 const historyTitle = `Release session history ${historySegment}`;
 const historySplitAt = Math.floor(historyMarker.length / 2);
@@ -1231,7 +1230,6 @@ function expectedRejection(command: string, invokeArgs: Record<string, unknown>)
     mcp_marketplace_set_enabled: "unknown marketplace id: final-surface-absent-marketplace",
     open_url_in_browser: "only http(s) URLs are openable, got: file:///final-surface-denied",
     outside_connectors_simulate: "unknown connector id",
-    pty_attach: "unknown terminal: TerminalKey { tab_id: \"final-surface-absent-terminal\", terminal_id: \"final-surface-absent-terminal\" }",
     pty_create: "tab_id is required",
     pty_resize: "unknown terminal: TerminalKey { tab_id: \"final-surface-absent-terminal\", terminal_id: \"final-surface-absent-terminal\" }",
     pty_write: "unknown terminal: TerminalKey { tab_id: \"final-surface-absent-terminal\", terminal_id: \"final-surface-absent-terminal\" }",

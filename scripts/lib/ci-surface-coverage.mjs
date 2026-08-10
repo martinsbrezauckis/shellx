@@ -16,6 +16,8 @@ export const REQUIRED_SURFACE_KINDS = Object.freeze([
   "ui-debug-surface",
 ]);
 
+const EXPECTED_TYPECHECK_SCRIPT = "tsc --noEmit --noUnusedLocals --noUnusedParameters";
+
 const EXPECTED_CI_SCRIPT = [
   "pnpm run surface:inventory:check",
   "pnpm run surface:driver-plan:check",
@@ -35,6 +37,13 @@ export function ciSurfaceCoverageErrors({
   ciSource = normalizeNewlines(ciSource);
   releaseSource = normalizeNewlines(releaseSource ?? "");
   const errors = [];
+  const frontendJob = workflowJobBlock(ciSource, "frontend");
+  if (!frontendJob.includes("run: pnpm run typecheck")) {
+    errors.push("frontend CI does not invoke the canonical strict TypeScript gate");
+  }
+  if (packageScripts?.typecheck !== EXPECTED_TYPECHECK_SCRIPT) {
+    errors.push("typecheck must reject unused locals and parameters");
+  }
   const job = workflowJobBlock(ciSource, "surface-contracts");
   if (!job) {
     errors.push("CI is missing the surface-contracts job");

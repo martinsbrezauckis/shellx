@@ -25,3 +25,16 @@ export function debugUiPollingEnabled(status: DebugUiConnectionStatus): boolean 
 export function debugUiPollDelay(status: DebugUiConnectionStatus): number {
   return status === "connected" ? DEBUG_UI_POLL_MS : DEBUG_UI_DISCONNECTED_POLL_MS;
 }
+
+export function debugUiStateTargetsBrowser(state: Record<string, unknown>): boolean {
+  const surface = typeof state.debugSurface === "string"
+    ? state.debugSurface.trim().toLowerCase()
+    : "";
+  if (surface === "app") return false;
+  if (surface === "browser") return true;
+
+  const source = typeof state.lastUiPatchSource === "string"
+    ? state.lastUiPatchSource.trim().toLowerCase()
+    : "";
+  return source === "renderer" || source.startsWith("renderer-") || source.includes("browser");
+}

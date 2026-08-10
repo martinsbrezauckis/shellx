@@ -752,6 +752,8 @@ function highlightResult(surface: Surface, highlight: Highlight): HighlightResul
         "[data-debug-id=\"surface-components-settings-connectorstab-17\"]",
       ]).has(selector))
       || (openModal === "settings" && settingsTab === "connectors" && connectorDraftOpen && new Set([
+        "[data-debug-id=\"connector-approval-auto-dispatch\"]",
+        "[data-debug-id=\"connector-approval-review-first\"]",
         "[data-debug-id=\"surface-components-settings-connectorstab-3\"]",
         "[data-debug-id=\"surface-components-settings-connectorstab-12\"]",
         "[data-debug-id=\"surface-components-settings-connectorstab-21\"]",

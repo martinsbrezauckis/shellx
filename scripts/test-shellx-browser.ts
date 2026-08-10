@@ -81,6 +81,7 @@ const mainSource = readFileSync("src/main.tsx", "utf8");
 const browserMainSource = readFileSync("src/shellx-browser-main.tsx", "utf8");
 const browserHtmlSource = readFileSync("shellx-browser.html", "utf8");
 const appSource = readFileSync("src/App.tsx", "utf8");
+const debugUiConnectionSource = readRequiredSource("src/lib/debug-ui-connection.ts");
 const uiSource = (() => {
   try {
     return readFileSync("src/components/ShellxBrowserApp.tsx", "utf8");
@@ -101,7 +102,6 @@ const browserMenusSource = readRequiredSource("src/browser/components/BrowserMen
 const browserHistorySidecarSource = readRequiredSource("src/browser/components/BrowserHistorySidecar.tsx");
 const downloadSidecarSource = readRequiredSource("src/browser/components/DownloadSidecar.tsx"), bookmarkSidecarSource = readRequiredSource("src/browser/components/BookmarkSidecar.tsx"), bookmarkToolbarSource = readRequiredSource("src/browser/components/BookmarkToolbar.tsx");
 const browserChromeSource = readRequiredSource("src/browser/components/BrowserChrome.tsx");
-const settingsSource = readRequiredSource("src/components/Settings.tsx");
 const settingsModelSource = readRequiredSource("src/lib/settings.ts");
 const generalTabSource = readRequiredSource("src/components/settings/GeneralTab.tsx");
 const nativeEngineSyncSource = readRequiredSource("src/browser/hooks/useNativeEngineSync.ts");
@@ -111,7 +111,8 @@ const engineViewportSource = readRequiredSource("src/browser/components/EngineVi
 const agentSidebarSource = readRequiredSource("src/browser/components/AgentSidebar.tsx");
 const vaultPromptCardsSource = readRequiredSource("src/browser/components/VaultPromptCards.tsx");
 const uiSourceLower = uiSource.toLowerCase();
-const cssSource = readFileSync("src/App.css", "utf8");
+const browserCssPaths = ["browserLayout.css", "browserWorkspace.css", "browserPanels.css", "browserShell.css"];
+const cssSource = browserCssPaths.map((path) => readFileSync(`src/browser/${path}`, "utf8")).join("\n");
 function cssBlock(selector: string): string {
   const start = cssSource.indexOf(`${selector} {`);
   if (start === -1) {
@@ -130,7 +131,6 @@ const browserHeaderPopoverCss = cssBlock(".shellx-browser-header-popover");
 const browserChromeShellCss = cssBlock(".shellx-browser-chrome-shell");
 const browserChromeMenuDockCss = cssBlock(".shellx-browser-chrome-menu-dock");
 const browserBookmarkToolbarCss = cssBlock(".shellx-browser-bookmark-toolbar");
-const browserBookmarkFolderMenuCss = cssBlock(".shellx-browser-bookmark-folder-menu");
 const browserExpandedAgentComposeCss = cssBlock(".shellx-browser-agent-panel.chat-expanded .shellx-browser-agent-compose");
 const readme = readFileSync("README.md", "utf8");
 const apiDocs = readFileSync("docs/public/API.md", "utf8");
@@ -1143,7 +1143,6 @@ assert(!/pub fn update_engine_pool\(/.test(rustBrowserRoot), "Browser engine-poo
 assert(
   browserActionsSource.includes("pub(crate) async fn try_apply_engine_action") &&
     browserActionsSource.includes("pub(crate) async fn observe_browser_page") &&
-    browserActionsSource.includes("pub(crate) fn classify_sensitive_field") &&
     rustBrowser.includes("crate::shellx_browser_actions"),
   "Browser action, observation, and verification behavior lives in shellx_browser_actions.rs",
 );
@@ -1440,9 +1439,9 @@ assert(
     debugApi.includes("debug_api_browser::") &&
     debugApiBrowserStateSource.includes("/browser/state") &&
     debugApiBrowser.includes("/browser/action") &&
-    debugApiBrowser.includes("browser_privacy_requires_operator") &&
-    debugApiBrowser.includes("browser_shields_requires_operator") &&
-    debugApiBrowser.includes("browser_session_grant_resolution_requires_operator"),
+    debugApiBrowserSettingsSource.includes("BROWSER_PRIVACY_OPERATOR_ERROR_CODE") &&
+    debugApiBrowserSettingsSource.includes("BROWSER_SHIELDS_OPERATOR_ERROR_CODE") &&
+    debugApiBrowserSecuritySource.includes("BROWSER_SESSION_GRANT_OPERATOR_ERROR_CODE"),
   "Browser Debug API routes are isolated without weakening operator gates",
 );
 assert(
@@ -1546,7 +1545,8 @@ assert(
 );
 assert(
   appSource.includes("isRendererDebugUiPatch(payload?.patch)") &&
-    appSource.includes("isRendererDebugUiSourceValue(source) || source.includes(\"browser\")"),
+    appSource.includes("!debugUiStateTargetsBrowser(state)") && debugUiConnectionSource.includes('if (surface === "app") return false') &&
+    debugUiConnectionSource.includes('source.includes("browser")'),
   "main ShellX window ignores Browser/renderer debug state so it cannot overwrite Browser highlight results",
 );
 assert(browserStateHookSource.includes("normalizeBrowserRightTabPatch") && browserStateHookSource.includes("onRightPanelPatch(rightTabPatch)"), "browser renderer maps debug rightTab patches to Browser panel tabs");
@@ -2275,7 +2275,7 @@ assert(apiDocs.includes("shellx_browser_delegate_tab_to_agent"), "API docs inclu
 assert(apiDocs.includes("/browser/action"), "API docs include browser actions");
 assert(apiDocs.includes("/browser/tabs/lock"), "API docs include browser tab lock route");
 assert(apiDocs.includes("/browser/personal-lock"), "API docs include personal lock read route");
-assert(apiDocs.includes("current route inventory refreshed 2026-08-03"), "API docs inventory date is current");
+assert(apiDocs.includes("current route inventory refreshed 2026-08-10"), "API docs inventory date is current");
 assert(apiDocs.includes("clearSiteData") && apiDocs.includes("capturePageSecretToVault"), "API docs include current Browser action names");
 assert(uiSource.includes('data-debug-id="shellx-browser-personal-lock-overlay"'), "browser UI exposes personal lock overlay selector");
 assert(browserChromeSource.includes('data-debug-id="shellx-browser-tab-strip"'), "browser UI exposes Browser tab strip selector");

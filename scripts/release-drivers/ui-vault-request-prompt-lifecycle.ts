@@ -127,7 +127,7 @@ export async function exerciseVaultRequestPromptSurface(
   const action = ACTIONS.get(assignment.surface.id);
   if (!action) return finalize(emptyOutcome(assignment), "unsupported Vault request/prompt surface");
   if (action === "header-tertiary" || action === "header-tertiary-marker") {
-    return exerciseHeaderTertiary(connection, installedInput, request, assignment, action);
+    return exerciseHeaderTertiary(connection, installedInput, assignment, action);
   }
   if (action === "header-secondary" || action === "header-primary") {
     return exerciseHeaderGrant(connection, installedInput, request, assignment, action);
@@ -141,7 +141,6 @@ export async function exerciseVaultRequestPromptSurface(
 async function exerciseHeaderTertiary(
   connection: Connection,
   input: InstalledInput,
-  request: ReleaseSurfaceDriverRequest,
   assignment: Assignment,
   action: "header-tertiary" | "header-tertiary-marker",
 ): Promise<ReleaseSurfaceDriverOutcome> {

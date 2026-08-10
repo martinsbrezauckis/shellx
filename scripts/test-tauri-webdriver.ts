@@ -360,6 +360,7 @@ async function webdriverRequest(method: string, path: string, body?: unknown): P
     method,
     headers: body === undefined ? undefined : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(60_000),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`${method} ${path} failed ${res.status}: ${text.slice(0, 2000)}`);

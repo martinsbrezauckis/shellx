@@ -3,7 +3,7 @@ import { readRustModuleFamily } from "./read-rust-module-family";
 
 const app = readFileSync("src/App.tsx", "utf8");
 const board = readFileSync("src/components/AttachmentMediaBoard.tsx", "utf8");
-const css = readFileSync("src/App.css", "utf8");
+const css = readFileSync("src/components/AttachmentMediaBoard.css", "utf8");
 const rust = readFileSync("src-tauri/src/lib.rs", "utf8");
 const webviewRuntimePaths = readFileSync("src-tauri/src/webview_runtime_paths.rs", "utf8");
 const browserWindowRuntime = readFileSync("src-tauri/src/shellx_browser_window_open_runtime.rs", "utf8");
@@ -34,6 +34,7 @@ assert(board.includes("onPreviewAsset"), "Asset board has source-aware asset pre
 assert(board.includes("onAttachAsset"), "Asset board has attach action for imported assets");
 assert(board.includes("onImportAsset"), "Asset board has import action");
 assert(board.includes("assetSourceLabel"), "Asset board shows source metadata for assets");
+assert(board.includes('import "./AttachmentMediaBoard.css";'), "lazy asset board owns its stylesheet");
 
 assert(css.includes("width: min(94vw, 1280px);"), "Asset board modal is wide enough for the extra column");
 assert(css.includes("grid-template-columns: repeat(5, minmax(0, 1fr));"), "Asset board uses five desktop columns");

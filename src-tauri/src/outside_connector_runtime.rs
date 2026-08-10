@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{OwnedMutexGuard, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -29,6 +29,8 @@ const TELEGRAM_IDLE_SLEEP: Duration = Duration::from_secs(3);
 const TELEGRAM_ERROR_SLEEP: Duration = Duration::from_secs(5);
 const OUTSIDE_CONNECTOR_PROMPT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const OUTSIDE_CONNECTOR_MAX_ACTIVE_DISPATCHES: usize = 16;
+const OUTSIDE_CONNECTOR_REPLY_MAX_CHARS: usize = 3_900;
+const OUTSIDE_CONNECTOR_REPLY_BUFFER_MAX_CHARS: usize = 32 * 1024;
 const DISCORD_GATEWAY_URL: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
 const DISCORD_INTENT_DIRECT_MESSAGES: u64 = 1 << 12;
 const DISCORD_IDLE_SLEEP: Duration = Duration::from_secs(3);
@@ -92,6 +94,55 @@ struct RuntimeState {
 #[derive(Debug, Default)]
 struct RuntimeErrorLogLimiter {
     active_errors: BTreeMap<(String, String), String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum OutsidePromptDispatchOutcome {
+    Reply(String),
+    StillRunning,
+}
+
+#[derive(Debug, Default)]
+struct ProviderConnectorReply {
+    text: String,
+}
+
+impl ProviderConnectorReply {
+    fn observe(&mut self, payload: &Value) {
+        let Some(kind) = payload.get("kind").and_then(Value::as_str) else {
+            return;
+        };
+        if !matches!(kind, "text" | "textDelta") {
+            return;
+        }
+        let Some(text) = payload
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        else {
+            return;
+        };
+        let remaining =
+            OUTSIDE_CONNECTOR_REPLY_BUFFER_MAX_CHARS.saturating_sub(self.text.chars().count());
+        if remaining == 0 {
+            return;
+        }
+        if kind == "text" && !self.text.is_empty() {
+            self.text.push('\n');
+        }
+        let remaining =
+            OUTSIDE_CONNECTOR_REPLY_BUFFER_MAX_CHARS.saturating_sub(self.text.chars().count());
+        self.text.extend(text.chars().take(remaining));
+    }
+
+    fn bounded_text(&self) -> Option<String> {
+        let text = self.text.trim();
+        (!text.is_empty()).then(|| {
+            text.chars()
+                .take(OUTSIDE_CONNECTOR_REPLY_MAX_CHARS)
+                .collect()
+        })
+    }
 }
 
 impl RuntimeErrorLogLimiter {
@@ -484,62 +535,27 @@ async fn dispatch_telegram_prompt(
         }
     };
 
-    let registry = app.state::<Arc<crate::acp::SessionRegistry>>();
-    let Some(session_arc) = registry.get_existing(&tab_id).await else {
-        let msg = format!(
-            "shellX tab {} is not connected. Open/connect that tab before using Telegram control.",
-            tab_id
-        );
-        let _ = send_telegram_text(client, token, &chat_id, &msg).await;
-        let _ = store
-            .record_outbound(
-                &connector,
-                &input,
-                OutsideConnectorEventStatus::Error,
-                &msg,
-                Some("target tab is not connected".to_string()),
-            )
-            .await;
-        return Err("target tab is not connected".to_string());
-    };
-
-    let started_ms = now_ms();
-    let final_prompt =
-        prepare_external_prompt(app, &session_arc, &tab_id, &input, "Telegram", "Chat").await?;
-    let rx = {
-        let mut session = session_arc.lock().await;
-        session.initiate_and_send_prompt(&final_prompt).await?
-    };
-    let outcome = timeout(OUTSIDE_CONNECTOR_PROMPT_TIMEOUT, rx).await;
-    {
-        let mut session = session_arc.lock().await;
-        match &outcome {
-            Ok(Ok(_)) => session.mark_prompt_responded(),
-            Err(_) if crate::acp::prompt_is_recently_active(&tab_id) => {
-                session.mark_prompt_responded()
+    let outcome =
+        match dispatch_prompt_to_shellx_tab(app, &tab_id, &input, "Telegram", "Chat").await {
+            Ok(outcome) => outcome,
+            Err(err_text) => {
+                let msg = format!("shellX prompt failed: {}", err_text);
+                let _ = send_telegram_text(client, token, &chat_id, &msg).await;
+                let _ = store
+                    .record_outbound(
+                        &connector,
+                        &input,
+                        OutsideConnectorEventStatus::Error,
+                        &msg,
+                        Some(err_text.clone()),
+                    )
+                    .await;
+                return Err(err_text);
             }
-            Err(_) => session.mark_prompt_timeout(),
-            Ok(Err(_)) => {}
-        }
-    }
-    match outcome {
-        Ok(Ok(_)) => {}
-        Ok(Err(err)) => {
-            let err_text = err.to_string();
-            let msg = format!("shellX prompt failed: {}", err_text);
-            let _ = send_telegram_text(client, token, &chat_id, &msg).await;
-            let _ = store
-                .record_outbound(
-                    &connector,
-                    &input,
-                    OutsideConnectorEventStatus::Error,
-                    &msg,
-                    Some(err_text.clone()),
-                )
-                .await;
-            return Err(err_text);
-        }
-        Err(_) => {
+        };
+    let reply = match outcome {
+        OutsidePromptDispatchOutcome::Reply(reply) => reply,
+        OutsidePromptDispatchOutcome::StillRunning => {
             let msg =
                 "shellX prompt is still running; watch shellX for continued progress.".to_string();
             send_telegram_text(client, token, &chat_id, &msg).await?;
@@ -554,10 +570,7 @@ async fn dispatch_telegram_prompt(
                 .await;
             return Ok(());
         }
-    }
-
-    let reply = collect_agent_reply(app, &tab_id, started_ms)
-        .unwrap_or_else(|| "shellX sent the message, but no text reply was captured.".to_string());
+    };
     send_telegram_text(client, token, &chat_id, &reply).await?;
     let _ = store
         .record_outbound(
@@ -648,6 +661,189 @@ async fn prepare_external_prompt(
         conversation_label,
         input,
     ))
+}
+
+async fn dispatch_prompt_to_shellx_tab(
+    app: &AppHandle,
+    tab_id: &str,
+    input: &OutsideConnectorInboundInput,
+    provider: &str,
+    conversation_label: &str,
+) -> Result<OutsidePromptDispatchOutcome, String> {
+    let acp_registry = app.state::<Arc<crate::acp::SessionRegistry>>();
+    if let Some(session_arc) = acp_registry.get_existing(tab_id).await {
+        let has_active_grok = session_arc.lock().await.has_active_child();
+        if has_active_grok {
+            let started_ms = now_ms();
+            let final_prompt = prepare_external_prompt(
+                app,
+                &session_arc,
+                tab_id,
+                input,
+                provider,
+                conversation_label,
+            )
+            .await?;
+            let rx = {
+                let mut session = session_arc.lock().await;
+                session.initiate_and_send_prompt(&final_prompt).await?
+            };
+            let outcome = timeout(OUTSIDE_CONNECTOR_PROMPT_TIMEOUT, rx).await;
+            {
+                let mut session = session_arc.lock().await;
+                match &outcome {
+                    Ok(Ok(_)) => session.mark_prompt_responded(),
+                    Err(_) if crate::acp::prompt_is_recently_active(tab_id) => {
+                        session.mark_prompt_responded()
+                    }
+                    Err(_) => session.mark_prompt_timeout(),
+                    Ok(Err(_)) => {}
+                }
+            }
+            return match outcome {
+                Ok(Ok(_)) => Ok(OutsidePromptDispatchOutcome::Reply(
+                    collect_agent_reply(app, tab_id, started_ms).unwrap_or_else(|| {
+                        "shellX sent the message, but no text reply was captured.".to_string()
+                    }),
+                )),
+                Ok(Err(err)) => Err(err.to_string()),
+                Err(_) => Ok(OutsidePromptDispatchOutcome::StillRunning),
+            };
+        }
+    }
+
+    dispatch_prompt_to_provider_tab(app, tab_id, input, provider, conversation_label).await
+}
+
+fn provider_connector_start_request(
+    run: &crate::provider_sessions::ProviderRunSnapshot,
+    provider_conversation_id: Option<String>,
+    prompt: String,
+) -> crate::provider_sessions::ProviderSessionStartRequest {
+    let resume = provider_conversation_id.is_some();
+    crate::provider_sessions::ProviderSessionStartRequest {
+        tab_id: Some(run.tab_id.clone()),
+        provider_id: run.provider_id,
+        cwd: run.cwd.clone(),
+        prompt,
+        include_mcp_probe: Some(false),
+        include_shellx_tooling: None,
+        shellx_tool_exposure: Some(run.shellx_tool_exposure),
+        mcp_path: None,
+        timeout_ms: Some(OUTSIDE_CONNECTOR_PROMPT_TIMEOUT.as_millis() as u64),
+        persist_session: Some(true),
+        resume: Some(resume),
+        resume_last: Some(false),
+        provider_conversation_id,
+        permission_mode: Some(run.permission_mode.clone()),
+        codex_driver: None,
+        transport: Some(run.transport.clone()),
+        wsl_distro: run.wsl_distro.clone(),
+        ssh_host: run.ssh_host.clone(),
+        ssh_port: run.ssh_port,
+        ssh_key_vault_ref: run.ssh_key_vault_ref.clone(),
+        ssh_remote_runtime: run.ssh_remote_runtime,
+        ssh_wsl_distro: run.ssh_wsl_distro.clone(),
+        release_fixture: None,
+    }
+}
+
+async fn dispatch_prompt_to_provider_tab(
+    app: &AppHandle,
+    tab_id: &str,
+    input: &OutsideConnectorInboundInput,
+    provider: &str,
+    conversation_label: &str,
+) -> Result<OutsidePromptDispatchOutcome, String> {
+    let registry = app
+        .state::<Arc<crate::provider_sessions::ProviderSessionRegistry>>()
+        .inner()
+        .clone();
+    let state = registry.state_for_tab_preferred(tab_id);
+    if state.active_run.is_some() {
+        return Err(format!(
+            "target provider tab {} is already running another prompt",
+            tab_id
+        ));
+    }
+    let Some(previous_run) = state.recent_runs.first() else {
+        return Err(format!(
+            "target tab {} is not connected to Grok, Codex, Claude, or Antigravity",
+            tab_id
+        ));
+    };
+    let provider_conversation_id = previous_run.provider_conversation_id.clone().or_else(|| {
+        state
+            .stored_conversations
+            .get(&previous_run.provider_id)
+            .cloned()
+    });
+    let request = provider_connector_start_request(
+        previous_run,
+        provider_conversation_id,
+        format_external_prompt_message(provider, conversation_label, input),
+    );
+    let reply = Arc::new(std::sync::Mutex::new(ProviderConnectorReply::default()));
+    let reply_for_events = Arc::clone(&reply);
+    let (terminal_tx, terminal_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let terminal_tx = Arc::new(std::sync::Mutex::new(Some(terminal_tx)));
+    let terminal_tx_for_events = Arc::clone(&terminal_tx);
+    let hub = app
+        .try_state::<Arc<crate::debug_api::DebugHub>>()
+        .map(|state| state.inner().clone());
+    let emitter = app.clone();
+    let emit: crate::provider_sessions::ProviderSessionEmit = Arc::new(move |kind, payload| {
+        {
+            let mut reply = reply_for_events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            reply.observe(&payload);
+        }
+        if let Some(terminal_kind) = payload
+            .get("kind")
+            .and_then(Value::as_str)
+            .filter(|kind| matches!(*kind, "completed" | "failed" | "aborted"))
+        {
+            let result = if terminal_kind == "completed" {
+                Ok(())
+            } else {
+                Err(payload
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .filter(|error| !error.trim().is_empty())
+                    .unwrap_or(terminal_kind)
+                    .to_string())
+            };
+            if let Some(sender) = terminal_tx_for_events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                let _ = sender.send(result);
+            }
+        }
+        if let Some(hub) = &hub {
+            hub.record_raw_event(kind, payload.clone());
+        }
+        let _ = emitter.emit(kind, payload);
+    });
+
+    crate::provider_sessions::start_provider_session(registry, request, emit).await?;
+    match timeout(OUTSIDE_CONNECTOR_PROMPT_TIMEOUT, terminal_rx).await {
+        Ok(Ok(Ok(()))) => {
+            let reply = reply
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .bounded_text()
+                .unwrap_or_else(|| {
+                    "shellX sent the message, but no text reply was captured.".to_string()
+                });
+            Ok(OutsidePromptDispatchOutcome::Reply(reply))
+        }
+        Ok(Ok(Err(error))) => Err(error),
+        Ok(Err(_)) => Err("provider session ended without a terminal event".to_string()),
+        Err(_) => Ok(OutsidePromptDispatchOutcome::StillRunning),
+    }
 }
 
 fn format_external_prompt_message(
@@ -1276,63 +1472,27 @@ async fn dispatch_discord_prompt(
         }
     };
 
-    let registry = app.state::<Arc<crate::acp::SessionRegistry>>();
-    let Some(session_arc) = registry.get_existing(&tab_id).await else {
-        let msg = format!(
-            "shellX tab {} is not connected. Open/connect that tab before using Discord control.",
-            tab_id
-        );
-        let _ = send_discord_text(client, token, channel_id, &msg).await;
-        let _ = store
-            .record_outbound(
-                &connector,
-                &input,
-                OutsideConnectorEventStatus::Error,
-                &msg,
-                Some("target tab is not connected".to_string()),
-            )
-            .await;
-        return Err("target tab is not connected".to_string());
-    };
-
-    let started_ms = now_ms();
-    let final_prompt =
-        prepare_external_prompt(app, &session_arc, &tab_id, &input, "Discord", "DM channel")
-            .await?;
-    let rx = {
-        let mut session = session_arc.lock().await;
-        session.initiate_and_send_prompt(&final_prompt).await?
-    };
-    let outcome = timeout(OUTSIDE_CONNECTOR_PROMPT_TIMEOUT, rx).await;
-    {
-        let mut session = session_arc.lock().await;
-        match &outcome {
-            Ok(Ok(_)) => session.mark_prompt_responded(),
-            Err(_) if crate::acp::prompt_is_recently_active(&tab_id) => {
-                session.mark_prompt_responded()
+    let outcome =
+        match dispatch_prompt_to_shellx_tab(app, &tab_id, &input, "Discord", "DM channel").await {
+            Ok(outcome) => outcome,
+            Err(err_text) => {
+                let msg = format!("shellX prompt failed: {}", err_text);
+                let _ = send_discord_text(client, token, channel_id, &msg).await;
+                let _ = store
+                    .record_outbound(
+                        &connector,
+                        &input,
+                        OutsideConnectorEventStatus::Error,
+                        &msg,
+                        Some(err_text.clone()),
+                    )
+                    .await;
+                return Err(err_text);
             }
-            Err(_) => session.mark_prompt_timeout(),
-            Ok(Err(_)) => {}
-        }
-    }
-    match outcome {
-        Ok(Ok(_)) => {}
-        Ok(Err(err)) => {
-            let err_text = err.to_string();
-            let msg = format!("shellX prompt failed: {}", err_text);
-            let _ = send_discord_text(client, token, channel_id, &msg).await;
-            let _ = store
-                .record_outbound(
-                    &connector,
-                    &input,
-                    OutsideConnectorEventStatus::Error,
-                    &msg,
-                    Some(err_text.clone()),
-                )
-                .await;
-            return Err(err_text);
-        }
-        Err(_) => {
+        };
+    let reply = match outcome {
+        OutsidePromptDispatchOutcome::Reply(reply) => reply,
+        OutsidePromptDispatchOutcome::StillRunning => {
             let msg =
                 "shellX prompt is still running; watch shellX for continued progress.".to_string();
             send_discord_text(client, token, channel_id, &msg).await?;
@@ -1347,10 +1507,7 @@ async fn dispatch_discord_prompt(
                 .await;
             return Ok(());
         }
-    }
-
-    let reply = collect_agent_reply(app, &tab_id, started_ms)
-        .unwrap_or_else(|| "shellX sent the message, but no text reply was captured.".to_string());
+    };
     send_discord_text(client, token, channel_id, &reply).await?;
     let _ = store
         .record_outbound(
@@ -1717,6 +1874,108 @@ mod tests {
         assert!(prompt.contains("External Discord message"));
         assert!(prompt.contains("DM channel: 999888777666555444"));
         assert!(prompt.contains("sent back to Discord"));
+    }
+
+    #[test]
+    fn provider_connector_reply_collects_only_text_and_stays_bounded() {
+        let mut reply = ProviderConnectorReply::default();
+        reply.observe(&json!({ "kind": "thinking", "text": "private reasoning" }));
+        reply.observe(&json!({ "kind": "textDelta", "text": "hello " }));
+        reply.observe(&json!({ "kind": "textDelta", "text": "world" }));
+        reply.observe(&json!({ "kind": "completed" }));
+
+        assert_eq!(reply.bounded_text().as_deref(), Some("hello world"));
+
+        let mut long = ProviderConnectorReply::default();
+        long.observe(&json!({
+            "kind": "text",
+            "text": "x".repeat(OUTSIDE_CONNECTOR_REPLY_BUFFER_MAX_CHARS + 100),
+        }));
+        assert_eq!(
+            long.text.chars().count(),
+            OUTSIDE_CONNECTOR_REPLY_BUFFER_MAX_CHARS
+        );
+        assert_eq!(
+            long.bounded_text().expect("bounded reply").chars().count(),
+            OUTSIDE_CONNECTOR_REPLY_MAX_CHARS
+        );
+    }
+
+    #[test]
+    fn provider_connector_resume_preserves_tab_execution_and_agent_policy() {
+        use crate::provider_adapters::{
+            ProviderExecutionTransport, ProviderId, ProviderPermissionMode,
+            ProviderShellxToolExposure,
+        };
+        use crate::provider_sessions::{ProviderRunPhase, ProviderRunSnapshot};
+
+        let run = ProviderRunSnapshot {
+            run_id: "provider-session-before".into(),
+            process_task_id: None,
+            tab_id: "tab-provider".into(),
+            provider_id: ProviderId::ClaudeCode,
+            cwd: "C:\\work\\project".into(),
+            transport: ProviderExecutionTransport::Ssh,
+            transport_key: "ssh:remote".into(),
+            wsl_distro: None,
+            ssh_host: Some("remote.example".into()),
+            ssh_port: Some(2222),
+            ssh_key_vault_ref: Some("ssh/remote".into()),
+            ssh_remote_runtime: crate::acp::SshRemoteRuntime::WindowsWsl,
+            ssh_wsl_distro: Some("Ubuntu".into()),
+            phase: ProviderRunPhase::Completed,
+            prompt_preview: "previous".into(),
+            started_at_ms: 1,
+            updated_at_ms: 2,
+            stdout_line_count: 1,
+            stderr_line_count: 0,
+            last_text_at_ms: Some(2),
+            duration_ms: Some(1),
+            exit_code: Some(0),
+            error: None,
+            provider_conversation_id: Some("conversation-1".into()),
+            resume_from_provider_conversation_id: None,
+            persist_session: true,
+            permission_mode: ProviderPermissionMode::ReadOnly,
+            shellx_tool_exposure: ProviderShellxToolExposure::HostBridge,
+        };
+
+        let request = provider_connector_start_request(
+            &run,
+            run.provider_conversation_id.clone(),
+            "external prompt".into(),
+        );
+
+        assert_eq!(request.tab_id.as_deref(), Some("tab-provider"));
+        assert_eq!(request.provider_id, ProviderId::ClaudeCode);
+        assert_eq!(request.cwd, "C:\\work\\project");
+        assert_eq!(request.transport, Some(ProviderExecutionTransport::Ssh));
+        assert_eq!(request.ssh_host.as_deref(), Some("remote.example"));
+        assert_eq!(request.ssh_port, Some(2222));
+        assert_eq!(request.ssh_key_vault_ref.as_deref(), Some("ssh/remote"));
+        assert_eq!(
+            request.ssh_remote_runtime,
+            crate::acp::SshRemoteRuntime::WindowsWsl
+        );
+        assert_eq!(request.ssh_wsl_distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(request.resume, Some(true));
+        assert_eq!(
+            request.provider_conversation_id.as_deref(),
+            Some("conversation-1")
+        );
+        assert_eq!(
+            request.permission_mode,
+            Some(ProviderPermissionMode::ReadOnly)
+        );
+        assert_eq!(
+            request.shellx_tool_exposure,
+            Some(ProviderShellxToolExposure::HostBridge)
+        );
+
+        let fresh = provider_connector_start_request(&run, None, "fresh prompt".into());
+        assert_eq!(fresh.resume, Some(false));
+        assert_eq!(fresh.resume_last, Some(false));
+        assert_eq!(fresh.provider_conversation_id, None);
     }
 
     #[test]

@@ -3,7 +3,6 @@ import { resolveReleaseSurfaceRuntimeCandidate } from "../lib/release-surface-ru
 import {
   clickReleaseSurfaceInstalledInputElement as clickReleaseSurfaceWebDriverElement,
   createReleaseSurfaceInstalledInputSession,
-  findReleaseSurfaceInstalledInputElement as findReleaseSurfaceWebDriverElement,
   observeReleaseSurfaceInstalledInputElement,
   performReleaseSurfaceInstalledInputKeyChord as performReleaseSurfaceWebDriverKeyChord,
   waitForReleaseSurfaceInstalledInputElement as waitForReleaseSurfaceWebDriverElement,

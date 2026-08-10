@@ -6,7 +6,7 @@ import {
   type ManualAtlasCaptureTarget,
 } from "./lib/manual-atlas-capture";
 import { calculateManualAtlasProductSourceSha256FromGit } from "./lib/manual-atlas-product-source.js";
-import { MANUAL_ATLAS_CAPTURE_PLAN, type ManualAtlasCaptureSurface } from "./lib/manual-atlas-capture-plan";
+import { MANUAL_ATLAS_CAPTURE_PLAN } from "./lib/manual-atlas-capture-plan";
 import {
   captureReleaseSurfaceWebDriverScreenshot,
   executeReleaseSurfaceWebDriverScript,
@@ -20,12 +20,17 @@ const args = process.argv.slice(2);
 const webdriverBase = exactLoopbackOrigin(requiredArg(args, "--webdriver-base"), "WebDriver base");
 const debugBase = exactLoopbackOrigin(requiredArg(args, "--debug-base"), "Debug API base");
 const appDemoCwd = resolve(requiredArg(args, "--app-demo-cwd"));
+const appDemoCwdLaunch = optionalArg(args, "--app-demo-cwd-launch") ?? appDemoCwd;
 const appDemoCwdStat = lstatSync(appDemoCwd);
 if (!appDemoCwdStat.isDirectory() || appDemoCwdStat.isSymbolicLink()) {
   throw new Error("manual atlas app demo cwd must be a real directory");
 }
 if (!appDemoCwd.replaceAll("\\", "/").endsWith("/shellx-manual-demo")) {
   throw new Error("manual atlas app demo cwd must use the public-safe shellx-manual-demo leaf");
+}
+if (!appDemoCwdLaunch.replaceAll("\\", "/").endsWith("/shellx-manual-demo")
+  || /[\r\n\0]/.test(appDemoCwdLaunch)) {
+  throw new Error("manual atlas app launch cwd must use the public-safe shellx-manual-demo leaf");
 }
 const sessionId = requiredArg(args, "--session-id");
 if (!/^[a-zA-Z0-9._:-]{8,256}$/.test(sessionId)) throw new Error("WebDriver session id is invalid");
@@ -54,7 +59,17 @@ const adapter: ManualAtlasCaptureAdapter = {
     await switchReleaseSurfaceWebDriverWindowByTitle(webdriver, "ShellX Browser");
   },
   async setWindowSize(width, height) {
-    await setReleaseSurfaceWebDriverWindowRect(webdriver, width, height);
+    const devicePixelRatio = Number(await executeReleaseSurfaceWebDriverScript(
+      webdriver,
+      "return window.devicePixelRatio || 1;",
+      [],
+    ));
+    if (!Number.isFinite(devicePixelRatio) || devicePixelRatio < 1 || devicePixelRatio > 4) {
+      throw new Error("manual atlas renderer returned an invalid device-pixel ratio");
+    }
+    const logicalWidth = Math.round(width / devicePixelRatio);
+    const logicalHeight = Math.round(height / devicePixelRatio);
+    await setReleaseSurfaceWebDriverWindowRect(webdriver, logicalWidth, logicalHeight);
   },
   async postPatch(_surface, body) {
     await postDebugUi(body);
@@ -141,7 +156,7 @@ async function postDebugUi(body: Record<string, unknown>): Promise<void> {
         ...body,
         activeTab: {
           tabId: await resolveActiveAppTabId(),
-          cwd: appDemoCwd,
+          cwd: appDemoCwdLaunch,
         },
       }
     : body;
@@ -233,6 +248,16 @@ function requiredArg(values: string[], name: string): string {
   const index = values.indexOf(name);
   const value = index >= 0 ? values[index + 1]?.trim() : "";
   if (!value) throw new Error(`missing required argument ${name}`);
+  return value;
+}
+
+function optionalArg(values: string[], name: string): string | undefined {
+  const index = values.indexOf(name);
+  if (index < 0) return undefined;
+  const value = values[index + 1]?.trim();
+  if (!value || value.startsWith("--") || /[\r\n\0]/.test(value)) {
+    throw new Error(`${name} must have one bounded value`);
+  }
   return value;
 }
 

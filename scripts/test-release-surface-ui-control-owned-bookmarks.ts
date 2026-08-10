@@ -9,6 +9,7 @@ import type { ReleaseSurfaceDriverReport, ReleaseSurfaceDriverRequest } from "./
 import {
   releaseSurfaceControllerBindingFixture,
   releaseSurfaceFixtureSourceCommit,
+  releaseSurfaceFixtureVersion,
 } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 
@@ -78,7 +79,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   const ports = await waitForPorts(statePath, fixture);
@@ -91,7 +92,7 @@ try {
     driverKind: "ui-control",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: inventory.digest,
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture("scripts/release-drivers/ui-control-installed.ts", [
@@ -233,8 +234,8 @@ try {
     target: "[data-debug-id='shellx-browser-bookmark-manager-row-final-surface-ui-control-drag-first']",
   }]);
   for (const selector of [
-    "[aria-label='New folder']",
-    "[aria-label='Add link']",
+    "[data-debug-id='shellx-browser-bookmark-create-folder']",
+    "[data-debug-id='shellx-browser-bookmark-create-link']",
     "[data-debug-id='shellx-browser-bookmark-pin-final-surface-ui-control-link']",
     "[data-debug-id='shellx-browser-bookmark-delete-final-surface-ui-control-link']",
     "[data-debug-id='shellx-browser-clear-history']",
@@ -243,7 +244,7 @@ try {
     "[data-debug-id='shellx-browser-bookmark-toolbar-link-final-surface-navigation-link']",
     "[data-debug-id='shellx-browser-bookmark-folder-child-final-surface-navigation-child']",
     "[data-debug-id='shellx-browser-bookmark-final-surface-navigation-link']",
-    "[data-debug-id='surface-browser-components-bookmarksidecar-5'][aria-label='Open Final surface navigation link']",
+    "[data-debug-id='shellx-browser-bookmark-open-final-surface-navigation-link'][aria-label='Open Final surface navigation link']",
   ]) assert(audit.clickedSelectors.includes(selector), `fixture did not observe ${selector}`);
 
   const overwrite = spawnSync(process.execPath, [

@@ -19,6 +19,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import "./PluginsModal.css";
 import { inTauri } from "../lib/tauri-bridge";
 import { ShellIcon } from "./icons";
 import { useModalFocus } from "../lib/useModalFocus";

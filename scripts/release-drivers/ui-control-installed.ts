@@ -8,7 +8,6 @@ import {
   closeReleaseSurfaceInstalledInputWindow as closeReleaseSurfaceWebDriverWindow,
   clickReleaseSurfaceInstalledInputElement as clickReleaseSurfaceWebDriverElement,
   createReleaseSurfaceInstalledInputSession,
-  executeReleaseSurfaceInstalledInputScript as executeReleaseSurfaceWebDriverScript,
   findReleaseSurfaceInstalledInputElement as findReleaseSurfaceWebDriverElement,
   observeReleaseSurfaceInstalledInputElement,
   performReleaseSurfaceInstalledInputKeyChord as performReleaseSurfaceWebDriverKeyChord,
@@ -3485,7 +3484,6 @@ type PublicSettings = {
   chatFontPx: number;
   density: string;
   githubGhBinary: string;
-  permissionUx: string;
   theme: string;
 };
 
@@ -3493,13 +3491,12 @@ async function readPublicSettings(connection: Connection): Promise<PublicSetting
   const body = await apiJson<Record<string, unknown>>(connection, "GET", "/settings");
   const keys = Object.keys(body).sort();
   if (JSON.stringify(keys) !== JSON.stringify([
-    "browserDownloadFolder", "chatFontPx", "density", "githubGhBinary", "permissionUx", "theme",
+    "browserDownloadFolder", "chatFontPx", "density", "githubGhBinary", "theme",
   ])) throw new Error("public Settings payload returned unexpected fields");
   if (typeof body.browserDownloadFolder !== "string"
     || !Number.isSafeInteger(body.chatFontPx)
     || !["compact", "default", "comfortable"].includes(String(body.density))
     || !["gh", "gh.exe"].includes(String(body.githubGhBinary))
-    || !["pill", "modal", "both"].includes(String(body.permissionUx))
     || !["black", "black_warm", "bright"].includes(String(body.theme))) {
     throw new Error("public Settings payload did not match its normalized schema");
   }

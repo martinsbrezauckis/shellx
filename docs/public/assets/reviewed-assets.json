@@ -1,85 +1,89 @@
 {
   "schemaVersion": "shellx.public-marketing-assets.v2",
-  "reviewedAt": "2026-08-09T08:37:54Z",
+  "reviewedAt": "2026-08-10T19:39:53Z",
   "revalidation": {
     "status": "reviewed",
-    "sourceCommit": "0f66c06ac4ef3d57b8bbbcb353d1f9300588f055",
-    "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-    "reviewedAt": "2026-08-09T20:54:40Z",
-    "evidenceSha256": "d7d36339c4fa5b987562506c600333172b736c20ea118fc58315a77b399aecd2"
+    "sourceCommit": "98faae740e86460bb9b5451f346ba526bd145278",
+    "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+    "reviewedAt": "2026-08-11T05:04:08Z",
+    "evidenceSha256": "d7dfc75690264c6bdeb2ddee1f070266d99e3de9cc54d8e976746af48c93cb82"
   },
   "generation": {
     "mode": "gpt-image-background-plus-reviewed-product-composite",
-    "prompt": "Create a premium, restrained 16:9 marketing background plate for ShellX desktop software screenshots. Deep near-black navy base, subtle indigo and electric-blue edge glow, one very restrained warm copper accent, elegant flowing contour lines that frame an empty central presentation area. High-end developer-tool aesthetic, crisp but quiet, ample negative space in the center. Absolutely no application UI, no browser chrome, no windows, no devices, no text, no letters, no logos, no icons, no badges, no mock interface elements. This image will only sit behind pixel-exact real product screenshots.",
-    "backgroundSha256": "b15775e38cc7250b511aee76c7e6ba5201f0b33a9a1a0ab27f75ad57d32304a4",
+    "prompt": "Use case: ads-marketing\nAsset type: premium 16:9 outer presentation background plate for real ShellX desktop screenshots\nPrimary request: an elegant near-black midnight-blue abstract environment with flowing topographic contour lines and restrained luminous energy currents that frame a completely quiet central rectangle\nScene/backdrop: deep black-navy field, subtle dimensional haze, soft electric-cyan illumination near opposite outer corners, one very restrained warm amber accent along a distant contour\nStyle/medium: sophisticated cinematic abstract digital art, premium developer-tool campaign aesthetic, crisp and understated\nComposition/framing: exact 16:9 horizontal; generous empty low-contrast central presentation area occupying roughly 82% width and 88% height; visual energy confined to the outer perimeter so a real application screenshot remains readable\nLighting/mood: refined, technical, confident, dark, high-end; subtle depth without distracting glare\nColor palette: near-black, midnight navy, indigo, electric cyan, tiny warm amber accent\nConstraints: background plate only; absolutely no application UI, no browser chrome, no windows, no devices, no text, no letters, no logos, no icons, no badges, no mock interface elements, no watermark\nAvoid: bright center, busy particles, generic neon tunnel, cyberpunk city, gradients that reduce screenshot contrast",
+    "backgroundSha256": "a392409251c06ec6d51b69259b64c9a16f32d985ebf0a97abff591fc9bafdbc4",
     "content": {
       "mode": "gpt-image-rendered-inside-installed-shellx-preview-center",
-      "prompt": "Create a visually arresting cinematic concept image of a colossal futuristic observatory built into a black volcanic cliff above a stormy ocean, with one luminous copper-orange energy ring cutting through the architecture and electric cyan light reflecting across rain and mist. Image content only; no application interface, text, logos, badges, or watermark.",
-      "sha256": "ffd76166a7d84380651ecf21bfaaf1b2389801bb4d418b3e18c8792d2d682f0d"
+      "prompt": "Use case: ads-marketing\nAsset type: wide landscape artwork to be visibly opened as user content inside the real ShellX Preview Center\nPrimary request: a breathtaking photorealistic snow leopard standing on a rain-dark basalt ridge above a vast alpine valley at blue hour, with luminous aurora-like cyan clouds and a restrained warm amber sunrise breaking through distant peaks\nScene/backdrop: sweeping high-altitude wilderness, mist layers, wet rock, distant waterfalls, dramatic but believable weather\nSubject: one majestic snow leopard, full body, sharply detailed natural fur, calm alert gaze, anatomically realistic\nStyle/medium: premium cinematic wildlife photography, photorealistic, editorial quality\nComposition/framing: 16:9 horizontal, animal slightly off-center with strong depth and readable silhouette, no cropped paws or tail, visually striking at desktop-preview size\nLighting/mood: high contrast cyan-blue atmosphere with a focused warm amber rim light, awe-inspiring and refined rather than fantasy kitsch\nMaterials/textures: realistic wet basalt, fine fur, drifting mist, snow crystals\nConstraints: image content only; no application interface, no windows, no devices, no text, no letters, no logos, no badges, no watermark\nAvoid: extra animals, artificial neon outlines, oversaturation, cartoon styling, malformed anatomy",
+      "sha256": "d73962f3b0ab26a35355ba6ca572f3fc9c586b2326ec7ae23fe94bd4ca152d79"
     },
-    "uiPolicy": "Generated pixels are restricted to the outer presentation backdrop and the image visibly opened as user content inside the real installed ShellX Preview Center. No generated or retouched pixels replace ShellX controls, chrome, labels, or layout.",
-    "compositionPolicy": "Product sources are uniformly resized to 1280x800 and placed at +128+16 on the 1536x864 background. The Browser source uses exact installed chrome plus a live same-URL page viewport at the installed engine bounds because Linux WebDriver omits the separately composited native child WebView."
+    "uiPolicy": "Generated pixels are restricted to the outer presentation backdrop and the snow-leopard image visibly opened as user content inside the real installed ShellX Preview Center. No generated or retouched pixels replace ShellX controls, chrome, labels, or layout.",
+    "compositionPolicy": "Product sources are uniformly resized to 1280x800 and placed at +128+16 on the 1536x864 presentation plate. The Browser source combines exact installed chrome with the live same-URL Windows page viewport cropped from the installed candidate at +10+228 and placed at +0+184 inside the measured native engine bounds."
   },
   "assets": [
     {
-      "file": "shellx-desktop-0.3.5.png",
+      "file": "shellx-desktop-0.3.51.png",
       "status": "reviewed",
-      "review": "Accepted populated ShellX 0.3.5 work session with the real Preview Center open on a high-contrast generated observatory image, the installed workspace visible behind it, and no private profile data.",
-      "sha256": "9be7c143363c1ad30acd79010c279badaa8078776c1f6593598275212d6b9248",
-      "source": "../marketing-sources/shellx-workspace-preview.png",
-      "sourceSha256": "1aa65bda2d6b6761a4ab4c8f7fa852a4a0fa2a980d2065bafb6cc8013ea3bfa2",
+      "review": "Accepted populated ShellX 0.3.51 work session with the real Preview Center open on a high-contrast generated snow-leopard image, the installed workspace visible behind it, and no private profile data.",
+      "sha256": "cfa48a8c92c8dd5dfbb4dfd6d67c0c24b5ba31f2d5aa6a85f6a1cd815cc777ec",
+      "source": "../marketing-sources/shellx-workspace-preview-0.3.51.png",
+      "sourceSha256": "7354dbbd2a59d3dbd7776bd35b028955cae03d71da4a320d253bbf664dd761d8",
       "sourceReview": {
         "status": "reviewed",
         "kind": "installed-candidate",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "1aa65bda2d6b6761a4ab4c8f7fa852a4a0fa2a980d2065bafb6cc8013ea3bfa2",
-        "reviewedAt": "2026-08-05T08:24:34Z",
-        "evidenceSha256": "34e7c3398ae6b34cd22ba1416c3a59949c2c23b90c35db1efdd0413b77985704"
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "7354dbbd2a59d3dbd7776bd35b028955cae03d71da4a320d253bbf664dd761d8",
+        "reviewedAt": "2026-08-10T19:39:53Z",
+        "evidenceSha256": "afb96ce7a2bf29197427480f6ef07a342c067dc9f36a626aa881bbdf07e6c199"
       }
     },
     {
-      "file": "shellx-browser-0.3.5.png",
+      "file": "shellx-browser-0.3.51.png",
       "status": "reviewed",
-      "review": "Accepted ShellX Browser 0.3.5 with installed native chrome, secure Personal profile state, https://theshellx.com in the address bar, the live public homepage rendered in the exact page bounds, and the bounded Chat sidebar visible.",
-      "sha256": "217bba7a5c1da64677232ab89d96cc7fe50335d120eedab04e7763ddd5fcdecb",
-      "source": "../marketing-sources/shellx-browser-theshellx.png",
-      "sourceSha256": "b21417397f9de6e2b9af2016f49b73c6e56eaaceb7487230ec1d0d1e7b2e7cec",
+      "review": "Accepted ShellX Browser 0.3.51 with exact installed Windows chrome, secure Agent profile state, https://theshellx.com in the address bar, the live public homepage rendered in the measured native engine bounds, and the Chat sidecar visible.",
+      "sha256": "127df4177f1ae3ec216dfe59f636b68eb405af74012b8a0f54767fc1d2094b7d",
+      "source": "../marketing-sources/shellx-browser-theshellx-0.3.51.png",
+      "sourceSha256": "267097a5e54b80ce39a88dfa5d339197fbfd446e322ffa7f44fbe7beb9bfa49c",
       "sourceReview": {
         "status": "reviewed",
         "kind": "installed-browser-live-site-composite",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "b21417397f9de6e2b9af2016f49b73c6e56eaaceb7487230ec1d0d1e7b2e7cec",
-        "reviewedAt": "2026-08-05T08:24:34Z",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "267097a5e54b80ce39a88dfa5d339197fbfd446e322ffa7f44fbe7beb9bfa49c",
+        "reviewedAt": "2026-08-10T19:39:53Z",
         "liveUrl": "https://theshellx.com/",
-        "liveTitle": "shellX — One desktop app for Grok, Claude Code & Codex",
-        "composition": "The live 1239x858 page viewport was placed at +0+142 inside the installed 1600x1000 Browser chrome capture, matching the installed engine bounds and verified URL, title, secure state, and DOM observation.",
+        "liveTitle": "shellX — Grok, Claude Code, Codex & Antigravity in one app",
+        "composition": "The live native page viewport was cropped at +10+228 to 1061x818 from the installed Windows capture and placed at +0+184 inside the 1602x1002 WebDriver chrome capture. Those physical bounds are the 1.5-DPR projection of the candidate-reported logical engine bounds x=0, y=122.66667175292967, width=707, height=545.3333740234375.",
         "components": [
           {
             "role": "installed-browser-chrome",
-            "sha256": "27b70e89b3e4b1bf466fbc923adb0ae0642c6d6b4480dd6294cb2882db5a8296"
+            "sha256": "1fbdd945792b4da306308b57272e71de4e51199bdc7c929d5c908508e587699b"
           },
           {
-            "role": "live-page-viewport",
-            "sha256": "b2d721ea261317e4e9645ea5848e2cad9b96966469f3d14f27f469c1a0ab9bd8"
+            "role": "live-page-window-capture",
+            "sha256": "98c7a94cbecaf43e2b297154244873a9c6291ca07df4f1977331421f62f2e7dc"
+          },
+          {
+            "role": "live-engine-viewport-crop",
+            "sha256": "307185be542921b2c17674b387576f9f9823887afd9268e07a33805ca3b4a9eb"
           }
         ],
-        "evidenceSha256": "34e7c3398ae6b34cd22ba1416c3a59949c2c23b90c35db1efdd0413b77985704",
-        "observationTextSha256": "67c475bf14659d7e6e21ef8647a2fd09298435d9bd36284e868e4a80f336503e"
+        "evidenceSha256": "52b73997f20a055e2b6ea1431399dabb89ece532fb98da52cfa6015db5b67efb",
+        "observationTextSha256": "9d856458a7809d07284f5b241bc3f9fa133f38ee4e7a0dcf688a4b08deca2a05"
       }
     },
     {
-      "file": "shellx-vault-0.3.5.png",
+      "file": "shellx-vault-0.3.51.png",
       "status": "reviewed",
-      "review": "Accepted current ShellX 0.3.5 Vault settings with an empty disposable profile and the password, profile-card, and agent-wallet tabs visible.",
-      "sha256": "87deb7456f32c9cc88ed436d62a5449f1d7e023bae2fc9e08f9037688767c805",
+      "review": "Accepted current ShellX 0.3.51 Vault settings with an empty disposable profile and the password, profile-card, and agent-wallet tabs visible.",
+      "sha256": "46ab3168eb48f9c4202a1a5ecaffa3604ddba96fd6b420a935be0e0ce3ee933b",
       "source": "../manual/shellx/assets/settings-vault.png",
-      "sourceSha256": "971f25c37ef8dfd0d5cdf3c68381a978818ac64447947a1ce94eba2ffb36bf2e"
+      "sourceSha256": "6b08415f2ec56be0902e5e358bcb7be544d641a121d87f25dc19a0be388d5863"
     }
   ]
 }

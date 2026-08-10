@@ -533,13 +533,6 @@ const fixtures = [
     ownedRendererEventProjection: true,
     cleanupAbsentSelector: "[data-debug-id=\"surface-components-permissionpill-1\"]",
   }),
-  appFixture("ui:permission-owned-modal-markers", {
-    debugRendererFixture: { id: "permission-decision-lifecycle", action: "modal-markers" },
-  }, undefined, [
-    { patch: { debugRendererFixture: { id: "permission-decision-lifecycle", action: "clear" } } },
-  ], {
-    cleanupAbsentSelector: "[data-debug-id=\"surface-components-permissionmodal-1\"]",
-  }),
   appFixture("ui:owned-renderer-event-assets-visible", { openModal: "assets" }, undefined, [
     { patch: { debugRendererFixture: "clear" } },
   ], {
@@ -805,6 +798,8 @@ cohort("ui:settings-connections-visible", "src/components/settings/ConnectionsTa
   "surface-components-settings-connectionstab-2",
 ]);
 cohort("ui:settings-connectors-visible", "src/components/settings/ConnectorsTab.tsx", [
+  "connector-approval-auto-dispatch",
+  "connector-approval-review-first",
   "surface-components-settings-connectorstab-1",
   "surface-components-settings-connectorstab-3",
   "surface-components-settings-connectorstab-12",
@@ -984,10 +979,6 @@ cohort("ui:owned-renderer-event-chat-visible", "src/components/ChatOutput.tsx", 
 cohort("ui:owned-renderer-event-chat-visible", "src/components/PermissionPill.tsx", [
   "surface-components-permissionpill-1",
   "surface-components-permissionpill-3",
-]);
-cohort("ui:permission-owned-modal-markers", "src/components/PermissionModal.tsx", [
-  "surface-components-permissionmodal-1",
-  "surface-components-permissionmodal-2",
 ]);
 cohort("ui:owned-renderer-event-assets-visible", "src/components/AttachmentMediaBoard.tsx", [
   "surface-components-attachmentmediaboard-12",
@@ -1331,7 +1322,9 @@ cohort("ui:browser-bookmark-manager-owned", "src/browser/components/BookmarkSide
   "shellx-browser-bookmark-url-*",
   "shellx-browser-bookmark-pin-*",
   "shellx-browser-bookmark-delete-*",
-  "surface-browser-components-bookmarksidecar-5",
+  "shellx-browser-bookmark-open-*",
+  "shellx-browser-bookmark-create-folder",
+  "shellx-browser-bookmark-create-link",
 ]);
 cohort("ui:browser-bookmark-toolbar-owned", "src/browser/components/BookmarkToolbar.tsx", [
   "shellx-browser-bookmark-toolbar",

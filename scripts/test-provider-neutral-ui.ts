@@ -15,13 +15,13 @@ const files = {
   connectionEditor: readFileSync("src/components/ConnectionEditor.tsx", "utf8"),
   connectionsTab: readFileSync("src/components/settings/ConnectionsTab.tsx", "utf8"),
   shellxagentTab: readFileSync("src/components/settings/ShellxagentTab.tsx", "utf8"),
-  permissionModal: readFileSync("src/components/PermissionModal.tsx", "utf8"),
   tasksPanel: readFileSync("src/components/TasksPanel.tsx", "utf8"),
   workPreview: readFileSync("src/components/WorkPreviewPanel.tsx", "utf8"),
   builtinDocs: readFileSync("src/lib/builtin-docs.ts", "utf8"),
   userStore: readFileSync("src/lib/userStore.ts", "utf8"),
   apiDocs: readFileSync("docs/public/API.md", "utf8"),
   debugApi: readRustModuleFamily("src-tauri/src/debug_api.rs"),
+  outsideConnectorRuntime: readFileSync("src-tauri/src/outside_connector_runtime.rs", "utf8"),
   hostMcp:
     readFileSync("src-tauri/src/host_mcp.rs", "utf8") +
     readdirSync("src-tauri/src/host_mcp", { recursive: true, encoding: "utf8" })
@@ -33,6 +33,21 @@ const files = {
   backend: readFileSync("src-tauri/src/lib.rs", "utf8"),
   debugSurfaceTest: readFileSync("scripts/test-debug-ui-surfaces.ts", "utf8"),
 };
+
+function providerConnectorDispatchContract(runtime: string, debugApi: string): boolean {
+  return debugApi.includes("ProviderSessionRegistry") &&
+    debugApi.includes("provider_session_info_from_run") &&
+    runtime.includes("dispatch_prompt_to_shellx_tab") &&
+    runtime.includes("dispatch_prompt_to_provider_tab") &&
+    runtime.includes("start_provider_session(registry, request, emit)") &&
+    runtime.includes("state_for_tab_preferred(tab_id)") &&
+    runtime.includes(".stored_conversations") &&
+    runtime.includes(".get(&previous_run.provider_id)") &&
+    runtime.includes("let resume = provider_conversation_id.is_some()") &&
+    runtime.includes("shellx_tool_exposure: Some(run.shellx_tool_exposure)") &&
+    runtime.includes("permission_mode: Some(run.permission_mode.clone())") &&
+    runtime.includes("ssh_remote_runtime: run.ssh_remote_runtime");
+}
 
 assert(files.app.includes("Connect agent session"));
 assert(files.app.includes("Ask active agent to fix current preview"));
@@ -61,6 +76,29 @@ assert(
 assert(files.connectors.includes("send to session"));
 assert(files.connectors.includes("returns the active session reply"));
 assert(
+  files.connectors.includes('aria-label="Connector session chat approval"')
+    && files.connectors.includes('data-debug-id="connector-approval-review-first"')
+    && files.connectors.includes('data-debug-id="connector-approval-auto-dispatch"')
+    && files.connectors.includes('dispatchMode: "autoPrompt" }))')
+    && !files.connectors.includes('dispatchMode: "autoPrompt", requireApproval: false')
+    && !files.connectors.includes('dispatchMode: "inbox", requireApproval: true'),
+  "connector delivery and per-message approval must remain independent controls",
+);
+assert(
+  providerConnectorDispatchContract(files.outsideConnectorRuntime, files.debugApi),
+  "every provider session advertised by the connector picker must retain a real provider dispatch route and its execution policy",
+);
+assert(
+  !providerConnectorDispatchContract(
+    files.outsideConnectorRuntime.replace(
+      "start_provider_session(registry, request, emit)",
+      "provider dispatch removed",
+    ),
+    files.debugApi,
+  ),
+  "provider connector dispatch guard must fail when its executable provider start route is removed",
+);
+assert(
   files.connectors.includes("const desktopConnectorsAvailable = inTauri()") &&
     files.connectors.includes("This connector editor is a visual preview") &&
     files.connectors.includes("disabled={busy || !desktopConnectorsAvailable || debugFixtureActive}") &&
@@ -75,13 +113,27 @@ assert(
   "browser preview must disclose unavailable connection IPC and disable refresh actions",
 );
 assert(
+  files.bottomPanel.includes('lazy(() => import("./ConnectionEditor")') &&
+    files.bottomPanel.includes("{connectionEditorOpen && (") &&
+    files.connectionsTab.includes('lazy(() => import("../ConnectionEditor")') &&
+    files.connectionsTab.includes("{editing !== null && (") &&
+    files.bottomPanel.includes('label="Connection editor"') &&
+    files.connectionsTab.includes('label="Connection editor"'),
+  "both connection-editor entry points must retain a recoverable on-demand boundary",
+);
+assert(
+  files.connectionEditor.includes('className="settings-close"') &&
+    files.connectionEditor.includes('className="settings-pill active"') &&
+    (files.connectionEditor.match(/className="settings-pill"/g)?.length ?? 0) >= 2,
+  "connection editor chrome and footer actions must use the shared ShellX dialog language",
+);
+assert(
   files.shellxagentTab.includes('import { inTauri } from "../../lib/tauri-bridge"') &&
     files.shellxagentTab.includes("const desktopAgentAvailable = fixtureActive || inTauri()") &&
     files.shellxagentTab.includes("shellXagent token and bound-port controls are unavailable") &&
     files.shellxagentTab.includes("disabled={loading || !desktopAgentAvailable || fixtureActive}"),
   "browser preview must disclose unavailable shellXagent IPC and disable token rotation",
 );
-assert(files.permissionModal.includes("Agent wants to run a shell command"));
 assert(files.tasksPanel.includes("Ask the active agent to inspect"));
 assert(
   files.tasksPanel.includes('t.origin === "grok" && activeAgentId && activeAgentId !== "grok"') &&
@@ -115,7 +167,7 @@ function functionBody(source: string, name: string): string {
 }
 
 assert(!functionBody(files.app, "handleNewTab").includes("connect("), "new tabs must not auto-connect to an agent");
-assert(!functionBody(files.app, "handleOpenProject").includes("connect("), "project tabs must not auto-connect to an agent");
+assert(!files.app.includes("handleOpenProject"), "retired project-open wiring must not silently create agent tabs");
 assert(!functionBody(files.app, "newTabEntry").includes("agentId"), "new tabs must not default the selected agent to Grok");
 assert(files.app.includes("Choose an agent before sending."), "normal sends must require an explicit agent selection");
 assert(
@@ -393,6 +445,27 @@ assert(files.rightRail.includes("Search capabilities"), "Tools capability sectio
 assert(files.rightRail.includes("? \"NATIVE\" : \"HOST\""), "native capability badge must not be labelled Grok on provider tabs");
 assert(files.rightRail.includes("ShellX tools"), "Tools pane must expose per-tab ShellX tool exposure controls");
 assert(files.rightRail.includes("tool-exposure-segments"), "ShellX tool exposure control must use a compact segmented control");
+assert(
+  files.rightRail.includes('lazy(() => import("./GitPane")') &&
+    files.rightRail.includes('lazy(() => import("./WorkPreviewPanel")') &&
+    files.rightRail.includes('lazy(() => import("./FilesPane")') &&
+    files.rightRail.includes('label="Git panel"') &&
+    files.rightRail.includes('label="Preview panel"') &&
+    files.rightRail.includes('label="Files panel"') &&
+    (files.rightRail.match(/onDismiss=\{\(\) => setTab\("Tasks"\)\}/g)?.length ?? 0) === 3,
+  "non-default operational right-rail panels must retain recoverable on-demand boundaries",
+);
+assert(
+  files.rightRail.includes('lazy(() => import("./AgentCliStatusCard")')
+    && (files.rightRail.match(/label="Agent CLI status" variant="inline"/g)?.length ?? 0) === 2,
+  "non-default Tooling views must load Agent CLI status behind a recoverable boundary",
+);
+assert(
+  files.rightRail.includes('lazy(() => import("./BuildRunCockpit")')
+    && files.rightRail.includes("renderedBuildState && (")
+    && files.rightRail.includes('label="Build Mode cockpit" variant="inline"'),
+  "Plan must load the Build Mode cockpit only for an observed build run and retain local recovery",
+);
 assert(files.builtinDocs.includes("Provider tabs only show commands"), "built-in help must explain provider-scoped slash commands");
 assert(!files.builtinDocs.includes("grok's slash commands"), "built-in help must not call all slash commands Grok commands");
 assert(files.settings.includes('const STORAGE_KEY = "shellX.settings.v2"'), "settings must write new data under the ShellX namespace");

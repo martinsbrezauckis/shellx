@@ -1,10 +1,17 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createReleaseSurfaceControllerBinding } from "../lib/release-surface-controller-binding";
 import type { ReleaseSurfaceControllerBinding } from "../lib/release-surface-controller-binding";
 import { UI_CONTROL_INSTALLED_CONTROLLER_FILES } from "../release-drivers/ui-control-installed-manifest";
 
 export const releaseSurfaceFixtureRoot = resolve(import.meta.dirname, "../..");
+export const releaseSurfaceFixtureVersion = (JSON.parse(
+  readFileSync(resolve(releaseSurfaceFixtureRoot, "package.json"), "utf8"),
+) as { version: string }).version;
+if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(releaseSurfaceFixtureVersion)) {
+  throw new Error("release surface fixture package version is invalid");
+}
 export const releaseSurfaceFixtureSourceCommit = execFileSync("git", ["rev-parse", "HEAD"], {
   cwd: releaseSurfaceFixtureRoot,
   encoding: "utf8",

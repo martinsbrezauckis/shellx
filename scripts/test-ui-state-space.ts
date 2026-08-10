@@ -177,7 +177,6 @@ function assertSourceBindings(): void {
   const bottomPanel = read("src/components/BottomPanel.tsx");
   const settings = read("src/components/Settings.tsx");
   const browserApp = read("src/components/ShellxBrowserApp.tsx");
-  const appCss = read("src/App.css");
   const interactionCss = read("src/styles/interactionAccessibility.css");
   const browserCss = read("src/browser/browserShell.css");
 
@@ -215,7 +214,7 @@ function assertSourceBindings(): void {
 
   assert(!browserApp.includes("gridTemplateColumns"), "Browser responsive grid must not be overridden inline");
   assert(
-    /@media \(max-width: 980px\)[\s\S]*?\.shellx-browser-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr/.test(appCss),
+    /@media \(max-width: 980px\)[\s\S]*?\.shellx-browser-grid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(browserCss),
     "Browser grid needs a narrow viewport single-column override",
   );
   assert(interactionCss.includes("@media (prefers-reduced-motion: reduce)"));

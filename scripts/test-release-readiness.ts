@@ -7,6 +7,9 @@ import {
 } from "../src/lib/release-readiness";
 import { readFileSync } from "node:fs";
 
+const releaseReadinessPanel = readFileSync("src/components/settings/ReleaseReadinessPanel.tsx", "utf8");
+const releaseReadinessCss = readFileSync("src/components/settings/ReleaseReadinessPanel.css", "utf8");
+
 let failures = 0;
 function assert(cond: boolean, label: string): void {
   console.log(`  ${cond ? "✓" : "✗"} ${label}`);
@@ -14,6 +17,13 @@ function assert(cond: boolean, label: string): void {
 }
 
 console.log("\n=== release readiness helpers ===");
+
+assert(
+  releaseReadinessPanel.includes('import "./ReleaseReadinessPanel.css";')
+    && releaseReadinessCss.includes(".release-readiness")
+    && releaseReadinessCss.includes(".release-check-actions"),
+  "lazy release-readiness UI owns its complete stylesheet",
+);
 
 const ready: ReleaseReadinessInput = {
   packageVersion: "0.1.31",

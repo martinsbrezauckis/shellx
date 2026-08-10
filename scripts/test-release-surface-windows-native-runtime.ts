@@ -20,7 +20,7 @@ import {
   validateReleaseSurfaceWindowsProbeOrder,
   type ReleaseSurfaceWindowsNativeRuntime,
 } from "./lib/release-surface-windows-native-runtime";
-import { syntheticReleaseSurfaceControllerBinding } from "./fixtures/release-surface-controller-binding-fixture";
+import { syntheticReleaseSurfaceControllerBinding, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 
 const fixture: ReleaseSurfaceWindowsNativeRuntime = {
   schema: RELEASE_SURFACE_WINDOWS_NATIVE_RUNTIME_SCHEMA,
@@ -153,7 +153,7 @@ async function runLiveWindowsCollectorTest(powershellPath: string): Promise<void
       "-StatePath", stateWindowsPath,
       "-TokenPath", tokenWindowsPath,
       "-InstanceId", "fixture-instance-0001",
-      "-Version", "0.3.5",
+      "-Version", releaseSurfaceFixtureVersion,
       "-SourceCommit", "b".repeat(40),
       "-MaxLifetimeSeconds", "30",
     ], { stdio: ["ignore", "pipe", "pipe"] });
@@ -227,7 +227,7 @@ function windowsRuntimeRequest(
     driverKind: "tauri-command",
     platform: "windows-installed",
     sourceCommit: "b".repeat(40),
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: "e".repeat(64),
     artifact: { basename: "powershell.exe", sha256: observation.process.imageSha256 },
     controller: syntheticReleaseSurfaceControllerBinding("b".repeat(40)),

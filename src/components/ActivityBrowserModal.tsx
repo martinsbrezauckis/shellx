@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type JSX, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import "./activityBrowser.css";
+import "./activityEvidence.css";
 import {
   buildActivityGraph,
   buildActivityClipboardSummary,

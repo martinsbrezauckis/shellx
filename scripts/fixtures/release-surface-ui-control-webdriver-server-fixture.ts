@@ -163,8 +163,6 @@ const findOwnedTabId = `fixture-find-owned-tab-${sourceCommit.slice(0, 16)}`;
 const bottomPanelOwnedTabId = `fixture-bottom-panel-owned-tab-${sourceCommit.slice(0, 16)}`;
 let bottomPanelAttachmentPaths: string[] = [];
 let bottomPanelImagePath: string | null = null;
-let bottomPanelTerminalIds: string[] = [];
-let bottomPanelActiveTerminal: string | null = null;
 let bottomPanelFixtureUserVisible = false;
 let previewState: Record<string, unknown> | null = null;
 let renderedPreviewState: Record<string, unknown> | null = null;
@@ -336,6 +334,7 @@ let connectorDraftOpen = false;
 let connectorProvider = "telegram";
 let connectorEnabled = false;
 let connectorDispatchMode = "inbox";
+let connectorRequireApproval = true;
 let connectorTargetMode = "activeTab";
 let connectorVaultKey = "telegram/bot-token";
 let connectorAllowedIds = "";
@@ -404,7 +403,8 @@ let ownedProjectRenaming = false;
 let ownedProjectRenameValue = "";
 let ownedProjectExpanded = false;
 let ownedProjectDeleteDialog = false;
-const leftRailProjectId = "release-left-rail-project-" + sourceCommit.slice(0, 16);
+let leftRailProjectSequence = 0;
+let leftRailProjectId = "proj-" + sourceCommit.slice(0, 8);
 const leftRailOwnedSessionId = "release_session_" + sourceCommit.slice(0, 16) + "_ui_left_rail_lifecycle";
 const leftRailOwnedTabId = "fixture-left-rail-owned-tab-" + sourceCommit.slice(0, 16);
 const leftRailUserDataPath = join(profileRoot, ".shellx", "user-data.json");
@@ -430,7 +430,6 @@ const publicSettings = {
   chatFontPx: 19,
   density: "default",
   githubGhBinary: "gh",
-  permissionUx: "pill",
   theme: "black",
 };
 let releaseNativePickerLease: {
@@ -763,8 +762,6 @@ function closeOwnedSessionTab(tabId: string): boolean {
   if (tabId === bottomPanelOwnedTabId) {
     bottomPanelAttachmentPaths = [];
     bottomPanelImagePath = null;
-    bottomPanelTerminalIds = [];
-    bottomPanelActiveTerminal = null;
     bottomPanelFixtureUserVisible = false;
     alwaysVisibleTextValues["[data-debug-id='composer-prompt']"] = "";
   }
@@ -1308,14 +1305,6 @@ function selectorDisplayed(selector: string): boolean {
     return rightTab === "Tooling" && rightRailGitLifecycleActive;
   }
   const permissionPending = permissionFixtureAction !== null && permissionDecision === null;
-  if (selector === "[data-debug-id='surface-components-permissionmodal-1']"
-    || selector === "[data-debug-id='surface-components-permissionmodal-2']") {
-    return permissionPending && permissionFixtureAction?.startsWith("modal-") === true;
-  }
-  if (selector === "[data-shellx-release-control='permission-modal-allow']"
-    || selector === "[data-shellx-release-control='permission-modal-deny']") {
-    return permissionPending && permissionFixtureAction?.startsWith("modal-") === true;
-  }
   if (selector === "[data-debug-id='surface-components-permissionpill-1']"
     || selector === "[data-debug-id='surface-components-permissionpill-3']"
     || selector === "[data-shellx-release-control='permission-pill-always']") {
@@ -1727,9 +1716,6 @@ function selectorDisplayed(selector: string): boolean {
   if (selector === ".preview-center-heading" || selector === ".preview-modal.preview-modal-embedded") {
     return ownedModalOpen === "preview" && previewCenterView === "file" && previewFilePath !== null;
   }
-  if (selector === ".terminal-substrip > button.substrip-tab") {
-    return activeTab.tabId === bottomPanelOwnedTabId && bottomPanelFixtureUserVisible;
-  }
   if (selector === ".bottom-panel") return true;
   if (selector === ".composer-attachment-chip[title]") {
     return activeTab.tabId === bottomPanelOwnedTabId && bottomPanelAttachmentPaths.length > 0;
@@ -1737,16 +1723,8 @@ function selectorDisplayed(selector: string): boolean {
   if (selector === ".composer-attachment-chip" || selector === ".composer-attachment-remove") {
     return bottomPanelAttachmentPaths.length > 0;
   }
-  if (selector === "[data-release-terminal-id]") {
-    return activeTab.tabId === bottomPanelOwnedTabId && bottomPanelTerminalIds.length > 0;
-  }
-  const exactTerminalRow = selector.match(/^\[data-release-terminal-id='([A-Za-z0-9._:-]+)'\]$/);
-  if (exactTerminalRow) return bottomPanelTerminalIds.includes(exactTerminalRow[1]!);
-  const foreignTerminalRow = selector.match(/^\[data-release-terminal-id\]:not\(\[data-release-terminal-id='([A-Za-z0-9._:-]+)'\]\)$/);
-  if (foreignTerminalRow) return bottomPanelTerminalIds.some((id) => id !== foreignTerminalRow[1]);
   if (selector === "[data-release-bottom-panel-user-terminal-fixture]") {
-    return activeTab.tabId === bottomPanelOwnedTabId && bottomPanelFixtureUserVisible
-      && bottomPanelActiveTerminal === "user";
+    return activeTab.tabId === bottomPanelOwnedTabId && bottomPanelFixtureUserVisible;
   }
   const removeAttachment = selector.match(/^\[aria-label='Remove ([^']+)'\]$/);
   if (removeAttachment) {
@@ -1755,10 +1733,6 @@ function selectorDisplayed(selector: string): boolean {
   }
   const mediaCard = selector.match(/^\[data-debug-id='surface-components-bottompanel-9'\]\[title='([^']+)'\]$/);
   if (mediaCard) return bottomTab === "Images" && bottomPanelImagePath === mediaCard[1]!.replace(/\\\\/g, "\\");
-  const acpTerminal = selector.match(/^\[title='ACP terminal ([A-Za-z0-9._:-]+)'\]$/);
-  if (acpTerminal) return bottomPanelTerminalIds.includes(acpTerminal[1]!);
-  const closeAcpTerminal = selector.match(/^\[data-release-terminal-id='([A-Za-z0-9._:-]+)'\] \[aria-label='close terminal tab'\]$/);
-  if (closeAcpTerminal) return bottomPanelTerminalIds.includes(closeAcpTerminal[1]!);
   if (selector === "[data-debug-id='surface-components-findpopover-1']") return true;
   if (selector === ".find-popover") return findSessionsFocused;
   if (selector === "[data-debug-id='surface-components-findpopover-3']") return findSessionsFocused;
@@ -1931,6 +1905,8 @@ function selectorDisplayed(selector: string): boolean {
     || selector === "[aria-label='Connector receiver state'] > button:last-child"
     || selector === "[aria-label='Connector delivery mode'] > button:first-child"
     || selector === "[aria-label='Connector delivery mode'] > button:last-child"
+    || selector === "[data-debug-id='connector-approval-review-first']"
+    || selector === "[data-debug-id='connector-approval-auto-dispatch']"
     || selector === "[id='connector-target']"
     || selector === "[data-debug-id='surface-components-settings-connectorstab-21']"
     || selector === "[id='connector-secret']"
@@ -2097,19 +2073,13 @@ function resetConnectorDraft(open = false): void {
   connectorProvider = "telegram";
   connectorEnabled = false;
   connectorDispatchMode = "inbox";
+  connectorRequireApproval = true;
   connectorTargetMode = "activeTab";
   connectorVaultKey = "telegram/bot-token";
   connectorAllowedIds = "";
   connectorSecretValue = "";
   connectorFixedTabId = "";
   connectorEditingId = "";
-}
-
-function resetAttachmentMediaFixture(): void {
-  attachmentMediaPendingPaths = [];
-  attachmentMediaSessionPath = null;
-  attachmentMediaImagePath = null;
-  attachmentMediaVideoPath = null;
 }
 
 function rightRailGitWriteFixtureActive(): boolean {
@@ -2288,10 +2258,6 @@ function closeModalBackdrop(selector: string): void {
   else if (leftRailLifecycle && selector === "[data-debug-id='surface-components-leftrail-24']") {
     leftRailSessionDeleteDialog = false;
     leftRailSessionDeleteTarget = null;
-  }
-  else if (selector === "[data-debug-id='surface-components-permissionmodal-1']"
-    && permissionFixtureAction === "modal-backdrop-deny") {
-    permissionDecision = "deny";
   }
   else {
     throw new Error(`fixture does not support modal backdrop ${selector}`);
@@ -3557,8 +3523,6 @@ const candidate = createServer(async (request, response) => {
         attachmentMediaImagePath = null;
         attachmentMediaVideoPath = null;
         bottomPanelImagePath = null;
-        bottomPanelTerminalIds = [];
-        bottomPanelActiveTerminal = null;
         bottomPanelFixtureUserVisible = false;
         chatOutputLifecycleActive = false;
         chatOutputThoughtExpanded = false;
@@ -3591,11 +3555,6 @@ const candidate = createServer(async (request, response) => {
           if (activeTab.tabId === bottomPanelOwnedTabId) {
             bottomPanelImagePath = attachmentMediaImagePath;
           }
-        } else if (rendererFixture.id === "bottom-panel-lifecycle"
-          && typeof rendererFixture.terminalId === "string" && /^[A-Za-z0-9._:-]+$/.test(rendererFixture.terminalId)) {
-          bottomPanelTerminalIds = [rendererFixture.terminalId];
-          bottomPanelActiveTerminal = "user";
-          bottomPanelFixtureUserVisible = true;
         } else if (rendererFixture.id === "chat-output-lifecycle") {
           chatOutputLifecycleActive = rendererFixture.action !== "clear";
           chatOutputThoughtExpanded = false;
@@ -3622,7 +3581,7 @@ const candidate = createServer(async (request, response) => {
           rightRailEnvironmentTraceReceipt = null;
         } else if (rendererFixture.id === "permission-decision-lifecycle"
           && typeof rendererFixture.action === "string"
-          && /^(?:modal-markers|modal-backdrop-deny|modal-deny|modal-allow|pill-allow|pill-always|pill-deny|clear)$/.test(rendererFixture.action)) {
+          && /^(?:pill-allow|pill-always|pill-deny|clear)$/.test(rendererFixture.action)) {
           permissionFixtureAction = rendererFixture.action === "clear" ? null : rendererFixture.action;
           permissionDecision = null;
         } else if (rendererFixture.id === "provider-action-lifecycle"
@@ -3860,8 +3819,6 @@ const candidate = createServer(async (request, response) => {
         releaseNativePickerArmed: releaseNativePickerLease !== null,
         bottomPanelComposerPrompt: alwaysVisibleTextValues["[data-debug-id='composer-prompt']"],
         bottomPanelImagePath,
-        bottomPanelTerminalIds,
-        bottomPanelActiveTerminal,
         bottomPanelFixtureUserVisible,
         previewStatus: previewState?.status ?? null,
         previewUrl: previewState?.url ?? null,
@@ -3973,6 +3930,7 @@ const candidate = createServer(async (request, response) => {
         connectorProvider,
         connectorEnabled,
         connectorDispatchMode,
+        connectorRequireApproval,
         connectorTargetMode,
         connectorVaultKey,
         connectorAllowedIds,
@@ -4166,6 +4124,10 @@ const webdriver = createServer(async (request, response) => {
             observation.pressed = connectorDispatchMode === "inbox";
           } else if (selector === "[aria-label='Connector delivery mode'] > button:last-child") {
             observation.pressed = connectorDispatchMode === "autoPrompt";
+          } else if (selector === "[data-debug-id='connector-approval-review-first']") {
+            observation.pressed = connectorRequireApproval;
+          } else if (selector === "[data-debug-id='connector-approval-auto-dispatch']") {
+            observation.pressed = !connectorRequireApproval;
           }
         }
         if (selector === "[id='connector-target']" && requested.includes("value")) {
@@ -4401,13 +4363,6 @@ const webdriver = createServer(async (request, response) => {
         if (selector === "[data-debug-id='surface-components-attachmentmediaboard-9']"
           && requested.includes("title")) {
           observation.title = attachmentMediaPendingPaths[0] ?? null;
-        }
-        if (selector === ".terminal-substrip > button.substrip-tab" && requested.includes("pressed")) {
-          observation.pressed = bottomPanelActiveTerminal === "user";
-        }
-        const observedAcpTerminal = selector.match(/^\[title='ACP terminal ([A-Za-z0-9._:-]+)'\]$/);
-        if (observedAcpTerminal && requested.includes("pressed")) {
-          observation.pressed = bottomPanelActiveTerminal === observedAcpTerminal[1];
         }
         if (
           selector === "[placeholder='What should Grok change about this plan? (Ctrl+Enter to submit)']"
@@ -4689,8 +4644,6 @@ const webdriver = createServer(async (request, response) => {
       if (script.includes("SHELLX_BOTTOM_PANEL_TERMINAL_STATE")) {
         return webdriverValue(response, {
           mounted: false,
-          ids: [...bottomPanelTerminalIds],
-          active: bottomPanelActiveTerminal,
           fixtureUserVisible: bottomPanelFixtureUserVisible,
         });
       }
@@ -5431,24 +5384,6 @@ const webdriver = createServer(async (request, response) => {
         previewCenterView = "file";
         clickedSelectors.push(selector);
       }
-      else if (/^\[title='ACP terminal [A-Za-z0-9._:-]+'\]$/.test(selector)) {
-        const terminalId = selector.match(/^\[title='ACP terminal ([A-Za-z0-9._:-]+)'\]$/)?.[1] ?? "";
-        if (!bottomPanelTerminalIds.includes(terminalId)) {
-          return webdriverError(response, 400, "element not interactable", "owned ACP terminal is missing");
-        }
-        bottomPanelActiveTerminal = terminalId;
-        clickedSelectors.push(selector);
-      }
-      else if (selector === ".terminal-substrip > button.substrip-tab") {
-        bottomPanelActiveTerminal = "user";
-        clickedSelectors.push(selector);
-      }
-      else if (/^\[data-release-terminal-id='[A-Za-z0-9._:-]+'\] \[aria-label='close terminal tab'\]$/.test(selector)) {
-        const terminalId = selector.match(/^\[data-release-terminal-id='([A-Za-z0-9._:-]+)'\]/)?.[1] ?? "";
-        bottomPanelTerminalIds = bottomPanelTerminalIds.filter((id) => id !== terminalId);
-        if (bottomPanelActiveTerminal === terminalId) bottomPanelActiveTerminal = "user";
-        clickedSelectors.push(selector);
-      }
       else if (selector === ".provider-runner-actions button:last-child"
         && agentCliSetupFixtureMode === "live-status") {
         scanOwnedAgentCliVersion();
@@ -5787,8 +5722,6 @@ const webdriver = createServer(async (request, response) => {
         if (tabId === bottomPanelOwnedTabId) {
           bottomPanelAttachmentPaths = [];
           bottomPanelImagePath = null;
-          bottomPanelTerminalIds = [];
-          bottomPanelActiveTerminal = null;
           bottomPanelFixtureUserVisible = false;
           alwaysVisibleTextValues["[data-debug-id='composer-prompt']"] = "";
         }
@@ -5826,8 +5759,7 @@ const webdriver = createServer(async (request, response) => {
         clickedSelectors.push(selector);
       }
       else if (selector === "[data-debug-id='shellx-setup-step-agents']") {
-        settingsOpen = true;
-        settingsTab = "shellxagent";
+        agentCliSetupFixtureMode = "live-setup";
         clickedSelectors.push(selector);
       }
       else if (selector === "[data-debug-id='shellx-setup-step-requests']") {
@@ -6297,6 +6229,14 @@ const webdriver = createServer(async (request, response) => {
         connectorDispatchMode = "autoPrompt";
         clickedSelectors.push(selector);
       }
+      else if (selector === "[data-debug-id='connector-approval-review-first']") {
+        connectorRequireApproval = true;
+        clickedSelectors.push(selector);
+      }
+      else if (selector === "[data-debug-id='connector-approval-auto-dispatch']") {
+        connectorRequireApproval = false;
+        clickedSelectors.push(selector);
+      }
       else if (/^\[data-debug-id='surface-components-rightrail-2'\]\[data-shellx-tool-exposure='(nativeFirst|hostBridge|hostFull|off)'\]$/.test(selector)) {
         activeTab.shellxToolExposure = selector.match(/data-shellx-tool-exposure='([^']+)'/)![1]!;
         clickedSelectors.push(selector);
@@ -6387,21 +6327,6 @@ const webdriver = createServer(async (request, response) => {
       else if (completeProviderAction(selector)) {
         // completeProviderAction records the exact native selector.
       }
-      else if (selector === "[data-debug-id='surface-components-permissionmodal-1']"
-        && permissionFixtureAction === "modal-backdrop-deny") {
-        permissionDecision = "deny";
-        clickedSelectors.push(selector);
-      }
-      else if (selector === "[data-shellx-release-control='permission-modal-allow']"
-        && permissionFixtureAction === "modal-allow") {
-        permissionDecision = "allow";
-        clickedSelectors.push(selector);
-      }
-      else if (selector === "[data-shellx-release-control='permission-modal-deny']"
-        && permissionFixtureAction === "modal-deny") {
-        permissionDecision = "deny";
-        clickedSelectors.push(selector);
-      }
       else if (selector === "[data-debug-id='surface-components-permissionpill-1']"
         && permissionFixtureAction === "pill-allow") {
         permissionDecision = "allow";
@@ -6479,6 +6404,7 @@ const webdriver = createServer(async (request, response) => {
         clickedSelectors.push(selector);
       }
       else if (selector === "[data-debug-id='left-add-project']") {
+        allocateLeftRailProjectId();
         ownedProjectDraft = true;
         ownedProjectRenaming = true;
         ownedProjectRenameValue = "New project";
@@ -7198,7 +7124,7 @@ function sessionTabFromActive(value: Record<string, unknown>): Record<string, un
 function persistLeftRailUserData(): void {
   if (!leftRailLifecycle) return;
   mkdirSync(dirname(leftRailUserDataPath), { recursive: true, mode: 0o700 });
-  const projects = ownedProjectDraft && !ownedProjectRenaming
+  const projects = ownedProjectDraft
     ? [{ id: leftRailProjectId, name: ownedProjectRenameValue }]
     : [];
   writeFileSync(leftRailUserDataPath, JSON.stringify({
@@ -7219,6 +7145,7 @@ function leftRailLifecycleSelectorDisplayed(selector: string): boolean | null {
   const projectOpen = projectBlock + " .chat-row[data-tab-id='" + baselineActiveTab.tabId + "']";
   const projectPast = projectBlock + " .chat-row[data-session-id='" + leftRailOwnedSessionId + "']";
   const exact: Record<string, boolean> = {
+    ["[data-debug-id='left-rail'][data-user-data-ready='true']"]: true,
     [projectBlock]: ownedProjectDraft && !ownedProjectRenaming,
     [projectBlock + " [data-debug-id='surface-components-leftrail-3']"]: ownedProjectDraft && !ownedProjectRenaming,
     [projectBlock + " [data-debug-id='surface-components-leftrail-3'][aria-expanded='true']"]: ownedProjectDraft && !ownedProjectRenaming && ownedProjectExpanded,
@@ -7300,6 +7227,7 @@ function handleLeftRailClick(selector: string): boolean {
   const projectOpen = projectBlock + " .chat-row[data-tab-id='" + baselineActiveTab.tabId + "']";
   const projectPast = projectBlock + " .chat-row[data-session-id='" + leftRailOwnedSessionId + "']";
   if (selector === "[data-debug-id='left-add-project']") {
+    allocateLeftRailProjectId();
     ownedProjectDraft = true;
     ownedProjectRenaming = true;
     ownedProjectRenameValue = "New project";
@@ -7457,6 +7385,12 @@ function handleLeftRailClick(selector: string): boolean {
   return false;
 }
 
+function allocateLeftRailProjectId(): void {
+  leftRailProjectSequence += 1;
+  const suffix = leftRailProjectSequence.toString(36).padStart(2, "0").slice(-2);
+  leftRailProjectId = "proj-" + sourceCommit.slice(0, 6) + suffix;
+}
+
 function activeContextFromSessionTab(
   tab: Record<string, unknown>,
   fallback: Record<string, unknown>,
@@ -7525,13 +7459,11 @@ function escapeRegex(value: string): string {
 }
 
 function generalSettingForSelector(selector: string): {
-  key: "density" | "permissionUx" | "theme";
+  key: "density" | "theme";
   value: string;
 } | null {
   const density = selector.match(/^\[data-debug-id='settings-density-(compact|default|comfortable)'\]$/)?.[1];
   if (density) return { key: "density", value: density };
-  const permissionUx = selector.match(/^\[data-debug-id='settings-permission-ux-(pill|modal|both)'\]$/)?.[1];
-  if (permissionUx) return { key: "permissionUx", value: permissionUx };
   const themes: Record<string, string> = {
     "[aria-label='Use Black theme']": "black",
     "[aria-label='Use Black and warm theme']": "black_warm",

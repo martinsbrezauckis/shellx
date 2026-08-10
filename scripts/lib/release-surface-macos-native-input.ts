@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { basename, dirname, isAbsolute, posix, relative, resolve, win32 } from "node:path";
+import { basename, isAbsolute, posix, relative, resolve, win32 } from "node:path";
 import { lstatSync, openSync, closeSync, readSync } from "node:fs";
 import type {
   ReleaseSurfaceCandidateAttestation,

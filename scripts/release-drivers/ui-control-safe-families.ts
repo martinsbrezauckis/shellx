@@ -275,6 +275,20 @@ const CONNECTOR_STATE_CONTROLS = {
     setupState: { dispatchMode: "inbox" },
     label: "Session chat delivery",
   },
+  "src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"connector-approval-review-first\"]": {
+    control: "[data-debug-id='connector-approval-review-first']",
+    setup: "[data-debug-id='connector-approval-auto-dispatch']",
+    state: { requireApproval: true },
+    setupState: { requireApproval: false },
+    label: "Review first approval",
+  },
+  "src/components/settings/ConnectorsTab.tsx:[data-debug-id=\"connector-approval-auto-dispatch\"]": {
+    control: "[data-debug-id='connector-approval-auto-dispatch']",
+    setup: "[data-debug-id='connector-approval-review-first']",
+    state: { requireApproval: false },
+    setupState: { requireApproval: true },
+    label: "Auto-dispatch approval",
+  },
 } as const;
 const CONNECTOR_TARGET_SURFACE = "src/components/settings/ConnectorsTab.tsx:[id=\"connector-target\"]";
 const CONNECTOR_TARGET = "[id='connector-target']";
@@ -481,7 +495,7 @@ export async function exerciseSafeUiControlFamily(
   if (name === CONNECTOR_TARGET_SURFACE) return await exerciseConnectorTarget(connection, webdriver, assignment);
   if (name in CONNECTOR_TEXT_CONTROLS) return await exerciseConnectorText(connection, webdriver, assignment);
   if (name === SHELLX_TOOL_EXPOSURE_SURFACE) return await exerciseShellxToolExposure(connection, webdriver, assignment);
-  return await exerciseLocalDisclosure(connection, webdriver, assignment);
+  return await exerciseLocalDisclosure(webdriver, assignment);
 }
 
 async function exerciseConnectorDraftLifecycle(
@@ -582,7 +596,8 @@ async function exerciseConnectorState(connection: Connection, webdriver: WebDriv
       const state = await readConnectorState(webdriver);
       if (state.draftOpen && state.enabled !== false) await clickSelector(webdriver, "[aria-label='Connector receiver state'] > button:first-child");
       if (state.draftOpen && state.dispatchMode !== "inbox") await clickSelector(webdriver, "[aria-label='Connector delivery mode'] > button:first-child");
-      if (state.draftOpen) await waitForConnectorState(webdriver, { enabled: false, dispatchMode: "inbox" });
+      if (state.draftOpen && state.requireApproval !== true) await clickSelector(webdriver, "[data-debug-id='connector-approval-review-first']");
+      if (state.draftOpen) await waitForConnectorState(webdriver, { enabled: false, dispatchMode: "inbox", requireApproval: true });
     });
     await cleanupConnectorSettings(connection, webdriver, outcome, baselineTab);
   }
@@ -1368,7 +1383,7 @@ async function waitForAboutExternalUrl(connection: Connection, baselineLength: n
   throw new Error(`About external-link dispatch did not emit ${expectedUrl}`);
 }
 
-async function exerciseLocalDisclosure(connection: Connection, webdriver: WebDriver, assignment: Assignment) {
+async function exerciseLocalDisclosure(webdriver: WebDriver, assignment: Assignment) {
   const config = LOCAL_DISCLOSURES[assignment.surface.name as keyof typeof LOCAL_DISCLOSURES];
   const plugins = config.owner === "plugins";
   const selector = config.selector;
@@ -1452,20 +1467,23 @@ type ConnectorDraftState = {
   providerKind: string | null;
   enabled: boolean | null;
   dispatchMode: string | null;
+  requireApproval: boolean | null;
   targetMode: string | null;
 };
 
 async function readConnectorState(webdriver: WebDriver): Promise<ConnectorDraftState> {
-  const [telegram, discord, paused, live, inbox, session, target] = await Promise.all([
+  const [telegram, discord, paused, live, inbox, session, reviewFirst, autoDispatch, target] = await Promise.all([
     observeReleaseSurfaceInstalledInputElement(webdriver, CONNECTOR_PROVIDER_TELEGRAM, ["selected"]),
     observeReleaseSurfaceInstalledInputElement(webdriver, CONNECTOR_PROVIDER_DISCORD, ["selected"]),
     observeReleaseSurfaceInstalledInputElement(webdriver, "[aria-label='Connector receiver state'] > button:first-child", ["pressed"]),
     observeReleaseSurfaceInstalledInputElement(webdriver, "[aria-label='Connector receiver state'] > button:last-child", ["pressed"]),
     observeReleaseSurfaceInstalledInputElement(webdriver, "[aria-label='Connector delivery mode'] > button:first-child", ["pressed"]),
     observeReleaseSurfaceInstalledInputElement(webdriver, "[aria-label='Connector delivery mode'] > button:last-child", ["pressed"]),
+    observeReleaseSurfaceInstalledInputElement(webdriver, "[data-debug-id='connector-approval-review-first']", ["pressed"]),
+    observeReleaseSurfaceInstalledInputElement(webdriver, "[data-debug-id='connector-approval-auto-dispatch']", ["pressed"]),
     observeReleaseSurfaceInstalledInputElement(webdriver, CONNECTOR_TARGET, ["value"]),
   ]);
-  const observations = [telegram, discord, paused, live, inbox, session, target];
+  const observations = [telegram, discord, paused, live, inbox, session, reviewFirst, autoDispatch, target];
   const open = observations.every((observation) => observation.present && observation.visible);
   const closed = observations.every((observation) => !observation.present);
   const state: ConnectorDraftState = {
@@ -1473,17 +1491,20 @@ async function readConnectorState(webdriver: WebDriver): Promise<ConnectorDraftS
     providerKind: open ? (telegram.selected ? "telegram" : discord.selected ? "discord" : null) : null,
     enabled: open ? (live.pressed ? true : paused.pressed ? false : null) : null,
     dispatchMode: open ? (session.pressed ? "autoPrompt" : inbox.pressed ? "inbox" : null) : null,
+    requireApproval: open ? (reviewFirst.pressed ? true : autoDispatch.pressed ? false : null) : null,
     targetMode: open && typeof target.value === "string" ? target.value : null,
   };
   const validOpen = open
     && ["telegram", "discord"].includes(String(state.providerKind))
     && typeof state.enabled === "boolean"
     && ["inbox", "autoPrompt"].includes(String(state.dispatchMode))
+    && typeof state.requireApproval === "boolean"
     && ["activeTab", "fixedTab"].includes(String(state.targetMode));
   const validClosed = closed
     && state.providerKind === null
     && state.enabled === null
     && state.dispatchMode === null
+    && state.requireApproval === null
     && state.targetMode === null;
   if (!validOpen && !validClosed) {
     throw new Error("Connectors unsaved draft did not expose its exact bounded state");
@@ -1498,6 +1519,7 @@ function connectorDraftBaseline(open: boolean): ConnectorDraftState {
         providerKind: "telegram",
         enabled: false,
         dispatchMode: "inbox",
+        requireApproval: true,
         targetMode: "activeTab",
       }
     : {
@@ -1505,6 +1527,7 @@ function connectorDraftBaseline(open: boolean): ConnectorDraftState {
         providerKind: null,
         enabled: null,
         dispatchMode: null,
+        requireApproval: null,
         targetMode: null,
       };
 }
@@ -1679,7 +1702,6 @@ type PublicSettings = {
   chatFontPx: number;
   density: string;
   githubGhBinary: string;
-  permissionUx: string;
   theme: string;
 };
 
@@ -1688,7 +1710,6 @@ async function readPublicSettings(connection: Connection): Promise<PublicSetting
   if (typeof body.browserDownloadFolder !== "string" || !Number.isSafeInteger(body.chatFontPx)
     || !["compact", "default", "comfortable"].includes(String(body.density))
     || !["gh", "gh.exe"].includes(String(body.githubGhBinary))
-    || !["pill", "modal", "both"].includes(String(body.permissionUx))
     || !["black", "black_warm", "bright"].includes(String(body.theme))) {
     throw new Error("public Settings payload did not match its normalized schema");
   }

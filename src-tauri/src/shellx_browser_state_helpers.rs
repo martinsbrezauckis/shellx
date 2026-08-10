@@ -302,10 +302,11 @@ pub(crate) struct EnsureEngineSnapshotRequest<'a> {
     pub(crate) status: &'a str,
 }
 
+#[deny(clippy::expect_used, clippy::unwrap_used)]
 pub(crate) fn ensure_engine_snapshot_locked(
     state: &mut BrowserState,
     request: EnsureEngineSnapshotRequest<'_>,
-) {
+) -> usize {
     let now = now_ms();
     let privacy_mode = effective_ad_mode_for_profile_and_url(
         &state.privacy,
@@ -313,12 +314,13 @@ pub(crate) fn ensure_engine_snapshot_locked(
         request.profile_id,
         request.url.as_deref(),
     );
-    if let Some(engine) = state
+    if let Some(engine_idx) = state
         .engine_pool
         .engines
-        .iter_mut()
-        .find(|engine| engine.engine_id == request.engine_id)
+        .iter()
+        .position(|engine| engine.engine_id == request.engine_id)
     {
+        let engine = &mut state.engine_pool.engines[engine_idx];
         engine.browser_tab_id = Some(request.browser_tab_id.to_string());
         engine.task_id = request.task_id.map(ToOwned::to_owned);
         engine.profile_id = Some(request.profile_id.to_string());
@@ -333,9 +335,10 @@ pub(crate) fn ensure_engine_snapshot_locked(
             engine.load_status = request.status.to_string();
         }
         engine.updated_at_ms = now;
-        return;
+        return engine_idx;
     }
     let is_foreground = request.engine_id == BROWSER_ENGINE_FOREGROUND_ID;
+    let engine_idx = state.engine_pool.engines.len();
     state.engine_pool.engines.push(BrowserEngineSnapshot {
         engine_id: request.engine_id.to_string(),
         mounted: false,
@@ -359,6 +362,7 @@ pub(crate) fn ensure_engine_snapshot_locked(
         waitlist: BrowserEngineWaitlistSnapshot::default(),
         updated_at_ms: now,
     });
+    engine_idx
 }
 
 pub(crate) fn update_tab_url(

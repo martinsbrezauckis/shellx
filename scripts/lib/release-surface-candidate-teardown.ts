@@ -190,6 +190,9 @@ function validateCandidateTeardownInputs(input: ReleaseSurfaceCandidateTeardownI
   if (manifest.schema !== RELEASE_SURFACE_DRIVER_RUN_SCHEMA || manifest.mode !== "final-frozen-candidate") {
     errors.push("candidate teardown requires the exact driver run manifest schema");
   }
+  if (manifest.targetedClosure) {
+    errors.push("candidate teardown requires the complete discovery manifest, not a targeted closure");
+  }
   if (manifest.platform !== input.platform
     || manifest.sourceCommit !== candidate.sourceCommit
     || manifest.version !== candidate.version) {

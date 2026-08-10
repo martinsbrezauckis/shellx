@@ -1,4 +1,5 @@
 import { useRef, type JSX } from "react";
+import "./AttachmentMediaBoard.css";
 import type { ComposerAttachmentChip, ComposerAttachmentKind } from "./BottomPanel";
 import { SafeImg, SafeVideo } from "./MediaPreview";
 import { ShellIcon, type ShellIconName } from "./icons";

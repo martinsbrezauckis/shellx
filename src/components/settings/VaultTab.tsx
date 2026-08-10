@@ -47,6 +47,7 @@ import { ShellIcon } from "../icons";
 import { VaultPasswordGenerator } from "../VaultPasswordGenerator";
 import { VaultGrantsPanel, type GrantOperation, type GrantSummary } from "./VaultGrantsPanel";
 import { OWNED_DEBUG_VAULT_RECOVERY_WORDS, VaultSetupPanel } from "./VaultSetupPanel";
+import "./VaultTab.css";
 import "./vaultFields.css";
 import { isTrustedShellxUserEvent, type ShellxUserEventLike } from "../../lib/trusted-user-event";
 import { generateVaultPassword } from "../../lib/vault-password-generator";

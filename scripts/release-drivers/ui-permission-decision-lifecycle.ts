@@ -1,6 +1,5 @@
 import {
   clickReleaseSurfaceInstalledInputElement,
-  clickReleaseSurfaceInstalledInputElementAtFraction,
   findReleaseSurfaceInstalledInputElement,
   observeReleaseSurfaceInstalledInputElement,
   waitForReleaseSurfaceInstalledInputElement,
@@ -22,55 +21,21 @@ type Action = {
   fixtureId: string;
   selector: string;
   decision: Decision;
-  backdrop?: boolean;
 };
 
 const FIXTURE_ID = "permission-decision-lifecycle";
 const CLEANUP_ID = "ui:clear-owned-permission-decision-and-restore-view";
-const MARKER_FIXTURE_ID = "ui:permission-owned-modal-markers";
-const MARKER_CLEANUP_ID = "ui:clear-owned-permission-modal-markers-and-restore-view";
-const MARKER_ORACLE_ID = "ui:visible-nonempty-rectangle";
 const RECEIPT = "[data-shellx-release-control='permission-decision-receipt']";
-const MODAL_BACKDROP = "[data-debug-id='surface-components-permissionmodal-1']";
-const MODAL_DIALOG = "[data-debug-id='surface-components-permissionmodal-2']";
-const MODAL_ALLOW = "[data-shellx-release-control='permission-modal-allow']";
-const MODAL_DENY = "[data-shellx-release-control='permission-modal-deny']";
 const PILL_ALLOW = "[data-debug-id='surface-components-permissionpill-1']";
 const PILL_ALWAYS = "[data-shellx-release-control='permission-pill-always']";
 const PILL_DENY = "[data-debug-id='surface-components-permissionpill-3']";
 const PENDING_SELECTORS = [
-  MODAL_BACKDROP,
-  MODAL_DIALOG,
-  MODAL_ALLOW,
-  MODAL_DENY,
   PILL_ALLOW,
   PILL_ALWAYS,
   PILL_DENY,
 ];
 
 const ACTIONS: readonly Action[] = [
-  {
-    surface: 'src/components/PermissionModal.tsx:[data-debug-id="surface-components-permissionmodal-1"]',
-    command: "modal-backdrop-deny",
-    fixtureId: "ui:permission-owned-modal-backdrop-deny",
-    selector: MODAL_BACKDROP,
-    decision: "deny",
-    backdrop: true,
-  },
-  {
-    surface: 'src/components/PermissionModal.tsx:role=button;name="Allow"',
-    command: "modal-allow",
-    fixtureId: "ui:permission-owned-modal-allow",
-    selector: MODAL_ALLOW,
-    decision: "allow",
-  },
-  {
-    surface: 'src/components/PermissionModal.tsx:role=button;name="Deny"',
-    command: "modal-deny",
-    fixtureId: "ui:permission-owned-modal-deny",
-    selector: MODAL_DENY,
-    decision: "deny",
-  },
   {
     surface: 'src/components/PermissionPill.tsx:[data-debug-id="surface-components-permissionpill-1"]',
     command: "pill-allow",
@@ -94,17 +59,9 @@ const ACTIONS: readonly Action[] = [
   },
 ];
 
-const MARKER_SURFACES = new Map([
-  ["surface-components-permissionmodal-1", MODAL_BACKDROP],
-  ["surface-components-permissionmodal-2", MODAL_DIALOG],
-]);
-
 export const PERMISSION_CONTROL_FIXTURES = ACTIONS.map((action) => action.fixtureId);
 export const PERMISSION_CONTROL_CLEANUPS = [CLEANUP_ID] as const;
 export const PERMISSION_CONTROL_ORACLES = ACTIONS.map(permissionOracle);
-export const PERMISSION_MARKER_FIXTURES = [MARKER_FIXTURE_ID] as const;
-export const PERMISSION_MARKER_CLEANUPS = [MARKER_CLEANUP_ID] as const;
-export const PERMISSION_MARKER_ORACLES = [MARKER_ORACLE_ID] as const;
 
 export function supportsPermissionDecisionControl(assignment: Assignment): boolean {
   const action = ACTIONS.find((candidate) => candidate.surface === assignment.surface.name);
@@ -116,21 +73,13 @@ export function supportsPermissionDecisionControl(assignment: Assignment): boole
   );
 }
 
-export function supportsPermissionDecisionMarker(assignment: Assignment): boolean {
-  return assignment.surface.kind === "ui-debug-surface"
-    && MARKER_SURFACES.has(assignment.surface.name)
-    && assignment.fixtureId === MARKER_FIXTURE_ID
-    && assignment.cleanupId === MARKER_CLEANUP_ID
-    && assignment.oracleId === MARKER_ORACLE_ID;
-}
-
 export async function exercisePermissionDecisionControls(
   connection: Connection,
   installedInput: ReleaseSurfaceInstalledInputSession,
   assignments: Assignment[],
 ): Promise<ReleaseSurfaceDriverOutcome[]> {
   if (assignments.length !== ACTIONS.length || !assignments.every(supportsPermissionDecisionControl)) {
-    throw new Error("permission decision control driver requires all six exact action assignments");
+    throw new Error("permission decision control driver requires all three exact pill assignments");
   }
   const baseline = await readBaseline(connection);
   await requireFixtureAbsent(installedInput);
@@ -142,53 +91,6 @@ export async function exercisePermissionDecisionControls(
     outcomes.push(await exerciseAction(connection, installedInput, assignment, action, baseline));
   }
   return outcomes;
-}
-
-export async function exercisePermissionDecisionMarkers(
-  connection: Connection,
-  installedInput: ReleaseSurfaceInstalledInputSession,
-  assignments: Assignment[],
-): Promise<ReleaseSurfaceDriverOutcome[]> {
-  if (assignments.length !== MARKER_SURFACES.size || !assignments.every(supportsPermissionDecisionMarker)) {
-    throw new Error("permission marker driver requires both exact PermissionModal markers");
-  }
-  const baseline = await readBaseline(connection);
-  const outcomes = new Map(assignments.map((assignment) => [assignment.surface.name, emptyOutcome(assignment)]));
-  let fixtureApplied = false;
-  let primaryError: string | null = null;
-  try {
-    await requireFixtureAbsent(installedInput);
-    fixtureApplied = true;
-    await postUi(connection, {
-      debugRendererFixture: { id: FIXTURE_ID, action: "modal-markers" },
-    });
-    for (const [name, selector] of MARKER_SURFACES) {
-      await waitForReleaseSurfaceInstalledInputElement(installedInput, selector);
-      const outcome = outcomes.get(name);
-      if (!outcome) throw new Error("missing permission marker outcome " + name);
-      outcome.present = "pass";
-      outcome.invoke = "pass";
-      outcome.effect = "pass";
-      outcome.observedEffect = selector
-        + " resolved through the exact renderer-owned PermissionModal marker fixture; no permission decision or provider action was invoked.";
-    }
-  } catch (error) {
-    primaryError = errorMessage(error);
-  } finally {
-    const cleanupError = fixtureApplied
-      ? await cleanupFixture(connection, installedInput, baseline)
-      : null;
-    for (const outcome of outcomes.values()) {
-      if (!cleanupError) outcome.cleanup = "pass";
-      if (primaryError) outcome.error = primaryError;
-      if (cleanupError) outcome.error = appendError(outcome.error, "cleanup: " + cleanupError);
-    }
-  }
-  return assignments.map((assignment) => {
-    const outcome = outcomes.get(assignment.surface.name);
-    if (!outcome) throw new Error("missing permission marker result " + assignment.surface.name);
-    return outcome;
-  });
 }
 
 async function exerciseAction(
@@ -204,17 +106,13 @@ async function exerciseAction(
     await requireFixtureAbsent(installedInput);
     fixtureApplied = true;
     await postUi(connection, {
-      ...(action.command.startsWith("pill-") ? { bottomTab: "Chat" } : {}),
+      bottomTab: "Chat",
       debugRendererFixture: { id: FIXTURE_ID, action: action.command },
     });
     const control = await waitForReleaseSurfaceInstalledInputElement(installedInput, action.selector);
     outcome.present = "pass";
     await waitForReleaseSurfaceInstalledInputElementAbsent(installedInput, RECEIPT);
-    if (action.backdrop) {
-      await clickReleaseSurfaceInstalledInputElementAtFraction(installedInput, control, 0.015, 0.015);
-    } else {
-      await clickReleaseSurfaceInstalledInputElement(installedInput, control);
-    }
+    await clickReleaseSurfaceInstalledInputElement(installedInput, control);
     outcome.invoke = "pass";
     await waitForReleaseSurfaceInstalledInputElementAbsent(installedInput, action.selector);
     const expectedTitle = "Permission decision receipt — " + action.command + " — " + action.decision;

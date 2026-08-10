@@ -447,6 +447,7 @@ fn setup_scan_status(status: ConnectionProviderScanStatus) -> &'static str {
     }
 }
 
+#[deny(clippy::expect_used, clippy::unwrap_used)]
 pub async fn prepare_agent_cli_install(
     preset: ConnectionPreset,
     provider_id: String,
@@ -493,10 +494,12 @@ pub async fn prepare_agent_cli_install(
                     recipe.display_name, target.command_runs_on
                 )
             })?,
-        None => methods
-            .into_iter()
-            .next()
-            .expect("methods checked non-empty"),
+        None => methods.into_iter().next().ok_or_else(|| {
+            format!(
+                "agent_cli_setup.prepare: {} has no install command for {}",
+                recipe.display_name, target.command_runs_on
+            )
+        })?,
     };
     let staged = if method.installer_url.is_some() {
         Some(stage_vendor_installer(&preset, &method).await?)
@@ -549,7 +552,7 @@ pub async fn prepare_agent_cli_install(
     let expiry_id = confirmation.confirmation_id.clone();
     let pending_expiry_id = expiry_id.clone();
     let expiry_task_id = expiry_id.clone();
-    let mut expiry_handle = Some(tokio::spawn(async move {
+    let expiry_handle = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(PENDING_CONFIRMATION_TTL_MS as u64)).await;
         let expired = pending_installs()
             .lock()
@@ -561,21 +564,16 @@ pub async fn prepare_agent_cli_install(
         if let Ok(mut tasks) = expiry_tasks().lock() {
             tasks.remove(&expiry_task_id);
         }
-    }));
-    let expiry_registered = match expiry_tasks().lock() {
+    });
+    let expiry_registration = match expiry_tasks().lock() {
         Ok(mut tasks) => {
-            tasks.insert(
-                expiry_id,
-                expiry_handle.take().expect("expiry handle is available"),
-            );
-            true
+            tasks.insert(expiry_id, expiry_handle);
+            Ok(())
         }
-        Err(_) => false,
+        Err(_) => Err(expiry_handle),
     };
-    if !expiry_registered {
-        if let Some(handle) = expiry_handle.take() {
-            handle.abort();
-        }
+    if let Err(handle) = expiry_registration {
+        handle.abort();
         pending_installs()
             .lock()
             .ok()

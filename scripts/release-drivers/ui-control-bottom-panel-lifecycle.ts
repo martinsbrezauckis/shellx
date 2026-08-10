@@ -23,24 +23,18 @@ type UiTab = Record<string, unknown> & { tabId: string };
 
 const PREFIX = "src/components/BottomPanel.tsx:";
 const REMOVE = `${PREFIX}[aria-label^="Remove "]`;
-const CLOSE_TERMINAL = `${PREFIX}[aria-label="close terminal tab"]`;
 const SLASH_ROW = `${PREFIX}[data-debug-id="surface-components-bottompanel-24"]`;
 const MEDIA_CARD = `${PREFIX}[data-debug-id="surface-components-bottompanel-9"]`;
-const ACP_TERMINAL = `${PREFIX}[title^="ACP terminal "]`;
 const INSPECT = `${PREFIX}role=button;name="Inspect"`;
-const SHELL = `${PREFIX}role=button;name="shell"`;
 const SUMMARIZE = `${PREFIX}role=button;name="Summarize"`;
 const AGENT_ROW = `${PREFIX}[data-debug-id="surface-components-bottompanel-23"]`;
 const VOICE_OFF = `${PREFIX}[aria-label="Turn voice chat off and cancel active listening"]`;
 const MIC_CONTROL = 'src/components/MicButton.tsx:[data-release-control="composer-mic-button"]';
 const SUPPORTED = new Set([
   REMOVE,
-  CLOSE_TERMINAL,
   SLASH_ROW,
   MEDIA_CARD,
-  ACP_TERMINAL,
   INSPECT,
-  SHELL,
   SUMMARIZE,
   AGENT_ROW,
   VOICE_OFF,
@@ -52,7 +46,6 @@ const PROMPT = "[data-debug-id='composer-prompt']";
 const INSPECT_BUTTON = ".composer-attachment-actions > .composer-attachment-action:nth-of-type(1)";
 const SUMMARIZE_BUTTON = ".composer-attachment-actions > .composer-attachment-action:nth-of-type(2)";
 const SLASH_BUTTON = "[data-debug-id='surface-components-bottompanel-24']";
-const SHELL_BUTTON = ".terminal-substrip > button.substrip-tab";
 const AGENT_BUTTON = "[data-debug-id='composer-agent']";
 const AGENT_MENU = "[data-agent-picker-root][role='menu'][aria-label='Agent']";
 const VOICE_OFF_BUTTON = "[aria-label='Turn voice chat off and cancel active listening']";
@@ -61,7 +54,6 @@ const CODEX_ROW = "[data-debug-id='surface-components-bottompanel-23'][data-agen
 const PREVIEW_DIALOG = "[role='dialog'][aria-label='Preview Center']";
 const OWNED_ATTACHMENT_NAME = "owned-attachment.txt";
 const OWNED_IMAGE_NAME = "owned-image.png";
-const FIXTURE_ID = "bottom-panel-lifecycle";
 
 interface OwnedTab {
   baselineTabs: UiTab[];
@@ -81,18 +73,10 @@ interface ComposerState {
   prompt: string;
 }
 
-interface TerminalState {
-  mounted: boolean;
-  ids: string[];
-  active: string | null;
-  fixtureUserVisible: boolean;
-}
-
 export const BOTTOM_PANEL_LIFECYCLE_FIXTURES = [
   "ui:bottom-panel-owned-tab-attachment",
   "ui:bottom-panel-owned-tab-slash-command",
   "ui:bottom-panel-owned-tab-media",
-  "ui:bottom-panel-owned-tab-terminal-projection",
   "ui:bottom-panel-owned-tab-agent-choice",
   "ui:bottom-panel-owned-tab-voice-capture",
   "ui:bottom-panel-owned-tab-mic-stop",
@@ -102,7 +86,6 @@ export const BOTTOM_PANEL_LIFECYCLE_CLEANUPS = [
   "ui:remove-owned-attachment-clear-prompt-delete-files-close-tab-restore-baseline",
   "ui:clear-owned-prompt-close-tab-restore-baseline",
   "ui:close-preview-clear-owned-events-delete-files-close-tab-restore-baseline",
-  "ui:clear-owned-terminal-projection-close-tab-restore-baseline",
   "ui:clear-owned-agent-scan-close-tab-restore-baseline",
   "ui:clear-owned-voice-capture-close-tab-restore-baseline",
   "ui:clear-owned-mic-stop-close-tab-restore-baseline",
@@ -113,7 +96,6 @@ export const BOTTOM_PANEL_LIFECYCLE_ORACLES = [
   "ui:activation:owned-attachment-prompt-transition",
   "ui:selection-state-transition",
   "ui:activation:owned-media-preview-opened",
-  "ui:activation:owned-terminal-selection-transition",
   "ui:boolean-state-transition",
   "ui:activation:owned-voice-capture-cancelled",
   "ui:activation:owned-mic-capture-stopped",
@@ -181,15 +163,6 @@ function assignmentContract(surfaceName: string): {
       cleanupId: "ui:clear-owned-mic-stop-close-tab-restore-baseline",
     };
   }
-  if ([CLOSE_TERMINAL, ACP_TERMINAL, SHELL].includes(surfaceName)) {
-    return {
-      fixtureId: "ui:bottom-panel-owned-tab-terminal-projection",
-      oracleId: surfaceName === CLOSE_TERMINAL
-        ? "ui:activation:owned-terminal-selection-transition"
-        : "ui:boolean-state-transition",
-      cleanupId: "ui:clear-owned-terminal-projection-close-tab-restore-baseline",
-    };
-  }
   throw new Error(`BottomPanel lifecycle driver does not support ${surfaceName}`);
 }
 
@@ -217,9 +190,6 @@ export async function exerciseBottomPanelLifecycleControl(
   }
   if (assignment.surface.name === MIC_CONTROL) {
     return exerciseMicStop(connection, input, assignment);
-  }
-  if ([CLOSE_TERMINAL, ACP_TERMINAL, SHELL].includes(assignment.surface.name)) {
-    return exerciseTerminal(connection, input, request, assignment);
   }
   return exerciseAttachment(connection, input, request, assignment);
 }
@@ -506,72 +476,6 @@ async function exerciseMediaPreview(
   return finalize(outcome);
 }
 
-async function exerciseTerminal(
-  connection: Connection,
-  input: InstalledInput,
-  request: ReleaseSurfaceDriverRequest,
-  assignment: Assignment,
-): Promise<ReleaseSurfaceDriverOutcome> {
-  const outcome = emptyOutcome(assignment);
-  let tab: OwnedTab | null = null;
-  let baselinePrompt = "";
-  let baselineTerminal: TerminalState | null = null;
-  const terminalId = `release-terminal-${request.sourceCommit.slice(0, 16)}`;
-  try {
-    if (await terminalMounted(input)) {
-      throw new Error("BottomPanel terminal fixture refuses a renderer with an already-mounted baseline terminal");
-    }
-    tab = await createOwnedTab(connection, input);
-    baselinePrompt = (await composerState(input)).prompt;
-    await postUi(connection, {
-      bottomTab: "Terminal",
-      debugRendererFixture: { id: FIXTURE_ID, terminalId, label: "owned fixture" },
-      source: "final-surface-bottom-panel-terminal",
-    });
-    baselineTerminal = { mounted: false, ids: [], active: null, fixtureUserVisible: false };
-    const ownedTerminal = `[title='ACP terminal ${terminalId}']`;
-    await waitForReleaseSurfaceInstalledInputElement(input, ownedTerminal);
-    await waitForTerminalState(input, terminalId, (state) => (
-      sameStrings(state.ids, [terminalId]) && state.active === "user" && state.fixtureUserVisible
-    ), "owned terminal projection setup");
-    let targetSelector = ownedTerminal;
-    if (assignment.surface.name === SHELL) {
-      const setup = await waitForReleaseSurfaceInstalledInputElement(input, ownedTerminal);
-      await clickReleaseSurfaceInstalledInputElement(input, setup);
-      await waitForTerminalState(input, terminalId, (state) => state.active === terminalId, "owned ACP terminal opposite baseline");
-      targetSelector = SHELL_BUTTON;
-    } else if (assignment.surface.name === CLOSE_TERMINAL) {
-      targetSelector = `[data-release-terminal-id='${terminalId}'] [aria-label='close terminal tab']`;
-    }
-    const control = await waitForReleaseSurfaceInstalledInputElement(input, targetSelector);
-    outcome.present = "pass";
-    await clickReleaseSurfaceInstalledInputElement(input, control);
-    outcome.invoke = "pass";
-    if (assignment.surface.name === CLOSE_TERMINAL) {
-      await waitForReleaseSurfaceInstalledInputElementAbsent(input, ownedTerminal);
-      await waitForTerminalState(input, terminalId, (state) => state.ids.length === 0 && state.active === "user", "owned terminal dismissal");
-      outcome.observedEffect = "A native click dismissed exactly the owned projected ACP terminal row and returned selection to the owned tab's shell projection without touching a PTY.";
-    } else {
-      const expected = assignment.surface.name === SHELL ? "user" : terminalId;
-      await waitForTerminalState(input, terminalId, (state) => (
-        sameStrings(state.ids, [terminalId]) && state.active === expected
-      ), "owned terminal selection transition");
-      outcome.observedEffect = assignment.surface.name === SHELL
-        ? "A native click moved the owned terminal strip selection from its projected ACP terminal back to the shell projection without spawning or controlling a PTY."
-        : "A native click selected the exact owned projected ACP terminal identity while preserving the sole owned terminal row.";
-    }
-    outcome.effect = "pass";
-  } catch (error) {
-    outcome.error = errorMessage(error);
-  } finally {
-    applyCleanup(outcome, await cleanupOwnedLifecycle(connection, input, tab, null, baselinePrompt, {
-      clearRendererFixture: true,
-      expectedTerminalBaseline: baselineTerminal,
-    }));
-  }
-  return finalize(outcome);
-}
-
 async function createOwnedTab(connection: Connection, input: InstalledInput): Promise<OwnedTab> {
   const baseline = await uiState(connection);
   const baselineTabs = exactTabs(baseline, "BottomPanel baseline");
@@ -612,7 +516,6 @@ async function cleanupOwnedLifecycle(
     removeAttachmentPath?: string;
     clearRendererFixture?: boolean;
     closePreview?: boolean;
-    expectedTerminalBaseline?: TerminalState | null;
     clearAgentPickerFixture?: boolean;
     clearVoiceFixture?: boolean;
     turnOffVoiceMode?: boolean;
@@ -657,10 +560,6 @@ async function cleanupOwnedLifecycle(
         await requireNoAttachmentChips(input, "owned attachment cleanup");
       }
       if (options.closePreview) await waitForReleaseSurfaceInstalledInputElementAbsent(input, PREVIEW_DIALOG);
-      if (options.expectedTerminalBaseline) {
-        await waitForReleaseSurfaceInstalledInputElementAbsent(input, `[data-release-terminal-id]`);
-        await waitForTerminalMounted(input, options.expectedTerminalBaseline.mounted, "owned terminal baseline restoration");
-      }
     } catch (error) {
       errors.push(errorMessage(error));
     }
@@ -771,71 +670,6 @@ async function terminalMounted(input: InstalledInput): Promise<boolean> {
     throw new Error("BottomPanel did not expose its declared bounded terminal-mounted observation");
   }
   return observation.mounted;
-}
-
-async function waitForTerminalMounted(input: InstalledInput, expected: boolean, label: string): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    if (await terminalMounted(input) === expected) return;
-    await delay(100);
-  }
-  throw new Error(`${label} did not appear before timeout`);
-}
-
-async function terminalState(input: InstalledInput, terminalId: string): Promise<TerminalState> {
-  const escapedId = safeTabId(terminalId);
-  const rowSelector = `[data-release-terminal-id='${escapedId}']`;
-  const terminalSelector = `[title='ACP terminal ${escapedId}']`;
-  const foreignSelector = `[data-release-terminal-id]:not([data-release-terminal-id='${escapedId}'])`;
-  // macOS target resolution uses one authenticated highlight challenge at a
-  // time. Keep these reads sequential so concurrent challenges cannot replace
-  // each other in the shared renderer state.
-  const mounted = await terminalMounted(input);
-  const row = await findReleaseSurfaceInstalledInputElement(input, rowSelector);
-  const foreign = await findReleaseSurfaceInstalledInputElement(input, foreignSelector);
-  const shell = await findReleaseSurfaceInstalledInputElement(input, SHELL_BUTTON);
-  const terminal = await findReleaseSurfaceInstalledInputElement(input, terminalSelector);
-  const fixtureUser = await findReleaseSurfaceInstalledInputElement(
-    input,
-    "[data-release-bottom-panel-user-terminal-fixture]",
-  );
-  if (foreign) throw new Error("BottomPanel terminal fixture observed a foreign ACP terminal row");
-  const shellPressed = shell
-    ? await observeReleaseSurfaceInstalledInputElement(input, SHELL_BUTTON, ["pressed"])
-    : null;
-  const terminalPressed = terminal
-    ? await observeReleaseSurfaceInstalledInputElement(input, terminalSelector, ["pressed"])
-    : null;
-  if (shellPressed && typeof shellPressed.pressed !== "boolean") {
-    throw new Error("BottomPanel shell tab omitted its bounded pressed observation");
-  }
-  if (terminalPressed && typeof terminalPressed.pressed !== "boolean") {
-    throw new Error("BottomPanel ACP tab omitted its bounded pressed observation");
-  }
-  if (shellPressed?.pressed === true && terminalPressed?.pressed === true) {
-    throw new Error("BottomPanel terminal fixture reported two active terminal projections");
-  }
-  return {
-    mounted,
-    ids: row ? [terminalId] : [],
-    active: shellPressed?.pressed === true ? "user" : terminalPressed?.pressed === true ? terminalId : null,
-    fixtureUserVisible: Boolean(fixtureUser),
-  };
-}
-
-async function waitForTerminalState(
-  input: InstalledInput,
-  terminalId: string,
-  predicate: (state: TerminalState) => boolean,
-  label: string,
-): Promise<TerminalState> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const state = await terminalState(input, terminalId);
-    if (predicate(state)) return state;
-    await delay(100);
-  }
-  throw new Error(`${label} did not appear before timeout`);
 }
 
 function attachmentSelector(path: string): string {

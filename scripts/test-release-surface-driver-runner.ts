@@ -16,6 +16,8 @@ import {
 } from "./lib/release-surface-driver-plan";
 import {
   RELEASE_SURFACE_DRIVER_RUN_SCHEMA,
+  releaseSurfaceDriverRunFailedDriverIds,
+  resolveReleaseSurfaceDriverSelection,
   runReleaseSurfaceDrivers,
 } from "./lib/release-surface-driver-runner";
 import { composeFinalSurfaceReceipt } from "./lib/release-surface-receipt-composer";
@@ -55,7 +57,7 @@ import {
 import {
   collectReleaseSurfaceInstalledPayloadManifest,
 } from "./lib/release-surface-installed-payload-manifest";
-import { releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import {
   collectReleaseSurfacePosixNativeRuntime,
   type ReleaseSurfacePosixNativeRuntime,
@@ -81,6 +83,20 @@ import {
 } from "./lib/release-surface-webdriver-lifecycle";
 
 const root = resolve(import.meta.dirname, "..");
+for (const script of [
+  "scripts/run-release-surface-webdriver-candidate.ts",
+  "scripts/run-release-surface-macos-candidate.ts",
+]) {
+  const source = readFileSync(resolve(root, script), "utf8");
+  assert.match(source, /readArgs\(args, "--driver-id"\)/, `${script} must accept targeted driver selectors`);
+  assert.match(source, /targeted-post-matrix/, `${script} must require the targeted execution window`);
+  assert.match(source, /selectedDriverIds/, `${script} must pass targeted selectors to the driver runner`);
+}
+{
+  const source = readFileSync(resolve(root, "scripts/prepare-release-surface-macos-candidate.ts"), "utf8");
+  assert.match(source, /readArgs\(values, "--driver-id"\)/, "macOS preparation must recognize targeted driver selectors");
+  assert.match(source, /targeted-post-matrix/, "macOS preparation must allow only the targeted execution window for a closure run");
+}
 assert.equal(
   fileURLToPath(releaseSurfaceControllerTsxLoaderSpecifier()),
   releaseSurfaceControllerTsxLoaderPath(),
@@ -198,11 +214,31 @@ const plan: FinalSurfaceDriverPlan = {
     },
   ],
 };
+assert.deepEqual(
+  resolveReleaseSurfaceDriverSelection(plan, "linux-installed", ["fixture-installed"]),
+  ["fixture-installed"],
+);
+assert.throws(
+  () => resolveReleaseSurfaceDriverSelection(plan, "linux-installed", []),
+  /at least one non-empty driver id/,
+);
+assert.throws(
+  () => resolveReleaseSurfaceDriverSelection(
+    plan,
+    "linux-installed",
+    ["fixture-installed", "fixture-installed"],
+  ),
+  /must be unique/,
+);
+assert.throws(
+  () => resolveReleaseSurfaceDriverSelection(plan, "linux-installed", ["missing-driver"]),
+  /names unavailable linux-installed drivers/,
+);
 
 const temp = mkdtempSync(join(tmpdir(), "shellx-final-driver-runner-"));
 let runtimeServer: ChildProcess | null = null;
 try {
-  const artifactPath = join(temp, "shellx_0.3.5_amd64.deb");
+  const artifactPath = join(temp, `shellx_${releaseSurfaceFixtureVersion}_amd64.deb`);
   const signatureReceiptPath = join(temp, "signature.json");
   const candidateAttestationPath = join(temp, "candidate-attestation.json");
   const installationReceiptPath = join(temp, "installation.json");
@@ -228,7 +264,7 @@ try {
     schema: "shellx/release-surface-signature-receipt@2",
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     createdAt: fixtureTimestamp("2026-07-28T17:59:00.000Z"),
     artifact: {
       basename: basename(artifactPath),
@@ -253,7 +289,7 @@ try {
     "--state-out", runtimeStatePath,
     "--instance-id", "fixture-instance-0001",
     "--process-id", "self",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   const runtimeState = await waitForRuntimeState(runtimeStatePath, runtimeServer);
@@ -293,7 +329,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath,
@@ -307,7 +343,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath,
@@ -321,6 +357,103 @@ try {
   assert.equal(result.signatureReceipt.sha256.length, 64);
   const persisted = JSON.parse(readFileSync(join(outputDir, "run-manifest.json"), "utf8"));
   assert.equal(persisted.inventoryDigest, inventory.digest);
+
+  const discoveryInventory: ReleaseSurfaceInventory = {
+    ...structuredClone(inventory),
+    digest: "b".repeat(64),
+    counts: { ...inventory.counts, "tauri-command": 2 },
+    items: [
+      { ...inventory.items[0]!, platforms: ["linux-installed"] },
+      {
+        id: "tauri-command:followup-fixture",
+        kind: "tauri-command",
+        name: "followup-fixture",
+        source: "fixture.rs",
+        platforms: ["linux-installed"],
+        delivery: "installed-app",
+      },
+    ],
+  };
+  const discoveryPlan: FinalSurfaceDriverPlan = {
+    schema: FINAL_SURFACE_DRIVER_PLAN_SCHEMA,
+    mode: "final-frozen-candidate",
+    inventoryDigest: discoveryInventory.digest,
+    releaseReady: true,
+    drivers: [
+      {
+        id: "fixture-a-failing-installed",
+        kind: "tauri-command",
+        entrypoint: "scripts/fixtures/release-surface-driver-failing-fixture.ts",
+        platforms: { "linux-installed": "ready" },
+      },
+      plan.drivers[0]!,
+    ],
+    assignments: [
+      {
+        surfaceId: "tauri-command:fixture",
+        driverId: "fixture-a-failing-installed",
+        fixtureId: "fixture:expected-failure",
+        expectedEffect: "fixture records one synthetic discovery finding",
+        oracleId: "fixture:expected-failure",
+        cleanupId: "tauri:discard-with-candidate-profile",
+      },
+      {
+        surfaceId: "tauri-command:followup-fixture",
+        driverId: "fixture-installed",
+        fixtureId: "fixture:isolated-profile",
+        expectedEffect: "later independent fixture still runs",
+        oracleId: "fixture:isolated-result",
+        cleanupId: "tauri:discard-with-candidate-profile",
+      },
+    ],
+  };
+  const discoveryOutputDir = join(temp, "discovery-evidence");
+  const discovery = runReleaseSurfaceDrivers({
+    rootDir: root,
+    plan: discoveryPlan,
+    inventory: discoveryInventory,
+    contract,
+    platform: "linux-installed",
+    sourceCommit,
+    version: releaseSurfaceFixtureVersion,
+    artifactPath,
+    signatureReceiptPath,
+    candidateAttestationPath,
+    installationReceiptPath,
+    outputDir: discoveryOutputDir,
+  });
+  assert.deepEqual(
+    discovery.driverReports.map((report) => report.driverId),
+    ["fixture-a-failing-installed", "fixture-installed"],
+    "a red section must not prevent the later independent section from producing durable evidence",
+  );
+  assert.deepEqual(
+    releaseSurfaceDriverRunFailedDriverIds(discovery, discoveryOutputDir),
+    ["fixture-a-failing-installed"],
+    "the completed discovery manifest must retain its exact failed section",
+  );
+  const targetedOutputDir = join(temp, "targeted-closure-evidence");
+  const targeted = runReleaseSurfaceDrivers({
+    rootDir: root,
+    plan: discoveryPlan,
+    inventory: discoveryInventory,
+    contract,
+    platform: "linux-installed",
+    sourceCommit,
+    version: releaseSurfaceFixtureVersion,
+    artifactPath,
+    signatureReceiptPath,
+    candidateAttestationPath,
+    installationReceiptPath,
+    outputDir: targetedOutputDir,
+    selectedDriverIds: ["fixture-installed"],
+  });
+  assert.deepEqual(targeted.targetedClosure, { driverIds: ["fixture-installed"] });
+  assert.deepEqual(
+    targeted.driverReports.map((report) => report.driverId),
+    ["fixture-installed"],
+  );
+  assert.deepEqual(releaseSurfaceDriverRunFailedDriverIds(targeted, targetedOutputDir), []);
 
   const lifecyclePath = join(temp, "webdriver-lifecycle.json");
   const profileCleanupPath = join(temp, "profile-cleanup.json");
@@ -428,7 +561,7 @@ try {
     mode: "final-frozen-candidate",
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: inventory.digest,
     artifactSha256: result.artifact.sha256,
     startedAt: fixtureTimestamp("2026-07-28T18:00:02.000Z"),
@@ -463,7 +596,7 @@ try {
     driverPlan: plan,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     rootDir: root,
   });
   assert.equal(receipt.outcomes.length, 1);
@@ -506,7 +639,7 @@ try {
     driverPlan: plan,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     rootDir: root,
   }), /startup response does not identify the exact candidate/, "scenario health cannot be backed by another process");
 
@@ -533,7 +666,7 @@ try {
     driverPlan: plan,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     rootDir: root,
   }), /console observation window must stay inside the collector interval/, "console coverage cannot exist outside the collector lifetime");
 
@@ -557,7 +690,7 @@ try {
     driverPlan: plan,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     rootDir: root,
   }), /shutdown elapsedMs must equal its observed timestamp interval/, "a claimed bounded shutdown must equal its timestamp interval");
 
@@ -606,7 +739,7 @@ try {
     driverPlan: plan,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     rootDir: root,
   }), /request runtime does not match the exact candidate process/, "coordinated request/report/probe rewrites must not escape candidate binding");
   for (const [path, contents] of originals) writeFileSync(path, contents, "utf8");
@@ -624,7 +757,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath: failedSignaturePath,
     candidateAttestationPath,
@@ -645,7 +778,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath: tamperedCandidatePath,
@@ -675,7 +808,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath: forgedCandidatePath,
@@ -707,7 +840,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath: unstructuredCandidatePath,
@@ -728,7 +861,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath: wrongRuntimeCandidatePath,
@@ -757,7 +890,7 @@ try {
       driverPlan: plan,
       platform: "linux-installed",
       sourceCommit: sourceCommit,
-      version: "0.3.5",
+      version: releaseSurfaceFixtureVersion,
       rootDir: root,
     }), pattern);
   };
@@ -825,7 +958,7 @@ try {
     driverPlan: plan,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     rootDir: root,
   }), /canary match is not derived from the exact bounded raw text/, "rehashed summaries cannot forge the raw provider canary");
 
@@ -841,7 +974,7 @@ try {
     driverPlan: plan,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     rootDir: root,
   }), /candidate attestation/, "receipt composition must require exact candidate-attestation evidence");
 
@@ -852,7 +985,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath,
@@ -870,7 +1003,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath,
@@ -887,7 +1020,7 @@ try {
       contract,
       platform: "linux-installed",
       sourceCommit: sourceCommit,
-      version: "0.3.5",
+      version: releaseSurfaceFixtureVersion,
       artifactPath,
       signatureReceiptPath,
       candidateAttestationPath,
@@ -907,7 +1040,7 @@ try {
     contract,
     platform: "linux-installed",
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath,
@@ -941,9 +1074,9 @@ function candidateAttestation(
     mode: "final-frozen-candidate",
     platform,
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     createdAt: fixtureTimestamp("2026-07-28T17:59:30.000Z"),
-    distributionArtifact: { basename: "shellx_0.3.5_amd64.deb", sha256: artifactSha256, bytes: artifactBytes },
+    distributionArtifact: { basename: `shellx_${releaseSurfaceFixtureVersion}_amd64.deb`, sha256: artifactSha256, bytes: artifactBytes },
     installation: {
       method: "installer-observed",
       sourceArtifactSha256: artifactSha256,
@@ -970,7 +1103,7 @@ function candidateAttestation(
       mcpTokenPath: debugTokenPath,
       processId,
       instanceId: "fixture-instance-0001",
-      appVersion: "0.3.5",
+      appVersion: releaseSurfaceFixtureVersion,
       buildCommit: sourceCommit,
     },
     posixNativeRuntime,
@@ -1022,7 +1155,7 @@ function installationReceipt(
     schema: RELEASE_SURFACE_INSTALLATION_RECEIPT_SCHEMA,
     platform,
     sourceCommit: sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     createdAt: fixtureTimestamp("2026-07-28T17:59:00.000Z"),
     method: "installer-observed",
     status: "pass",
@@ -1054,7 +1187,7 @@ function installationReceipt(
       package: {
         format: "deb",
         name: RELEASE_SURFACE_LINUX_DEB_PACKAGE_NAME,
-        version: "0.3.5",
+        version: releaseSurfaceFixtureVersion,
         architecture: process.arch === "arm64" ? "arm64" : "amd64",
         installedSizeKiB: 1,
         mainExecutableRelativePath: "usr/bin/shellx",

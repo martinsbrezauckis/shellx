@@ -7,6 +7,7 @@ const files = {
   tasksPanel: readFileSync("src/components/TasksPanel.tsx", "utf8"),
   agentRunsMonitor: readFileSync("src/components/AgentRunsMonitor.tsx", "utf8"),
   providerSessions: readFileSync("src/lib/provider-sessions.ts", "utf8"),
+  providerSessionApi: readFileSync("src/lib/provider-session-api.ts", "utf8"),
   debugApi: readRustModuleFamily("src-tauri/src/debug_api.rs"),
   apiDocs: readFileSync("docs/public/API.md", "utf8"),
   changelog: readFileSync("CHANGELOG.md", "utf8"),
@@ -32,7 +33,7 @@ assert(
 assert(
     files.providerSessions.includes("AgentRunManagerState") &&
     files.providerSessions.includes("agentRunsStatePath") &&
-    files.providerSessions.includes("getAgentRunsState") &&
+    files.providerSessionApi.includes("getAgentRunsState") &&
     files.providerSessions.includes("timeToFirstSuccessfulActionMs") &&
     files.providerSessions.includes("cacheWriteTokens"),
   "frontend API helper must expose the agent run manager state",

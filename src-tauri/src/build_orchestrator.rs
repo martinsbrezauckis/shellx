@@ -2165,7 +2165,7 @@ fn sha256_file_hex(path: &Path) -> Result<(u64, String), String> {
         std::fs::File::open(path).map_err(|e| format!("open {} failed: {}", path.display(), e))?;
     let mut hasher = Sha256::new();
     let mut total = 0u64;
-    let mut buf = [0u8; 64 * 1024];
+    let mut buf = vec![0u8; 64 * 1024].into_boxed_slice();
     loop {
         let n = file
             .read(&mut buf)

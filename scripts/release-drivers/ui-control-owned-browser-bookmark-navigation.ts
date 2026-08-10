@@ -47,7 +47,7 @@ const SURFACES: Record<string, Kind> = {
   "src/browser/components/BookmarkToolbar.tsx:[data-debug-id^=\"shellx-browser-bookmark-toolbar-link-\"]": "toolbarLink",
   "src/browser/components/BookmarkToolbar.tsx:[data-debug-id^=\"shellx-browser-bookmark-folder-child-\"]": "folderChild",
   "src/browser/components/BookmarkSidecar.tsx:[data-debug-id^=\"shellx-browser-bookmark-\"]": "listRow",
-  "src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"surface-browser-components-bookmarksidecar-5\"]": "managerOpen",
+  "src/browser/components/BookmarkSidecar.tsx:[data-debug-id^=\"shellx-browser-bookmark-open-\"]": "managerOpen",
 };
 export const OWNED_BROWSER_BOOKMARK_NAV_FIXTURES = ["ui:browser-bookmark-owned-navigation"] as const;
 export const OWNED_BROWSER_BOOKMARK_NAV_CLEANUPS = ["ui:delete-owned-bookmark-navigation-abort-task-and-window-loopback"] as const;
@@ -162,7 +162,7 @@ export async function exerciseOwnedBrowserBookmarkNavigation(
         baselineManageMode = await readManageMode(webdriver);
         if (kind === "managerOpen") {
           await setManageMode(webdriver, true);
-          selector = `[data-debug-id='surface-browser-components-bookmarksidecar-5'][aria-label='Open Final surface navigation link']`;
+          selector = `[data-debug-id='shellx-browser-bookmark-open-${ROOT_ID}'][aria-label='Open Final surface navigation link']`;
         } else {
           await setManageMode(webdriver, false);
           selector = `[data-debug-id='shellx-browser-bookmark-${ROOT_ID}']`;

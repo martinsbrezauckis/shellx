@@ -1,4 +1,5 @@
 import { useRef, type JSX } from "react";
+import "./PreviewCenter.css";
 import { FilePreviewModal } from "./FilePreviewModal";
 import { WorkPreviewStage } from "./WorkPreviewPanel";
 import { ShellIcon } from "./icons";

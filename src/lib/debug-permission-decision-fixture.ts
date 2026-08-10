@@ -10,24 +10,16 @@ export type DebugPermissionDecision =
   | "deny";
 
 export type DebugPermissionAction =
-  | "modal-markers"
-  | "modal-backdrop-deny"
-  | "modal-deny"
-  | "modal-allow"
   | "pill-allow"
   | "pill-always"
   | "pill-deny";
-
-export type DebugPermissionModalSource = "backdrop" | "deny" | "allow";
 
 export interface DebugPermissionDecisionFixture {
   fixtureOnly: true;
   id: typeof DEBUG_PERMISSION_DECISION_FIXTURE;
   action: DebugPermissionAction;
-  surface: "modal" | "pill";
   requestId: string;
   expectedDecision: DebugPermissionDecision | null;
-  expectedModalSource: DebugPermissionModalSource | null;
   command: "shellx-owned-permission-check";
   args: readonly ["--fixture-only"];
   cwd: null;
@@ -38,43 +30,17 @@ const ACTIONS: Record<
   DebugPermissionAction,
   Pick<
     DebugPermissionDecisionFixture,
-    "surface" | "expectedDecision" | "expectedModalSource"
+    "expectedDecision"
   >
 > = {
-  "modal-markers": {
-    surface: "modal",
-    expectedDecision: null,
-    expectedModalSource: null,
-  },
-  "modal-backdrop-deny": {
-    surface: "modal",
-    expectedDecision: "deny",
-    expectedModalSource: "backdrop",
-  },
-  "modal-deny": {
-    surface: "modal",
-    expectedDecision: "deny",
-    expectedModalSource: "deny",
-  },
-  "modal-allow": {
-    surface: "modal",
-    expectedDecision: "allow",
-    expectedModalSource: "allow",
-  },
   "pill-allow": {
-    surface: "pill",
     expectedDecision: "allow",
-    expectedModalSource: null,
   },
   "pill-always": {
-    surface: "pill",
     expectedDecision: "allow_always",
-    expectedModalSource: null,
   },
   "pill-deny": {
-    surface: "pill",
     expectedDecision: "deny",
-    expectedModalSource: null,
   },
 };
 
@@ -98,10 +64,8 @@ export function debugPermissionDecisionFixture(
     fixtureOnly: true,
     id: DEBUG_PERMISSION_DECISION_FIXTURE,
     action,
-    surface: config.surface,
     requestId: "release-permission-" + action,
     expectedDecision: config.expectedDecision,
-    expectedModalSource: config.expectedModalSource,
     command: "shellx-owned-permission-check",
     args: ["--fixture-only"],
     cwd: null,
@@ -110,8 +74,7 @@ export function debugPermissionDecisionFixture(
 }
 
 /**
- * Install or clear only the exact permission fixture frames. Modal fixtures
- * need no transcript event; pill fixtures use the real grouping projection.
+ * Install or clear only the exact permission-pill fixture frames.
  */
 export function applyDebugPermissionDecisionFixtureEvents(
   current: readonly RawEventFrame[],
@@ -120,7 +83,7 @@ export function applyDebugPermissionDecisionFixtureEvents(
   now = Date.now(),
 ): RawEventFrame[] {
   const baseline = current.filter((frame) => !isDebugPermissionDecisionFrame(frame));
-  if (!fixture || fixture.surface !== "pill") return baseline;
+  if (!fixture) return baseline;
   const meta = {
     tabId,
     [DEBUG_PERMISSION_FIXTURE_META_KEY]: DEBUG_PERMISSION_DECISION_FIXTURE,

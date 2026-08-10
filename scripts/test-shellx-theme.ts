@@ -43,6 +43,7 @@ assertIncludes(app, 'theme: settings.theme === "bright" ? "black" : "bright"', "
 assertIncludes(app, "onThemeToggle={handleThemeToggle}", "header theme handler wiring");
 
 const css = read("src/App.css");
+const browserLayoutCss = read("src/browser/browserLayout.css");
 const browserCss = read("src/browser/browserShell.css");
 const tokensCss = read("src/styles/tokens.css");
 const interactionCss = read("src/styles/interactionAccessibility.css");
@@ -68,12 +69,63 @@ for (const foreground of ["--ink-3", "--ink-4"]) {
   }
 }
 
+const browserThemeBlocks = [
+  {
+    label: "Browser light",
+    baseBlock: cssSelectorBlock(browserLayoutCss, '.shellx-browser-app[data-color-mode="light"]'),
+    refinementBlock: cssSelectorBlock(browserCss, '.shellx-browser-app[data-color-mode="light"]'),
+  },
+  {
+    label: "Browser dark",
+    baseBlock: cssSelectorBlock(browserLayoutCss, '.shellx-browser-app[data-color-mode="dark"]'),
+    refinementBlock: cssSelectorBlock(browserCss, '.shellx-browser-app[data-color-mode="dark"]'),
+  },
+  {
+    label: "Browser system light",
+    baseBlock: cssSelectorBlock(browserLayoutCss, '.shellx-browser-app[data-color-mode="system"]', 0),
+    refinementBlock: cssSelectorBlock(browserCss, '.shellx-browser-app[data-color-mode="system"]', 0),
+  },
+  {
+    label: "Browser system dark",
+    baseBlock: cssSelectorBlock(browserLayoutCss, '.shellx-browser-app[data-color-mode="system"]', 1),
+    refinementBlock: cssSelectorBlock(browserCss, '.shellx-browser-app[data-color-mode="system"]', 1),
+  },
+];
+for (const { label, baseBlock, refinementBlock } of browserThemeBlocks) {
+  for (const foreground of ["--ink-3", "--ink-4"]) {
+    for (const background of ["--bg", "--surface", "--surface-2", "--surface-3"]) {
+      const backgroundValue = cssHexToken(baseBlock, background);
+      const baseRatio = contrastRatio(cssHexToken(baseBlock, foreground), backgroundValue);
+      const effectiveRatio = contrastRatio(cssHexToken(refinementBlock, foreground), backgroundValue);
+      if (baseRatio < 4.5 || effectiveRatio < 4.5) {
+        throw new Error(
+          `${label} ${foreground} on ${background} contrast is below WCAG AA 4.5:1 `
+          + `(base ${baseRatio.toFixed(2)}, effective ${effectiveRatio.toFixed(2)})`,
+        );
+      }
+    }
+  }
+}
+
 console.log("shellx theme wiring test passed");
 
 function cssHexToken(source: string, name: string): string {
   const match = source.match(new RegExp(`${name.replace("-", "\\-")}\\s*:\\s*(#[0-9a-fA-F]{6})`));
   if (!match?.[1]) throw new Error(`missing hex token ${name}`);
   return match[1];
+}
+
+function cssSelectorBlock(source: string, selector: string, occurrence = 0): string {
+  const marker = `${selector} {`;
+  let start = -1;
+  for (let index = 0; index <= occurrence; index += 1) {
+    start = source.indexOf(marker, start + 1);
+    if (start < 0) throw new Error(`missing CSS selector occurrence ${occurrence}: ${selector}`);
+  }
+  const bodyStart = start + marker.length;
+  const bodyEnd = source.indexOf("}", bodyStart);
+  if (bodyEnd < 0) throw new Error(`unterminated CSS selector: ${selector}`);
+  return source.slice(bodyStart, bodyEnd);
 }
 
 function contrastRatio(left: string, right: string): number {

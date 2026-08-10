@@ -9,7 +9,7 @@ import {
   type ReleaseSurfaceDriverReport,
   type ReleaseSurfaceDriverRequest,
 } from "./lib/release-surface-driver-protocol";
-import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 
 const root = resolve(import.meta.dirname, "..");
@@ -91,7 +91,6 @@ const commands = [
   "outside_connectors_test",
   "pause_build",
   "pause_goal",
-  "pty_attach",
   "pty_create",
   "pty_kill",
   "pty_resize",
@@ -222,7 +221,7 @@ try {
     "--token", token,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", temp,
     "--platform", fixturePlatform === "windows-installed" ? "windows" : "linux",
@@ -236,7 +235,7 @@ try {
     driverKind: "tauri-command",
     platform: fixturePlatform,
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: "a".repeat(64),
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: {
@@ -582,7 +581,6 @@ try {
     },
     outside_connectors_test: { id: "final-surface-absent-connector" },
     pause_build: { tabId: "final-surface-absent-pause-build" },
-    pty_attach: { tabId: "final-surface-absent-terminal", terminalId: "final-surface-absent-terminal" },
     pty_create: { tabId: "", shell: null, cwd: null, cols: 80, rows: 24 },
     pty_kill: { tabId: "final-surface-absent-terminal", terminalId: "final-surface-absent-terminal" },
     pty_resize: { tabId: "final-surface-absent-terminal", terminalId: "final-surface-absent-terminal", cols: 80, rows: 24 },
@@ -1135,7 +1133,6 @@ function testOracleId(command: string): string {
     "mcp_marketplace_set_enabled",
     "open_url_in_browser",
     "outside_connectors_simulate",
-    "pty_attach",
     "pty_create",
     "pty_resize",
     "pty_write",

@@ -3,18 +3,11 @@
  *
  * Role
  * Single source of truth for mounting xterm.js into a host <div>,
- * spawning (or attaching to) a PTY in the Rust TerminalRegistry, and
+ * spawning an operator PTY in the Rust TerminalRegistry, and
  * forwarding keystrokes + output bytes between them.
  *
- * Two render modes:
- * - "owned" (default, used directly by BottomPanel):
- * calls `pty_create` on mount and `pty_kill` on unmount. Owns
- * the PTY lifecycle.
- * - "attach" (used by ChatOutput's inline ACP-terminal view):
- * binds to an existing terminalId via `pty_attach` (which returns
- * the current ring snapshot for instant replay) and listens to
- * `pty-output` / `pty-exit` events. Does NOT spawn or kill — that
- * is the ACP agent's job via terminal/create + terminal/release.
+ * The component owns its PTY lifecycle: `pty_create` on mount,
+ * `pty_write`/`pty_resize` while active, and `pty_kill` on unmount.
  *
  * Dependencies
  * xterm — terminal renderer (v5 API)
@@ -23,23 +16,15 @@
  * @tauri-apps/api/core, /event — invoke + event listening
  *
  * Callers
- * - BottomPanel.tsx (mode="owned")
- * - ChatOutput.tsx (mode="attach", attachOnly prop)
- * - Future: BottomPanel "ACP" tab strip rendering attached views
- * for ACP-origin terminals.
+ * - BottomPanel.tsx
  *
  * Lifecycle
  * - Mount: instantiate Terminal + FitAddon + WebLinksAddon, attach to
- * DOM. In owned mode: invoke pty_create. In attach mode: invoke
- * pty_attach to fetch snapshot, then term.write it.
+ * DOM, then invoke pty_create.
  * - Subscribe to pty-output + pty-exit events filtered by
  * (tabId, terminalId). Append bytes via term.write.
- * - In owned mode: forward term.onData → pty_write.
- * - In attach mode: forward keystrokes only if `readOnly === false`,
- * allowing the chat-embedded view to be interactive when the user
- * wants to type into the agent's shell.
- * - Unmount: drop listeners, dispose xterm. Owned mode also calls
- * pty_kill; attach mode leaves the registry record alone.
+ * - Forward term.onData → pty_write.
+ * - Unmount: drop listeners, kill the PTY, and dispose xterm.
  *
  * Non-Tauri fallback
  * When `window.__TAURI_INTERNALS__` is undefined, render a tiny note
@@ -62,24 +47,12 @@ interface PtyOutputPayload {
   data: number[];
 }
 
-/** Wire payload for the `pty-exit` Tauri event. added the
- * exitCode / signal fields so chat-embedded views can render an
- * exit-status footer matching what grok sees via `terminal/output`. */
+/** Wire payload for the `pty-exit` Tauri event. */
 interface PtyExitPayload {
   tabId: string;
   terminalId: string;
   exitCode?: number | null;
   signal?: string | null;
-}
-
-/** Snapshot returned by `pty_attach`. */
-interface PtyAttachSnapshot {
-  tabId: string;
-  terminalId: string;
-  output: string;
-  truncated: boolean;
-  exited: boolean;
-  origin: "user" | "acp";
 }
 
 /** Detect whether we're running inside the Tauri webview. The PTY commands
@@ -94,40 +67,18 @@ export function isTauri(): boolean {
 export interface TerminalViewProps {
  /** Stable per-session identifier. Keys the PTY in the registry. */
   tabId: string;
- /** Mode-A only: existing ACP-origin terminal_id to attach to. When
- * set, the component does NOT call pty_create / pty_kill. */
-  terminalId?: string;
- /** When true, skip pty_create/pty_kill and bind to the provided
- * terminalId via pty_attach. Implies the terminalId prop is required. */
-  attachOnly?: boolean;
- /** Disable input forwarding. When true, term.onData is not piped
- * into pty_write. Useful for chat-embedded views where the user
- * shouldn't be able to type into the agent's shell. Defaults to false
- * even in attach mode — a typed interactive view is the better UX. */
-  readOnly?: boolean;
- /** Optional explicit row count cap (visible rows). Useful for the
- * inline chat view which wants ~24 rows, not "fill container". */
-  initialRows?: number;
 }
 
-/**
- * Shared xterm.js mount that backs both the bottom-panel terminal tab
- * and the chat-embedded ACP terminal view. See the file header for mode
- * semantics.
- */
-export function TerminalView(props: TerminalViewProps): JSX.Element {
-  const { tabId, terminalId, attachOnly = false, readOnly = false, initialRows } = props;
+/** xterm.js mount for the operator-facing bottom-panel terminal. */
+export function TerminalView({ tabId }: TerminalViewProps): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
-  const terminalIdRef = useRef<string | null>(terminalId ?? null);
+  const terminalIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isTauri()) return;
     if (!hostRef.current) return;
     if (!tabId) return;
- // Attach mode requires a terminalId.
-    if (attachOnly && !terminalId) return;
-
     const host = hostRef.current;
  /* pick up the runtime --fs-mono CSS var set by
  * lib/settings.applyTheme so the user's chat-font slider also resizes
@@ -151,12 +102,11 @@ export function TerminalView(props: TerminalViewProps): JSX.Element {
       fontFamily: "ui-monospace, 'JetBrains Mono', Menlo, Monaco, 'Cascadia Code', 'Source Code Pro', Consolas, monospace",
       fontSize: readMonoPx(),
       lineHeight: 1.2,
-      cursorBlink: !readOnly,
+      cursorBlink: true,
       scrollback: 10_000,
       allowProposedApi: true,
       convertEol: false,
-      ...(typeof initialRows === "number" ? { rows: initialRows } : {}),
-      disableStdin: readOnly,
+      disableStdin: false,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -187,45 +137,18 @@ export function TerminalView(props: TerminalViewProps): JSX.Element {
 
     (async () => {
       try {
-        let activeId: string;
-
-        if (attachOnly) {
-          activeId = terminalId!;
-          terminalIdRef.current = activeId;
- // Pull the existing ring contents so the user sees scrollback
- // even when the agent populated the PTY before our mount.
-          try {
-            const snap = await invoke<PtyAttachSnapshot>("pty_attach", {
-              tabId: myTabId,
-              terminalId: activeId,
-            });
-            if (disposed) return;
-            if (snap.output) term.write(snap.output);
-            if (snap.exited) {
-              term.write(`\r\n\x1b[2m[process exited — output may continue if released later]\x1b[0m\r\n`);
-            }
-          } catch (err) {
- // Registry may not know this terminalId yet (race with
- // terminal/create on the agent side). Subscribe to events
- // anyway — the bytes will start flowing once create lands.
-            console.warn("[TerminalView] pty_attach failed (will still subscribe):", err);
-          }
-        } else {
- // Owned mode: spawn a brand-new PTY for the bottom-panel tab.
-          const cols = term.cols;
-          const rows = term.rows;
-          const id = await invoke<string>("pty_create", {
-            tabId: myTabId,
-            cols,
-            rows,
-          });
-          if (disposed) {
-            void invoke("pty_kill", { tabId: myTabId, terminalId: id }).catch(() => {});
-            return;
-          }
-          activeId = id;
-          terminalIdRef.current = id;
+        const cols = term.cols;
+        const rows = term.rows;
+        const activeId = await invoke<string>("pty_create", {
+          tabId: myTabId,
+          cols,
+          rows,
+        });
+        if (disposed) {
+          void invoke("pty_kill", { tabId: myTabId, terminalId: activeId }).catch(() => {});
+          return;
         }
+        terminalIdRef.current = activeId;
 
         unlistenOutput = await listen<PtyOutputPayload>("pty-output", (evt) => {
           const p = evt.payload;
@@ -240,20 +163,17 @@ export function TerminalView(props: TerminalViewProps): JSX.Element {
           term.write(`\r\n\x1b[2m[process exited${codePart}]\x1b[0m\r\n`);
         });
 
- // Wire keystrokes only when not read-only.
-        if (!readOnly) {
-          term.onData((data) => {
-            if (disposed || !terminalIdRef.current) return;
-            const bytes = Array.from(new TextEncoder().encode(data));
-            void invoke("pty_write", {
-              tabId: myTabId,
-              terminalId: terminalIdRef.current,
-              data: bytes,
-            }).catch((err) => {
-              console.warn("[TerminalView] pty_write failed:", err);
-            });
+        term.onData((data) => {
+          if (disposed || !terminalIdRef.current) return;
+          const bytes = Array.from(new TextEncoder().encode(data));
+          void invoke("pty_write", {
+            tabId: myTabId,
+            terminalId: terminalIdRef.current,
+            data: bytes,
+          }).catch((err) => {
+            console.warn("[TerminalView] pty_write failed:", err);
           });
-        }
+        });
       } catch (err) {
         console.error("[TerminalView] mount failed:", err);
         if (!disposed) {
@@ -289,17 +209,14 @@ export function TerminalView(props: TerminalViewProps): JSX.Element {
       if (unlistenOutput) unlistenOutput();
       if (unlistenExit) unlistenExit();
       const id = terminalIdRef.current;
- // Owned mode: pty_kill drops the registry record (User-origin).
- // Attach mode: leave the record alone — only `terminal/release`
- // from the ACP agent should remove it.
-      if (!attachOnly && id) {
+      if (id) {
         void invoke("pty_kill", { tabId: myTabId, terminalId: id }).catch(() => {});
       }
       terminalIdRef.current = null;
       term.dispose();
       termRef.current = null;
     };
-  }, [tabId, terminalId, attachOnly, readOnly, initialRows]);
+  }, [tabId]);
 
   if (!isTauri()) {
     return (

@@ -2,10 +2,10 @@
   "schema": "shellx.manual-visuals.v1",
   "revalidation": {
     "status": "reviewed",
-    "sourceCommit": "0f66c06ac4ef3d57b8bbbcb353d1f9300588f055",
-    "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-    "reviewedAt": "2026-08-09T20:54:40Z",
-    "evidenceSha256": "d7d36339c4fa5b987562506c600333172b736c20ea118fc58315a77b399aecd2"
+    "sourceCommit": "98faae740e86460bb9b5451f346ba526bd145278",
+    "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+    "reviewedAt": "2026-08-11T05:04:08Z",
+    "evidenceSha256": "d7dfc75690264c6bdeb2ddee1f070266d99e3de9cc54d8e976746af48c93cb82"
   },
   "captures": {
     "shellx-workspace": {
@@ -16,13 +16,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "3dfff58677bef6b9dc0b79b6c3bb0f7677baa01acff407e16d8d52028ed7c77f",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "105ccea3048cc16c48483cec59bfe2babd444a7e7975a72e5fcecfe3f886d70a",
         "intendedState": "Installed ShellX workspace with the setup guide dismissed, Chat and Tasks selected, and no modal or request popover open.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "command-palette": {
@@ -33,13 +33,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "9094a2c78ccf00b326efcd3de5de531d28eeacf7007afe339932437436da3123",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "5b12ff55ec6419d7379c097b2148bf212c0d7106336225113124ca8ec523c156",
         "intendedState": "Installed ShellX command palette open over the normal workspace with its complete available action list visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "header-requests": {
@@ -50,13 +50,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "893902cc17a111816343fb7548ea8fcd406f49af366a4358d33110e26b3b3f20",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "dd5148e42bae4c6b58544c193e7eb14dff6955301e85b950ee155e41e0b81426",
         "intendedState": "Installed ShellX Vault Request Center open from the header while the rest of the workspace remains in its normal baseline state.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "header-plugins": {
@@ -67,13 +67,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "b100b7bbb35ce309790f8cf894d5156ad5b13a26b194668c88de12a33185c05d",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "38b13f66ca971c235df0feb36d6933b950977ad6fc204d4f04f33c5e8898becd",
         "intendedState": "Installed ShellX Plugins dialog open with the Vault Request Center closed and the workspace visible behind it.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "right-rail-tasks": {
@@ -84,13 +84,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "5cb0e5bb1969ff5ebb0cdfcf00d035cd572f8278e4e4b27fb2842faf34b3725d",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "0f39b4a9a9697ccdf69c820ca97c3e22ff6330882f70db3a8facd0e5c100c52f",
         "intendedState": "Installed ShellX workspace with the Tasks right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "right-rail-tools": {
@@ -101,13 +101,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "4af85461ede6616b3db7fe415b3c202e258d1013052b3f3cbf9d915dad107c1c",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "02a97e041bc4e465baba96a251d08b0fb84301dc9381b0e4891105b9eeb05d61",
         "intendedState": "Installed ShellX workspace with the Tooling right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "right-rail-git": {
@@ -118,13 +118,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "9160c8c88ac64d0335a188700e19a2ef5d69bbaee7c8451833ab02f141863936",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "885e738655c5a5d879286e1ef723fb3b1cf4e225221ca52e7f33747001e45002",
         "intendedState": "Installed ShellX workspace with the Git right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "right-rail-preview": {
@@ -135,13 +135,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "9a7ca69fc90849d0f1b3476e45db228c285d5720ca6e8b65065184cf9c1eaec7",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "d50519abc82b2c58422c519a58fc7f324a93759fa1cbfb8694a06050ca928686",
         "intendedState": "Installed ShellX workspace with the Preview right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "right-rail-plan": {
@@ -152,13 +152,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "a65a4e554e5578eac5dc951bb0e33d1a197e7bbb4bd4d13baa923a517d23890b",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "063032a5869f30fff9649ee220cddaa9d19b1279380467a43cea04200ce116ac",
         "intendedState": "Installed ShellX workspace with the Plan right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "right-rail-files": {
@@ -169,13 +169,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "f202a332128105527d7d6be812bc4ecca8091d43419bbc10c4d2ab4cdb5d1834",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "dd90bc23c5e098261758b541e65ea88bff60c5f26f3f7494a6a1ecc4c8ad6444",
         "intendedState": "Installed ShellX workspace with the Files right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "bottom-terminal": {
@@ -186,13 +186,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "fb7aeec910e6daed61389cf2b9761e6126864ef04c2dee613d7ec5b169ef44a2",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "cecc1a0ef9007f59f520205466a5424ac715a184e0425b9e3445e84735a41dea",
         "intendedState": "Installed ShellX workspace with the persistent Terminal bottom panel selected and visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "bottom-trace": {
@@ -203,13 +203,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "133fee24131d90113d13ae9971a59ee77094e7f9239de7bdd4c931ed2cede570",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "1dfa8d5c20b215b4562c62723818fdbb63fa564c920e6dcd9517ef9dafd2ff5a",
         "intendedState": "Installed ShellX Activity Browser opened from Trace with its Files view and navigation visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "bottom-assets": {
@@ -220,13 +220,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "cc8f92d668671bceae9cf96332380388afb86123e88c84754cea03cf5588de09",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "c904f9fe735e923ffaa78393f3fc1dcb9ef29f82b6419106e1c5da7eca8ddbe6",
         "intendedState": "Installed ShellX attachment and media board opened from Assets without any private user files in the disposable profile.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "bottom-logs": {
@@ -237,13 +237,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "dd712633956b5e7e39a4685447ecf2d22a6c988dd579f4deca4f9d97190976f8",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "77ff77b68bcf68c90e16046e003dc3a05a53d0e33f309d713fa3579524be420d",
         "intendedState": "Installed ShellX workspace with the raw event Logs bottom panel selected and visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "bottom-stderr": {
@@ -254,13 +254,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "b740980c5f407771f2157f7520e828cec06b26debd483f36be85529d791fe065",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "97048c6202992618275401b4a635a8378f0440319e9349bbb289fe013f54e044",
         "intendedState": "Installed ShellX workspace with the Stderr bottom panel selected and visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "settings-general": {
@@ -271,13 +271,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "5682fa8ebdb6e38f9275e8003c37f6da17e00d7fbb353019f005bd93596444e8",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "53b86d22303887c50f39ace8b6223a4f63ae21852946a32b7f77b45122cea6ab",
         "intendedState": "Installed ShellX Settings dialog with the General tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "settings-vault": {
@@ -288,13 +288,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "971f25c37ef8dfd0d5cdf3c68381a978818ac64447947a1ce94eba2ffb36bf2e",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "6b08415f2ec56be0902e5e358bcb7be544d641a121d87f25dc19a0be388d5863",
         "intendedState": "Installed ShellX Settings dialog with the Vault tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "settings-connections": {
@@ -305,13 +305,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "a59734671eb0a4e187e99b552e4dd1cf2c9c181d9d39f32f2c72dd07b99c3b82",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "489ed7a30ac22a53934510f743fc5f5963f574d41463e8486b57fcd6874a02dc",
         "intendedState": "Installed ShellX Settings dialog with the Connections tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "settings-connectors": {
@@ -322,13 +322,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "e27d8f12308ae89e91b08bc68d881dde86d1f604f5c531b27da17758874bdf74",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "bfc7a243ae8322e0a6f5360ce8a3ad8cf5926eecfd58f268b4215783f445061a",
         "intendedState": "Installed ShellX Settings dialog with the Connectors tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "settings-desktop": {
@@ -339,13 +339,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "83ac65beea72c97d90dec27fa80d41cd1b5ec498ef2911fee2e73db56754ec2b",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "e49885459e38031e105ebeb0a4c8657f3818d86972d7268ac8f0e9b50ae9455e",
         "intendedState": "Installed ShellX Settings dialog with the Desktop tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "settings-shellxagent": {
@@ -356,13 +356,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "42a308fd8a277cad3c525e4b4485301aada3f4ea8507b253408aa154698e9ebe",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "ef6d2498ac3b893ba67d93ec42670758eaa5011648997e5504f01fac584b137a",
         "intendedState": "Installed ShellX Settings dialog with the shellXagent tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "settings-data": {
@@ -373,13 +373,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "00684b40641f144dd3058884dfe07d72ad2650cf416b464d80610982629f9637",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "1d56c7965bfaf7d2ebb225cfff4ade28dbf89bb2f224923f8cc78778838f73d7",
         "intendedState": "Installed ShellX Settings dialog with the Data tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "settings-about": {
@@ -390,251 +390,251 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "90767fbbbff85a5410f91f792a39e2c8864231598cd10a2d442201a427034112",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "91870de353f9c99e76ee16c0696df9cecc593e44a1c0ee8cc227e131d9d691f7",
         "intendedState": "Installed ShellX Settings dialog with the About tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-overview": {
       "file": "assets/browser-overview.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "651c7d3c7b99d27896c14964148e1b46fa42262a3df5a5b1d80e2a497a034e04",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "6041674d4cbf889d3e87528077f9c0be9b372cee45a209e9af33146a7d97dcc5",
         "intendedState": "Installed ShellX Browser window showing its tab strip, navigation chrome, page viewport, and Chat right sidebar in the disposable profile.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-options": {
       "file": "assets/browser-options.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "013e6c4b4d7bbbdb426ea10de3efd74ed7b3f380560ce9176e6cfc8c55473f23",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "5dd540f96dea19a5893a6a1ad72329ee042b5935acff9aa7bc02bc2de8158d16",
         "intendedState": "Installed ShellX Browser with the complete Browser options sidecar open.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-save-menu": {
       "file": "assets/browser-save-menu.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "5917daf546d4ac656a6a129c186586a2c00770482f444f292f402742e85ee23e",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "4d0e039ef2fe2a44479da71a9083212994ae675650772e38ead86b1ff2811b33",
         "intendedState": "Installed ShellX Browser Save page menu showing its local artifact actions from the top of the menu.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-save-copy-jobs": {
       "file": "assets/browser-save-copy-jobs.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "c69dd0a53cb2e2cfddb00bf39a4bb2188a088584a984cde22fc5d2107f619a34",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "dadf61a7958e3abf259b3b95a74c1dc2dfd3a72479fa371f033e0d7989743071",
         "intendedState": "Installed ShellX Browser Save page menu scrolled to expose every queued media, code, and site copy action.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-ads-menu": {
       "file": "assets/browser-ads-menu.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "20e44be10217f3fe58d1d16c495ff2d46d6bb0e818d3ef42f4fdcdd93e3f73da",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "4000ca1ef4995b7ace4e655ab86becf6a2ddc12b3975de9672d23fb2e383d2b6",
         "intendedState": "Installed ShellX Browser with the profile ad-filter mode menu open.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-history": {
       "file": "assets/browser-history.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "c6eb12b6b51cc8f4313abc05d9e4d36abca33e7871c814ebde3b792fa4ccfe37",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "fa84c7a5207244f1bc4e354c381803668f474cc8ed051678aa927ec911b0581e",
         "intendedState": "Installed ShellX Browser with the History sidecar open in the disposable profile.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-bookmarks": {
       "file": "assets/browser-bookmarks.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "9ba016c0efe4b9b9788bb5e8e6d2e4a9ae95fbd62a7151765d3c881ed04c7d1e",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "044bd02e6ba68cd3b2d01cfc1db5b710401b1215a46ce01499be3e18f00cf32f",
         "intendedState": "Installed ShellX Browser with the Bookmarks sidecar open in list mode.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-bookmark-manager": {
       "file": "assets/browser-bookmark-manager.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "59563984a1f139fb46231522cbc156ed87881da0fe6b9de5114ba63b4c28305e",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "f5649a837690c6c6957fd153bebea74e4130b21e9104d63748064931fb2c36ae",
         "intendedState": "Installed ShellX Browser with the Bookmark manager Edit surface open.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-downloads": {
       "file": "assets/browser-downloads.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "3e5efa9f9604fe993473012e3b2de2acf3a59af930d8a76bf7a173fadef352ea",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "67b2c6400343d9261ce873a182bf6fb9c97c069652b46640e211a259b2fc4b2c",
         "intendedState": "Installed ShellX Browser with the Downloads sidecar and download-folder controls visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-panel-chat": {
       "file": "assets/browser-panel-chat.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "651c7d3c7b99d27896c14964148e1b46fa42262a3df5a5b1d80e2a497a034e04",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "6041674d4cbf889d3e87528077f9c0be9b372cee45a209e9af33146a7d97dcc5",
         "intendedState": "Installed ShellX Browser with the Chat right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-panel-requests": {
       "file": "assets/browser-panel-requests.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "af1de24c59cfb65c57d9398c7ca8ced07e680ed1895b24c73f0d15589cf8f9ec",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "c8b2b96b4c4a3de76cad37f0a6d22298ea0e93eb9fff7011a87cb2e5bd4a53f0",
         "intendedState": "Installed ShellX Browser with the Requests right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-panel-actions": {
       "file": "assets/browser-panel-actions.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "88307dc495023e22589a68e6e2f9c8eaf7c3b91bc25e001049d076514a705742",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "ed359bbc31000f17270265afd2f5106c7315c14a34d5c014005e1a1121f337ca",
         "intendedState": "Installed ShellX Browser with the Actions right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-panel-evidence": {
       "file": "assets/browser-panel-evidence.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "aeaa561c50d58e6f1a85c678df4fce2db13983dcf97cf0ddedaeb84c515d9b25",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "a217c8c50ad38e959f46c3e82f86d7ff139c1864209c10505434e1bc649206e6",
         "intendedState": "Installed ShellX Browser with the Evidence right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     },
     "browser-panel-errors": {
       "file": "assets/browser-panel-errors.png",
-      "width": 1600,
-      "height": 1000,
+      "width": 1602,
+      "height": 1002,
       "kind": "installed-candidate",
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7f3b43010f55737b0325d25f4c61f1989565f714",
-        "productSourceSha256": "4382ee2c3d0cc29baad023bacef6c30d57d87a0035b8248eb31146adeb0b4069",
-        "appVersion": "0.3.5",
-        "platform": "linux-installed",
-        "sha256": "43e7de602e509f1536d7578690ffab1f6f0995e4a44f77cce2834d13f5ff1fc0",
+        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
+        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
+        "appVersion": "0.3.51",
+        "platform": "windows-installed",
+        "sha256": "393b9dbda2bdbbf4b3a26b985b69eebcceb2bc3bf838e885a1a39fb9c949c8c4",
         "intendedState": "Installed ShellX Browser with the Errors right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-05T00:35:59Z"
+        "reviewedAt": "2026-08-10T19:39:53Z"
       }
     }
   },
@@ -642,37 +642,37 @@
     "shellx.interface.header.about": {
       "capture": "settings-about",
       "focus": [
-        1.0,
-        1.0,
-        10.0,
-        4.0
+        1,
+        1,
+        10,
+        4
       ]
     },
     "shellx.interface.header.find": {
       "capture": "shellx-workspace",
       "focus": [
-        12.0,
-        1.0,
-        18.0,
-        4.0
+        12,
+        1,
+        18,
+        4
       ]
     },
     "shellx.interface.header.browser": {
       "capture": "shellx-workspace",
       "focus": [
         85.5,
-        1.0,
+        1,
         2.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.header.requests": {
       "capture": "header-requests",
       "focus": [
         88.3,
-        1.0,
+        1,
         2.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.header.inbox": {
@@ -680,7 +680,7 @@
       "focus": [
         84.8,
         0.7,
-        9.0,
+        9,
         4.5
       ],
       "note": "The connector Inbox is conditional and joins this header action group when a compatible connector is configured."
@@ -689,27 +689,27 @@
       "capture": "header-plugins",
       "focus": [
         91.2,
-        1.0,
+        1,
         2.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.header.theme": {
       "capture": "shellx-workspace",
       "focus": [
-        94.0,
-        1.0,
+        94,
+        1,
         2.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.header.settings": {
       "capture": "settings-general",
       "focus": [
-        97.0,
-        1.0,
+        97,
+        1,
         2.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.left.projects": {
@@ -717,17 +717,17 @@
       "focus": [
         0.8,
         12.5,
-        16.0,
-        6.0
+        16,
+        6
       ]
     },
     "shellx.interface.left.open_chats": {
       "capture": "shellx-workspace",
       "focus": [
         0.8,
-        19.0,
-        16.0,
-        7.0
+        19,
+        16,
+        7
       ]
     },
     "shellx.interface.left.past_chats": {
@@ -735,14 +735,14 @@
       "focus": [
         0.8,
         22.5,
-        16.0,
-        5.0
+        16,
+        5
       ]
     },
     "shellx.interface.right.tasks": {
       "capture": "right-rail-tasks",
       "focus": [
-        74.0,
+        74,
         16.2,
         4.2,
         3.5
@@ -778,7 +778,7 @@
     "shellx.interface.right.plan": {
       "capture": "right-rail-plan",
       "focus": [
-        91.0,
+        91,
         16.2,
         4.2,
         3.5
@@ -797,7 +797,7 @@
       "capture": "shellx-workspace",
       "focus": [
         18.4,
-        68.0,
+        68,
         2.4,
         3.7
       ]
@@ -806,7 +806,7 @@
       "capture": "bottom-terminal",
       "focus": [
         20.7,
-        68.0,
+        68,
         2.4,
         3.7
       ]
@@ -816,8 +816,8 @@
       "focus": [
         19.2,
         13.8,
-        12.0,
-        5.0
+        12,
+        5
       ],
       "note": "Trace opens the Activity Browser shown in this capture."
     },
@@ -870,7 +870,7 @@
       "capture": "bottom-assets",
       "focus": [
         25.3,
-        68.0,
+        68,
         2.4,
         3.7
       ]
@@ -879,7 +879,7 @@
       "capture": "bottom-assets",
       "focus": [
         27.6,
-        68.0,
+        68,
         2.4,
         3.7
       ]
@@ -888,7 +888,7 @@
       "capture": "bottom-assets",
       "focus": [
         29.9,
-        68.0,
+        68,
         2.4,
         3.7
       ]
@@ -897,7 +897,7 @@
       "capture": "bottom-logs",
       "focus": [
         32.2,
-        68.0,
+        68,
         2.4,
         3.7
       ]
@@ -906,7 +906,7 @@
       "capture": "bottom-stderr",
       "focus": [
         34.5,
-        68.0,
+        68,
         2.4,
         3.7
       ]
@@ -917,7 +917,7 @@
         20.4,
         85.2,
         6.2,
-        4.0
+        4
       ]
     },
     "shellx.interface.composer.agent": {
@@ -926,7 +926,7 @@
         26.5,
         85.2,
         8.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.composer.folder": {
@@ -935,7 +935,7 @@
         35.1,
         85.2,
         8.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.composer.branch": {
@@ -944,96 +944,96 @@
         43.5,
         85.2,
         4.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.command.connect": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         31.7,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.abort": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         34.5,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.new_session": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         37.3,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.close_tab": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         40.2,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.settings": {
       "capture": "command-palette",
       "focus": [
-        34.0,
-        43.0,
-        32.0,
+        34,
+        43,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.desktop": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         45.8,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.attach": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         48.7,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.screenshot": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         51.5,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.media_board": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         54.3,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.work_preview": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         57.2,
-        32.0,
+        32,
         2.8
       ]
     },
@@ -1050,54 +1050,54 @@
     "shellx.interface.command.toggle_terminal": {
       "capture": "command-palette",
       "focus": [
-        34.0,
-        60.0,
-        32.0,
+        34,
+        60,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.pull_request": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         62.8,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.vault": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         65.7,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.help": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         68.5,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.autonomy_auto": {
       "capture": "command-palette",
       "focus": [
-        34.0,
+        34,
         74.2,
-        32.0,
+        32,
         2.8
       ]
     },
     "shellx.interface.command.slash_commands": {
       "capture": "command-palette",
       "focus": [
-        34.0,
-        77.0,
-        32.0,
+        34,
+        77,
+        32,
         2.8
       ],
       "note": "The exact slash rows are provider- and environment-specific; /commands is the captured example."
@@ -1106,45 +1106,45 @@
       "capture": "shellx-workspace",
       "focus": [
         20.2,
-        79.0,
+        79,
         2.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.composer.screenshot": {
       "capture": "shellx-workspace",
       "focus": [
         22.3,
-        79.0,
+        79,
         2.5,
-        4.0
+        4
       ]
     },
     "shellx.interface.composer.voice": {
       "capture": "shellx-workspace",
       "focus": [
-        61.0,
-        79.0,
-        5.0,
-        4.0
+        61,
+        79,
+        5,
+        4
       ]
     },
     "shellx.interface.composer.help": {
       "capture": "shellx-workspace",
       "focus": [
         59.2,
-        79.0,
+        79,
         2.3,
-        4.0
+        4
       ]
     },
     "shellx.interface.composer.send": {
       "capture": "shellx-workspace",
       "focus": [
-        66.0,
-        79.0,
+        66,
+        79,
         5.2,
-        4.0
+        4
       ]
     },
     "shellx.interface.settings.general": {
@@ -1153,7 +1153,7 @@
         31.5,
         31.4,
         4.2,
-        3.0
+        3
       ]
     },
     "shellx.interface.settings.vault": {
@@ -1171,7 +1171,7 @@
         31.9,
         32.2,
         6.8,
-        3.0
+        3
       ]
     },
     "shellx.interface.vault.workspace.grants": {
@@ -1180,16 +1180,16 @@
         38.7,
         32.2,
         8.2,
-        3.0
+        3
       ]
     },
     "shellx.interface.vault.workspace.setup": {
       "capture": "settings-vault",
       "focus": [
-        47.0,
+        47,
         32.2,
         3.2,
-        3.0
+        3
       ]
     },
     "shellx.interface.vault.resource.password_key": {
@@ -1198,7 +1198,7 @@
         32.3,
         44.8,
         7.9,
-        3.0
+        3
       ]
     },
     "shellx.interface.vault.resource.profile": {
@@ -1206,8 +1206,8 @@
       "focus": [
         40.3,
         44.8,
-        6.0,
-        3.0
+        6,
+        3
       ]
     },
     "shellx.interface.vault.resource.agent_wallet": {
@@ -1216,7 +1216,7 @@
         46.5,
         44.8,
         6.6,
-        3.0
+        3
       ]
     },
     "shellx.interface.settings.connections": {
@@ -1232,7 +1232,7 @@
       "capture": "settings-connectors",
       "focus": [
         44.5,
-        15.0,
+        15,
         5.5,
         3.2
       ]
@@ -1268,8 +1268,8 @@
       "capture": "settings-about",
       "focus": [
         62.5,
-        15.0,
-        4.0,
+        15,
+        4,
         3.4
       ]
     },
@@ -1278,7 +1278,7 @@
       "focus": [
         89.8,
         0.6,
-        3.0,
+        3,
         4.1
       ]
     },
@@ -1287,14 +1287,14 @@
       "focus": [
         92.9,
         0.6,
-        3.0,
+        3,
         4.1
       ]
     },
     "shellx.browser.ui.agent_lock": {
       "capture": "browser-overview",
       "focus": [
-        96.0,
+        96,
         0.6,
         2.5,
         4.1
@@ -1333,9 +1333,9 @@
       "capture": "browser-overview",
       "focus": [
         78.3,
-        12.0,
+        12,
         3.2,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.back": {
@@ -1344,7 +1344,7 @@
         0.7,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.forward": {
@@ -1353,7 +1353,7 @@
         3.1,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.reload": {
@@ -1362,7 +1362,7 @@
         5.5,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.home": {
@@ -1371,7 +1371,7 @@
         7.9,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.trust": {
@@ -1380,7 +1380,7 @@
         10.6,
         5.3,
         5.2,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.address": {
@@ -1389,7 +1389,7 @@
         15.7,
         5.3,
         61.2,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.copy_address": {
@@ -1398,7 +1398,7 @@
         76.7,
         5.3,
         3.2,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.bookmark_current": {
@@ -1407,7 +1407,7 @@
         80.3,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.vault_fill": {
@@ -1416,7 +1416,7 @@
         82.9,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.downloads": {
@@ -1425,7 +1425,7 @@
         85.5,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.bookmarks": {
@@ -1434,7 +1434,7 @@
         88.1,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.history": {
@@ -1443,7 +1443,7 @@
         90.7,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.save": {
@@ -1452,7 +1452,7 @@
         93.2,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.ads": {
@@ -1461,22 +1461,22 @@
         95.7,
         5.3,
         2.7,
-        4.0
+        4
       ]
     },
     "shellx.browser.ui.options": {
       "capture": "browser-overview",
       "focus": [
-        98.0,
+        98,
         5.3,
         1.9,
-        4.0
+        4
       ]
     },
     "shellx.browser.save.full_page": {
       "capture": "browser-save-menu",
       "focus": [
-        81.0,
+        81,
         17.5,
         17.8,
         4.5
@@ -1485,7 +1485,7 @@
     "shellx.browser.save.window": {
       "capture": "browser-save-menu",
       "focus": [
-        81.0,
+        81,
         22.4,
         17.8,
         4.5
@@ -1494,7 +1494,7 @@
     "shellx.browser.save.markdown": {
       "capture": "browser-save-menu",
       "focus": [
-        81.0,
+        81,
         27.3,
         17.8,
         4.5
@@ -1503,7 +1503,7 @@
     "shellx.browser.save.links": {
       "capture": "browser-save-menu",
       "focus": [
-        81.0,
+        81,
         32.2,
         17.8,
         4.5
@@ -1512,7 +1512,7 @@
     "shellx.browser.save.snapshot": {
       "capture": "browser-save-menu",
       "focus": [
-        81.0,
+        81,
         37.1,
         17.8,
         4.5
@@ -1521,7 +1521,7 @@
     "shellx.browser.save.media": {
       "capture": "browser-save-copy-jobs",
       "focus": [
-        81.0,
+        81,
         37.5,
         17.8,
         4.8
@@ -1530,7 +1530,7 @@
     "shellx.browser.save.code": {
       "capture": "browser-save-copy-jobs",
       "focus": [
-        81.0,
+        81,
         42.7,
         17.8,
         4.8
@@ -1539,7 +1539,7 @@
     "shellx.browser.save.site": {
       "capture": "browser-save-copy-jobs",
       "focus": [
-        81.0,
+        81,
         47.9,
         17.8,
         4.8
@@ -1551,16 +1551,16 @@
         80.5,
         15.7,
         18.5,
-        5.0
+        5
       ]
     },
     "shellx.browser.ads.strict": {
       "capture": "browser-ads-menu",
       "focus": [
         80.5,
-        21.0,
+        21,
         18.5,
-        5.0
+        5
       ]
     },
     "shellx.browser.ads.off": {
@@ -1569,16 +1569,16 @@
         80.5,
         26.4,
         18.5,
-        5.0
+        5
       ]
     },
     "shellx.browser.options.color": {
       "capture": "browser-options",
       "focus": [
         0.5,
-        17.0,
+        17,
         20.5,
-        6.0
+        6
       ]
     },
     "shellx.browser.options.homepage": {
@@ -1587,7 +1587,7 @@
         0.5,
         24.6,
         20.5,
-        8.0
+        8
       ]
     },
     "shellx.browser.options.profile": {
@@ -1596,7 +1596,7 @@
         0.5,
         33.8,
         20.5,
-        7.0
+        7
       ]
     },
     "shellx.browser.options.sidebar": {
@@ -1605,7 +1605,7 @@
         0.5,
         42.2,
         20.5,
-        5.0
+        5
       ]
     },
     "shellx.browser.options.personal_lock_enable": {
@@ -1630,7 +1630,7 @@
       "capture": "browser-options",
       "focus": [
         0.5,
-        62.0,
+        62,
         20.5,
         4.2
       ]
@@ -1685,36 +1685,36 @@
       "capture": "browser-options",
       "focus": [
         0.5,
-        80.0,
+        80,
         20.5,
-        5.0
+        5
       ]
     },
     "shellx.browser.panel.chat": {
       "capture": "browser-panel-chat",
       "focus": [
         77.9,
-        16.0,
+        16,
         4.3,
-        4.0
+        4
       ]
     },
     "shellx.browser.panel.requests": {
       "capture": "browser-panel-requests",
       "focus": [
         82.1,
-        16.0,
+        16,
         4.3,
-        4.0
+        4
       ]
     },
     "shellx.browser.panel.actions": {
       "capture": "browser-panel-actions",
       "focus": [
         86.3,
-        16.0,
+        16,
         4.3,
-        4.0
+        4
       ]
     },
     "shellx.browser.panel.actions_tasks": {
@@ -1722,7 +1722,7 @@
       "focus": [
         78.3,
         20.6,
-        7.0,
+        7,
         3.2
       ]
     },
@@ -1731,7 +1731,7 @@
       "focus": [
         78.3,
         44.6,
-        8.0,
+        8,
         3.2
       ]
     },
@@ -1739,18 +1739,18 @@
       "capture": "browser-panel-evidence",
       "focus": [
         90.5,
-        16.0,
+        16,
         4.3,
-        4.0
+        4
       ]
     },
     "shellx.browser.panel.errors": {
       "capture": "browser-panel-errors",
       "focus": [
         94.7,
-        16.0,
+        16,
         4.3,
-        4.0
+        4
       ]
     },
     "shellx.browser.panel.errors_console": {
@@ -1758,7 +1758,7 @@
       "focus": [
         78.3,
         20.6,
-        9.0,
+        9,
         3.2
       ]
     },
@@ -1766,9 +1766,9 @@
       "capture": "browser-history",
       "focus": [
         0.5,
-        16.0,
+        16,
         18.5,
-        4.0
+        4
       ]
     },
     "shellx.browser.sidecar.history_filters": {
@@ -1777,7 +1777,7 @@
         0.5,
         19.7,
         18.5,
-        4.0
+        4
       ]
     },
     "shellx.browser.sidecar.clear_history": {
@@ -1786,7 +1786,7 @@
         0.5,
         23.3,
         18.5,
-        4.0
+        4
       ],
       "note": "Clear history appears directly below the filters when at least one history entry exists."
     },
@@ -1794,16 +1794,16 @@
       "capture": "browser-bookmarks",
       "focus": [
         0.5,
-        16.0,
+        16,
         18.5,
-        9.0
+        9
       ]
     },
     "shellx.browser.sidecar.bookmark_manager": {
       "capture": "browser-bookmark-manager",
       "focus": [
         0.5,
-        16.0,
+        16,
         18.5,
         18.5
       ]
@@ -1812,18 +1812,18 @@
       "capture": "browser-downloads",
       "focus": [
         0.5,
-        16.0,
+        16,
         18.5,
-        6.0
+        6
       ]
     },
     "shellx.browser.sidecar.download_list": {
       "capture": "browser-downloads",
       "focus": [
         0.5,
-        22.0,
+        22,
         18.5,
-        5.0
+        5
       ]
     }
   }

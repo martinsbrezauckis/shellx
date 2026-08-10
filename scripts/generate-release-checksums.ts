@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, relative, resolve, sep } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const RELEASE_ASSET_PATTERN = /(?:\.exe|\.msi|\.dmg|\.pkg|\.appimage|\.deb|\.rpm|\.zip|\.tar\.gz|\.sig|latest\.json)$/i;
+const RELEASE_ASSET_PATTERN = /(?:\.exe|\.msi|\.dmg|\.pkg|\.appimage|\.deb|\.rpm|\.zip|\.tar\.gz|\.sig|\.cdx\.json|\.intoto\.jsonl|latest\.json)$/i;
 
 function option(argv: string[], name: string): string | undefined {
   const index = argv.indexOf(name);
@@ -53,4 +53,3 @@ function main(): void {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
-

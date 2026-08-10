@@ -76,7 +76,7 @@ assert(clicks.includes("[data-debug-id='shellx-browser-downloads-menu']"));
 assert(waits.includes("[role='dialog'][aria-label='Attachment and media board']"));
 assert.deepEqual(scrolls, ["#shellx-browser-save-menu:top", "#shellx-browser-save-menu:bottom"]);
 assert.equal(manifest.captures["shellx-workspace"]?.width, 1920);
-assert.equal(manifest.captures["browser-overview"]?.height, 1000);
+assert.equal(manifest.captures["browser-overview"]?.height, 1002);
 assert.match(manifest.captures["browser-overview"]?.sha256 ?? "", /^[a-f0-9]{64}$/);
 
 await assert.rejects(

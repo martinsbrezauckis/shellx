@@ -195,6 +195,18 @@ try {
   assert(existsSync(join(output, "skills/shellx-host/SKILL.md")), "installer-embedded host skill is exported");
   assert(existsSync(join(output, "docs/public/manual/shellx/index.html")), "interactive manual is exported");
   assert(existsSync(join(output, "docs/public/SHELLX_MANUAL.md")), "repository manual is exported");
+  const vaultProvenancePath = join(output, "vendor/shellx-vault/PROVENANCE.json");
+  assert(existsSync(vaultProvenancePath), "vendored Vault provenance is exported");
+  const vaultProvenance = JSON.parse(readFileSync(vaultProvenancePath, "utf8")) as {
+    upstreamRevision?: string;
+    crates?: Record<string, { sourceDigestSha256?: string }>;
+  };
+  assert(
+    /^[0-9a-f]{40}$/.test(vaultProvenance.upstreamRevision ?? "") &&
+      Object.keys(vaultProvenance.crates ?? {}).sort().join(",") === "vault-broker,vault-client,vault-core,vault-server" &&
+      Object.values(vaultProvenance.crates ?? {}).every((crate) => /^[0-9a-f]{64}$/.test(crate.sourceDigestSha256 ?? "")),
+    "exported Vault provenance binds one full upstream revision and four SHA-256 crate digests",
+  );
   const initialPayloadFiles = listFiles(output);
   assert(initialPayloadFiles.every((path) => !path.startsWith("docs/private/")), "the complete docs/private tree is excluded without publishing its filenames");
   assert(!existsSync(join(output, ".git")), "plain export does not synthesize Git metadata");
@@ -359,6 +371,7 @@ try {
   ] as const) {
     assert(!/\$\(\s*cat\s+~\/\.shellx\/(?:shellxagent|mcp)\.token\s*\)/.test(text), `${path} must not publish a shell command that loads a bearer token`);
     assert(!/\b(?:TOKEN|SECRET)\s*=\s*["']?\$\(/.test(text), `${path} must not publish a shell variable loader for secret material`);
+    assert(!/~\/\.shellx\/(?:shellxagent|mcp)\.token/.test(text), `${path} must not direct public readers to a raw bearer-token path`);
   }
 
   const publicWindowsSigningProfile = JSON.parse(readFileSync(join(output, "release/windows-signing-profile.json"), "utf8")) as Record<string, unknown>;

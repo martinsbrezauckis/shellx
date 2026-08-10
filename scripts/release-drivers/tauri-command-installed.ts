@@ -128,7 +128,6 @@ const COMMANDS = [
   "outside_connectors_test",
   "pause_build",
   "pause_goal",
-  "pty_attach",
   "pty_create",
   "pty_kill",
   "pty_resize",
@@ -399,7 +398,6 @@ const EXPECTED_REJECTIONS = new Map<SupportedCommand, string>([
   ["mcp_marketplace_set_enabled", "unknown marketplace id: final-surface-absent-marketplace"],
   ["open_url_in_browser", "only http(s) URLs are openable, got: file:///final-surface-denied"],
   ["outside_connectors_simulate", "unknown connector id"],
-  ["pty_attach", "unknown terminal: TerminalKey { tab_id: \"final-surface-absent-terminal\", terminal_id: \"final-surface-absent-terminal\" }"],
   ["pty_create", "tab_id is required"],
   ["pty_resize", "unknown terminal: TerminalKey { tab_id: \"final-surface-absent-terminal\", terminal_id: \"final-surface-absent-terminal\" }"],
   ["pty_write", "unknown terminal: TerminalKey { tab_id: \"final-surface-absent-terminal\", terminal_id: \"final-surface-absent-terminal\" }"],
@@ -1112,7 +1110,7 @@ function invocationArgs(
     return { id: marketplaceFixture.id };
   }
   if (command === "pty_create") return { tabId: "", shell: null, cwd: null, cols: 80, rows: 24 };
-  if (command === "pty_write" || command === "pty_attach" || command === "pty_resize" || command === "pty_kill") {
+  if (command === "pty_write" || command === "pty_resize" || command === "pty_kill") {
     return {
       tabId: "final-surface-absent-terminal",
       terminalId: "final-surface-absent-terminal",

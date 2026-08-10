@@ -66,7 +66,6 @@ let settings = {
   chatFontPx: 15,
   density: "default",
   githubGhBinary: "gh",
-  permissionUx: "pill",
   theme: "black",
 };
 let connectionReceiptIndex = 0;
@@ -223,8 +222,14 @@ const server = createServer(async (request, response) => {
       });
     }
     if (body.action === "releaseEmpty" && body.leaseId === releaseClipboardLeaseId) {
+      return json(response, 409, {
+        error: "release_clipboard_not_empty",
+        message: "an empty clipboard lease cannot be released while native format metadata is nonempty",
+      });
+    }
+    if (body.action === "abandon" && body.leaseId === releaseClipboardLeaseId) {
       releaseClipboardLeaseId = null;
-      return json(response, 200, { ok: true, action: "releaseEmpty", empty: true, platform: fixturePlatform });
+      return json(response, 200, { ok: true, action: "abandon", empty: false, platform: fixturePlatform });
     }
     return json(response, 404, { error: "release_clipboard_lease_not_found" });
   }
@@ -2195,7 +2200,6 @@ const server = createServer(async (request, response) => {
       || !Number.isSafeInteger(body.chatFontPx) || Number(body.chatFontPx) < 12 || Number(body.chatFontPx) > 26
       || !["compact", "default", "comfortable"].includes(String(body.density))
       || !["gh", "gh.exe"].includes(String(body.githubGhBinary))
-      || !["pill", "modal", "both"].includes(String(body.permissionUx))
       || !["black", "black_warm", "bright"].includes(String(body.theme))) {
       return json(response, 400, { error: "invalid settings fixture" });
     }
@@ -2204,7 +2208,6 @@ const server = createServer(async (request, response) => {
       chatFontPx: Number(body.chatFontPx),
       density: String(body.density),
       githubGhBinary: String(body.githubGhBinary),
-      permissionUx: String(body.permissionUx),
       theme: String(body.theme),
     };
     return json(response, 200, { ok: true, settings });

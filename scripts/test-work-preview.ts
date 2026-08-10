@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import {
   clearWorkPreviewBrowserEvents,
   emptyWorkPreviewState,
@@ -85,6 +87,27 @@ assert(
 );
 clearWorkPreviewBrowserEvents("preview-tab");
 assert(getWorkPreviewBrowserEvents("preview-tab").length === 0, "browser events can be cleared per tab");
+
+const appSource = readFileSync("src/App.tsx", "utf8");
+const rightRailSource = readFileSync("src/components/RightRail.tsx", "utf8");
+const panelSource = readFileSync("src/components/WorkPreviewPanel.tsx", "utf8");
+assert(
+  appSource.includes("poll: refreshWorkPreviews") &&
+    appSource.includes("intervalMs: anyRunningPreview ? 2_000 : 5_000") &&
+    appSource.includes("workPreviewPollingVisible") &&
+    !appSource.includes("[workPreviewTabIdsKey, workPreviewByTab]"),
+  "App owns one serialized, visibility-aware Work Preview polling loop",
+);
+assert(
+  appSource.includes("workPreviewState={rightRailWorkPreviewState}") &&
+    rightRailSource.includes("stateSnapshot={workPreviewState}"),
+  "App state feeds the visible Work Preview panel without a second backend poll",
+);
+assert(
+  !panelSource.includes("window.setInterval(() => void refresh(), running ? 1500 : 4000)") &&
+    panelSource.includes("stateSnapshot?.tabId === tabId"),
+  "Work Preview panel keeps manual refresh while consuming the shared live snapshot",
+);
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} work preview helper tests`);
 process.exit(failures === 0 ? 0 : 1);

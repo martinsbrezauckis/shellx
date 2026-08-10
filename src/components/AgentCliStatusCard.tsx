@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import { lazy, useCallback, useEffect, useRef, useState, type JSX } from "react";
 import {
   providerExecutionTargetLabel,
   providerDisplayName,
@@ -11,7 +11,6 @@ import {
   providerScanStatus,
   scanConnectionProviderCapabilities,
 } from "../lib/connection-provider-capabilities";
-import { AgentCliSetupDialog } from "./AgentCliSetupAssistant";
 import type { AgentCliSetupFixture } from "./AgentCliSetupAssistant";
 import { setupStateToProviderScan } from "../lib/agent-cli-setup";
 import type {
@@ -20,6 +19,9 @@ import type {
   ConnectionProviderScanEntry,
 } from "./ConnectionPicker";
 import { ShellIcon } from "./icons";
+import { LazySurface } from "./LazySurface";
+
+const AgentCliSetupDialog = lazy(() => import("./AgentCliSetupDialog.lazy"));
 
 type AgentCliId = "grok" | ProviderId;
 
@@ -247,28 +249,36 @@ export function AgentCliStatusCard({
           })}
         </div>
         {setupDialogOpen && setupPreset && (
-          <AgentCliSetupDialog
-            preset={setupPreset}
-            initialProviderId={setupProviderId ?? undefined}
-            missingOnly={!setupProviderId}
-            fixture={fixture}
-            onClose={() => {
+          <LazySurface
+            label="Agent CLI Setup Assistant"
+            onDismiss={() => {
               setSetupDialogOpen(false);
               setSetupProviderId(null);
             }}
-            onSetupChanged={(providers) => {
-              const requestKey = currentRequestKeyRef.current;
-              if (requestKey) {
-                const checkedAtMs = Math.max(0, ...providers.map((provider) => provider.checkedAtMs));
-                freshnessRef.current = {
-                  requestKey,
-                  freshUntilMs: checkedAtMs + CONNECTION_PROVIDER_CAPABILITY_TTL_MS,
-                };
-                setInventory({ requestKey, providers, capability: null });
-              }
-              onProviderScanUpdated?.(setupPreset, providers);
-            }}
-          />
+          >
+            <AgentCliSetupDialog
+              preset={setupPreset}
+              initialProviderId={setupProviderId ?? undefined}
+              missingOnly={!setupProviderId}
+              fixture={fixture}
+              onClose={() => {
+                setSetupDialogOpen(false);
+                setSetupProviderId(null);
+              }}
+              onSetupChanged={(providers) => {
+                const requestKey = currentRequestKeyRef.current;
+                if (requestKey) {
+                  const checkedAtMs = Math.max(0, ...providers.map((provider) => provider.checkedAtMs));
+                  freshnessRef.current = {
+                    requestKey,
+                    freshUntilMs: checkedAtMs + CONNECTION_PROVIDER_CAPABILITY_TTL_MS,
+                  };
+                  setInventory({ requestKey, providers, capability: null });
+                }
+                onProviderScanUpdated?.(setupPreset, providers);
+              }}
+            />
+          </LazySurface>
         )}
         {message && <div className="tooling-issue">{message}</div>}
       </div>

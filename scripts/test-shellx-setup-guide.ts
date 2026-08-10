@@ -18,6 +18,7 @@ const installedProof = readFileSync("scripts/test-shellx-setup-guide-installed.t
 assert.ok(
   app.includes("ShellxSetupGuide") &&
     app.includes("onOpenSettingsTab={openSettingsTab}") &&
+    app.includes('onOpenAgentSetup={() => setAgentCliSetupFixtureMode("live-setup")}') &&
     app.includes("requestCount={vaultRequestItems.length}") &&
     app.includes('agentsConfigured={activeAgentProviderScan.some((provider) => providerScanStatus(provider) === "ready")}') &&
     app.includes("onOpenBrowser={handleOpenShellxBrowser}") &&
@@ -64,10 +65,18 @@ assert.ok(
 assert.ok(
   guide.includes('onOpenVault(vaultReady ? "overview" : "setup")') &&
     guide.includes("agentsConfigured ? \"Ready\" : \"Check setup\"") &&
+    guide.includes("onClick: onOpenAgentSetup") &&
     guide.includes("onClick: onOpenRequests") &&
     guide.includes('onOpenSettingsTab("general")') &&
-    guide.includes('onOpenSettingsTab("shellxagent")'),
+    !guide.includes('onOpenSettingsTab("shellxagent")'),
   "Setup guide actions must route to exact existing surfaces",
+);
+
+assert.ok(
+  app.includes('agentCliSetupFixtureMode === "live-setup"') &&
+    app.includes("activeConnectionPreset ?? currentLocalConnectionPreset()") &&
+    app.includes("handleProviderScanUpdated("),
+  "Agents setup step must open the live CLI assistant for the active execution target",
 );
 
 assert.ok(

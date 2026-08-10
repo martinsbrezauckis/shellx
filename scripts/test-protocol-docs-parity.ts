@@ -1,0 +1,167 @@
+import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const root = resolve(import.meta.dirname, "..");
+
+function read(relativePath: string): string {
+  return readFileSync(resolve(root, relativePath), "utf8");
+}
+
+function debugApiSourceFiles(): string[] {
+  return readdirSync(resolve(root, "src-tauri/src"))
+    .filter((name) => name === "debug_api.rs" || /^debug_api_.*\.rs$/.test(name))
+    .map((name) => `src-tauri/src/${name}`)
+    .sort();
+}
+
+function routeCalls(source: string): string[] {
+  const calls: string[] = [];
+  let cursor = 0;
+  while ((cursor = source.indexOf(".route(", cursor)) >= 0) {
+    const bodyStart = cursor + ".route(".length;
+    let depth = 1;
+    let quote = "";
+    let escaped = false;
+    let index = bodyStart;
+    for (; index < source.length && depth > 0; index += 1) {
+      const character = source[index];
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === quote) quote = "";
+        continue;
+      }
+      if (character === '"' || character === "'") quote = character;
+      else if (character === "(") depth += 1;
+      else if (character === ")") depth -= 1;
+    }
+    assert.equal(depth, 0, "Debug API route declaration must have balanced parentheses");
+    calls.push(source.slice(bodyStart, index - 1));
+    cursor = index;
+  }
+  return calls;
+}
+
+function implementedDebugApiRoutes(): Set<string> {
+  const routes = new Set<string>();
+  for (const sourcePath of debugApiSourceFiles()) {
+    for (const call of routeCalls(read(sourcePath))) {
+      const path = call.match(/^\s*"([^"]+)"\s*,/)?.[1];
+      assert(path, `${sourcePath} must use a literal path for every Debug API route`);
+      const methods = [...call.matchAll(/\b(get|post|delete)\s*\(/g)]
+        .map((match) => match[1]?.toUpperCase())
+        .filter((method): method is string => Boolean(method));
+      assert(methods.length > 0, `${sourcePath} ${path} must declare an HTTP method`);
+      for (const method of methods) routes.add(`${method} ${path}`);
+    }
+  }
+  return routes;
+}
+
+function documentedDebugApiRoutes(apiDocs: string): Set<string> {
+  const start = apiDocs.indexOf("## Current Implementation Inventory");
+  const end = apiDocs.indexOf("Legacy `/goal/*`", start);
+  assert(start >= 0 && end > start, "API docs must contain one bounded current route inventory");
+  const routes = new Set<string>();
+  for (const line of apiDocs.slice(start, end).split("\n")) {
+    const row = line.match(/^\| (GET|POST|DELETE) \| (.+) \|$/);
+    if (!row) continue;
+    const method = row[1];
+    const paths = row[2];
+    assert(method && paths, "API route inventory row must contain a method and path list");
+    for (const pathMatch of paths.matchAll(/`(\/[^`]+)`/g)) {
+      const path = pathMatch[1];
+      assert(path, "API route inventory path must not be empty");
+      routes.add(`${method} ${path}`);
+    }
+  }
+  return routes;
+}
+
+function sorted(values: Iterable<string>): string[] {
+  return [...values].sort();
+}
+
+const apiDocs = read("docs/public/API.md");
+const architecture = read("docs/public/ARCHITECTURE.md");
+const threatModel = read("docs/public/THREAT_MODEL.md");
+const normalizedThreatModel = threatModel.replace(/\s+/g, " ");
+const debugApiClient = read("src/lib/debug-api.ts");
+const netFetch = read("src-tauri/src/host_mcp/net_fetch.rs");
+const sessionArchive = read("src-tauri/src/session_archive.rs");
+const hostSkill = read("skills/shellx-host/SKILL.md");
+const skillInstaller = read("src-tauri/src/skill_install.rs");
+const inventory = JSON.parse(read("release/surface-inventory.json")) as {
+  counts: Record<string, number>;
+  items: Array<{ kind: string; name: string }>;
+};
+
+const implementedRoutes = implementedDebugApiRoutes();
+const documentedRoutes = documentedDebugApiRoutes(apiDocs);
+const inventoriedRoutes = new Set(
+  inventory.items.filter((item) => item.kind === "debug-api-route").map((item) => item.name),
+);
+assert.deepEqual(sorted(documentedRoutes), sorted(implementedRoutes), "API route table must exactly match the Axum routers");
+assert.deepEqual(sorted(inventoriedRoutes), sorted(implementedRoutes), "release inventory must exactly match the Axum routers");
+assert.equal(inventory.counts["debug-api-route"], implementedRoutes.size);
+
+const hostTools = inventory.items.filter((item) => item.kind === "host-mcp-tool").map((item) => item.name);
+assert.equal(inventory.counts["host-mcp-tool"], hostTools.length);
+assert(architecture.includes(`contains ${hostTools.length} host-MCP surfaces`), "architecture must use the live Host MCP inventory count");
+const compactCatalogEntries = new Set(["capabilities_summary", "search_tool", "browser_read", "browser_act"]);
+const exactUnderlyingTools = hostTools.filter((name) => !compactCatalogEntries.has(name));
+assert(apiDocs.includes(`The ${exactUnderlyingTools.length} exact underlying Host schemas remain searchable`), "API guide must use the live searchable Host schema count");
+
+for (const gateway of ["capabilities_summary", "search_tool", "host_read", "host_act", "browser_read", "browser_act"]) {
+  assert(apiDocs.includes(`\`${gateway}\``), `API guide must name compact gateway ${gateway}`);
+  assert(hostSkill.includes(gateway), `installed host skill must name compact gateway ${gateway}`);
+}
+assert(
+  hostSkill.includes("Use this skill only after positive evidence")
+    && hostSkill.includes("If this precondition is absent, stop using this skill"),
+  "installed host skill must remain opt-in for confirmed ShellX sessions",
+);
+assert(
+  skillInstaller.includes('include_str!("../../skills/shellx-host/SKILL.md")'),
+  "desktop installer must embed the repository host skill byte-for-byte",
+);
+assert(
+  architecture.includes("Reqwest redirects are disabled")
+    && netFetch.includes("redirect(reqwest::redirect::Policy::none())")
+    && !architecture.includes("redirects\n  follow default policy"),
+  "architecture must describe the implemented fail-closed net_fetch redirect policy",
+);
+assert(
+  debugApiClient.includes("ShellX creates a bearer token at startup")
+    && !debugApiClient.includes("auth middleware then\n// accepts requests without a token"),
+  "Debug API client guidance must not claim authenticated routes become tokenless by default",
+);
+assert(
+  sessionArchive.includes("SSH: build a filtered tar stream")
+    && !sessionArchive.includes("SSH: NOT YET"),
+  "session archive ownership comment must include the shipped SSH implementations",
+);
+assert(
+  normalizedThreatModel.includes("ShellX does not copy, move, rewrite, or persist that provider-owned")
+    && normalizedThreatModel.includes("the local tool reads the canonical credential into process memory")
+    && !normalizedThreatModel.includes("shellX does not read or store xAI credentials itself"),
+  "threat model must describe the implemented optional xAI media and X Search credential boundary",
+);
+
+for (const path of [
+  "docs/public/API.md",
+  "docs/public/ARCHITECTURE.md",
+  "docs/public/DOCUMENTATION_WORKFLOW.md",
+  "docs/public/THREAT_MODEL.md",
+  "skills/shellx-host/SKILL.md",
+]) {
+  assert(
+    !/~\/\.shellx\/(?:shellxagent|mcp)\.token/.test(read(path)),
+    `${path} must not direct public readers to a raw bearer-token path`,
+  );
+}
+
+console.log(
+  `Protocol docs match ${implementedRoutes.size} Debug API routes, ${hostTools.length} Host MCP tools, and the installer-bundled session-only skill`,
+);

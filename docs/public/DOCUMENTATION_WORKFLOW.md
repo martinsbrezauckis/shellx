@@ -30,8 +30,9 @@ captures, and features that point at a missing capture. This check is a release
 gate; it is intentionally stricter than the routine documentation editing loop.
 
 Use `pnpm docs:capture-atlas` only against an isolated installed-Tauri candidate
-that already has a bound WebDriver session and Debug API token. Supply the exact
-loopback bases, session ID, token file, source commit, version, platform, an
+that already has a bound WebDriver session and private Debug API authentication.
+Supply the exact loopback bases, session ID, process-local credential input,
+source commit, version, platform, an
 empty staging directory, and an existing synthetic app workspace whose leaf is
 exactly `shellx-manual-demo`. The runner binds the active tab to that workspace
 so captured Git, Files, and footer surfaces cannot expose an operator or release
@@ -134,7 +135,7 @@ Each successful staging export writes:
   counts by policy category; their private filenames and reasons are not copied
   into the public payload.
 
-The JSON manifest is the review ledger for the 0.3.5 export. A file is
+The JSON manifest is the review ledger for the current export. A file is
 not eligible merely because it is tracked: its policy category and reason must
 explain its public product, documentation, build, test, security, or
 reproducibility purpose. `docs/public/` is the single positive documentation

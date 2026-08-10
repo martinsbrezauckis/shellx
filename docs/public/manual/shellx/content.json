@@ -1,12 +1,12 @@
 {
   "schema": "shellx.manual-content.v1",
-  "version": "0.3.5",
-  "revision": 31,
-  "updated": "2026-08-05",
+  "version": "0.3.51",
+  "revision": 32,
+  "updated": "2026-08-10",
   "title": "ShellX Manual",
   "eyebrow": "Agent workspace · Browser · Vault",
   "intro": "ShellX is a desktop workspace for local and remote coding agents. It keeps conversations, project files, Browser tasks, Vault approvals, previews, Git state, and test evidence visible in one operator-controlled shell.",
-  "releaseNote": "This manual covers ShellX v0.3.5. Verify the installed version from Settings → About when comparing behavior with these instructions.",
+  "releaseNote": "This manual covers ShellX v0.3.51. Verify the installed version from Settings → About when comparing behavior with these instructions.",
   "sections": [
     {
       "id": "start",
@@ -248,7 +248,7 @@
         {
           "id": "shellx.interface.bottom.terminal",
           "label": "Bottom panel: Terminal",
-          "summary": "Terminal provides the active tab's user shell plus visible agent-created ACP terminals when the provider exposes them."
+          "summary": "Terminal provides a persistent operator-owned shell for the active session tab. Provider-originated ACP terminal requests stay disabled and cannot attach to this shell."
         },
         {
           "id": "shellx.interface.bottom.trace",
@@ -486,6 +486,7 @@
           "label": "Settings: Connectors",
           "summary": "Connectors configures supported outside messaging surfaces and shows their availability and setup state.",
           "steps": [
+            "Delivery and Session chat approval are independent: choosing Session chat preserves Review first by default, while Auto-dispatch is a separate explicit choice.",
             "For Telegram, allowlisting a group chat authorizes every participant in that group; keep per-message approval enabled or use a private chat when Session chat can dispatch agent work.",
             "Discord Session chat accepts allowlisted direct-message user IDs rather than channel or guild IDs."
           ]
@@ -900,9 +901,9 @@
           "steps": [
             "Install and sign in to Antigravity in the selected environment.",
             "ShellX attaches a unique private additional workspace and named agent only to this launched session; direct Antigravity sessions do not inherit ShellX activation.",
-            "Prefer native Antigravity tools, including generate_image when available. ShellX host MCP is disabled because 1.1.8 through 1.1.10 print-mode canaries never produced a real MCP tools/call; return to ShellX for host Vault, evidence, or handoff work."
+            "Prefer native Antigravity tools, including generate_image when available. ShellX host MCP is disabled because 1.1.8 through 1.1.11 print-mode canaries never produced a real MCP tools/call; return to ShellX for host Vault, evidence, or handoff work."
           ],
-          "note": "The 1.1.10 CLI discovered the exact canary schema but echoed the expected marker only after reading test files; the MCP server received no tools/call. Failed probes consumed 32k to 83k tokens, so ShellX does not advertise this as working functionality."
+          "note": "The 1.1.11 CLI discovered the exact canary schema, but its execution backend rejected four attempted invocation spellings as unknown tools; the MCP server received no tools/call. The tiny failed probe consumed about 71k tokens, so ShellX does not advertise this as working functionality."
         },
         {
           "id": "shellx.agents.host_skill",

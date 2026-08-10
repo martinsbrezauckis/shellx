@@ -117,6 +117,7 @@ use history_settings_http::*;
 use preview_tools_http::*;
 use providers_http::*;
 use reports_http::*;
+#[cfg(not(target_os = "linux"))]
 pub(crate) use screenshot_http::capture_window_label_png;
 use screenshot_http::screenshot;
 use session_lifecycle_http::*;

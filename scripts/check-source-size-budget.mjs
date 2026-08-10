@@ -17,7 +17,7 @@ const LEGACY_CEILINGS = new Map([
   ["src-tauri/src/shellx_browser_shields.rs", { max: 1_154, target: 1_000 }],
   ["src-tauri/src/shellx_browser_transfers.rs", { max: 1_024, target: 1_000 }],
   ["src/components/ShellxBrowserApp.tsx", { max: 1_000, target: 1_000 }],
-  ["src/App.css", { max: 12_912, target: 2_000 }],
+  ["src/App.css", { max: 7_234, target: 2_000 }],
   ["scripts/test-shellx-browser.ts", { max: 2_724, target: 1_000 }],
 ]);
 

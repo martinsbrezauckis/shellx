@@ -360,8 +360,6 @@ function assertStaticNativeHelperContract(): void {
 
   for (const required of [
     "AXIsProcessTrusted()",
-    "AXUIElementCopyElementAtPosition",
-    "AXUIElementPerformAction(hit, kAXPressAction as CFString)",
     "CGPreflightPostEventAccess()",
     "CGEvent(",
     '"AXWebArea"',
@@ -425,9 +423,44 @@ function assertStaticNativeHelperContract(): void {
     "the helper must use the current macOS activation contract without deprecated ignored options",
   );
   assert(
-    swift.indexOf("postAccessibilityPress(processId: request.candidate.processId")
-      < swift.indexOf(": try postMouseClick(at: point)"),
-    "bounded clicks must prefer a candidate-scoped Accessibility press and retain coordinate input as a fallback",
+    swift.includes("func postMouseClick(at point: CGPoint)")
+      && swift.includes("down.post(tap: .cghidEventTap)")
+      && swift.includes("up.post(tap: .cghidEventTap)")
+      && swift.includes("postMouseClick(at: point)")
+      && swift.includes("NSWorkspace.shared.frontmostApplication?.processIdentifier == request.candidate.processId"),
+    "bounded renderer clicks must post the mapped mouse pair only after the exact candidate is frontmost",
+  );
+  assert.match(
+    swift,
+    /func postMouseClick\(at point: CGPoint\)[\s\S]*?down\.post\(tap: \.cghidEventTap\)\s+Thread\.sleep\(forTimeInterval: 0\.025\)\s+up\.post\(tap: \.cghidEventTap\)/,
+    "bounded renderer clicks must retain a short press dwell so WKWebView receives the complete gesture",
+  );
+  assert.match(
+    swift,
+    /func postContextClick\(at point: CGPoint\)[\s\S]*?down\.post\(tap: \.cghidEventTap\)\s+Thread\.sleep\(forTimeInterval: 0\.025\)\s+up\.post\(tap: \.cghidEventTap\)/,
+    "bounded renderer context clicks must retain the same short press dwell",
+  );
+  assert(
+    !swift.includes("postAccessibilityPress"),
+    "renderer clicks must not accept a no-op Accessibility press as proof of a DOM mouse effect",
+  );
+  assert(
+    swift.includes("func postKey(processId: Int32, code: CGKeyCode")
+      && swift.includes("func postUnicode(processId: Int32, _ text: String)")
+      && swift.includes("func postKeyChord(processId: Int32, _ keys: [String])")
+      && swift.includes("postKeyChord(processId: request.candidate.processId")
+      && swift.includes("postUnicode(processId: request.candidate.processId"),
+    "bounded keyboard and Unicode input must post only to the exact candidate process",
+  );
+  assert.match(
+    swift,
+    /func postKey\(processId: Int32[\s\S]*?down\.postToPid\(pid_t\(processId\)\)\s+Thread\.sleep\(forTimeInterval: 0\.025\)\s+up\.postToPid\(pid_t\(processId\)\)/,
+    "bounded key chords must retain a short key-down dwell",
+  );
+  assert.match(
+    swift,
+    /func postUnicode\(processId: Int32[\s\S]*?down\.postToPid\(pid_t\(processId\)\)\s+Thread\.sleep\(forTimeInterval: 0\.025\)\s+up\.postToPid\(pid_t\(processId\)\)/,
+    "bounded Unicode entry must retain a short key-down dwell",
   );
   assert(build.includes('spawnSync("/usr/bin/xcrun"'));
   assert(build.includes('"swiftc"'));

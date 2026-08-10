@@ -22,9 +22,9 @@ assert.deepEqual(inventory.uiDriverFamilyAccounting, {
   choice: 20,
   range: 2,
   "file-picker": 0,
-  activation: 392,
-  "static-marker": 437,
-  "dynamic-marker": 23,
+  activation: 388,
+  "static-marker": 438,
+  "dynamic-marker": 24,
 }, "every exact UI occurrence must belong to one deterministic installed-driver family");
 
 for (const surfaceId of [

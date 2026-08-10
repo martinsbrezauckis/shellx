@@ -362,11 +362,16 @@ function ConnectionRow({
   onEdit: () => void;
   onDelete: () => void;
 }): JSX.Element {
-  const dot = testResult
+  const testState = testResult
     ? testResult.reachable
-      ? "#5b5"
-      : "#c55"
-    : "var(--fg-muted)";
+      ? "reachable"
+      : "failed"
+    : "untested";
+  const testStateLabel = testState === "reachable"
+    ? "Connection reachable"
+    : testState === "failed"
+      ? "Connection test failed"
+      : "Connection not tested";
   const lastUsed = preset.lastUsedMs === 0
     ? "never"
     : new Date(preset.lastUsedMs).toLocaleString();
@@ -383,14 +388,7 @@ function ConnectionRow({
     : preset.transport.kind;
   return (
     <li
-      style={{
-        display: "flex",
-        gap: 8,
-        alignItems: "center",
-        padding: "8px 12px",
-        borderBottom: "1px solid var(--border)",
-        background: active ? "rgba(255,255,255,0.05)" : "transparent",
-      }}
+      className={`connection-picker-row${active ? " active" : ""}`}
     >
       <button
         type="button"
@@ -400,18 +398,12 @@ function ConnectionRow({
         title={`Use ${preset.label}`}
       >
         <span
-          aria-label={testResult?.reachable ? "reachable" : "untested or unreachable"}
+          className={`connection-test-dot ${testState}`}
+          aria-label={testStateLabel}
           data-shellx-release-control="connection-test-receipt"
           title={testResult
             ? `Connection test · reachable=${testResult.reachable} · latencyMs=${testResult.latencyMs ?? "none"} · error=${testResult.error ? "present" : "none"}`
             : "Connection test · pending"}
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: 4,
-            background: dot,
-            flex: "0 0 auto",
-          }}
         />
         <span className="connection-row-copy">
           <span style={{ fontSize: "var(--fs-ui-sm)" }}>{preset.label}</span>

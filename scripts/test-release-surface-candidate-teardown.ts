@@ -26,7 +26,7 @@ import {
   RELEASE_SURFACE_MACOS_NATIVE_INPUT_BINDING_SCHEMA,
   type ReleaseSurfaceMacosNativeInputBindingEvidence,
 } from "./lib/release-surface-macos-native-input";
-import { syntheticReleaseSurfaceControllerBinding } from "./fixtures/release-surface-controller-binding-fixture";
+import { syntheticReleaseSurfaceControllerBinding, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 
 const sourceCommit = "a".repeat(40);
 const profilePath = "/tmp/shellx-final-webdriver-0123456789abcdef";
@@ -40,7 +40,7 @@ const candidate: ReleaseSurfaceCandidateAttestation = {
   mode: "final-frozen-candidate",
   platform: "linux-installed",
   sourceCommit,
-  version: "0.3.5",
+  version: releaseSurfaceFixtureVersion,
   createdAt: "2026-07-30T01:00:00.000Z",
   distributionArtifact: artifact,
   installation: {
@@ -60,7 +60,7 @@ const candidate: ReleaseSurfaceCandidateAttestation = {
     mcpTokenPath: `${profilePath}/.shellx/mcp.token`,
     processId: 4321,
     instanceId: "shellx-final-0123456789abcdef",
-    appVersion: "0.3.5",
+    appVersion: releaseSurfaceFixtureVersion,
     buildCommit: sourceCommit,
   },
 };
@@ -69,7 +69,7 @@ const manifest: ReleaseSurfaceDriverRunManifest = {
   mode: "final-frozen-candidate",
   platform: "linux-installed",
   sourceCommit,
-  version: "0.3.5",
+  version: releaseSurfaceFixtureVersion,
   inventoryDigest: "3".repeat(64),
   startedAt: "2026-07-30T01:00:01.000Z",
   completedAt: "2026-07-30T01:00:05.000Z",
@@ -214,7 +214,7 @@ const macBinding: ReleaseSurfaceMacosNativeInputBindingEvidence = {
   mode: "final-frozen-candidate",
   platform: "macos-installed",
   sourceCommit,
-  version: "0.3.5",
+  version: releaseSurfaceFixtureVersion,
   createdAt: "2026-07-30T01:00:02.000Z",
   candidate: {
     processId: macCandidate.process.pid,

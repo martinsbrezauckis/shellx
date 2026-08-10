@@ -55,8 +55,8 @@ const EDIT_MODE = "[data-debug-id='shellx-browser-bookmark-manager-toggle']";
 const DRAFT_LABEL = "[data-debug-id='shellx-browser-bookmark-draft-label']";
 const DRAFT_URL = "[data-debug-id='shellx-browser-bookmark-draft-url']";
 const DRAFT_FOLDER = "[data-debug-id='shellx-browser-bookmark-draft-folder']";
-const NEW_FOLDER = "[aria-label='New folder']";
-const ADD_LINK = "[aria-label='Add link']";
+const NEW_FOLDER = "[data-debug-id='shellx-browser-bookmark-create-folder']";
+const ADD_LINK = "[data-debug-id='shellx-browser-bookmark-create-link']";
 const OWNED_LINK_ID = "final-surface-ui-control-link";
 const OWNED_FOLDER_ID = "final-surface-ui-control-folder";
 const OWNED_DRAG_FIRST_ID = "final-surface-ui-control-drag-first";
@@ -86,8 +86,8 @@ const SURFACES = {
   pin: "src/browser/components/BookmarkSidecar.tsx:[data-debug-id^=\"shellx-browser-bookmark-pin-\"]",
   delete: "src/browser/components/BookmarkSidecar.tsx:[data-debug-id^=\"shellx-browser-bookmark-delete-\"]",
   folder: "src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"shellx-browser-bookmark-draft-folder\"]",
-  createFolder: "src/browser/components/BookmarkSidecar.tsx:[aria-label=\"New folder\"]",
-  createLink: "src/browser/components/BookmarkSidecar.tsx:[aria-label=\"Add link\"]",
+  createFolder: "src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"shellx-browser-bookmark-create-folder\"]",
+  createLink: "src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"shellx-browser-bookmark-create-link\"]",
 } as const;
 
 type ControlKind = keyof typeof SURFACES;

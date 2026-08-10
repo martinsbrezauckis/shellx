@@ -127,7 +127,7 @@ export async function exerciseConnectionLifecycleControl(
     else if (assignment.surface.name === PICKER_TEST) await exercisePickerTest(connection, input, fixture, outcome);
     else if (assignment.surface.name === EDITOR_SCAN) await exerciseEditorScan(connection, input, fixture, outcome);
     else if (assignment.surface.name === EDITOR_TEST) await exerciseEditorTest(connection, input, fixture, outcome);
-    else if (assignment.surface.name === EDITOR_SETUP) await exerciseEditorSetup(connection, input, fixture, outcome);
+    else if (assignment.surface.name === EDITOR_SETUP) await exerciseEditorSetup(input, fixture, outcome);
     else if (assignment.surface.name === SAVE) await exerciseSave(connection, input, fixture, outcome);
     else if (assignment.surface.name === DELETE) await exerciseDeletePrompt(connection, input, fixture, outcome);
     else if (assignment.surface.name === CANCEL_DELETE) await exerciseDeleteCancel(connection, input, fixture, outcome);
@@ -244,7 +244,6 @@ async function exerciseEditorTest(
 }
 
 async function exerciseEditorSetup(
-  connection: Connection,
   input: ReleaseSurfaceInstalledInputSession,
   fixture: Fixture,
   outcome: ReleaseSurfaceDriverOutcome,

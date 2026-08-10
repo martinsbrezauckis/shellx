@@ -2089,7 +2089,6 @@ type PublicSettings = {
   chatFontPx: number;
   density: "compact" | "default" | "comfortable";
   githubGhBinary: "gh" | "gh.exe";
-  permissionUx: "pill" | "modal" | "both";
   theme: "black" | "black_warm" | "bright";
 };
 
@@ -2116,7 +2115,6 @@ async function exerciseSettingsMutation(
       chatFontPx: baseline.chatFontPx === 17 ? 18 : 17,
       density: baseline.density === "compact" ? "comfortable" : "compact",
       githubGhBinary: baseline.githubGhBinary === "gh" ? "gh.exe" : "gh",
-      permissionUx: baseline.permissionUx === "modal" ? "both" : "modal",
       theme: baseline.theme === "bright" ? "black_warm" : "bright",
     };
     const changed = await postSettings(connection, target);
@@ -2184,14 +2182,12 @@ function validatePublicSettings(value: unknown, label: string): PublicSettings {
     "chatFontPx",
     "density",
     "githubGhBinary",
-    "permissionUx",
     "theme",
   ], label);
   if (typeof body.browserDownloadFolder !== "string" || body.browserDownloadFolder.length > 4096
     || !Number.isSafeInteger(body.chatFontPx) || Number(body.chatFontPx) < 12 || Number(body.chatFontPx) > 26
     || !["compact", "default", "comfortable"].includes(String(body.density))
     || !["gh", "gh.exe"].includes(String(body.githubGhBinary))
-    || !["pill", "modal", "both"].includes(String(body.permissionUx))
     || !["black", "black_warm", "bright"].includes(String(body.theme))) {
     throw new Error(`${label} returned invalid normalized public settings`);
   }
@@ -2491,16 +2487,40 @@ async function exerciseReleaseClipboardLease(
     if (leaseId) {
       try {
         const releaseResponse = await postReleaseClipboard(connection, { action: "releaseEmpty", leaseId });
-        if (releaseResponse.status !== 200) {
+        if (releaseResponse.status === 409
+          && releaseResponse.value.error === "release_clipboard_not_empty") {
+          requireExactKeys(
+            releaseResponse.value,
+            ["error", "message"],
+            "POST /release-test/clipboard releaseEmpty nonempty preservation",
+          );
+          if (releaseResponse.value.message
+            !== "an empty clipboard lease cannot be released while native format metadata is nonempty") {
+            throw new Error("POST /release-test/clipboard returned the wrong changed-clipboard preservation contract");
+          }
+          const abandonResponse = await postReleaseClipboard(connection, { action: "abandon", leaseId });
+          if (abandonResponse.status !== 200) {
+            throw new Error(`POST /release-test/clipboard abandon returned ${abandonResponse.status} (${String(abandonResponse.value.error ?? "unknown")})`);
+          }
+          const abandoned = abandonResponse.value;
+          requireExactKeys(abandoned, ["action", "empty", "ok", "platform"], "POST /release-test/clipboard abandon");
+          if (abandoned.ok !== true || abandoned.action !== "abandon" || abandoned.empty !== false
+            || typeof abandoned.platform !== "string" || abandoned.platform.length === 0) {
+            throw new Error("POST /release-test/clipboard did not abandon the changed-clipboard lease exactly");
+          }
+          outcome.observedEffect = "POST /release-test/clipboard acquired one native empty-clipboard lease, detected that native clipboard metadata changed before release, preserved its payload without reading it, and abandoned only the lease.";
+          outcome.cleanup = "pass";
+        } else if (releaseResponse.status !== 200) {
           throw new Error(`POST /release-test/clipboard releaseEmpty returned ${releaseResponse.status} (${String(releaseResponse.value.error ?? "unknown")})`);
+        } else {
+          const released = releaseResponse.value;
+          requireExactKeys(released, ["action", "empty", "ok", "platform"], "POST /release-test/clipboard releaseEmpty");
+          if (released.ok !== true || released.action !== "releaseEmpty" || released.empty !== true
+            || typeof released.platform !== "string" || released.platform.length === 0) {
+            throw new Error("POST /release-test/clipboard did not release the exact unused lease");
+          }
+          outcome.cleanup = "pass";
         }
-        const released = releaseResponse.value;
-        requireExactKeys(released, ["action", "empty", "ok", "platform"], "POST /release-test/clipboard releaseEmpty");
-        if (released.ok !== true || released.action !== "releaseEmpty" || released.empty !== true
-          || typeof released.platform !== "string" || released.platform.length === 0) {
-          throw new Error("POST /release-test/clipboard did not release the exact unused lease");
-        }
-        outcome.cleanup = "pass";
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         outcome.error = outcome.error ? `${outcome.error}; cleanup: ${message}` : `cleanup: ${message}`;
@@ -3552,14 +3572,13 @@ function verifyJsonBody(
     return "Agent documentation alias returned the installed session-scoped ShellX host manifest.";
   }
   if (path === "/settings") {
-    const expectedKeys = ["browserDownloadFolder", "chatFontPx", "density", "githubGhBinary", "permissionUx", "theme"];
+    const expectedKeys = ["browserDownloadFolder", "chatFontPx", "density", "githubGhBinary", "theme"];
     const actualKeys = Object.keys(body).sort();
     if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
       throw new Error(`settings returned unexpected keys: ${actualKeys.join(", ")}`);
     }
     if (!["compact", "default", "comfortable"].includes(String(body.density))
       || !["black", "black_warm", "bright"].includes(String(body.theme))
-      || !["pill", "modal", "both"].includes(String(body.permissionUx))
       || typeof body.chatFontPx !== "number" || body.chatFontPx < 12 || body.chatFontPx > 26
       || typeof body.browserDownloadFolder !== "string"
       || !["gh", "gh.exe"].includes(String(body.githubGhBinary))) {

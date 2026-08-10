@@ -1,9 +1,11 @@
 import type { RawEventFrame } from "../types/acp";
 import {
-  getProviderSessionState,
-  startProviderSession,
   type ProviderSessionStartRequest,
 } from "./provider-sessions";
+import {
+  getProviderSessionState,
+  startProviderSession,
+} from "./provider-session-api";
 import { apiGet } from "./debug-api";
 
 export const DEBUG_PROVIDER_ACTION_FIXTURE_ID = "provider-action-lifecycle";

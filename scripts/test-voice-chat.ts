@@ -12,6 +12,7 @@ import {
   extractLastAssistantTurn,
   getVoiceTurnToSpeak,
 } from "../src/lib/voice-chat";
+import { buildVoiceAwarePrompt } from "../src/lib/voice-chat-runtime";
 import type { RawEventFrame } from "../src/types/acp";
 
 let failures = 0;
@@ -150,6 +151,31 @@ console.log("\n=== voice chat: provider tools are not spoken ===");
     extractLastAssistantTurn(events, "tab-provider") === "Only final speech.",
     "provider command, MCP, and raw events stay out of TTS text",
   );
+}
+
+console.log("\n=== voice chat: prompt shaping remains tab scoped ===");
+{
+  const priorStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const enabled = new Set(["shellx.voiceChatMode.tab-voice"]);
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem(key: string): string | null {
+        return enabled.has(key) ? "1" : null;
+      },
+    },
+  });
+  try {
+    const voice = buildVoiceAwarePrompt("Explain the result", "tab-voice");
+    assert(voice.voiceReplyExpected, "enabled tab records that a spoken reply is expected");
+    assert(voice.prompt.startsWith("[voice chat]"), "enabled tab receives the bounded speech instruction");
+    assert(voice.prompt.endsWith("Explain the result"), "voice instruction preserves the user prompt exactly");
+    const silent = buildVoiceAwarePrompt("Keep text", "tab-text");
+    assert(!silent.voiceReplyExpected && silent.prompt === "Keep text", "another tab remains plain text");
+  } finally {
+    if (priorStorage) Object.defineProperty(globalThis, "localStorage", priorStorage);
+    else delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
 }
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} voice-chat tests`);

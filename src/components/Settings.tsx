@@ -23,6 +23,7 @@
  * startup code do not pull every Settings tab into their initial bundle.
  */
 import { useEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import "./Settings.css";
 import {
   ALL_SETTINGS_TABS,
   applyTheme,

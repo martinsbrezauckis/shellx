@@ -36,7 +36,7 @@ the expensive cross-platform matrix.
 
 Current synchronized ledger:
 
-<!-- shellx-final-surface-ledger: {"status":"ready","inventoryItems":1636,"inventoryCells":4898,"assigned":4898,"ready":4898,"missing":0} -->
+<!-- shellx-final-surface-ledger: {"status":"ready","inventoryItems":1633,"inventoryCells":4889,"assigned":4889,"ready":4889,"missing":0} -->
 
 The marker is checked against the JSON ledger. It describes source-level driver
 readiness only; installed candidate receipts, reviewed manual captures, and the
@@ -123,7 +123,7 @@ pnpm release:surface-prepare-macos-candidate -- \
   --candidate-stage signed-and-frozen \
   --execution-window immediately-before-publish \
   --run-id <16-to-64-lowercase-hex> \
-  --artifact /private/path/shellX_0.3.5_aarch64.dmg \
+  --artifact /private/path/shellX_0.3.51_aarch64.dmg \
   --installation-receipt /private/path/macos-installation.json \
   --application '/private/path/shellX.app/Contents/MacOS/shellX' \
   --profile /private/path/shellx-final-webdriver-<run-id> \
@@ -151,7 +151,7 @@ pnpm release:surface-run-macos-candidate -- \
   --execution-window immediately-before-publish \
   --run-id <same-run-id> \
   --preparation /private/path/preparation.json \
-  --artifact /private/path/shellX_0.3.5_aarch64.dmg \
+  --artifact /private/path/shellX_0.3.51_aarch64.dmg \
   --signature-receipt /private/path/macos-signature.json \
   --installation-receipt /private/path/macos-installation.json \
   --candidate-attestation /private/path/candidate.json \
@@ -363,7 +363,7 @@ the signature receipt from the exact frozen DMG:
 install -d -m 700 "$HOME/Library/Application Support/ShellXReleaseEvidence"
 
 pnpm release:surface-signature-macos -- \
-  --artifact /absolute/path/to/shellX_0.3.5_<arch>.dmg \
+  --artifact /absolute/path/to/shellX_0.3.51_<arch>.dmg \
   --out <new-private-macOS-signature-receipt>
 ```
 
@@ -383,7 +383,7 @@ Install the receipt-approved DMG into one absent, run-owned application target:
 
 ```bash
 pnpm release:surface-install-macos-dmg -- \
-  --artifact /absolute/path/to/shellX_0.3.5_<arch>.dmg \
+  --artifact /absolute/path/to/shellX_0.3.51_<arch>.dmg \
   --signature-receipt <exact-macOS-signature-receipt> \
   --target-app "$HOME/Library/Application Support/ShellXReleaseEvidence/shellx-final-install-<nonce>.app" \
   --out <new-private-macOS-installation-receipt>
@@ -468,7 +468,7 @@ cannot create a passing shipping receipt. Native Linux acceptance using the
 actual frozen `.deb` remains required. If the release intends to claim normal
 distro package installation rather than bounded package-payload acceptance, a
 separate disposable VM package-manager lane remains a blocker only if that
-normal package-manager behavior will be claimed for 0.3.5.
+normal package-manager behavior will be claimed for 0.3.51.
 
 The macOS DMG signature, copy-install, and exact finalization adapters have
 Linux-runnable parser, contract, adversarial-copy, and manifest-bound cleanup
@@ -489,8 +489,8 @@ generate `latest.json`, then create the public checksum manifest from the exact
 release-asset staging directory:
 
 ```bash
-pnpm release:updater-verify -- --artifact-root <release-assets-directory> --version 0.3.5 --tag v0.3.5
-pnpm release:updater-manifest -- --artifact-root <release-assets-directory> --version 0.3.5 --tag v0.3.5
+pnpm release:updater-verify -- --artifact-root <release-assets-directory> --version 0.3.51 --tag v0.3.51
+pnpm release:updater-manifest -- --artifact-root <release-assets-directory> --version 0.3.51 --tag v0.3.51
 pnpm release:checksums -- --artifact-root <release-assets-directory>
 (cd <release-assets-directory> && sha256sum -c SHA256SUMS)
 ```

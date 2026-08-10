@@ -4,9 +4,8 @@
  *
  * Role
  * A right-rail tab that surfaces ALL in-flight subprocesses the
- * shellX host has spawned: grok subprocesses (one per tab), ACP
- * terminals grok asked us to spawn via `terminal/*`, and user
- * terminals from the bottom-panel terminal tab. Future spawn
+ * ShellX host has spawned: provider subprocesses (one per tab), operator
+ * terminals from the bottom-panel Terminal, and host-Agent children. Future spawn
  * sources (host_mcp children, debug-api spawns) appear here
  * automatically once they land their own registry rows.
  *
@@ -14,7 +13,7 @@
  * Polls the Rust `list_background_tasks` command every 500ms while
  * the panel is visible. Each row carries:
  * - taskId stable key + signal target
- * - origin "grok" | "acp_term" | "user_term" | "host_mcp"
+ * - origin "grok" | "user_term" | "host_mcp"
  * - commandDisplay friendly cmd-line string
  * - pid, cpuPct, rssMb live metrics from one sysinfo pass per poll
  * - status "running" | "stopped" | "exited" | "killed"
@@ -42,7 +41,7 @@ import { ShellIcon } from "./icons";
 
 export interface TaskSnapshot {
   taskId: string;
-  origin: "grok" | "acp_term" | "user_term" | "host_mcp" | string;
+  origin: "grok" | "user_term" | "host_mcp" | string;
   commandDisplay: string;
   pid: number | null;
   cpuPct: number | null;
@@ -307,7 +306,7 @@ export function TasksPanel({
   }
 
  /* Group rows by origin for the panel. The Rust side already returns
- * a stable order (grok → acp_term → user_term); we just walk it and
+ * a stable order (grok → user_term → host_mcp); we just walk it and
  * insert section headers as origin changes. */
   const sections: { origin: string; rows: TaskSnapshot[] }[] = [];
   for (const t of filteredTasks) {
@@ -591,7 +590,6 @@ export function TasksPanel({
 function originLabel(o: string): string {
   switch (o) {
     case "grok": return "Grok subprocesses";
-    case "acp_term": return "ACP terminals";
     case "user_term": return "User terminals";
     case "host_mcp": return "Host MCP children";
     default: return o;
@@ -678,7 +676,7 @@ function outputLooksProblematic(output: string): boolean {
 }
 
 function isTerminalTask(task: TaskSnapshot): boolean {
-  return task.origin === "user_term" || task.origin === "acp_term";
+  return task.origin === "user_term";
 }
 
 interface TaskRowProps {

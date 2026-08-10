@@ -576,6 +576,7 @@ fn engine_waitlist_ref<'a>(
         .map(|engine| &engine.waitlist)
 }
 
+#[deny(clippy::expect_used, clippy::unwrap_used)]
 fn engine_waitlist_mut<'a>(
     state: &'a mut BrowserState,
     engine_id: &str,
@@ -588,6 +589,7 @@ fn engine_waitlist_mut<'a>(
     {
         return &mut state.engine_pool.engines[idx].waitlist;
     }
+    let engine_idx = state.engine_pool.engines.len();
     let webview_label = browser_engine_webview_label(engine_id);
     state.engine_pool.engines.push(BrowserEngineSnapshot {
         engine_id: engine_id.to_string(),
@@ -612,12 +614,7 @@ fn engine_waitlist_mut<'a>(
         waitlist: BrowserEngineWaitlistSnapshot::default(),
         updated_at_ms: now_ms(),
     });
-    &mut state
-        .engine_pool
-        .engines
-        .last_mut()
-        .expect("engine was just pushed")
-        .waitlist
+    &mut state.engine_pool.engines[engine_idx].waitlist
 }
 
 fn sync_engine_waitlist_compat_locked(state: &mut BrowserState, engine_id: &str) {

@@ -91,6 +91,7 @@ export interface ReleaseSurfaceDriverRunInput {
   candidateAttestationPath: string;
   installationReceiptPath: string;
   outputDir: string;
+  selectedDriverIds?: string[];
   nativeWebDriver?: ReleaseSurfaceWebDriverSession;
   macosNativeInput?: {
     helperPath: string;
@@ -101,6 +102,9 @@ export interface ReleaseSurfaceDriverRunInput {
 export interface ReleaseSurfaceDriverRunManifest {
   schema: typeof RELEASE_SURFACE_DRIVER_RUN_SCHEMA;
   mode: "final-frozen-candidate";
+  targetedClosure?: {
+    driverIds: string[];
+  };
   platform: ReleasePlatform;
   sourceCommit: string;
   version: string;
@@ -144,6 +148,47 @@ export interface ReleaseSurfaceDriverRunManifest {
 
 type FileIdentity = ReleaseSurfaceFileIdentity;
 
+export function releaseSurfaceDriverRunFailedDriverIds(
+  manifest: ReleaseSurfaceDriverRunManifest,
+  outputDir: string,
+): string[] {
+  const root = resolve(outputDir);
+  return manifest.driverReports.flatMap((row) => {
+    const reportPath = join(root, `${safeStem(row.driverId)}.report.json`);
+    const identity = identifyRegularFile(reportPath, `driver ${row.driverId} report`);
+    if (identity.basename !== row.basename || identity.sha256 !== row.sha256 || identity.bytes !== row.bytes) {
+      throw new Error(`driver ${row.driverId} report identity drifted after the complete discovery run`);
+    }
+    const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
+    return releaseSurfaceDriverPhaseReportPassed(report) ? [] : [row.driverId];
+  });
+}
+
+export function resolveReleaseSurfaceDriverSelection(
+  plan: FinalSurfaceDriverPlan,
+  platform: ReleasePlatform,
+  requestedDriverIds?: string[],
+): string[] {
+  const ready = plan.drivers
+    .filter((driver) => driverReadyOnPlatform(driver, platform))
+    .map((driver) => driver.id)
+    .sort();
+  if (requestedDriverIds === undefined) return ready;
+  const requested = requestedDriverIds.map((id) => id.trim()).filter(Boolean);
+  if (requested.length === 0) {
+    throw new Error("targeted closure requires at least one non-empty driver id");
+  }
+  if (new Set(requested).size !== requested.length) {
+    throw new Error("targeted closure driver ids must be unique");
+  }
+  const readySet = new Set(ready);
+  const unknown = requested.filter((id) => !readySet.has(id));
+  if (unknown.length > 0) {
+    throw new Error(`targeted closure names unavailable ${platform} drivers: ${unknown.join(", ")}`);
+  }
+  return [...requested].sort();
+}
+
 export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): ReleaseSurfaceDriverRunManifest {
   const root = resolve(input.rootDir);
   const outputDir = resolve(input.outputDir);
@@ -154,7 +199,20 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
       + `/${planVerification.counts.inventoryCells} platform cells, missing ${planVerification.counts.missing}`,
     );
   }
-  const applicable = input.inventory.items.filter((surface) => surface.platforms.includes(input.platform));
+  const selectedDriverIds = resolveReleaseSurfaceDriverSelection(
+    input.plan,
+    input.platform,
+    input.selectedDriverIds,
+  );
+  const selectedDriverIdSet = new Set(selectedDriverIds);
+  const selectedSurfaceIds = new Set(input.plan.assignments
+    .filter((assignment) => selectedDriverIdSet.has(assignment.driverId))
+    .map((assignment) => assignment.surfaceId));
+  const applicable = input.inventory.items.filter((surface) =>
+    surface.platforms.includes(input.platform) && selectedSurfaceIds.has(surface.id));
+  if (input.selectedDriverIds !== undefined && applicable.length === 0) {
+    throw new Error(`targeted closure drivers have no ${input.platform} inventory assignments`);
+  }
   if (existsSync(outputDir)) throw new Error(`release driver output already exists: ${outputDir}`);
 
   const artifact = identifyRegularFile(input.artifactPath, "candidate artifact");
@@ -257,7 +315,8 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
 
   const driverReports: ReleaseSurfaceDriverRunManifest["driverReports"] = [];
   const nativeDriverIds = new Set(input.plan.drivers
-    .filter((driver) => driverReadyOnPlatform(driver, input.platform)
+    .filter((driver) => selectedDriverIdSet.has(driver.id)
+      && driverReadyOnPlatform(driver, input.platform)
       && releaseSurfaceDriverRequiresNativeWebDriver(driver.id, driver.kind, input.platform))
     .filter((driver) => (assignmentsByDriver.get(driver.id) ?? []).length > 0)
     .map((driver) => driver.id));
@@ -268,7 +327,8 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
     throw new Error("ready native WebDriver drivers require a live same-process session");
   }
   const macosNativeInputDriverIds = new Set(input.plan.drivers
-    .filter((driver) => input.platform === "macos-installed"
+    .filter((driver) => selectedDriverIdSet.has(driver.id)
+      && input.platform === "macos-installed"
       && driverReadyOnPlatform(driver, input.platform)
       && releaseSurfaceDriverSupportsMacosNativeInput(driver.id, driver.kind))
     .filter((driver) => (assignmentsByDriver.get(driver.id) ?? []).length > 0)
@@ -297,7 +357,10 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
         bindingReceiptPath: input.macosNativeInput!.bindingReceiptPath,
       })
     : undefined;
-  for (const driver of input.plan.drivers.filter((candidate) => driverReadyOnPlatform(candidate, input.platform)).sort((a, b) => a.id.localeCompare(b.id))) {
+  for (const driver of input.plan.drivers
+    .filter((candidate) => selectedDriverIdSet.has(candidate.id)
+      && driverReadyOnPlatform(candidate, input.platform))
+    .sort((a, b) => a.id.localeCompare(b.id))) {
     const assignments = assignmentsByDriver.get(driver.id) ?? [];
     if (assignments.length === 0) continue;
     const described = describeReadyDriver(root, driver);
@@ -378,15 +441,19 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
     } catch (error) {
       afterProbeError = error instanceof Error ? error.message : String(error);
     }
-    if (result.status !== 0) {
-      const suffix = afterProbeError ? `; after-driver runtime probe also failed: ${afterProbeError}` : "";
-      throw new Error(`release driver ${driver.id} failed: ${(result.stderr || result.stdout).trim()}${suffix}`);
-    }
     if (!afterProbe) throw new Error(`release driver ${driver.id} lost its attested runtime after execution: ${afterProbeError}`);
+    if (!existsSync(reportPath)) {
+      throw new Error(`release driver ${driver.id} failed without a durable report: ${(result.stderr || result.stdout).trim()}`);
+    }
     const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
     const errors = validateReleaseSurfaceDriverReport(request, report);
     if (errors.length > 0) throw new Error(`release driver ${driver.id} returned invalid evidence: ${errors.join("; ")}`);
-    if (!releaseSurfaceDriverPhaseReportPassed(report)) throw new Error(`release driver ${driver.id} reported failed outcomes`);
+    const reportPassed = releaseSurfaceDriverPhaseReportPassed(report);
+    if (result.status !== 0 && reportPassed) {
+      throw new Error(
+        `release driver ${driver.id} exited unsuccessfully despite a passing report: ${(result.stderr || result.stdout).trim()}`,
+      );
+    }
     const controllerAfterErrors = verifyReleaseSurfaceControllerBinding({
       rootDir: root,
       binding: controller,
@@ -437,6 +504,9 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
   const manifest: ReleaseSurfaceDriverRunManifest = {
     schema: RELEASE_SURFACE_DRIVER_RUN_SCHEMA,
     mode: "final-frozen-candidate",
+    ...(input.selectedDriverIds !== undefined
+      ? { targetedClosure: { driverIds: selectedDriverIds } }
+      : {}),
     platform: input.platform,
     sourceCommit: input.sourceCommit,
     version: input.version,

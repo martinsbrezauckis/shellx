@@ -6,6 +6,8 @@ import { readRustModuleFamily } from "./read-rust-module-family";
 const requiredFiles = [
   "src/lib/agent-cli-setup.ts",
   "src/components/AgentCliSetupAssistant.tsx",
+  "src/components/AgentCliSetupAssistant.css",
+  "src/components/AgentCliSetupDialog.lazy.tsx",
   "src/lib/debug-agent-cli-setup-fixture.ts",
   "src/components/AgentCliStatusCard.tsx",
   "src/components/ConnectionEditor.tsx",
@@ -23,6 +25,8 @@ for (const file of requiredFiles) {
 
 const frontend = readFileSync("src/lib/agent-cli-setup.ts", "utf8");
 const assistant = readFileSync("src/components/AgentCliSetupAssistant.tsx", "utf8");
+const assistantCss = readFileSync("src/components/AgentCliSetupAssistant.css", "utf8");
+const lazyDialog = readFileSync("src/components/AgentCliSetupDialog.lazy.tsx", "utf8");
 const app = readFileSync("src/App.tsx", "utf8");
 const bottomPanel = readFileSync("src/components/BottomPanel.tsx", "utf8");
 const debugFixture = readFileSync("src/lib/debug-agent-cli-setup-fixture.ts", "utf8");
@@ -154,7 +158,7 @@ assert(
     && assistant.includes("fixture?.confirmation?.confirmationId === confirmationId")
     && (assistant.match(/disabled=\{Boolean\(fixture\)/g)?.length ?? 0) >= 3
     && assistant.includes("fixture?.allowOwnedInstall !== true")
-    && assistant.includes("disabled={loading || Boolean(fixture)}"),
+    && assistant.includes("disabled={loading || Boolean(fixture) || !inTauri()}"),
   "synthetic Agent CLI setup state must bypass discovery and confirmation cleanup while disabling every external, clipboard, provider, and installer action",
 );
 assert(
@@ -183,6 +187,15 @@ assert(
     agentCliStatusCard.includes("AgentCliSetupDialog") &&
     !agentCliStatusCard.includes("<AgentCliSetupAssistant"),
   "Agent CLIs card must expose compact Set up action that opens a modal dialog",
+);
+assert(
+  app.includes('lazy(() => import("./components/AgentCliSetupDialog.lazy"))') &&
+    connectionEditor.includes('lazy(() => import("./AgentCliSetupDialog.lazy"))') &&
+    agentCliStatusCard.includes('lazy(() => import("./AgentCliSetupDialog.lazy"))') &&
+    app.includes('label="Agent CLI Setup Assistant"') &&
+    connectionEditor.includes('label="Agent CLI Setup Assistant"') &&
+    agentCliStatusCard.includes('label="Agent CLI Setup Assistant"'),
+  "every Agent CLI setup entry point must retain the shared recoverable lazy boundary",
 );
 assert(
   providerRuntime.includes("WINDOWS_PROVIDER_SHELL_PRELUDE") &&
@@ -287,10 +300,18 @@ assert(
   "public API docs and changelog must describe the user-visible setup assistant",
 );
 assert(
-  !readFileSync("src/App.css", "utf8").includes("var(--surface-0)") &&
-    readFileSync("src/App.css", "utf8").includes("agent-cli-setup-dialog") &&
-    readFileSync("src/App.css", "utf8").includes("background: var(--surface"),
+  lazyDialog.includes('import "./AgentCliSetupAssistant.css"') &&
+    lazyDialog.includes("AgentCliSetupDialog as default") &&
+    !assistantCss.includes("var(--surface-0)") &&
+    assistantCss.includes("agent-cli-setup-dialog") &&
+    assistantCss.includes("background: var(--surface"),
   "setup dialog CSS must use defined opaque surface tokens, not undefined transparent surface-0",
+);
+assert(
+  assistant.includes('import { inTauri } from "../lib/tauri-bridge"') &&
+    assistant.includes('"Agent CLI discovery is available in the ShellX desktop app."') &&
+    assistant.includes("!inTauri()"),
+  "plain-browser setup previews must disclose the desktop boundary without exposing raw IPC errors",
 );
 assert(
   testSuiteManifest.includes('["tsx","scripts/test-agent-cli-setup.ts"]'),

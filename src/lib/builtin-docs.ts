@@ -159,7 +159,7 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
   report copy, agent diagnostics, and stop controls.
 - The shellXagent API exposes app state, prompts, screenshots, previews,
   settings, vault actions, build state, and diagnostics over loopback.
-- API access uses the local bearer token stored under \`~/.shellx\`.
+- API access uses a private per-user bearer resolved internally by ShellX-owned clients.
 - The updater checks signed release manifests and offers in-app updates
   when a published release is available.
 
@@ -326,6 +326,9 @@ any required API keys. After a session connects, open the right rail's
 Open **Settings -> Connectors** to add bot tokens and allowlisted sender
 ids. Telegram direct chats and Discord DMs can land in the connector
 inbox or route into Session chat and return the active session reply.
+Delivery and Session chat approval are independent controls. Session chat
+keeps per-message Review first enabled unless the operator separately selects
+Auto-dispatch.
 For Telegram, allowlisting a group chat authorizes every participant in
 that group; keep per-message approval enabled or use a private chat when
 Session chat can dispatch agent work.

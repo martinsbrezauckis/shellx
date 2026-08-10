@@ -18,14 +18,17 @@
   text-transform: capitalize;
 }
 .shellx-browser-bookmark-refresh-badge {
-  border-color: rgba(245, 158, 11, 0.42);
-  color: #fbbf24;
+  border-color: var(--shellx-browser-workflow-warn-border);
+  color: var(--shellx-browser-workflow-warn-ink);
+}
+.shellx-browser-bookmark-sidecar.has-workflow-preview {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 .shellx-browser-workflow-preview {
   display: grid;
   gap: 3px;
   border: 1px solid var(--hairline);
-  border-left: 3px solid rgba(59, 130, 246, 0.55);
+  border-left: 3px solid var(--shellx-browser-ref-ink);
   border-radius: var(--radius-button);
   padding: 8px;
   background: var(--surface-2);
@@ -40,5 +43,5 @@
   line-height: 1.35;
 }
 .shellx-browser-workflow-preview.error {
-  border-left-color: rgba(239, 68, 68, 0.62);
+  border-left-color: var(--err);
 }

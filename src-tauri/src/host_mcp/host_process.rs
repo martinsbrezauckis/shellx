@@ -232,6 +232,7 @@ pub(super) async fn tool_process_signal(
 }
 
 /// process_stats — extended sysinfo for one task.
+#[deny(clippy::expect_used, clippy::unwrap_used)]
 pub(super) async fn tool_process_stats(
     args: Value,
     ctx: &Arc<HostMcpContext>,
@@ -245,7 +246,7 @@ pub(super) async fn tool_process_stats(
         .stats(task_id)
         .await
         .ok_or_else(|| format!("unknown taskId: {}", task_id))?;
-    Ok(serde_json::to_value(stats).unwrap())
+    serde_json::to_value(stats).map_err(|error| format!("serialize process stats: {error}"))
 }
 
 /// process_attach_stdout — snapshot the tail buffer.

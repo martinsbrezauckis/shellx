@@ -27,6 +27,8 @@ const DESTINATION_BY_SURFACE: Record<string, SetupDestination> = Object.fromEntr
 DESTINATION_BY_SURFACE["src/components/ShellxSetupGuide.tsx:[data-debug-id=\"shellx-setup-guide-dismiss\"]"] = "dismiss";
 const GUIDE = "[data-debug-id='shellx-setup-guide']";
 const SETTINGS = "[role='dialog'][aria-label='Settings']";
+const AGENT_CLI_SETUP = "[data-debug-id='agent-cli-setup-dialog']";
+const AGENT_CLI_ASSISTANT = "[data-debug-id='agent-cli-setup-assistant']";
 const VAULT = "[data-debug-id='vault-workspace-modal']";
 const REQUESTS = "[data-debug-id='vault-request-center-popover'][role='dialog']";
 const REQUEST_TOGGLE = "[data-debug-id='header-vault-request-center'][aria-expanded='true']";
@@ -37,7 +39,7 @@ export const SETUP_GUIDE_ORACLES = [
   "ui:activation:setup-guide-vault-opened",
   "ui:activation:setup-guide-browser-opened",
   "ui:activation:setup-guide-download-settings-opened",
-  "ui:activation:setup-guide-agent-settings-opened",
+  "ui:activation:setup-guide-agent-cli-setup-opened",
   "ui:activation:setup-guide-requests-opened",
   "ui:activation:setup-guide-dismissed",
 ] as const;
@@ -79,19 +81,25 @@ export async function exerciseSetupGuideControl(
       originalWindow = switched.originalHandle;
       browserOpened = true;
       await waitForBrowserWindow(connection, true);
-    } else if (destination === "downloads" || destination === "agents") {
-      const tab = destination === "downloads" ? "general" : "shellxagent";
+    } else if (destination === "downloads") {
       await waitForReleaseSurfaceInstalledInputElement(webdriver, SETTINGS, { timeoutMs: 5_000, pollMs: 50 });
       await waitForReleaseSurfaceInstalledInputElement(
         webdriver,
-        `[data-debug-id='settings-tab-${tab}'][aria-selected='true']`,
+        "[data-debug-id='settings-tab-general'][aria-selected='true']",
         { timeoutMs: 5_000, pollMs: 50 },
       );
       await waitForReleaseSurfaceInstalledInputElement(
         webdriver,
-        `#settings-tab-panel[aria-labelledby='settings-tab-${tab}']`,
+        "#settings-tab-panel[aria-labelledby='settings-tab-general']",
         { timeoutMs: 5_000, pollMs: 50 },
       );
+    } else if (destination === "agents") {
+      await waitForReleaseSurfaceInstalledInputElement(webdriver, AGENT_CLI_SETUP, { timeoutMs: 5_000, pollMs: 50 });
+      await waitForReleaseSurfaceInstalledInputElement(webdriver, AGENT_CLI_ASSISTANT, { timeoutMs: 5_000, pollMs: 50 });
+      const state = await apiJson(connection, "GET", "/state/ui");
+      if (state.agentCliSetupFixture !== "live-setup") {
+        throw new Error(`Setup Guide Agents destination opened ${String(state.agentCliSetupFixture)} instead of live CLI setup`);
+      }
     } else if (destination === "requests") {
       await waitForReleaseSurfaceInstalledInputElement(webdriver, REQUESTS, { timeoutMs: 5_000, pollMs: 50 });
       await waitForReleaseSurfaceInstalledInputElement(webdriver, REQUEST_TOGGLE, { timeoutMs: 5_000, pollMs: 50 });
@@ -147,7 +155,8 @@ async function prepare(
   if (!settingsTab || typeof state.setupGuideDismissed !== "boolean") {
     throw new Error("Setup Guide fixture could not read its exact Settings and dismissal baseline");
   }
-  if (state.settingsOpen !== false || state.vaultRequestCenterOpen !== false) {
+  if (state.settingsOpen !== false || state.vaultRequestCenterOpen !== false
+    || state.agentCliSetupFixture !== "closed") {
     throw new Error("Setup Guide fixture requires closed isolated destination surfaces");
   }
   await postUi(connection, {
@@ -184,6 +193,7 @@ async function restore(
     source: "final-surface-setup-guide-destination-cleanup",
   });
   await waitForReleaseSurfaceInstalledInputElementAbsent(webdriver, SETTINGS, { timeoutMs: 5_000, pollMs: 50 });
+  await waitForReleaseSurfaceInstalledInputElementAbsent(webdriver, AGENT_CLI_SETUP, { timeoutMs: 5_000, pollMs: 50 });
   await waitForReleaseSurfaceInstalledInputElementAbsent(webdriver, VAULT, { timeoutMs: 5_000, pollMs: 50 });
   await waitForReleaseSurfaceInstalledInputElementAbsent(webdriver, REQUESTS, { timeoutMs: 5_000, pollMs: 50 });
   if (baseline.setupGuideDismissed) {
@@ -193,7 +203,8 @@ async function restore(
   }
   const state = await apiJson(connection, "GET", "/state/ui");
   if (state.settingsTab !== baseline.settingsTab || state.settingsOpen !== false
-    || state.vaultRequestCenterOpen !== false || state.setupGuideDismissed !== baseline.setupGuideDismissed) {
+    || state.vaultRequestCenterOpen !== false || state.agentCliSetupFixture !== "closed"
+    || state.setupGuideDismissed !== baseline.setupGuideDismissed) {
     throw new Error("Setup Guide cleanup did not restore its exact UI baseline");
   }
 }
@@ -212,7 +223,7 @@ function observedEffect(destination: SetupDestination): string {
   if (destination === "browser") return "A native WebDriver click opened the separately titled ShellX Browser window and its exact Browser state.";
   if (destination === "dismiss") return "A native WebDriver click dismissed the Setup Guide and changed its exact local dismissal state before restoration.";
   if (destination === "downloads") return "A native WebDriver click opened Settings with General selected and its exact tabpanel visible.";
-  if (destination === "agents") return "A native WebDriver click opened Settings with ShellX Agent selected and its exact tabpanel visible.";
+  if (destination === "agents") return "A native WebDriver click opened the live Agent CLI setup assistant for the active execution target.";
   if (destination === "requests") return "A native WebDriver click expanded the Vault Request Center and exposed its exact dialog owner.";
   return "A native WebDriver click opened the Vault workspace with the exact setup-or-overview intent derived from metadata-only Vault status.";
 }

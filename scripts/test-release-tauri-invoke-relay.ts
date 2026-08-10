@@ -71,7 +71,7 @@ const allowlist = readFileSync("src-tauri/src/release_tauri_command_allowlist.tx
   .trim()
   .split(/\r?\n/);
 assert.equal(RELEASE_TAURI_INVOKE_EVENT, "release-test-tauri-invoke");
-assert.equal(allowlist.length, 154);
+assert.equal(allowlist.length, 153);
 assert.equal(new Set(allowlist).size, allowlist.length);
 assert(allowlist.includes("shellx_browser_fill_user_vault_secret"));
 assert(allowlist.includes("release_test_take_native_picker"));

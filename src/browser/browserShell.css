@@ -4,37 +4,47 @@
   --shellx-browser-viewport-surface: #050505;
   --shellx-browser-viewport-card: rgba(9, 9, 9, 0.92);
   --shellx-browser-ref-ink: #9cc6ff;
+  --shellx-browser-workflow-warn-border: rgba(251, 191, 36, 0.42);
+  --shellx-browser-workflow-warn-ink: #fbbf24;
 }
 
 .shellx-browser-app[data-color-mode="light"] {
-  --ink-3: #62695e;
-  --ink-4: #727a6f;
+  color-scheme: light;
+  --ink-3: #5e6459;
+  --ink-4: #62685d;
   --shellx-browser-viewport-grid: rgba(20, 21, 18, 0.055);
   --shellx-browser-viewport-surface: #e9ece7;
   --shellx-browser-viewport-card: rgba(255, 255, 255, 0.94);
   --shellx-browser-ref-ink: #245ca6;
+  --shellx-browser-workflow-warn-border: rgba(138, 75, 6, 0.42);
+  --shellx-browser-workflow-warn-ink: #8a4b06;
 }
 
 .shellx-browser-app[data-color-mode="dark"] {
-  --ink-3: #8f8f8b;
-  --ink-4: #7d7d79;
+  color-scheme: dark;
+  --ink-3: #92928d;
+  --ink-4: #83837e;
 }
 
 @media (prefers-color-scheme: light) {
   .shellx-browser-app[data-color-mode="system"] {
-    --ink-3: #62695e;
-    --ink-4: #727a6f;
+    color-scheme: light;
+    --ink-3: #5e6459;
+    --ink-4: #62685d;
     --shellx-browser-viewport-grid: rgba(20, 21, 18, 0.055);
     --shellx-browser-viewport-surface: #e9ece7;
     --shellx-browser-viewport-card: rgba(255, 255, 255, 0.94);
     --shellx-browser-ref-ink: #245ca6;
+    --shellx-browser-workflow-warn-border: rgba(138, 75, 6, 0.42);
+    --shellx-browser-workflow-warn-ink: #8a4b06;
   }
 }
 
 @media (prefers-color-scheme: dark) {
   .shellx-browser-app[data-color-mode="system"] {
-    --ink-3: #8f8f8b;
-    --ink-4: #7d7d79;
+    color-scheme: dark;
+    --ink-3: #92928d;
+    --ink-4: #83837e;
   }
 }
 
@@ -157,4 +167,101 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* Shared primitives required by the standalone Browser entry point. */
+* {
+  scrollbar-width: thin;
+}
+
+.sx-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: -0.125em;
+  stroke: currentColor;
+}
+
+button .sx-icon {
+  pointer-events: none;
+}
+
+.settings-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-pill.active {
+  border-color: var(--ink-3);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.settings-pill:disabled,
+.settings-pill[aria-disabled="true"] {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.debug-highlight-overlay-root {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  pointer-events: none;
+}
+
+.debug-highlight-box {
+  position: fixed;
+  box-sizing: border-box;
+  border: 3px solid #1e88e5;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.debug-highlight-label {
+  position: fixed;
+  box-sizing: border-box;
+  max-width: min(280px, calc(100vw - 16px));
+  overflow: hidden;
+  padding: 4px 8px;
+  border: 1px solid #1e88e5;
+  border-radius: 5px;
+  color: #050607;
+  font: 700 12px/1.25 var(--sans);
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-highlight-label-above,
+.debug-highlight-label-below {
+  transform: translateY(0);
+}
+
+.shellx-browser-field-row select,
+.shellx-browser-download-folder input,
+.shellx-browser-history-filters input,
+.shellx-browser-history-filters select,
+.shellx-browser-bookmark-editor select,
+.shellx-browser-bookmark-editor input,
+.shellx-browser-bookmark-manager-row select,
+.shellx-browser-bookmark-row-main input,
+.shellx-browser-options-section input[type="url"],
+.shellx-browser-options-section input[type="password"],
+.shellx-browser-options-section select,
+.shellx-browser-address-row input,
+.shellx-browser-agent-compose textarea,
+.shellx-browser-agent-compose select,
+.shellx-browser-dev-select select,
+.shellx-browser-personal-lock-overlay input {
+  border-color: var(--control-border);
 }

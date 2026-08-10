@@ -7,8 +7,14 @@ import type { FinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
 import type { ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
 import type { ReleaseSurfaceDriverReport, ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
 import {
+  projectCollapseDefaults,
+  reconcileProjectCollapse,
+  toggleProjectCollapse,
+} from "../src/lib/projectCollapse";
+import {
   releaseSurfaceControllerBindingFixture,
   releaseSurfaceFixtureSourceCommit,
+  releaseSurfaceFixtureVersion,
 } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 
@@ -42,6 +48,22 @@ let fixture: ChildProcess | null = null;
 try {
   const inventory = JSON.parse(readFileSync(join(root, "release/surface-inventory.json"), "utf8")) as ReleaseSurfaceInventory;
   const plan = JSON.parse(readFileSync(join(root, "release/surface-driver-plan.json"), "utf8")) as FinalSurfaceDriverPlan;
+  const css = readFileSync(join(root, "src/App.css"), "utf8");
+  const leftRailSource = readFileSync(join(root, "src/components/LeftRail.tsx"), "utf8");
+  const lifecycleSource = readFileSync(join(root, "scripts/release-drivers/ui-control-left-rail-lifecycle.ts"), "utf8");
+  assert.match(css, /\.left-hdr \.left-collapse-all\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;/s);
+  assert.match(css, /\.left-hdr \.plus-btn\s*\{[^}]*flex:\s*0 0 24px;/s);
+  assert.match(css, /\.left-hdr \.plus-btn\s*\{[^}]*flex-basis:\s*28px;/s);
+  assert.match(leftRailSource, /if \(!userDataReady\)\s*\{[\s\S]*data-user-data-ready="false"[\s\S]*aria-busy="true"/);
+  assert.match(leftRailSource, /data-user-data-ready="true"[\s\S]*aria-busy="false"/);
+  assert.match(lifecycleSource, /wait\(input, "\[data-debug-id='left-rail'\]\[data-user-data-ready='true'\]"\)/);
+  assert.deepEqual(projectCollapseDefaults([{ id: "first" }, { id: "second" }], {}), { first: false, second: true });
+  assert.deepEqual(toggleProjectCollapse({}, "fresh"), { fresh: false }, "a missing collapse key expands on its first click");
+  assert.deepEqual(
+    reconcileProjectCollapse([{ id: "fresh" }], { fresh: false }, { fresh: true }),
+    { fresh: false },
+    "post-render reconciliation preserves an immediate user expand",
+  );
   const planned = plan.assignments.filter((assignment) => assignment.driverId === driverId);
   assert.equal(planned.length, 24, "left-rail lifecycle driver must own exactly 24 reversible controls");
   assert.equal(new Set(planned.map((assignment) => assignment.surfaceId)).size, 24);
@@ -66,7 +88,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", profileRoot,
     "--left-rail-lifecycle",
@@ -84,7 +106,7 @@ try {
     driverKind: "ui-control",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: inventory.digest,
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture(

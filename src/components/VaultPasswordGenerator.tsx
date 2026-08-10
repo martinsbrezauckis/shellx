@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type JSX, type MouseEvent } from "react";
 
 import { ShellIcon } from "./icons";
+import "./VaultPasswordGenerator.css";
 import {
   clearVaultPasswordPocket,
   DEFAULT_VAULT_PASSWORD_OPTIONS,

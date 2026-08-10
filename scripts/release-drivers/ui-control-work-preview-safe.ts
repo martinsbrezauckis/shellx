@@ -465,10 +465,6 @@ function finalize(outcome: ReleaseSurfaceDriverOutcome, message: string): Releas
   return outcome;
 }
 
-function stringOrNull(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
 async function delay(): Promise<void> {
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
 }

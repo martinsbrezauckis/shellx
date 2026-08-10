@@ -7,12 +7,9 @@ import type { FinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
 import type { ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
 import { createReleaseSurfaceInstalledInputSession } from "./lib/release-surface-installed-input-client";
 import type { ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
-import { releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
-import {
-  exercisePermissionDecisionControls,
-  exercisePermissionDecisionMarkers,
-} from "./release-drivers/ui-permission-decision-lifecycle";
+import { exercisePermissionDecisionControls } from "./release-drivers/ui-permission-decision-lifecycle";
 
 const root = resolve(import.meta.dirname, "..");
 const temp = mkdtempSync(join(tmpdir(), "shellx-ui-permission-decision-"));
@@ -32,18 +29,10 @@ const controllerFiles = [
   "scripts/release-drivers/ui-permission-decision-lifecycle.ts",
 ];
 const controlNames = new Set([
-  'src/components/PermissionModal.tsx:[data-debug-id="surface-components-permissionmodal-1"]',
-  'src/components/PermissionModal.tsx:role=button;name="Allow"',
-  'src/components/PermissionModal.tsx:role=button;name="Deny"',
   'src/components/PermissionPill.tsx:[data-debug-id="surface-components-permissionpill-1"]',
   'src/components/PermissionPill.tsx:[data-debug-id="surface-components-permissionpill-3"]',
   'src/components/PermissionPill.tsx:[title="Allow this tool every time without asking"]',
 ]);
-const markerNames = new Set([
-  "surface-components-permissionmodal-1",
-  "surface-components-permissionmodal-2",
-]);
-
 let fixture: ChildProcess | null = null;
 try {
   mkdirSync(shellxHome, { recursive: true, mode: 0o700 });
@@ -56,7 +45,7 @@ try {
     "--session-id", sessionId,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", profileRoot,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -67,12 +56,7 @@ try {
   assertManifest(
     "scripts/release-drivers/ui-control-permission-decision-lifecycle-installed.ts",
     "ui-control-permission-decision-lifecycle-installed",
-    6,
-  );
-  assertManifest(
-    "scripts/release-drivers/ui-debug-permission-decision-lifecycle-installed.ts",
-    "ui-debug-permission-decision-lifecycle-installed",
-    1,
+    3,
   );
 
   const controlRequest = createRequest(
@@ -92,24 +76,8 @@ try {
     installedInput,
     controlRequest.assignments,
   );
-  assert.equal(controlOutcomes.length, 6);
+  assert.equal(controlOutcomes.length, 3);
   assert(controlOutcomes.every(passed), JSON.stringify(controlOutcomes, null, 2));
-
-  const markerRequest = createRequest(
-    candidateBase,
-    webdriverBase,
-    ports.candidatePort,
-    "ui-debug-permission-decision-lifecycle-installed",
-    "ui-debug-surface",
-    markerNames,
-  );
-  const markerOutcomes = await exercisePermissionDecisionMarkers(
-    { base: candidateBase, token },
-    installedInput,
-    markerRequest.assignments,
-  );
-  assert.equal(markerOutcomes.length, 2);
-  assert(markerOutcomes.every(passed), JSON.stringify(markerOutcomes, null, 2));
 
   const auditResponse = await fetch(candidateBase + "/audit", {
     headers: { Authorization: "Bearer " + token },
@@ -127,25 +95,19 @@ try {
   assert.equal(audit.permissionFixtureAction, null);
   assert.equal(audit.permissionDecision, null);
   const permissionClicks = audit.clickedSelectors.filter((selector) => (
-    selector.includes("permissionmodal")
-    || selector.includes("permission-modal")
-    || selector.includes("permissionpill")
+    selector.includes("permissionpill")
     || selector.includes("permission-pill")
   ));
-  assert.equal(permissionClicks.length, 6);
+  assert.equal(permissionClicks.length, 3);
 
   const plan = JSON.parse(readFileSync(join(root, "release/surface-driver-plan.json"), "utf8")) as FinalSurfaceDriverPlan;
   const permissionAssignments = plan.assignments.filter((assignment) => (
-    assignment.surfaceId.includes("@src/components/PermissionModal.tsx")
-    || assignment.surfaceId.includes("@src/components/PermissionPill.tsx")
+    assignment.surfaceId.includes("@src/components/PermissionPill.tsx")
   ));
-  assert.equal(permissionAssignments.length, 10);
+  assert.equal(permissionAssignments.length, 5);
   assert.equal(permissionAssignments.filter((assignment) => (
     assignment.driverId === "ui-control-permission-decision-lifecycle-installed"
-  )).length, 6);
-  assert.equal(permissionAssignments.filter((assignment) => (
-    assignment.driverId === "ui-debug-permission-decision-lifecycle-installed"
-  )).length, 2);
+  )).length, 3);
   assert.equal(permissionAssignments.filter((assignment) => (
     assignment.driverId === "ui-debug-surface-installed"
   )).length, 2);
@@ -153,7 +115,7 @@ try {
     assignment.driverId.endsWith("-backlog-installed")
   )).length, 0);
 
-  console.log("Permission decision lifecycle passed: 6 native action transitions, 2 owned modal markers, 0 backlog");
+  console.log("Permission decision lifecycle passed: 3 native pill transitions, 2 passive pill markers, 0 backlog");
 } finally {
   if (fixture && fixture.exitCode === null && fixture.signalCode === null) fixture.kill("SIGTERM");
   if (fixture) await waitForExit(fixture);
@@ -210,7 +172,7 @@ function createRequest(
     driverKind,
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: inventory.digest,
     artifact: { basename: "shellx", sha256: "d".repeat(64) },
     controller: {} as ReleaseSurfaceDriverRequest["controller"],

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { syntheticReleaseSurfaceControllerBinding } from "./fixtures/release-surface-controller-binding-fixture";
+import { syntheticReleaseSurfaceControllerBinding, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 import {
   validateReleaseSurfaceDriverRequest,
@@ -314,7 +314,7 @@ function requestWithoutNativeBinding(
     driverKind: manifest.kind,
     platform: macos ? "macos-installed" : "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: "c".repeat(64),
     artifact: { basename: "shellx", sha256: executableSha256 },
     controller: syntheticReleaseSurfaceControllerBinding(sourceCommit),

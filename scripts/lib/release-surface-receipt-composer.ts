@@ -270,7 +270,16 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
   const parsedProfileCleanup = JSON.parse(
     readFileSync(profileCleanupPath, "utf8"),
   ) as ReleaseSurfaceRunProfileCleanupReceipt;
-  const candidateTeardownEvidenceId = addEvidence("candidate-teardown", candidateTeardownPath);
+  const candidateTeardownEvidenceId = "candidate-teardown";
+  if (evidenceArtifacts.some((artifact) => artifact.id === candidateTeardownEvidenceId)) {
+    throw new Error(`evidence id ${candidateTeardownEvidenceId} is duplicated`);
+  }
+  evidenceArtifacts.push({
+    id: candidateTeardownEvidenceId,
+    relativePath: candidateTeardownIdentity.relativePath,
+    sha256: candidateTeardownIdentity.sha256,
+    bytes: candidateTeardownIdentity.bytes,
+  });
   if (webdriverLifecyclePath) addEvidence("webdriver-lifecycle", webdriverLifecyclePath);
   addEvidence("run-profile-cleanup", profileCleanupPath);
   let parsedWebDriverBinding: ReleaseSurfaceWebDriverBindingEvidence | null = null;
@@ -655,6 +664,9 @@ function validateRunManifest(
   manifest: ReleaseSurfaceDriverRunManifest,
   input: ComposeFinalSurfaceReceiptInput,
 ): void {
+  if (manifest.targetedClosure) {
+    throw new Error("targeted closure driver manifest cannot replace the complete discovery manifest");
+  }
   requireOnlyKeys(manifest, [
     "schema", "mode", "platform", "sourceCommit", "version", "inventoryDigest", "startedAt",
     "completedAt", "controller", "artifact", "signatureReceipt", "candidateAttestation",

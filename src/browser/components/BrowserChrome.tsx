@@ -26,7 +26,6 @@ interface BrowserChromeProps {
   headerProfileId: string;
   headerProfileDescription?: string | null;
   personalLock?: BrowserPersonalLockSettings | null;
-  personalTabLocked: boolean;
   personalLockAttention: boolean;
   canHandOffActiveTab: boolean;
   canTakeBackActiveTab: boolean;
@@ -129,7 +128,6 @@ export function BrowserChrome({
   headerProfileId,
   headerProfileDescription,
   personalLock,
-  personalTabLocked,
   personalLockAttention,
   canHandOffActiveTab,
   canTakeBackActiveTab,

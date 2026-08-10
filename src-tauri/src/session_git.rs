@@ -607,17 +607,11 @@ async fn command_context_with_provider(
             .or_else(|| debug.get("cwd").and_then(|v| v.as_str()))
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        if let Some(next_cwd) = debug_cwd {
-            cwd = next_cwd.to_string();
-            has_cwd = true;
-        }
+        set_context_cwd_if_missing(&mut cwd, &mut has_cwd, debug_cwd);
     }
     if !has_classic_session {
         if let Some(provider) = provider_context {
-            if !has_cwd {
-                cwd = provider.cwd.trim().to_string();
-                has_cwd = !cwd.is_empty();
-            }
+            set_context_cwd_if_missing(&mut cwd, &mut has_cwd, Some(&provider.cwd));
             match provider.transport {
                 ProviderExecutionTransport::Local => {
                     transport = "local".to_string();
@@ -660,6 +654,16 @@ async fn command_context_with_provider(
         wsl_distro,
         ssh_config,
         has_cwd,
+    }
+}
+
+fn set_context_cwd_if_missing(cwd: &mut String, has_cwd: &mut bool, candidate: Option<&str>) {
+    if *has_cwd {
+        return;
+    }
+    if let Some(next_cwd) = candidate.map(str::trim).filter(|value| !value.is_empty()) {
+        *cwd = next_cwd.to_string();
+        *has_cwd = true;
     }
 }
 
@@ -891,7 +895,7 @@ fn sha256_file_hex(path: &Path) -> Result<(u64, String), String> {
         std::fs::File::open(path).map_err(|e| format!("open {} failed: {}", path.display(), e))?;
     let mut hasher = Sha256::new();
     let mut total = 0u64;
-    let mut buf = [0u8; 64 * 1024];
+    let mut buf = vec![0u8; 64 * 1024].into_boxed_slice();
     loop {
         let n = file
             .read(&mut buf)
@@ -1305,16 +1309,6 @@ fn write_transport_untracked_snapshot(
     })
 }
 
-#[allow(dead_code)]
-pub(crate) async fn git_session_current_worktree_fingerprint_for_tab(
-    registry: Arc<SessionRegistry>,
-    tab_id: Option<String>,
-    cwd: Option<String>,
-) -> Result<Option<String>, String> {
-    git_session_current_worktree_fingerprint_for_tab_with_provider(registry, tab_id, cwd, None)
-        .await
-}
-
 pub(crate) async fn git_session_current_worktree_fingerprint_for_tab_with_provider(
     registry: Arc<SessionRegistry>,
     tab_id: Option<String>,
@@ -1593,15 +1587,6 @@ fn primary_worktree_root<'a>(repo_root: &'a str, worktrees: &'a [GitWorktreeSumm
         .unwrap_or(repo_root)
 }
 
-#[allow(dead_code)]
-pub(crate) async fn git_session_status_for_tab(
-    registry: Arc<SessionRegistry>,
-    tab_id: Option<String>,
-    cwd: Option<String>,
-) -> Result<GitSessionStatus, String> {
-    git_session_status_for_tab_with_provider(registry, tab_id, cwd, None).await
-}
-
 pub(crate) async fn git_session_status_for_tab_with_provider(
     registry: Arc<SessionRegistry>,
     tab_id: Option<String>,
@@ -1737,16 +1722,6 @@ pub async fn git_session_status(
     .await
 }
 
-#[allow(dead_code)]
-pub(crate) async fn git_session_diff_for_tab(
-    registry: Arc<SessionRegistry>,
-    tab_id: Option<String>,
-    cwd: Option<String>,
-    scope: Option<String>,
-) -> Result<GitDiffResponse, String> {
-    git_session_diff_for_tab_with_provider(registry, tab_id, cwd, scope, None).await
-}
-
 pub(crate) async fn git_session_diff_for_tab_with_provider(
     registry: Arc<SessionRegistry>,
     tab_id: Option<String>,
@@ -1865,20 +1840,6 @@ pub async fn git_session_diff(
         cwd,
         scope,
         provider_context,
-    )
-    .await
-}
-
-#[allow(dead_code)]
-pub async fn git_session_create_checkpoint_for_tab(
-    registry: Arc<SessionRegistry>,
-    build_orch: Arc<crate::build_orchestrator::BuildOrchestrator>,
-    tab_id: Option<String>,
-    cwd: Option<String>,
-    label: Option<String>,
-) -> Result<GitCheckpointCreateResponse, String> {
-    git_session_create_checkpoint_for_tab_with_provider(
-        registry, build_orch, tab_id, cwd, label, None,
     )
     .await
 }
@@ -2081,25 +2042,6 @@ pub async fn git_session_create_checkpoint(
         cwd,
         label,
         provider_context,
-    )
-    .await
-}
-
-#[allow(dead_code)]
-pub async fn git_session_create_worktree_for_tab(
-    registry: Arc<SessionRegistry>,
-    tab_id: Option<String>,
-    cwd: Option<String>,
-    source_branch: Option<String>,
-    new_branch: Option<String>,
-) -> Result<GitWorktreeCreateResponse, String> {
-    git_session_create_worktree_for_tab_with_provider(
-        registry,
-        tab_id,
-        cwd,
-        source_branch,
-        new_branch,
-        None,
     )
     .await
 }
@@ -2417,6 +2359,28 @@ mod tests {
             Some("deploy@example.test")
         );
         assert!(ctx.has_cwd);
+    }
+
+    #[test]
+    fn explicit_cwd_is_not_replaced_by_a_session_candidate() {
+        let mut cwd = "/home/user/requested".to_string();
+        let mut has_cwd = true;
+
+        set_context_cwd_if_missing(&mut cwd, &mut has_cwd, Some("/home/user/session-default"));
+
+        assert_eq!(cwd, "/home/user/requested");
+        assert!(has_cwd);
+    }
+
+    #[test]
+    fn missing_cwd_uses_a_trimmed_session_candidate() {
+        let mut cwd = String::new();
+        let mut has_cwd = false;
+
+        set_context_cwd_if_missing(&mut cwd, &mut has_cwd, Some("  /home/user/session  "));
+
+        assert_eq!(cwd, "/home/user/session");
+        assert!(has_cwd);
     }
 
     #[test]

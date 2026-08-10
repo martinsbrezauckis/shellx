@@ -10,7 +10,7 @@ import {
   type ReleaseSurfaceDriverReport,
   type ReleaseSurfaceDriverRequest,
 } from "./lib/release-surface-driver-protocol";
-import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit } from "./fixtures/release-surface-controller-binding-fixture";
+import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceCommit, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 import {
   HOST_MCP_CAPTURE_FIXTURE_VALUE,
@@ -164,7 +164,7 @@ try {
     "--mcp-token", mcpToken,
     "--instance-id", instanceId,
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", releaseSurfaceFixtureVersion,
     "--source-commit", sourceCommit,
     "--profile-root", profileRoot,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -176,7 +176,7 @@ try {
     driverKind: "host-mcp-tool",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: releaseSurfaceFixtureVersion,
     inventoryDigest: "a".repeat(64),
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture(
@@ -260,6 +260,14 @@ try {
   assert(report.outcomes.every((outcome) => outcome.present === "pass"
     && outcome.invoke === "pass" && outcome.effect === "pass" && outcome.cleanup === "pass"));
   assert.equal(existsSync(join(profileRoot, "host-mcp-release-fixture")), false, "driver must remove its exact fixture root");
+  const driverSource = readFileSync(
+    resolve(root, "scripts/release-drivers/host-mcp-tool-installed.ts"),
+    "utf8",
+  );
+  assert(
+    driverSource.includes('writeFileSync(join(nodeRoot, ".git"), "gitdir: .shellx-release-missing-gitdir\\n", {'),
+    "Host MCP release fixture must stop Git discovery at its exact owned boundary",
+  );
   for (const name of ["flight-recorder.json", "screenshot.png", "trace.json"]) {
     assert.equal(
       existsSync(join(shellxHome, "browser-artifacts", "release-driver", name)),

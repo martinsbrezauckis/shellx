@@ -48,6 +48,7 @@ if (candidate.platform !== "macos-installed" || candidate.sourceCommit !== sourc
 const manifest = JSON.parse(readFileSync(driverManifestPath, "utf8")) as ReleaseSurfaceDriverRunManifest;
 if (manifest.schema !== RELEASE_SURFACE_DRIVER_RUN_SCHEMA
   || manifest.mode !== "final-frozen-candidate"
+  || manifest.targetedClosure
   || manifest.platform !== "macos-installed"
   || manifest.sourceCommit !== sourceCommit
   || manifest.version !== candidate.version) {

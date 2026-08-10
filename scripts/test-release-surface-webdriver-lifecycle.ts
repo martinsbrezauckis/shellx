@@ -11,6 +11,7 @@ import {
 } from "./lib/release-surface-webdriver-lifecycle";
 
 const root = resolve(import.meta.dirname, "..");
+const tsxImport = import.meta.resolve("tsx");
 const fixturePath = resolve(root, "scripts/fixtures/release-surface-webdriver-lifecycle-driver-fixture.ts");
 const temp = mkdtempSync(join(tmpdir(), "shellx-webdriver-lifecycle-"));
 const applicationPath = join(temp, "shellx-fixture");
@@ -185,14 +186,16 @@ function lifecycleInput(
     tauriDriverCommand: process.execPath,
     tauriDriverNodePath: process.execPath,
     tauriDriverArgsPrefix: [
-      "--import", "tsx", fixturePath,
+      "--import", tsxImport, fixturePath,
       "--audit-out", auditPath,
       "--expected-application", applicationPath,
+      "--expected-working-directory", temp,
       "--session-id", sessionId,
       ...fixtureArgs,
     ],
     applicationLaunchPath: applicationPath,
     applicationNodePath: applicationPath,
+    workingDirectory: temp,
     driverPort: ports.driverPort,
     nativePort: ports.nativePort,
     evidencePath,

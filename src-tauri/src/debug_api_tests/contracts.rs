@@ -117,7 +117,6 @@ fn settings_normalization_accepts_bright_theme() {
         "density": "default",
         "theme": "bright",
         "chatFontPx": 19,
-        "permissionUx": "pill"
     }));
 
     assert_eq!(

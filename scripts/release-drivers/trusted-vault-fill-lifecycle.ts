@@ -196,7 +196,7 @@ async function exerciseBrowserCli(
       "--task", required(lifecycle.taskId, "CLI task"),
     ], connection, request);
     outcome.invoke = "pass";
-    verifyAppliedFillResult(result, lifecycle.taskId, SECRET_VALUE, "Browser CLI fill-from-vault");
+    verifyAppliedFillResult(result, lifecycle.taskId, "Browser CLI fill-from-vault");
     await verifyFieldHash(connection, lifecycle, "password", SECRET_HASH);
     outcome.effect = "pass";
     outcome.observedEffect = "Browser CLI fill-from-vault used one approved isolated Fill grant on the production-trusted HTTPS origin; only the target field's SHA-256 and input-event count were observed.";
@@ -246,7 +246,7 @@ async function exerciseHostMcp(
         };
     const result = await callMcpTool(mcp, toolName, args);
     outcome.invoke = "pass";
-    verifyAppliedFillResult(result, lifecycle.taskId, action === "host-mcp-profile" ? PROFILE_VALUE : SECRET_VALUE, `Host MCP ${toolName}`);
+    verifyAppliedFillResult(result, lifecycle.taskId, `Host MCP ${toolName}`);
     await verifyFieldHash(
       connection,
       lifecycle,
@@ -289,7 +289,7 @@ async function exerciseTauri(
       },
     });
     outcome.invoke = "pass";
-    verifyAppliedFillResult(record(value, "Tauri Vault fill result"), null, SECRET_VALUE, "Tauri Vault fill");
+    verifyAppliedFillResult(record(value, "Tauri Vault fill result"), null, "Tauri Vault fill");
     await verifyFieldHash(connection, lifecycle, "password", SECRET_HASH);
     outcome.effect = "pass";
     outcome.observedEffect = "Tauri shellx_browser_fill_user_vault_secret filled one user-owned trusted HTTPS field from the isolated user-only Vault item; evidence retained only its SHA-256 and input-event count.";
@@ -826,7 +826,7 @@ async function invokeTauri(
   throw new Error("trusted Vault fill Tauri command did not complete before timeout");
 }
 
-function verifyAppliedFillResult(result: Json, taskId: string | null, forbiddenValue: string, label: string): void {
+function verifyAppliedFillResult(result: Json, taskId: string | null, label: string): void {
   rejectRawValues(result, label);
   if (result.ok !== true || result.status !== "applied"
     || (taskId !== null && result.taskId !== taskId)

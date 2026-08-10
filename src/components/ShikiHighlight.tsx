@@ -55,6 +55,8 @@ export function ShikiHighlight({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setHtml(null);
+    setError(null);
     let cancelled = false;
     const lang = shikiLangForPath(path);
     (async () => {
@@ -103,9 +105,9 @@ export function ShikiHighlight({
 
   if (!html) return <div className="preview-empty">Tokenizing…</div>;
 
- // Shiki returns a <pre class="shiki ..."><code>...</code></pre> tree.
- // We render via dangerouslySetInnerHTML — the input is local file
- // contents under Tauri's assetProtocol scope, not network HTML.
+ // Shiki returns a <pre class="shiki ..."><code>...</code></pre> tree and
+ // escapes source text before inserting token markup. Local provenance alone
+ // would not make file contents safe for dangerouslySetInnerHTML.
   return (
     <div
       className="preview shiki-preview"

@@ -108,6 +108,17 @@ const rightRailSource = readFileSync(
   new URL("../src/components/RightRail.tsx", import.meta.url),
   "utf8",
 );
+const cardsApiSource = readFileSync(
+  new URL("../src/lib/model-instruction-cards-api.ts", import.meta.url),
+  "utf8",
+);
+assert(
+  cardsApiSource.includes('from "./debug-api"') &&
+    cardsApiSource.includes("getModelInstructionCards") &&
+    !readFileSync(new URL("../src/lib/model-instruction-cards.ts", import.meta.url), "utf8")
+      .includes('import("./debug-api")'),
+  "Model instruction contracts must stay separate from the operational Debug API client",
+);
 assert(
   rightRailSource.includes("getModelInstructionCards"),
   "Tools pane must fetch model instruction cards",

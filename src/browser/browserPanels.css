@@ -1,0 +1,829 @@
+.shellx-browser-vault-prompt-stack {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.shellx-browser-vault-prompt-stack.is-empty {
+  max-height: 0;
+  overflow: hidden;
+}
+.shellx-browser-vault-prompt-card {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  padding: 9px;
+  background: var(--surface-2);
+}
+.shellx-browser-vault-prompt-card.attention {
+  border-color: rgba(245, 158, 11, 0.42);
+  background: rgba(245, 158, 11, 0.07);
+}
+.shellx-browser-vault-prompt-card.danger {
+  border-color: rgba(239, 68, 68, 0.48);
+  background: rgba(239, 68, 68, 0.07);
+}
+.shellx-browser-vault-card-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+.shellx-browser-vault-card-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  color: var(--ink-2);
+}
+.shellx-browser-vault-card-head h3 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-vault-card-head p {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-vault-card-details {
+  display: grid;
+  gap: 3px;
+}
+.shellx-browser-vault-card-details span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-vault-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.shellx-browser-vault-card-actions .shellx-browser-primary,
+.shellx-browser-vault-card-actions .shellx-browser-secondary {
+  height: 28px;
+  font-size: 11px;
+}
+.shellx-browser-panel-toggle:hover {
+  border-color: var(--hairline-2);
+  color: var(--ink);
+}
+.shellx-browser-sidebar section + section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+.shellx-browser-section-heading {
+  width: 100%;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  margin: 0 0 9px;
+  padding: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.shellx-browser-section-heading:hover {
+  color: var(--ink);
+}
+.shellx-browser-section-heading span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-list-row {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  padding: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.shellx-browser-list-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-ui-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-list-row small,
+.shellx-browser-receipt small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-list-row:hover,
+.shellx-browser-list-row.active {
+  border-color: var(--hairline-2);
+  background: var(--surface);
+}
+.shellx-browser-utility-row {
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  margin: 0 0 8px;
+  padding: 5px 8px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+.shellx-browser-utility-row:hover {
+  border-color: var(--hairline-2);
+  color: var(--ink);
+}
+.shellx-browser-utility-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.shellx-browser-menu-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  padding: 3px;
+  background: var(--surface-2);
+}
+.shellx-browser-menu-tabs button,
+.shellx-browser-right-tabs button {
+  min-width: 0;
+  border: 0;
+  border-radius: calc(var(--radius-button) - 2px);
+  background: transparent;
+  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.shellx-browser-menu-tabs button {
+  height: 24px;
+}
+.shellx-browser-menu-tabs button.active,
+.shellx-browser-menu-tabs button:hover,
+.shellx-browser-right-tabs button.active,
+.shellx-browser-right-tabs button:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+.shellx-browser-menu-row {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  padding: 7px 8px;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+.shellx-browser-menu-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-ui-sm);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-menu-row small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-menu-row:hover {
+  border-color: var(--hairline-2);
+  background: var(--surface-2);
+}
+.shellx-browser-menu-row.active {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.08);
+}
+.shellx-browser-menu-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+.shellx-browser-empty-state {
+  min-height: 34px;
+  border: 1px dashed var(--hairline);
+  border-radius: var(--radius-button);
+  padding: 8px;
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+}
+.shellx-browser-page {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.shellx-browser-engine-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.shellx-browser-engine-shell .shellx-browser-page {
+  flex: 1 1 auto;
+}
+.shellx-browser-engine-shell.personal-locked .shellx-browser-page {
+  pointer-events: none;
+}
+.shellx-browser-personal-lock-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: rgba(5, 5, 5, 0.72);
+  color: var(--ink);
+  text-align: center;
+}
+.shellx-browser-personal-lock-overlay.cover {
+  backdrop-filter: blur(18px);
+}
+.shellx-browser-personal-lock-overlay > div {
+  display: grid;
+  gap: 4px;
+}
+.shellx-browser-personal-lock-overlay strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+.shellx-browser-personal-lock-overlay span {
+  color: var(--ink-2);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-personal-lock-overlay input {
+  width: min(240px, 70vw);
+  height: 30px;
+  justify-self: center;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 10px;
+  font: inherit;
+}
+.shellx-browser-personal-lock-overlay button {
+  justify-self: center;
+}
+.shellx-browser-page-head {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.shellx-browser-page-head > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.shellx-browser-kicker {
+  display: inline-block;
+  margin-bottom: 5px;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.shellx-browser-page-head h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shellx-browser-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 0;
+  background:
+    linear-gradient(var(--shellx-browser-viewport-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--shellx-browser-viewport-grid) 1px, transparent 1px),
+    var(--shellx-browser-viewport-surface);
+  background-size: 28px 28px;
+}
+.shellx-browser-viewport-inner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(720px, calc(100% - 40px));
+  max-height: calc(100% - 40px);
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-card);
+  padding: 24px;
+  background: var(--shellx-browser-viewport-card);
+  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.32);
+  pointer-events: none;
+}
+.shellx-browser-viewport-inner h2 {
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+}
+.shellx-browser-viewport-inner p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-sm);
+  line-height: 1.55;
+}
+.shellx-browser-ref-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.shellx-browser-ref-strip span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+.shellx-browser-ref-strip code {
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: var(--radius-chip);
+  padding: 3px 7px;
+  background: rgba(59, 130, 246, 0.09);
+  color: var(--shellx-browser-ref-ink);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.shellx-browser-right {
+  position: relative;
+  min-width: 0;
+  z-index: 10;
+  border-left: 0;
+}
+.shellx-browser-sidebar-resize {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 8px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+.shellx-browser-sidebar-resize:hover,
+.shellx-browser-sidebar-resize:focus-visible {
+  background: rgba(34, 197, 94, 0.14);
+  outline: none;
+}
+.shellx-browser-right-tabs {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(54px, 1fr));
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  margin-bottom: 2px;
+  padding: 3px;
+  background: var(--surface-2);
+}
+.shellx-browser-right-tabs::-webkit-scrollbar {
+  display: none;
+}
+.shellx-browser-right-tabs button {
+  min-width: 54px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-tab-badge {
+  min-width: 16px;
+  flex: 0 0 auto;
+  height: 16px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  padding: 0 4px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  line-height: 1;
+}
+.shellx-browser-requests-panel {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+.shellx-browser-agent-panel {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+  overflow: hidden;
+}
+.shellx-browser-agent-panel.chat-expanded {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.shellx-browser-agent-state span {
+  width: max-content;
+  border: 1px solid rgba(59, 130, 246, 0.36);
+  border-radius: var(--radius-chip);
+  padding: 2px 7px;
+  background: rgba(59, 130, 246, 0.08);
+  color: #9cc6ff;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.shellx-browser-agent-compose {
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+}
+.shellx-browser-agent-quick-actions {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.shellx-browser-agent-quick-actions .shellx-browser-secondary {
+  height: 28px;
+}
+.shellx-browser-agent-panel.chat-expanded .shellx-browser-agent-compose {
+  align-self: end;
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  overflow: visible;
+}
+.shellx-browser-agent-compose label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.shellx-browser-agent-controls {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.shellx-browser-agent-chat-stream {
+  max-height: 240px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  padding: 8px;
+  background: var(--surface-2);
+}
+.shellx-browser-agent-panel.chat-expanded .shellx-browser-agent-chat-stream {
+  max-height: none;
+  min-height: 0;
+}
+.shellx-browser-agent-panel.chat-expanded .shellx-browser-agent-compose textarea {
+  min-height: 74px;
+  max-height: 118px;
+  resize: vertical;
+}
+.shellx-browser-chat-bubble {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  padding: 8px;
+  background: var(--surface);
+}
+.shellx-browser-chat-bubble.assistant {
+  border-color: rgba(59, 130, 246, 0.28);
+}
+.shellx-browser-chat-bubble.user {
+  margin-left: 18px;
+  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.07);
+}
+.shellx-browser-chat-bubble.system {
+  border-style: dashed;
+}
+.shellx-browser-chat-bubble span {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.shellx-browser-chat-bubble p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-sm);
+  line-height: 1.45;
+}
+.shellx-browser-agent-state {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+}
+.shellx-browser-agent-state p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-sm);
+  line-height: 1.45;
+}
+.shellx-browser-dev-panel,
+.shellx-browser-actions-panel {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+}
+.shellx-browser-actions-panel > section,
+.shellx-browser-actions-panel .shellx-browser-agent-controls {
+  min-width: 0;
+}
+.shellx-browser-actions-panel .shellx-browser-list-row span,
+.shellx-browser-actions-panel .shellx-browser-list-row small,
+.shellx-browser-actions-panel .shellx-browser-receipt span,
+.shellx-browser-actions-panel .shellx-browser-receipt small,
+.shellx-browser-actions-panel .shellx-browser-transfer p,
+.shellx-browser-actions-panel .shellx-browser-transfer small {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: normal;
+}
+.shellx-browser-actions-panel .shellx-browser-receipt,
+.shellx-browser-actions-panel .shellx-browser-transfer {
+  align-content: start;
+}
+.shellx-browser-scroll-panel {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.shellx-browser-dev-select {
+  display: grid;
+  gap: 5px;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.shellx-browser-dev-select select {
+  height: 32px;
+}
+.shellx-browser-wide-action {
+  width: 100%;
+}
+.shellx-browser-receipt {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border-bottom: 1px solid var(--hairline);
+  padding: 8px 0;
+}
+.shellx-browser-receipt span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-console {
+  min-width: 0;
+}
+.shellx-browser-log {
+  display: grid;
+  gap: 4px;
+  border-left: 2px solid var(--hairline-2);
+  border-bottom: 1px solid var(--hairline);
+  padding: 8px 0 8px 8px;
+}
+.shellx-browser-log.error {
+  border-left-color: rgba(239, 68, 68, 0.82);
+}
+.shellx-browser-log.warn {
+  border-left-color: rgba(245, 158, 11, 0.82);
+}
+.shellx-browser-log.info {
+  border-left-color: rgba(59, 130, 246, 0.72);
+}
+.shellx-browser-log span {
+  width: max-content;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-chip);
+  padding: 1px 6px;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.shellx-browser-log.error span {
+  border-color: rgba(239, 68, 68, 0.42);
+  color: var(--err);
+}
+.shellx-browser-log.warn span {
+  border-color: rgba(245, 158, 11, 0.42);
+  color: #fbbf24;
+}
+.shellx-browser-log p {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.shellx-browser-transfer-list {
+  min-width: 0;
+}
+.shellx-browser-transfer {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border-bottom: 1px solid var(--hairline);
+  padding: 8px 0;
+}
+.shellx-browser-transfer span {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid rgba(34, 197, 94, 0.32);
+  border-radius: var(--radius-chip);
+  padding: 1px 6px;
+  overflow: hidden;
+  color: var(--ok);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.shellx-browser-transfer p {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-transfer small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-log small,
+.shellx-browser-empty-log {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-empty-log {
+  padding: 7px 0;
+}
+@media (max-width: 980px) {
+  .shellx-browser-top {
+    grid-template-columns: 1fr;
+  }
+  .shellx-browser-goal {
+    flex-basis: 100%;
+  }
+  .shellx-browser-grid {
+    grid-template-columns: 1fr;
+  }
+  .shellx-browser-sidebar,
+  .shellx-browser-right {
+    max-height: 220px;
+  }
+  .shellx-browser-page-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 760px) {
+  .plan-review-title-block {
+    padding: 18px 18px 15px;
+  }
+  .plan-review-title-block h2 {
+    font-size: 21px;
+  }
+  .plan-review-objective {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+  .plan-review-md {
+    padding: 20px 18px 30px;
+  }
+  .plan-review-action-spacer {
+    display: none;
+  }
+  .plan-action {
+    flex: 1 1 150px;
+  }
+}

@@ -5,7 +5,11 @@
  * echo can be emitted before Rust has reported the ACP session id for the
  * tab; those frames must wait and flush later or they disappear after restart.
  */
-import { PendingLocalEventQueue, localEventTabId } from "../src/lib/pending-local-events";
+import {
+  PendingLocalEventQueue,
+  buildSessionLogWrites,
+  localEventTabId,
+} from "../src/lib/pending-local-events";
 import type { RawEventFrame } from "../src/types/acp";
 
 let failures = 0;
@@ -61,6 +65,29 @@ console.log("\n=== pending local events: bounded queue ===");
   queue.enqueue("tab-a", ui("tab-a", "two"));
   queue.enqueue("tab-a", ui("tab-a", "three"));
   assert(queue.pendingCount("tab-a") === 2, "caps per-tab queue");
+}
+
+console.log("\n=== live session log writes: ordered batching ===");
+{
+  const events = [ui("tab-a", "one"), ui("tab-b", "two"), ui("tab-a", "three")];
+  const writes = buildSessionLogWrites(
+    events,
+    (event) => ({ "tab-a": "session-a", "tab-b": "session-b" }[localEventTabId(event, null) ?? ""] ?? null),
+  );
+  assert(writes.length === 2, "collapses one renderer envelope to one write per bound session");
+  assert(writes[0]?.frameCount === 2 && writes[1]?.frameCount === 1, "retains exact per-session frame counts");
+  assert(
+    writes[0]?.line.split("\n").map((line) => JSON.parse(line).payload.text).join(",") === "one,three",
+    "preserves per-session source order in valid JSONL",
+  );
+  assert(
+    buildSessionLogWrites(events, () => null).length === 0,
+    "leaves frames without a live session binding caller-owned",
+  );
+  assert(
+    buildSessionLogWrites(events, () => "session-a", 100).length > 1,
+    "splits a session envelope at the configured write budget",
+  );
 }
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} pending local event tests`);

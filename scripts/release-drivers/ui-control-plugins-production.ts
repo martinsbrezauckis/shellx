@@ -14,7 +14,6 @@ import { releaseSurfaceProfileLaunchRootFromDebugTokenPath } from "../lib/releas
 import {
   clearReleaseSurfaceInstalledInputElement,
   clickReleaseSurfaceInstalledInputElement,
-  findReleaseSurfaceInstalledInputElement,
   observeReleaseSurfaceInstalledInputElement,
   setReleaseSurfaceInstalledInputElementValue,
   waitForReleaseSurfaceInstalledInputElement,

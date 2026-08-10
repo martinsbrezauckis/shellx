@@ -25,6 +25,17 @@ for (const path of activeConsumers) {
   );
 }
 
+const hostVaultTools = readFileSync(resolve("src-tauri/src/host_mcp/vault_tools.rs"), "utf8");
+assert(
+  !hostVaultTools.includes("tool_secret_get_vault_raw_approved"),
+  "agent-facing Host MCP source must not retain a dormant raw Vault resolver",
+);
+assert(
+  hostVaultTools.includes("RAW_SECRET_REVEAL_DENIED") &&
+    hostVaultTools.includes("use mediated Vault fill or injection tools"),
+  "agent-facing Host MCP secret_get keeps the structured mediated-use denial",
+);
+
 const backend = readFileSync(resolve("src-tauri/src/shellx_vault/backend.rs"), "utf8");
 assert.equal(
   (backend.match(/crate::vault::Vault::open\(\)/g) ?? []).length,

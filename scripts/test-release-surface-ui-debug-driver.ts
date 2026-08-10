@@ -21,6 +21,7 @@ import { releaseSurfaceControllerBindingFixture, releaseSurfaceFixtureSourceComm
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 
 const root = resolve(import.meta.dirname, "..");
+const candidateVersion = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
 const temp = mkdtempSync(join(tmpdir(), "shellx-ui-debug-driver-"));
 const tokenPath = join(temp, ".shellx", "shellxagent.token");
 const mcpTokenPath = join(temp, "mcp.token");
@@ -42,7 +43,7 @@ try {
     "--state-out", statePath,
     "--instance-id", "owned-ui-debug-instance-0001",
     "--process-id", "4321",
-    "--version", "0.3.5",
+    "--version", candidateVersion,
     "--source-commit", sourceCommit,
   ], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   const port = await waitForPort(statePath, server);
@@ -224,7 +225,7 @@ function driverRequest(port: number): ReleaseSurfaceDriverRequest {
     driverKind: "ui-debug-surface",
     platform: "linux-installed",
     sourceCommit,
-    version: "0.3.5",
+    version: candidateVersion,
     inventoryDigest: "a".repeat(64),
     artifact: { basename: "shellx", sha256: "c".repeat(64) },
     controller: releaseSurfaceControllerBindingFixture("scripts/release-drivers/ui-debug-surface-installed.ts"),

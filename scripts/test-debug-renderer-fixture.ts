@@ -5,9 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   applyDebugRendererFixture,
   debugBuildRunCockpitFixture,
-  debugBottomPanelTerminalFixture,
   DEBUG_BUILD_RUN_COCKPIT_FIXTURE,
-  DEBUG_BOTTOM_PANEL_LIFECYCLE_FIXTURE,
   DEBUG_CHAT_OUTPUT_LIFECYCLE_FIXTURE,
   DEBUG_KEYBOARD_DIFF_LIFECYCLE_FIXTURE,
   DEBUG_RENDERER_EVENT_PROJECTIONS_FIXTURE,
@@ -126,19 +124,6 @@ assert.deepEqual(
   "keyboard diff cleanup must remove only its renderer-only ACP frames",
 );
 
-assert.deepEqual(debugBottomPanelTerminalFixture({
-  id: DEBUG_BOTTOM_PANEL_LIFECYCLE_FIXTURE,
-  terminalId: "release-terminal-owned.035",
-  label: "owned fixture",
-}), [{ terminalId: "release-terminal-owned.035", label: "owned fixture", fixtureOnly: true }]);
-assert.deepEqual(debugBottomPanelTerminalFixture("clear"), []);
-assert.equal(debugBottomPanelTerminalFixture({ id: "unknown" }), null);
-assert.equal(debugBottomPanelTerminalFixture({
-  id: DEBUG_BOTTOM_PANEL_LIFECYCLE_FIXTURE,
-  terminalId: "not bounded / unsafe",
-  label: "owned fixture",
-}), null);
-
 const buildCockpit = debugBuildRunCockpitFixture({
   id: DEBUG_BUILD_RUN_COCKPIT_FIXTURE,
 }, "fixture-tab", 10_000);
@@ -166,7 +151,6 @@ assert.equal(buildCockpitMarkup.includes(">Stop</button>"), false);
 const appSource = readFileSync("src/App.tsx", "utf8");
 const rightRailSource = readFileSync("src/components/RightRail.tsx", "utf8");
 const gitPaneSource = readFileSync("src/components/GitPane.tsx", "utf8");
-const permissionModalSource = readFileSync("src/components/PermissionModal.tsx", "utf8");
 const permissionPillSource = readFileSync("src/components/PermissionPill.tsx", "utf8");
 const chatOutputSource = readFileSync("src/components/ChatOutput.tsx", "utf8");
 assert(appSource.includes("setDebugBuildRunFixture(debugBuildRunCockpitFixture("));
@@ -214,7 +198,6 @@ const permissionPillFixture = debugPermissionDecisionFixture({
 });
 assert(permissionPillFixture);
 assert.equal(permissionPillFixture.fixtureOnly, true);
-assert.equal(permissionPillFixture.surface, "pill");
 assert.equal(permissionPillFixture.expectedDecision, "allow_always");
 const permissionFrames = applyDebugPermissionDecisionFixtureEvents(
   [unrelated],
@@ -233,22 +216,12 @@ assert.deepEqual(
   [unrelated],
   "permission cleanup removes only exact tagged fixture frames",
 );
-const permissionModalFixture = debugPermissionDecisionFixture({
-  id: DEBUG_PERMISSION_DECISION_FIXTURE,
-  action: "modal-backdrop-deny",
-});
-assert(permissionModalFixture);
-assert.equal(permissionModalFixture.surface, "modal");
-assert.equal(permissionModalFixture.expectedDecision, "deny");
-assert.equal(permissionModalFixture.expectedModalSource, "backdrop");
 assert.equal(debugPermissionDecisionFixture({
   id: DEBUG_PERMISSION_DECISION_FIXTURE,
   action: "clear",
 }), null);
 assert(
-  permissionModalSource.includes("debugFixture.expectedModalSource !== source")
-    && permissionModalSource.includes("debugFixture.expectedDecision !== decision")
-    && permissionPillSource.includes("debugFixture.expectedDecision !== decision")
+  permissionPillSource.includes("debugFixture.expectedDecision !== decision")
     && permissionPillSource.includes("if (!debugFixture)")
     && chatOutputSource.includes("debugPermissionFixture?.requestId === group.requestId"),
   "permission fixture bypass remains exact-request, exact-action, and debug-only",

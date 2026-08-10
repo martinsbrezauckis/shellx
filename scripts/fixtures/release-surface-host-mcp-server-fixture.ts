@@ -14,7 +14,6 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { basename, dirname, join } from "node:path";
 import {
   HOST_MCP_CAPTURE_FIXTURE_VALUE,
-  HOST_MCP_EMAIL_CODE_FIXTURE,
 } from "../release-drivers/host-mcp-vault-lifecycle";
 
 const args = process.argv.slice(2);

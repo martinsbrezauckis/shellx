@@ -30,7 +30,7 @@ help.
 
 ## 1. ACP terminals are unavailable
 
-ShellX 0.3.5 always advertises `clientCapabilities.terminal: false` and
+Current ShellX builds always advertise `clientCapabilities.terminal: false` and
 unconditionally rejects provider-originated `terminal/*` ACP requests with
 JSON-RPC `-32601`. Do not retry those calls. Use the provider's native tools
 or the ShellX `Agent` host tool for supervised work instead.
@@ -55,10 +55,19 @@ fallback.
 
 If `shellx-host-http__capabilities_summary` or
 `grok-shell-host__capabilities_summary` is advertised, call it directly
-for a compact current tool map before broad tool discovery. Use targeted
-`search_tool` queries only for exact schemas; avoid `full_inventory`
-unless debugging tool-schema drift, because the result is large and Grok
-may store it as a session artifact instead of showing it clearly in chat.
+for a compact current tool map before broad tool discovery. Only six compact
+entry tools are advertised by default: `capabilities_summary`, `search_tool`,
+`host_read`, `host_act`, `browser_read`, and `browser_act`. Use targeted
+`search_tool` queries for an exact hidden Host action schema, then pass the
+action name and its exact fields through `host_read { action, params }` for
+read-class operations or permission-gated `host_act { action, params }` for
+mutations and external side effects. Prefer the `shellx-host-http__` qualified
+gateway when advertised. The names in the Vault and Host maps below are action
+names for that routing flow, not additional always-advertised tools. Avoid
+`full_inventory` unless debugging tool-schema drift, because the result is
+large and Grok may store it as a session artifact instead of showing it clearly
+in chat. Browser actions use their dedicated `browser_read` and `browser_act`
+gateways instead.
 
 - `vault_list { prefix? }` → lists agent-visible Vault key/resource
   names, descriptions, and non-secret metadata for planning. It never
@@ -117,7 +126,7 @@ When a parent-host text read is needed, discover `fs_read` and route it through
 when the task needs more of the document. Keep `max_bytes` small for planning
 and never request a whole large document merely to find one section.
 
-Direct status/evidence tool map:
+Searchable status/evidence action map:
 - `shellx_health` — debug API liveness.
 - `browser_check { taskId?, browserTabId?, timeoutMs? }` — bounded UI-silent
   Browser liveness/settlement check; it never creates a task, opens/focuses
@@ -308,7 +317,7 @@ Vault-backed Browser actions:
 - `browser_act action=readEmailCode` reads an approved short verification code from an
   email resource.
 - `browser_act action=useAgentWallet` is reserved for ShellX agent wallets, not
-  user payment cards. In 0.3.5 it returns
+  user payment cards. In the current release it returns
   `browser_agent_wallet_checkout_unavailable` until a real provider transaction
   bridge can prove the checkout; approval alone is not success.
 
@@ -367,8 +376,9 @@ explicitly asks about tabs.
 
 HTTP+WS server bound to loopback. Read the actual bound port from
 `~/.shellx/debug-api.port` (preferred is 5757; falls back to higher
-ports if held). The bearer token at `~/.shellx/shellxagent.token` uses mode
-0600 on macOS/Linux and inherits the user-private profile ACL on Windows.
+ports if held). ShellX-owned clients resolve the private per-user bearer
+internally; custom clients must receive it through a private process-local
+integration and must not read, print, or persist raw credential material.
 CORS allows exactly `tauri://localhost`, `http://tauri.localhost`,
 `https://tauri.localhost`, `http://localhost:5173`, and
 `http://127.0.0.1:5173`; other localhost ports are not allowed.
@@ -378,7 +388,7 @@ Current high-use endpoints:
   gated Browser paths, and agent-doc links.
 - `GET /agent-doc/manifest`, `GET /agent-doc/skills/shellx-host/SKILL.md` —
   the bundled host-skill docs that installed agents also receive on disk.
-- `GET /state/sessions` — active grok sessions per tab.
+- `GET /state/sessions` — active Grok ACP and provider-session context per tab.
 - `GET /sessions/search?q=…` — full-text search across past jsonl logs.
 - `GET /sessions/history`, `GET /sessions/history/:id` — recent saved
   sessions and raw JSONL for one saved session.
@@ -591,13 +601,11 @@ Outside connectors are configured by the user in Settings -> Connectors.
 They are not general-purpose MCP tools; treat them as shellX-owned intake
 and reply channels.
 
-- Telegram is the first shipped live session-chat connector. In Inbox mode,
-  allowlisted messages appear in shellX for user review. In Session chat mode,
-  allowlisted direct messages are sent to the selected shellX tab and Grok's
-  text reply is sent back to Telegram. If a reply references a local image
-  path, shellX can send it as a Telegram photo.
-- Discord is DM intake/inbox only in this release. Do not promise Discord
-  session-chat replies until the app reports that mode as available.
+- Telegram and Discord support Inbox and Session chat modes. In Inbox mode,
+  allowlisted direct messages appear in shellX for user review. In Session chat
+  mode, they are sent to the selected live Grok, Codex, Claude, or Antigravity
+  tab, and the captured text reply is sent back through the originating bot.
+  Telegram can also send a referenced local image path as a photo.
 - Do not ask users to paste bot tokens into chat. Tokens live in the shellX
   vault under connector-specific keys configured in Settings.
 - When connector behavior is unclear, use the UI/debug API connector state

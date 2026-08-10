@@ -24,7 +24,6 @@ const headerSource = readFileSync("src/components/Header.tsx", "utf8");
 const connectorsSource = readFileSync("src/components/settings/ConnectorsTab.tsx", "utf8");
 const rightRailSource = readFileSync("src/components/RightRail.tsx", "utf8");
 const gitPaneSource = readFileSync("src/components/GitPane.tsx", "utf8");
-const permissionModalSource = readFileSync("src/components/PermissionModal.tsx", "utf8");
 const permissionPillSource = readFileSync("src/components/PermissionPill.tsx", "utf8");
 const sessionTabsSource = readFileSync("src/components/SessionTabs.tsx", "utf8");
 const tasksPanelSource = readFileSync("src/components/TasksPanel.tsx", "utf8");
@@ -38,6 +37,7 @@ const downloadSidecarSource = readFileSync("src/browser/components/DownloadSidec
 const buildRunCockpitSource = readFileSync("src/components/BuildRunCockpit.tsx", "utf8");
 const chatOutputSource = readFileSync("src/components/ChatOutput.tsx", "utf8");
 const previewCenterSource = readFileSync("src/components/PreviewCenter.tsx", "utf8");
+const previewCenterCss = readFileSync("src/components/PreviewCenter.css", "utf8");
 const filePreviewSource = readFileSync("src/components/FilePreviewModal.tsx", "utf8");
 const micButtonSource = readFileSync("src/components/MicButton.tsx", "utf8");
 const prCreateSource = readFileSync("src/components/PRCreateModal.tsx", "utf8");
@@ -62,6 +62,12 @@ assert(
   "app and browser renderers both retain the shared bounded observation request",
 );
 assert(appSource.includes("<DebugHighlightOverlay"), "renderer mounts the debug highlight overlay");
+assert(
+  previewCenterSource.includes('import "./PreviewCenter.css";')
+    && previewCenterCss.includes(".preview-center-modal")
+    && previewCenterCss.includes(".preview-center-switcher button.active"),
+  "lazy Preview Center owns its complete shell and mode-switcher styles",
+);
 assert(overlaySource.includes("getBoundingClientRect"), "overlay positions borders from real DOM rectangles");
 assert(overlaySource.includes("ResizeObserver"), "overlay remeasures when target layout changes");
 assert(overlaySource.includes("MutationObserver"), "overlay remeasures when target visibility changes");
@@ -97,8 +103,8 @@ assert(
   "Connectors provider tabs declare only their non-sensitive selected observation",
 );
 assert(
-  (connectorsSource.match(/data-shellx-release-observe="pressed"/g) ?? []).length === 4,
-  "Connectors receiver and delivery buttons declare four non-sensitive pressed observations",
+  (connectorsSource.match(/data-shellx-release-observe="pressed"/g) ?? []).length === 6,
+  "Connectors receiver, approval, and delivery buttons declare six non-sensitive pressed observations",
 );
 assert(
   (connectorsSource.match(/data-shellx-release-observe="value"/g) ?? []).length === 3
@@ -142,9 +148,7 @@ assert(
   "environment refresh and trace expose bounded renderer-fixture receipts before live CLI or filesystem effects",
 );
 assert(
-  permissionModalSource.includes('data-shellx-release-control="permission-decision-receipt"')
-    && permissionModalSource.includes('data-shellx-release-observe="title"')
-    && permissionPillSource.includes('data-shellx-release-control={debugFixture ? "permission-decision-receipt" : undefined}')
+  permissionPillSource.includes('data-shellx-release-control={debugFixture ? "permission-decision-receipt" : undefined}')
     && permissionPillSource.includes('data-shellx-release-observe={debugFixture ? "title" : undefined}'),
   "permission fixtures expose only the exact non-secret decision receipt title",
 );
@@ -176,8 +180,8 @@ assert(
   bottomPanelSource.includes('data-shellx-release-observe="mounted"')
     && bottomPanelSource.includes("data-shellx-release-mounted={terminalEverShown ?")
     && bottomPanelSource.includes('data-shellx-release-observe="value"')
-    && (bottomPanelSource.match(/data-shellx-release-observe="pressed"/g) ?? []).length === 2,
-  "BottomPanel exposes only bounded terminal-mount, composer-value, and terminal-selection observations",
+    && !bottomPanelSource.includes('data-shellx-release-observe="pressed"'),
+  "BottomPanel exposes only bounded terminal-mount and composer-value observations",
 );
 assert(
   buildRunCockpitSource.includes('data-shellx-release-control="build-run-state-receipt"')
@@ -219,6 +223,10 @@ assert(
 assert(
   /data-hunk-idx=\{i\}[\s\S]{0,120}data-shellx-release-observe="focused"/.test(chatOutputSource),
   "diff hunks explicitly allow only their bounded focus state for release proof",
+);
+assert(
+  /aria-label=\{`hunk \$\{i \+ 1\} of \$\{hunks\.length\}`\}[\s\S]{0,120}onMouseDown=\{\(event\) => event\.currentTarget\.focus\(\)\}/.test(chatOutputSource),
+  "pointer activation must explicitly focus a diff hunk before native j/k/y/n keyboard handling",
 );
 assert(
   bottomPanelSource.includes('debugId="composer-voice-chat"') && micButtonSource.includes("data-debug-id={debugId}"),

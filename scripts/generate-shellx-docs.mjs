@@ -271,7 +271,7 @@ function renderHtml(content, visuals) {
           </div>
           <p class="candidate-note">${escapeHtml(content.releaseNote)}</p>
           <figure class="manual-overview-visual">
-            <img src="./assets/shellx-workspace.png" width="1920" height="1200" decoding="async" alt="ShellX v0.3.5 workspace with header, projects, session, composer, and right rail visible" />
+            <img src="./assets/shellx-workspace.png" width="1920" height="1200" decoding="async" alt="ShellX v${escapeHtml(content.version)} workspace with header, projects, session, composer, and right rail visible" />
             <figcaption><strong>Interface map</strong><span>Select a persistent ShellX or Browser control in the left tree to update one interactive highlight below.</span></figcaption>
           </figure>
         </section>
