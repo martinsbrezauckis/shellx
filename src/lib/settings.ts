@@ -2,14 +2,12 @@ import { apiPost } from "./debug-api";
 
 export type DensityMode = "compact" | "default" | "comfortable";
 export type ThemeMode = "black" | "black_warm" | "bright";
-export type PermissionUxMode = "modal" | "pill" | "both";
 export type SettingsTab = "general" | "vault" | "connections" | "connectors" | "desktop" | "shellxagent" | "data" | "about";
 
 export interface SettingsValues {
   density: DensityMode;
   theme: ThemeMode;
   chatFontPx: number;
-  permissionUx: PermissionUxMode;
   browserDownloadFolder: string;
 }
 
@@ -32,7 +30,6 @@ export const DEFAULT_SETTINGS: SettingsValues = {
   density: "default",
   theme: "black",
   chatFontPx: FONT_PX_DEFAULT,
-  permissionUx: "pill",
   browserDownloadFolder: "",
 };
 
@@ -76,7 +73,6 @@ function readObjectProperty(value: unknown, key: string): unknown {
 export function normalizeSettings(raw: unknown): SettingsValues {
   const densityValue = readObjectProperty(raw, "density");
   const themeValue = readObjectProperty(raw, "theme");
-  const permissionUxValue = readObjectProperty(raw, "permissionUx");
   const chatFontPxValue = readObjectProperty(raw, "chatFontPx");
   const browserDownloadFolderValue = readObjectProperty(raw, "browserDownloadFolder");
   const density: DensityMode =
@@ -87,17 +83,13 @@ export function normalizeSettings(raw: unknown): SettingsValues {
     themeValue === "black_warm" || themeValue === "black" || themeValue === "bright"
       ? themeValue
       : DEFAULT_SETTINGS.theme;
-  const permissionUx: PermissionUxMode =
-    permissionUxValue === "modal" || permissionUxValue === "both" || permissionUxValue === "pill"
-      ? permissionUxValue
-      : DEFAULT_SETTINGS.permissionUx;
   const chatFontPx =
     typeof chatFontPxValue === "number" && Number.isFinite(chatFontPxValue)
       ? Math.max(FONT_PX_MIN, Math.min(FONT_PX_MAX, Math.round(chatFontPxValue)))
       : DEFAULT_SETTINGS.chatFontPx;
   const browserDownloadFolder =
     typeof browserDownloadFolderValue === "string" ? browserDownloadFolderValue.trim() : "";
-  return { density, theme, chatFontPx, permissionUx, browserDownloadFolder };
+  return { density, theme, chatFontPx, browserDownloadFolder };
 }
 
 export function readSettingsLocal(): SettingsValues {

@@ -7,6 +7,35 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
+## [0.3.51] - 2026-08-10
+
+### Added
+
+- Release assets can include deterministic, sanitized CycloneDX SBOMs bound to
+  each artifact digest and the exact source commit. These SBOMs are dependency
+  inventories, not signed provenance attestations.
+
+### Improved
+
+- Large workspace, Browser, Settings, connection, setup, Vault, and operational
+  panels now load on demand. The interactive Terminal remains in the app and is
+  preloaded when the user signals intent to open it.
+- Plan, Preview, Vault Request Center, Vault status, transcript, and native
+  event refreshes share bounded schedulers or batched updates, reducing idle
+  backend traffic and duplicate renderer work.
+- Browser Workflows, native form controls, connection status, and neighboring
+  light/dark surfaces use the established compact ShellX hierarchy and clearer
+  recovery states.
+- The Agent CLI setup action now opens the environment-aware setup assistant
+  and refreshes provider discovery for the active Local, WSL, or SSH target.
+- Runtime stream buffers and process drains use bounded heap ownership, while
+  provider and Debug API contracts are split from operational clients to keep
+  startup bundles smaller.
+
+### Fixed
+
+- Bugfixes.
+
 ## [0.3.5] - 2026-08-09
 
 ### Added

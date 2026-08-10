@@ -845,7 +845,7 @@ fn file_artifact_metadata(path: &str) -> Result<Option<(u64, String)>, String> {
     let mut reader = std::io::BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut bytes = 0u64;
-    let mut buffer = [0u8; 64 * 1024];
+    let mut buffer = vec![0u8; 64 * 1024].into_boxed_slice();
     loop {
         let read = reader
             .read(&mut buffer)
@@ -994,5 +994,30 @@ fn classify_transfer_content(mime_type: Option<&str>, path: &str) -> String {
         infer_mime_type_from_path(path)
             .map(|inferred| classify_transfer_content(Some(&inferred), path))
             .unwrap_or_else(|| "binary".to_string())
+    }
+}
+
+#[cfg(test)]
+mod artifact_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn file_artifact_metadata_streams_large_file_exactly() {
+        let path = std::env::temp_dir().join(format!(
+            "shellx-browser-artifact-metadata-{}.bin",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let body = (0..(3 * 64 * 1024 + 37))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        std::fs::write(&path, &body).expect("write large artifact fixture");
+
+        let metadata = file_artifact_metadata(&path.to_string_lossy())
+            .expect("hash large artifact")
+            .expect("large artifact metadata");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(metadata.0, body.len() as u64);
+        assert_eq!(metadata.1, format!("{:x}", Sha256::digest(&body)));
     }
 }

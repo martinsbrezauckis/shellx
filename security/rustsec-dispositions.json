@@ -2,31 +2,6 @@
   "schemaVersion": "shellx.rustsec-dispositions.v1",
   "entries": [
     {
-      "advisoryId": "RUSTSEC-2026-0194",
-      "package": "quick-xml",
-      "versions": ["0.30.0", "0.37.5", "0.39.4"],
-      "expiresOn": "2026-09-05",
-      "reason": "The affected duplicate-attribute parsing path is not reachable from agent- or user-controlled XML in ShellX's dependency owners.",
-      "evidence": [
-        "quick-xml 0.30.0 is an xcb build dependency that parses crate-packaged XCB protocol XML.",
-        "tauri-winrt-notification 0.7.2 uses quick-xml 0.37.5 only for XML escaping and does not instantiate a Reader.",
-        "quick-xml 0.39.4 is used by build-time Wayland protocol generation and Tauri plist handling for project or current-bundle Info.plist data; ShellX exposes no arbitrary plist parser surface."
-      ],
-      "upgradeCondition": "Remove as soon as xcb, notify-rust/tauri-winrt-notification, wayland-scanner, and plist accept quick-xml 0.41 or later."
-    },
-    {
-      "advisoryId": "RUSTSEC-2026-0195",
-      "package": "quick-xml",
-      "versions": ["0.30.0", "0.37.5", "0.39.4"],
-      "expiresOn": "2026-09-05",
-      "reason": "None of ShellX's quick-xml dependency owners use the affected NsReader namespace API.",
-      "evidence": [
-        "Source inspection of xcb 1.7.0, tauri-winrt-notification 0.7.2, plist 1.9.0, and wayland-scanner 0.31.10 found no NsReader use.",
-        "The 0.30.0 and Wayland parser inputs are dependency-owned build inputs, while the Windows notification owner uses only quick_xml::escape::escape."
-      ],
-      "upgradeCondition": "Remove as soon as all dependency owners accept quick-xml 0.41 or later."
-    },
-    {
       "advisoryId": "RUSTSEC-2026-0235",
       "package": "rkyv",
       "versions": ["0.7.46"],

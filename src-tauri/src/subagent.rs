@@ -55,7 +55,10 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::process_registry::{ProcessRegistry, ProcessSource, ProcessStatus};
+use crate::process_registry::{
+    capture_owned_process_identity, owned_process_identity_is_current, OwnedProcessIdentity,
+    ProcessRegistry, ProcessSource, ProcessStatus,
+};
 
 // ─────────────────────────── Personas ───────────────────────────
 
@@ -267,6 +270,9 @@ pub struct SubagentState {
     /// without holding the Child handle (which is owned by the spawn
     /// task's `wait_with_output`).
     pub pid: Option<u32>,
+    /// PID plus OS process-start token. Delayed SIGKILL escalation must match
+    /// this identity so a reused numeric PID can never target a new process.
+    process_identity: Option<OwnedProcessIdentity>,
     /// Process-registry task_id of the form `gs-<hex>`. Mirrors the row
     /// the right-rail TasksPanel renders for this subagent. None when no
     /// registry was registered (legacy callers / unit tests that haven't
@@ -293,6 +299,7 @@ impl SubagentState {
             elapsed_ms: None,
             total_tokens: None,
             pid: None,
+            process_identity: None,
             task_id: None,
             killed: false,
         }
@@ -1249,6 +1256,12 @@ pub async fn spawn_subagent_with_transport_options(
     // TasksPanel can render this subagent. The registry is optional —
     // unit tests and direct binary callers can skip wiring one.
     let child_pid = child.id();
+    let child_process_identity = child_pid.and_then(capture_owned_process_identity);
+    if child_pid.is_some() && child_process_identity.is_none() {
+        tracing::warn!(
+            "Agent: could not bind child PID to a stable process identity; delayed kill escalation will remain disabled"
+        );
+    }
     // Assign Windows pid to kill-on-close Job Object.
     if let Some(pid_u32) = child_pid {
         crate::winproc::tie_to_parent_lifetime(pid_u32);
@@ -1280,6 +1293,7 @@ pub async fn spawn_subagent_with_transport_options(
     {
         let mut st = handle.state.lock().await;
         st.pid = child_pid;
+        st.process_identity = child_process_identity;
         st.task_id = task_id_opt;
         // Mirror initial Running state with the now-
         // known pid into the cross-process db. This is the first write
@@ -1338,28 +1352,48 @@ pub async fn spawn_subagent_with_transport_options(
                     timing.watchdog,
                     SubagentWatchdogPolicy::Hard { .. } | SubagentWatchdogPolicy::Idle { .. }
                 ) {
-                    // SIGTERM, then escalate to SIGKILL if the child is
-                    // still alive after a 1.5s grace window. SIGTERM alone
+                    // Verify the owned process generation, send SIGTERM, then
+                    // escalate only if that same generation remains alive
+                    // after a 1.5s grace window. SIGTERM alone
                     // can leave a child running 15s past the timeout,
                     // leaking work + tokens. The escalation path mirrors
                     // `kill` (taskkill /T then /T /F on Windows; SIGTERM
                     // then SIGKILL on Unix). We DON'T await the reaper task.
-                    let pid_opt = {
+                    let (still_running, pid_opt, process_identity) = {
                         let st = handle.state.lock().await;
-                        st.pid
+                        (
+                            st.status == SubagentStatus::Running,
+                            st.pid,
+                            st.process_identity,
+                        )
                     };
-                    if let Some(pid) = pid_opt {
-                        let _ = send_term(pid);
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_millis(1500)).await;
-                            if pid_is_alive(pid) {
+                    if still_running {
+                        if let Some(pid) = pid_opt {
+                            if let Some(identity) = process_identity {
+                                if delayed_escalation_target_is_current(&handle, identity).await {
+                                    let _ = send_term(pid);
+                                    let escalation_handle = handle.clone();
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(Duration::from_millis(1500)).await;
+                                        if delayed_escalation_target_is_current(
+                                            &escalation_handle,
+                                            identity,
+                                        )
+                                        .await
+                                        {
+                                            tracing::warn!(
+                                                "Agent timeout: owned pid={pid} survived SIGTERM; escalating to SIGKILL"
+                                            );
+                                            let _ = send_kill9(pid);
+                                        }
+                                    });
+                                }
+                            } else {
                                 tracing::warn!(
-                                    "Agent timeout: pid={} survived SIGTERM after 1500ms — escalating to SIGKILL",
-                                    pid
+                                    "Agent timeout: skipped automatic termination for pid={pid} because no stable process identity was captured"
                                 );
-                                let _ = send_kill9(pid);
                             }
-                        });
+                        }
                     }
                 }
                 true
@@ -1627,8 +1661,9 @@ fn format_iso_utc_now() -> String {
 /// for a detached subagent.
 ///
 /// After `watchdog_ms` the task re-reads the handle's status; if still
-/// `Running`, it marks `killed=true`, sends SIGTERM to the child pid,
-/// waits 1.5s, escalates to SIGKILL if needed. Without this, a hung
+/// `Running`, it marks `killed=true`, verifies the captured PID/start token,
+/// sends SIGTERM, waits 1.5s, then re-verifies the same process generation
+/// before escalating to SIGKILL. Without this, a hung
 /// detached subagent (e.g. grok waiting on stdin that never closes)
 /// runs until the host MCP process exits — could be days of wasted
 /// xAI auth slot + idle process holding a registry row in Running.
@@ -1642,9 +1677,13 @@ pub(crate) fn arm_detached_watchdog(handle: Arc<SubagentHandle>, watchdog_ms: u6
         // Check status — if terminal, exit silently. We capture pid
         // under the SAME lock as the status check to avoid a race
         // where the reaper transitions state right after our check.
-        let (still_running, pid_opt) = {
+        let (still_running, pid_opt, process_identity) = {
             let st = handle.state.lock().await;
-            (st.status == SubagentStatus::Running, st.pid)
+            (
+                st.status == SubagentStatus::Running,
+                st.pid,
+                st.process_identity,
+            )
         };
         if !still_running {
             return;
@@ -1658,22 +1697,44 @@ pub(crate) fn arm_detached_watchdog(handle: Arc<SubagentHandle>, watchdog_ms: u6
             st.killed = true;
         }
         if let Some(pid) = pid_opt {
-            tracing::warn!(
-                "Agent detached watchdog: pid={} exceeded {}ms — SIGTERM",
-                pid,
-                watchdog_ms
-            );
-            let _ = send_term(pid);
-            tokio::time::sleep(Duration::from_millis(1500)).await;
-            if pid_is_alive(pid) {
+            if let Some(identity) = process_identity {
+                if !delayed_escalation_target_is_current(&handle, identity).await {
+                    return;
+                }
                 tracing::warn!(
-                    "Agent detached watchdog: pid={} survived SIGTERM after 1500ms — SIGKILL",
-                    pid
+                    "Agent detached watchdog: pid={} exceeded {}ms — SIGTERM",
+                    pid,
+                    watchdog_ms
                 );
-                let _ = send_kill9(pid);
+                let _ = send_term(pid);
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                if delayed_escalation_target_is_current(&handle, identity).await {
+                    tracing::warn!(
+                        "Agent detached watchdog: pid={} survived SIGTERM after 1500ms — SIGKILL",
+                        pid
+                    );
+                    let _ = send_kill9(pid);
+                }
+            } else {
+                tracing::warn!(
+                    "Agent detached watchdog: skipped automatic termination for pid={pid} because no stable process identity was captured"
+                );
             }
         }
     });
+}
+
+async fn delayed_escalation_target_is_current(
+    handle: &SubagentHandle,
+    expected: OwnedProcessIdentity,
+) -> bool {
+    let still_owned = {
+        let state = handle.state.lock().await;
+        state.status == SubagentStatus::Running
+            && state.pid == Some(expected.pid())
+            && state.process_identity == Some(expected)
+    };
+    still_owned && owned_process_identity_is_current(expected)
 }
 
 /// Drive the spawned child to completion, capture stdout/stderr, update
@@ -2175,10 +2236,11 @@ async fn lookup(id: Uuid) -> Result<Arc<SubagentHandle>, String> {
 /// A hard-already-exited subagent returns `was_running=false, killed=false`
 /// — no error: idempotent kill is a feature.
 ///
-/// We send the signal by PID rather than holding a `Child` handle because
-/// the spawn task owns the Child via `wait_with_output` and we don't
-/// want to fight that ownership. The kill flag flips first so the
-/// post-mortem in `run_to_completion` files this as `Killed` not `Failed`.
+/// We send the initial signal by PID rather than holding a `Child` handle
+/// because the spawn task owns the Child. The delayed escalation additionally
+/// verifies the OS process-start token, preventing a reused numeric PID from
+/// targeting a new process. The kill flag flips first so the post-mortem in
+/// `run_to_completion` files this as `Killed` not `Failed`.
 pub async fn kill(subagent_id: &str, force: bool) -> Result<Value, String> {
     let id = Uuid::parse_str(subagent_id)
         .map_err(|e| format!("Agent_kill: bad subagent_id '{}': {}", subagent_id, e))?;
@@ -2186,7 +2248,7 @@ pub async fn kill(subagent_id: &str, force: bool) -> Result<Value, String> {
 
     // Snapshot state under the lock; release before sending any signal so
     // the spawn task's wait can still update state when the child dies.
-    let (status, pid_opt, task_id_opt) = {
+    let (status, pid_opt, process_identity, task_id_opt) = {
         let mut st = h.state.lock().await;
         if st.status == SubagentStatus::Running {
             // Mark intent BEFORE signalling — the spawn-task post-mortem
@@ -2198,7 +2260,7 @@ pub async fn kill(subagent_id: &str, force: bool) -> Result<Value, String> {
             // still mirrors on top of this.
             mirror_to_db(&h, &st);
         }
-        (st.status, st.pid, st.task_id.clone())
+        (st.status, st.pid, st.process_identity, st.task_id.clone())
     };
 
     if status != SubagentStatus::Running {
@@ -2272,8 +2334,16 @@ pub async fn kill(subagent_id: &str, force: bool) -> Result<Value, String> {
             let st = h_clone.state.lock().await;
             st.status == SubagentStatus::Running
         };
-        if still_running && pid_is_alive(pid) {
-            let _ = send_kill9(pid);
+        if still_running {
+            if let Some(identity) = process_identity {
+                if delayed_escalation_target_is_current(&h_clone, identity).await {
+                    let _ = send_kill9(pid);
+                }
+            } else {
+                tracing::warn!(
+                    "Agent_kill: skipped delayed SIGKILL for pid={pid} because no stable process identity was captured"
+                );
+            }
         }
     });
 
@@ -2308,12 +2378,6 @@ fn send_kill9(pid: u32) -> Result<(), String> {
     .map_err(|e| format!("SIGKILL {} failed: {}", pid, e))
 }
 
-#[cfg(unix)]
-fn pid_is_alive(pid: u32) -> bool {
-    use nix::sys::signal::kill;
-    crate::process_registry::checked_unix_process_id(pid).is_ok_and(|pid| kill(pid, None).is_ok())
-}
-
 #[cfg(not(unix))]
 fn send_term(pid: u32) -> Result<(), String> {
     // Windows: taskkill without /F is the closest analogue to SIGTERM.
@@ -2344,15 +2408,6 @@ fn send_kill9(pid: u32) -> Result<(), String> {
     } else {
         Err(format!("taskkill /F failed exit={:?}", status.code()))
     }
-}
-
-#[cfg(not(unix))]
-fn pid_is_alive(pid: u32) -> bool {
-    use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
-    let mut sys =
-        System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
-    sys.refresh_processes();
-    sys.process(Pid::from(pid as usize)).is_some()
 }
 
 // ─────────────────────────── metrics ───────────────────────────
@@ -3010,6 +3065,29 @@ mod tests {
             "watchdog must NOT mark killed when handle is already terminal"
         );
         assert_eq!(st.status, SubagentStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn delayed_escalation_requires_the_same_owned_process_generation() {
+        let pid = std::process::id();
+        let identity = capture_owned_process_identity(pid)
+            .expect("current test process has a stable identity");
+        let handle = Arc::new(SubagentHandle {
+            id: Uuid::new_v4(),
+            persona: "general-purpose".to_string(),
+            task_preview: "stable escalation identity".to_string(),
+            started_at: Instant::now(),
+            state: Mutex::new(SubagentState::new_running()),
+        });
+        {
+            let mut state = handle.state.lock().await;
+            state.pid = Some(pid);
+            state.process_identity = Some(identity);
+        }
+        assert!(delayed_escalation_target_is_current(&handle, identity).await);
+
+        handle.state.lock().await.process_identity = None;
+        assert!(!delayed_escalation_target_is_current(&handle, identity).await);
     }
 
     /// Percentile helper: nearest-rank, empty input → Null, single

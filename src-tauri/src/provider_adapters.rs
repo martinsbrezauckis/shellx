@@ -597,7 +597,7 @@ pub fn build_provider_command_with_options(
                     args.push("--agent".to_string());
                     args.push(agent_name.to_string());
                     notes.push(
-                        "ShellX session rules are isolated in a private Antigravity additional workspace selected only for this run. Antigravity 1.1.8 through 1.1.10 advertises call_mcp_tool but fails to execute the discovered MCP tool, so ShellX host MCP remains disabled for this provider."
+                        "ShellX session rules are isolated in a private Antigravity additional workspace selected only for this run. Antigravity 1.1.8 through 1.1.11 advertises call_mcp_tool but fails to execute the discovered MCP tool, so ShellX host MCP remains disabled for this provider."
                             .to_string(),
                     );
                 } else {
@@ -1267,7 +1267,7 @@ fn write_antigravity_shellx_agent(
     let agent_name = antigravity_agent_name(&tab_id);
     let workspace_name = format!("{agent_name}-workspace");
     let agent_rendered = format!(
-        "---\nname: {agent_name}\ndescription: ShellX session-scoped activation.\nmainAgent: true\nsubagent: false\n---\n\n# ShellX session\n\n{}\n\nAntigravity 1.1.8 through 1.1.10 advertises `call_mcp_tool` but fails to execute the discovered MCP tool. Do not search for, invoke, or claim ShellX host tools in this provider session; return control to ShellX for host-only operations.\n",
+        "---\nname: {agent_name}\ndescription: ShellX session-scoped activation.\nmainAgent: true\nsubagent: false\n---\n\n# ShellX session\n\n{}\n\nAntigravity 1.1.8 through 1.1.11 advertises `call_mcp_tool` but fails to execute the discovered MCP tool. Do not search for, invoke, or claim ShellX host tools in this provider session; return control to ShellX for host-only operations.\n",
         crate::skill_install::SHELLX_SESSION_RULES
     );
 

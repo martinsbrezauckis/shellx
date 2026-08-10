@@ -23,7 +23,7 @@
  * TerminalView mount async IIFE). This boundary catches the COMMON
  * case — a render-time null deref turning into a black screen.
  */
-import React, { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface Props {

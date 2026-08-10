@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +7,14 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const POLICY_PATH = resolve(ROOT, "security", "rustsec-dispositions.json");
 const LOCK_PATH = resolve(ROOT, "src-tauri", "Cargo.lock");
+const ROOT_MANIFEST_PATH = resolve(ROOT, "src-tauri", "Cargo.toml");
+const WINRT_VENDOR_ROOT = resolve(ROOT, "vendor", "tauri-winrt-notification");
+
+const WINRT_UPSTREAM_HASHES = new Map([
+  ["src/lib.rs", "02737ddf3e28757572c6da5ed492496a07f59e56e78bc3dbea327ebaeb8913f1"],
+  ["LICENSE_APACHE-2.0", "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"],
+  ["LICENSE_MIT", "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"],
+]);
 
 function vulnerabilityKey(advisoryId, packageName, version) {
   return `${advisoryId}:${packageName}@${version}`;
@@ -82,6 +91,38 @@ function readJson(path) {
   }
 }
 
+function sha256(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+export function validateWinrtPatch() {
+  const errors = [];
+  for (const [relativePath, expectedHash] of WINRT_UPSTREAM_HASHES) {
+    const actualHash = sha256(resolve(WINRT_VENDOR_ROOT, relativePath));
+    if (actualHash !== expectedHash) {
+      errors.push(`vendored tauri-winrt-notification ${relativePath} differs from crates.io 0.7.2`);
+    }
+  }
+
+  const vendorManifest = readFileSync(resolve(WINRT_VENDOR_ROOT, "Cargo.toml"), "utf8");
+  if (!vendorManifest.includes('version = "0.7.2"') || !vendorManifest.includes('quick-xml = "0.41"')) {
+    errors.push("vendored tauri-winrt-notification must retain API version 0.7.2 and quick-xml 0.41");
+  }
+
+  const rootManifest = readFileSync(ROOT_MANIFEST_PATH, "utf8");
+  if (!rootManifest.includes('tauri-winrt-notification = { path = "../vendor/tauri-winrt-notification" }')) {
+    errors.push("ShellX Cargo manifest does not activate the reviewed tauri-winrt-notification patch");
+  }
+
+  const lock = readFileSync(LOCK_PATH, "utf8");
+  for (const vulnerableVersion of ["0.37.5", "0.39.4"]) {
+    if (lock.includes(`name = "quick-xml"\nversion = "${vulnerableVersion}"`)) {
+      errors.push(`Cargo.lock still resolves vulnerable quick-xml ${vulnerableVersion}`);
+    }
+  }
+  return errors;
+}
+
 function runCargoAudit() {
   const result = spawnSync("cargo", ["audit", "--file", LOCK_PATH, "--json"], {
     cwd: ROOT,
@@ -124,6 +165,8 @@ function renderEvaluation(evaluation) {
 
 function main() {
   try {
+    const patchErrors = validateWinrtPatch();
+    if (patchErrors.length > 0) throw new Error(patchErrors.join("\n"));
     const report = runCargoAudit();
     const policy = readJson(POLICY_PATH);
     const evaluation = evaluateRustsecReport(report, policy);

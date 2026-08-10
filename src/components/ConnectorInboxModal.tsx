@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import "./ConnectorInboxModal.css";
 import { ShellIcon } from "./icons";
 import { inTauri } from "../lib/tauri-bridge";
 import {
@@ -230,7 +231,7 @@ export function ConnectorInboxModal({
           {error && <div className="connector-toast connector-toast-err">{error}</div>}
 
           {filteredEvents.length === 0 ? (
-            <div className="vault-empty connector-events-empty">
+            <div className="connector-events-empty">
               No connector messages in this inbox.
             </div>
           ) : (

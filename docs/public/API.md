@@ -9,7 +9,7 @@
 > publishes its port to `~/.shellx/mcp-http.port` the same way.
 
 **Status:** Implementation guide plus v1.x roadmap (drafted 2026-05-17,
-current route inventory refreshed 2026-08-03).
+current route inventory refreshed 2026-08-10).
 **Audience:** Any future implementer (human or agent) extending shellX's
 debug API beyond what is already wired in `src-tauri/src/debug_api.rs` and the
 `src-tauri/src/debug_api_browser*.rs` route handlers.
@@ -28,13 +28,13 @@ major and shipping a migration shim.
 ## Current Implementation Inventory
 
 These routes are wired today. All routes except `GET /health` require the
-debug bearer token from `~/.shellx/shellxagent.token` or
-`SHELLX_DEBUG_SECRET` (legacy `GROK_SHELL_DEBUG_SECRET` also works).
-On launch ShellX also writes `~/.shellx/shellxagent.json`, a private
-discovery descriptor containing the bound Debug API URL, existing bearer
-token when file-based auth is active, and gated Browser route paths. The
-same descriptor is available to authenticated local clients at
-`GET /shellxagent.json`. Installer-bundled agent docs are available at
+private per-user Debug API bearer. ShellX-owned clients resolve it internally;
+custom clients must receive it through a private process-local integration and
+must not read, print, or persist raw credential material. On launch ShellX also
+writes a private discovery descriptor containing the bound Debug API URL,
+credential material for ShellX-owned local clients, and gated Browser route
+paths. The same non-secret discovery metadata is available to authenticated
+local clients at `GET /shellxagent.json`. Installer-bundled agent docs are available at
 `GET /agent-doc/manifest` and
 `GET /agent-doc/skills/shellx-host/SKILL.md`. None of these surfaces
 expose raw CDP.
@@ -69,7 +69,7 @@ The `/release-test/tauri-invokes*` routes are unavailable in ordinary ShellX
 instances. They activate only when the process satisfies the exact isolated
 release-profile contract (dedicated test home, instance id, marker, and
 separate Debug API/MCP ports). The authenticated controller starts one of the
-154 frozen allowlisted commands; the backend emits only an invoke id and a
+153 frozen allowlisted commands; the backend emits only an invoke id and a
 128-bit claim nonce to the renderer. The renderer must claim that nonce before
 the backend returns the command and bounded JSON arguments, invokes through the
 normal Tauri bridge, and submits a bounded result. Only one invoke may be
@@ -378,7 +378,7 @@ aliases:
 - `browser_fill_profile_card -> POST /browser/action` with `action: "fillProfileCardGrant"`, `grantId`, `resourceRef`, `key`, and `refId` or `selector`.
 - `browser_capture_secret_to_vault -> POST /browser/action` with `action: "capturePageSecretToVault"`, `secretRef`, and `refId` or `selector`. Directly visible field/text values are deposited without being returned; copy-only controls stop for an explicit operator clipboard transfer, and ShellX neither clicks them nor reads the host clipboard.
 - `browser_read_email_code -> POST /browser/action` with `action: "readEmailCodeGrant"`, `grantId`, and `resourceRef`.
-- `browser_use_agent_wallet -> POST /browser/action` with `action: "useAgentWalletGrant"`, `grantId`, and `resourceRef`; 0.3.5 returns `browser_agent_wallet_checkout_unavailable` until a provider transaction bridge can prove the checkout.
+- `browser_use_agent_wallet -> POST /browser/action` with `action: "useAgentWalletGrant"`, `grantId`, and `resourceRef`; the current release returns `browser_agent_wallet_checkout_unavailable` until a provider transaction bridge can prove the checkout.
 - `browser_downloads -> GET /browser/downloads`.
 - `browser_resolve_dialog -> POST /browser/dialogs/resolve` with `dialogId`, `taskId`, and `action: "accept"` or `"dismiss"`.
 - `browser_trace_open -> POST /browser/trace/export`.
@@ -554,7 +554,7 @@ internal `fillRef`, and records `browserProfileCardFilled`.
 `emailInbox` resource and returns only the short code plus redacted receipt
 metadata. The Vault UI does not expose a separate email-resource editor; email
 account passwords should be stored as normal `secret` entries. `useAgentWalletGrant`
-validates `AgentWalletUse` on a `stripeAgentWallet` resource, but 0.3.5 returns
+validates `AgentWalletUse` on a `stripeAgentWallet` resource, but the current release returns
 `501 browser_agent_wallet_checkout_unavailable` because grant approval alone is
 not proof of a provider payment operation. ShellX does not store generic user
 payment cards or claim that an unavailable checkout was prepared.
@@ -1322,10 +1322,10 @@ Codex treats it as a probe MCP server script path and wires inline
 `--mcp-config` JSON file path and adds `--strict-mcp-config`.
 Antigravity does not use the generic `mcpPath` probe flag. ShellX gives it a
 private per-tab additional workspace for session instructions, but does not add
-a host MCP config: 1.1.8 and 1.1.10 print-mode canaries discovered the test
-schema but never sent a real MCP `tools/call`. The 1.1.10 retry returned the
-expected marker only after reading test files, so ShellX correctly rejected it
-as execution evidence.
+a host MCP config: 1.1.8, 1.1.10, and 1.1.11 print-mode canaries discovered the
+test schema but never sent a real MCP `tools/call`. The 1.1.11 retry attempted
+four invocation spellings that its execution backend rejected as unknown tools,
+so ShellX correctly rejected the successful process exit as execution evidence.
 
 `includeShellxTooling` defaults to true. `shellxToolExposure` is the newer
 per-tab control for the same provider-facing host-tool surface:
@@ -2708,8 +2708,8 @@ concurrency tests.
 ```
 
 Sets the Grok/ACP tab to the ShellX Full Auto mode used when a Grok child is
-next spawned. Older migration/diagnostic wire values remain accepted by 0.3.5
-but are not user-facing modes. Provider CLI sessions do not read this endpoint
+next spawned. Older migration/diagnostic wire values remain accepted at the
+transport boundary but are not user-facing modes. Provider CLI sessions do not read this endpoint
 directly; Debug API clients should pass `permissionMode` on
 `/provider-sessions/start`. For a running Grok session the response includes
 `appliesAfterReconnect: true` because the CLI flag is already baked into argv.
@@ -2748,7 +2748,6 @@ fail closed to deny.
   density: "compact" | "default" | "comfortable";
   theme: "black" | "black_warm" | "bright";
   chatFontPx: number;               // 12..26
-  permissionUx: "pill" | "modal" | "both"; // legacy/internal provider-prompt compatibility
   githubGhBinary: string;           // advanced compatibility setting
 }
 ```
@@ -2979,6 +2978,10 @@ type OutsideConnector = {
 };
 ```
 
+`dispatchMode` and `requireApproval` are independent. Selecting Session chat
+does not disable per-message review; new connectors default to
+`requireApproval: true`, and Auto-dispatch requires a separate operator choice.
+
 Routes:
 
 - `GET /outside-connectors` → `{ connectors: OutsideConnector[] }`
@@ -2993,14 +2996,19 @@ Telegram test calls Bot API `getMe` using the Vault reference named
 `botTokenVaultKey`. Discord test calls `GET /users/@me` using the bot-token
 Vault reference named `botTokenVaultKey`.
 
-Telegram `autoPrompt` is the first live session-chat connector. It
-requires an enabled connector, an allowlisted chat id, and either a fixed
-tab or the renderer-published active tab. shellX records the inbound
-event, sends the message to the target ShellX session, returns the active session's text
-reply back with Telegram `sendMessage`, and sends a referenced local
-image path with `sendPhoto` when the reply includes one. Discord supports
-the same `autoPrompt` routing for allowlisted direct messages and returns
-the captured text reply through its bot API.
+Telegram `autoPrompt` is a live session-chat connector. It requires an enabled
+connector, an allowlisted chat id, and either a fixed tab or the
+renderer-published active tab. shellX records the inbound event, sends the
+message to the target ShellX session—either live Grok ACP or a Codex, Claude,
+or Antigravity provider session—and returns the active session's captured text reply with Telegram
+`sendMessage`, and sends a referenced local image path with `sendPhoto` when
+the reply includes one. Discord supports the same `autoPrompt` routing for
+allowlisted direct messages and returns the captured text reply through its bot
+API. Provider-session routing reuses the selected tab's recorded execution
+target, permission mode, and ShellX tool-exposure policy. It resumes the exact
+provider conversation when that identity is available and otherwise starts a
+fresh run in the same tab and target rather than continuing an unrelated global
+conversation. It never copies or relocates provider authentication state.
 
 Connector events are bounded to the latest 200 events in
 `~/.shellx/outside-connector-events.jsonl`. Simulation routes exercise
@@ -3355,18 +3363,17 @@ Authorization: Bearer <token>
 Mismatch returns `401 unauthorized`. The WS upgrade reads the token from a
 query param `?token=<>` because browsers do not support custom headers on WS.
 
-Token resolution order on the server side:
-1. `SHELLX_DEBUG_SECRET` env var (overrides the file, used for CI)
-2. `GROK_SHELL_DEBUG_SECRET` legacy env var
-3. the per-user token file (auto-created, 32 hex chars, `0600` on macOS/Linux;
-   on Windows it inherits the user-private profile ACL)
+Server-side authentication accepts a process-local override for isolated CI
+and otherwise creates one per-user credential. The generated credential is 32
+hex characters and is stored with mode `0600` on macOS/Linux or the inherited
+user-private profile ACL on Windows. Client code should not depend on that
+storage implementation.
 
-ShellX also writes `~/.shellx/shellxagent.json` with the bound
+ShellX also writes a private local descriptor with the bound
 `url`, `browserAction`, `browserCheck`, `browserSummary`, `browserSettle`, `browserState`, `browserTabs`, `events`,
-and `health` endpoints for local tool discovery. For normal file-token
-installs it includes the same bearer token as `shellxagent.token`; when
-auth is overridden by an env var, the descriptor omits the env token so
-the override is not persisted. The descriptor intentionally advertises
+and `health` endpoints for local tool discovery. For ordinary installs the
+private on-disk copy may include the bearer for ShellX-owned local clients;
+process-local overrides are never persisted there. The descriptor intentionally advertises
 `rawCdpExposed: false`; Browser automation must continue through the
 gated `/browser/*` Debug API routes.
 
@@ -3394,8 +3401,8 @@ content.
 probe used by drivers waiting for the app to come up.
 
 The host MCP HTTP server (separate port, published to
-`~/.shellx/mcp-http.port`) uses an independent token at
-`~/.shellx/mcp.token`. Rotate the two tokens independently.
+`~/.shellx/mcp-http.port`) uses an independently generated private per-user
+credential. Rotate the Debug API and Host MCP credentials independently.
 
 ---
 
@@ -3410,7 +3417,7 @@ Product surfaces that promise evidence use their own bounded receipts and
 artifacts, including Browser actions, Flight Recorder exports, Vault grants,
 build/goal receipts, and release-driver evidence. Request logging with a
 documented redaction schema, caller identity, retention policy, and rotation
-contract remains roadmap work and is not part of the 0.3.5 API.
+contract remains roadmap work and is not part of the current API.
 
 ---
 

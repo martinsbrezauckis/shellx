@@ -46,15 +46,14 @@ blocks credential stores, shell startup files, SSH config, Git config, and
 user persistence locations even when they are inside HOME.
 
 ### T2. Agent runs arbitrary shell
-A `terminal/create` request from grok over ACP, if honored, would
-spawn a host PTY with whatever command grok wants.
+A provider-originated `terminal/*` request, if honored, could spawn or control
+a host PTY with provider-selected commands.
 
-**Defense**: `acp.rs::handle_terminal_create` intercepts on every
-transport and returns JSON-RPC `-32601` with guidance to use the supervised
-ShellX `Agent` tool instead. **No host PTY is ever spawned in response to a
-grok request.** This is
-load-bearing — a regression here would let grok run arbitrary shell.
-See `acp.rs::handle_terminal_create`.
+**Defense**: `acp.rs::reject_provider_terminal_method` is the single boundary
+for every `terminal/*` method on every transport. It returns JSON-RPC `-32601`
+with guidance to use the supervised ShellX `Agent` tool instead. **No host PTY
+is ever spawned in response to a provider request.** This is load-bearing — a
+regression here would let a provider run arbitrary shell.
 
 ### T3. Agent exfiltrates host credentials
 An active Grok or provider CLI session could read `~/.aws/credentials`, `~/.ssh/id_*`, `~/.password-store/`,
@@ -355,8 +354,13 @@ server-side escrow or recovery beyond the saved recovery materials.
 ### O3. Compromise of grok-build's xAI auth
 Grok-build has its own `~/.grok/auth.json` with an xAI session token.
 If that's stolen, the attacker can impersonate the user against xAI
-APIs. This is xAI's threat model, not shellX's. shellX does not
-read or store xAI credentials itself.
+APIs. ShellX does not copy, move, rewrite, or persist that provider-owned
+credential. When the user invokes ShellX's optional xAI-backed vision, voice,
+transcription, or X Search tools, the local tool reads the canonical credential
+into process memory for that request; an explicit Vault or environment API key
+can be used instead. Protecting the provider credential at rest remains xAI's
+and the operating system's boundary, while preventing it from appearing in
+ShellX logs, evidence, or agent-facing responses remains ShellX's boundary.
 
 ### O4. Side-channels (timing, cache, power)
 No defense against e.g. timing attacks on the auth flow beyond

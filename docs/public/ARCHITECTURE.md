@@ -86,9 +86,9 @@ Playwright, CI, etc.
 - Bind `127.0.0.1` only.
 - Preferred port `5757`; if busy, steps up and publishes the actual
   bound port to `~/.shellx/debug-api.port`.
-- Bearer token: 16 bytes OsRng → 32 hex chars, file at
-  `~/.shellx/shellxagent.token`; mode 0600 on macOS/Linux, inherited
-  user-private `%USERPROFILE%` ACL on Windows, constant-time compared.
+- Bearer token: 16 bytes OsRng → 32 hex chars, stored in a private per-user
+  credential file with mode 0600 on macOS/Linux and the inherited user-private
+  profile ACL on Windows, then compared in constant time.
   Env `SHELLX_DEBUG_SECRET` override, with
   `GROK_SHELL_DEBUG_SECRET` kept as a legacy fallback. Older installs
   are auto-migrated.
@@ -125,8 +125,9 @@ shellXagent).
 - Bind `127.0.0.1` only.
 - Preferred port `5758`; if busy, steps up and publishes the actual
   bound port to `~/.shellx/mcp-http.port`.
-- Bearer token at `~/.shellx/mcp.token`, 16 bytes OsRng, atomically replaced;
-  mode 0600 on macOS/Linux and inherited user-private profile ACL on Windows.
+- A separate 16-byte OsRng bearer is atomically stored in a private per-user
+  credential file; mode 0600 on macOS/Linux and the inherited user-private
+  profile ACL on Windows.
   Legacy low-entropy tokens (pre-OsRng pid+nanos pattern,
   detected by ≥8 leading zero nibbles) auto-rotated on upgrade.
 - `axum::extract::DefaultBodyLimit::max(32 MiB)` so the advertised
@@ -145,8 +146,8 @@ shellXagent).
   MCP payload; project `.grok/config.toml` files are migration inputs and are
   not rewritten with replacement ShellX sections.
 
-**Trust assumption:** the bearer in `mcp.token` is the only gate.
-Anything inside the user's OS session that can read the file can
+**Trust assumption:** the MCP bearer is the only HTTP gate.
+Anything inside the user's OS session that can read its private credential can
 call every host MCP tool. The stdio variant of host_mcp (used on
 Local Windows) has no token gate. A process that spawns the binary with
 `--mcp-server` and pipes stdin gets read-class tool access; standalone stdio
@@ -155,7 +156,7 @@ gate. This is by design: stdio is a parent-process relationship.
 
 ### 3. Host MCP stdio + tool surface (`host_mcp.rs`)
 
-The callable catalog contains 105 host-MCP surfaces in the 0.3.5 release
+The callable catalog contains 105 host-MCP surfaces in the current release
 inventory. Families include `fs_*`, Browser read/action/workflow tools, Vault
 grants and mediated secret operations, build/goal orchestration, provider
 handoffs, `net_fetch`, vision, voice, X search, `mem_*`, `Agent` fan-out,
@@ -189,10 +190,11 @@ uniquely named main-agent definition. ShellX selects that agent and adds only
 that private workspace for the launched process, so Antigravity keeps its
 native file, command, Browser, search, image, and subagent tools without making
 ShellX guidance globally discoverable. Antigravity host MCP stays disabled:
-1.1.8 and 1.1.10 print-mode conformance tests discovered a workspace server
-schema, but neither produced a real MCP `tools/call`. The 1.1.10 CLI instead
-read the generated schema and fixture files before echoing the expected marker,
-which is not accepted as tool-execution proof.
+1.1.8 through 1.1.11 print-mode conformance tests discovered a workspace server
+schema, but none produced a real MCP `tools/call` through ShellX's custom-agent
+session shape. The 1.1.11 execution backend rejected the wrapper, leaf, and
+server-qualified tool names as unknown, which is not accepted as tool-execution
+proof even though the process reported success.
 Codex receives the same compact ShellX rule through a per-process config
 override and Claude through `--append-system-prompt`; direct provider launches
 do not inherit these rules.
@@ -237,9 +239,9 @@ and each one enforces its own contract:
   for the full tool table.)
 - **`net_fetch`:** allow-list at `~/.shellx/net_allow.toml`,
   hard-coded self-allow for `127.0.0.1` / `localhost` / `::1`
-  so grok can self-introspect (#302). Reqwest client; redirects
-  follow default policy (sensitive headers stripped on cross-
-  host).
+  so grok can self-introspect (#302). Reqwest redirects are disabled;
+  callers must submit the redirect target as a fresh request so ShellX can
+  validate its host and resolved addresses independently.
 - **`vision_describe`:** xAI Grok multimodal vision. Uses Grok OAuth
   from `~/.grok/auth.json` by default, then falls back to
   `GROK_VISION_API_KEY` / `XAI_API_KEY`, vault `xai/api-key`, and
@@ -273,13 +275,12 @@ methods get -32601), JSON-RPC param shapes (defensively parsed
 with `.and_then`/`.unwrap_or`).
 
 **What we DON'T trust from grok:**
-- **Raw shell strings.** `terminal/create` is intercepted on
-  every transport and rejected with guidance to use ShellX `Agent`
-  subagent. WSL/SSH → user-facing error (PTY round-trip is blocked
-  upstream in grok-build 0.1.211). No host PTY is ever spawned
-  in response to a grok request. This is the load-bearing
-  safety property; a regression here would let grok run arbitrary
-  shell. See `acp.rs::handle_terminal_create`.
+- **Raw shell strings.** Every provider-originated `terminal/*` method is
+  intercepted by one transport-neutral boundary and rejected with JSON-RPC
+  `-32601` plus guidance to use the supervised ShellX `Agent` tool. No host
+  PTY is ever spawned in response to a provider request. This is the
+  load-bearing safety property; a regression here would let a provider run
+  arbitrary shell. See `acp.rs::reject_provider_terminal_method`.
 - **Cwd/paths.** Every path arriving over ACP goes through
   `validate_fs_path` on the way to `fs_*` tools.
 
@@ -329,6 +330,10 @@ in `host_mcp/`, `debug_api_browser_*`, or `shellx_browser_*` focused modules;
 new Vault behavior belongs under `shellx_vault/` or the shared
 `vendor/shellx-vault` broker. `pnpm source:size` enforces a 1,000-line default
 for focused Browser modules and no-regrowth ceilings for named legacy files.
+The vendored Vault boundary carries `vendor/shellx-vault/PROVENANCE.json`, which
+binds the full standalone upstream Git revision to deterministic SHA-256 source
+digests for each included crate. Public CI recalculates those digests from the
+checkout, so provenance verification does not depend on a sibling Vault clone.
 
 | File | LOC | Role |
 |---|---|---|

@@ -1,10 +1,10 @@
 import { useEffect, useState, type JSX } from "react";
 import {
-  getAgentRunsState,
   providerDisplayName,
   type AgentRunManagerState,
   type AgentRunRow,
 } from "../lib/provider-sessions";
+import { getAgentRunsState } from "../lib/provider-session-api";
 import { inTauri } from "../lib/tauri-bridge";
 import { ShellIcon } from "./icons";
 

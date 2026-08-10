@@ -7,12 +7,14 @@ use tauri::{AppHandle, Manager};
 #[cfg(not(windows))]
 use tokio::time::{sleep, Duration};
 
+#[cfg(not(target_os = "linux"))]
+use crate::shellx_browser::BROWSER_WINDOW_LABEL;
 use crate::shellx_browser::{
     clean_string, eval_browser_engine_json, now_ms, BrowserAccessibilityNode, BrowserActionRequest,
     BrowserActionResponse, BrowserActionabilityCheck, BrowserDomSummary, BrowserFindTextResult,
     BrowserFormField, BrowserObservation, BrowserObservationRef, BrowserPermissionRecordRequest,
     BrowserPrivacyStats, BrowserScreenshotArtifact, BrowserVerificationResult,
-    ShellxBrowserRegistry, BROWSER_ENGINE_EVAL_TIMEOUT, BROWSER_WINDOW_LABEL,
+    ShellxBrowserRegistry, BROWSER_ENGINE_EVAL_TIMEOUT,
 };
 use crate::shellx_browser_action_execution::{
     eval_browser_engine_action_result, EngineControlEvalOutcome,
@@ -125,32 +127,6 @@ pub(crate) struct EngineControlResult {
         deserialize_with = "crate::shellx_browser::deserialize_option_bool_lossy"
     )]
     pub(crate) native_input_recommended: Option<bool>,
-}
-
-#[allow(dead_code)]
-pub(crate) fn classify_sensitive_field(metadata: &str, input_type: Option<&str>) -> bool {
-    let input_type = input_type.unwrap_or_default().trim().to_ascii_lowercase();
-    if matches!(input_type.as_str(), "password" | "hidden") {
-        return true;
-    }
-    metadata
-        .to_ascii_lowercase()
-        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
-        .any(|part| {
-            matches!(
-                part,
-                "pass"
-                    | "password"
-                    | "secret"
-                    | "token"
-                    | "api"
-                    | "key"
-                    | "apikey"
-                    | "credential"
-                    | "otp"
-                    | "pin"
-            )
-        })
 }
 
 pub(crate) async fn observe_browser_page(
@@ -544,7 +520,21 @@ async fn capture_browser_screenshot_artifact(
         )
         .await;
     }
-    #[cfg(feature = "debug-api")]
+    #[cfg(all(feature = "debug-api", target_os = "linux"))]
+    {
+        // WebKitGTK can snapshot the exact owned page viewport without a
+        // compositor-wide screenshot request. This keeps agent-driven Browser
+        // capture non-interactive on Wayland and under bare release displays.
+        let bytes = capture_linux_webkit_visible_png(app, engine_label).await?;
+        if bytes.len() > 16 * 1024 * 1024 {
+            return Err(format!(
+                "browser screenshot too large ({} bytes)",
+                bytes.len()
+            ));
+        }
+        persist_browser_screenshot_artifact(bytes, "browser-viewport", false, None, None).await
+    }
+    #[cfg(all(feature = "debug-api", not(target_os = "linux")))]
     {
         let bytes = crate::debug_api::capture_window_label_png(app, BROWSER_WINDOW_LABEL).await?;
         if bytes.len() > 16 * 1024 * 1024 {

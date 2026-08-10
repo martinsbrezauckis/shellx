@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "upstreamProject": "ShellX Vault",
+  "upstreamRevision": "a581783410f5b588d852d5d247feeb87b87b7f94",
+  "upstreamCommittedAt": "2026-08-05T03:14:20+03:00",
+  "digestAlgorithm": "sha256(relative-path NUL sha256(file-bytes) LF)",
+  "crates": {
+    "vault-broker": {
+      "path": "crates/vault-broker",
+      "sourceDigestSha256": "2854af854171c0b518c1ddafa02613d7402f2777e704328db6ba20b17773aa8c",
+      "fileCount": 38,
+      "byteCount": 289623
+    },
+    "vault-client": {
+      "path": "crates/vault-client",
+      "sourceDigestSha256": "38e2b848019de8d1975836701932f3833c6310b57a4629b2a516d9fd7e17f6e2",
+      "fileCount": 10,
+      "byteCount": 143418
+    },
+    "vault-core": {
+      "path": "crates/vault-core",
+      "sourceDigestSha256": "9cb35bdc7242e4b6ce8b814a8c22661e54d8393c5655d601800e32b0095ec7dc",
+      "fileCount": 9,
+      "byteCount": 50701
+    },
+    "vault-server": {
+      "path": "crates/vault-server",
+      "sourceDigestSha256": "b0184e4f61f0bf7df84d3da22e8a4d048700867550561a55290f1266833e6aa9",
+      "fileCount": 7,
+      "byteCount": 143927
+    }
+  },
+  "rootFiles": {
+    "Cargo.lock": {
+      "sha256": "8db0229753d891f1c73eef464672368a8ec2e0c6dc5de4dcafacc3621d757640",
+      "byteCount": 80207
+    },
+    "Cargo.toml": {
+      "sha256": "a2e32c3dc433e1b9dbc31f03f07b1cf22750a706b13ac243546a169a77edd3d5",
+      "byteCount": 2020
+    },
+    "LICENSE": {
+      "sha256": "7d304653a919d62cfa5bedf879903035dd569f32033797cb58a680e9d77fedcb",
+      "byteCount": 1076
+    }
+  }
+}

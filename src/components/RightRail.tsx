@@ -5,12 +5,12 @@
  * * - Tasks: TasksPanel — running background subprocesses scoped to the
  * active tab. Polling is mount-gated.
  * - Plan: PlanPane — reads grok's plan.md / goal.md scratchboard from disk
- * and re-fetches on each new event. Approval actions live in the modal.
+ * through bounded event-aware refreshes. Approval actions live in the modal.
  * - Files: FilesPane — git-aware tree rooted at the active tab's cwd.
  * * PreviewTarget is still exported for legacy file/URL preview callers;
  * WorkPreviewPanel is the right-rail live app preview surface.
  */
-import { useEffect, useMemo, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { lazy, useCallback, useEffect, useMemo, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -40,13 +40,9 @@ import {
   type DebugUpdateFixtureMode,
 } from "../lib/update-notes";
 import { TasksPanel } from "./TasksPanel";
-import { BuildRunCockpit } from "./BuildRunCockpit";
-import { WorkPreviewPanel } from "./WorkPreviewPanel";
 import type { ConnectionPreset, ConnectionProviderScanEntry } from "./ConnectionPicker";
-import { AgentCliStatusCard } from "./AgentCliStatusCard";
 import type { AgentCliSetupFixture } from "./AgentCliSetupAssistant";
-import { GitPane } from "./GitPane";
-import { FilesPane } from "./FilesPane";
+import { LazySurface } from "./LazySurface";
 import { apiPost } from "../lib/debug-api";
 import { DEBUG_AGENT_CLI_SETUP_PRESET } from "../lib/debug-agent-cli-setup-fixture";
 import {
@@ -56,10 +52,10 @@ import {
   type ProviderShellxToolExposure,
 } from "../lib/provider-sessions";
 import {
-  getModelInstructionCards,
   type ModelInstructionCard,
   type ModelInstructionCardsState,
 } from "../lib/model-instruction-cards";
+import { getModelInstructionCards } from "../lib/model-instruction-cards-api";
 import type { WorkPreviewState } from "../lib/work-preview";
 import type { RawEventFrame } from "../types/acp";
 import type { DebugBuildRunCockpitFixture } from "../lib/debug-renderer-fixture";
@@ -67,6 +63,18 @@ import { RIGHT_RAIL_TABS, isRightTab, type RightTab } from "../lib/ui-navigation
 import { ShellIcon, TransportIcon, type ShellIconName } from "./icons";
 import type { DebugRightRailGitLifecycleFixture } from "../lib/debug-right-rail-git-fixture";
 import type { DebugProviderAction } from "../lib/debug-provider-action-fixture";
+import { useEventAwarePolling, type PollCurrent } from "../lib/useEventAwarePolling";
+
+const GitPane = lazy(() => import("./GitPane")
+  .then((module) => ({ default: module.GitPane })));
+const WorkPreviewPanel = lazy(() => import("./WorkPreviewPanel")
+  .then((module) => ({ default: module.WorkPreviewPanel })));
+const FilesPane = lazy(() => import("./FilesPane")
+  .then((module) => ({ default: module.FilesPane })));
+const AgentCliStatusCard = lazy(() => import("./AgentCliStatusCard")
+  .then((module) => ({ default: module.AgentCliStatusCard })));
+const BuildRunCockpit = lazy(() => import("./BuildRunCockpit")
+  .then((module) => ({ default: module.BuildRunCockpit })));
 
 export type { RightTab } from "../lib/ui-navigation";
 export const RIGHT_RAIL_TAB_KEY = "shellX.rightTab.v2";
@@ -355,8 +363,6 @@ interface GrokTraceExportResult {
   stderrTail?: string | null;
 }
 
-const PROVIDER_IDS: ProviderId[] = ["codex-cli", "claude-code", "antigravity-cli"];
-
 export interface PreviewTarget {
   kind: "file" | "url" | "image" | "markdown" | "diff";
   path: string;
@@ -365,8 +371,6 @@ export interface PreviewTarget {
 }
 
 export function RightRail({
-  preview,
-  onPreviewClear,
   autonomy,
   onPreviewFile,
   onAttachPaths,
@@ -384,6 +388,7 @@ export function RightRail({
   onSendPromptToActiveTab,
   onTabChange,
   onWorkPreviewStateChange,
+  workPreviewState,
   onOpenWorkPreview,
   onAskGrokToFixPreview,
   onConnectActiveTab,
@@ -399,8 +404,6 @@ export function RightRail({
   agentCliStatusFixture,
   agentCliStatusLive = false,
 }: {
-  preview: PreviewTarget | null;
-  onPreviewClear: () => void;
  /** Current autonomy mode — drives the Plan tab empty-state copy. */
   autonomy?: string;
  /** Click handler for FilesPane rows + future flink chips. */
@@ -429,6 +432,7 @@ export function RightRail({
   onSendPromptToActiveTab?: (text: string) => void;
   onTabChange?: (tab: RightTab) => void;
   onWorkPreviewStateChange?: (state: WorkPreviewState) => void;
+  workPreviewState?: WorkPreviewState;
   onOpenWorkPreview?: (state: WorkPreviewState) => void;
   onAskGrokToFixPreview?: (state: WorkPreviewState) => void;
   onConnectActiveTab?: (target?: { tabId?: string | null; cwd?: string | null }) => Promise<boolean> | boolean | void;
@@ -533,21 +537,26 @@ export function RightRail({
         />
       )}
       {tab === "Git" && (
-        <GitPane
-          activeTabId={activeTabId ?? null}
-          cwd={cwd}
-          debugFixture={debugRightRailGitFixture}
-        />
+        <LazySurface label="Git panel" variant="inline" onDismiss={() => setTab("Tasks")}>
+          <GitPane
+            activeTabId={activeTabId ?? null}
+            cwd={cwd}
+            debugFixture={debugRightRailGitFixture}
+          />
+        </LazySurface>
       )}
       {tab === "Preview" && (
-        <WorkPreviewPanel
-          activeTabId={activeTabId ?? null}
-          cwd={cwd}
-          onStateChange={onWorkPreviewStateChange}
-          onOpenPreview={onOpenWorkPreview}
-          onAskGrokToFix={onAskGrokToFixPreview}
-          debugClipboardFixture={debugClipboardFixture === "work-preview" ? "owned-safe" : null}
-        />
+        <LazySurface label="Preview panel" variant="inline" onDismiss={() => setTab("Tasks")}>
+          <WorkPreviewPanel
+            activeTabId={activeTabId ?? null}
+            cwd={cwd}
+            stateSnapshot={workPreviewState}
+            onStateChange={onWorkPreviewStateChange}
+            onOpenPreview={onOpenWorkPreview}
+            onAskGrokToFix={onAskGrokToFixPreview}
+            debugClipboardFixture={debugClipboardFixture === "work-preview" ? "owned-safe" : null}
+          />
+        </LazySurface>
       )}
       {tab === "Plan" && (
         <PlanPane
@@ -565,13 +574,15 @@ export function RightRail({
         />
       )}
       {tab === "Files" && (
-        <FilesPane
-          activeTabId={activeTabId ?? null}
-          connectionId={connectionId ?? null}
-          cwd={cwd}
-          onPreviewFile={onPreviewFile ?? (() => {})}
-          onAttachPaths={onAttachPaths}
-        />
+        <LazySurface label="Files panel" variant="inline" onDismiss={() => setTab("Tasks")}>
+          <FilesPane
+            activeTabId={activeTabId ?? null}
+            connectionId={connectionId ?? null}
+            cwd={cwd}
+            onPreviewFile={onPreviewFile ?? (() => {})}
+            onAttachPaths={onAttachPaths}
+          />
+        </LazySurface>
       )}
     </aside>
   );
@@ -758,14 +769,16 @@ function ToolingPane({
   if (agentCliStatusFixture || agentCliStatusLive) {
     return (
       <div className="tooling-pane">
-        <AgentCliStatusCard
-          activeTabId={activeTabId ?? "release-surface-agent-cli-status"}
-          sessionInfo={null}
-          connectionId={null}
-          connectionTransport="local"
-          connectionPreset={DEBUG_AGENT_CLI_SETUP_PRESET}
-          fixture={agentCliStatusFixture}
-        />
+        <LazySurface label="Agent CLI status" variant="inline">
+          <AgentCliStatusCard
+            activeTabId={activeTabId ?? "release-surface-agent-cli-status"}
+            sessionInfo={null}
+            connectionId={null}
+            connectionTransport="local"
+            connectionPreset={DEBUG_AGENT_CLI_SETUP_PRESET}
+            fixture={agentCliStatusFixture}
+          />
+        </LazySurface>
       </div>
     );
   }
@@ -820,14 +833,16 @@ function ToolingPane({
         />
       )}
 
-      <AgentCliStatusCard
-        activeTabId={activeTabId}
-        sessionInfo={sessionInfo}
-        connectionId={connectionId}
-        connectionTransport={connectionTransport}
-        connectionPreset={connectionPreset}
-        onProviderScanUpdated={onProviderScanUpdated}
-      />
+      <LazySurface label="Agent CLI status" variant="inline">
+        <AgentCliStatusCard
+          activeTabId={activeTabId}
+          sessionInfo={sessionInfo}
+          connectionId={connectionId}
+          connectionTransport={connectionTransport}
+          connectionPreset={connectionPreset}
+          onProviderScanUpdated={onProviderScanUpdated}
+        />
+      </LazySurface>
 
       <ModelInstructionCardsCard />
 
@@ -1902,6 +1917,20 @@ function toolingIssue(entry: McpEntryStatus, health?: MarketplaceHealthEntry): s
 
 /* ─────────────── Plan ─────────────── */
 
+interface GoalStatusState {
+  active: boolean;
+  objective: string;
+  scratchboardPath?: string;
+  continuationsTotal: number;
+  startedAtMs: number;
+  pausedByUser: boolean;
+  haltedReason?: string;
+  awaitingApproval?: boolean;
+  planTurnCompleted?: boolean;
+  approvalStatus?: { ready: boolean; reason?: string | null };
+  approvedAtMs?: number;
+}
+
 function PlanPane({
   autonomy: _autonomy,
   events,
@@ -1939,8 +1968,8 @@ function PlanPane({
  // → grok confirmed entry; gives us the file to read.
  // 3. currentModeId="default" → exited plan mode
  // // Tauri's assetProtocol scope includes $HOME/.grok/sessions/**, so
- // the plan file is fetched via asset://. Re-runs on every events
- // change (cheap; plan files are small). The extractPlanState walk
+ // the plan file is fetched via asset://. Event bursts schedule one
+ // trailing refresh. The extractPlanState walk
  // is memoized on events identity to avoid a full rescan per render.
   const [planFilePath, modeId, planEntries] = useMemo(() => extractPlanState(events, activeTabId), [events, activeTabId]);
  // Seed planText from the App-level pre-fetch when available so the
@@ -1955,10 +1984,11 @@ function PlanPane({
  * poll get_goal_state to find scratchboardPath, fetch its contents,
  * and render as markdown as a fallback below ACP entries (or instead
  * of them when entries are absent). */
-  const [goalScratchboardPath, setGoalScratchboardPath] = useState<string | null>(null);
+  const [goalState, setGoalState] = useState<GoalStatusState | null>(null);
   const [goalScratchboardText, setGoalScratchboardText] = useState<string>("");
-  const [goalActive, setGoalActive] = useState<boolean>(false);
-  const [goalContinuationsTotal, setGoalContinuationsTotal] = useState<number>(0);
+  const goalActive = Boolean(goalState?.active);
+  const goalContinuationsTotal = goalState?.continuationsTotal ?? 0;
+  const goalScratchboardPath = goalState?.scratchboardPath ?? null;
   const [buildState, setBuildState] = useState<BuildRunState | null>(null);
   const [buildReceipts, setBuildReceipts] = useState<BuildReceipt[]>([]);
   const [buildScratchboardText, setBuildScratchboardText] = useState<string>("");
@@ -1966,111 +1996,141 @@ function PlanPane({
   const renderedBuildState = debugBuildRunFixture?.state ?? buildState;
   const renderedBuildReceipts = debugBuildRunFixture?.receipts ?? buildReceipts;
   const renderedBuildScratchboardText = debugBuildRunFixture?.scratchboardText ?? buildScratchboardText;
+  const goalPollingEnabled = inTauri() && Boolean(activeTabId);
+  const refreshGoalState = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
+    if (!activeTabId) return;
+    try {
+      const st = await invoke<unknown>("get_goal_state", { tabId: activeTabId }) as any;
+      if (!isCurrent()) return;
+      if (!st || !st.active) {
+        setGoalState(null);
+        setGoalScratchboardText("");
+        return;
+      }
+      setGoalState(st as GoalStatusState);
+    } catch {
+      // Goal state is optional outside a compatible desktop host.
+    }
+  }, [activeTabId]);
+
+  useEventAwarePolling({
+    enabled: goalPollingEnabled,
+    scopeKey: `goal:${activeTabId ?? "none"}`,
+    eventRevision: events.length,
+    intervalMs: 2500,
+    poll: refreshGoalState,
+  });
+
   useEffect(() => {
-    if (!inTauri() || !activeTabId) return;
-    let cancelled = false;
-    const poll = () => {
-      void invoke<unknown>("get_goal_state", { tabId: activeTabId })
-        .then((st: any) => {
-          if (cancelled) return;
-          if (!st || !st.active) {
-            setGoalActive(false);
-            setGoalScratchboardPath(null);
-            setGoalScratchboardText("");
-            return;
-          }
-          setGoalActive(true);
-          setGoalContinuationsTotal(st.continuationsTotal ?? 0);
-          const p = st.scratchboardPath ?? null;
-          setGoalScratchboardPath((cur) => (cur === p ? cur : p));
-        })
-        .catch(() => {});
-    };
-    poll();
- // Re-poll on every new event (cheap) so the scratchboard surfaces
- // promptly after a continuation injects + grok writes.
-    const id = window.setInterval(poll, 2500);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [activeTabId, events.length]);
+    if (goalPollingEnabled) return;
+    setGoalState(null);
+    setGoalScratchboardText("");
+  }, [goalPollingEnabled]);
+
+  const buildPollingEnabled = inTauri() && Boolean(activeTabId) && !debugBuildRunFixture;
+  const refreshBuildState = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
+    if (!activeTabId) return;
+    try {
+      const st = await getBuildState(activeTabId);
+      if (!isCurrent()) return;
+      setBuildState(st);
+      if (!st) {
+        setBuildReceipts([]);
+        return;
+      }
+      try {
+        const rows = await getBuildReceipts(activeTabId);
+        if (isCurrent()) setBuildReceipts(rows);
+      } catch {
+        if (isCurrent()) setBuildReceipts([]);
+      }
+    } catch {
+      if (isCurrent()) {
+        setBuildState(null);
+        setBuildReceipts([]);
+      }
+    }
+  }, [activeTabId]);
+
+  useEventAwarePolling({
+    enabled: buildPollingEnabled,
+    scopeKey: `build:${activeTabId ?? "none"}:${debugBuildRunFixture ? "fixture" : "live"}`,
+    eventRevision: events.length + buildRefreshSeq,
+    intervalMs: 2500,
+    poll: refreshBuildState,
+  });
+
   useEffect(() => {
     if (debugBuildRunFixture) {
       setBuildState(null);
       setBuildReceipts([]);
       return;
     }
-    if (!inTauri() || !activeTabId) {
+    if (!buildPollingEnabled) {
       setBuildState(null);
       setBuildReceipts([]);
-      return;
     }
-    let cancelled = false;
-    const poll = () => {
-      void getBuildState(activeTabId)
-        .then((st) => {
-          if (cancelled) return;
-          setBuildState(st);
-          if (!st) {
-            setBuildReceipts([]);
-            return;
-          }
-          void getBuildReceipts(activeTabId)
-            .then((rows) => { if (!cancelled) setBuildReceipts(rows); })
-            .catch(() => { if (!cancelled) setBuildReceipts([]); });
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setBuildState(null);
-            setBuildReceipts([]);
-          }
-        });
-    };
-    poll();
-    const id = window.setInterval(poll, 2500);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [activeTabId, events.length, buildRefreshSeq, debugBuildRunFixture]);
+  }, [buildPollingEnabled, debugBuildRunFixture]);
+  const refreshGoalScratchboard = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
+    if (!goalScratchboardPath) return;
+    try {
+      const text = inTauri()
+        ? await invoke<string>("read_text_file_for_path", {
+            path: goalScratchboardPath,
+            tabId: activeTabId ?? undefined,
+            sessionCwd: activeCwd,
+          })
+        : await fetch(convertFileSrc(goalScratchboardPath, "asset"))
+            .then((response) => (response.ok ? response.text() : ""));
+      if (isCurrent()) setGoalScratchboardText((cur) => (cur === text ? cur : text));
+    } catch {
+      if (isCurrent()) setGoalScratchboardText("");
+    }
+  }, [activeCwd, activeTabId, goalScratchboardPath]);
+
+  useEventAwarePolling({
+    enabled: Boolean(goalScratchboardPath),
+    scopeKey: `goal-file:${activeTabId ?? "none"}:${goalScratchboardPath ?? "none"}:${activeCwd ?? ""}`,
+    eventRevision: events.length,
+    poll: refreshGoalScratchboard,
+  });
+
   useEffect(() => {
-    if (!goalScratchboardPath) { setGoalScratchboardText(""); return; }
-    let cancelled = false;
-    const set = (t: string) => {
-      if (cancelled) return;
-      setGoalScratchboardText((cur) => (cur === t ? cur : t));
-    };
-    if (inTauri()) {
-      void invoke<string>("read_text_file_for_path", {
-        path: goalScratchboardPath,
-        tabId: activeTabId ?? undefined,
-        sessionCwd: activeCwd,
-      }).then(set).catch(() => set(""));
-    } else {
-      const url = convertFileSrc(goalScratchboardPath, "asset");
-      fetch(url).then((r) => (r.ok ? r.text() : "")).then(set).catch(() => set(""));
+    if (!goalScratchboardPath) setGoalScratchboardText("");
+  }, [goalScratchboardPath]);
+
+  const buildScratchboardPath = buildState?.scratchboardPath ?? null;
+  const refreshBuildScratchboard = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
+    if (!buildScratchboardPath) return;
+    try {
+      const text = inTauri()
+        ? await invoke<string>("read_text_file_for_path", {
+            path: buildScratchboardPath,
+            tabId: activeTabId ?? undefined,
+            sessionCwd: activeCwd,
+          })
+        : await fetch(convertFileSrc(buildScratchboardPath, "asset"))
+            .then((response) => (response.ok ? response.text() : ""));
+      if (isCurrent()) setBuildScratchboardText((cur) => (cur === text ? cur : text));
+    } catch {
+      if (isCurrent()) setBuildScratchboardText("");
     }
-    return () => { cancelled = true; };
-  }, [goalScratchboardPath, events.length, activeTabId]);
+  }, [activeCwd, activeTabId, buildScratchboardPath]);
+
+  useEventAwarePolling({
+    enabled: Boolean(buildScratchboardPath) && !debugBuildRunFixture,
+    scopeKey: `build-file:${activeTabId ?? "none"}:${buildScratchboardPath ?? "none"}:${activeCwd ?? ""}`,
+    eventRevision: events.length,
+    poll: refreshBuildScratchboard,
+  });
+
   useEffect(() => {
     if (debugBuildRunFixture) {
       setBuildScratchboardText(debugBuildRunFixture.scratchboardText);
       return;
     }
-    const path = buildState?.scratchboardPath;
-    if (!path) { setBuildScratchboardText(""); return; }
-    let cancelled = false;
-    const set = (t: string) => {
-      if (cancelled) return;
-      setBuildScratchboardText((cur) => (cur === t ? cur : t));
-    };
-    if (inTauri()) {
-      void invoke<string>("read_text_file_for_path", {
-        path,
-        tabId: activeTabId ?? undefined,
-        sessionCwd: activeCwd,
-      }).then(set).catch(() => set(""));
-    } else {
-      const url = convertFileSrc(path, "asset");
-      fetch(url).then((r) => (r.ok ? r.text() : "")).then(set).catch(() => set(""));
-    }
-    return () => { cancelled = true; };
-  }, [buildState?.scratchboardPath, events.length, activeTabId, debugBuildRunFixture]);
+    if (!buildScratchboardPath) setBuildScratchboardText("");
+  }, [buildScratchboardPath, debugBuildRunFixture]);
 
  // When App's cache updates with a fresher body, adopt it — but
  // only when non-empty, so an empty/undefined cache can't blank a
@@ -2081,46 +2141,46 @@ function PlanPane({
     }
   }, [prefetchedPlanText]);
 
-  useEffect(() => {
-    if (!planFilePath) { setPlanText(""); return; }
-    let cancelled = false;
+  const refreshPlanFile = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
+    if (!planFilePath) return;
  /* WSL sessions emit Linux paths like /home/X/.grok/.../plan.md
  * that asset:// can't reach from a Windows host. The Tauri
  * `read_text_file_for_path` command translates to \\wsl$\<distro>\...
  * when the session has WSL config; falls back to asset:// in
  * browser-only mode.
- * * `events.length` is in the deps so we re-fetch on EVERY new
- * event, not just when planFilePath first appears. Grok writes
+ * Grok writes
  * plan.md AFTER emitting EnterPlanMode via a separate
- * fs/write_text_file call, so the first fetch lands an empty
- * file; re-running on each event picks up content as soon as
- * grok writes it. The cancelled flag + setPlanText-only-if-
- * changed prevents render flicker. */
-    const fetchAndSet = (t: string) => {
-      if (cancelled) return;
-      setPlanText((cur) => (cur === t ? cur : t));
-    };
-    if (inTauri()) {
+ * fs/write_text_file call, so renderer events schedule one trailing,
+ * bounded refresh instead of one filesystem read per stream frame. */
+    try {
  // activeTabId lets the Rust handler look up the right tab's
  // wsl_distro / sshHost and UNC-translate plan_file_path.
  // Param is camelCase (`tabId`) per the handler's
  // #[allow(non_snake_case)] attribute.
-      void invoke<string>("read_text_file_for_path", {
-        path: planFilePath,
-        tabId: activeTabId ?? undefined,
-        sessionCwd: activeCwd,
-      })
-        .then(fetchAndSet)
-        .catch(() => {});
-    } else {
-      const url = convertFileSrc(planFilePath, "asset");
-      fetch(url)
-        .then((r) => (r.ok ? r.text() : ""))
-        .then(fetchAndSet)
-        .catch(() => {});
+      const text = inTauri()
+        ? await invoke<string>("read_text_file_for_path", {
+            path: planFilePath,
+            tabId: activeTabId ?? undefined,
+            sessionCwd: activeCwd,
+          })
+        : await fetch(convertFileSrc(planFilePath, "asset"))
+            .then((response) => (response.ok ? response.text() : ""));
+      if (isCurrent()) setPlanText((cur) => (cur === text ? cur : text));
+    } catch {
+      // Keep the latest readable plan while a remote path is unavailable.
     }
-    return () => { cancelled = true; };
-  }, [planFilePath, events.length, activeTabId]);
+  }, [activeCwd, activeTabId, planFilePath]);
+
+  useEventAwarePolling({
+    enabled: Boolean(planFilePath),
+    scopeKey: `plan-file:${activeTabId ?? "none"}:${planFilePath ?? "none"}:${activeCwd ?? ""}`,
+    eventRevision: events.length,
+    poll: refreshPlanFile,
+  });
+
+  useEffect(() => {
+    if (!planFilePath) setPlanText("");
+  }, [planFilePath]);
 
   const planActive = modeId === "plan";
  // entries from the ACP `plan` sessionUpdate take precedence
@@ -2163,20 +2223,23 @@ function PlanPane({
         </span>
       </div>
  {/* Legacy goal-orchestrator status bar. Renders only when goal_mode
- * is on for the active tab. Polls the Rust orchestrator via
- * get_goal_state. */}
-      <BuildRunCockpit
-        activeTabId={activeTabId}
-        state={renderedBuildState}
-        receipts={renderedBuildReceipts}
-        scratchboardText={renderedBuildScratchboardText}
-        sessionConnected={sessionStatus === "Connected"}
-        onConnectActiveTab={onConnectActiveTab}
-        onChanged={() => setBuildRefreshSeq((n) => n + 1)}
-      />
+ * is on for the active tab and reuses PlanPane's bounded host state. */}
+      {renderedBuildState && (
+        <LazySurface label="Build Mode cockpit" variant="inline">
+          <BuildRunCockpit
+            activeTabId={activeTabId}
+            state={renderedBuildState}
+            receipts={renderedBuildReceipts}
+            scratchboardText={renderedBuildScratchboardText}
+            sessionConnected={sessionStatus === "Connected"}
+            onConnectActiveTab={onConnectActiveTab}
+            onChanged={() => setBuildRefreshSeq((n) => n + 1)}
+          />
+        </LazySurface>
+      )}
       <GoalStatusBar
         activeTabId={activeTabId}
-        eventsLen={events.length}
+        state={goalState}
         onOpenGoalReview={onOpenGoalReview}
       />
       <div className="plan">
@@ -2301,8 +2364,8 @@ function PlanPane({
 
 /**
  * Hard-enforcement goal-orchestrator status bar above the Plan
- * scratchboard/content. Polls Tauri `get_goal_state` every 4 s or whenever the
- * events array grows. Renders nothing when goal_mode is off.
+ * scratchboard/content. Reuses the parent Plan surface's bounded
+ * `get_goal_state` snapshot and renders nothing when goal_mode is off.
  * * Tauri commands:
  * get_goal_state(tabId) → { active, objective, continuationsTotal,
  * startedAtMs, pausedByUser, ... }
@@ -2311,53 +2374,13 @@ function PlanPane({
  */
 function GoalStatusBar({
   activeTabId,
-  eventsLen,
+  state,
   onOpenGoalReview,
 }: {
   activeTabId?: string | null;
-  eventsLen: number;
+  state: GoalStatusState | null;
   onOpenGoalReview?: () => void;
 }): JSX.Element {
-  const [state, setState] = useState<
-    | null
-    | {
-        active: boolean;
-        objective: string;
-        continuationsTotal: number;
-        startedAtMs: number;
-        pausedByUser: boolean;
-        haltedReason?: string;
- // plan-approval gate. While true, the user is staring at
- // the proposed plan; the orchestrator hasn't injected anything
- // yet. Approve flips it to false; Reject clears the goal.
-        awaitingApproval?: boolean;
-        planTurnCompleted?: boolean;
-        approvalStatus?: { ready: boolean; reason?: string | null };
-        approvedAtMs?: number;
-      }
-  >(null);
-
- // Poll get_goal_state. Re-poll on activeTabId change, on each new
- // event arrival (prompt-complete is a likely trigger), and on a 4s
- // wall-clock interval to catch elapsed-time updates.
-  useEffect(() => {
-    if (!activeTabId) { setState(null); return; }
-    let cancelled = false;
-    const fetchState = () => {
-      if (!inTauri()) return;
-      void invoke<unknown>("get_goal_state", { tabId: activeTabId })
-        .then((s) => {
-          if (cancelled) return;
-          if (!s || typeof s !== "object") { setState(null); return; }
-          setState(s as any);
-        })
-        .catch(() => { /* command absent in dev / old builds: stay quiet */ });
-    };
-    fetchState();
-    const id = window.setInterval(fetchState, 4000);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [activeTabId, eventsLen]);
-
   if (!state || !state.active) return <></>;
 
   const elapsedMs = Date.now() - state.startedAtMs;

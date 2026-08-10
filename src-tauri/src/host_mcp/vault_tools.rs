@@ -86,28 +86,6 @@ pub(super) async fn tool_secret_get_vault(key: &str) -> Result<Value, String> {
     }))
 }
 
-/// Raw approved `vault:<key>` resolver. This is intentionally private and
-/// not wired into the MCP tool table until a caller can prove explicit
-/// ShellX/user authority for plaintext reveal.
-#[allow(dead_code)]
-pub(super) async fn tool_secret_get_vault_raw_approved(key: &str) -> Result<Value, String> {
-    if key.is_empty() {
-        return Err("secret_get: vault key cannot be empty".to_string());
-    }
-    let backend = crate::shellx_vault::shared_backend();
-    match crate::shellx_vault::resolve_internal_secret(&backend, key).await {
-        // SAFETY: only the value crosses the wire; not logged here or
-        // anywhere else in this branch.
-        Ok(Some(value)) => Ok(json!({ "ok": true, "value": value })),
-        Ok(None) => Ok(json!({
-            "code": "VAULT_KEY_NOT_FOUND",
-            "message": format!("vault key not found: {}", key),
-            "isError": true
-        })),
-        Err(e) => Err(format!("vault read failed: {}", e)),
-    }
-}
-
 /// Write a value into the shellX vault. Refuses `pass:`
 /// and other namespaces; vault is the only safe write target from
 /// inside an agent context (no GPG pinentry surprises).

@@ -330,7 +330,7 @@ pub(super) fn browser_tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "browser_use_agent_wallet",
-            "description": "Reserved agent-wallet checkout action. ShellX validates AgentWalletUse grants for stripeAgentWallet resources, but 0.3.5 returns browser_agent_wallet_checkout_unavailable until a real provider transaction bridge can prove the payment operation. Never use this for user payment cards or treat grant approval as checkout success.",
+            "description": "Reserved agent-wallet checkout action. ShellX validates AgentWalletUse grants for stripeAgentWallet resources, but the current release returns browser_agent_wallet_checkout_unavailable until a real provider transaction bridge can prove the payment operation. Never use this for user payment cards or treat grant approval as checkout success.",
             "inputSchema": {
                 "type": "object",
                 "properties": browser_action_schema_properties(),
@@ -391,7 +391,7 @@ pub(super) fn browser_tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "browser_screenshot",
-            "description": "Capture a native ShellX Browser screenshot through Debug API `/browser/action` with action `captureScreenshot`. Set `fullPage=true` to produce one page-content PNG for the whole document, not only the visible Browser window; full-page responses include pageWidth/pageHeight and MCP cssScale so agents can convert screenshot pixels to CSS coordinates for browser_click_at/browser_type_text. Re-capture after viewport changes and scroll off-screen targets into view before coordinate actions. Returns a local screenshot artifact path, SHA-256, dimensions, and Browser receipt metadata.",
+            "description": "Capture a native ShellX Browser screenshot through Debug API `/browser/action` with action `captureScreenshot`. Set `fullPage=true` to produce one page-content PNG for the whole document, not only the visible Browser view; full-page responses include pageWidth/pageHeight and MCP cssScale so agents can convert screenshot pixels to CSS coordinates for browser_click_at/browser_type_text. Re-capture after viewport changes and scroll off-screen targets into view before coordinate actions. Returns a local screenshot artifact path, SHA-256, dimensions, and Browser receipt metadata.",
             "inputSchema": {
                 "type": "object",
                 "properties": browser_action_schema_properties()

@@ -34,10 +34,8 @@ import {
 import { isTrustedShellxUserEvent, type ShellxUserEventLike } from "../lib/trusted-user-event";
 import {
   browserVisibleAdMode,
-  type BrowserAdMode,
   type BrowserProfile,
   type BrowserShieldSettings,
-  type BrowserState,
   type BrowserTabShieldState,
   type BrowserVisibleAdMode,
 } from "../browser/types";
@@ -759,7 +757,6 @@ export function ShellxBrowserApp(): JSX.Element {
         headerProfileId={headerProfileId}
         headerProfileDescription={headerProfile?.description ?? null}
         personalLock={personalLock}
-        personalTabLocked={personalTabLocked}
         personalLockAttention={browserPersonalLock.attention}
         canHandOffActiveTab={browserTabs.canHandOffActiveTab}
         canTakeBackActiveTab={browserTabs.canTakeBackActiveTab}

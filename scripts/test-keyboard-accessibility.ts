@@ -11,7 +11,12 @@ const filesPane = readFileSync("src/components/FilesPane.tsx", "utf8");
 const connectionPicker = readFileSync("src/components/ConnectionPicker.tsx", "utf8");
 const connectionsTab = readFileSync("src/components/settings/ConnectionsTab.tsx", "utf8");
 const pluginsModal = readFileSync("src/components/PluginsModal.tsx", "utf8");
+const pluginsModalCss = readFileSync("src/components/PluginsModal.css", "utf8");
+const connectorInbox = readFileSync("src/components/ConnectorInboxModal.tsx", "utf8");
+const connectorInboxCss = readFileSync("src/components/ConnectorInboxModal.css", "utf8");
 const settings = readFileSync("src/components/Settings.tsx", "utf8");
+const settingsCss = readFileSync("src/components/Settings.css", "utf8");
+const appCss = readFileSync("src/App.css", "utf8");
 const agentSidebar = readFileSync("src/browser/components/AgentSidebar.tsx", "utf8");
 const chatOutput = normalizedTextContent(readFileSync("src/components/ChatOutput.tsx", "utf8"));
 const modalFocus = readFileSync("src/lib/useModalFocus.ts", "utf8");
@@ -20,6 +25,9 @@ const findPopover = readFileSync("src/components/FindPopover.tsx", "utf8");
 const shortcuts = readFileSync("src/lib/shortcuts.ts", "utf8");
 const activityBrowser = readFileSync("src/components/ActivityBrowserModal.tsx", "utf8");
 const commandPalette = readFileSync("src/components/CommandPalette.tsx", "utf8");
+const commandPaletteCss = readFileSync("src/components/CommandPalette.css", "utf8");
+const bottomPanel = readFileSync("src/components/BottomPanel.tsx", "utf8");
+const branchPicker = readFileSync("src/components/BranchPicker.tsx", "utf8");
 const css = readFileSync("src/styles/interactionAccessibility.css", "utf8");
 
 console.log("\n=== keyboard-complete operational controls ===");
@@ -39,6 +47,13 @@ assert(
   "connection deletion must default focus to Cancel and trap keyboard focus inside its in-app confirmation",
 );
 assert(
+  connectionPicker.includes('"Connection reachable"')
+    && connectionPicker.includes('"Connection test failed"')
+    && connectionPicker.includes('"Connection not tested"')
+    && !connectionPicker.includes('"untested or unreachable"'),
+  "connection status must distinguish untested, reachable, and failed states without relying on color",
+);
+assert(
   connectionsTab.includes('role="alertdialog"')
     && connectionsTab.includes('aria-label="Delete saved connection"')
     && connectionsTab.includes('setAttribute("inert", "")')
@@ -47,9 +62,27 @@ assert(
     && !connectionsTab.includes("window.confirm"),
   "Settings connection deletion must use the same keyboard-safe in-app confirmation boundary",
 );
-assert(pluginsModal.includes('className="mp-tier-button"') && pluginsModal.includes("aria-expanded={!collapsed}"));
+assert(
+  pluginsModal.includes('className="mp-tier-button"')
+    && pluginsModal.includes("aria-expanded={!collapsed}")
+    && pluginsModalCss.includes(".mp-tier-button:focus-visible")
+    && pluginsModalCss.includes("outline: 1px solid var(--accent);"),
+  "Plugins tier disclosures expose state and a visible keyboard focus boundary",
+);
+assert(
+  connectorInbox.includes('role="tab"')
+    && connectorInbox.includes("aria-selected={active}")
+    && connectorInboxCss.includes(".connector-inbox-tab:focus-visible"),
+  "Connector inbox tabs expose selection and a visible keyboard focus boundary",
+);
 assert(settings.includes("useModalFocus(open, dialogRef, onClose)") && settings.includes("handleTabKeyDown"));
 assert(settings.includes('role="tabpanel"') && settings.includes("aria-labelledby={`settings-tab-${renderedTab}`}"));
+assert(
+  settings.includes('import "./Settings.css"')
+    && settingsCss.includes(".settings-tab:focus-visible")
+    && appCss.includes(".settings-close:focus-visible"),
+  "Settings tabs and the shared dialog close button expose visible keyboard focus boundaries",
+);
 assert(agentSidebar.includes("AGENT_SIDEBAR_PANEL_ORDER"));
 assert(agentSidebar.includes('event.key === "ArrowRight"') && agentSidebar.includes('event.key === "ArrowLeft"'));
 assert(agentSidebar.includes('event.key === "Home"') && agentSidebar.includes('event.key === "End"'));
@@ -63,6 +96,12 @@ assert(
     && commandPalette.includes("aria-activedescendant={activeOptionId}")
     && commandPalette.includes("aria-selected={i === idx}"),
   "Command Palette must expose its active keyboard selection through combobox/listbox semantics",
+);
+assert(
+  commandPalette.includes('import "./CommandPalette.css"')
+    && commandPaletteCss.includes(".palette-input:focus-visible")
+    && commandPaletteCss.includes(".palette-row:focus-visible"),
+  "Command Palette must load its component-owned visible focus contract",
 );
 assert(pluginsModal.includes("useModalFocus(open, dialogRef, onClose)") && pluginsModal.includes('role="dialog"'));
 assert(modalFocus.includes("inertOutsideDialog") && modalFocus.includes('event.key !== "Tab"'));
@@ -86,6 +125,26 @@ assert(
 assert(
   !findPopover.includes('(e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k"'),
   "Find must not steal the Command Palette shortcut and open two overlays",
+);
+assert(
+  findPopover.includes("const previewRequestSeq = useRef(0)")
+    && findPopover.includes("const requestSeq = ++previewRequestSeq.current")
+    && findPopover.includes("previewRequestSeq.current === requestSeq"),
+  "only the newest Find preview request may clear its loading state",
+);
+assert(
+  !bottomPanel.includes("onCreateWorktree") && !branchPicker.includes("onCreateWorktree"),
+  "composer branch selection must not retain a dead worktree callback contract",
+);
+assert(
+  bottomPanel.includes('"Pick connection — Local / WSL / SSH"') &&
+    !bottomPanel.includes("Local / WSL / SSH / Tailscale"),
+  "composer connection help must advertise only routes the Connection Editor can create",
+);
+assert(
+  bottomPanel.includes('title="Pick branch for this tab"') &&
+    !bottomPanel.includes("also offers +create worktree from branch"),
+  "composer branch help must not promise worktree creation that lives in the Git rail",
 );
 assert.deepEqual(
   titleOnlyIconButtons("src"),

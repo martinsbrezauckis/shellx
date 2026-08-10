@@ -153,7 +153,10 @@ use build_receipts::*;
 use build_tools::*;
 use debug_client::*;
 use filesystem_core::*;
-pub(crate) use filesystem_core::{enforce_home_containment, validate_fs_path, FsAccessKind};
+pub(crate) use filesystem_core::{
+    enforce_home_containment, sensitive_fs_denylist_match, validate_fs_path, FsAccessKind,
+    SENSITIVE_ARCHIVE_GLOBS,
+};
 use filesystem_grep::*;
 pub(crate) use filesystem_media::wsl_running_distros;
 use filesystem_media::*;

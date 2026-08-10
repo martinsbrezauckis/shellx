@@ -61,7 +61,6 @@ outside_connectors_simulate
 outside_connectors_test
 pause_build
 pause_goal
-pty_attach
 pty_create
 pty_kill
 pty_resize

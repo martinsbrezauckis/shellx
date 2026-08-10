@@ -45,7 +45,7 @@ where
     let cap = cap.max(1);
     let mut tail = VecDeque::with_capacity(cap.min(16 * 1024));
     let mut total_bytes = 0u64;
-    let mut chunk = [0u8; 16 * 1024];
+    let mut chunk = vec![0u8; 16 * 1024].into_boxed_slice();
 
     loop {
         let read = reader.read(&mut chunk).await?;
@@ -105,5 +105,19 @@ mod tests {
         let text = capture.into_lossy_string();
         assert!(text.ends_with("last 9 bytes retained]"));
         assert!(!text.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bounded_stream_capture_drains_large_input_and_keeps_exact_tail() {
+        let input = (0..(320 * 1024))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let cap = 32 * 1024;
+        let capture = drain_stream_tail_bounded(&input[..], cap)
+            .await
+            .expect("capture large output");
+
+        assert_eq!(capture.total_bytes, input.len() as u64);
+        assert_eq!(capture.bytes, input[input.len() - cap..]);
     }
 }

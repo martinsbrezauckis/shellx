@@ -45,8 +45,8 @@ pub(super) struct AutonomyBody {
     /// Optional tabId; defaults to "default". Without per-tab routing,
     /// /autonomy writes to the slot "default" while sessions are keyed
     /// by their real tab_id (e.g. "goal-46c"); per-tab permission_mode
-    /// lookup at terminal/create then finds None instead of the tab's
-    /// provider-native Full Auto setting.
+    /// lookup during provider permission resolution then finds None instead
+    /// of the tab's provider-native Full Auto setting.
     // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
     // drivers + test agents that reach for the shorter `tab` form stop
     // silently collapsing to the default tab.
@@ -563,7 +563,6 @@ pub(super) fn debug_ui_sensitive_text_reason(text: &str) -> Option<&'static str>
         "perm-pill-btn",
         "data-request-id",
         "pact-edit",
-        "permission-modal",
         "shellx-browser-personal-lock-toggle",
         "shellx-browser-handoff-tab",
         "shellx-browser-take-back-tab",

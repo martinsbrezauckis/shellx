@@ -96,8 +96,3 @@ export function requiredPreflightIds(card: ModelInstructionCard): string[] {
     .filter((check) => check.required)
     .map((check) => check.id);
 }
-
-export async function getModelInstructionCards(): Promise<ModelInstructionCardsState> {
-  const { apiGet } = await import("./debug-api");
-  return apiGet<ModelInstructionCardsState>(modelInstructionCardsPath());
-}

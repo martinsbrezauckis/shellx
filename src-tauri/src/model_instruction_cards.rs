@@ -516,7 +516,7 @@ fn antigravity_cli_card() -> ModelInstructionCard {
                 "mcpToolCalls",
                 "MCP tool calls",
                 "unknown",
-                "Antigravity discovers workspace MCP schemas, but 1.1.8 through 1.1.10 print-mode call canaries never produced a real MCP tools/call; ShellX host MCP stays disabled.",
+                "Antigravity discovers workspace MCP schemas, but 1.1.8 through 1.1.11 print-mode call canaries never produced a real MCP tools/call; ShellX host MCP stays disabled.",
             ),
             capability(
                 "permissionPrompts",

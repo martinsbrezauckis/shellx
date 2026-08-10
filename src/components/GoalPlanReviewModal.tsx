@@ -5,7 +5,7 @@
  * plan approval is a decision point. This modal opens when the orchestrator
  * reports that Grok has finished writing a ready-to-review plan.
  */
-import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -14,6 +14,7 @@ import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import { fileDisplayName, SafeMarkdownLink } from "../lib/markdown-links";
 import { ShellIcon } from "./icons";
 import { useModalFocus } from "../lib/useModalFocus";
+import { useEventAwarePolling, type PollCurrent } from "../lib/useEventAwarePolling";
 
 export interface GoalState {
   active: boolean;
@@ -125,66 +126,76 @@ export function GoalPlanReviewModal({
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const effectiveTabId = fixture?.tabId ?? activeTabId;
 
+  const goalPollingEnabled = !fixture && Boolean(effectiveTabId) && inTauri();
+  const refreshGoal = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
+    if (!effectiveTabId) return;
+    try {
+      const next = await invoke<unknown>("get_goal_state", { tabId: effectiveTabId });
+      if (!isCurrent()) return;
+      if (!next || typeof next !== "object") {
+        setGoal(null);
+        return;
+      }
+      setGoal(next as GoalState);
+    } catch {
+      // Preserve the last state across a transient host read failure.
+    }
+  }, [effectiveTabId]);
+
+  useEventAwarePolling({
+    enabled: goalPollingEnabled,
+    scopeKey: `goal-review:${effectiveTabId ?? "none"}`,
+    eventRevision: eventsLen,
+    intervalMs: 2500,
+    poll: refreshGoal,
+  });
+
   useEffect(() => {
     if (fixture) {
       setGoal(fixture.goal);
       return;
     }
-    if (!effectiveTabId || !inTauri()) {
-      setGoal(null);
-      return;
-    }
-    let cancelled = false;
-    const fetchState = () => {
-      void invoke<unknown>("get_goal_state", { tabId: effectiveTabId })
-        .then((s) => {
-          if (cancelled) return;
-          if (!s || typeof s !== "object") {
-            setGoal(null);
-            return;
-          }
-          setGoal(s as GoalState);
-        })
-        .catch(() => {});
-    };
-    fetchState();
-    const id = window.setInterval(fetchState, 2500);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [effectiveTabId, eventsLen, fixture]);
+    if (!goalPollingEnabled) setGoal(null);
+  }, [fixture, goalPollingEnabled]);
 
   const scratchboardPath = goal?.scratchboardPath ?? "";
+  const planReadEnabled = !fixture && Boolean(effectiveTabId && scratchboardPath && goal?.awaitingApproval);
+  const refreshPlanText = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
+    if (!effectiveTabId || !scratchboardPath) return;
+    try {
+      const text = inTauri()
+        ? await invoke<string>("read_text_file_for_path", {
+            path: scratchboardPath,
+            tabId: effectiveTabId,
+          })
+        : await fetch(convertFileSrc(scratchboardPath, "asset"))
+            .then((response) => response.ok ? response.text() : Promise.reject(`HTTP ${response.status}`));
+      if (!isCurrent()) return;
+      setReadError(null);
+      setPlanText((cur) => (cur === text ? cur : text));
+    } catch (error) {
+      if (isCurrent()) setReadError(String(error));
+    }
+  }, [effectiveTabId, scratchboardPath]);
+
+  useEventAwarePolling({
+    enabled: planReadEnabled,
+    scopeKey: `goal-review-file:${effectiveTabId ?? "none"}:${scratchboardPath}:${goal?.approvalStatus?.ready ?? false}`,
+    eventRevision: eventsLen,
+    poll: refreshPlanText,
+  });
+
   useEffect(() => {
     if (fixture) {
       setReadError(null);
       setPlanText(fixture.planText);
       return;
     }
-    if (!effectiveTabId || !scratchboardPath || !goal?.awaitingApproval) {
+    if (!planReadEnabled) {
       setPlanText("");
       setReadError(null);
-      return;
     }
-    let cancelled = false;
-    const setText = (text: string) => {
-      if (cancelled) return;
-      setReadError(null);
-      setPlanText((cur) => (cur === text ? cur : text));
-    };
-    if (inTauri()) {
-      void invoke<string>("read_text_file_for_path", {
-        path: scratchboardPath,
-        tabId: effectiveTabId,
-      }).then(setText).catch((e) => {
-        if (!cancelled) setReadError(String(e));
-      });
-    } else {
-      fetch(convertFileSrc(scratchboardPath, "asset"))
-        .then((r) => (r.ok ? r.text() : Promise.reject(`HTTP ${r.status}`)))
-        .then(setText)
-        .catch((e) => { if (!cancelled) setReadError(String(e)); });
-    }
-    return () => { cancelled = true; };
-  }, [effectiveTabId, scratchboardPath, goal?.awaitingApproval, goal?.approvalStatus?.ready, eventsLen, fixture]);
+  }, [fixture, planReadEnabled]);
 
   useEffect(() => {
     if (!fixture) return;

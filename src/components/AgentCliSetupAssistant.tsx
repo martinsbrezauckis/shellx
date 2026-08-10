@@ -15,6 +15,7 @@ import {
 } from "../lib/agent-cli-setup";
 import type { ConnectionPreset, ConnectionProviderScanEntry } from "./ConnectionPicker";
 import { useModalFocus } from "../lib/useModalFocus";
+import { inTauri } from "../lib/tauri-bridge";
 
 export interface AgentCliSetupFixture {
   state: AgentCliSetupState;
@@ -77,6 +78,15 @@ export function AgentCliSetupAssistant({
       setInstallResult(null);
       return;
     }
+    if (!inTauri()) {
+      setState(null);
+      setConfirmation(null);
+      setLoading(false);
+      setBusyProviderId(null);
+      setError(null);
+      setInstallResult(null);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -115,7 +125,7 @@ export function AgentCliSetupAssistant({
   if (!preset) return null;
 
   async function refresh(): Promise<void> {
-    if (!preset) return;
+    if (!preset || !inTauri()) return;
     setLoading(true);
     setError(null);
     try {
@@ -207,11 +217,13 @@ export function AgentCliSetupAssistant({
               ? `${state.target.label} · commands run on ${state.target.commandRunsOn}`
               : loading
                 ? "Checking setup…"
-                : "Ready to check agent CLI setup"}
+                : inTauri() || fixture
+                  ? "Ready to check agent CLI setup"
+                  : "ShellX desktop required"}
           </span>
         </div>
         <div className="agent-cli-setup-header-actions">
-          <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void refresh()} disabled={loading || Boolean(fixture)}>
+          <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void refresh()} disabled={loading || Boolean(fixture) || !inTauri()}>
             Recheck
           </button>
           {onClose && (
@@ -282,7 +294,11 @@ export function AgentCliSetupAssistant({
           );
         })}
         {!loading && providers.length === 0 && (
-          <div className="agent-cli-setup-empty">No setup cards are available for this target.</div>
+          <div className="agent-cli-setup-empty">
+            {inTauri() || fixture
+              ? "No setup cards are available for this target."
+              : "Agent CLI discovery is available in the ShellX desktop app."}
+          </div>
         )}
       </div>
 

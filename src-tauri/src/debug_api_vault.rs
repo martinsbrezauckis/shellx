@@ -1,5 +1,13 @@
 use super::*;
 
+fn emit_vault_status_invalidated(s: &ApiState, reason: &str) {
+    let _ = tauri::Emitter::emit(
+        s.app(),
+        "shellx:vault-status-invalidated",
+        serde_json::json!({ "reason": reason }),
+    );
+}
+
 pub(super) fn shellx_vault_from_state_inner(
     s: &ApiState,
 ) -> Result<Arc<crate::shellx_vault::ShellxVaultBackend>, Box<Response>> {
@@ -182,7 +190,10 @@ pub(super) async fn vault_grant_create_http(
         Err(response) => return *response,
     };
     match vault.create_grant(body).await {
-        Ok(grant) => Json(serde_json::json!({ "ok": true, "grant": grant })).into_response(),
+        Ok(grant) => {
+            emit_vault_status_invalidated(&s, "grantCreated");
+            Json(serde_json::json!({ "ok": true, "grant": grant })).into_response()
+        }
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -202,7 +213,10 @@ pub(super) async fn vault_grant_revoke_http(
         Err(response) => return *response,
     };
     match vault.revoke_grant(&grant_id).await {
-        Ok(_) => Json(serde_json::json!({ "ok": true, "grantId": grant_id })).into_response(),
+        Ok(_) => {
+            emit_vault_status_invalidated(&s, "grantRevoked");
+            Json(serde_json::json!({ "ok": true, "grantId": grant_id })).into_response()
+        }
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -260,13 +274,16 @@ pub(super) async fn vault_agent_request_create_http(
         Err(response) => return *response,
     };
     match crate::shellx_vault::agent_requests::submit_request(&vault, body).await {
-        Ok(request) => Json(serde_json::json!({
-            "ok": true,
-            "status": "pendingOperatorApproval",
-            "request": request,
-            "secretExposed": false,
-        }))
-        .into_response(),
+        Ok(request) => {
+            emit_vault_status_invalidated(&s, "agentRequestCreated");
+            Json(serde_json::json!({
+                "ok": true,
+                "status": "pendingOperatorApproval",
+                "request": request,
+                "secretExposed": false,
+            }))
+            .into_response()
+        }
         Err(e) => vault_bad_request(e),
     }
 }
@@ -287,12 +304,15 @@ pub(super) async fn vault_agent_request_cancel_http(
         Err(response) => return *response,
     };
     match crate::shellx_vault::agent_requests::cancel_request(&vault, &request_id, &body.actor_id) {
-        Ok(request) => Json(serde_json::json!({
-            "ok": true,
-            "request": request,
-            "secretExposed": false,
-        }))
-        .into_response(),
+        Ok(request) => {
+            emit_vault_status_invalidated(&s, "agentRequestCancelled");
+            Json(serde_json::json!({
+                "ok": true,
+                "request": request,
+                "secretExposed": false,
+            }))
+            .into_response()
+        }
         Err(e) => vault_bad_request(e),
     }
 }

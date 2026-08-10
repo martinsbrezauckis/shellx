@@ -1,0 +1,189 @@
+.settings-modal {
+  width: min(540px, 90vw);
+}
+.settings-modal h3 {
+  margin: 0 0 var(--space-5);
+}
+/* `.about-link` — clickable URL/email links inside the About tab
+ * meta grid. Underlined by default so they unmistakably read as
+ * links; accent color brightens on hover. */
+.about-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent, #6ed18a);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.about-link:hover {
+  filter: brightness(1.15);
+}
+/* ─────────────── Tabbed Settings ─────────────── */
+/*
+ * `.settings-modal` now hosts a tab strip + tab pane instead of a single
+ * vertical scroll. Widened to fit Vault's CRUD table without horizontal
+ * scroll; the body region scrolls independently from the tab strip so
+ * the tabs stay accessible regardless of pane length.
+ */
+.settings-modal {
+  /* Override the earlier .settings-modal min-width (480px) so tab labels
+   * + Vault rows breathe; also clamp to 90vw via .modal cap. */
+  width: min(760px, 90vw);
+  padding: 0;
+  /* Modal default .modal has padding var(--space-6); we move padding
+   * into the .settings-tab-pane below so the tab strip can sit flush
+   * against the modal edge for a real "browser tab" feel. */
+}
+.settings-tabbar {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--hairline-2);
+  padding: var(--space-3) var(--space-5) 0;
+  gap: 2px;
+  /* Sticky so long Vault lists don't lose the strip. */
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 2;
+}
+.settings-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 14px 8px;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  margin-bottom: -1px; /* overlap the strip's border-bottom */
+}
+.settings-tab:hover { color: var(--ink-2); }
+.settings-tab:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+.settings-tab.active {
+  color: var(--ink);
+  border-color: var(--hairline-2);
+  border-bottom-color: var(--surface);
+  background: var(--surface);
+}
+.settings-tabbar-spacer { flex: 1; }
+.settings-tab-pane {
+  padding: var(--space-5) var(--space-6);
+  max-height: 65vh;
+  overflow-y: auto;
+}
+/* keep the closing hint above the modal floor inside padded pane */
+.settings-modal > .modal-hint {
+  padding: 0 var(--space-6) var(--space-4);
+  margin-top: 0;
+}
+/* ─────────────── Settings → Data tab (#435) ───────────────
+ * Same row rhythm as .vault-row + .connection-row: hairline
+ * between rows, multi-line info block on the left, action pill on
+ * the right. data-row-count is the small grey metric line. */
+.data-tab { gap: var(--space-3); }
+.data-row-list {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-1, 6px);
+  background: var(--surface-1, var(--bg));
+  overflow: hidden;
+}
+.data-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hairline);
+  font-family: var(--sans);
+}
+.data-row:last-child { border-bottom: 0; }
+.data-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.data-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.data-row-desc {
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.4;
+}
+.data-row-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+.data-row-delete {
+  flex-shrink: 0;
+  color: #d68a8a;
+  border-color: #4a2a2a;
+}
+.data-row-delete:hover:not(:disabled) {
+  color: #ff9090;
+  border-color: #6a3a3a;
+}
+.data-row-delete:disabled { opacity: 0.5; cursor: default; }
+
+/* ─────────────── Settings → About tab ─────────────── */
+.about-tab { gap: var(--space-4); }
+.about-brand { padding-bottom: var(--space-3); border-bottom: 1px solid var(--hairline); }
+.about-name {
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+.about-tag { font-family: var(--sans); font-size: 13px; color: var(--ink-3); margin-top: 2px; }
+.about-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 13px;
+}
+.about-grid dt { color: var(--ink-3); }
+.about-grid dd { margin: 0; color: var(--ink); }
+.about-grid code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.about-links {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.about-links a { text-decoration: none; }
+.about-fineprint {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.6;
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+}
+.about-fineprint code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+}

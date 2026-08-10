@@ -46,7 +46,6 @@ import "./App.css";
 import { Header } from "./components/Header";
 import type { AutonomyMode } from "./lib/autonomy";
 import { composerDraftForTab, pruneComposerDrafts, updateComposerDraftForTab } from "./lib/composer-drafts";
-import type { ChatHit } from "./components/FindPopover";
 import { LeftRail } from "./components/LeftRail";
 import { ChatOutput } from "./components/ChatOutput";
 import {
@@ -58,17 +57,15 @@ import {
 } from "./components/BottomPanel";
 import { RightRail, type PreviewTarget } from "./components/RightRail";
 import { SessionTabs, type SessionTab } from "./components/SessionTabs";
-import { CommandPalette, type PaletteAction } from "./components/CommandPalette";
+import type { PaletteAction } from "./components/CommandPalette";
 // Defensive provider-permission surface retained for legacy sessions and
 // release diagnostics. Normal ShellX sessions run provider-native Full Auto.
-import { PermissionModal } from "./components/PermissionModal";
 import { UpdateBanner } from "./components/UpdateBanner";
 import type { DebugUpdateFixtureMode } from "./lib/update-notes";
 import { DebugApiConnectionBanner } from "./components/DebugApiConnectionBanner";
 import { SESSION_TABS_KEY, hydrateUserData, persistUserData, readUserDataLocalStorage, type UserDataKey } from "./lib/userStore";
 import { GoalPlanReviewModal } from "./components/GoalPlanReviewModal";
 import { BuildPlanReviewModal } from "./components/BuildPlanReviewModal";
-import { AgentCliSetupDialog } from "./components/AgentCliSetupAssistant";
 import { DebugHighlightOverlay, type DebugHighlightRequest } from "./components/DebugHighlightOverlay";
 import { normalizeDebugHighlightRequests, sameDebugHighlightRequests } from "./lib/debug-highlight-normalization";
 import { SHELLX_SETUP_GUIDE_DISMISSED_EVENT, ShellxSetupGuide } from "./components/ShellxSetupGuide";
@@ -76,6 +73,7 @@ import { ShellIcon } from "./components/icons";
 import { LazySurface } from "./components/LazySurface";
 import { startReleaseTauriInvokeRelay } from "./lib/release-tauri-invoke-relay";
 import { useModalFocus } from "./lib/useModalFocus";
+import { useEventAwarePolling, type PollCurrent } from "./lib/useEventAwarePolling";
 import type { HashItem } from "./components/HashAutocomplete";
 import {
   readSettingsLocal,
@@ -105,6 +103,7 @@ import {
   debugUiPollDelay,
   debugUiPollingEnabled,
   debugUiRetryDelay,
+  debugUiStateTargetsBrowser,
   type DebugUiConnectionStatus,
 } from "./lib/debug-ui-connection";
 import { inTauri } from "./lib/tauri-bridge";
@@ -121,19 +120,22 @@ import {
   extractSessionAssetRegistry,
   type SessionAssetItem,
 } from "./lib/session-assets";
-import { PendingLocalEventQueue, localEventTabId } from "./lib/pending-local-events";
+import {
+  PendingLocalEventQueue,
+  buildSessionLogWrites,
+  localEventTabId,
+} from "./lib/pending-local-events";
 import {
   appendBoundedRendererEvents,
   historyTruncationFrame,
   MAX_SESSION_LOG_REHYDRATION_LINES,
   withRendererEventTabId,
 } from "./lib/bounded-event-store";
+import { RendererEventBatcher } from "./lib/renderer-event-batcher";
 import {
   applyDebugRendererFixture,
   debugBuildRunCockpitFixture,
-  debugBottomPanelTerminalFixture,
   type DebugBuildRunCockpitFixture,
-  type DebugBottomPanelTerminalFixture,
 } from "./lib/debug-renderer-fixture";
 import {
   debugRightRailGitLifecycleFixture,
@@ -157,6 +159,7 @@ import {
 } from "./lib/debug-goal-plan-review-fixture";
 import { classifyComposerSubmission } from "./lib/acp-interjection";
 import { extractAssistantTurnAfterIndex, getVoiceTurnToSpeak } from "./lib/voice-chat";
+import { buildVoiceAwarePrompt, speakAndRearm } from "./lib/voice-chat-runtime";
 import {
   addBuildOperatorNote,
   buildActionFailureMessage,
@@ -206,33 +209,37 @@ import {
   vaultRequestSummaryText,
   type VaultRequestCenterAction,
   type VaultRequestCenterItem,
-  type VaultAgentRequestSource,
 } from "./lib/vault-request-center";
+import {
+  useVaultRequestCenterState,
+} from "./lib/useVaultRequestCenterState";
+import type { BrowserSessionGrantPromptSource } from "./lib/vault-approval-prompts";
 import type { VaultPanelIntent } from "./lib/vault-ui";
 import { isTrustedShellxUserEvent, type ShellxUserEventLike } from "./lib/trusted-user-event";
 import {
   agentDisplayName,
   isProviderAgent,
-  normalizeAgentId,
   normalizeAgentSelection,
   providerPermissionModeForAutonomy,
   type AgentId,
   type AgentSelection,
 } from "./lib/agent-selection";
 import {
-  abortProviderSession,
-  getProviderAdapterState,
-  getProviderSessionState,
   normalizeShellxToolExposure,
   providerExecutionTargetLabel,
   providerSessionGroupShape,
   shellxToolExposureForProviderStart,
-  startProviderSession,
   DEFAULT_SHELLX_TOOL_EXPOSURE,
   type ProviderExecutionTransport,
   type ProviderId,
   type ProviderShellxToolExposure,
 } from "./lib/provider-sessions";
+import {
+  abortProviderSession,
+  getProviderAdapterState,
+  getProviderSessionState,
+  startProviderSession,
+} from "./lib/provider-session-api";
 import {
   debugProviderActionFixture,
   dispatchDebugProviderAction,
@@ -249,6 +256,9 @@ import {
 
 const Settings = lazy(() => import("./components/Settings")
   .then((module) => ({ default: module.Settings })));
+const CommandPalette = lazy(() => import("./components/CommandPalette")
+  .then((module) => ({ default: module.CommandPalette })));
+const AgentCliSetupDialog = lazy(() => import("./components/AgentCliSetupDialog.lazy"));
 const HelpModal = lazy(() => import("./components/HelpModal")
   .then((module) => ({ default: module.HelpModal })));
 const PluginsModal = lazy(() => import("./components/PluginsModal")
@@ -513,78 +523,6 @@ interface TabEntry {
   status?: Status;
   /** Per-tab prompt-in-flight flag. Toggles composer Send/Stop. */
   isSending?: boolean;
-}
-
-interface AppBrowserSessionGrant {
-  grantId: string;
-  taskId?: string | null;
-  fromProfileId: string;
-  toProfileId: string;
-  reason: string;
-  status: string;
-  ttlSeconds?: number | null;
-  createdAtMs: number;
-  resolvedAtMs?: number | null;
-  appliedAtMs?: number | null;
-}
-
-interface AppBrowserVaultDeposit {
-  depositId: string;
-  label: string;
-  storageCommitHash: string;
-  secretExposed: boolean;
-  taskId?: string | null;
-  sourceUrl?: string | null;
-  createdAtMs?: number | null;
-  serverReceipt?: { createdMs?: number | null } | null;
-  receipt?: { t?: number | null } | null;
-}
-
-interface AppVaultGrant {
-  grantId: string;
-  secretRef: string;
-  actorScope: string;
-  operation: string;
-  origin?: string | null;
-  createdAtMs?: number | null;
-  expiresAtMs?: number | null;
-  revoked: boolean;
-  approved: boolean;
-}
-
-interface AppBrowserRequestState {
-  sessionGrants?: AppBrowserSessionGrant[];
-  vaultDeposits?: AppBrowserVaultDeposit[];
-  vaultGrants?: AppVaultGrant[];
-  agentRequests?: VaultAgentRequestSource[];
-}
-
-interface AppVaultAgentRequestSnapshot {
-  requests?: VaultAgentRequestSource[];
-}
-
-function mergeAppVaultGrants(
-  nativeGrants: readonly AppVaultGrant[],
-  debugGrants: readonly AppVaultGrant[],
-): AppVaultGrant[] {
-  const byId = new Map<string, AppVaultGrant>();
-  for (const grant of nativeGrants) byId.set(grant.grantId, grant);
-  for (const grant of debugGrants) {
-    if (!byId.has(grant.grantId)) byId.set(grant.grantId, grant);
-  }
-  return [...byId.values()];
-}
-
-function mergeAppVaultAgentRequests(
-  nativeRequests: readonly VaultAgentRequestSource[],
-  debugRequests: readonly VaultAgentRequestSource[],
-): VaultAgentRequestSource[] {
-  const byId = new Map<string, VaultAgentRequestSource>();
-  for (const request of nativeRequests) byId.set(request.requestId, request);
-  for (const request of debugRequests) {
-    if (!byId.has(request.requestId)) byId.set(request.requestId, request);
-  }
-  return [...byId.values()];
 }
 
 interface SessionConnectionMeta {
@@ -930,15 +868,30 @@ export default function App(): JSX.Element {
    * tag-only path.
    */
   const [pendingAttachmentsByTab, setPendingAttachmentsByTab] = useState<Record<string, PendingComposerAttachments>>({});
-  /**
-   * Last-seen agentCapabilities dict from grok's initialize response.
-   * Shape: { promptCapabilities: { image, embeddedContext, audio, ... } }.
-   * Behavior doesn't change yet (image=false); we log on flip so the
-   * binary-image path can be enabled when grok ships support.
-   */
-  const [agentCaps, setAgentCaps] = useState<Record<string, unknown> | null>(null);
   const [events, setEvents] = useState<RawEventFrame[]>([]);
-  const [debugBottomPanelTerminals, setDebugBottomPanelTerminals] = useState<DebugBottomPanelTerminalFixture[]>([]);
+  const persistLiveBatchRef = useRef<(batch: readonly RawEventFrame[]) => void>(() => undefined);
+  const liveEventBatcherRef = useRef<RendererEventBatcher<RawEventFrame> | null>(null);
+  const enqueueLiveEvent = useCallback((event: RawEventFrame): void => {
+    if (!liveEventBatcherRef.current) {
+      liveEventBatcherRef.current = new RendererEventBatcher(
+        (batch) => {
+          setEvents((current) => appendBoundedRendererEvents(current, batch));
+          persistLiveBatchRef.current(batch);
+        },
+        (flush) => window.setTimeout(flush, 16),
+        (handle) => window.clearTimeout(handle),
+      );
+    }
+    liveEventBatcherRef.current.enqueue(event);
+  }, []);
+  const flushLiveEvents = useCallback((): void => {
+    liveEventBatcherRef.current?.flush();
+  }, []);
+  useEffect(() => () => {
+    liveEventBatcherRef.current?.flush();
+    liveEventBatcherRef.current?.dispose();
+    liveEventBatcherRef.current = null;
+  }, []);
   const [debugBuildRunFixture, setDebugBuildRunFixture] = useState<DebugBuildRunCockpitFixture | null>(null);
   const [debugRightRailGitFixture, setDebugRightRailGitFixture] =
     useState<DebugRightRailGitLifecycleFixture | null>(null);
@@ -1060,6 +1013,7 @@ export default function App(): JSX.Element {
         kind,
         payload,
       };
+      flushLiveEvents();
       setEvents((prev) => appendBoundedRendererEvents(prev, synthetic));
     };
     window.addEventListener("shellx:synthetic-event", handler);
@@ -1234,13 +1188,11 @@ export default function App(): JSX.Element {
   const pendingVaultPanelAckIdsRef = useRef<Set<string>>(new Set());
   const [vaultRequestCenterOpenSeq, setVaultRequestCenterOpenSeq] = useState(0);
   const [vaultRequestCenterCloseSeq, setVaultRequestCenterCloseSeq] = useState(0);
-  const [browserVaultRequestState, setBrowserVaultRequestState] =
-    useState<AppBrowserRequestState>({
-      sessionGrants: [],
-      vaultDeposits: [],
-      vaultGrants: [],
-      agentRequests: [],
-    });
+  const {
+    state: browserVaultRequestState,
+    setState: setBrowserVaultRequestState,
+    refresh: refreshBrowserVaultRequests,
+  } = useVaultRequestCenterState();
   const [dismissedVaultDepositIds, setDismissedVaultDepositIds] = useState<Set<string>>(
     () => loadDismissedVaultDepositIds(),
   );
@@ -1250,83 +1202,6 @@ export default function App(): JSX.Element {
     setVaultOpen(true);
   }, []);
 
-  const refreshBrowserVaultRequests = useCallback(async () => {
-    if (!inTauri()) return;
-    const readDebugVaultGrants = async (): Promise<AppVaultGrant[]> => {
-      try {
-        const response = await apiGet<{ grants?: AppVaultGrant[] }>("/vault/grants");
-        return response.grants ?? [];
-      } catch {
-        return [];
-      }
-    };
-    const readDebugVaultAgentRequests = async (): Promise<VaultAgentRequestSource[]> => {
-      try {
-        const response = await apiGet<AppVaultAgentRequestSnapshot>("/vault/agent-requests");
-        return response.requests ?? [];
-      } catch {
-        return [];
-      }
-    };
-    try {
-      const [
-        next,
-        nativeVaultGrants,
-        debugVaultGrants,
-        nativeAgentRequests,
-        debugAgentRequests,
-      ] = await Promise.all([
-        invoke<AppBrowserRequestState>("shellx_browser_state"),
-        invoke<AppVaultGrant[]>("shellx_vault_list_grants").catch(() => [] as AppVaultGrant[]),
-        readDebugVaultGrants(),
-        invoke<AppVaultAgentRequestSnapshot>("shellx_vault_agent_request_center")
-          .catch(() => ({ requests: [] } as AppVaultAgentRequestSnapshot)),
-        readDebugVaultAgentRequests(),
-      ]);
-      setBrowserVaultRequestState({
-        sessionGrants: next.sessionGrants ?? [],
-        vaultDeposits: next.vaultDeposits ?? [],
-        vaultGrants: mergeAppVaultGrants(nativeVaultGrants, debugVaultGrants),
-        agentRequests: mergeAppVaultAgentRequests(
-          nativeAgentRequests.requests ?? [],
-          debugAgentRequests,
-        ),
-      });
-      return;
-    } catch {
-      // Older/dev builds may not have the native command. Fall back to
-      // the existing local Debug API when it is enabled.
-    }
-    try {
-      const [next, debugVaultGrants, debugAgentRequests] = await Promise.all([
-        apiGet<AppBrowserRequestState>("/browser/state"),
-        readDebugVaultGrants(),
-        readDebugVaultAgentRequests(),
-      ]);
-      setBrowserVaultRequestState({
-        sessionGrants: next.sessionGrants ?? [],
-        vaultDeposits: next.vaultDeposits ?? [],
-        vaultGrants: debugVaultGrants,
-        agentRequests: debugAgentRequests,
-      });
-    } catch {
-      // Browser may not be running yet; keep the last known summary.
-    }
-  }, []);
-  useEffect(() => {
-    if (!inTauri()) return;
-    let cancelled = false;
-    const refresh = async () => {
-      if (cancelled) return;
-      await refreshBrowserVaultRequests();
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 2500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [refreshBrowserVaultRequests]);
   useEffect(() => {
     if (!inTauri()) return;
     let unlisten: UnlistenFn | null = null;
@@ -2111,6 +1986,12 @@ export default function App(): JSX.Element {
     },
     [activeTabId, previewFileContext?.tabId, workPreviewByTab],
   );
+  const rightRailWorkPreviewState = useMemo(
+    () => activeTabId
+      ? workPreviewByTab.get(activeTabId) ?? emptyWorkPreviewState(activeTabId)
+      : emptyWorkPreviewState("default"),
+    [activeTabId, workPreviewByTab],
+  );
   const workPreviewTabIds = useMemo(() => {
     const ids = new Set<string>();
     for (const tab of tabs) ids.add(tab.tabId);
@@ -2119,18 +2000,28 @@ export default function App(): JSX.Element {
     return Array.from(ids);
   }, [activeTabId, previewFileContext?.tabId, tabs]);
   const workPreviewTabIdsKey = workPreviewTabIds.join("\u0000");
-
+  const [workPreviewPollingVisible, setWorkPreviewPollingVisible] = useState(
+    () => document.visibilityState !== "hidden",
+  );
   useEffect(() => {
-    if (!inTauri() || workPreviewTabIds.length === 0) return;
-    let cancelled = false;
-
-    const refreshWorkPreview = async () => {
+    const onVisibilityChange = () => {
+      setWorkPreviewPollingVisible(document.visibilityState !== "hidden");
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+  const anyRunningPreview = workPreviewTabIds.some((tabId) => {
+    const state = workPreviewByTab.get(tabId);
+    return state?.status === "running" || state?.status === "starting";
+  });
+  const refreshWorkPreviews = useCallback(
+    async (isCurrent: PollCurrent): Promise<void> => {
       const states = await Promise.all(
         workPreviewTabIds.map((tabId) =>
           getWorkPreviewState(tabId).catch(() => null),
         ),
       );
-      if (cancelled) return;
+      if (!isCurrent()) return;
       try {
         setWorkPreviewByTab((prev) => {
           const next = new Map(prev);
@@ -2160,22 +2051,16 @@ export default function App(): JSX.Element {
       } catch {
         /* Work preview is optional; the right rail surfaces manual errors. */
       }
-    };
-
-    void refreshWorkPreview();
-    const anyRunningPreview = workPreviewTabIds.some((tabId) => {
-      const state = workPreviewByTab.get(tabId);
-      return state?.status === "running" || state?.status === "starting";
-    });
-    const pollMs = anyRunningPreview
-      ? 2000
-      : 5000;
-    const id = window.setInterval(() => void refreshWorkPreview(), pollMs);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [workPreviewTabIdsKey, workPreviewByTab]);
+    },
+    [workPreviewTabIdsKey],
+  );
+  useEventAwarePolling({
+    enabled: inTauri() && workPreviewPollingVisible && workPreviewTabIds.length > 0,
+    scopeKey: workPreviewTabIdsKey,
+    eventRevision: 0,
+    intervalMs: anyRunningPreview ? 2_000 : 5_000,
+    poll: refreshWorkPreviews,
+  });
 
   /** Active tab's lifecycle status (Idle if no tab). Header, footer and
    * composer all read this derived value rather than a singleton. */
@@ -2294,6 +2179,7 @@ export default function App(): JSX.Element {
             _meta: { tabId: request.tabId ?? activeTabIdRef.current ?? "default" },
           },
         };
+        flushLiveEvents();
         setEvents((prev) => appendBoundedRendererEvents(prev, synthetic));
         return;
       }
@@ -2313,7 +2199,7 @@ export default function App(): JSX.Element {
               : grant,
           ),
         }));
-        void invoke<AppBrowserSessionGrant>("shellx_browser_resolve_session_grant", {
+        void invoke<BrowserSessionGrantPromptSource>("shellx_browser_resolve_session_grant", {
           grantId: request.grantId,
           approved,
         })
@@ -2716,6 +2602,7 @@ export default function App(): JSX.Element {
         );
         if (permissionDecisionFixture !== undefined) {
           setDebugPermissionDecisionFixture(permissionDecisionFixture);
+          flushLiveEvents();
           setEvents((current) => applyDebugPermissionDecisionFixtureEvents(
             current,
             permissionDecisionFixture,
@@ -2729,13 +2616,12 @@ export default function App(): JSX.Element {
           if (rightRailGitFixture !== undefined) {
             setDebugRightRailGitFixture(rightRailGitFixture);
           } else {
+            flushLiveEvents();
             setEvents((current) => applyDebugRendererFixture(
               current,
               p.debugRendererFixture,
               fixtureTabId,
             ));
-            const terminals = debugBottomPanelTerminalFixture(p.debugRendererFixture);
-            if (terminals) setDebugBottomPanelTerminals(terminals);
             setDebugBuildRunFixture(debugBuildRunCockpitFixture(
               p.debugRendererFixture,
               fixtureTabId,
@@ -2968,12 +2854,6 @@ export default function App(): JSX.Element {
       source === "renderer" || source.startsWith("renderer-");
     const isRendererDebugUiPatch = (patch: unknown): boolean =>
       isRendererDebugUiSourceValue(debugUiPatchSource(patch));
-    const isBrowserDebugUiSource = (state: Record<string, unknown>): boolean => {
-      const source = typeof state.lastUiPatchSource === "string"
-        ? state.lastUiPatchSource.trim().toLowerCase()
-        : "";
-      return isRendererDebugUiSourceValue(source) || source.includes("browser");
-    };
     const applyAuthoritativeUiState = (state: Record<string, unknown>, eventPatch?: unknown) => {
       const revision = uiRevisionFromState(state);
       if (revision !== null) lastAppliedUiRevision = revision;
@@ -3052,7 +2932,7 @@ export default function App(): JSX.Element {
         const state = await readAuthoritativeUiState();
         if (closed || !debugUiPollingEnabled(connectionStatus)) return;
         const revision = uiRevisionFromState(state);
-        if (revision !== null && revision !== lastAppliedUiRevision && !isBrowserDebugUiSource(state)) {
+        if (revision !== null && revision !== lastAppliedUiRevision && !debugUiStateTargetsBrowser(state)) {
           applyAuthoritativeUiState(state);
         }
       } catch {
@@ -3078,7 +2958,7 @@ export default function App(): JSX.Element {
         nativeStatePollErrorReported = false;
         const revision = uiRevisionFromState(state);
         if (
-          !isBrowserDebugUiSource(state)
+          !debugUiStateTargetsBrowser(state)
           && (revision === null || revision !== lastAppliedUiRevision)
         ) {
           applyAuthoritativeUiState(state);
@@ -3251,30 +3131,47 @@ export default function App(): JSX.Element {
     if (processedPromptCompletionsRef.current.has(completionKey)) return false;
     processedPromptCompletionsRef.current.add(completionKey);
     processedPromptCompletionOrderRef.current.push(completionKey);
-    while (processedPromptCompletionOrderRef.current.length > 200) {
+    while (processedPromptCompletionOrderRef.current.length > 512) {
       const old = processedPromptCompletionOrderRef.current.shift();
       if (old) processedPromptCompletionsRef.current.delete(old);
     }
     return true;
   }, []);
 
-  const persist = useCallback(async (ev: RawEventFrame): Promise<boolean> => {
+  const sessionIdForEvent = useCallback((ev: RawEventFrame): string | null => {
     const tag = (ev as any)?.payload?._meta?.tabId
       ?? (ev as any)?.payload?.params?._meta?.tabId
       ?? (ev as any)?._meta?.tabId
       ?? null;
     const tabKey: string | null = tag ?? activeTabIdRef.current ?? null;
-    if (!tabKey) return false;
-    const sid = tabSessionByTab.current.get(tabKey)
+    if (!tabKey) return null;
+    return tabSessionByTab.current.get(tabKey)
       ?? tabsRef.current.find((t) => t.tabId === tabKey)?.sessionId
-      ?? (tabKey === activeTabIdRef.current ? activeSessionIdRef.current ?? undefined : undefined);
-    if (!sid) return false;  // session not yet established for this tab
+      ?? (tabKey === activeTabIdRef.current ? activeSessionIdRef.current : null)
+      ?? null;
+  }, []);
+  const sessionLogWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  const persistFrames = useCallback((frames: readonly RawEventFrame[]): Promise<number> => {
+    const writes = buildSessionLogWrites(frames, sessionIdForEvent);
+    if (writes.length === 0) return Promise.resolve(0);
+    const frameCount = writes.reduce((total, write) => total + write.frameCount, 0);
+    const task = sessionLogWriteChainRef.current.then(async () => {
+      for (const write of writes) {
+        await invoke("append_session_log", { sessionId: write.sessionId, line: write.line });
+      }
+    });
+    sessionLogWriteChainRef.current = task.catch(() => undefined);
+    return task.then(() => frameCount);
+  }, [sessionIdForEvent]);
+  persistLiveBatchRef.current = (batch) => {
+    void persistFrames(batch).catch(() => undefined);
+  };
+  const persist = useCallback(async (ev: RawEventFrame): Promise<boolean> => {
     try {
-      await invoke("append_session_log", { sessionId: sid, line: JSON.stringify(ev) });
-      return true;
+      return await persistFrames([ev]) === 1;
     } catch { /* writer may not be ready or invalid path; non-fatal */ }
     return false;
-  }, []);
+  }, [persistFrames]);
   const persistRef = useRef(persist);
   useEffect(() => { persistRef.current = persist; }, [persist]);
   const pendingLocalEvents = useRef(new PendingLocalEventQueue());
@@ -3345,6 +3242,7 @@ export default function App(): JSX.Element {
             ));
           }
           if (recovered.length > 0) {
+            flushLiveEvents();
             setEvents((prev) => appendBoundedRendererEvents(prev, recovered));
             console.info(`[shellX] rehydrated ${recovered.length} bounded events from ${tab.sessionId}.jsonl into ${tab.tabId.slice(0, 8)}`);
           }
@@ -3392,10 +3290,9 @@ export default function App(): JSX.Element {
           kind: ch,
           payload: event.payload,
         }, currentActiveTab);
-        setEvents((prev) => appendBoundedRendererEvents(prev, ev));
-        // Read persist + activeTabId via refs so the callback never
-        // closes over stale values. The outer useEffect has [] deps.
-        void persistRef.current(ev);
+        enqueueLiveEvent(ev);
+        // Read activeTabId via a ref so this mount-only callback never closes
+        // over stale tab state. Persistence is queued by the renderer batch.
         const sid = extractSessionId(event.payload);
         if (sid) {
           // Route the (tabId, sessionId) binding into tabSessionByTab
@@ -3423,10 +3320,8 @@ export default function App(): JSX.Element {
                     cwd: tab.cwd,
                   },
                 };
-                void invoke("append_session_log", {
-                  sessionId: sid,
-                  line: JSON.stringify(metaLine),
-                }).catch(() => { /* best-effort metadata only */ });
+                flushLiveEvents();
+                void persistFrames([metaLine]).catch(() => { /* best-effort metadata only */ });
               }
             }
             // Adopt the sid into the tab record — the right tab may
@@ -3489,7 +3384,6 @@ export default function App(): JSX.Element {
            * needs enabling in handleAttach. */
           const caps = (event.payload as any)?.agentCapabilities;
           if (caps && typeof caps === "object") {
-            setAgentCaps(caps as Record<string, unknown>);
             const promptCaps = (caps as any).promptCapabilities;
             if (promptCaps?.image === true) {
               console.info(
@@ -3524,7 +3418,10 @@ export default function App(): JSX.Element {
     if (events.length === 0) return;
     // Scan recent events for any completion signal — covers both
     // event kinds and the case where the typed event arrives last.
-    const tail = events.slice(-50);
+    // One state commit can now contain up to 128 coalesced native frames.
+    // Scan twice that bound and process every unseen completion in source
+    // order so two tabs finishing in the same batch cannot hide each other.
+    const tail = events.slice(-256);
     // TTS-back trigger shared by both completion paths. Keyed by
     // (tab, last prompt-echo index) so the same turn never speaks
     // twice even when Path A and Path B both fire (or fire across
@@ -3553,7 +3450,7 @@ export default function App(): JSX.Element {
       voicePendingTurnRef.current.delete(taggedTab ?? "__default__");
       void speakAndRearm(turn.text, taggedTab);
     };
-    for (let i = tail.length - 1; i >= 0; i--) {
+    for (let i = 0; i < tail.length; i++) {
       const e = tail[i];
       if (!e) continue;
       const payload = e.payload as any;
@@ -3571,7 +3468,7 @@ export default function App(): JSX.Element {
           if (!rememberPromptCompletion(completionKey)) continue;
           updateTabById(tagged, { isSending: false });
           if (kind === "completed") maybeFireTTS(tagged);
-          return;
+          continue;
         }
       }
       // Path A: typed `prompt-complete` event.
@@ -3594,7 +3491,7 @@ export default function App(): JSX.Element {
         // element. After playback ends, re-arm the mic for continuous
         // conversation.
         maybeFireTTS(tagged);
-        return;
+        continue;
       }
       // Path B: grok-acp-event with stopReason.
       if (e.kind === "grok-acp-event") {
@@ -4393,6 +4290,7 @@ export default function App(): JSX.Element {
   }
 
   function pushLocalEvent(ev: RawEventFrame): void {
+    flushLiveEvents();
     setEvents((prev) => appendBoundedRendererEvents(prev, ev));
     if (ev.kind === "ui") {
       void persistRef.current(ev).then((ok) => {
@@ -4936,24 +4834,6 @@ export default function App(): JSX.Element {
   }
 
   /**
-   * Open a NEW tab pre-scoped to the given project. Inherits the
-   * active tab's connection/branch if any; otherwise defaults to a
-   * fresh Local tab from newTabEntry.
-   */
-  function handleOpenProject(projectId: string, projectName: string): void {
-    const t = newTabEntry(cwd, autonomy);
-    t.title = projectName;
-    t.projectId = projectId;
-    // Inherit connection/branch from current active tab for continuity.
-    if (activeTab?.connectionId !== undefined) t.connectionId = activeTab.connectionId;
-    if (activeTab?.connectionLabel)            t.connectionLabel = activeTab.connectionLabel;
-    if (activeTab?.connectionTransport)        t.connectionTransport = activeTab.connectionTransport;
-    if (activeTab?.branchName)                 t.branchName = activeTab.branchName;
-    setTabs((prev) => [...prev, t]);
-    setActiveTabId(t.tabId);
-  }
-
-  /**
    * Open an EXISTING chat in a new tab. Pre-scopes the tab to the
    * chat's project (if any) and transport icon so the strip emoji
    * matches the source chat. The session id binds later via the
@@ -5079,6 +4959,7 @@ export default function App(): JSX.Element {
         ));
       }
       if (recovered.length > 0) {
+        flushLiveEvents();
         setEvents((prev) => appendBoundedRendererEvents(prev, recovered));
         const inferredAgent = latestAgentFromEventFrames(recovered);
         if (inferredAgent) {
@@ -5736,6 +5617,7 @@ export default function App(): JSX.Element {
         onOpenVault={openVaultPanel}
         onOpenBrowser={handleOpenShellxBrowser}
         onOpenRequests={() => setVaultRequestCenterOpenSeq((seq) => seq + 1)}
+        onOpenAgentSetup={() => setAgentCliSetupFixtureMode("live-setup")}
         onOpenSettingsTab={openSettingsTab}
       />
 
@@ -5747,15 +5629,14 @@ export default function App(): JSX.Element {
         >
           <Panel defaultSize={18} minSize={12} maxSize={36}>
             {/* LeftRail = Projects + Past chats. Project + chat clicks
-                open new session tabs via handleOpenProject /
-                handleOpenChat. A tab belongs to project p when
+                open existing sessions via handleOpenChat. A tab belongs to
+                project p when
                 t.projectId === p.id OR (for past chats)
                 sessionProjects[t.sessionId] === p.id. */}
             <LeftRail
               cwd={activeTab?.cwd ?? cwd}
               activeTabId={activeTabId}
               onPreviewFile={handlePreviewFile}
-              onOpenProject={handleOpenProject}
               onOpenChat={handleOpenChat}
               projects={projects.map((p) => ({
                 id: p.id,
@@ -6120,14 +6001,10 @@ export default function App(): JSX.Element {
                         <ChatOutput
                           groups={groups}
                           onPreviewFile={handlePreviewFile}
-                          // tabId forward so inline
-                          // <TerminalView attachOnly/> binds to the right
-                          // ACP-origin PTY in the registry.
+                          // Session identity for attachment and media previews.
                           tabId={activeTabId ?? undefined}
                           assistantFallbackLabel={agentDisplayName(activeAgentForChat ?? "grok")}
-                          debugPermissionFixture={debugPermissionFixture?.surface === "pill"
-                            ? debugPermissionFixture
-                            : null}
+                          debugPermissionFixture={debugPermissionFixture}
                         />
                   </div>
                 </Panel>
@@ -6221,7 +6098,6 @@ export default function App(): JSX.Element {
 	                    connectionLocked={Boolean(activeTab?.firstMessageMs || activeTab?.sessionLockPending)}
                     debugOpenMenu={debugComposerMenuRequest?.menu ?? null}
                     debugOpenMenuSeq={debugComposerMenuRequest?.seq}
-                    debugAcpTerminals={debugBottomPanelTerminals}
                     releaseTestVoiceRecording={releaseTestVoiceRecording}
                     scopeConnection={activeTab?.connectionLabel ?? "Local"}
                     scopeConnectionId={activeTab?.connectionId ?? null}
@@ -6250,11 +6126,6 @@ export default function App(): JSX.Element {
                       scanConnectionProvidersForPreset(preset);
                     }}
                     onSelectBranch={(name) => updateActiveTab({ branchName: name })}
-                    onCreateWorktree={() => {
-                      /* Worktree creation is not on the v1 roadmap.
-                       * The handler is kept (required by BranchPicker
-                       * types) but intentionally no-ops. */
-                    }}
                   />
                 </Panel>
               </PanelGroup>
@@ -6264,8 +6135,6 @@ export default function App(): JSX.Element {
 
                   <Panel defaultSize={32} minSize={15} maxSize={60}>
                     <RightRail
-                      preview={activeTab?.preview ?? null}
-                      onPreviewClear={() => updateActiveTab({ preview: undefined })}
                       autonomy={autonomy}
                       /* Wire Files-tab clicks through to App's preview
                        * pipeline. Filter to active-tab events so
@@ -6322,6 +6191,7 @@ export default function App(): JSX.Element {
                           return next;
                         });
                       }}
+                      workPreviewState={rightRailWorkPreviewState}
                       onOpenWorkPreview={(state) => {
                         setWorkPreviewByTab((prev) => {
                           const next = new Map(prev);
@@ -6355,31 +6225,38 @@ export default function App(): JSX.Element {
         || agentCliSetupFixtureMode === "install-lifecycle"
         || agentCliSetupFixtureMode === "clipboard-cards"
         || agentCliSetupFixtureMode === "clipboard-confirmation") && (
-        <AgentCliSetupDialog
-          preset={DEBUG_AGENT_CLI_SETUP_PRESET}
-          onClose={() => setAgentCliSetupFixtureMode("closed")}
-          fixture={agentCliSetupFixtureMode === "live-setup"
-            ? undefined
-            : debugAgentCliSetupFixture(agentCliSetupFixtureMode)}
-        />
+        <LazySurface
+          label="Agent CLI Setup Assistant"
+          onDismiss={() => setAgentCliSetupFixtureMode("closed")}
+        >
+          <AgentCliSetupDialog
+            preset={agentCliSetupFixtureMode === "live-setup"
+              ? activeConnectionPreset ?? currentLocalConnectionPreset()
+              : DEBUG_AGENT_CLI_SETUP_PRESET}
+            onClose={() => setAgentCliSetupFixtureMode("closed")}
+            fixture={agentCliSetupFixtureMode === "live-setup"
+              ? undefined
+              : debugAgentCliSetupFixture(agentCliSetupFixtureMode)}
+            onSetupChanged={agentCliSetupFixtureMode === "live-setup"
+              ? (providers) => handleProviderScanUpdated(
+                  activeConnectionPreset ?? currentLocalConnectionPreset(),
+                  providers,
+                )
+              : undefined}
+          />
+        </LazySurface>
       )}
-      {/* Compatibility-only provider prompt surface. Full Auto is the normal
-       * ShellX mode, but a migrated session or release fixture may still emit
-       * a defensive `terminal/create` decision request. */}
-      {(settings.permissionUx !== "pill" || debugPermissionFixture?.surface === "modal") && (
-        <PermissionModal
-          debugFixture={debugPermissionFixture?.surface === "modal"
-            ? debugPermissionFixture
-            : null}
-        />
+      {paletteOpen && (
+        <LazySurface label="Command Palette" onDismiss={() => setPaletteOpen(false)}>
+          <CommandPalette
+            open
+            onClose={() => setPaletteOpen(false)}
+            actions={paletteActions}
+            skills={visibleSlashCommands}
+            insertSlash={insertSlashIntoPrompt}
+          />
+        </LazySurface>
       )}
-      <CommandPalette
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        actions={paletteActions}
-        skills={visibleSlashCommands}
-        insertSlash={insertSlashIntoPrompt}
-      />
       {settingsOpen && (
         <LazySurface label="Settings" onDismiss={() => setSettingsOpen(false)}>
           <Settings
@@ -6904,143 +6781,6 @@ function RemoteFolderPickerModal({
 
 /* ─────────────── Helpers ─────────────── */
 
-function isVoiceChatEnabled(tabId: string | null): boolean {
-  try {
-    // Voice chat is explicitly per tab. The legacy global key is only a
-    // migration artifact; reading it here can make TTS leak into a tab
-    // where the user never enabled voice chat.
-    if (!tabId) return false;
-    return localStorage.getItem(`shellx.voiceChatMode.${tabId}`) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function buildVoiceAwarePrompt(
-  text: string,
-  tabId: string | null,
-): { prompt: string; voiceReplyExpected: boolean } {
-  const voiceReplyExpected = isVoiceChatEnabled(tabId);
-  // The frontend owns ordinary TTS-back. Keep this instruction natural
-  // so Grok does not explain the implementation ("plain text", "TTS")
-  // during normal voice conversation, while still allowing explicit
-  // diagnostic/tool requests.
-  const prompt = voiceReplyExpected
-    ? `[voice chat] Answer naturally as speech: concise, conversational, under about 6 sentences, no tables, no code blocks. Your final answer will be spoken automatically, so do not mention plain text, TTS, audio plumbing, or voice_tts unless the user asks you to diagnose voice mode. Do not call voice_tts for ordinary replies. If the user explicitly asks you to inspect, diagnose, or use tools, use the appropriate tools and then summarize the result in spoken-friendly text.\n\n${text}`
-    : text;
-  return { prompt, voiceReplyExpected };
-}
-
-// Keep the currently-playing voice-chat audio alive until playback
-// finishes. A local `const audio = new Audio(...)` inside
-// speakAndRearm() can fall out of JS reach immediately after
-// `audio.play()` resolves; browsers often keep playing anyway, but that
-// is not a contract worth betting the voice loop on. Holding one
-// module-scoped reference also lets us stop an older reply cleanly
-// before starting a newer one.
-let activeVoiceAudio: HTMLAudioElement | null = null;
-let activeVoiceAudioAbort: AbortController | null = null;
-
-/**
- * #355:  voice-chat TTS-back + auto-rearm. Calls the Rust
- * `synthesize_voice` Tauri command with the assistant's spoken text,
- * gets back a `data:audio/mpeg;base64,...` URL, plays it through an
- * `<audio>` element, then fires a `shellx:voice-chat-rearm` event so
- * BottomPanel can restart the 🎧 mic for the next conversational
- * turn. Best-effort: if TTS fails, log + skip; the user's voice mode
- * stays on for the next prompt.
- */
-async function speakAndRearm(text: string, tabId: string | null): Promise<void> {
-  // Surface every TTS step to the WebView console + a `ui` event the
-  // user can see in chat. Silent failure was making "voice chat is
-  // one-way" hard to diagnose (was it: empty turn text? Tauri command
-  // missing? no API key? autoplay blocked? CSP block on data: URL?).
-  // Each failure mode now writes a distinct line so a glance at the
-  // chat log identifies which step broke.
-  try { console.info("voice-chat: speakAndRearm starting", { chars: text.length }); } catch { /* ignore */ }
-  const dispatchRearm = () => {
-    try {
-      window.dispatchEvent(new CustomEvent("shellx:voice-chat-rearm", { detail: { tabId } }));
-    } catch { /* ignore */ }
-  };
-  const surface = (msg: string) => {
-    try {
-      window.dispatchEvent(new CustomEvent("shellx:voice-chat-error", { detail: { msg, tabId } }));
-    } catch { /* ignore */ }
-    try { console.warn("voice-chat:", msg); } catch { /* ignore */ }
-  };
-  let res: { audio_data_url: string; ms_total: number };
-  try {
-    res = await invoke<{ audio_data_url: string; ms_total: number }>(
-      "synthesize_voice",
-      { text },
-    );
-    try { console.info("voice-chat: TTS bytes received", { ms: res.ms_total, urlLen: res.audio_data_url.length }); } catch { /* ignore */ }
-  } catch (err) {
-    const msg = String((err as any)?.message ?? err);
-    if (msg.startsWith("STT_NO_KEY:")) {
-      surface("TTS no credential — run `grok login` or add xai/api-key to vault. Voice chat stays ON; next turn will retry.");
-    } else {
-      surface(`TTS synthesize failed: ${msg}`);
-    }
-    dispatchRearm();
-    return;
-  }
-  try {
-    if (activeVoiceAudio) {
-      try { activeVoiceAudioAbort?.abort(); } catch { /* ignore */ }
-      try { activeVoiceAudio.pause(); } catch { /* ignore */ }
-      try { activeVoiceAudio.src = ""; } catch { /* ignore */ }
-      activeVoiceAudio = null;
-      activeVoiceAudioAbort = null;
-    }
-    const audio = new Audio(res.audio_data_url);
-    const listenerAbort = new AbortController();
-    activeVoiceAudio = audio;
-    activeVoiceAudioAbort = listenerAbort;
-    let rearmed = false;
-    const rearmOnce = () => {
-      if (rearmed) return;
-      rearmed = true;
-      try { listenerAbort.abort(); } catch { /* ignore */ }
-      if (activeVoiceAudio === audio) {
-        activeVoiceAudio = null;
-        activeVoiceAudioAbort = null;
-      }
-      dispatchRearm();
-    };
-    audio.addEventListener("ended", () => {
-      try { console.info("voice-chat: playback ended, re-arming"); } catch { /* ignore */ }
-      rearmOnce();
-    }, { once: true, signal: listenerAbort.signal });
-    audio.addEventListener("error", (e) => {
-      // Playback-side error (decode failure, network for non-data
-      // URLs, CSP). audio.error.code is 1=ABORTED 2=NETWORK 3=DECODE
-      // 4=SRC_NOT_SUPPORTED.
-      const code = (e.target as HTMLAudioElement)?.error?.code;
-      surface(`TTS playback error (code=${code ?? "?"}) — audio decode/CSP issue. Voice chat stays ON.`);
-      rearmOnce();
-    }, { once: true, signal: listenerAbort.signal });
-    // .play() returns a promise that rejects on autoplay-policy
-    // block. WebView2 typically allows autoplay in installed apps,
-    // but the rejection path here surfaces the failure so we don't
-    // sit in silence.
-    await audio.play();
-    try { console.info("voice-chat: audio.play() resolved"); } catch { /* ignore */ }
-  } catch (err) {
-    try { activeVoiceAudioAbort?.abort(); } catch { /* ignore */ }
-    if (activeVoiceAudio) {
-      try { activeVoiceAudio.pause(); } catch { /* ignore */ }
-      try { activeVoiceAudio.src = ""; } catch { /* ignore */ }
-      activeVoiceAudio = null;
-    }
-    activeVoiceAudioAbort = null;
-    const msg = String((err as any)?.message ?? err);
-    surface(`TTS playback failed: ${msg}. (If "NotAllowedError" — browser autoplay policy blocked it; click the page once to grant gesture.)`);
-    dispatchRearm();
-  }
-}
-
 function extractSessionId(payload: unknown): string | undefined {
   if (payload == null || typeof payload !== "object") return undefined;
   const p = payload as any;
@@ -7050,14 +6790,6 @@ function extractSessionId(payload: unknown): string | undefined {
     p?.sessionId ??
     undefined
   );
-}
-
-function readLocal<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw == null) return fallback;
-    return JSON.parse(raw) as T;
-  } catch { return fallback; }
 }
 
 function readLocalMigrated<T>(key: string, legacyKey: string, fallback: T): T {

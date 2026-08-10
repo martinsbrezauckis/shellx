@@ -79,6 +79,7 @@ impl ShellxBrowserRegistry {
         request
     }
 
+    #[deny(clippy::expect_used, clippy::unwrap_used)]
     pub fn record_engine_sync(&self, request: BrowserEngineSyncRequest) -> BrowserEngineSnapshot {
         let mut state = lock_or_recover(&self.state);
         let engine_id = resolve_engine_id_for_sync_request_locked(&state, &request);
@@ -101,7 +102,7 @@ impl ShellxBrowserRegistry {
             .find(|engine| engine.engine_id == engine_id)
             .map(|engine| engine.mounted)
             .unwrap_or(false);
-        ensure_engine_snapshot_locked(
+        let engine_idx = ensure_engine_snapshot_locked(
             &mut state,
             EnsureEngineSnapshotRequest {
                 engine_id: &engine_id,
@@ -114,12 +115,6 @@ impl ShellxBrowserRegistry {
                 status: "mounted",
             },
         );
-        let engine_idx = state
-            .engine_pool
-            .engines
-            .iter()
-            .position(|engine| engine.engine_id == engine_id)
-            .expect("engine snapshot exists after ensure");
         let was_mounted = state.engine_pool.engines[engine_idx].mounted;
         let previous_url = state.engine_pool.engines[engine_idx].url.clone();
         let previous_pending_url = state.engine_pool.engines[engine_idx].pending_url.clone();

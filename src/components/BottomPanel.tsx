@@ -10,24 +10,21 @@
  * events[]. Prompt wiring: parent passes onSend(text); Enter sends,
  * Shift+Enter newline, ⌘U opens the file picker.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from "react";
+import { lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import type { RawEventFrame } from "../types/acp";
 import type { UiGroup } from "../lib/grouping";
 import { extractSessionAttachments, extractSessionMedia, type SessionMediaItem, type SessionMediaKind } from "../lib/session-media";
 import { HashAutocomplete, type HashItem } from "./HashAutocomplete";
 import { ConnectionPicker, type ConnectionPreset, type ConnectionProviderScanEntry } from "./ConnectionPicker";
-import { ConnectionEditor } from "./ConnectionEditor";
 import { BranchPicker } from "./BranchPicker";
-// PTY-backed terminal view, keyed by activeTabId in the Rust registry.
-// <TerminalView/> is also reused for attached ACP terminals when grok
-// spawns terminal/* PTYs.
+// PTY-backed operator terminal, keyed by activeTabId in the Rust registry.
 import { LazyTerminalView, preloadTerminalView } from "./LazyTerminalView";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 // Push-to-talk dictation via xAI Grok STT.
 import { MicButton, type MicButtonHandle } from "./MicButton";
 import { SafeImg, SafeVideo } from "./MediaPreview";
 import { ShellIcon, TransportIcon, type ShellIconName } from "./icons";
+import { LazySurface } from "./LazySurface";
 import {
   AGENT_OPTIONS,
   agentSelectionShortLabel,
@@ -40,7 +37,9 @@ import {
 import { providerDisplayName, type ProviderId } from "../lib/provider-sessions";
 import { providerScanStatus } from "../lib/connection-provider-capabilities";
 import { isBottomTab, type BottomTab, type ComposerDebugMenu } from "../lib/ui-navigation";
-import type { DebugBottomPanelTerminalFixture } from "../lib/debug-renderer-fixture";
+
+const ConnectionEditor = lazy(() => import("./ConnectionEditor")
+  .then((module) => ({ default: module.ConnectionEditor })));
 
 export interface SlashCommandItem {
   name: string;
@@ -298,7 +297,6 @@ export function BottomPanel({
  // Optional for callers that don't route through App.
   onSelectConnection,
   onSelectBranch,
-  onCreateWorktree,
   onPickProject,
   connectionLocked,
  // Active session tab id; keys the PTY per-tab in the Rust registry.
@@ -308,7 +306,6 @@ export function BottomPanel({
   voiceSessionTabs = [],
   debugOpenMenu,
   debugOpenMenuSeq,
-  debugAcpTerminals = [],
   releaseTestVoiceRecording = false,
 }: {
   prompt: string;
@@ -355,7 +352,6 @@ export function BottomPanel({
   scopeBranchAhead?: number;
   onSelectConnection?: (preset: ConnectionPreset) => void;
   onSelectBranch?: (name: string) => void;
-  onCreateWorktree?: (sourceBranch: string) => void;
  /** clicking the project scope-pill opens a folder picker
  * and binds the choice to the active tab. */
   onPickProject?: () => void;
@@ -371,7 +367,6 @@ export function BottomPanel({
   voiceSessionTabs?: VoiceSessionTab[];
   debugOpenMenu?: ComposerDebugMenu | null;
   debugOpenMenuSeq?: number;
-  debugAcpTerminals?: DebugBottomPanelTerminalFixture[];
   /** Isolated release fixture forwarded to the voice-chat MicButton. */
   releaseTestVoiceRecording?: boolean;
 }): JSX.Element {
@@ -391,36 +386,16 @@ export function BottomPanel({
     writeMigratedLocalStorage(TAB_KEY, tab, [LEGACY_TAB_KEY]);
   }, [tab]);
 
-  useEffect(() => {
-    const preload = window.setTimeout(preloadTerminalView, 1_000);
-    return () => window.clearTimeout(preload);
-  }, []);
-
  /** Defer Terminal mount until the user clicks the Terminal tab.
  * Once shown, TerminalView stays mounted across tab switches so
  * xterm.js state survives. Lazy first-mount avoids running
  * pty_create against a zero-size hidden container on every boot. */
   const [terminalEverShown, setTerminalEverShown] = useState<boolean>(tab === "Terminal");
   const [mountedTerminalTabIds, setMountedTerminalTabIds] = useState<string[]>([]);
-  const terminalFixtureWasActive = useRef(false);
-  const terminalOpenedOutsideFixture = useRef(tab === "Terminal" && debugAcpTerminals.length === 0);
 
   useEffect(() => {
-    if (debugAcpTerminals.length > 0) {
-      terminalFixtureWasActive.current = true;
-      setTerminalEverShown(true);
-      return;
-    }
-    if (tab === "Terminal") {
-      terminalOpenedOutsideFixture.current = true;
-      setTerminalEverShown(true);
-      return;
-    }
-    if (terminalFixtureWasActive.current) {
-      terminalFixtureWasActive.current = false;
-      if (!terminalOpenedOutsideFixture.current) setTerminalEverShown(false);
-    }
-  }, [debugAcpTerminals.length, tab]);
+    if (tab === "Terminal") setTerminalEverShown(true);
+  }, [tab]);
 
   useEffect(() => {
     const openTabIds = new Set(voiceSessionTabs.map((entry) => entry.tabId));
@@ -461,6 +436,8 @@ export function BottomPanel({
           type="button"
           className={`btab ${tab === "Terminal" ? "active" : ""}`}
           data-debug-id="bottom-tab-terminal"
+          onPointerEnter={preloadTerminalView}
+          onFocus={preloadTerminalView}
           onClick={() => setTab("Terminal")}
           title="Terminal - persistent session shell"
           aria-label="Terminal - persistent session shell"
@@ -582,7 +559,6 @@ export function BottomPanel({
             scopeBranchAhead={scopeBranchAhead}
             onSelectConnection={onSelectConnection}
             onSelectBranch={onSelectBranch}
-            onCreateWorktree={onCreateWorktree}
             onPickProject={onPickProject}
             connectionLocked={connectionLocked}
             activeTabId={activeTabId}
@@ -613,11 +589,7 @@ export function BottomPanel({
                 minHeight: 0,
               }}
             >
-              <BottomTerminalSurface
-                sessionTabId={terminalTabId}
-                fixtureAcpTerms={terminalTabId === activeTabId ? debugAcpTerminals : []}
-                fixtureProjection={terminalTabId === activeTabId && debugAcpTerminals.length > 0}
-              />
+              <BottomTerminalSurface sessionTabId={terminalTabId} />
             </div>
           )))
           : (tab === "Terminal" && <TerminalPlaceholder />)}
@@ -781,7 +753,6 @@ function PromptComposer({
   scopeBranchAhead,
   onSelectConnection: onSelectConnectionExt,
   onSelectBranch: onSelectBranchExt,
-  onCreateWorktree: onCreateWorktreeExt,
   onPickProject,
   connectionLocked = false,
   activeTabId,
@@ -822,7 +793,6 @@ function PromptComposer({
   scopeBranchAhead?: number;
   onSelectConnection?: (preset: ConnectionPreset) => void;
   onSelectBranch?: (name: string) => void;
-  onCreateWorktree?: (sourceBranch: string) => void;
   onPickProject?: () => void;
  /** locks the connection pill in read-only state. */
   connectionLocked?: boolean;
@@ -1268,7 +1238,7 @@ function PromptComposer({
 
  // Composer is a controlled component for scope. Pill labels come
  // from props (App's activeTab state); selections fire
- // onSelectConnection / onSelectBranch / onCreateWorktree callbacks
+ // onSelectConnection / onSelectBranch callbacks
  // up to App which calls updateActiveTab. Local state holds only
  // the popover open/closed flags.
   const [connectionPickerOpen, setConnectionPickerOpen] = useState(false);
@@ -1327,12 +1297,6 @@ function PromptComposer({
     if (onSelectBranchExt) onSelectBranchExt(name);
     else console.info("[Composer] branch picked (no handler):", name);
   };
-  const onCreateWorktree = (sourceBranch: string) => {
-    setBranchPickerOpen(false);
-    if (onCreateWorktreeExt) onCreateWorktreeExt(sourceBranch);
-    else console.info("[Composer] worktree create (no handler), from:", sourceBranch);
-  };
-
  /* drag-and-drop attach. The Files tab puts the file's absolute path
  * under the shellX MIME type `application/x-shellx-file`. OS-level
  * drops arrive as File blobs in HTML5 DnD; App persists those into the
@@ -1761,7 +1725,7 @@ function PromptComposer({
               data-debug-id="composer-connection"
               title={connectionLocked
                 ? "Connection locked after first message. Open a new tab (+) to use a different transport."
-                : "Pick connection — Local / WSL / SSH / Tailscale"}
+                : "Pick connection — Local / WSL / SSH"}
               onClick={() => { if (!connectionLocked) setConnectionPickerOpen((v) => !v); }}
               disabled={connectionLocked}
             >
@@ -1786,23 +1750,33 @@ function PromptComposer({
               }}
               onClose={() => setConnectionPickerOpen(false)}
             />
-            <ConnectionEditor
-              open={connectionEditorOpen}
-              initial={connectionEditorInitial}
-              onSaved={(saved) => {
-                setConnectionEditorOpen(false);
-                setConnectionEditorInitial(undefined);
-                setPresetListVersion((v) => v + 1);
+            {connectionEditorOpen && (
+              <LazySurface
+                label="Connection editor"
+                onDismiss={() => {
+                  setConnectionEditorOpen(false);
+                  setConnectionEditorInitial(undefined);
+                }}
+              >
+                <ConnectionEditor
+                  open
+                  initial={connectionEditorInitial}
+                  onSaved={(saved) => {
+                    setConnectionEditorOpen(false);
+                    setConnectionEditorInitial(undefined);
+                    setPresetListVersion((v) => v + 1);
  // Re-open the picker so user sees the new/updated entry.
-                setConnectionPickerOpen(true);
+                    setConnectionPickerOpen(true);
  // Could also auto-select the saved preset — leave to user.
-                void saved;
-              }}
-              onClose={() => {
-                setConnectionEditorOpen(false);
-                setConnectionEditorInitial(undefined);
-              }}
-            />
+                    void saved;
+                  }}
+                  onClose={() => {
+                    setConnectionEditorOpen(false);
+                    setConnectionEditorInitial(undefined);
+                  }}
+                />
+              </LazySurface>
+            )}
           </div>
           <button
             ref={agentAnchorRef}
@@ -1845,7 +1819,7 @@ function PromptComposer({
               className="scope-pill"
               data-picker-anchor="branch"
               data-debug-id="composer-branch"
-              title="Pick branch — also offers +create worktree from branch"
+              title="Pick branch for this tab"
               onClick={() => setBranchPickerOpen((v) => !v)}
             >
               <span className="sico"><ShellIcon name="git-branch" size={14} /></span>
@@ -1864,7 +1838,6 @@ function PromptComposer({
               cwd={activeCwd}
               activeTabId={activeTabId}
               onSelect={onPickBranch}
-              onCreateWorktree={onCreateWorktree}
               onClose={() => setBranchPickerOpen(false)}
             />
           </div>
@@ -2003,217 +1976,12 @@ function TerminalPlaceholder(): JSX.Element {
   );
 }
 
-/**
- * terminal surface for the bottom panel. Shows a small tab
- * strip with the user shell first, then one tab per ACP-origin PTY
- * grok has spawned via `terminal/create`. Selecting an ACP tab mounts
- * a read-write attached <TerminalView/> so the user can watch and
- * optionally interact with the agent's shell.
- * * `terminal-opened` events come from the Rust `acp_create` helper.
- * They include the terminalId minted by the TerminalRegistry plus a
- * truncated command preview to label the tab.
- */
-interface AcpTerminalRef {
-  terminalId: string;
-  label: string;
-  fixtureOnly?: boolean;
+/** Operator-facing terminal. Provider terminal/* calls are rejected in the
+ * ACP bridge and never project attach-only tabs into this surface. */
+function BottomTerminalSurface({ sessionTabId }: { sessionTabId: string }): JSX.Element {
+  return <LazyTerminalView tabId={sessionTabId} />;
 }
 
-function BottomTerminalSurface({
-  sessionTabId,
-  fixtureAcpTerms,
-  fixtureProjection,
-}: {
-  sessionTabId: string;
-  fixtureAcpTerms: DebugBottomPanelTerminalFixture[];
-  fixtureProjection: boolean;
-}): JSX.Element {
- // List of ACP-origin terminals associated with the current session.
- // Each one becomes a tab in the strip. We don't proactively remove
- // them on `terminal/release` — grok already saw the bytes and the
- // user may still want to scroll the xterm.js buffer. Press the [x]
- // button to dismiss a closed tab.
-  const [acpTerms, setAcpTerms] = useState<AcpTerminalRef[]>([]);
-  const [dismissedFixtureIds, setDismissedFixtureIds] = useState<Set<string>>(() => new Set());
-  const [active, setActive] = useState<string>("user");
-  const visibleAcpTerms = useMemo(() => [
-    ...acpTerms.filter((term) => !fixtureAcpTerms.some((fixture) => fixture.terminalId === term.terminalId)),
-    ...fixtureAcpTerms.filter((term) => !dismissedFixtureIds.has(term.terminalId)),
-  ], [acpTerms, dismissedFixtureIds, fixtureAcpTerms]);
-
-  useEffect(() => {
-    let unl: UnlistenFn | null = null;
-    let disposed = false;
-    interface OpenedPayload {
-      tabId: string;
-      terminalId: string;
-      origin: string;
-      command: string;
-      args?: string[];
-    }
-    (async () => {
-      unl = await listen<OpenedPayload>("terminal-opened", (evt) => {
-        const p = evt.payload;
- // Only react to terminals for our session tab.
-        if (p.tabId !== sessionTabId) return;
-        if (disposed) return;
- // Label uses the program + first arg for compact tab text.
-        const label = (p.args && p.args.length > 0
-          ? `${p.command} ${p.args[0]}`
-          : p.command).slice(0, 24);
-        setAcpTerms((prev) =>
-          prev.some((t) => t.terminalId === p.terminalId)
-            ? prev
-            : [...prev, { terminalId: p.terminalId, label }],
-        );
-      });
-    })();
-    return () => {
-      disposed = true;
-      if (unl) unl();
-    };
-  }, [sessionTabId]);
-
- // When the session tab changes (different chat tab selected) reset.
-  useEffect(() => {
-    setAcpTerms([]);
-    setDismissedFixtureIds(new Set());
-    setActive("user");
-  }, [sessionTabId]);
-
-  useEffect(() => {
-    setDismissedFixtureIds(new Set());
-    if (fixtureAcpTerms.length === 0 && !acpTerms.some((term) => term.terminalId === active)) {
-      setActive("user");
-    }
-  }, [fixtureAcpTerms]);
-
-  function dismiss(terminalId: string) {
-    if (fixtureAcpTerms.some((term) => term.terminalId === terminalId)) {
-      setDismissedFixtureIds((current) => new Set(current).add(terminalId));
-    } else {
-      setAcpTerms((prev) => prev.filter((t) => t.terminalId !== terminalId));
-    }
-    setActive("user");
-  }
-
-  return (
-    <div className="terminal-surface" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {visibleAcpTerms.length > 0 && (
-        <div
-          className="terminal-substrip"
-          style={{
-            display: "flex",
-            gap: 6,
-            padding: "4px 8px",
-            borderBottom: "1px solid rgba(255,255,255,0.08)",
-            fontSize: "var(--fs-ui-xs)",
-            color: "var(--ink-2)",
-          }}
-        >
-          <button
-            type="button"
-            className={`substrip-tab ${active === "user" ? "active" : ""}`}
-            aria-pressed={active === "user"}
-            data-shellx-release-observe="pressed"
-            onClick={() => setActive("user")}
-            style={tabStyle(active === "user")}
-          >
-            shell
-          </button>
-          {visibleAcpTerms.map((t) => (
-            <span
-              key={t.terminalId}
-              data-release-terminal-id={t.terminalId}
-              style={{ display: "inline-flex", alignItems: "center" }}
-            >
-              <button
-                type="button"
-                className={`substrip-tab ${active === t.terminalId ? "active" : ""}`}
-                aria-pressed={active === t.terminalId}
-                data-shellx-release-observe="pressed"
-                onClick={() => setActive(t.terminalId)}
-                style={tabStyle(active === t.terminalId)}
-                title={`ACP terminal ${t.terminalId}`}
-              >
-                <span style={{
-                  background: "rgba(120,180,255,0.18)",
-                  color: "var(--info)",
-                  fontSize: "var(--fs-ui-xs)",
-                  padding: "0 4px",
-                  marginRight: 4,
-                  borderRadius: 2,
-                  letterSpacing: 0.5,
-                }}>ACP</span>
-                {t.label}
-              </button>
-              <button
-                type="button"
-                aria-label="close terminal tab"
-                onClick={() => dismiss(t.terminalId)}
-                style={{
-                  marginLeft: 2,
-                  background: "none",
-                  border: "none",
-                  color: "var(--ink-3)",
-                  cursor: "pointer",
-                  padding: "0 4px",
-                }}
-              >×</button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        <div style={{ display: active === "user" ? "block" : "none", height: "100%" }}>
-          {fixtureProjection
-            ? (
-                <div data-release-bottom-panel-user-terminal-fixture className="tab-placeholder">
-                  Owned release fixture user-terminal projection
-                </div>
-              )
-            : <LazyTerminalView tabId={sessionTabId} />}
-        </div>
-        {visibleAcpTerms.map((terminal) => (
-          <div
-            key={terminal.terminalId}
-            style={{ display: active === terminal.terminalId ? "block" : "none", height: "100%" }}
-          >
-            {terminal.fixtureOnly
-              ? (
-                  <div
-                    data-release-bottom-panel-terminal-fixture={terminal.terminalId}
-                    className="tab-placeholder"
-                  >
-                    Owned release fixture terminal projection
-                  </div>
-                )
-              : (
-                  <LazyTerminalView
-                    tabId={sessionTabId}
-                    terminalId={terminal.terminalId}
-                    attachOnly
-                    readOnly={false}
-                  />
-                )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function tabStyle(isActive: boolean): React.CSSProperties {
-  return {
-    background: isActive ? "rgba(255,255,255,0.08)" : "transparent",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: 3,
-    color: isActive ? "var(--ink)" : "var(--ink-2)",
-    cursor: "pointer",
-    fontSize: "var(--fs-ui-xs)",
-    padding: "2px 8px",
-  };
-}
 
 /* ─────────────── Logs tab ─────────────── */
 

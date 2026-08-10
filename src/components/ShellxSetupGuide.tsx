@@ -30,6 +30,7 @@ export function ShellxSetupGuide({
   onOpenVault,
   onOpenBrowser,
   onOpenRequests,
+  onOpenAgentSetup,
   onOpenSettingsTab,
 }: {
   settings: SettingsValues;
@@ -38,6 +39,7 @@ export function ShellxSetupGuide({
   onOpenVault: (intent?: VaultPanelIntent) => void;
   onOpenBrowser: () => void;
   onOpenRequests: () => void;
+  onOpenAgentSetup: () => void;
   onOpenSettingsTab: (tab: SettingsTab) => void;
 }): JSX.Element | null {
   const [dismissed, setDismissed] = useState(() => readSetupGuideDismissed());
@@ -116,7 +118,7 @@ export function ShellxSetupGuide({
         status: agentsConfigured ? "Ready" : "Check setup",
         ready: agentsConfigured,
         icon: "terminal",
-        onClick: () => onOpenSettingsTab("shellxagent"),
+        onClick: onOpenAgentSetup,
       },
       {
         id: "requests",
@@ -127,7 +129,7 @@ export function ShellxSetupGuide({
         onClick: onOpenRequests,
       },
     ];
-  }, [agentsConfigured, onOpenBrowser, onOpenRequests, onOpenSettingsTab, onOpenVault, requestCount, settings.browserDownloadFolder, vaultStatus]);
+  }, [agentsConfigured, onOpenAgentSetup, onOpenBrowser, onOpenRequests, onOpenSettingsTab, onOpenVault, requestCount, settings.browserDownloadFolder, vaultStatus]);
 
   if (dismissed) return null;
 

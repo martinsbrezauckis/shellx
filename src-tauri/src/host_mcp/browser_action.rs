@@ -25,7 +25,7 @@ pub(super) fn browser_action_schema_properties() -> Value {
         "lockLeaseId": { "type": "string", "description": "Optional Browser tab lock lease id." },
         "ownerAgentId": { "type": "string", "description": "Optional lock owner agent id." },
         "ownerRunId": { "type": "string", "description": "Optional lock owner run id." },
-        "fullPage": { "type": "boolean", "description": "For browser_screenshot, capture one full-document page image instead of the visible Browser window." },
+        "fullPage": { "type": "boolean", "description": "For browser_screenshot, capture one full-document page image instead of the visible Browser view." },
         "fullObservation": { "type": "boolean", "description": "For browser_observe only, explicitly return the full uncompressed and unbudgeted observation. Use only for a user-requested deep dump." },
         "includePageText": { "type": "boolean", "description": "For browser_observe only, request larger page text/markdown previews within the total MCP payload budget; use browser_extract for full content." },
         "maxRefs": { "type": "integer", "description": "For browser_observe only, maximum refs considered for the MCP response. Defaults to 32; the total payload budget may return fewer." },

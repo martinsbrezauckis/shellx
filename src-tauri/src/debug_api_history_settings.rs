@@ -23,7 +23,6 @@ pub(super) fn default_settings_json() -> serde_json::Value {
         "density": "default",
         "theme": "black",
         "chatFontPx": 19,
-        "permissionUx": "pill",
         "browserDownloadFolder": "",
         "githubGhBinary": "gh",
     })
@@ -74,12 +73,6 @@ pub(super) fn normalize_settings_json(v: serde_json::Value) -> serde_json::Value
         Some("black" | "black_warm" | "bright")
     ) {
         dst.insert("theme".into(), src["theme"].clone());
-    }
-    if matches!(
-        src.get("permissionUx").and_then(|v| v.as_str()),
-        Some("pill" | "modal" | "both")
-    ) {
-        dst.insert("permissionUx".into(), src["permissionUx"].clone());
     }
     if let Some(px) = src.get("chatFontPx").and_then(|v| v.as_f64()) {
         if px.is_finite() {
@@ -139,12 +132,7 @@ pub(super) async fn set_settings(
         for (k, v) in patch_obj {
             if matches!(
                 k.as_str(),
-                "density"
-                    | "theme"
-                    | "chatFontPx"
-                    | "permissionUx"
-                    | "browserDownloadFolder"
-                    | "githubGhBinary"
+                "density" | "theme" | "chatFontPx" | "browserDownloadFolder" | "githubGhBinary"
             ) {
                 curr_obj.insert(k.clone(), v.clone());
             }

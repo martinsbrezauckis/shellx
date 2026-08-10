@@ -1,0 +1,667 @@
+/* ── activity browser preview ─────────────────────────────────────── */
+.activity-modal {
+  position: relative;
+  width: min(92vw, var(--activity-modal-width, 1180px));
+  height: min(88vh, var(--activity-modal-height, 860px));
+  min-width: min(760px, calc(100vw - 64px));
+  min-height: min(520px, calc(100vh - 64px));
+  max-width: calc(100vw - 64px);
+  max-height: calc(100vh - 64px);
+  overflow: hidden;
+}
+.activity-modal .preview-head {
+  min-width: 0;
+}
+.activity-modal .preview-close {
+  margin-left: 0;
+}
+.activity-search {
+  flex: 0 1 280px;
+  min-width: 180px;
+  max-width: 320px;
+  height: 28px;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--surface-2) 76%, transparent);
+  color: var(--ink-4);
+}
+.activity-search:focus-within {
+  border-color: color-mix(in oklab, #8fb9f2 54%, var(--hairline));
+  color: var(--ink-2);
+  background: var(--surface-2);
+}
+.activity-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 11px/1.2 var(--mono);
+}
+.activity-search input::placeholder {
+  color: var(--ink-4);
+}
+.activity-search input:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.activity-search button {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-4);
+  cursor: pointer;
+}
+.activity-search button:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.07);
+}
+.activity-modal-resize-handle {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  z-index: 8;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.activity-modal-resize-handle::before,
+.activity-modal-resize-handle::after {
+  content: "";
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 10px;
+  height: 1px;
+  background: color-mix(in oklab, var(--ink-3) 78%, transparent);
+  transform: rotate(-45deg);
+  transform-origin: right center;
+}
+.activity-modal-resize-handle::after {
+  right: 5px;
+  bottom: 9px;
+  width: 6px;
+  opacity: 0.72;
+}
+.activity-modal-resize-handle:focus-visible {
+  outline: 1px solid var(--ink-2);
+  outline-offset: 2px;
+}
+.activity-body {
+  padding: 0;
+  background: var(--surface);
+}
+.activity-layout,
+.activity-summary-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.activity-stats {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--hairline);
+}
+.activity-stat {
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--surface-2);
+}
+.activity-stat span {
+  display: block;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.activity-stat strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.activity-tree {
+  padding: 8px 0 12px;
+}
+.activity-graph-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.activity-graph-overflow {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-3);
+  background: color-mix(in oklab, var(--warn) 8%, var(--surface));
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.activity-graph-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px var(--activity-graph-detail-width, 320px);
+  border-top: 1px solid var(--hairline);
+}
+.activity-graph-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(108, 152, 214, 0.08) 0%, rgba(108, 152, 214, 0.025) 28%, transparent 58%),
+    linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
+}
+.activity-graph-canvas::before {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.035);
+  border-radius: var(--radius-modal);
+  pointer-events: none;
+}
+.activity-graph-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+.activity-graph-edge {
+  stroke: rgba(255, 255, 255, 0.16);
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.04));
+}
+.activity-graph-edge-verified {
+  stroke: color-mix(in oklab, var(--ok) 40%, rgba(255, 255, 255, 0.16));
+}
+.activity-graph-edge-observed {
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-dasharray: 6 8;
+}
+.activity-graph-edge-inferred {
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-dasharray: 2 8;
+}
+.activity-graph-legend {
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--surface-2) 86%, transparent);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+.activity-graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.activity-graph-legend-item i {
+  width: 18px;
+  height: 0;
+  border-top: 2px solid rgba(255, 255, 255, 0.2);
+}
+.activity-graph-legend-verified i {
+  border-color: color-mix(in oklab, var(--ok) 56%, rgba(255, 255, 255, 0.2));
+}
+.activity-graph-legend-observed i {
+  border-style: dashed;
+}
+.activity-graph-legend-inferred i {
+  border-style: dotted;
+  opacity: 0.7;
+}
+.activity-graph-node {
+  position: absolute;
+  z-index: 1;
+  width: 124px;
+  min-height: 54px;
+  transform: translate(-50%, -50%);
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon kind count"
+    "icon label label";
+  align-content: center;
+  gap: 4px 8px;
+  padding: 8px 10px 8px 8px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: color-mix(in oklab, var(--surface-2) 88%, transparent);
+  color: var(--ink-2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  text-align: left;
+  font: inherit;
+}
+.activity-graph-node:active {
+  cursor: grabbing;
+}
+.activity-graph-node:hover,
+.activity-graph-node.selected {
+  z-index: 2;
+  color: var(--ink);
+  border-color: color-mix(in oklab, var(--ink-2) 36%, var(--hairline-2));
+  background: var(--surface-3);
+}
+.activity-graph-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.activity-graph-reset {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline-2);
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--surface-3) 86%, transparent);
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.activity-graph-reset:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+}
+.activity-graph-node-session {
+  width: 152px;
+  min-height: 72px;
+  color: var(--ink);
+  border-color: color-mix(in oklab, var(--accent) 38%, var(--hairline-2));
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 22% 20%, color-mix(in oklab, var(--accent) 16%, transparent), transparent 54%),
+    #0b0b0b;
+}
+.activity-graph-node-action {
+  width: 112px;
+  min-height: 48px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--surface-3) 76%, transparent);
+}
+.activity-graph-node-folder {
+  border-style: dashed;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--surface-2) 82%, rgba(212, 166, 87, 0.08));
+}
+.activity-graph-node-file {
+  width: 138px;
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--surface-2) 86%, rgba(255, 255, 255, 0.035));
+}
+.activity-graph-node-file::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 13px;
+  height: 13px;
+  border-left: 1px solid var(--hairline-2);
+  border-bottom: 1px solid var(--hairline-2);
+  border-radius: 0 7px 0 4px;
+  background: color-mix(in oklab, var(--ink-2) 10%, var(--surface-3));
+}
+.activity-graph-node-verified {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--ok) 20%, transparent), 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+.activity-graph-node-written,
+.activity-graph-node-created {
+  border-color: color-mix(in oklab, var(--warn) 42%, var(--hairline-2));
+}
+.activity-graph-node-searched,
+.activity-graph-node-read,
+.activity-graph-node-opened,
+.activity-graph-node-listed {
+  border-color: color-mix(in oklab, #78a7e6 34%, var(--hairline-2));
+}
+.activity-graph-node-deleted {
+  border-color: color-mix(in oklab, var(--err) 48%, var(--hairline-2));
+}
+.activity-graph-node-git {
+  border-color: color-mix(in oklab, #7fd0a8 40%, var(--hairline-2));
+}
+.activity-graph-node-icon {
+  grid-area: icon;
+  align-self: center;
+  justify-self: center;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  color: var(--ink-3);
+  background: rgba(255, 255, 255, 0.035);
+}
+.activity-graph-node-session .activity-graph-node-icon {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 32%, var(--hairline));
+}
+.activity-graph-node-action .activity-graph-node-icon {
+  border-radius: 999px;
+}
+.activity-graph-node-folder .activity-graph-node-icon {
+  color: #d4a657;
+  border-color: color-mix(in oklab, #d4a657 36%, var(--hairline));
+}
+.activity-graph-node-file .activity-graph-node-icon {
+  color: var(--ink-2);
+}
+.activity-graph-node-written .activity-graph-node-icon,
+.activity-graph-node-created .activity-graph-node-icon {
+  color: var(--warn);
+  border-color: color-mix(in oklab, var(--warn) 36%, var(--hairline));
+}
+.activity-graph-node-deleted .activity-graph-node-icon {
+  color: var(--err);
+  border-color: color-mix(in oklab, var(--err) 36%, var(--hairline));
+}
+.activity-graph-node-git .activity-graph-node-icon {
+  color: #7fd0a8;
+  border-color: color-mix(in oklab, #7fd0a8 32%, var(--hairline));
+  background: color-mix(in oklab, #7fd0a8 10%, transparent);
+}
+.activity-graph-node-searched .activity-graph-node-icon,
+.activity-graph-node-read .activity-graph-node-icon,
+.activity-graph-node-opened .activity-graph-node-icon,
+.activity-graph-node-listed .activity-graph-node-icon {
+  color: #8fb9f2;
+  border-color: color-mix(in oklab, #8fb9f2 30%, var(--hairline));
+}
+.activity-graph-node-kind {
+  grid-area: kind;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-4);
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.activity-graph-node-label {
+  grid-area: label;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: currentColor;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.15;
+}
+.activity-graph-node-count {
+  grid-area: count;
+  justify-self: end;
+  min-width: 20px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.activity-graph-detail {
+  min-width: 0;
+  padding: 14px;
+  background: var(--surface-2);
+  overflow: auto;
+}
+.activity-graph-detail-resizer {
+  position: relative;
+  min-width: 8px;
+  background: var(--surface);
+  border-left: 1px solid var(--hairline);
+  border-right: 1px solid var(--hairline);
+  cursor: col-resize;
+  touch-action: none;
+}
+.activity-graph-detail-resizer::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 48px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--ink-4) 72%, transparent);
+  transform: translate(-50%, -50%);
+}
+.activity-graph-detail-resizer:hover,
+.activity-graph-detail-resizer:focus-visible {
+  background: color-mix(in oklab, var(--ink-2) 6%, var(--surface));
+}
+.activity-graph-detail-resizer:focus-visible {
+  outline: 1px solid var(--ink-2);
+  outline-offset: -2px;
+}
+.activity-graph-detail-kicker {
+  color: var(--ink-4);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.activity-graph-detail-title {
+  margin-top: 6px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: break-word;
+}
+.activity-graph-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.activity-graph-detail-row strong {
+  color: var(--ink-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.activity-graph-detail .activity-counts {
+  justify-content: flex-start;
+  min-width: 0;
+  margin-top: 12px;
+}
+.activity-graph-open {
+  margin-top: 14px;
+}
+.activity-graph-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+.activity-graph-recent > span {
+  color: var(--ink-4);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.activity-graph-recent button {
+  display: grid;
+  grid-template-columns: 58px 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 5px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.activity-graph-recent button:hover {
+  color: var(--ink);
+}
+.activity-graph-recent button span,
+.activity-graph-recent button strong {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+}
+.activity-graph-recent button em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font-style: normal;
+  font-size: 11px;
+}
+.activity-row {
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+  padding-right: 12px;
+}
+.activity-row:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+.activity-deleted { border-left-color: color-mix(in oklab, var(--err) 72%, transparent); }
+.activity-written,
+.activity-created { border-left-color: color-mix(in oklab, var(--warn) 72%, transparent); }
+.activity-read,
+.activity-opened { border-left-color: color-mix(in oklab, var(--ink-2) 56%, transparent); }
+.activity-searched,
+.activity-listed { border-left-color: color-mix(in oklab, var(--ink-3) 62%, transparent); }
+.activity-executed { border-left-color: color-mix(in oklab, var(--ink-4) 70%, transparent); }
+.activity-twist {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.activity-twist:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+.activity-name {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.activity-name-file:hover span:last-child {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.activity-glyph {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  color: var(--ink-4);
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.4;
+  text-transform: uppercase;
+  text-align: center;
+}
+.activity-name span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-counts {
+  display: inline-flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 120px;
+}
+.activity-chip,
+.activity-confidence,
+.activity-actor {
+  display: inline-flex;
+  align-items: center;
+  min-height: 19px;
+  padding: 1px 6px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-pill);
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.activity-chip-written,
+.activity-chip-created { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 36%, var(--hairline)); }
+.activity-chip-deleted { color: var(--err); border-color: color-mix(in oklab, var(--err) 36%, var(--hairline)); }
+.activity-chip-git { color: #7fd0a8; border-color: color-mix(in oklab, #7fd0a8 34%, var(--hairline)); }
+.activity-chip-searched,
+.activity-chip-read { color: var(--ink-2); border-color: color-mix(in oklab, var(--ink-2) 24%, var(--hairline)); }

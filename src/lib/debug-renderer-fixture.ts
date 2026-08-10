@@ -7,7 +7,6 @@ export const DEBUG_RENDERER_EVENT_PROJECTIONS_FIXTURE = "event-projections";
 export const DEBUG_CHAT_OUTPUT_LIFECYCLE_FIXTURE = "chat-output-lifecycle";
 export const DEBUG_KEYBOARD_DIFF_LIFECYCLE_FIXTURE = "keyboard-diff-lifecycle";
 export const OWNED_CHAT_CLIPBOARD_CODE = "const shellxClipboardFixture = true;";
-export const DEBUG_BOTTOM_PANEL_LIFECYCLE_FIXTURE = "bottom-panel-lifecycle";
 export const DEBUG_BUILD_RUN_COCKPIT_FIXTURE = "build-run-cockpit-receipts";
 const DEBUG_FIXTURE_META_KEY = "shellxDebugRendererFixture";
 
@@ -31,34 +30,11 @@ interface KeyboardDiffLifecycleFixture {
   action?: "clear";
 }
 
-export interface DebugBottomPanelTerminalFixture {
-  terminalId: string;
-  label: string;
-  fixtureOnly: true;
-}
-
 export interface DebugBuildRunCockpitFixture {
   fixtureOnly: true;
   scratchboardText: "";
   state: BuildRunState;
   receipts: BuildReceipt[];
-}
-
-/**
- * Resolve the bounded ACP-terminal projection used by the final installed
- * BottomPanel control driver. This creates renderer state only: it never
- * spawns, attaches to, writes to, or kills a PTY.
- */
-export function debugBottomPanelTerminalFixture(
-  command: unknown,
-): DebugBottomPanelTerminalFixture[] | null {
-  if (command === "clear") return [];
-  if (!command || typeof command !== "object" || Array.isArray(command)) return null;
-  const body = command as Record<string, unknown>;
-  if (body.id !== DEBUG_BOTTOM_PANEL_LIFECYCLE_FIXTURE) return null;
-  const terminalId = boundedToken(body.terminalId, 128);
-  const label = boundedToken(body.label, 24);
-  return terminalId && label ? [{ terminalId, label, fixtureOnly: true }] : null;
 }
 
 /**

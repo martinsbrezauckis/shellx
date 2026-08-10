@@ -10,11 +10,14 @@
  * The shared `ConnectionEditor` handles every transport variant
  * (Local / WSL / SSH) and the vault-key dropdown for SSH keys.
  */
-import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import { lazy, useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../../lib/tauri-bridge";
 import type { ConnectionPreset } from "../ConnectionPicker";
-import { ConnectionEditor } from "../ConnectionEditor";
+import { LazySurface } from "../LazySurface";
+
+const ConnectionEditor = lazy(() => import("../ConnectionEditor")
+  .then((module) => ({ default: module.ConnectionEditor })));
 
 export function ConnectionsTab(): JSX.Element {
   const [presets, setPresets] = useState<ConnectionPreset[]>([]);
@@ -134,15 +137,19 @@ export function ConnectionsTab(): JSX.Element {
 
  {/* Add / edit modal — reuses the existing component the
           workspace-pill ConnectionPicker also mounts. */}
-      <ConnectionEditor
-        open={editing !== null}
-        initial={editing?.initial}
-        onSaved={async () => {
-          setEditing(null);
-          await refresh();
-        }}
-        onClose={() => setEditing(null)}
-      />
+      {editing !== null && (
+        <LazySurface label="Connection editor" onDismiss={() => setEditing(null)}>
+          <ConnectionEditor
+            open
+            initial={editing.initial}
+            onSaved={async () => {
+              setEditing(null);
+              await refresh();
+            }}
+            onClose={() => setEditing(null)}
+          />
+        </LazySurface>
+      )}
       </div>
 
       {pendingDelete && (

@@ -1,0 +1,6 @@
+Source: crates.io tauri-winrt-notification 0.7.2
+Repository: https://github.com/tauri-apps/winrt-notification
+Package SHA-256: 0b1e66e07de489fe43a46678dd0b8df65e0c973909df1b60ba33874e297ba9b9
+
+ShellX patch: the Cargo dependency on quick-xml is raised from 0.37 to 0.41.
+The Rust source and upstream license files are byte-identical to the package.

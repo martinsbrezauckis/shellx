@@ -5,16 +5,17 @@ use crate::connections::{ConnectionPreset, ConnectionStore};
 pub(super) static CONN_HTTP_CELL: std::sync::OnceLock<Arc<ConnectionStore>> =
     std::sync::OnceLock::new();
 
+#[deny(clippy::expect_used, clippy::unwrap_used)]
 pub(super) fn connections_handle() -> Result<Arc<ConnectionStore>, String> {
     if let Some(s) = CONN_HTTP_CELL.get() {
         return Ok(s.clone());
     }
     let s = Arc::new(ConnectionStore::open()?);
     let _ = CONN_HTTP_CELL.set(s.clone());
-    Ok(CONN_HTTP_CELL
+    CONN_HTTP_CELL
         .get()
-        .expect("CONN_HTTP_CELL just set")
-        .clone())
+        .cloned()
+        .ok_or_else(|| "connection store initialization did not publish a handle".to_string())
 }
 
 pub(super) async fn connections_list_http(State(_s): State<ApiState>) -> impl IntoResponse {

@@ -6,6 +6,11 @@ import {
   extractVaultPermissionRequests,
   vaultRequestSummaryText,
 } from "../src/lib/vault-request-center";
+import {
+  browserEventTouchesVaultRequests,
+  mergeVaultRequestCenterAgentRequests,
+  mergeVaultRequestCenterGrants,
+} from "../src/lib/useVaultRequestCenterState";
 
 const tabs = [
   { tabId: "tab-oauth", title: "OAuth setup" },
@@ -172,10 +177,75 @@ assert.ok(agentRequest?.detailLines.some((line) => line.includes("NODE_AUTH_TOKE
 assert.equal(vaultRequestSummaryText(requests), "5 approvals needed");
 assert.equal(vaultRequestSummaryText([]), "Ready");
 
+const nativeGrant = {
+  grantId: "shared-grant",
+  secretRef: "native/value",
+  actorScope: "native",
+  operation: "fill",
+  revoked: false,
+  approved: false,
+};
+const debugGrant = { ...nativeGrant, secretRef: "debug/value", actorScope: "debug" };
+assert.deepEqual(
+  mergeVaultRequestCenterGrants(
+    [nativeGrant],
+    [debugGrant, { ...debugGrant, grantId: "debug-only" }],
+  ).map((grant) => [grant.grantId, grant.secretRef]),
+  [["shared-grant", "native/value"], ["debug-only", "debug/value"]],
+  "native Vault state must win duplicate ids while Debug API fills missing grants",
+);
+
+const agentRequestFixture = (requestId: string, actorLabel: string) => ({
+  requestId,
+  requestDigest: `digest-${requestId}`,
+  actorId: `actor-${requestId}`,
+  actorLabel,
+  status: "pending",
+  createdAtMs: 1,
+  expiresAtMs: 2,
+  spec: {
+    purpose: "test",
+    program: "/bin/test",
+    bindings: [],
+    timeoutMs: 1_000,
+  },
+});
+assert.deepEqual(
+  mergeVaultRequestCenterAgentRequests(
+    [agentRequestFixture("shared-request", "native")],
+    [
+      agentRequestFixture("shared-request", "debug"),
+      agentRequestFixture("debug-request", "debug"),
+    ],
+  ).map((request) => [request.requestId, request.actorLabel]),
+  [["shared-request", "native"], ["debug-request", "debug"]],
+  "native Vault state must win duplicate ids while Debug API fills missing agent requests",
+);
+assert.equal(
+  browserEventTouchesVaultRequests({ receipt: { kind: "browserSessionGrantRequested" } }),
+  true,
+  "session grant Browser events must refresh the global Request Center",
+);
+assert.equal(
+  browserEventTouchesVaultRequests({ receipt: { kind: "browserVaultDepositCreated" } }),
+  true,
+  "Vault deposit Browser events must refresh the global Request Center",
+);
+assert.equal(
+  browserEventTouchesVaultRequests({ receipt: { kind: "browserEngineActionApplied" } }),
+  false,
+  "unrelated Browser activity must not fan out into Vault reads",
+);
+
 const header = readFileSync("src/components/Header.tsx", "utf8");
 const requestCenterComponent = readFileSync("src/components/HeaderVaultRequestCenter.tsx", "utf8");
 const app = readFileSync("src/App.tsx", "utf8");
+const requestStateHook = readFileSync("src/lib/useVaultRequestCenterState.ts", "utf8");
+const eventPollingHook = readFileSync("src/lib/useEventAwarePolling.ts", "utf8");
+const debugVaultApi = readFileSync("src-tauri/src/debug_api_vault.rs", "utf8");
 const css = readFileSync("src/App.css", "utf8");
+const generatorCss = readFileSync("src/components/VaultPasswordGenerator.css", "utf8");
+const vaultCss = readFileSync("src/components/settings/VaultTab.css", "utf8");
 const popoverBlock = css.match(/^\.vault-request-popover\s*\{[^}]+\}/m)?.[0] ?? "";
 assert.ok(
   requestCenterComponent.includes('data-debug-id="header-vault-request-center"'),
@@ -231,37 +301,73 @@ assert.ok(
   "Vault Request Center Generate must open the standalone generator instead of the full Vault workspace",
 );
 assert.ok(
+  requestCenterComponent.includes('lazy(() => import("./VaultPasswordGenerator")') &&
+    requestCenterComponent.includes('label="Password generator"') &&
+    requestCenterComponent.includes('variant="inline"'),
+  "header password generation must retain a recoverable on-demand boundary",
+);
+assert.ok(
   app.includes('"vaultRequestCenterOpen",'),
   "Vault Request Center debug open command must survive authoritative UI-state merge",
 );
 assert.ok(
-  app.includes('invoke<AppVaultGrant[]>("shellx_vault_list_grants"') &&
+  requestStateHook.includes('invoke<VaultGrantPromptSource[]>("shellx_vault_list_grants"') &&
     app.includes('"shellx_vault_approve_grant"') &&
     app.includes('"shellx_vault_revoke_grant"'),
   "App must list pending Vault grants and resolve them through operator-only Tauri commands",
 );
 assert.ok(
-  app.includes('invoke<AppVaultAgentRequestSnapshot>("shellx_vault_agent_request_center"') &&
+  requestStateHook.includes('invoke<VaultAgentRequestSnapshot>("shellx_vault_agent_request_center"') &&
     app.includes('"shellx_vault_agent_request_approve"') &&
     app.includes('"shellx_vault_agent_request_deny"'),
   "App must list and resolve digest-bound Vault executable requests through operator-only Tauri commands",
 );
 assert.ok(
-  app.includes("mergeAppVaultGrants") &&
-    app.includes('apiGet<{ grants?: AppVaultGrant[] }>("/vault/grants")') &&
-    !app.includes('invoke<AppVaultGrant[]>("shellx_vault_list_grants").catch(() => [])'),
+  requestStateHook.includes("mergeVaultRequestCenterGrants") &&
+    requestStateHook.includes('apiGet<{ grants?: VaultGrantPromptSource[] }>("/vault/grants")') &&
+    !requestStateHook.includes('invoke<VaultGrantPromptSource[]>("shellx_vault_list_grants").catch(() => [])'),
   "Vault Request Center must merge Debug API grant state instead of hiding it behind an empty native fallback",
 );
+assert.ok(
+  app.includes("useVaultRequestCenterState()") &&
+    !app.includes("window.setInterval(() => void refresh(), 2500)") &&
+    requestStateHook.includes("useEventAwarePolling({") &&
+    requestStateHook.includes("intervalMs: 10_000") &&
+    requestStateHook.includes('register<unknown>("browser-event"') &&
+    requestStateHook.includes('register<unknown>("shellx:vault-status-invalidated"') &&
+    requestStateHook.includes('document.addEventListener("visibilitychange"') &&
+    eventPollingHook.includes("return run;"),
+  "Request Center refreshes must be serialized, event-aware, visibility-aware, and manually refreshable",
+);
+assert.ok(
+  requestCenterComponent.includes("useEventAwarePolling({") &&
+    requestCenterComponent.includes('scopeKey: "header-vault-status"') &&
+    requestCenterComponent.includes("intervalMs: 10_000") &&
+    requestCenterComponent.includes('document.addEventListener("visibilitychange"') &&
+    !requestCenterComponent.includes("window.setInterval(() => void refreshVaultStatus(), 10000)"),
+  "Header Vault status must reuse serialized event-aware polling and pause while hidden",
+);
+for (const reason of [
+  "grantCreated",
+  "grantRevoked",
+  "agentRequestCreated",
+  "agentRequestCancelled",
+]) {
+  assert.ok(
+    debugVaultApi.includes(`emit_vault_status_invalidated(&s, "${reason}")`),
+    `Debug Vault mutation must invalidate Request Center state for ${reason}`,
+  );
+}
 assert.ok(
   popoverBlock.includes("background: var(--surface") && !popoverBlock.includes("var(--surface-1)"),
   "Vault Request Center popover must render on an opaque defined surface",
 );
 assert.ok(
   css.includes(".vault-request-quick-actions") &&
-    css.includes(".vault-password-generator") &&
+    generatorCss.includes(".vault-password-generator") &&
     css.includes(".hdr-vault-request-icon.vault-open") &&
     css.includes(".hdr-vault-request-icon.vault-closed") &&
-    css.includes(".vault-workspace-modal"),
+    vaultCss.includes(".vault-workspace-modal"),
   "Vault Request Center quick actions, generator, lock state, and standalone Vault workspace must have CSS",
 );
 

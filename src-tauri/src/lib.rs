@@ -1,4 +1,5 @@
 #![allow(clippy::doc_lazy_continuation)]
+#![warn(clippy::large_futures, clippy::large_stack_arrays)]
 
 // src-tauri/src/lib.rs
 //
@@ -3199,6 +3200,26 @@ mod file_listing_tests {
 
 #[tauri::command]
 async fn append_session_log(session_id: String, line: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || append_session_log_blocking(&session_id, &line))
+        .await
+        .map_err(|e| format!("session log writer task failed: {e}"))?
+}
+
+fn append_session_log_blocking(session_id: &str, line: &str) -> Result<(), String> {
+    // Windows has USERPROFILE, not HOME. Match the pattern already
+    // used in vault.rs / connections.rs so append_session_log actually
+    // persists on Windows.
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME/USERPROFILE unset".to_string())?;
+    append_session_log_blocking_at(std::path::Path::new(&home), session_id, line)
+}
+
+fn append_session_log_blocking_at(
+    home: &std::path::Path,
+    session_id: &str,
+    line: &str,
+) -> Result<(), String> {
     use std::io::Write;
     if session_id.is_empty()
         || !session_id
@@ -3207,15 +3228,7 @@ async fn append_session_log(session_id: String, line: String) -> Result<(), Stri
     {
         return Err(format!("invalid session_id: {}", session_id));
     }
-    // Windows has USERPROFILE, not HOME. Match the pattern already
-    // used in vault.rs / connections.rs so append_session_log actually
-    // persists on Windows.
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "HOME/USERPROFILE unset".to_string())?;
-    let dir = std::path::PathBuf::from(&home)
-        .join(".shellx")
-        .join("sessions");
+    let dir = home.join(".shellx").join("sessions");
     crate::session_git::ensure_strict_private_dir(&dir, "session log")?;
     let path = dir.join(format!("{}.jsonl", session_id));
     let _guard = session_log_append_lock()
@@ -3875,10 +3888,9 @@ async fn save_dropped_attachment_to_scope(
 
 // ────────── Visible background-task manager ──────────
 //
-// Aggregates three sources into one uniform task list:
+// Aggregates task sources into one uniform list:
 // 1. Grok subprocesses (one per registered tab) — via SessionRegistry.
-// 2. ACP-origin terminals — via TerminalRegistry (origin="acp_term").
-// 3. User-origin terminals — via TerminalRegistry (origin="user_term").
+// 2. Operator terminals — via TerminalRegistry (origin="user_term").
 //
 // Host-MCP children are appended from ProcessRegistry under
 // origin="host_mcp". Future debug-api spawns can use the same registry
@@ -3894,7 +3906,7 @@ pub struct TaskSnapshot {
     /// rows such as host_mcp children. The renderer uses this
     /// as a React key and as the argument to pause/resume/kill.
     pub task_id: String,
-    /// One of "grok" | "acp_term" | "user_term" | "host_mcp".
+    /// One of "grok" | "user_term" | "host_mcp".
     pub origin: String,
     /// User-friendly cmd-line / shell description.
     pub command_display: String,
@@ -3961,7 +3973,7 @@ fn cpu_rss_for_pids(pids: &[u32]) -> std::collections::HashMap<u32, (f32, u64)> 
 ///
 /// Sources:
 /// - Grok subprocesses (SessionRegistry.snapshot_grok_subprocesses)
-/// - ACP + user terminals (TerminalRegistry.list_task_rows)
+/// - Operator terminals (TerminalRegistry.list_task_rows)
 ///
 /// Per row we attach live CPU% + RSS-MB via one sysinfo pass at the end.
 /// Sysinfo's first-sample CPU is often zero (it needs a delta to compute);
@@ -4084,17 +4096,15 @@ async fn list_background_tasks(
     out.sort_by(|a, b| {
         let order_a = match a.origin.as_str() {
             "grok" => 0,
-            "acp_term" => 1,
-            "user_term" => 2,
-            "host_mcp" => 3,
-            _ => 4,
+            "user_term" => 1,
+            "host_mcp" => 2,
+            _ => 3,
         };
         let order_b = match b.origin.as_str() {
             "grok" => 0,
-            "acp_term" => 1,
-            "user_term" => 2,
-            "host_mcp" => 3,
-            _ => 4,
+            "user_term" => 1,
+            "host_mcp" => 2,
+            _ => 3,
         };
         order_a
             .cmp(&order_b)
@@ -6955,9 +6965,9 @@ pub fn run() {
         .manage(terminal_registry.clone())
         .manage(shellx_browser_registry.clone())
         .manage(shellx_vault_backend.clone())
-        // Pending defensive permission requests. Created at boot, looked up by
-        // acp::handle_terminal_create and resolve_permission_request. Normal
-        // ShellX sessions use provider-native Full Auto.
+        // Pending provider/tool permission requests. Created at boot and
+        // resolved by the matching provider-owned UI control. Normal ShellX
+        // sessions use provider-native Full Auto.
         .manage(Arc::new(PendingPermissionRegistry::new()))
         // Goal orchestrator. Per-tab Goal-mode state. Shared with
         // acp.rs (read_loop calls consider_continue on prompt-complete),
@@ -7099,13 +7109,9 @@ pub fn run() {
             outside_connectors_capabilities,
             outside_connectors_events,
             outside_connectors_simulate,
-            // Real PTY for the bottom-panel Terminal tab. The same
-            // registry ALSO services grok's ACP `terminal/*` requests;
-            // `pty_attach` is the read-only attach surface for chat-
-            // embedded views that bind to ACP-origin PTYs.
+            // Real PTY for the operator-facing bottom-panel Terminal tab.
             crate::terminal::pty_create,
             crate::terminal::pty_write,
-            crate::terminal::pty_attach,
             crate::terminal::pty_resize,
             crate::terminal::pty_kill,
             // xAI Grok STT via push-to-talk mic button in the composer.
@@ -7492,6 +7498,19 @@ pub fn run() {
 mod session_log_tests {
     use super::*;
 
+    fn unique_root() -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "shellx-session-log-{}-{}",
+            std::process::id(),
+            nanos
+        ))
+    }
+
     #[test]
     fn split_session_jsonl_records_recovers_adjacent_objects() {
         let content = r#"{"t":1,"kind":"ui","payload":"a"}{"t":2,"kind":"ui","payload":"b"}
@@ -7502,6 +7521,26 @@ mod session_log_tests {
         assert!(records[0].contains(r#""payload":"a""#));
         assert!(records[1].contains(r#""payload":"b""#));
         assert!(records[2].contains(r#""payload":"c""#));
+    }
+
+    #[test]
+    fn append_session_log_writes_multiline_jsonl_batch_in_order() {
+        let root = unique_root();
+        std::fs::create_dir_all(&root).expect("create isolated home");
+        let batch = r#"{"t":1,"kind":"ui","payload":"one"}
+{"t":2,"kind":"ui","payload":"two"}"#;
+
+        append_session_log_blocking_at(&root, "session-batch", batch).expect("append JSONL batch");
+
+        let path = root
+            .join(".shellx")
+            .join("sessions")
+            .join("session-batch.jsonl");
+        let content = std::fs::read_to_string(path).expect("read session log");
+        assert_eq!(content, format!("{batch}\n"));
+        assert_eq!(split_session_jsonl_records(&content).len(), 2);
+
+        std::fs::remove_dir_all(root).expect("remove isolated home");
     }
 }
 

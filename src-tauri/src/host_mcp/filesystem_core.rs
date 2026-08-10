@@ -388,6 +388,55 @@ pub(super) const SENSITIVE_FS_SUBSTRINGS: &[&str] = &[
     "ntuser.dat",
 ];
 
+/// Tar-compatible patterns for the sensitive credential families that can
+/// occur inside an archived workspace. Session archive uses this list for
+/// both POSIX and native-Windows SSH remotes; local archives additionally run
+/// every absolute entry through the shared sensitive filesystem denylist.
+pub(crate) const SENSITIVE_ARCHIVE_GLOBS: &[&str] = &[
+    ".env",
+    ".env*",
+    ".git/config",
+    "*/.git/config",
+    ".ssh/*",
+    "*/.ssh/*",
+    ".aws/*",
+    "*/.aws/*",
+    ".azure/*",
+    "*/.azure/*",
+    ".config/gcloud/*",
+    "*/.config/gcloud/*",
+    ".config/gh/*",
+    "*/.config/gh/*",
+    ".docker/config.json",
+    "*/.docker/config.json",
+    ".kube/config",
+    "*/.kube/config",
+    ".cargo/credentials",
+    "*/.cargo/credentials",
+    ".cargo/credentials.toml",
+    "*/.cargo/credentials.toml",
+    ".terraform.d/credentials.tfrc.json",
+    "*/.terraform.d/credentials.tfrc.json",
+    ".password-store/*",
+    "*/.password-store/*",
+    ".gnupg/*",
+    "*/.gnupg/*",
+    ".npmrc",
+    "*/.npmrc",
+    ".pypirc",
+    "*/.pypirc",
+    ".netrc",
+    "*/.netrc",
+    ".git-credentials",
+    "*/.git-credentials",
+    "_netrc",
+    "*/_netrc",
+    "id_rsa*",
+    "id_ed25519*",
+    "*.pem",
+    "*.token",
+];
+
 /// Persistence-bearing directories that are sensitive only when they are
 /// direct descendants of HOME. Keeping these anchored avoids false positives
 /// for ordinary project folders such as `<repo>/bin` or `<repo>/Library`.
@@ -433,7 +482,7 @@ fn sensitive_home_relative_match(path_lower: &str) -> Option<&'static str> {
     })
 }
 
-pub(super) fn sensitive_fs_denylist_match(path: &std::path::Path) -> Option<&'static str> {
+pub(crate) fn sensitive_fs_denylist_match(path: &std::path::Path) -> Option<&'static str> {
     let path_lower_full = normalized_fs_match_path(path);
     SENSITIVE_FS_SUBSTRINGS
         .iter()
@@ -459,6 +508,159 @@ pub(super) fn reject_sensitive_fs_path(tool: &str, path: &std::path::Path) -> Re
     Ok(())
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct WslUncPath {
+    pub(super) distro: String,
+    pub(super) linux_path: String,
+    pub(super) allowed_root: String,
+}
+
+fn strip_ascii_prefix_case_insensitive<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    value
+        .get(..prefix.len())
+        .filter(|candidate| candidate.eq_ignore_ascii_case(prefix))
+        .and_then(|_| value.get(prefix.len()..))
+}
+
+pub(super) fn parse_wsl_unc_path(path: &std::path::Path) -> Result<Option<WslUncPath>, String> {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let normalized =
+        if let Some(rest) = strip_ascii_prefix_case_insensitive(&normalized, "//?/unc/") {
+            format!("//{rest}")
+        } else if let Some(rest) = strip_ascii_prefix_case_insensitive(&normalized, "//?/") {
+            rest.to_string()
+        } else {
+            normalized
+        };
+    let after_host = strip_ascii_prefix_case_insensitive(&normalized, "//wsl$/").or_else(|| {
+        strip_ascii_prefix_case_insensitive(&normalized, WSL_DOT_LOCALHOST_UNIX_PREFIX)
+    });
+    let Some(after_host) = after_host else {
+        return Ok(None);
+    };
+    let (distro, rest) = after_host
+        .split_once('/')
+        .ok_or_else(|| "WSL UNC path is missing a Linux path".to_string())?;
+    let distro = crate::acp::validate_ssh_wsl_distro_arg(Some(distro))
+        .map_err(|error| format!("invalid WSL UNC distro: {error}"))?;
+    let linux_path = format!("/{}", rest.trim_start_matches('/'));
+    let mut segments = linux_path.split('/').filter(|segment| !segment.is_empty());
+    let allowed_root = match (segments.next(), segments.next()) {
+        (Some("home"), Some(user)) if user != "." && user != ".." => {
+            format!("/home/{user}")
+        }
+        (Some("tmp"), _) => "/tmp".to_string(),
+        _ => {
+            return Err(format!(
+                "WSL UNC path is outside the supported /home/<user> and /tmp roots: {linux_path}"
+            ))
+        }
+    };
+    Ok(Some(WslUncPath {
+        distro: distro.to_string(),
+        linux_path,
+        allowed_root,
+    }))
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn linux_path_is_within_root(path: &str, root: &str) -> bool {
+    path == root || path.starts_with(&format!("{root}/"))
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_wsl_unc_linux_path(
+    tool: &str,
+    path: &std::path::Path,
+    parsed: &WslUncPath,
+    kind: FsAccessKind,
+) -> Result<String, String> {
+    use crate::winproc::NoWindowExt as _;
+
+    let mode = match kind {
+        FsAccessKind::Read => "-e",
+        FsAccessKind::Write => "-m",
+    };
+    let mut command = std::process::Command::new("wsl.exe");
+    command
+        .args([
+            "--distribution",
+            &parsed.distro,
+            "--exec",
+            "realpath",
+            mode,
+            "--",
+            &parsed.linux_path,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .no_window();
+    let mut child = command.spawn().map_err(|error| {
+        format!(
+            "{tool}: WSL realpath launch failed for {}: {error}",
+            path.display()
+        )
+    })?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "{tool}: WSL realpath timed out for {}",
+                    path.display()
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "{tool}: WSL realpath status failed for {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    let output = child.wait_with_output().map_err(|error| {
+        format!(
+            "{tool}: WSL realpath output failed for {}: {error}",
+            path.display()
+        )
+    })?;
+    if !output.status.success() {
+        let diagnostic = String::from_utf8_lossy(&output.stderr)
+            .trim()
+            .chars()
+            .take(240)
+            .collect::<String>();
+        return Err(format!(
+            "{tool}: WSL realpath rejected {}: {}",
+            path.display(),
+            if diagnostic.is_empty() {
+                format!("status {}", output.status)
+            } else {
+                diagnostic
+            }
+        ));
+    }
+    let resolved = String::from_utf8(output.stdout)
+        .map_err(|_| format!("{tool}: WSL realpath returned non-UTF-8 output"))?
+        .trim()
+        .to_string();
+    if !resolved.starts_with('/') || resolved.lines().count() != 1 {
+        return Err(format!(
+            "{tool}: WSL realpath returned an invalid absolute path"
+        ));
+    }
+    Ok(resolved)
+}
+
 pub(crate) fn enforce_home_containment(
     tool: &str,
     path: &std::path::Path,
@@ -477,6 +679,39 @@ pub(crate) fn enforce_home_containment(
     // ~/.ssh/id_*, ~/.aws/credentials, ~/.password-store/. Public-release
     // posture requires these to be inaccessible even to the model.
     reject_sensitive_fs_path(tool, path)?;
+
+    // A lexical WSL UNC prefix is not containment: an allowed-looking path
+    // may be a symlink to /etc, /mnt/c, another user's home, or a sensitive
+    // file under the same home. Resolve inside the selected distro first and
+    // bind the result to the exact original /home/<user> or /tmp root.
+    if let Some(parsed) = parse_wsl_unc_path(path).map_err(|error| format!("{tool}: {error}"))? {
+        #[cfg(target_os = "windows")]
+        {
+            let resolved = resolve_wsl_unc_linux_path(tool, path, &parsed, kind)?;
+            if !linux_path_is_within_root(&resolved, &parsed.allowed_root) {
+                return Err(format!(
+                    "{tool}: refusing WSL path outside allowed root after symlink resolution: {} -> {} (root={})",
+                    path.display(),
+                    resolved,
+                    parsed.allowed_root
+                ));
+            }
+            let resolved_unc = PathBuf::from(format!(
+                r"\\wsl$\{}{}",
+                parsed.distro,
+                resolved.replace('/', r"\")
+            ));
+            reject_sensitive_fs_path(tool, &resolved_unc)?;
+            return Ok(());
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            return Err(format!(
+                "{tool}: WSL UNC path is valid only on Windows: distro={}, path={}, root={}",
+                parsed.distro, parsed.linux_path, parsed.allowed_root
+            ));
+        }
+    }
 
     // WSL HOME containment via UNC. The host MCP runs on the
     // Windows side, so its HOME is `C:\Users\<user>`. A WSL-transport
@@ -532,12 +767,13 @@ pub(crate) fn enforce_home_containment(
         }
     };
     if is_wsl_home_unc {
-        // Sensitive-substring denylist already passed above. Lexical
-        // prefix + canonicalize-symlink checks below assume Windows
-        // HOME; for WSL HOME / /tmp UNC paths we trust the path is
-        // bounded by the `//wsl$/<distro>/(home|tmp)/...` prefix and
-        // short-circuit the rest of the check.
-        return Ok(());
+        // The structured parser above owns every supported WSL UNC form. If a
+        // legacy detector recognizes a form that parser did not, fail closed
+        // instead of restoring the former lexical-only containment bypass.
+        return Err(format!(
+            "{tool}: refusing unverified WSL UNC path: {}",
+            path.display()
+        ));
     }
 
     // Lexical prefix check first — catches /etc/passwd, C:\Windows,

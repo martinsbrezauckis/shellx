@@ -12,9 +12,9 @@
 // Transport coverage in this version:
 // - Local Windows: zip cwd + %USERPROFILE%\.grok\sessions\<urlenc-cwd>\<sid>\
 // - WSL: zip via \\wsl$\<distro>\... UNC of cwd + linux_home/.grok/sessions/<urlenc-cwd>/<sid>/
-// - SSH: NOT YET — needs a separate tar-then-scp implementation,
-// returns Err for SSH sessions so the frontend can show "not
-// supported on SSH yet" instead of building an empty zip.
+// - SSH: build a filtered tar stream on POSIX or native Windows remotes,
+// transfer it through the established SSH transport, then write the selected
+// local archive destination.
 //
 // Caller flow:
 // 1. Frontend "Download all" button calls the Tauri command
@@ -201,7 +201,10 @@ fn validate_archive_save_path(save_path: &str, is_ssh: bool) -> Result<String, S
     Ok(trimmed.to_string())
 }
 
-fn archive_entry_is_sensitive(rel: &Path) -> bool {
+fn archive_entry_is_sensitive(abs: &Path, rel: &Path) -> bool {
+    if crate::host_mcp::sensitive_fs_denylist_match(abs).is_some() {
+        return true;
+    }
     let normalized = rel
         .to_string_lossy()
         .replace('\\', "/")
@@ -430,7 +433,7 @@ pub async fn archive_session_artifacts_inner(
                     }
                 }
                 let rel_str = rel.to_string_lossy().replace('\\', "/");
-                if archive_entry_is_sensitive(rel) {
+                if archive_entry_is_sensitive(abs, rel) {
                     warn!("archive: skip sensitive entry {}", rel_str);
                     skipped += 1;
                     continue;
@@ -450,7 +453,7 @@ pub async fn archive_session_artifacts_inner(
                     skipped += 1;
                     continue;
                 }
-                let mut buf = [0u8; 64 * 1024];
+                let mut buf = vec![0u8; 64 * 1024].into_boxed_slice();
                 let mut file_bytes: u64 = 0;
                 loop {
                     match f.read(&mut buf) {
@@ -562,30 +565,29 @@ struct SshArchiveTransport<'a> {
     wsl_distro: Option<&'a str>,
 }
 
+fn windows_ssh_archive_excludes() -> String {
+    crate::host_mcp::SENSITIVE_ARCHIVE_GLOBS
+        .iter()
+        .map(|pattern| crate::acp::powershell_single_quote(&format!("--exclude={pattern}")))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn posix_ssh_archive_excludes() -> String {
+    crate::host_mcp::SENSITIVE_ARCHIVE_GLOBS
+        .iter()
+        .map(|pattern| format!("--exclude={}", crate::acp::shell_quote_for_remote(pattern)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn windows_ssh_archive_command(cwd: &str, urlenc: &str, session_id: &str) -> String {
     let cwd = crate::acp::powershell_single_quote(cwd);
     let scratch = crate::acp::powershell_single_quote(&format!(
         ".grok\\sessions\\{}\\{}",
         urlenc, session_id
     ));
-    let excludes = [
-        "--exclude=.env",
-        "--exclude=.env*",
-        "--exclude=.git/config",
-        "--exclude=*/.git/config",
-        "--exclude=.ssh/*",
-        "--exclude=*/.ssh/*",
-        "--exclude=.netrc",
-        "--exclude=*/.netrc",
-        "--exclude=id_rsa*",
-        "--exclude=id_ed25519*",
-        "--exclude=*.pem",
-        "--exclude=*.token",
-    ]
-    .iter()
-    .map(|value| crate::acp::powershell_single_quote(value))
-    .collect::<Vec<_>>()
-    .join(",");
+    let excludes = windows_ssh_archive_excludes();
     format!(
         "{prelude}$userHome=$env:USERPROFILE;$cwd={cwd};$scratch={scratch};$inputs=[Collections.Generic.List[string]]::new();if(Test-Path -LiteralPath (Join-Path $userHome $scratch)){{$inputs.Add($scratch)}};$homeFull=[IO.Path]::GetFullPath($userHome).TrimEnd('\\');$cwdFull=[IO.Path]::GetFullPath($cwd).TrimEnd('\\');if(-not $cwdFull.Equals($homeFull,[StringComparison]::OrdinalIgnoreCase)-and(Test-Path -LiteralPath $cwdFull -PathType Container)){{$inputs.Add($cwdFull)}};if($inputs.Count -eq 0){{throw 'ShellX archive has no existing session or workspace input'}};$tmp=Join-Path ([IO.Path]::GetTempPath()) ('shellx-archive-'+[Guid]::NewGuid().ToString('N')+'.tar.gz');try{{$tarArgs=@({excludes},'-czf',$tmp,'-C',$userHome);$tarArgs+=@($inputs);& tar.exe @tarArgs;if($LASTEXITCODE -ne 0){{throw ('tar.exe failed with exit code '+$LASTEXITCODE)}};$stream=[IO.File]::OpenRead($tmp);$stdout=[Console]::OpenStandardOutput();try{{$stream.CopyTo($stdout);$stdout.Flush()}}finally{{$stream.Dispose()}}}}finally{{if(Test-Path -LiteralPath $tmp){{Remove-Item -LiteralPath $tmp -Force}}}}",
         prelude = crate::acp::windows_remote_shell_prelude(),
@@ -655,13 +657,7 @@ async fn archive_ssh_session(
     // Quote single-quote in cwd for the shell `case` test.
     let cwd_for_test = cwd.replace('\'', "'\\''");
     let cwd_quoted = crate::acp::shell_quote_for_remote(cwd);
-    const REMOTE_TAR_SECRET_EXCLUDES: &str = "\
-        --exclude='.env' --exclude='.env*' \
-        --exclude='.git/config' --exclude='*/.git/config' \
-        --exclude='.ssh/*' --exclude='*/.ssh/*' \
-        --exclude='.netrc' --exclude='*/.netrc' \
-        --exclude='id_rsa*' --exclude='id_ed25519*' \
-        --exclude='*.pem' --exclude='*.token'";
+    let remote_tar_secret_excludes = posix_ssh_archive_excludes();
     let remote_cmd = if transport.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
         windows_ssh_archive_command(cwd, urlenc, session_id)
     } else {
@@ -672,7 +668,7 @@ async fn archive_ssh_session(
                 tar --ignore-failed-read {excludes} -czf - -C \"$HOME\" {scratch} {cwd} 2>/dev/null; \
              fi",
             cwd_t = cwd_for_test,
-            excludes = REMOTE_TAR_SECRET_EXCLUDES,
+            excludes = remote_tar_secret_excludes,
             scratch = scratch_quoted,
             cwd = cwd_quoted,
         )
@@ -742,7 +738,7 @@ async fn archive_ssh_session(
             let mut reader = std::io::BufReader::new(stdout);
  // Manual copy loop with a per-loop byte counter so we can
  // abort BEFORE the local disk fills.
-            let mut buf = [0u8; 64 * 1024];
+            let mut buf = vec![0u8; 64 * 1024].into_boxed_slice();
             let mut copied: u64 = 0;
             loop {
                 let n = std::io::Read::read(&mut reader, &mut buf)
@@ -959,11 +955,54 @@ mod tests {
             ".netrc",
         ] {
             assert!(
-                archive_entry_is_sensitive(Path::new(rel)),
+                archive_entry_is_sensitive(Path::new(rel), Path::new(rel)),
                 "archive should skip sensitive entry: {rel}"
             );
         }
-        assert!(!archive_entry_is_sensitive(Path::new("src/main.rs")));
-        assert!(!archive_entry_is_sensitive(Path::new("docs/env-notes.md")));
+        for rel in [
+            ".aws/credentials",
+            ".azure/accessTokens.json",
+            ".config/gcloud/credentials.db",
+            ".config/gh/hosts.yml",
+            ".docker/config.json",
+            ".kube/config",
+            ".cargo/credentials.toml",
+            ".terraform.d/credentials.tfrc.json",
+            ".password-store/service.gpg",
+            ".gnupg/private-keys-v1.d/key",
+            ".npmrc",
+            ".pypirc",
+            ".git-credentials",
+        ] {
+            let abs = Path::new("/home/fixture/workspace").join(rel);
+            assert!(
+                archive_entry_is_sensitive(&abs, Path::new(rel)),
+                "archive should share Host MCP sensitive-path coverage: {rel}"
+            );
+        }
+        assert!(!archive_entry_is_sensitive(
+            Path::new("/home/fixture/workspace/src/main.rs"),
+            Path::new("src/main.rs")
+        ));
+        assert!(!archive_entry_is_sensitive(
+            Path::new("/home/fixture/workspace/docs/env-notes.md"),
+            Path::new("docs/env-notes.md")
+        ));
+    }
+
+    #[test]
+    fn ssh_archive_excludes_share_one_sensitive_pattern_source() {
+        let windows = windows_ssh_archive_excludes();
+        let posix = posix_ssh_archive_excludes();
+        for pattern in crate::host_mcp::SENSITIVE_ARCHIVE_GLOBS {
+            assert!(
+                windows.contains(&format!("--exclude={pattern}")),
+                "native Windows SSH archive is missing {pattern}"
+            );
+            assert!(
+                posix.contains(&format!("--exclude='{pattern}'")),
+                "POSIX SSH archive is missing {pattern}"
+            );
+        }
     }
 }

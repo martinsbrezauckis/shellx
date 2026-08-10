@@ -339,7 +339,7 @@ export function useBrowserBookmarks(options: BrowserBookmarksOptions) {
         });
         const { parseBrowserWorkflowPreview } = await import("../browserWorkflowPreview");
         setWorkflowPreview(parseBrowserWorkflowPreview(bookmark.bookmarkId, response));
-      } catch (cause) {
+      } catch {
         setWorkflowPreview({
           bookmarkId: bookmark.bookmarkId,
           status: "error",
@@ -347,7 +347,6 @@ export function useBrowserBookmarks(options: BrowserBookmarksOptions) {
           stepsSkipped: 0,
           decisionPoints: 0,
         });
-        throw cause;
       }
     });
     return true;

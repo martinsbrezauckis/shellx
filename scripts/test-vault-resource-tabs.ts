@@ -5,9 +5,20 @@ const source = readFileSync("src/components/settings/VaultTab.tsx", "utf8");
 const setupSource = readFileSync("src/components/settings/VaultSetupPanel.tsx", "utf8");
 const model = readFileSync("src/lib/vault-resource-model.ts", "utf8");
 const css = [
-  readFileSync("src/App.css", "utf8"),
+  readFileSync("src/components/settings/VaultTab.css", "utf8"),
   readFileSync("src/components/settings/vaultFields.css", "utf8"),
 ].join("\n");
+
+assert.ok(
+  source.includes('import "./VaultTab.css";') && source.includes('import "./vaultFields.css";'),
+  "lazy Vault editor must own both its workspace and focused field styles",
+);
+assert.ok(
+  css.includes(".vault-workspace-tab:focus-visible")
+    && css.includes(".vault-resource-form-tab:focus-visible")
+    && css.includes(".vault-permission-choice:focus-visible"),
+  "Vault workspace, resource, and permission tab groups must expose a visible keyboard focus boundary",
+);
 
 assert.ok(
   source.includes('data-debug-id="vault-resource-form-tabs"'),

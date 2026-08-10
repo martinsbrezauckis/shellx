@@ -2,7 +2,9 @@ import ReactDOM from "react-dom/client";
 
 import "@fontsource-variable/onest";
 import "./styles/tokens.css";
-import "./App.css";
+import "./browser/browserLayout.css";
+import "./browser/browserWorkspace.css";
+import "./browser/browserPanels.css";
 import "./browser/browserShell.css";
 
 import { ErrorBoundary } from "./components/ErrorBoundary";

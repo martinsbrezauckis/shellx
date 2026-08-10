@@ -15,7 +15,6 @@ import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { linkifyPreviewableFileRefs, SafeMarkdownLink } from "../lib/markdown-links";
-import { LazyTerminalView } from "./LazyTerminalView";
 import { SafeImg, SafeVideo } from "./MediaPreview";
 import { ShellIcon, type ShellIconName } from "./icons";
 import type {
@@ -34,11 +33,6 @@ import type {
 import { PermissionPill } from "./PermissionPill";
 import type { DebugPermissionDecisionFixture } from "../lib/debug-permission-decision-fixture";
 
-/* tabId is the active session's tab_id; forwarded to inline
- * <TerminalView attachOnly/> so it binds to the right ACP-origin PTY
- * in the TerminalRegistry. Falls back to "default" to match the
- * Rust-side `tab_id.unwrap_or("default")` convention. */
-
 function ChatOutputView({
   groups,
   onPreviewFile,
@@ -48,7 +42,7 @@ function ChatOutputView({
 }: {
   groups: UiGroup[];
   onPreviewFile: (path: string) => void;
- /** Forwarded to inline <TerminalView/> for ACP-origin terminals. */
+ /** Session identity for attachment and generated-media previews. */
   tabId?: string;
   /** Label for ACP assistant groups that predate provider speaker metadata. */
   assistantFallbackLabel?: string;
@@ -712,8 +706,7 @@ function ToolCard({
 }: {
   g: ToolGroup;
   onPreviewFile: (path: string) => void;
- /** Session tab_id forwarded to inline <TerminalView/> so attach
- * binds to the right record. */
+ /** Session identity for generated-media previews. */
   tabId: string;
  /** When set, this card's image/video path duplicates an earlier
  * card; render a pill instead of the media. */
@@ -721,12 +714,6 @@ function ToolCard({
 }): JSX.Element {
   const statusClass = normalizeStatus(g.status);
   const hasDiff = typeof g.diffPath === "string" && g.diffPath.length > 0;
- // An embedded ACP-origin PTY view renders when the tool_call (or
- // any update) carries a `{type:"terminal", terminalId}` block. The
- // view stays mounted across status transitions so the user can
- // keep watching output even after grok calls terminal/release —
- // xterm.js's internal buffer retains the visible bytes.
-  const hasTerminal = typeof g.terminalId === "string" && g.terminalId.length > 0;
   return (
     <div className={`tool ${statusClass}`}>
       <div className="tool-hdr">
@@ -744,19 +731,19 @@ function ToolCard({
         </span>
         <span className="tstat">{g.status.toUpperCase()}</span>
       </div>
-      {(g.argsJson || hasDiff || g.imagePath || g.videoPath || hasTerminal || g.toolText) && (
+      {(g.argsJson || hasDiff || g.imagePath || g.videoPath || g.toolText) && (
         <div className="tool-body">
-          {g.argsJson && !hasDiff && !g.imagePath && !g.videoPath && !hasTerminal && (
+          {g.argsJson && !hasDiff && !g.imagePath && !g.videoPath && (
             <pre>{truncate(g.argsJson, 1200)}</pre>
           )}
  {/* surface rawOutput.text for fs_read / bash /
  * web_fetch / fs_list_dir — previously these tool cards
  * showed args only, leaving the user blind to what the
  * tool actually returned. Skip when the result is already
- * represented as image / video / diff / terminal. 4 KB cap
+ * represented as image / video / diff. 4 KB cap
  * keeps the bubble manageable; full content is reachable
  * via FilePreviewModal for file reads. */}
-          {g.toolText && !hasDiff && !g.imagePath && !g.videoPath && !hasTerminal && (
+          {g.toolText && !hasDiff && !g.imagePath && !g.videoPath && (
             <pre className="tool-output">{truncate(g.toolText, 4096)}</pre>
           )}
           {hasDiff && (
@@ -824,21 +811,6 @@ function ToolCard({
               />
             </div>
           ) : null}
- {/* Live xterm.js view of the ACP-origin PTY. attachOnly
- * binds via pty_attach + pty-output events without
- * pty_create/pty_kill. Interactive so the user can type
- * into the agent's shell (e.g. REPL prompts). */}
-          {hasTerminal && (
-            <div className="tool-terminal">
-              <LazyTerminalView
-                tabId={tabId}
-                terminalId={g.terminalId!}
-                attachOnly
-                readOnly={false}
-                initialRows={24}
-              />
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -936,6 +908,7 @@ function DiffHunks({
             tabIndex={0}
             role="region"
             aria-label={`hunk ${i + 1} of ${hunks.length}`}
+            onMouseDown={(event) => event.currentTarget.focus()}
           >
             {h.old && <div className="diff-old">{`- ${truncate(h.old, 800)}`}</div>}
             <div className="diff-new">{`+ ${truncate(h.new, 4000)}`}</div>

@@ -184,7 +184,7 @@ pub(super) async fn require_auth(
     ) {
         return Err((
             StatusCode::UNAUTHORIZED,
-            "missing or invalid bearer token (read ~/.shellx/shellxagent.token)",
+            "missing or invalid bearer token (use ShellX-owned discovery or a private process-local integration)",
         )
             .into_response());
     }

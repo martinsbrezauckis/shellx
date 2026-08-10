@@ -489,7 +489,7 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
               aria-pressed={form.dispatchMode === "inbox"}
               data-shellx-release-observe="pressed"
               className={`connector-provider-tab ${form.dispatchMode === "inbox" ? "active" : ""}`}
-              onClick={() => setForm((f) => ({ ...f, dispatchMode: "inbox", requireApproval: true }))}
+              onClick={() => setForm((f) => ({ ...f, dispatchMode: "inbox" }))}
             >
               Inbox
             </button>
@@ -498,13 +498,43 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
               aria-pressed={form.dispatchMode === "autoPrompt"}
               data-shellx-release-observe="pressed"
               className={`connector-provider-tab ${form.dispatchMode === "autoPrompt" ? "active" : ""}`}
-              onClick={() => setForm((f) => ({ ...f, dispatchMode: "autoPrompt", requireApproval: false }))}
+              onClick={() => setForm((f) => ({ ...f, dispatchMode: "autoPrompt" }))}
               title={`Send allowlisted ${providerLabel(form.providerKind)} messages to the active session`}
             >
               Session chat
             </button>
           </div>
           <span className="settings-suffix">{form.dispatchMode === "autoPrompt" ? "send to session" : "review first"}</span>
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-label">Session chat approval</span>
+          <div className="connector-provider-tabs connector-state-tabs" role="group" aria-label="Connector session chat approval">
+            <button
+              type="button"
+              data-debug-id="connector-approval-review-first"
+              aria-pressed={form.requireApproval}
+              data-shellx-release-observe="pressed"
+              className={`connector-provider-tab ${form.requireApproval ? "active" : ""}`}
+              onClick={() => setForm((f) => ({ ...f, requireApproval: true }))}
+            >
+              Review first
+            </button>
+            <button
+              type="button"
+              data-debug-id="connector-approval-auto-dispatch"
+              aria-pressed={!form.requireApproval}
+              data-shellx-release-observe="pressed"
+              className={`connector-provider-tab ${!form.requireApproval ? "active" : ""}`}
+              onClick={() => setForm((f) => ({ ...f, requireApproval: false }))}
+              title="Allow allowlisted messages to dispatch without per-message operator review"
+            >
+              Auto-dispatch
+            </button>
+          </div>
+          <span className="settings-suffix">
+            {form.requireApproval ? "operator reviews each message" : "allowlisted messages run immediately"}
+          </span>
         </div>
 
         <div className="settings-row">
@@ -731,7 +761,9 @@ function ConnectorRow({
           </span>
         </div>
         <span className="connection-target">
-          {provider} · {connector.dispatchMode === "autoPrompt" ? "session chat" : "inbox"} · {target}
+          {provider} · {connector.dispatchMode === "autoPrompt"
+            ? `session chat · ${connector.requireApproval ? "review first" : "auto-dispatch"}`
+            : "inbox"} · {target}
         </span>
         <span className="connector-route">
           {allowed.length ? `Allowed: ${allowed.join(", ")}` : "Allowed: none configured"}

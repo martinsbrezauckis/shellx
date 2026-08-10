@@ -1,0 +1,753 @@
+.shellx-browser-bookmark-sidecar {
+  min-width: 0;
+}
+.shellx-browser-bookmark-manager-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.shellx-browser-bookmark-manager-head h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.shellx-browser-bookmark-manager-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shellx-browser-bookmark-mode {
+  width: 100%;
+}
+.shellx-browser-bookmark-manager-dock .shellx-browser-bookmark-manager {
+  min-height: 0;
+  overflow: hidden;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.shellx-browser-bookmark-editor-actions,
+.shellx-browser-bookmark-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shellx-browser-bookmark-browser,
+.shellx-browser-bookmark-manager {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+  align-content: start;
+}
+.shellx-browser-bookmark-browser {
+  grid-template-rows: minmax(0, 1fr);
+}
+.shellx-browser-bookmark-manager {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.shellx-browser-bookmark-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+.shellx-browser-bookmark-editor select,
+.shellx-browser-bookmark-editor input,
+.shellx-browser-bookmark-manager-row select,
+.shellx-browser-bookmark-row-main input {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.shellx-browser-bookmark-editor input {
+  grid-column: 1 / -1;
+}
+.shellx-browser-bookmark-editor-actions {
+  justify-content: flex-end;
+}
+.shellx-browser-bookmark-manager-list {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  grid-auto-rows: max-content;
+  max-height: min(220px, 34vh);
+  overflow: auto;
+}
+.shellx-browser-bookmark-manager-dock .shellx-browser-bookmark-manager-list {
+  max-height: none;
+}
+.shellx-browser-bookmark-list {
+  min-height: 0;
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  grid-auto-rows: max-content;
+  overflow: auto;
+}
+.shellx-browser-bookmark-list-item,
+.shellx-browser-bookmark-manager-node,
+.shellx-browser-bookmark-list-children,
+.shellx-browser-bookmark-manager-children {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  align-content: start;
+}
+.shellx-browser-bookmark-list-row {
+  min-width: 0;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 7px;
+  align-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  padding: 5px 7px;
+  text-align: left;
+}
+button.shellx-browser-bookmark-list-row {
+  cursor: pointer;
+}
+button.shellx-browser-bookmark-list-row:hover {
+  border-color: var(--hairline-2);
+  color: var(--ink);
+}
+.shellx-browser-bookmark-list-row.folder {
+  color: var(--ink);
+}
+.shellx-browser-bookmark-list-row span,
+.shellx-browser-bookmark-list-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-bookmark-list-row small {
+  grid-column: 2;
+  color: var(--ink-4);
+  font-size: 10.5px;
+}
+.shellx-browser-bookmark-manager-node.dragging,
+.shellx-browser-tab.dragging {
+  opacity: 0.58;
+}
+.shellx-browser-bookmark-manager-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 6px;
+}
+.shellx-browser-bookmark-drag {
+  width: 24px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  cursor: grab;
+}
+.shellx-browser-bookmark-drag:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.shellx-browser-bookmark-row-main {
+  min-width: 0;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 7px;
+  align-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  padding: 5px 7px;
+  text-align: left;
+}
+.shellx-browser-bookmark-row-fields {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-bookmark-row-main input {
+  width: 100%;
+  height: 18px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+.shellx-browser-bookmark-row-main input.shellx-browser-bookmark-url-input {
+  color: var(--ink-3);
+  font-size: 10.5px;
+}
+.shellx-browser-bookmark-row-main input:focus {
+  outline: none;
+}
+.shellx-browser-bookmark-row-main:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+.shellx-browser-bookmark-row-main span,
+.shellx-browser-bookmark-row-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-bookmark-row-main small {
+  color: var(--ink-4);
+  font-size: 10.5px;
+}
+.shellx-browser-bookmark-row-actions button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.shellx-browser-bookmark-row-actions button:hover:not(:disabled) {
+  border-color: var(--hairline-2);
+  color: var(--ink);
+}
+.shellx-browser-bookmark-row-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.shellx-browser-bookmark-toolbar {
+  position: relative;
+  z-index: 80;
+  min-height: 32px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  overflow: visible;
+  scrollbar-width: none;
+}
+.shellx-browser-bookmark-toolbar::-webkit-scrollbar {
+  display: none;
+}
+.shellx-browser-bookmark-toolbar-link,
+.shellx-browser-bookmark-folder > button,
+.shellx-browser-bookmark-folder-menu button {
+  height: 24px;
+  max-width: 150px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.shellx-browser-bookmark-folder > button.active {
+  border-color: rgba(34, 197, 94, 0.55);
+  color: var(--ink);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.08);
+}
+.shellx-browser-bookmark-toolbar-link span,
+.shellx-browser-bookmark-folder > button span,
+.shellx-browser-bookmark-folder-menu button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-bookmark-folder {
+  flex: 0 0 auto;
+}
+.shellx-browser-bookmark-folder-menu-dock {
+  position: relative;
+  z-index: 150;
+  min-height: 34px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+.shellx-browser-bookmark-folder-menu button {
+  width: 100%;
+  justify-content: flex-start;
+}
+.shellx-browser-bookmark-folder-menu-dock button {
+  width: auto;
+  min-width: 150px;
+  max-width: 220px;
+}
+@media (max-width: 720px) {
+  .shellx-browser-bookmark-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .shellx-browser-bookmark-editor input {
+    grid-column: auto;
+  }
+}
+.shellx-browser-save-popover {
+  width: 304px;
+}
+.shellx-browser-save-section {
+  display: grid;
+  gap: 4px;
+}
+.shellx-browser-save-section + .shellx-browser-save-section {
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+.shellx-browser-save-section h3 {
+  margin: 0 0 2px;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 780;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.shellx-browser-save-popover .shellx-browser-menu-row {
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+}
+.shellx-browser-save-popover .shellx-browser-menu-row svg {
+  grid-row: 1 / 3;
+  color: var(--ink-3);
+}
+.shellx-browser-save-popover .shellx-browser-menu-row small {
+  white-space: normal;
+}
+.shellx-browser-ad-popover {
+  width: 320px;
+}
+.shellx-browser-ad-popover .shellx-browser-menu-row small {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+@media (max-width: 720px) {
+  .shellx-browser-header-popover.shellx-browser-shields-panel {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: 86px;
+    width: auto;
+    max-height: calc(100vh - 104px);
+    overflow: auto;
+  }
+}
+.shellx-browser-header-popover h2 {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.shellx-browser-options-section label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-options-section label:has(input[type="checkbox"]) {
+  justify-content: flex-start;
+}
+.shellx-browser-options-section label > span {
+  min-width: 0;
+}
+.shellx-browser-options-section input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  accent-color: var(--ok);
+}
+.shellx-browser-options-section input[type="url"],
+.shellx-browser-options-section input[type="password"] {
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink);
+  padding: 0 8px;
+  font: inherit;
+}
+.shellx-browser-options-section select {
+  min-width: 96px;
+  max-width: 160px;
+  height: 28px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+}
+.shellx-browser-options-section .shellx-browser-home-setting {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+.shellx-browser-menu-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.shellx-browser-address-row input,
+.shellx-browser-agent-compose textarea,
+.shellx-browser-agent-compose select,
+.shellx-browser-dev-select select {
+  min-width: 0;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 10px;
+  font-family: var(--sans);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-address-row input {
+  height: 32px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.shellx-browser-agent-compose textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  padding: 9px 10px;
+  line-height: 1.45;
+}
+.shellx-browser-agent-compose select {
+  height: 32px;
+}
+.shellx-browser-icon-btn,
+.shellx-browser-primary,
+.shellx-browser-secondary {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.shellx-browser-icon-btn {
+  width: 32px;
+  padding: 0;
+}
+.shellx-browser-primary {
+  min-width: 62px;
+  padding: 0 12px;
+  border-color: rgba(34, 197, 94, 0.48);
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--ok);
+}
+.shellx-browser-secondary {
+  padding: 0 11px;
+}
+.shellx-browser-icon-btn:hover,
+.shellx-browser-secondary:hover,
+.shellx-browser-primary:hover {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.shellx-browser-icon-btn:disabled,
+.shellx-browser-primary:disabled,
+.shellx-browser-secondary:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+.shellx-browser-personal-lock-btn {
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+.shellx-browser-personal-lock-btn.unconfigured {
+  border-color: rgba(245, 158, 11, 0.38);
+  background: rgba(245, 158, 11, 0.08);
+  color: #fbbf24;
+}
+.shellx-browser-personal-lock-btn.unlocked {
+  border-color: rgba(34, 197, 94, 0.5);
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--ok);
+}
+.shellx-browser-personal-lock-btn.locked {
+  border-color: rgba(239, 68, 68, 0.58);
+  background: rgba(239, 68, 68, 0.14);
+  color: var(--err);
+}
+.shellx-browser-personal-lock-btn.attention,
+.shellx-browser-personal-lock-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.22), 0 0 0 5px rgba(239, 68, 68, 0.12);
+}
+.shellx-browser-tab-strip {
+  position: relative;
+  z-index: 1;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
+  overflow: visible;
+}
+.shellx-browser-tabs {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.shellx-browser-tabs::-webkit-scrollbar {
+  display: none;
+}
+.shellx-browser-tab {
+  width: clamp(132px, 16vw, 184px);
+  min-width: 124px;
+  height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  padding: 2px 3px 2px 8px;
+  background: var(--surface);
+  color: var(--ink-2);
+  text-align: left;
+}
+.shellx-browser-tab.active {
+  border-color: rgba(34, 197, 94, 0.55);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px rgba(34, 197, 94, 0.18),
+    0 0 0 3px rgba(34, 197, 94, 0.06);
+  color: var(--ink);
+}
+.shellx-browser-tab:hover {
+  border-color: var(--hairline-2);
+  color: var(--ink);
+}
+.shellx-browser-tab-main,
+.shellx-browser-tab-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.shellx-browser-tab-main {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.shellx-browser-tab-close {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius-button);
+  color: var(--ink-3);
+  cursor: pointer;
+  opacity: 0.76;
+}
+.shellx-browser-tab-close:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+  opacity: 1;
+}
+.shellx-browser-tab-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.32;
+}
+.shellx-browser-tab-main span,
+.shellx-browser-tab-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-tab-main span {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+}
+.shellx-browser-tab-main small,
+.shellx-browser-tab-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.shellx-browser-tab-profile-marker {
+  width: 15px;
+  height: 15px;
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-tab-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.shellx-browser-goal {
+  flex: 1 1 auto;
+}
+.shellx-browser-error {
+  margin: 10px 14px 0;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: var(--radius-button);
+  padding: 8px 10px;
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--err);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-native-security-notice {
+  padding: 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 42%, var(--hairline));
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.shellx-browser-lock-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-color: rgba(239, 68, 68, 0.56);
+  background: rgba(239, 68, 68, 0.1);
+}
+.shellx-browser-lock-notice span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.shellx-browser-lock-notice .settings-pill {
+  flex: 0 0 auto;
+}
+.shellx-browser-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--shellx-browser-right-sidebar-width, 360px);
+  gap: 1px;
+  background: var(--hairline);
+}
+.shellx-browser-grid.hide-right {
+  grid-template-columns: minmax(0, 1fr);
+}
+.shellx-browser-sidebar,
+.shellx-browser-page {
+  min-height: 0;
+  background: var(--bg);
+}
+.shellx-browser-sidebar {
+  position: relative;
+  overflow: auto;
+  padding: 12px 12px 14px;
+}
+.shellx-browser-right {
+  padding-top: 12px;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 10px;
+  align-content: stretch;
+  overflow: hidden;
+}
+.shellx-browser-panel-toggle {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  background: var(--surface);
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.shellx-browser-panel-toggle {
+  position: absolute;
+  top: 8px;
+}
+.shellx-browser-panel-toggle-right {
+  left: 8px;
+}
+.shellx-browser-right-controls {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-left: 8px;
+}
+.shellx-browser-right-controls .shellx-browser-panel-toggle {
+  position: static;
+  flex: 0 0 auto;
+}
+.shellx-browser-vault-prompt {
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-chip);
+  padding: 4px 7px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

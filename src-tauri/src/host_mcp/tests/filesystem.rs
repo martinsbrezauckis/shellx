@@ -30,6 +30,112 @@ fn path_safety_allows_the_native_temp_directory() {
     std::fs::remove_dir(&target).expect("remove native temp watch fixture");
 }
 
+#[test]
+fn wsl_unc_parser_tracks_exact_distro_path_and_allowed_root() {
+    for (raw, distro, linux_path, allowed_root) in [
+        (
+            r"\\wsl$\Ubuntu-24.04\home\alice\project\file.txt",
+            "Ubuntu-24.04",
+            "/home/alice/project/file.txt",
+            "/home/alice",
+        ),
+        (
+            r"\\wsl.localhost\Ubuntu-24.04\tmp\shellx\file.txt",
+            "Ubuntu-24.04",
+            "/tmp/shellx/file.txt",
+            "/tmp",
+        ),
+        (
+            r"\\?\UNC\wsl.localhost\Ubuntu-24.04\home\alice\new.txt",
+            "Ubuntu-24.04",
+            "/home/alice/new.txt",
+            "/home/alice",
+        ),
+    ] {
+        let parsed = parse_wsl_unc_path(Path::new(raw))
+            .expect("valid WSL UNC path")
+            .expect("WSL UNC path detected");
+        assert_eq!(parsed.distro, distro);
+        assert_eq!(parsed.linux_path, linux_path);
+        assert_eq!(parsed.allowed_root, allowed_root);
+    }
+    assert!(parse_wsl_unc_path(Path::new(r"\\wsl$\Ubuntu-24.04\etc\passwd")).is_err());
+    assert!(parse_wsl_unc_path(Path::new(r"\\wsl$\Ubuntu-24.04\root\secret")).is_err());
+    assert!(parse_wsl_unc_path(Path::new(r"\\wsl$\bad distro\home\alice\x")).is_err());
+    assert_eq!(
+        parse_wsl_unc_path(Path::new("/home/alice/project")).expect("ordinary path"),
+        None
+    );
+}
+
+#[test]
+fn linux_root_check_rejects_sibling_and_escape_targets() {
+    assert!(linux_path_is_within_root(
+        "/home/alice/project/file",
+        "/home/alice"
+    ));
+    assert!(linux_path_is_within_root("/tmp/shellx/file", "/tmp"));
+    assert!(!linux_path_is_within_root(
+        "/home/alice2/file",
+        "/home/alice"
+    ));
+    assert!(!linux_path_is_within_root("/etc/passwd", "/home/alice"));
+    assert!(!linux_path_is_within_root("/mnt/c/Users/User", "/tmp"));
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires SHELLX_TEST_WSL_UNC_ROOT with the documented symlink fixture"]
+fn wsl_unc_live_containment_resolves_symlinks_inside_the_distro() {
+    let root = PathBuf::from(
+        std::env::var("SHELLX_TEST_WSL_UNC_ROOT")
+            .expect("SHELLX_TEST_WSL_UNC_ROOT must name the live fixture UNC root"),
+    );
+
+    enforce_home_containment(
+        "fs_read",
+        &root.join("inside-link").join("file.txt"),
+        FsAccessKind::Read,
+    )
+    .expect("in-root read symlink remains allowed");
+    enforce_home_containment(
+        "fs_write",
+        &root.join("inside-link").join("new.txt"),
+        FsAccessKind::Write,
+    )
+    .expect("in-root write symlink remains allowed");
+
+    for (escape, kind) in [
+        (root.join("etc-link").join("passwd"), FsAccessKind::Read),
+        (root.join("chained-link").join("passwd"), FsAccessKind::Read),
+        (
+            root.join("windows-link")
+                .join("Users")
+                .join("ShellX-new.txt"),
+            FsAccessKind::Write,
+        ),
+        (
+            root.join("tmp-link").join("ShellX-new.txt"),
+            FsAccessKind::Write,
+        ),
+    ] {
+        let error = enforce_home_containment("fs_test", &escape, kind)
+            .expect_err("out-of-root symlink must be rejected");
+        assert!(
+            error.contains("outside allowed root"),
+            "{escape:?}: {error}"
+        );
+    }
+
+    let hidden_sensitive = root.join("hidden-sensitive").join("id_ed25519");
+    let error = enforce_home_containment("fs_read", &hidden_sensitive, FsAccessKind::Read)
+        .expect_err("resolved sensitive path must be rejected");
+    assert!(
+        error.contains("matches denylist pattern '/.ssh/'"),
+        "{hidden_sensitive:?}: {error}"
+    );
+}
+
 #[tokio::test]
 async fn secret_get_rejects_shell_meta() {
     let r = tool_secret_get(json!({"path": "foo;bar"})).await;

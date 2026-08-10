@@ -24,7 +24,7 @@
  * Selecting "(none)" clears the field. We DO NOT expose vault values
  * here — only the references.
  */
-import { useEffect, useRef, useState, type CSSProperties, type JSX } from "react";
+import { lazy, useEffect, useRef, useState, type CSSProperties, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ConnectionPreset,
@@ -34,8 +34,10 @@ import type {
 } from "./ConnectionPicker";
 import { agentDisplayName } from "../lib/agent-selection";
 import { scanConnectionProviderCapabilities } from "../lib/connection-provider-capabilities";
-import { AgentCliSetupDialog } from "./AgentCliSetupAssistant";
+import { LazySurface } from "./LazySurface";
 import { useModalFocus } from "../lib/useModalFocus";
+
+const AgentCliSetupDialog = lazy(() => import("./AgentCliSetupDialog.lazy"));
 
 export function ConnectionEditor({
   open,
@@ -318,7 +320,14 @@ export function ConnectionEditor({
           <h2 id="conn-editor-title" style={{ margin: 0, fontSize: 16 }}>
             {initial ? "Edit connection" : "New connection"}
           </h2>
-          <button aria-label="Close connection editor" onClick={onClose}>×</button>
+          <button
+            type="button"
+            className="settings-close"
+            aria-label="Close connection editor"
+            onClick={onClose}
+          >
+            ×
+          </button>
         </div>
         {error && (
           <div role="alert" style={{ color: "var(--err)", fontSize: "var(--fs-ui-sm)" }}>
@@ -544,11 +553,16 @@ export function ConnectionEditor({
           </div>
         </Labeled>
         {setupDialogOpen && setupPreset && (
-          <AgentCliSetupDialog
-            preset={setupPreset}
-            onSetupChanged={applySetupScan}
-            onClose={() => setSetupDialogOpen(false)}
-          />
+          <LazySurface
+            label="Agent CLI Setup Assistant"
+            onDismiss={() => setSetupDialogOpen(false)}
+          >
+            <AgentCliSetupDialog
+              preset={setupPreset}
+              onSetupChanged={applySetupScan}
+              onClose={() => setSetupDialogOpen(false)}
+            />
+          </LazySurface>
         )}
         {testResult && (
           <div
@@ -569,11 +583,30 @@ export function ConnectionEditor({
           </div>
         )}
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }}>
-          <button data-debug-id="surface-components-connectioneditor-14" onClick={handleTest} disabled={testing || !initial?.id}>
+          <button
+            type="button"
+            className="settings-pill"
+            data-debug-id="surface-components-connectioneditor-14"
+            onClick={handleTest}
+            disabled={testing || !initial?.id}
+          >
             {testing ? "Testing…" : "Test"}
           </button>
-          <button aria-label="Cancel connection changes" onClick={onClose}>Cancel</button>
-          <button data-debug-id="surface-components-connectioneditor-16" onClick={handleSave} disabled={saving}>
+          <button
+            type="button"
+            className="settings-pill"
+            aria-label="Cancel connection changes"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="settings-pill active"
+            data-debug-id="surface-components-connectioneditor-16"
+            onClick={handleSave}
+            disabled={saving}
+          >
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
