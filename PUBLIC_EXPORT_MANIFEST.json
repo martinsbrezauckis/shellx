@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "ddf201199cea45ac9043b47f57cd2b7aa77b2ebe",
-    "tree": "82cf59284be919730cbe8d628fd1bb9c1e9c06fa"
+    "commit": "b5642172fb7ea9f7569bdb41641adf06a3aba324",
+    "tree": "523d022bf25e4fab99b5a4df8991f817bc99d8b1"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1096,
-    "totalBytes": 32581022,
-    "digest": "af0269a514df01d4a8ef452b33b8cb758906ba49689e9b326b01d9b53c718310"
+    "totalBytes": 32581256,
+    "digest": "bfb135c18724271186a394ff85096d76026dd97beb6833c8756aaf78602935dc"
   },
   "exclusions": {
     "fileCount": 21,
@@ -38,8 +38,8 @@
     {
       "path": ".gitattributes",
       "mode": "100644",
-      "sha256": "1d5d71dcc6ccd28ab46a335349ecc74742ca4b81f4fcad212f8d134f70f1f13e",
-      "bytes": 17,
+      "sha256": "41c9067849395f502c4057e2f2c6cd3535457c33df7491a406335f7596989371",
+      "bytes": 36,
       "ruleId": "repository-metadata",
       "matchedBy": "exact",
       "matchedPath": ".gitattributes",
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "beb7ed7d80f46626c9cc2ea78bb1b06650e1200b76e6481f67d7e557d820c06f",
+      "sha256": "5b5597d90a92818ad126a16f2eec41c03172fece4c71f9f4ad40f25274a93ae7",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -3987,8 +3987,8 @@
     {
       "path": "scripts/test-ci-surface-coverage.mjs",
       "mode": "100644",
-      "sha256": "bcfa2464a348573c2c82ea9357b732d4babf6e543cb0f7e79572a126949f05f2",
-      "bytes": 4033,
+      "sha256": "f392f61b3c1b48a14441af73cc4bd9be46ddbb843b8a6755819d89e554ffdc9e",
+      "bytes": 4248,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",

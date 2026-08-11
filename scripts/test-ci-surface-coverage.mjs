@@ -5,6 +5,7 @@ import { ciSurfaceCoverageErrors } from "./lib/ci-surface-coverage.mjs";
 import { TEST_SUITES } from "./test-suite-manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
+const attributesSource = readFileSync(resolve(root, ".gitattributes"), "utf8");
 const ciSource = readFileSync(resolve(root, ".github/workflows/ci.yml"), "utf8");
 const releaseSource = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
 const buildScript = readFileSync(resolve(root, "src-tauri/build.rs"), "utf8");
@@ -23,6 +24,10 @@ const input = {
   testSuites: TEST_SUITES,
 };
 assert.deepEqual(ciSurfaceCoverageErrors(input), []);
+assert(
+  attributesSource.split(/\r?\n/).includes("* text=auto eol=lf"),
+  "Git must preserve canonical LF text on every CI host",
+);
 
 const windowsCheckout = {
   ...input,
