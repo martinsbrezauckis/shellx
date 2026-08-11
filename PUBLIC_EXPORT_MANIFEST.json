@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "1aeaa3dc49d85f15123cf6650cc2a613e9721346",
-    "tree": "fcb7e623dd05d6aeb8eb43057d557be35a934d03"
+    "commit": "38eeb1d1bc8e13225d2bee512414341e8fab0379",
+    "tree": "4e3f853a2c023946e7b4772de193c6369461be74"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1096,
-    "totalBytes": 32580341,
-    "digest": "ba63a213f08e04e2be4073dc609f2344b08e3f6fa07c9b42c4aec1594b6763c7"
+    "totalBytes": 32580344,
+    "digest": "316c4165a2c10fbe4eb87da52e6aee7b8cf6e66a117d38b25417442ccc7821d2"
   },
   "exclusions": {
     "fileCount": 21,
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "73c01d446f22fd39310860546c5d25706663bac7f0393d5077b811f95a7f4547",
+      "sha256": "72ea42fe4ab867757a9f4c3a7941e8c9761abae1668bfd952d153628bd9d2f3e",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -4306,8 +4306,8 @@
     {
       "path": "scripts/test-protocol-docs-parity.ts",
       "mode": "100644",
-      "sha256": "b2c8e67d5a7f35c5bd76cc8d38007e707a7f9416bd9efffa8e1cbaea9d257736",
-      "bytes": 7491,
+      "sha256": "08abc6b1178e75544202b398ec963ff102e55a0c252f3f7697e69aff0d0675a7",
+      "bytes": 7494,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",

@@ -64,7 +64,7 @@ function documentedDebugApiRoutes(apiDocs: string): Set<string> {
   const end = apiDocs.indexOf("Legacy `/goal/*`", start);
   assert(start >= 0 && end > start, "API docs must contain one bounded current route inventory");
   const routes = new Set<string>();
-  for (const line of apiDocs.slice(start, end).split("\n")) {
+  for (const line of apiDocs.slice(start, end).split(/\r?\n/)) {
     const row = line.match(/^\| (GET|POST|DELETE) \| (.+) \|$/);
     if (!row) continue;
     const method = row[1];
