@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
 
-import { evaluateRustsecReport, validateWinrtPatch } from "./check-rustsec.mjs";
+import {
+  evaluateRustsecReport,
+  normalizePolicyText,
+  policyTextSha256,
+  validateWinrtPatch,
+} from "./check-rustsec.mjs";
 
 const NOW = new Date("2026-07-10T12:00:00Z");
 
 assert.deepEqual(validateWinrtPatch(), [], "reviewed Windows notification dependency patch stays intact");
+assert.equal(normalizePolicyText("name = \"quick-xml\"\r\nversion = \"0.39.4\"\r\n"), "name = \"quick-xml\"\nversion = \"0.39.4\"\n");
+assert.equal(
+  policyTextSha256("reviewed\r\nvendored\r\ntext\r\n"),
+  policyTextSha256("reviewed\nvendored\ntext\n"),
+  "reviewed text hashes must be stable across Git checkout line endings",
+);
 
 function vulnerability(id = "RUSTSEC-2026-0194", version = "0.39.4") {
   return {

@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "38eeb1d1bc8e13225d2bee512414341e8fab0379",
-    "tree": "4e3f853a2c023946e7b4772de193c6369461be74"
+    "commit": "ddf201199cea45ac9043b47f57cd2b7aa77b2ebe",
+    "tree": "82cf59284be919730cbe8d628fd1bb9c1e9c06fa"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1096,
-    "totalBytes": 32580344,
-    "digest": "316c4165a2c10fbe4eb87da52e6aee7b8cf6e66a117d38b25417442ccc7821d2"
+    "totalBytes": 32581022,
+    "digest": "af0269a514df01d4a8ef452b33b8cb758906ba49689e9b326b01d9b53c718310"
   },
   "exclusions": {
     "fileCount": 21,
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "72ea42fe4ab867757a9f4c3a7941e8c9761abae1668bfd952d153628bd9d2f3e",
+      "sha256": "beb7ed7d80f46626c9cc2ea78bb1b06650e1200b76e6481f67d7e557d820c06f",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -907,8 +907,8 @@
     {
       "path": "scripts/check-rustsec.mjs",
       "mode": "100644",
-      "sha256": "84e20b8e8437d68c4525633c72c4a487495266fab6efd9534b6cb5bb9b56f529",
-      "bytes": 7171,
+      "sha256": "471bff7a978785e35b4ecf335f1cc85906eb2fdfa6c8765ba2be6bd97868a179",
+      "bytes": 7469,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5274,8 +5274,8 @@
     {
       "path": "scripts/test-rustsec-audit.mjs",
       "mode": "100644",
-      "sha256": "53bd2da681b293e959c5b2c29ddca7c0103a9246c14ef176cea339e040f8edc7",
-      "bytes": 2897,
+      "sha256": "35b8c6bf1ebb048be8b9d920d76a1a315c12f792ecaf8e203c85abc37a3e8a33",
+      "bytes": 3277,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
