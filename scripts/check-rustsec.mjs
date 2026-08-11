@@ -91,30 +91,42 @@ function readJson(path) {
   }
 }
 
-function sha256(path) {
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+export function normalizePolicyText(value) {
+  return value.replace(/\r\n/g, "\n");
+}
+
+export function policyTextSha256(value) {
+  return createHash("sha256").update(normalizePolicyText(value), "utf8").digest("hex");
+}
+
+function readPolicyText(path) {
+  return normalizePolicyText(readFileSync(path, "utf8"));
+}
+
+function sha256PolicyText(path) {
+  return policyTextSha256(readFileSync(path, "utf8"));
 }
 
 export function validateWinrtPatch() {
   const errors = [];
   for (const [relativePath, expectedHash] of WINRT_UPSTREAM_HASHES) {
-    const actualHash = sha256(resolve(WINRT_VENDOR_ROOT, relativePath));
+    const actualHash = sha256PolicyText(resolve(WINRT_VENDOR_ROOT, relativePath));
     if (actualHash !== expectedHash) {
       errors.push(`vendored tauri-winrt-notification ${relativePath} differs from crates.io 0.7.2`);
     }
   }
 
-  const vendorManifest = readFileSync(resolve(WINRT_VENDOR_ROOT, "Cargo.toml"), "utf8");
+  const vendorManifest = readPolicyText(resolve(WINRT_VENDOR_ROOT, "Cargo.toml"));
   if (!vendorManifest.includes('version = "0.7.2"') || !vendorManifest.includes('quick-xml = "0.41"')) {
     errors.push("vendored tauri-winrt-notification must retain API version 0.7.2 and quick-xml 0.41");
   }
 
-  const rootManifest = readFileSync(ROOT_MANIFEST_PATH, "utf8");
+  const rootManifest = readPolicyText(ROOT_MANIFEST_PATH);
   if (!rootManifest.includes('tauri-winrt-notification = { path = "../vendor/tauri-winrt-notification" }')) {
     errors.push("ShellX Cargo manifest does not activate the reviewed tauri-winrt-notification patch");
   }
 
-  const lock = readFileSync(LOCK_PATH, "utf8");
+  const lock = readPolicyText(LOCK_PATH);
   for (const vulnerableVersion of ["0.37.5", "0.39.4"]) {
     if (lock.includes(`name = "quick-xml"\nversion = "${vulnerableVersion}"`)) {
       errors.push(`Cargo.lock still resolves vulnerable quick-xml ${vulnerableVersion}`);
