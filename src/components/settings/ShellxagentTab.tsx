@@ -12,9 +12,9 @@
  * - shellxagent_token_regenerate → rotate + persist
  * - get_bound_ports → { debugApi, mcpHttp } actual ports
  *
- * Rotation takes effect immediately: the auth middleware re-reads
- * `~/.shellx/shellxagent.token` on every request, so orchestrators
- * just reload the file to pick up the new value.
+ * Rotation takes effect immediately after ShellX atomically persists the new
+ * value and swaps its process authority. Existing external orchestrators must
+ * reload their token after a successful rotation.
  *
  * Uses the shared `.settings-row`/`.settings-label`/`.settings-input`/
  * `.settings-pill` primitives so visual rhythm matches the other tabs.

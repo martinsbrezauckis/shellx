@@ -588,6 +588,7 @@ impl ShellxBrowserRegistry {
     pub fn vault_grant_actor_context_for_action(
         &self,
         request: &BrowserActionRequest,
+        authenticated_agent_id: Option<&str>,
     ) -> Result<crate::shellx_vault::GrantActorContext, String> {
         let state = lock_or_recover(&self.state);
         let target_tab_idx = resolve_action_tab_index(&state, request)?;
@@ -615,12 +616,10 @@ impl ShellxBrowserRegistry {
             .or(task_url)
             .or_else(|| state.engine.url.clone());
         Ok(crate::shellx_vault::GrantActorContext {
-            agent_id: request
-                .owner_agent_id
-                .as_deref()
-                .map(clean_string)
-                .filter(|value| !value.is_empty())
-                .or_else(|| Some("shellx-browser-agent".to_string())),
+            agent_id: crate::shellx_browser_caller::browser_vault_agent_identity(
+                authenticated_agent_id,
+                request.owner_agent_id.as_deref(),
+            ),
             provider_id: None,
             workspace: None,
             origin: current_url.as_deref().and_then(browser_origin_for_url),

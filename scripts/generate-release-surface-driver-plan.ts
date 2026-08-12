@@ -23,6 +23,16 @@ import {
   UI_CONTROL_BOUNDED_INSTALLED_DRIVER_ID,
   UI_CONTROL_BOUNDED_INSTALLED_SURFACE_NAMES,
 } from "./release-drivers/ui-control-bounded-installed-assignments";
+import {
+  BROWSER_TEACH_CONTROL_DRIVER_ID,
+  BROWSER_TEACH_CONTROL_SURFACE_IDS,
+  BROWSER_TEACH_DEBUG_ASSIGNMENT_IDS,
+  BROWSER_TEACH_DEBUG_DRIVER_ID,
+  BROWSER_TEACH_INSTALLED_CLEANUP,
+  BROWSER_TEACH_INSTALLED_CONTROL_ORACLES,
+  BROWSER_TEACH_INSTALLED_DEBUG_ORACLE,
+  BROWSER_TEACH_INSTALLED_FIXTURE,
+} from "./release-drivers/ui-browser-teach-review-installed-assignments";
 
 const BACKLOG_SUFFIX = "-backlog-installed";
 const BROWSER_SHIELDS_UI_DRIVER_ID = "ui-control-browser-shields-installed";
@@ -172,6 +182,46 @@ const BROWSER_DELEGATION_DEBUG_DRIVER_ID = "ui-debug-browser-delegation-installe
 const BROWSER_DELEGATION_DEBUG_SURFACE_IDS = new Set([
   "ui-debug-surface:shellx-browser-handoff-tab@src/browser/components/BrowserChrome.tsx#8",
   "ui-debug-surface:shellx-browser-take-back-tab@src/browser/components/BrowserChrome.tsx#9",
+  "ui-debug-surface:shellx-browser-handoff-confirmation-backdrop@src/browser/components/BrowserTabHandoffConfirmation.tsx#1",
+  "ui-debug-surface:shellx-browser-handoff-confirmation@src/browser/components/BrowserTabHandoffConfirmation.tsx#2",
+  "ui-debug-surface:shellx-browser-handoff-context@src/browser/components/BrowserTabHandoffConfirmation.tsx#3",
+  "ui-debug-surface:shellx-browser-handoff-vault-notice@src/browser/components/BrowserTabHandoffConfirmation.tsx#4",
+  "ui-debug-surface:shellx-browser-handoff-status@src/browser/components/BrowserTabHandoffConfirmation.tsx#5",
+  "ui-debug-surface:shellx-browser-handoff-cancel@src/browser/components/BrowserTabHandoffConfirmation.tsx#6",
+  "ui-debug-surface:shellx-browser-handoff-confirm@src/browser/components/BrowserTabHandoffConfirmation.tsx#7",
+]);
+const BROWSER_DEVELOPER_EVIDENCE_UI_DRIVER_ID = "ui-control-browser-developer-evidence-installed";
+const BROWSER_DEVELOPER_EVIDENCE_DEBUG_DRIVER_ID = "ui-debug-browser-developer-evidence-installed";
+const BROWSER_DEVELOPER_EVIDENCE_UI_SURFACE_IDS = new Set([
+  'ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id="shellx-browser-developer-approve-current-site"]@src/browser/components/BrowserDeveloperInspection.tsx#4',
+  'ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id="shellx-browser-developer-disable-mode"]@src/browser/components/BrowserDeveloperInspection.tsx#5',
+  'ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id="shellx-browser-developer-export-har"]@src/browser/components/BrowserDeveloperInspection.tsx#2',
+  'ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id="shellx-browser-developer-export-performance"]@src/browser/components/BrowserDeveloperInspection.tsx#3',
+  'ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id="shellx-browser-developer-inspect"]@src/browser/components/BrowserDeveloperInspection.tsx#1',
+  'ui-control:src/browser/components/BrowserEvidencePanel.tsx:[data-debug-id="shellx-browser-evidence-teach-workflow"]@src/browser/components/BrowserEvidencePanel.tsx#2',
+]);
+const BROWSER_DEVELOPER_EVIDENCE_DEBUG_SURFACE_IDS = new Set([
+  "ui-debug-surface:shellx-browser-evidence-teach-workflow@src/browser/components/BrowserEvidencePanel.tsx#3",
+  "ui-debug-surface:shellx-browser-developer-*-receipt@src/browser/components/BrowserDeveloperInspection.tsx#1",
+  "ui-debug-surface:shellx-browser-developer-access-active@src/browser/components/BrowserDeveloperInspection.tsx#18",
+  "ui-debug-surface:shellx-browser-developer-access-required@src/browser/components/BrowserDeveloperInspection.tsx#16",
+  "ui-debug-surface:shellx-browser-developer-approve-current-site@src/browser/components/BrowserDeveloperInspection.tsx#17",
+  "ui-debug-surface:shellx-browser-developer-artifacts@src/browser/components/BrowserDeveloperInspection.tsx#20",
+  "ui-debug-surface:shellx-browser-developer-clean@src/browser/components/BrowserDeveloperInspection.tsx#9",
+  "ui-debug-surface:shellx-browser-developer-console-summary@src/browser/components/BrowserDeveloperInspection.tsx#5",
+  "ui-debug-surface:shellx-browser-developer-disable-mode@src/browser/components/BrowserDeveloperInspection.tsx#19",
+  "ui-debug-surface:shellx-browser-developer-export-har@src/browser/components/BrowserDeveloperInspection.tsx#13",
+  "ui-debug-surface:shellx-browser-developer-export-performance@src/browser/components/BrowserDeveloperInspection.tsx#14",
+  "ui-debug-surface:shellx-browser-developer-inspect@src/browser/components/BrowserDeveloperInspection.tsx#12",
+  "ui-debug-surface:shellx-browser-developer-inspection@src/browser/components/BrowserDeveloperInspection.tsx#11",
+  "ui-debug-surface:shellx-browser-developer-issues@src/browser/components/BrowserDeveloperInspection.tsx#8",
+  "ui-debug-surface:shellx-browser-developer-last-inspected@src/browser/components/BrowserDeveloperInspection.tsx#3",
+  "ui-debug-surface:shellx-browser-developer-network-summary@src/browser/components/BrowserDeveloperInspection.tsx#6",
+  "ui-debug-surface:shellx-browser-developer-page-summary@src/browser/components/BrowserDeveloperInspection.tsx#4",
+  "ui-debug-surface:shellx-browser-developer-partial@src/browser/components/BrowserDeveloperInspection.tsx#10",
+  "ui-debug-surface:shellx-browser-developer-performance-summary@src/browser/components/BrowserDeveloperInspection.tsx#7",
+  "ui-debug-surface:shellx-browser-developer-state-*@src/browser/components/BrowserDeveloperInspection.tsx#15",
+  "ui-debug-surface:shellx-browser-developer-summary@src/browser/components/BrowserDeveloperInspection.tsx#2",
 ]);
 const BROWSER_PERSONAL_LOCK_DEBUG_SURFACE_IDS = new Set([
   "ui-debug-surface:shellx-browser-personal-lock-now@src/browser/components/BrowserMenus.tsx#8",
@@ -383,7 +433,6 @@ const vaultUiLifecycleBuildingBlockers = new Map<string, string>([
   ['ui-control:src/components/settings/VaultTab.tsx:[aria-label="Copy without revealing"]@src/components/settings/VaultTab.tsx#27', "Copy without revealing writes the generated secret draft to the operator clipboard, which has no exact cross-platform restoration channel"],
   ['ui-control:src/components/VaultPasswordGenerator.tsx:[data-debug-id="vault-password-generator-copy"]@src/components/VaultPasswordGenerator.tsx#4', "Copy generated password writes secret material to the operator clipboard, which this isolated lifecycle must not touch"],
 ]);
-
 type VaultRequestPromptPromotion = {
   fixtureId: string;
   expectedEffect: string;
@@ -981,6 +1030,46 @@ const browserDelegationDebugDriver: FinalSurfaceDriverDefinition = {
     "linux-installed": "ready",
   },
 };
+const browserDeveloperEvidenceUiDriver: FinalSurfaceDriverDefinition = {
+  id: BROWSER_DEVELOPER_EVIDENCE_UI_DRIVER_ID,
+  kind: "ui-control",
+  entrypoint: "scripts/release-drivers/ui-control-browser-developer-evidence-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
+const browserDeveloperEvidenceDebugDriver: FinalSurfaceDriverDefinition = {
+  id: BROWSER_DEVELOPER_EVIDENCE_DEBUG_DRIVER_ID,
+  kind: "ui-debug-surface",
+  entrypoint: "scripts/release-drivers/ui-debug-browser-developer-evidence-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
+const browserTeachUiDriver: FinalSurfaceDriverDefinition = {
+  id: BROWSER_TEACH_CONTROL_DRIVER_ID,
+  kind: "ui-control",
+  entrypoint: "scripts/release-drivers/ui-control-browser-teach-review-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
+const browserTeachDebugDriver: FinalSurfaceDriverDefinition = {
+  id: BROWSER_TEACH_DEBUG_DRIVER_ID,
+  kind: "ui-debug-surface",
+  entrypoint: "scripts/release-drivers/ui-debug-browser-teach-review-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
 const rightRailGitReadUiDriver: FinalSurfaceDriverDefinition = {
   id: RIGHT_RAIL_GIT_READ_UI_DRIVER_ID,
   kind: "ui-control",
@@ -1273,8 +1362,16 @@ const promotedTauriCommands = new Set([
   "shellx_browser_grant_transfer",
   "shellx_browser_open_window",
   "shellx_browser_open_vault_panel",
+  "shellx_browser_operator_approve_teach_draft",
+  "shellx_browser_operator_developer_inspect",
   "shellx_browser_operator_evidence_summary",
+  "shellx_browser_operator_export_har",
   "shellx_browser_operator_export_flight_recorder",
+  "shellx_browser_operator_export_performance",
+  "shellx_browser_operator_list_teach_drafts",
+  "shellx_browser_operator_prepare_teach_draft",
+  "shellx_browser_operator_rehearse_teach_recipe",
+  "shellx_browser_operator_revise_teach_draft",
   "shellx_browser_sync_engine",
   "shellx_browser_replay_cowork_prompt_notifications",
   "shellx_browser_remove_site_shields",
@@ -1384,6 +1481,7 @@ const promotedDebugApiReads = new Set([
   "GET /browser/bookmarks",
   "GET /browser/check",
   "GET /browser/settle",
+  "GET /browser/teach/drafts",
   "GET /browser/developer-mode",
   "GET /browser/dialogs",
   "GET /browser/downloads",
@@ -1479,6 +1577,11 @@ const promotedDebugApiBrowserLifecycleMutations = new Set([
   "POST /browser/tabs/open",
   "POST /browser/tabs/reorder",
   "POST /browser/tabs/unlock",
+]);
+const promotedDebugApiBrowserTeachDeveloperMutations = new Set([
+  "POST /browser/developer/inspect",
+  "POST /browser/teach/prepare",
+  "POST /browser/teach/revise",
 ]);
 const promotedDebugApiBrowserEvidenceArtifactMutations = new Set([
   "POST /browser/evaluations",
@@ -1706,6 +1809,7 @@ const promotedHostMcpReads = new Set([
   "Agent_poll_all",
   "Agent_status",
   "capabilities_summary",
+  "cut_read",
   "browser_locks",
   "browser_check",
   "browser_downloads",
@@ -1783,6 +1887,7 @@ const promotedHostMcpWrites = new Set([
   "fs_watch",
   "fs_write",
   "host_act",
+  "cut_act",
   "goal_complete",
   "mem_delete",
   "mem_set",
@@ -3057,9 +3162,27 @@ const promotedUiControls = new Map<string, {
   }],
   ["src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-clear-history\"]", {
     fixtureId: "ui:browser-owned-history-sidecar",
-    expectedEffect: "Native input accepts the exact operator confirmation and clears the isolated owned Browser-history baseline before restoring scope, panel, task, loopback server, and window state.",
+    expectedEffect: "Native input confirms the exact ShellX Agent-history sheet and clears the isolated owned Browser-history baseline before restoring scope, panel, task, loopback server, and window state.",
     oracleId: "ui:activation:owned-browser-history-clear",
     cleanupId: "ui:clear-owned-browser-history-abort-task-and-window-loopback",
+  }],
+  ["src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-clear-all-history\"]", {
+    fixtureId: "ui:browser-history-clear-sheet-owned-baseline",
+    expectedEffect: "Native input opens the exact All-history confirmation sheet over a mixed owned User and Agent history baseline without removing either class before exact panel, scope, task, personal tab, loopback server, and window restoration.",
+    oracleId: "ui:activation:owned-browser-history-all-clear-sheet",
+    cleanupId: "ui:restore-owned-browser-history-clear-sheet",
+  }],
+  ["src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-history-clear-cancel\"]", {
+    fixtureId: "ui:browser-history-clear-sheet-owned-baseline",
+    expectedEffect: "Native input cancels the exact All-history confirmation sheet over a mixed owned User and Agent history baseline and preserves both classes before exact panel, scope, task, personal tab, loopback server, and window restoration.",
+    oracleId: "ui:activation:owned-browser-history-clear-cancel",
+    cleanupId: "ui:restore-owned-browser-history-clear-sheet",
+  }],
+  ["src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-history-clear-confirm\"]", {
+    fixtureId: "ui:browser-history-clear-sheet-owned-baseline",
+    expectedEffect: "Native input confirms the exact All-history sheet over a mixed owned User and Agent history baseline, then verifies the all-scope receipt and success status before exact panel, scope, task, personal tab, loopback server, and window restoration.",
+    oracleId: "ui:activation:owned-browser-history-all-clear-receipt",
+    cleanupId: "ui:restore-owned-browser-history-clear-sheet",
   }],
   ["src/browser/components/BookmarkSidecar.tsx:[data-debug-id=\"shellx-browser-bookmark-list-mode\"]", {
     fixtureId: "ui:browser-bookmark-mode-owned-baseline",
@@ -3195,13 +3318,25 @@ const promotedUiControls = new Map<string, {
   }],
   ["src/browser/components/BrowserChrome.tsx:[data-debug-id=\"shellx-browser-handoff-tab\"]", {
     fixtureId: "ui:browser-owned-tab-delegation",
-    expectedEffect: "Installed input accepts the exact trusted-user confirmation and delegates one owned user tab to the exact active Browser agent task without granting Vault access, then takes it back and restores task, ownership, active-tab, tab-set, and window state.",
+    expectedEffect: "Installed input opens and confirms the exact ShellX-owned trusted-user handoff sheet, delegates one owned user tab to the exact active Browser agent task without granting Vault access, then takes it back and restores task, ownership, active-tab, tab-set, and window state.",
     oracleId: "ui:activation:owned-browser-tab-delegation-transition",
     cleanupId: "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window",
   }],
   ["src/browser/components/BrowserChrome.tsx:[data-debug-id=\"shellx-browser-take-back-tab\"]", {
     fixtureId: "ui:browser-owned-tab-delegation",
     expectedEffect: "After an exact trusted-user handoff setup, installed input takes one owned delegated Browser tab back from its active agent task and restores user ownership with no task or grant binding before exact task, tab-set, active-tab, and window cleanup.",
+    oracleId: "ui:activation:owned-browser-tab-delegation-transition",
+    cleanupId: "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window",
+  }],
+  ["src/browser/components/BrowserTabHandoffConfirmation.tsx:[data-debug-id=\"shellx-browser-handoff-cancel\"]", {
+    fixtureId: "ui:browser-owned-tab-delegation",
+    expectedEffect: "Installed input opens the exact ShellX handoff review, verifies its sanitized tab, profile, persistence, owner, target-task, and Vault-boundary receipts, exercises Cancel with focus restoration, then reopens and confirms the owned handoff before exact take-back, task, tab-set, active-tab, and window cleanup.",
+    oracleId: "ui:activation:owned-browser-tab-delegation-transition",
+    cleanupId: "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window",
+  }],
+  ["src/browser/components/BrowserTabHandoffConfirmation.tsx:[data-debug-id=\"shellx-browser-handoff-confirm\"]", {
+    fixtureId: "ui:browser-owned-tab-delegation",
+    expectedEffect: "Installed input opens the exact ShellX handoff review, verifies its sanitized tab, profile, persistence, owner, target-task, and Vault-boundary receipts, exercises Cancel with focus restoration, then makes one trusted Confirm and observes its pending-to-success handoff before exact take-back, task, tab-set, active-tab, and window cleanup.",
     oracleId: "ui:activation:owned-browser-tab-delegation-transition",
     cleanupId: "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window",
   }],
@@ -4334,6 +4469,10 @@ export function buildExpectedPlan(
       && driver.id !== CHAT_OUTPUT_JUMP_DEBUG_DRIVER_ID
       && driver.id !== BROWSER_PERSONAL_LOCK_DEBUG_DRIVER_ID
       && driver.id !== BROWSER_DELEGATION_DEBUG_DRIVER_ID
+      && driver.id !== BROWSER_DEVELOPER_EVIDENCE_UI_DRIVER_ID
+      && driver.id !== BROWSER_DEVELOPER_EVIDENCE_DEBUG_DRIVER_ID
+      && driver.id !== BROWSER_TEACH_CONTROL_DRIVER_ID
+      && driver.id !== BROWSER_TEACH_DEBUG_DRIVER_ID
       && driver.id !== "ui-debug-permission-decision-lifecycle-installed"
       && driver.id !== RIGHT_RAIL_GIT_READ_UI_DRIVER_ID
       && driver.id !== RIGHT_RAIL_GIT_WRITE_UI_DRIVER_ID
@@ -4377,6 +4516,10 @@ export function buildExpectedPlan(
     chatOutputJumpDebugDriver,
     browserPersonalLockDebugDriver,
     browserDelegationDebugDriver,
+    browserDeveloperEvidenceUiDriver,
+    browserDeveloperEvidenceDebugDriver,
+    browserTeachUiDriver,
+    browserTeachDebugDriver,
     rightRailGitReadUiDriver,
     rightRailGitWriteUiDriver,
     permissionDecisionUiDriver,
@@ -4413,6 +4556,7 @@ export function buildExpectedPlan(
             || promotedDebugApiVaultOpenPanelMutations.has(surface.name)
             || promotedDebugApiProviderLifecycleMutations.has(surface.name)
             || promotedDebugApiBrowserLifecycleMutations.has(surface.name)
+            || promotedDebugApiBrowserTeachDeveloperMutations.has(surface.name)
             || promotedDebugApiBrowserEvidenceArtifactMutations.has(surface.name)
             || promotedDebugApiBrowserMonotonicMutations.has(surface.name)
             || promotedDebugApiBrowserTransferIntentMutations.has(surface.name)
@@ -4469,6 +4613,8 @@ export function buildExpectedPlan(
             || promotedActivityBrowserLifecycleControls.has(surface.id)
             || SCREENSHOT_ATTACHMENT_UI_SURFACE_IDS.has(surface.id)
             || BROWSER_SAVE_LIFECYCLE_UI_SURFACE_IDS.has(surface.id)
+            || BROWSER_DEVELOPER_EVIDENCE_UI_SURFACE_IDS.has(surface.id)
+            || BROWSER_TEACH_CONTROL_SURFACE_IDS.has(surface.id)
             || agentCliSetupLifecycleUiControls.has(surface.id)
             || goalPlanReviewLifecycleUiControls.has(surface.id)
             || CLIPBOARD_LIFECYCLE_UI_SURFACE_IDS.has(surface.id)
@@ -4481,6 +4627,8 @@ export function buildExpectedPlan(
             || surface.id === VAULT_ROW_REVEAL_DEBUG_SURFACE_ID
             || BROWSER_PERSONAL_LOCK_DEBUG_SURFACE_IDS.has(surface.id)
             || BROWSER_DELEGATION_DEBUG_SURFACE_IDS.has(surface.id)
+            || BROWSER_DEVELOPER_EVIDENCE_DEBUG_SURFACE_IDS.has(surface.id)
+            || BROWSER_TEACH_DEBUG_ASSIGNMENT_IDS.has(surface.id)
             || releaseUiDebugSurfaceCohort(surface) !== null
             || surface.name === CHAT_OUTPUT_JUMP_DEBUG_SURFACE_NAME
           )
@@ -4538,6 +4686,7 @@ export function buildExpectedPlan(
         if (promotedDebugApiRawRevealDenials.has(surface.name)) return promotedDebugApiRawRevealDenialAssignment(surface);
         if (promotedDebugApiSafeRefusals.has(surface.name)) return promotedDebugApiSafeRefusalAssignment(surface);
         if (promotedDebugApiBrowserLifecycleMutations.has(surface.name)) return promotedDebugApiBrowserLifecycleMutationAssignment(surface);
+        if (promotedDebugApiBrowserTeachDeveloperMutations.has(surface.name)) return promotedDebugApiBrowserTeachDeveloperMutationAssignment(surface);
         if (promotedDebugApiBrowserEvidenceArtifactMutations.has(surface.name)) return promotedDebugApiBrowserEvidenceArtifactMutationAssignment(surface);
         if (promotedDebugApiBrowserMonotonicMutations.has(surface.name)) return promotedDebugApiBrowserMonotonicMutationAssignment(surface);
         if (promotedDebugApiBrowserTransferIntentMutations.has(surface.name)) return promotedDebugApiBrowserTransferIntentMutationAssignment(surface);
@@ -4584,6 +4733,12 @@ export function buildExpectedPlan(
       if (surface.kind === "keyboard-shortcut") return promotedKeyboardShortcutAssignment(surface);
       if (surface.kind === "shellx-command") return promotedShellxCommandAssignment(surface);
       if (surface.kind === "ui-control") {
+        if (BROWSER_TEACH_CONTROL_SURFACE_IDS.has(surface.id)) {
+          return promotedBrowserTeachUiAssignment(surface);
+        }
+        if (BROWSER_DEVELOPER_EVIDENCE_UI_SURFACE_IDS.has(surface.id)) {
+          return promotedBrowserDeveloperEvidenceUiAssignment(surface);
+        }
         if (BROWSER_SAVE_LIFECYCLE_UI_SURFACE_IDS.has(surface.id)) {
           return promotedBrowserSaveLifecycleAssignment(surface);
         }
@@ -4729,6 +4884,26 @@ function promotedVaultRequestPromptDebugAssignment(surface: ReleaseSurfaceItem):
 }
 
 function promotedUiDebugAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  if (BROWSER_TEACH_DEBUG_ASSIGNMENT_IDS.has(surface.id)) {
+    return {
+      surfaceId: surface.id,
+      driverId: BROWSER_TEACH_DEBUG_DRIVER_ID,
+      fixtureId: BROWSER_TEACH_INSTALLED_FIXTURE,
+      expectedEffect: `${surface.name} becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.`,
+      oracleId: BROWSER_TEACH_INSTALLED_DEBUG_ORACLE,
+      cleanupId: BROWSER_TEACH_INSTALLED_CLEANUP,
+    };
+  }
+  if (BROWSER_DEVELOPER_EVIDENCE_DEBUG_SURFACE_IDS.has(surface.id)) {
+    return {
+      surfaceId: surface.id,
+      driverId: BROWSER_DEVELOPER_EVIDENCE_DEBUG_DRIVER_ID,
+      fixtureId: "ui:browser-developer-evidence-owned-marker-state",
+      expectedEffect: `${surface.name} resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.`,
+      oracleId: "ui:visible-browser-developer-evidence-marker",
+      cleanupId: "ui:clear-browser-developer-marker-state-close-owned-task-and-window",
+    };
+  }
   if (BROWSER_PERSONAL_LOCK_DEBUG_SURFACE_IDS.has(surface.id)) {
     return {
       surfaceId: surface.id,
@@ -4768,6 +4943,66 @@ function promotedUiDebugAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDri
     expectedEffect: `${surface.name} resolves on the attested ${cohort.debugSurface} renderer after its exact owned fixture state is established; no control activation is claimed.`,
     oracleId: RELEASE_UI_DEBUG_ORACLE_ID,
     cleanupId: releaseUiDebugCleanupIdForFixture(cohort.fixtureId),
+  };
+}
+
+function promotedBrowserTeachUiAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  if (!BROWSER_TEACH_CONTROL_SURFACE_IDS.has(surface.id)) {
+    throw new Error(`missing Browser Teach control config for ${surface.id}`);
+  }
+  const oracleId = surface.name.includes("teach-issue-action-")
+    ? BROWSER_TEACH_INSTALLED_CONTROL_ORACLES[1]
+    : surface.name.includes("teach-vault-binding-")
+      ? BROWSER_TEACH_INSTALLED_CONTROL_ORACLES[3]
+      : surface.name.includes("teach-goal")
+        || surface.name.includes("teach-value-label-")
+        || surface.name.includes("teach-value-literal-")
+        ? BROWSER_TEACH_INSTALLED_CONTROL_ORACLES[2]
+        : BROWSER_TEACH_INSTALLED_CONTROL_ORACLES[0];
+  return {
+    surfaceId: surface.id,
+    driverId: BROWSER_TEACH_CONTROL_DRIVER_ID,
+    fixtureId: BROWSER_TEACH_INSTALLED_FIXTURE,
+    expectedEffect: `${surface.name} is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.`,
+    oracleId,
+    cleanupId: BROWSER_TEACH_INSTALLED_CLEANUP,
+  };
+}
+
+function promotedBrowserDeveloperEvidenceUiAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  if (!BROWSER_DEVELOPER_EVIDENCE_UI_SURFACE_IDS.has(surface.id)) {
+    throw new Error(`missing Browser Developer/Evidence control config for ${surface.id}`);
+  }
+  const control = surface.name.includes("teach-workflow")
+    ? {
+        expectedEffect: "A native installed-app click records one complete owned Flight Recorder attempt and enters Browser Teach with one reversible draft identity; neither approval nor recipe replay is invoked.",
+        oracleId: "ui:activation:browser-evidence-teach-owned-draft",
+      }
+    : surface.name.includes("developer-inspect")
+      ? {
+          expectedEffect: "A native installed-app click exposes the pending Browser Developer inspection state and then its exact Developer Mode denial for the owned loopback site without granting CDP access.",
+          oracleId: "ui:activation:browser-developer-inspection-denied",
+        }
+      : surface.name.includes("approve-current-site")
+        ? {
+            expectedEffect: "A native installed-app click approves Developer Mode only for the exact owned loopback host and exposes bounded partial inspection state.",
+            oracleId: "ui:activation:browser-developer-site-approved",
+          }
+        : surface.name.includes("disable-mode")
+          ? {
+              expectedEffect: "A native installed-app click disables Browser Developer Mode, clears the exact owned site approval, and removes private inspection receipt state.",
+              oracleId: "ui:activation:browser-developer-mode-disabled",
+            }
+          : {
+              expectedEffect: "A native installed-app click exports one private sanitized Browser Developer artifact and proves only its compact receipt identity, byte count, and SHA-256 without exposing a filesystem path.",
+              oracleId: "ui:activation:browser-developer-artifact-receipt",
+            };
+  return {
+    surfaceId: surface.id,
+    driverId: BROWSER_DEVELOPER_EVIDENCE_UI_DRIVER_ID,
+    fixtureId: "ui:browser-developer-evidence-owned-task",
+    ...control,
+    cleanupId: "ui:clear-browser-developer-site-approval-close-owned-task-and-window",
   };
 }
 
@@ -5107,6 +5342,16 @@ function promotedDebugApiReadAssignment(surface: ReleaseSurfaceItem): FinalSurfa
     || path === "/state/environment"
     || path === "/state/grok_environment"
     || path === "/preview/work/diagnose";
+  if (path === "/browser/teach/drafts") {
+    return {
+      surfaceId: surface.id,
+      driverId: "debug-api-route-installed",
+      fixtureId: "debug-api:isolated-browser-teach-agent-task",
+      expectedEffect: "GET /browser/teach/drafts reads exactly one draft prepared from owned evidence for the matching MCP task owner; it neither approves nor applies a recipe.",
+      oracleId: "debug-api:GET-browser-teach-drafts:owned-agent-readback",
+      cleanupId: "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
+    };
+  }
   return {
     surfaceId: surface.id,
     driverId: "debug-api-route-installed",
@@ -5142,6 +5387,40 @@ function promotedDebugApiReadAssignment(surface: ReleaseSurfaceItem): FinalSurfa
         : gitFixture
           ? "debug-api:delete-owned-git-fixture"
         : "debug-api:read-only",
+  };
+}
+
+function promotedDebugApiBrowserTeachDeveloperMutationAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  if (!promotedDebugApiBrowserTeachDeveloperMutations.has(surface.name)) {
+    throw new Error(`missing promoted Debug API Browser Teach/Developer config for ${surface.id}`);
+  }
+  if (surface.name === "POST /browser/developer/inspect") {
+    return {
+      surfaceId: surface.id,
+      driverId: "debug-api-route-installed",
+      fixtureId: "debug-api:isolated-browser-teach-agent-task",
+      expectedEffect: "POST /browser/developer/inspect proves the fixed task-owned inspection remains Developer-Mode-gated and returns its expected structured denial without enabling Developer Mode or executing arbitrary CDP.",
+      oracleId: "debug-api:POST-browser-developer-inspect:developer-mode-denial",
+      cleanupId: "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
+    };
+  }
+  if (surface.name === "POST /browser/teach/prepare") {
+    return {
+      surfaceId: surface.id,
+      driverId: "debug-api-route-installed",
+      fixtureId: "debug-api:isolated-browser-teach-agent-task",
+      expectedEffect: "POST /browser/teach/prepare derives one immutable draft and current revision from exact owned Flight Recorder evidence for the matching MCP task owner; approval remains unavailable on Debug API.",
+      oracleId: "debug-api:POST-browser-teach-prepare:owned-agent-draft",
+      cleanupId: "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
+    };
+  }
+  return {
+    surfaceId: surface.id,
+    driverId: "debug-api-route-installed",
+    fixtureId: "debug-api:isolated-browser-teach-agent-task",
+    expectedEffect: "POST /browser/teach/revise creates one compare-and-swap revision for the exact owned agent draft and confirms it through owner-scoped draft readback; it cannot approve or apply a recipe.",
+    oracleId: "debug-api:POST-browser-teach-revise:owned-agent-revision",
+    cleanupId: "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
   };
 }
 
@@ -5813,9 +6092,9 @@ function promotedTauriSpecialAssignment(surface: ReleaseSurfaceItem): FinalSurfa
       surfaceId: surface.id,
       driverId: "tauri-command-installed",
       fixtureId: "tauri:isolated-token-rotation",
-      expectedEffect: "Installed Tauri IPC rotates the isolated candidate token, proves its format, disk persistence, and command readback, then restores the exact original token.",
+      expectedEffect: "Installed Tauri IPC rotates the isolated candidate token, proves its format, disk persistence, and command readback, then preserves the live token only until disposable candidate teardown.",
       oracleId: "tauri:shellxagent_token_regenerate:owned-token-rotation",
-      cleanupId: "tauri:restore-attested-token",
+      cleanupId: "tauri:preserve-rotated-token-until-candidate-teardown",
     };
   }
   if (surface.name === "shellx_browser_open_vault_panel") {
@@ -5843,7 +6122,7 @@ function promotedTauriSpecialAssignment(surface: ReleaseSurfaceItem): FinalSurfa
       surfaceId: surface.id,
       driverId: "tauri-command-installed",
       fixtureId: "tauri:isolated-browser-history",
-      expectedEffect: "Installed Tauri IPC shellx_browser_clear_history clears exactly one owned loopback history entry, proves empty readback, closes the owned task and tab, and leaves its monotonic receipt only until candidate teardown.",
+      expectedEffect: "Installed Tauri IPC shellx_browser_clear_history clears exactly one owned loopback history entry through an explicit all-scope request, proves empty readback, closes the owned task and tab, and leaves its monotonic receipt only until candidate teardown.",
       oracleId: "tauri:shellx_browser_clear_history:owned-history-cleared",
       cleanupId: "tauri:close-owned-browser-history-fixture",
     };
@@ -5866,6 +6145,61 @@ function promotedTauriSpecialAssignment(surface: ReleaseSurfaceItem): FinalSurfa
       expectedEffect: "Installed operator Tauri IPC writes one bounded Flight Recorder artifact for an exact owned task, verifies its bytes and SHA-256, then removes the file, task, and tab.",
       oracleId: "tauri:shellx_browser_operator_export_flight_recorder:owned-artifact",
       cleanupId: "tauri:close-owned-browser-evidence-fixture",
+    };
+  }
+  if (surface.name === "shellx_browser_operator_developer_inspect") {
+    return {
+      surfaceId: surface.id,
+      driverId: "tauri-command-installed",
+      fixtureId: "tauri:isolated-browser-operator-workflow",
+      expectedEffect: "Installed operator Tauri IPC invokes the fixed Browser developer inspector for one owned task and proves its expected Developer Mode denial without granting approval, enabling Developer Mode, or mutating the page.",
+      oracleId: "tauri:shellx_browser_operator_developer_inspect:developer-mode-denial",
+      cleanupId: "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+    };
+  }
+  if (surface.name === "shellx_browser_operator_export_har" || surface.name === "shellx_browser_operator_export_performance") {
+    const kind = surface.name.endsWith("export_har") ? "HAR" : "performance";
+    return {
+      surfaceId: surface.id,
+      driverId: "tauri-command-installed",
+      fixtureId: "tauri:isolated-browser-operator-workflow",
+      expectedEffect: `Installed operator Tauri IPC exports one bounded owned Browser ${kind} artifact and returns only its compact receipt; the task, tab, loopback page, and private candidate artifacts end with exact cleanup and candidate teardown.`,
+      oracleId: `tauri:${surface.name}:owned-artifact-receipt`,
+      cleanupId: "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+    };
+  }
+  if (new Set([
+    "shellx_browser_operator_prepare_teach_draft",
+    "shellx_browser_operator_list_teach_drafts",
+    "shellx_browser_operator_revise_teach_draft",
+    "shellx_browser_operator_approve_teach_draft",
+    "shellx_browser_operator_rehearse_teach_recipe",
+  ]).has(surface.name)) {
+    const effect = surface.name === "shellx_browser_operator_prepare_teach_draft"
+      ? "derives one immutable operator Teach draft from exact owned Flight Recorder evidence"
+      : surface.name === "shellx_browser_operator_list_teach_drafts"
+        ? "reads back one exact owned operator Teach draft"
+        : surface.name === "shellx_browser_operator_revise_teach_draft"
+          ? "creates one compare-and-swap operator Teach revision and reads it back"
+          : surface.name === "shellx_browser_operator_approve_teach_draft"
+            ? "creates one operator-approved Action Recipe V2 draft and matching approval receipt without applying it"
+            : "dry-runs one approved Teach recipe with zero applied steps and records one rehearsal receipt";
+    const oracle = surface.name === "shellx_browser_operator_prepare_teach_draft"
+      ? "owned-draft"
+      : surface.name === "shellx_browser_operator_list_teach_drafts"
+        ? "owned-draft-readback"
+        : surface.name === "shellx_browser_operator_revise_teach_draft"
+          ? "owned-revision"
+          : surface.name === "shellx_browser_operator_approve_teach_draft"
+            ? "owned-approval-receipt"
+            : "dry-run-receipt";
+    return {
+      surfaceId: surface.id,
+      driverId: "tauri-command-installed",
+      fixtureId: "tauri:isolated-browser-operator-workflow",
+      expectedEffect: `Installed operator Tauri IPC ${effect}; Debug API has no approval or replay authority, and the exact task, tab, loopback page, and private candidate artifacts end with cleanup and candidate teardown.`,
+      oracleId: `tauri:${surface.name}:${oracle}`,
+      cleanupId: "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
     };
   }
   if (surface.name === "shellx_browser_sync_engine") {

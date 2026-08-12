@@ -11,6 +11,7 @@ function assert(condition: unknown, message: string): asserts condition {
 const tasks = source("src-tauri/src/shellx_browser_tasks.rs");
 const runtime = source("src-tauri/src/shellx_browser_window_runtime.rs");
 const engineRuntime = source("src-tauri/src/shellx_browser_engine_runtime.rs");
+const engineLifecycle = source("src-tauri/src/shellx_browser_engine_lifecycle.rs");
 const webviewRuntime = source("src-tauri/src/shellx_browser_webview_runtime.rs");
 const debugState = source("src-tauri/src/debug_api_browser_state.rs");
 const cowork = source("src-tauri/src/shellx_browser_cowork.rs");
@@ -44,7 +45,14 @@ assert(
     && webviewRuntime.includes("native.Navigate(&HSTRING::from(target_url))"),
   "new native engines remain on a blank page until every protection is installed and native navigation is acknowledged",
 );
-assert(engineRuntime.includes("Browser engine initialization failed") && engineRuntime.includes("rollback closed the partial Browser engine") && engineRuntime.includes("wait_for_browser_engine_label_release(app, &engine_label)"), "post-mount initialization failures close the partial engine and observe label release before returning");
+assert(
+  engineRuntime.includes("Browser engine initialization failed")
+    && engineRuntime.includes("close_and_cleanup_failed_browser_engine_mount(")
+    && engineLifecycle.includes("webview.close()")
+    && engineLifecycle.includes("wait_for_browser_engine_label_release(app, engine_label)")
+    && engineLifecycle.includes("{context} closed the partial Browser engine"),
+  "post-mount initialization failures close the partial engine and observe label release before returning",
+);
 assert(metadata.includes('"rollbackSafeTaskStart"') && rollbackSafeSchema, "Browser discovery advertises rollback-safe task start without regressing its schema revision");
 assert(docs.includes("browser_task_engine_sync_failed") && docs.includes("rollback evidence"), "Browser API docs describe failed-start cleanup semantics");
 

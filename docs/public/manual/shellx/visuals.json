@@ -2,10 +2,10 @@
   "schema": "shellx.manual-visuals.v1",
   "revalidation": {
     "status": "reviewed",
-    "sourceCommit": "98faae740e86460bb9b5451f346ba526bd145278",
-    "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-    "reviewedAt": "2026-08-11T05:04:08Z",
-    "evidenceSha256": "d7dfc75690264c6bdeb2ddee1f070266d99e3de9cc54d8e976746af48c93cb82"
+    "sourceCommit": "6cfdfb800d48573c5638324d006b7b0e3423c0e6",
+    "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+    "reviewedAt": "2026-08-13T09:41:58Z",
+    "evidenceSha256": "a6e7659491e4dd661936887ae2f59b01a9e8e6b44d24f446e02d26013bd05a95"
   },
   "captures": {
     "shellx-workspace": {
@@ -16,13 +16,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "105ccea3048cc16c48483cec59bfe2babd444a7e7975a72e5fcecfe3f886d70a",
+        "sha256": "5936715172caeb785b40727e0e77ec1061fb0f6a0e7cabf1db5ad6542390e52f",
         "intendedState": "Installed ShellX workspace with the setup guide dismissed, Chat and Tasks selected, and no modal or request popover open.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "command-palette": {
@@ -33,13 +33,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "5b12ff55ec6419d7379c097b2148bf212c0d7106336225113124ca8ec523c156",
+        "sha256": "ca26e6ad4e75118df2cc956b0033e9052c51c5a3d645d26b47a27f82ee2472c2",
         "intendedState": "Installed ShellX command palette open over the normal workspace with its complete available action list visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "header-requests": {
@@ -50,13 +50,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "dd5148e42bae4c6b58544c193e7eb14dff6955301e85b950ee155e41e0b81426",
+        "sha256": "e520845ba650e53bf1812969c8e852166ccd52e3d6332d29163d1062761e62aa",
         "intendedState": "Installed ShellX Vault Request Center open from the header while the rest of the workspace remains in its normal baseline state.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "header-plugins": {
@@ -67,13 +67,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "38b13f66ca971c235df0feb36d6933b950977ad6fc204d4f04f33c5e8898becd",
+        "sha256": "d5663e8ca9193f20a4bf766509b97b3ecf261fcc469efeadb705eb67c98e719a",
         "intendedState": "Installed ShellX Plugins dialog open with the Vault Request Center closed and the workspace visible behind it.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "right-rail-tasks": {
@@ -84,13 +84,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "0f39b4a9a9697ccdf69c820ca97c3e22ff6330882f70db3a8facd0e5c100c52f",
+        "sha256": "d9eba4bb7cebb5f3720357d1f9b941579c826172c685d9a80c41c058c538e003",
         "intendedState": "Installed ShellX workspace with the Tasks right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "right-rail-tools": {
@@ -101,13 +101,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "02a97e041bc4e465baba96a251d08b0fb84301dc9381b0e4891105b9eeb05d61",
+        "sha256": "24801721deece93a7587a4675421f2f1c93b19e07efb11c57e22623973d4fc50",
         "intendedState": "Installed ShellX workspace with the Tooling right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "right-rail-git": {
@@ -118,13 +118,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "885e738655c5a5d879286e1ef723fb3b1cf4e225221ca52e7f33747001e45002",
+        "sha256": "77fa0eed71b0d9ea8d134614ed6900e08c3eba64e53f679b9a61f04f59c5e064",
         "intendedState": "Installed ShellX workspace with the Git right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "right-rail-preview": {
@@ -135,13 +135,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "d50519abc82b2c58422c519a58fc7f324a93759fa1cbfb8694a06050ca928686",
+        "sha256": "8c213f0175f5b3468b30d7630d9cf9742b5bfe3e3df8fd9372faf01c606f4d09",
         "intendedState": "Installed ShellX workspace with the Preview right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "right-rail-plan": {
@@ -152,13 +152,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "063032a5869f30fff9649ee220cddaa9d19b1279380467a43cea04200ce116ac",
+        "sha256": "0b1bac4d5108c180ef04ac5fbe7aa2dba66a226dd47ce2cd1612161867da2fe9",
         "intendedState": "Installed ShellX workspace with the Plan right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "right-rail-files": {
@@ -169,13 +169,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "dd90bc23c5e098261758b541e65ea88bff60c5f26f3f7494a6a1ecc4c8ad6444",
+        "sha256": "a6d29c82317b721ec5f33bdfec46d458af4e37bc50a6ae2188f9fcc4e97ab9d0",
         "intendedState": "Installed ShellX workspace with the Files right-rail tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "bottom-terminal": {
@@ -186,13 +186,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "cecc1a0ef9007f59f520205466a5424ac715a184e0425b9e3445e84735a41dea",
+        "sha256": "51ac53921433c91b32bc20f4cb56a607c63a1ff1f68047a96771c023649ab555",
         "intendedState": "Installed ShellX workspace with the persistent Terminal bottom panel selected and visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "bottom-trace": {
@@ -203,13 +203,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "1dfa8d5c20b215b4562c62723818fdbb63fa564c920e6dcd9517ef9dafd2ff5a",
+        "sha256": "80107c24e285d672b581e80e0e189d1c0c4ba941294b3fc72738471f20bd1d5f",
         "intendedState": "Installed ShellX Activity Browser opened from Trace with its Files view and navigation visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "bottom-assets": {
@@ -220,13 +220,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "c904f9fe735e923ffaa78393f3fc1dcb9ef29f82b6419106e1c5da7eca8ddbe6",
+        "sha256": "20a21cbe0a9d57b5315002b35106b6e596daa6b5c1cbb7965e165f07d76707d6",
         "intendedState": "Installed ShellX attachment and media board opened from Assets without any private user files in the disposable profile.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "bottom-logs": {
@@ -237,13 +237,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "77ff77b68bcf68c90e16046e003dc3a05a53d0e33f309d713fa3579524be420d",
+        "sha256": "a72b0af4b8b926dca27d8a38ed908f0f01edbcc040c501e6a4f1c25f15c34347",
         "intendedState": "Installed ShellX workspace with the raw event Logs bottom panel selected and visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "bottom-stderr": {
@@ -254,13 +254,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "97048c6202992618275401b4a635a8378f0440319e9349bbb289fe013f54e044",
+        "sha256": "460ac458eef2d8a63b705c90d3f440685dbf856d52ce8b61883c4994489e1870",
         "intendedState": "Installed ShellX workspace with the Stderr bottom panel selected and visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "settings-general": {
@@ -271,13 +271,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "53b86d22303887c50f39ace8b6223a4f63ae21852946a32b7f77b45122cea6ab",
+        "sha256": "c369394700b75099ecf74b2a8ce071ae88b337decc06910a3b9e684d64f2d65a",
         "intendedState": "Installed ShellX Settings dialog with the General tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "settings-vault": {
@@ -288,13 +288,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "6b08415f2ec56be0902e5e358bcb7be544d641a121d87f25dc19a0be388d5863",
+        "sha256": "166241395163934877af90482c3bfef424ce0b409a68ea61311abae7d6307b7b",
         "intendedState": "Installed ShellX Settings dialog with the Vault tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "settings-connections": {
@@ -305,13 +305,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "489ed7a30ac22a53934510f743fc5f5963f574d41463e8486b57fcd6874a02dc",
+        "sha256": "f1aa22ada060ced920773173284eed06286020671f0f1636a3d4b891b7dd593a",
         "intendedState": "Installed ShellX Settings dialog with the Connections tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "settings-connectors": {
@@ -322,13 +322,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "bfc7a243ae8322e0a6f5360ce8a3ad8cf5926eecfd58f268b4215783f445061a",
+        "sha256": "f0aba700f964aef33cf0f288f6c8c76f68b007cd93d20c19372fa826108c0946",
         "intendedState": "Installed ShellX Settings dialog with the Connectors tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "settings-desktop": {
@@ -339,13 +339,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "e49885459e38031e105ebeb0a4c8657f3818d86972d7268ac8f0e9b50ae9455e",
+        "sha256": "bcf88ed390229b98a52a67d45c1b96f0d34e9de0c2e4dfb956fbfee56e56bb09",
         "intendedState": "Installed ShellX Settings dialog with the Desktop tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "settings-shellxagent": {
@@ -356,13 +356,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "ef6d2498ac3b893ba67d93ec42670758eaa5011648997e5504f01fac584b137a",
+        "sha256": "7b7fb031286598e3e9cb3d694309820a354e265dfcb443e5be626c652e9a139b",
         "intendedState": "Installed ShellX Settings dialog with the shellXagent tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "settings-data": {
@@ -373,13 +373,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "1d56c7965bfaf7d2ebb225cfff4ade28dbf89bb2f224923f8cc78778838f73d7",
+        "sha256": "a37828396a792d0ec2e836badcd0fd72c46587faf273c6ebc3168d50bdd4bfc1",
         "intendedState": "Installed ShellX Settings dialog with the Data tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "settings-about": {
@@ -390,13 +390,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "91870de353f9c99e76ee16c0696df9cecc593e44a1c0ee8cc227e131d9d691f7",
+        "sha256": "6e1d935ce3388d07531c0ce955630cf8a66ee72f84e6b920a81f15f08a9003f1",
         "intendedState": "Installed ShellX Settings dialog with the About tab selected and its distinct settings surface visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-overview": {
@@ -407,13 +407,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "6041674d4cbf889d3e87528077f9c0be9b372cee45a209e9af33146a7d97dcc5",
         "intendedState": "Installed ShellX Browser window showing its tab strip, navigation chrome, page viewport, and Chat right sidebar in the disposable profile.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-options": {
@@ -424,13 +424,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "5dd540f96dea19a5893a6a1ad72329ee042b5935acff9aa7bc02bc2de8158d16",
         "intendedState": "Installed ShellX Browser with the complete Browser options sidecar open.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-save-menu": {
@@ -441,13 +441,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "4d0e039ef2fe2a44479da71a9083212994ae675650772e38ead86b1ff2811b33",
         "intendedState": "Installed ShellX Browser Save page menu showing its local artifact actions from the top of the menu.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-save-copy-jobs": {
@@ -458,13 +458,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "dadf61a7958e3abf259b3b95a74c1dc2dfd3a72479fa371f033e0d7989743071",
         "intendedState": "Installed ShellX Browser Save page menu scrolled to expose every queued media, code, and site copy action.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-ads-menu": {
@@ -475,13 +475,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "4000ca1ef4995b7ace4e655ab86becf6a2ddc12b3975de9672d23fb2e383d2b6",
         "intendedState": "Installed ShellX Browser with the profile ad-filter mode menu open.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-history": {
@@ -492,13 +492,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "fa84c7a5207244f1bc4e354c381803668f474cc8ed051678aa927ec911b0581e",
         "intendedState": "Installed ShellX Browser with the History sidecar open in the disposable profile.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-bookmarks": {
@@ -509,13 +509,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "044bd02e6ba68cd3b2d01cfc1db5b710401b1215a46ce01499be3e18f00cf32f",
+        "sha256": "8c0a248516ba3caca075028a04dbf07fb1b00898db3f9c6aec358aed04df7190",
         "intendedState": "Installed ShellX Browser with the Bookmarks sidecar open in list mode.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-bookmark-manager": {
@@ -526,13 +526,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "f5649a837690c6c6957fd153bebea74e4130b21e9104d63748064931fb2c36ae",
+        "sha256": "47aa961496583026cac8db1a7dd66282269439a83b0fcd929888988a26dee46f",
         "intendedState": "Installed ShellX Browser with the Bookmark manager Edit surface open.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-downloads": {
@@ -543,13 +543,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "67b2c6400343d9261ce873a182bf6fb9c97c069652b46640e211a259b2fc4b2c",
         "intendedState": "Installed ShellX Browser with the Downloads sidecar and download-folder controls visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-panel-chat": {
@@ -560,13 +560,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "6041674d4cbf889d3e87528077f9c0be9b372cee45a209e9af33146a7d97dcc5",
         "intendedState": "Installed ShellX Browser with the Chat right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-panel-requests": {
@@ -577,13 +577,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "c8b2b96b4c4a3de76cad37f0a6d22298ea0e93eb9fff7011a87cb2e5bd4a53f0",
         "intendedState": "Installed ShellX Browser with the Requests right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-panel-actions": {
@@ -594,13 +594,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "ed359bbc31000f17270265afd2f5106c7315c14a34d5c014005e1a1121f337ca",
+        "sha256": "6011be5e0cf75d7c05518caa3fb3067aa68bd837ab9e46c44a50ba53a22bfb7a",
         "intendedState": "Installed ShellX Browser with the Actions right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-panel-evidence": {
@@ -611,13 +611,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "a217c8c50ad38e959f46c3e82f86d7ff139c1864209c10505434e1bc649206e6",
+        "sha256": "8e8d8117b9f48ccf727e3a9a410fc6332263d311219dbf996e3f157d862dd37b",
         "intendedState": "Installed ShellX Browser with the Evidence right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     },
     "browser-panel-errors": {
@@ -628,13 +628,13 @@
       "review": {
         "status": "reviewed",
         "source": "installed-tauri",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
         "sha256": "393b9dbda2bdbbf4b3a26b985b69eebcceb2bc3bf838e885a1a39fb9c949c8c4",
         "intendedState": "Installed ShellX Browser with the Errors right-sidebar tab selected and its distinct panel visible.",
-        "reviewedAt": "2026-08-10T19:39:53Z"
+        "reviewedAt": "2026-08-12T01:44:41Z"
       }
     }
   },

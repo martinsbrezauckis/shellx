@@ -43,7 +43,7 @@ interface Fixture {
 }
 
 const TIMEOUT_MS = Math.max(5_000, Math.min(Number(process.env.SHELLX_FLIGHT_RECORDER_TIMEOUT_MS ?? 30_000), 120_000));
-const TAB_ID = process.env.SHELLX_FLIGHT_RECORDER_TAB_ID?.trim() || `shellx-flight-recorder-${randomUUID()}`;
+const CONFIGURED_TAB_ID = process.env.SHELLX_FLIGHT_RECORDER_TAB_ID?.trim() || null;
 const CALLER_HEADER = "x-shellx-mcp-caller-id";
 
 function assert(condition: boolean, message: string): void {
@@ -155,9 +155,9 @@ async function firstHealthyDebug(): Promise<DebugContext> {
   throw new Error(`No reachable ShellX Debug API candidate. ${errors.join(" | ")}`);
 }
 
-async function firstHealthyMcp(): Promise<McpContext> {
+async function firstHealthyMcp(tabId: string): Promise<McpContext> {
   const errors: string[] = [];
-  for (const candidate of mcpCandidates(TAB_ID)) {
+  for (const candidate of mcpCandidates(tabId)) {
     try {
       await requestJson(candidate.base, null, "GET", "/health");
       return candidate;
@@ -166,6 +166,16 @@ async function firstHealthyMcp(): Promise<McpContext> {
     }
   }
   throw new Error(`No reachable ShellX MCP HTTP candidate. ${errors.join(" | ")}`);
+}
+
+async function resolveCallerTabId(debug: DebugContext): Promise<string> {
+  if (CONFIGURED_TAB_ID) return CONFIGURED_TAB_ID;
+  const ui = await debugRequest(debug, "GET", "/state/ui");
+  const activeTabId = ui.activeTabId;
+  if (typeof activeTabId !== "string" || !/^[a-zA-Z0-9._:-]{1,256}$/.test(activeTabId)) {
+    throw new Error("Installed Flight Recorder gate requires an active bounded renderer tab id");
+  }
+  return activeTabId;
 }
 
 async function mcpRpc(ctx: McpContext, method: string, params: JsonObject = {}): Promise<JsonObject> {
@@ -293,7 +303,8 @@ function outputPathFromArgs(): string | null {
 async function main(): Promise<void> {
   console.log("\n=== ShellX installed Flight Recorder pipeline ===");
   const debug = await firstHealthyDebug();
-  const mcp = await firstHealthyMcp();
+  const tabId = await resolveCallerTabId(debug);
+  const mcp = await firstHealthyMcp(tabId);
   const health = await debugRequest(debug, "GET", "/health");
   const buildCommit = stringValue(health, "buildCommit", "health");
   const expectedCommit = process.env.SHELLX_EXPECT_BUILD_COMMIT?.trim();
@@ -307,24 +318,24 @@ async function main(): Promise<void> {
   });
   const browserSchemaBytes = Buffer.byteLength(JSON.stringify(browserTools));
   assert(browserTools.length === 2, "installed MCP advertises exactly two Browser tools");
-  assert(browserSchemaBytes === 2_331, "installed Browser schema remains 2,331 serialized bytes");
+  assert(browserSchemaBytes === 2_601, "installed Browser schema remains 2,601 serialized bytes");
 
   const fixture = configuredFixture() ?? await startFixture();
   const taskIds = new Set<string>();
   let cleanup: BrowserLifecycleCleanupResult | null = null;
   let receipt: JsonObject | null = null;
   try {
-    await debugRequest(debug, "POST", `/autonomy?tabId=${encodeURIComponent(TAB_ID)}`, { tabId: TAB_ID, mode: "bypassPermissions" });
+    await debugRequest(debug, "POST", `/autonomy?tabId=${encodeURIComponent(tabId)}`, { tabId, mode: "bypassPermissions" });
     const task = await debugRequest(debug, "POST", "/browser/task/start", {
       goal: "Installed Flight Recorder exact-identity gate",
       startUrl: fixture.url,
       profileId: "agent-work",
       autonomy: "assistedAutonomous",
       expectedDomains: ["127.0.0.1"],
-    }, { [CALLER_HEADER]: TAB_ID });
+    }, { [CALLER_HEADER]: tabId });
     const baselineTaskId = stringValue(task, "taskId", "baseline Browser task");
     taskIds.add(baselineTaskId);
-    assert(task.ownerSessionId === TAB_ID, "installed Browser task is bound to the MCP caller session");
+    assert(task.ownerSessionId === tabId, "installed Browser task is bound to the MCP caller session");
     const settled = await debugRequest(
       debug,
       "GET",
@@ -347,10 +358,10 @@ async function main(): Promise<void> {
       profileId: "agent-work",
       autonomy: "assistedAutonomous",
       expectedDomains: ["127.0.0.1"],
-    }, { [CALLER_HEADER]: TAB_ID });
+    }, { [CALLER_HEADER]: tabId });
     const candidateTaskId = stringValue(candidateTask, "taskId", "candidate Browser task");
     taskIds.add(candidateTaskId);
-    assert(candidateTask.ownerSessionId === TAB_ID, "candidate Browser task is bound to the MCP caller session");
+    assert(candidateTask.ownerSessionId === tabId, "candidate Browser task is bound to the MCP caller session");
     const candidateSettled = await debugRequest(
       debug,
       "GET",
@@ -380,7 +391,11 @@ async function main(): Promise<void> {
     assert(evidence.callerScoped === true, "installed evidence summary is caller scoped");
     assert(numberValue(evidence, "count", "evidence summary") >= 3, "installed evidence summary lists recorder and evaluation receipts");
 
-    const cliEnv = { SHELLX_DEBUG_BASE: debug.base, SHELLX_DEBUG_SECRET: debug.token };
+    const cliEnv = {
+      SHELLX_DEBUG_BASE: debug.base,
+      SHELLX_DEBUG_SECRET: debug.token,
+      SHELLX_HOST_MCP_TAB_ID: tabId,
+    };
     const cliExport = runCli(["flight-recorder-export", "--task", candidateTaskId, "--suite", suiteId, "--group", "candidate", "--attempt-index", "2"], cliEnv);
     artifactIdentity(cliExport, "CLI recorder export");
     const tempRoot = mkdtempSync(join(tmpdir(), "shellx-flight-recorder-installed-"));
@@ -399,7 +414,7 @@ async function main(): Promise<void> {
         tasks: {
           baselineTaskId,
           candidateTaskId,
-          ownerSessionId: TAB_ID,
+          ownerSessionId: tabId,
           distinct: baselineTaskId !== candidateTaskId,
         },
         attempts: [baselineIdentity, candidateIdentity],
@@ -424,10 +439,10 @@ async function main(): Promise<void> {
     }
   } finally {
     cleanup = await cleanupOwnedBrowserLifecycle(
-      (method, path, body) => debugRequest(debug, method, path, body, { [CALLER_HEADER]: TAB_ID }),
+      (method, path, body) => debugRequest(debug, method, path, body, { [CALLER_HEADER]: tabId }),
       { taskIds, label: "flight-recorder-installed" },
     );
-    await debugRequest(debug, "POST", `/autonomy?tabId=${encodeURIComponent(TAB_ID)}`, { tabId: TAB_ID, mode: "bypassPermissions" });
+    await debugRequest(debug, "POST", `/autonomy?tabId=${encodeURIComponent(tabId)}`, { tabId, mode: "bypassPermissions" });
     await fixture.close();
   }
 

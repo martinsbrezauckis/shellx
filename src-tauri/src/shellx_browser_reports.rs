@@ -19,6 +19,29 @@ impl ShellxBrowserRegistry {
         logs
     }
 
+    pub fn console_logs_for_agent_session(
+        &self,
+        caller_session_id: &str,
+        limit: Option<usize>,
+    ) -> Vec<BrowserConsoleLogEntry> {
+        let state = lock_or_recover(&self.state);
+        let mut logs = state
+            .console_logs
+            .iter()
+            .filter(|entry| {
+                crate::shellx_browser_state::browser_task_belongs_to_agent_session(
+                    &state,
+                    entry.task_id.as_deref(),
+                    caller_session_id,
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        logs.sort_by_key(|entry| std::cmp::Reverse(entry.t));
+        logs.truncate(limit.unwrap_or(200).min(1_000));
+        logs
+    }
+
     pub fn record_console_log(
         &self,
         request: BrowserConsoleLogRequest,

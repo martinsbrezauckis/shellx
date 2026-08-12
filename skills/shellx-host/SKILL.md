@@ -55,9 +55,10 @@ fallback.
 
 If `shellx-host-http__capabilities_summary` or
 `grok-shell-host__capabilities_summary` is advertised, call it directly
-for a compact current tool map before broad tool discovery. Only six compact
+for a compact current tool map before broad tool discovery. Only eight compact
 entry tools are advertised by default: `capabilities_summary`, `search_tool`,
-`host_read`, `host_act`, `browser_read`, and `browser_act`. Use targeted
+`host_read`, `host_act`, `browser_read`, `browser_act`, `cut_read`, and
+`cut_act`. Use targeted
 `search_tool` queries for an exact hidden Host action schema, then pass the
 action name and its exact fields through `host_read { action, params }` for
 read-class operations or permission-gated `host_act { action, params }` for
@@ -67,7 +68,8 @@ names for that routing flow, not additional always-advertised tools. Avoid
 `full_inventory` unless debugging tool-schema drift, because the result is
 large and Grok may store it as a session artifact instead of showing it clearly
 in chat. Browser actions use their dedicated `browser_read` and `browser_act`
-gateways instead.
+gateways instead. ShellX Cut discovery and execution use `cut_read` and
+`cut_act`; Cut's generated verb catalog stays behind that compact pair.
 
 - `vault_list { prefix? }` → lists agent-visible Vault key/resource
   names, descriptions, and non-secret metadata for planning. It never
@@ -142,6 +144,28 @@ Searchable status/evidence action map:
 - `preview_state` / `preview_logs` / `preview_diagnose` — Work Preview
   status, server logs, browser/runtime diagnosis, and screenshot path.
 
+### ShellX Cut video editing from an agent
+
+When ShellX Cut is installed and running, a confirmed ShellX-hosted agent can
+inspect and edit the open video project through the same Cut MCP/verb engine as
+the editor UI. ShellX does not register Cut's full generated catalog in every
+prompt.
+
+1. Call `cut_read { action: "status" }` to verify the installed Cut engine and
+   its current environment.
+2. Call `cut_read { action: "search", query }` to find a likely verb. Results
+   are bounded and show argument names without injecting the full catalog.
+3. Call `cut_read { action: "schema", verb }` for the exact input schema.
+4. Call `cut_act { verb, arguments }` to execute it. Every exact Cut verb call
+   is permission-gated because the current Cut MCP catalog does not publish a
+   reliable read/mutation annotation to ShellX yet.
+
+Use dotted Cut REST names or generated MCP names (`project.state` and
+`project_state` resolve to the same MCP verb). Do not guess fields, call the
+editor's private loopback API directly, or alter CLI/provider authentication.
+Cut remains the project authority and returns its normal typed result,
+operation receipt, or honest unavailable/error envelope.
+
 ### Native ShellX Browser for agent web work
 
 ShellX includes a native, ShellX-owned Browser window and runtime. Use it for
@@ -159,7 +183,11 @@ Host MCP Browser flow:
 
 1. `browser_read action=tabs` or `browser_read action=state` — find the active Browser tab, profile,
    trust state, locks, and current URL. `browser_state` is a bounded summary by
-   default. Pass `include` only for the detail needed now; prior observations,
+   default and every visible Browser state/detail read is scoped to this
+   authenticated caller session. Personal and other-agent Browser activity
+   stays in the operator UI;
+   saved workflow bookmarks remain discoverable as the deliberate Agent-facing
+   catalog. Pass `include` only for the detail needed now; prior observations,
    receipts, network rows, history, and logs are opt-in slices.
 2. `browser_act { action: "navigate", url, browserTabId? }` — open a URL in the native Browser.
    If you omit `browserTabId` and `taskId`, ShellX auto-starts or reuses an
@@ -284,6 +312,28 @@ when evidence is missing/incomplete or the candidate is unsafe. Use
 recorder/evaluation receipts. These artifacts are not a route for raw Browser
 state or secret values into a project folder.
 
+For one bounded native developer review, use `browser_read
+action=developerInspect` with the caller-owned `taskId` and optional
+`browserTabId`. It returns a compact sanitized summary of document checks,
+console/network counts, performance, deterministic issues, and truncation. It
+never accepts arbitrary JavaScript or CDP methods. If it reports
+`developerModeRequired`, stop for the operator to approve that Browser host in
+ShellX; do not try to route around the native Browser or use external Chrome.
+HAR and performance export buttons are operator-only controls in Browser
+Evidence and are not agent actions.
+
+To turn one complete Flight Recorder attempt from a completed task into an
+editable workflow draft, call `browser_act action=teachPrepare` with its exact
+`attemptId`. Use
+`browser_read action=teachDrafts` with the owning `taskId` and optional `limit`
+to recover compact current draft identities. Preparing is deterministic and
+does not call a model, approve a recipe, or run actions. Revision, Vault-binding
+selection, recipe approval, and rehearsal remain in the Browser Evidence UI.
+Approval creates an ordinary private Action Recipe V2 only; rehearsal uses the
+existing dry-run planner and applies zero steps. Continue live for any redacted
+input or Vault-mediated step that the recipe planner reports as requiring a
+fresh binding.
+
 Agents running from the ShellX source package can use its Browser CLI fallback.
 Use `pnpm shellx-browser run-steps --steps-json ...` for short generic Browser
 batches; it starts an `agent-work` task by default so it does not act on the
@@ -331,9 +381,11 @@ injects a runtime guard that tells subagents the native Browser exists.
 
 ### Media Handoff Recipes
 
-Use these recipes immediately when the user explicitly names the media
-provider. Do not search docs, inspect provider logs, or run raw provider CLI
-commands first.
+When the user explicitly names a media provider, use the recipe that matches
+the current provider context. A target provider uses its native media tool;
+only a different ShellX-host-enabled provider/session uses a ShellX handoff.
+Do not search docs, inspect provider logs, or run raw provider CLI commands
+first.
 
 GPT Image via Codex:
 - Call `shellx-host-http__send_prompt_to_provider`.
@@ -343,6 +395,33 @@ GPT Image via Codex:
 - Do not run `codex exec` directly. Do not inspect `.codex` logs unless the
   user asks for debugging after a failed ShellX handoff.
 - Do not set `timeoutMs` below `900000`; omit it when unsure.
+
+Antigravity image generation:
+- In an already-running Antigravity session, call native `generate_image`
+  directly; do not hand off to Antigravity from Antigravity.
+- From a different ShellX-host-enabled provider/session, use the explicit
+  handoff below only after the user names or approves Antigravity.
+- Call `shellx-host-http__send_prompt_to_provider`.
+- Use `providerId: "antigravity-cli"` and `userApproved: true`.
+- Omit `targetTabId` for same-tab handoff unless the user names another tab.
+- Set `includeShellxTooling: false` to select the target provider session's
+  existing off/no-ShellX-tooling mode unless the task independently needs
+  ShellX tooling, and do not set `timeoutMs` below `900000`; omit it when unsure.
+- Ask Antigravity to use native `generate_image`, choose an operator-visible
+  `ImageName`, and return the generated artifact path or receipt. Pass
+  `AspectRatio` or `ImagePaths` only when the user supplied them.
+- Do not replace `generate_image` with Browser automation, Vision Describe,
+  raw provider CLI commands, or another provider. Ask before any fallback.
+
+Antigravity video generation (unavailable):
+- The current native Antigravity CLI has no video-generation tool. Do not launch
+  Antigravity solely for this unsupported request.
+- Video attachment or analysis and ShellX Browser WebM recording do not count
+  as Antigravity video generation.
+- State the availability boundary and ask before routing to Grok Imagine or any
+  future video provider.
+- When the installed Antigravity version changes, refresh this rule from the
+  official tool catalogue and one live no-tool ShellX canary.
 
 Grok Imagine image:
 - Call `shellx-host-http__send_prompt_to_session`.
@@ -388,7 +467,8 @@ Current high-use endpoints:
   gated Browser paths, and agent-doc links.
 - `GET /agent-doc/manifest`, `GET /agent-doc/skills/shellx-host/SKILL.md` —
   the bundled host-skill docs that installed agents also receive on disk.
-- `GET /state/sessions` — active Grok ACP and provider-session context per tab.
+- `GET /state/sessions` — per-tab rows merging active Grok ACP and
+  provider-session context.
 - `GET /sessions/search?q=…` — full-text search across past jsonl logs.
 - `GET /sessions/history`, `GET /sessions/history/:id` — recent saved
   sessions and raw JSONL for one saved session.
@@ -479,7 +559,7 @@ Raw HTTP route inventory for ShellX Browser:
   `GET /browser/receipts`,
   `GET /browser/privacy`, `GET /browser/personal-lock`,
   `GET /browser/engine-pool`, `GET /browser/shields`,
-  `GET /browser/developer-mode`, `GET /browser/downloads`,
+  `GET /browser/developer-mode`, `GET /browser/teach/drafts`, `GET /browser/downloads`,
   `GET /browser/uploads`, `GET /browser/logs`,
   `GET /browser/storage-state`, `GET /browser/dialogs`,
   `GET /browser/permissions`, `GET /browser/popups`,
@@ -498,8 +578,9 @@ Raw HTTP route inventory for ShellX Browser:
   `POST /browser/logs`, `POST /browser/engine-pool`,
   `POST /browser/privacy`, `POST /browser/personal-lock`,
   `POST /browser/shields`, `POST /browser/shields/site`,
-  `DELETE /browser/shields/site/:host`, `POST /browser/developer-mode`, and
-  `POST /browser/developer-mode/approval`. Privacy, Personal Lock, Shields,
+  `DELETE /browser/shields/site/:host`, `POST /browser/developer-mode`,
+  `POST /browser/developer-mode/approval`, `POST /browser/developer/inspect`,
+  `POST /browser/teach/prepare`, and `POST /browser/teach/revise`. Privacy, Personal Lock, Shields,
   and Developer Mode writes are operator-only denial paths over Debug API.
 - Artifacts/workflows: `POST /browser/downloads/request`,
   `POST /browser/downloads/complete`, `POST /browser/uploads/request`,

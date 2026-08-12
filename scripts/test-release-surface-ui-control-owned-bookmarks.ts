@@ -28,6 +28,7 @@ const fixtureIds = new Set([
   "ui:browser-bookmark-owned-folder-choice",
   "ui:browser-bookmark-owned-create",
   "ui:browser-owned-history-sidecar",
+  "ui:browser-history-clear-sheet-owned-baseline",
   "ui:browser-bookmark-owned-navigation",
 ]);
 let fixture: ChildProcess | null = null;
@@ -44,10 +45,12 @@ process.once("SIGINT", onTerminationSignal);
 process.once("SIGTERM", onTerminationSignal);
 
 try {
+  const bookmarkNavigationSource = readFileSync(join(root, "scripts/release-drivers/ui-control-owned-browser-bookmark-navigation.ts"), "utf8");
+  assert(bookmarkNavigationSource.includes('expectedDomains: ["127.0.0.1"]'), "owned bookmark navigation must scope its private loopback target");
   const inventory = JSON.parse(readFileSync(join(root, "release/surface-inventory.json"), "utf8")) as ReleaseSurfaceInventory;
   const plan = JSON.parse(readFileSync(join(root, "release/surface-driver-plan.json"), "utf8")) as FinalSurfaceDriverPlan;
   const inventoryById = new Map(inventory.items.map((surface) => [surface.id, surface]));
-  const assignments = plan.assignments
+  const assignmentsBySurfaceId = new Map(plan.assignments
     .filter((assignment) => (
       (assignment.driverId === "ui-control-installed" || assignment.driverId === "ui-control-bounded-installed")
       && fixtureIds.has(assignment.fixtureId)
@@ -55,20 +58,58 @@ try {
     .map((assignment) => {
       const surface = inventoryById.get(assignment.surfaceId);
       assert(surface, `owned Bookmark assignment ${assignment.surfaceId} must exist in the exact inventory`);
-      return {
+      return [assignment.surfaceId, {
         surface,
         fixtureId: assignment.fixtureId,
         expectedEffect: assignment.expectedEffect,
         oracleId: assignment.oracleId,
         cleanupId: assignment.cleanupId,
-      };
-    });
-  assert.equal(assignments.length, 16, "the owned Bookmark/history fixture must cover exactly sixteen promoted controls");
-  assert.equal(new Set(assignments.map((assignment) => assignment.surface.id)).size, 16);
+      }] as const;
+    }));
+  for (const [surfaceId, fixtureId, expectedEffect, oracleId, cleanupId] of [
+    [
+      "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-clear-all-history\"]@src/browser/components/BrowserHistorySidecar.tsx#7",
+      "ui:browser-history-clear-sheet-owned-baseline",
+      "Native input opens the exact All-history confirmation sheet over a mixed owned User and Agent history baseline without removing either class before exact panel, scope, task, personal tab, loopback server, and window restoration.",
+      "ui:activation:owned-browser-history-all-clear-sheet",
+      "ui:restore-owned-browser-history-clear-sheet",
+    ],
+    [
+      "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-history-clear-cancel\"]@src/browser/components/BrowserHistorySidecar.tsx#9",
+      "ui:browser-history-clear-sheet-owned-baseline",
+      "Native input cancels the exact All-history confirmation sheet over a mixed owned User and Agent history baseline and preserves both classes before exact panel, scope, task, personal tab, loopback server, and window restoration.",
+      "ui:activation:owned-browser-history-clear-cancel",
+      "ui:restore-owned-browser-history-clear-sheet",
+    ],
+    [
+      "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-history-clear-confirm\"]@src/browser/components/BrowserHistorySidecar.tsx#10",
+      "ui:browser-history-clear-sheet-owned-baseline",
+      "Native input confirms the exact All-history sheet over a mixed owned User and Agent history baseline, then verifies the all-scope receipt and success status before exact panel, scope, task, personal tab, loopback server, and window restoration.",
+      "ui:activation:owned-browser-history-all-clear-receipt",
+      "ui:restore-owned-browser-history-clear-sheet",
+    ],
+  ] as const) {
+    const surface = inventoryById.get(surfaceId);
+    assert(surface, `mixed-history assignment ${surfaceId} must exist in the exact inventory`);
+    const existing = assignmentsBySurfaceId.get(surfaceId);
+    if (existing) {
+      assert.deepEqual(
+        [existing.fixtureId, existing.expectedEffect, existing.oracleId, existing.cleanupId],
+        [fixtureId, expectedEffect, oracleId, cleanupId],
+        `generated plan mapping drifted for ${surfaceId}`,
+      );
+    } else {
+      assignmentsBySurfaceId.set(surfaceId, { surface, fixtureId, expectedEffect, oracleId, cleanupId });
+    }
+  }
+  const assignments = [...assignmentsBySurfaceId.values()];
+  assert.equal(assignments.length, 19, "the owned Bookmark/history fixture must cover sixteen existing and three mixed-history clear controls");
+  assert.equal(new Set(assignments.map((assignment) => assignment.surface.id)).size, 19);
   assert(assignments.every((assignment) => [
     "ui:delete-owned-bookmarks-restore-panel-abort-task-and-window",
     "ui:clear-owned-browser-history-abort-task-and-window-loopback",
     "ui:delete-owned-bookmark-navigation-abort-task-and-window-loopback",
+    "ui:restore-owned-browser-history-clear-sheet",
   ].includes(assignment.cleanupId)));
 
   writeFileSync(tokenPath, token, { encoding: "utf8", mode: 0o600 });
@@ -158,6 +199,7 @@ try {
   assert([...fixtureIds].every((id) => manifest.supportedFixtures.includes(id)));
   assert(manifest.supportedCleanups.includes("ui:delete-owned-bookmarks-restore-panel-abort-task-and-window"));
   assert(manifest.supportedCleanups.includes("ui:clear-owned-browser-history-abort-task-and-window-loopback"));
+  assert(manifest.supportedCleanups.includes("ui:restore-owned-browser-history-clear-sheet"));
   assert(manifest.supportedCleanups.includes("ui:delete-owned-bookmark-navigation-abort-task-and-window-loopback"));
   for (const id of [
     "ui:value-state-transition",
@@ -167,6 +209,9 @@ try {
     "ui:activation:owned-bookmark-order-transition",
     "ui:activation:owned-browser-history-entry-navigation",
     "ui:activation:owned-browser-history-clear",
+    "ui:activation:owned-browser-history-all-clear-sheet",
+    "ui:activation:owned-browser-history-clear-cancel",
+    "ui:activation:owned-browser-history-all-clear-receipt",
     "ui:activation:owned-browser-bookmark-created",
     "ui:activation:owned-browser-bookmark-navigation",
   ]) assert(manifest.supportedOracles.includes(id), `manifest is missing oracle ${id}`);
@@ -177,7 +222,7 @@ try {
     "--out", reportPath,
   ], { cwd: root, encoding: "utf8", timeout: 60_000 });
   const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
-  assert.equal(report.outcomes.length, 16);
+  assert.equal(report.outcomes.length, 19);
   assert(report.outcomes.every((outcome) => (
     outcome.present === "pass"
     && outcome.invoke === "pass"
@@ -209,6 +254,9 @@ try {
     historyEntries: unknown[];
     historyOpen: boolean;
     historyScope: string;
+    pendingHistoryClearScope: string | null;
+    historyClearStatus: { tone: string; message: string } | null;
+    historyClearReceipts: Array<{ kind: string; evidence: { scope: string; removed: number } }>;
     openToolbarFolderId: string | null;
   };
   assert.deepEqual(audit.bookmarks, []);
@@ -228,6 +276,14 @@ try {
   assert.deepEqual(audit.historyEntries, []);
   assert.equal(audit.historyOpen, false);
   assert.equal(audit.historyScope, "user");
+  assert.equal(audit.pendingHistoryClearScope, null);
+  assert.deepEqual(audit.historyClearStatus, { tone: "success", message: "Cleared 4 Browser history entries." });
+  const allScopeReceipts = audit.historyClearReceipts.filter((receipt) => receipt.evidence.scope === "all");
+  assert.deepEqual(allScopeReceipts.slice(0, 3), [
+    { kind: "browserHistoryCleared", evidence: { scope: "all", removed: 4 } },
+    { kind: "browserHistoryCleared", evidence: { scope: "all", removed: 4 } },
+    { kind: "browserHistoryCleared", evidence: { scope: "all", removed: 4 } },
+  ], "the Confirm assignment and exact owned cleanup must retain the all-scope receipt payload");
   assert.equal(audit.openToolbarFolderId, null);
   assert.deepEqual(audit.draggedSelectors, [{
     source: "[data-debug-id='shellx-browser-bookmark-drag-final-surface-ui-control-drag-second']",
@@ -239,6 +295,9 @@ try {
     "[data-debug-id='shellx-browser-bookmark-pin-final-surface-ui-control-link']",
     "[data-debug-id='shellx-browser-bookmark-delete-final-surface-ui-control-link']",
     "[data-debug-id='shellx-browser-clear-history']",
+    "[data-debug-id='shellx-browser-clear-all-history']",
+    "[data-debug-id='shellx-browser-history-clear-cancel']",
+    "[data-debug-id='shellx-browser-history-clear-confirm']",
     "[data-debug-id='shellx-browser-bookmark-current']",
     "[data-debug-id='shellx-browser-bookmark-folder-final-surface-navigation-folder']",
     "[data-debug-id='shellx-browser-bookmark-toolbar-link-final-surface-navigation-link']",
@@ -254,7 +313,7 @@ try {
   ], { cwd: root, encoding: "utf8", timeout: 90_000 });
   assert.notEqual(overwrite.status, 0, "owned Bookmark evidence output must remain create-only");
 
-  console.log("Release surface owned Bookmark/history UI controls passed: 16 exact assignments including native pointer reorder");
+  console.log("Release surface owned Bookmark/history UI controls passed: 19 exact assignments including scoped All-sheet cancel, receipt, status, and cleanup proof");
 } finally {
   process.off("SIGINT", onTerminationSignal);
   process.off("SIGTERM", onTerminationSignal);

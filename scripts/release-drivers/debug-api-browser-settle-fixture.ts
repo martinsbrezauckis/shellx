@@ -135,7 +135,7 @@ async function startOwnedPage(): Promise<{
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
     });
-    response.end("<!doctype html><title>ShellX release settle</title><main>Owned Browser settle fixture ready</main>");
+    response.end("<!doctype html><title>ShellX release settle</title><main>Owned Browser settle fixture ready</main><label>Owned Teach input <input id=\"shellx-release-teach-input\" autocomplete=\"off\"></label>");
   });
   server.on("connection", (socket) => {
     sockets.add(socket);

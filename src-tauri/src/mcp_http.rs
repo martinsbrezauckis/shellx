@@ -2220,6 +2220,7 @@ mod tests {
             "send_prompt_to_session",
             "send_prompt_to_provider",
             "browser_act",
+            "cut_act",
             "browser_navigate",
             "browser_click_ref",
             "browser_click_at",

@@ -65,6 +65,10 @@ assert.match(source, /Refusing to remove non-harness Windows profile/);
 assert.match(source, /outside Windows TEMP/);
 assert.match(source, /AddSeconds\(10\)/);
 assert.match(source, /Start-Sleep -Milliseconds 250/);
+assert.match(source, /\$env:LOCALAPPDATA/);
+assert.match(source, /\$env:APPDATA/);
+assert.match(source, /\$env:TEMP/);
+assert.match(source, /\$env:TMP/);
 
 const rust = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
 assert.match(rust, /isolated_test_instance_requested/);

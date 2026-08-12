@@ -19,6 +19,10 @@ import type {
 } from "./release-surface-candidate-attestation";
 import { toReleaseSurfacePosixNativeBinding } from "./release-surface-posix-native-runtime";
 import {
+  closeReleaseSurfaceWindowsNativeWindow,
+  type ReleaseSurfaceWindowsNativeWindowCloseReceipt,
+} from "./release-surface-windows-native-window";
+import {
   acceptReleaseSurfaceWebDriverAlert,
   clearReleaseSurfaceWebDriverElement,
   clickReleaseSurfaceWebDriverElement,
@@ -29,7 +33,10 @@ import {
   executeReleaseSurfaceWebDriverScript,
   findReleaseSurfaceWebDriverElement,
   performReleaseSurfaceWebDriverKeyChord,
+  releaseSurfaceWebDriverCurrentWindow,
   releaseSurfaceWebDriverElementDisplayed,
+  releaseSurfaceWebDriverWindowHandles,
+  releaseSurfaceWebDriverWindowTitle,
   setReleaseSurfaceWebDriverElementValue,
   submitReleaseSurfaceWebDriverPrompt,
   switchReleaseSurfaceWebDriverWindow,
@@ -64,6 +71,13 @@ export type ReleaseSurfaceInstalledInputElement = ReleaseSurfaceWebDriverElement
 export type ReleaseSurfaceInstalledInputSession = {
   transport: "native-webdriver";
   session: NonNullable<ReleaseSurfaceDriverRequest["nativeWebDriver"]>;
+  windowsNativeWindow?: {
+    binding: NonNullable<ReleaseSurfaceDriverRequest["runtime"]["windowsNative"]>;
+    close: (
+      binding: NonNullable<ReleaseSurfaceDriverRequest["runtime"]["windowsNative"]>,
+      title: "ShellX Browser",
+    ) => ReleaseSurfaceWindowsNativeWindowCloseReceipt;
+  };
 } | {
   transport: "macos-native-input";
   request: ReleaseSurfaceMacosInstalledInputContext;
@@ -100,10 +114,22 @@ type CandidateConnection = { base: string; token: string };
 export function createReleaseSurfaceInstalledInputSession(
   request: ReleaseSurfaceDriverRequest,
   connection: CandidateConnection,
-  options?: { runHelper?: typeof runReleaseSurfaceMacosNativeInputHelper },
+  options?: {
+    runHelper?: typeof runReleaseSurfaceMacosNativeInputHelper;
+    closeWindowsNativeWindow?: typeof closeReleaseSurfaceWindowsNativeWindow;
+  },
 ): ReleaseSurfaceInstalledInputSession {
   if (request.nativeWebDriver && !request.macosNativeInput) {
-    return { transport: "native-webdriver", session: request.nativeWebDriver };
+    return {
+      transport: "native-webdriver",
+      session: request.nativeWebDriver,
+      ...(request.platform === "windows-installed" && request.runtime.windowsNative ? {
+        windowsNativeWindow: {
+          binding: request.runtime.windowsNative,
+          close: options?.closeWindowsNativeWindow ?? closeReleaseSurfaceWindowsNativeWindow,
+        },
+      } : {}),
+    };
   }
   if (request.platform !== "macos-installed" || !request.macosNativeInput || request.nativeWebDriver) {
     throw new Error("installed-input driver requires exactly one platform-native input binding");
@@ -312,6 +338,28 @@ export async function clickReleaseSurfaceInstalledInputElement(
   await applyMacosAction(session, "click", await requireFreshMacosTarget(session, element));
 }
 
+export async function clickReleaseSurfaceInstalledInputAccessibilityButton(
+  session: ReleaseSurfaceInstalledInputSession,
+  label: "Reset UI" | "Reload window",
+): Promise<void> {
+  if (session.transport !== "macos-native-input") {
+    throw new Error("the exact Accessibility button transport is available only to the attested macOS native-input helper");
+  }
+  const request: ReleaseSurfaceMacosNativeInputHelperRequest = {
+    schema: RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_REQUEST_SCHEMA,
+    action: "clickAccessibilityButton",
+    candidate: {
+      processId: session.request.runtime.processId,
+      executablePath: session.request.runtime.installedPayloadPath,
+      executableSha256: session.request.runtime.executableSha256,
+      expectedWindowTitle: session.activeWindow.title,
+    },
+    accessibilityLabel: label,
+  };
+  const response = session.runHelper(session.request.macosNativeInput!.helperPath, request);
+  validateMacosBoundResponse(session, "clickAccessibilityButton", response, "applied", true);
+}
+
 export async function clickReleaseSurfaceInstalledInputElementAtFraction(
   session: ReleaseSurfaceInstalledInputSession,
   element: ReleaseSurfaceInstalledInputElement,
@@ -479,12 +527,71 @@ export async function switchReleaseSurfaceInstalledInputWindow(
   await bindMacosWindow(session, target);
 }
 
+export async function focusReleaseSurfaceInstalledInputMainWindow(
+  session: ReleaseSurfaceInstalledInputSession,
+): Promise<string> {
+  if (session.transport === "macos-native-input") {
+    if (session.activeWindow.surface === "app") return session.activeWindow.handle;
+    const target = macosWindowForTitle(session, "shellX");
+    await bindMacosWindow(session, target);
+    return target.handle;
+  }
+
+  const deadline = Date.now() + 8_000;
+  let observed: string[] = [];
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      const currentHandle = await releaseSurfaceWebDriverCurrentWindow(session.session);
+      const currentTitle = await releaseSurfaceWebDriverWindowTitle(session.session);
+      if (currentTitle === "shellX") return currentHandle;
+    } catch (error) {
+      lastError = error;
+    }
+
+    try {
+      const handles = await releaseSurfaceWebDriverWindowHandles(session.session);
+      observed = [];
+      for (const handle of handles) {
+        try {
+          await switchReleaseSurfaceWebDriverWindow(session.session, handle);
+          const title = await releaseSurfaceWebDriverWindowTitle(session.session);
+          observed.push(title);
+          if (title === "shellX") return handle;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(100);
+  }
+  const detail = lastError instanceof Error ? `; last error: ${lastError.message}` : "";
+  throw new Error(`installed-input could not focus the exact shellX main window among ${JSON.stringify(observed)}${detail}`);
+}
+
 export async function switchReleaseSurfaceInstalledInputWindowByTitle(
   session: ReleaseSurfaceInstalledInputSession,
   exactTitle: string,
 ): Promise<{ originalHandle: string; targetHandle: string }> {
   if (session.transport === "native-webdriver") {
-    return switchReleaseSurfaceWebDriverWindowByTitle(session.session, exactTitle);
+    if (exactTitle !== "ShellX Browser") {
+      return switchReleaseSurfaceWebDriverWindowByTitle(session.session, exactTitle);
+    }
+    const deadline = Date.now() + 10_000;
+    let lastError: unknown = null;
+    while (Date.now() < deadline) {
+      try {
+        return await switchReleaseSurfaceWebDriverWindowByTitle(session.session, exactTitle);
+      } catch (error) {
+        lastError = error;
+        await delay(100);
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("ShellX Browser window did not become available before timeout");
   }
   const original = { ...session.activeWindow };
   const target = macosWindowForTitle(session, exactTitle);
@@ -498,7 +605,54 @@ export async function switchReleaseSurfaceInstalledInputWindowByTitle(
 export async function closeReleaseSurfaceInstalledInputWindow(
   session: ReleaseSurfaceInstalledInputSession,
 ): Promise<void> {
-  if (session.transport === "native-webdriver") return closeReleaseSurfaceWebDriverWindow(session.session);
+  if (session.transport === "native-webdriver") {
+    const title = await releaseSurfaceWebDriverWindowTitle(session.session);
+    if (title !== "ShellX Browser") return closeReleaseSurfaceWebDriverWindow(session.session);
+
+    if (session.windowsNativeWindow) {
+      session.windowsNativeWindow.close(
+        session.windowsNativeWindow.binding,
+        "ShellX Browser",
+      );
+      return;
+    }
+
+    // ShellX Browser owns more than one WebView handle inside one native
+    // window. Ask the exact Browser chrome renderer to close its own
+    // candidate-owned Tauri window first. Some WebKitDriver builds retain a
+    // stale renderer handle after the native window is gone, so purge only
+    // that exact handle through WebDriver before deciding cleanup failed.
+    const browserChromeHandle = await releaseSurfaceWebDriverCurrentWindow(session.session);
+    const closeRequested = await executeReleaseSurfaceWebDriverScript(session.session, `
+      const internals = window.__TAURI_INTERNALS__;
+      const label = internals?.metadata?.currentWindow?.label;
+      if (label !== "shellx-browser" || typeof internals?.invoke !== "function") return false;
+      void internals.invoke("plugin:window|close", { label });
+      return true;
+    `);
+    if (closeRequested !== true) {
+      throw new Error("ShellX Browser candidate-owned native close route was unavailable");
+    }
+    let deadline = Date.now() + 4_000;
+    let lastHandles: string[] = [];
+    while (Date.now() < deadline) {
+      lastHandles = await releaseSurfaceWebDriverWindowHandles(session.session);
+      if (!lastHandles.includes(browserChromeHandle)) return;
+      await delay(100);
+    }
+
+    await switchReleaseSurfaceWebDriverWindow(session.session, browserChromeHandle);
+    await closeReleaseSurfaceWebDriverWindow(session.session);
+    deadline = Date.now() + 4_000;
+    while (Date.now() < deadline) {
+      lastHandles = await releaseSurfaceWebDriverWindowHandles(session.session);
+      if (!lastHandles.includes(browserChromeHandle)) return;
+      await delay(100);
+    }
+    throw new Error(
+      `ShellX Browser native window did not close before timeout; chrome handle ${browserChromeHandle} remains among ${lastHandles.join(", ")}`,
+    );
+  }
   if (session.activeWindow.surface !== "browser") {
     throw new Error("macOS native-input refuses to close the attested main candidate window");
   }
@@ -523,7 +677,26 @@ export async function submitReleaseSurfaceInstalledInputPrompt(
   if (session.transport === "native-webdriver") {
     return submitReleaseSurfaceWebDriverPrompt(session.session, expectedText, responseText);
   }
-  throw new Error("macOS native-input does not expose a bounded system-dialog prompt channel");
+  if (!expectedText || expectedText.length > 4_096 || expectedText.includes("\0")) {
+    throw new Error("macOS native-input expected prompt text must be non-empty, at most 4096 characters, and contain no NUL bytes");
+  }
+  if (!responseText.trim() || responseText.length > 4_096 || responseText.includes("\0")) {
+    throw new Error("macOS native-input prompt response must be non-empty, at most 4096 characters, and contain no NUL bytes");
+  }
+  const request: ReleaseSurfaceMacosNativeInputHelperRequest = {
+    schema: RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_REQUEST_SCHEMA,
+    action: "submitPrompt",
+    candidate: {
+      processId: session.request.runtime.processId,
+      executablePath: session.request.runtime.installedPayloadPath,
+      executableSha256: session.request.runtime.executableSha256,
+      expectedWindowTitle: session.activeWindow.title,
+    },
+    promptText: expectedText,
+    promptResponseText: responseText,
+  };
+  const response = session.runHelper(session.request.macosNativeInput!.helperPath, request);
+  validateMacosPromptResponse(session, response, { expectedText, responseText });
 }
 
 async function bindMacosWindow(
@@ -533,21 +706,29 @@ async function bindMacosWindow(
   const previous = session.activeWindow;
   session.activeWindow = { ...targetWindow };
   try {
-    const target = await resolveMacosTarget(session, "body");
-    if (!target) throw new Error(`macOS native-input window renderer did not resolve: ${targetWindow.title}`);
-    const request: ReleaseSurfaceMacosNativeInputHelperRequest = {
-      schema: RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_REQUEST_SCHEMA,
-      action: "preflight",
-      candidate: {
-        processId: session.request.runtime.processId,
-        executablePath: session.request.runtime.installedPayloadPath,
-        executableSha256: session.request.runtime.executableSha256,
-        expectedWindowTitle: targetWindow.title,
-      },
-      target,
-    };
-    const response = session.runHelper(session.request.macosNativeInput!.helperPath, request);
-    validateMacosBoundResponse(session, "preflight", response, "ready", false);
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const target = await resolveMacosTarget(session, "body");
+        if (!target) throw new ReleaseSurfaceMacosRendererResolutionError();
+        const request: ReleaseSurfaceMacosNativeInputHelperRequest = {
+          schema: RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_REQUEST_SCHEMA,
+          action: "preflight",
+          candidate: {
+            processId: session.request.runtime.processId,
+            executablePath: session.request.runtime.installedPayloadPath,
+            executableSha256: session.request.runtime.executableSha256,
+            expectedWindowTitle: targetWindow.title,
+          },
+          target,
+        };
+        const response = session.runHelper(session.request.macosNativeInput!.helperPath, request);
+        validateMacosBoundResponse(session, "preflight", response, "ready", false);
+        return;
+      } catch (error) {
+        if (!(error instanceof ReleaseSurfaceMacosRendererResolutionError) || attempt === 3) throw error;
+        await delay(100);
+      }
+    }
   } catch (error) {
     session.activeWindow = previous;
     throw error;
@@ -743,9 +924,41 @@ function validateMacosPickerResponse(
   }
 }
 
+function validateMacosPromptResponse(
+  session: Extract<ReleaseSurfaceInstalledInputSession, { transport: "macos-native-input" }>,
+  response: ReleaseSurfaceMacosNativeInputHelperResponse,
+  input: { expectedText: string; responseText: string },
+): void {
+  if (response.schema !== RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_RESPONSE_SCHEMA
+    || response.action !== "submitPrompt" || response.ok !== true || response.status !== "applied") {
+    throw new Error("macOS native-input helper did not apply its exact submitPrompt contract");
+  }
+  if (response.candidate?.processId !== session.request.runtime.processId
+    || response.candidate?.executableSha256 !== session.request.runtime.executableSha256
+    || response.candidate?.pathMatched !== true) {
+    throw new Error("macOS native-input prompt response drifted from the exact candidate process");
+  }
+  if (response.permissions?.accessibilityTrusted !== true
+    || response.permissions.eventPostingTrusted !== true
+    || response.permissions.promptRequested !== false) {
+    throw new Error("macOS native-input prompt lost its operator-granted permission binding");
+  }
+  if (!response.prompt
+    || !(new Set(["AXSheet", "AXDialog", "AXWindow"])).has(response.prompt.role)
+    || response.prompt.promptTextSha256 !== sha256(input.expectedText)
+    || response.prompt.responseTextSha256 !== sha256(input.responseText)
+    || response.prompt.dialogOwnedByCandidate !== true
+    || response.effect?.applicationActivated !== true
+    || !Number.isSafeInteger(response.effect.eventsPosted)
+    || response.effect.eventsPosted < 6
+    || response.effect.eventsPosted > 12) {
+    throw new Error("macOS native-input prompt response did not prove one exact candidate-owned dialog submission");
+  }
+}
+
 function validateMacosBoundResponse(
   session: Extract<ReleaseSurfaceInstalledInputSession, { transport: "macos-native-input" }>,
-  action: "preflight" | "click" | "contextClick" | "drag" | "typeText" | "clear" | "keyChord" | "selectPickerPath",
+  action: "preflight" | "click" | "contextClick" | "drag" | "typeText" | "clear" | "keyChord" | "clickAccessibilityButton" | "selectPickerPath",
   response: ReleaseSurfaceMacosNativeInputHelperResponse,
   expectedStatus: "ready" | "applied",
   expectEffect: boolean,

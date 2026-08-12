@@ -38,8 +38,7 @@ pub(super) async fn post_build_checkpoint_to_debug_api(
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
     let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
-    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
-        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let token = crate::debug_api::current_debug_token()?;
     let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
         .unwrap_or_else(|_| "5757".to_string());
     let url = format!(
@@ -80,8 +79,7 @@ pub(super) async fn post_preview_diagnose_to_debug_api(
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
     let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
-    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
-        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let token = crate::debug_api::current_debug_token()?;
     let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
         .unwrap_or_else(|_| "5757".to_string());
     let url = format!(
@@ -118,8 +116,7 @@ pub(super) async fn post_preview_start_to_debug_api(
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
     let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
-    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
-        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let token = crate::debug_api::current_debug_token()?;
     let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
         .unwrap_or_else(|_| "5757".to_string());
     let url = format!(

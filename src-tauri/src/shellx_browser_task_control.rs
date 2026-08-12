@@ -10,6 +10,7 @@ use crate::shellx_browser_tabs::resolve_action_tab_index;
 use crate::shellx_browser_tasks::{
     browser_task_is_terminal, find_task_index, repair_browser_task_invariants_locked,
     resolve_task_id, transition_task_status_locked, BROWSER_TASK_OPERATOR_CONTROL_REQUIRED,
+    BROWSER_TASK_OWNER_CONTROL_REQUIRED,
 };
 
 impl ShellxBrowserRegistry {
@@ -291,19 +292,58 @@ impl ShellxBrowserRegistry {
     ) -> Result<(), String> {
         let state = lock_or_recover(&self.state);
         let target_tab_idx = resolve_action_tab_index(&state, request)?;
-        let task_id = request
+        let requested_task_id = request
             .task_id
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .or_else(|| target_tab_idx.and_then(|tab_idx| state.tabs[tab_idx].task_id.clone()))
+            .map(str::to_string);
+        let tab_task_id = target_tab_idx.and_then(|tab_idx| state.tabs[tab_idx].task_id.clone());
+        if caller_session_id.is_some() {
+            let tab_idx = target_tab_idx.ok_or_else(|| {
+                format!(
+                    "{}: authenticated Browser agents require a caller-owned tab target",
+                    BROWSER_TASK_OWNER_CONTROL_REQUIRED
+                )
+            })?;
+            let tab_task_id = state.tabs[tab_idx].task_id.as_deref().ok_or_else(|| {
+                format!(
+                    "{}: authenticated Browser agents cannot target a taskless or personal tab",
+                    BROWSER_TASK_OWNER_CONTROL_REQUIRED
+                )
+            })?;
+            if requested_task_id
+                .as_deref()
+                .is_some_and(|requested_task_id| requested_task_id != tab_task_id)
+            {
+                return Err("browserTabId/taskId mismatch for Browser action target".to_string());
+            }
+            let idx = find_task_index(&state, tab_task_id)?;
+            return ensure_browser_task_control_authority(
+                &state.tasks[idx],
+                BrowserTaskControlAuthority::Agent,
+                caller_session_id,
+            );
+        }
+        if let (Some(requested_task_id), Some(tab_task_id)) =
+            (requested_task_id.as_deref(), tab_task_id.as_deref())
+        {
+            if requested_task_id != tab_task_id {
+                return Err("browserTabId/taskId mismatch for Browser action target".to_string());
+            }
+        }
+        let task_id = requested_task_id
+            .or(tab_task_id)
             .or_else(|| state.active_task_id.clone());
         let Some(task_id) = task_id else {
             return Ok(());
         };
-        drop(state);
-        self.ensure_agent_session_for_task_id(&task_id, caller_session_id)
+        let idx = find_task_index(&state, &task_id)?;
+        ensure_browser_task_control_authority(
+            &state.tasks[idx],
+            BrowserTaskControlAuthority::Agent,
+            caller_session_id,
+        )
     }
 
     pub(crate) fn ensure_agent_session_for_task_id(
@@ -324,7 +364,11 @@ impl ShellxBrowserRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shellx_browser::StartBrowserTaskRequest;
+    use crate::shellx_browser::{
+        BrowserConsoleLogRequest, BrowserDownloadRequest, BrowserHistoryEntry,
+        BrowserNetworkRecordRequest, BrowserSessionGrantRequest, BrowserTabOpenRequest,
+        BrowserUploadRequest, StartBrowserTaskRequest,
+    };
     use crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED;
 
     #[test]
@@ -387,5 +431,275 @@ mod tests {
                 Some("mcp-tab-a"),
             )
             .expect("owning caller can pause task");
+    }
+
+    #[test]
+    fn caller_bound_actions_reject_own_task_paired_with_foreign_tab_before_dispatch() {
+        let registry = ShellxBrowserRegistry::default();
+        let task_a = registry
+            .start_task_for_agent_session(
+                StartBrowserTaskRequest {
+                    goal: "Caller A".to_string(),
+                    profile_id: Some("task-disposable".to_string()),
+                    ..StartBrowserTaskRequest::default()
+                },
+                Some("mcp-tab-a"),
+            )
+            .expect("caller A task");
+        let task_b = registry
+            .start_task_for_agent_session(
+                StartBrowserTaskRequest {
+                    goal: "Caller B".to_string(),
+                    profile_id: Some("agent-work".to_string()),
+                    ..StartBrowserTaskRequest::default()
+                },
+                Some("mcp-tab-b"),
+            )
+            .expect("caller B task");
+        let foreign_tab_id = registry
+            .tabs_for_agent_session("mcp-tab-a")
+            .into_iter()
+            .find(|tab| tab.task_id.as_deref() == Some(task_a.task_id.as_str()))
+            .expect("caller A tab")
+            .browser_tab_id;
+
+        for action in [
+            "readEmailCodeGrant",
+            "useAgentWalletGrant",
+            "fillFromVaultGrant",
+            "fillProfileCardGrant",
+            "clickRef",
+        ] {
+            let error = registry
+                .ensure_agent_session_for_action(
+                    &BrowserActionRequest {
+                        browser_tab_id: Some(foreign_tab_id.clone()),
+                        task_id: Some(task_b.task_id.clone()),
+                        action: action.to_string(),
+                        ..BrowserActionRequest::default()
+                    },
+                    Some("mcp-tab-b"),
+                )
+                .expect_err("foreign tab pairing must fail before Browser action dispatch");
+            assert_eq!(
+                error,
+                "browserTabId/taskId mismatch for Browser action target"
+            );
+        }
+
+        let personal_tab_id = registry
+            .open_tab(BrowserTabOpenRequest {
+                profile_id: Some("personal".to_string()),
+                url: Some("https://personal.invalid/private".to_string()),
+                ..BrowserTabOpenRequest::default()
+            })
+            .expect("operator personal tab")
+            .tab
+            .browser_tab_id;
+        for (action, task_id) in [
+            ("readEmailCodeGrant", Some(task_b.task_id.clone())),
+            ("fillFromVaultGrant", Some(task_b.task_id.clone())),
+            ("clearSiteData", Some(task_b.task_id.clone())),
+            ("clickRef", None),
+        ] {
+            let error = registry
+                .ensure_agent_session_for_action(
+                    &BrowserActionRequest {
+                        browser_tab_id: Some(personal_tab_id.clone()),
+                        task_id,
+                        action: action.to_string(),
+                        ..BrowserActionRequest::default()
+                    },
+                    Some("mcp-tab-b"),
+                )
+                .expect_err("authenticated agents cannot target a personal tab");
+            assert!(error.contains(BROWSER_TASK_OWNER_CONTROL_REQUIRED));
+        }
+    }
+
+    #[test]
+    fn caller_scoped_browser_reads_exclude_personal_and_other_agent_state() {
+        let registry = ShellxBrowserRegistry::default();
+        let task_a = registry
+            .start_task_for_agent_session(
+                StartBrowserTaskRequest {
+                    goal: "Caller A private navigation".to_string(),
+                    profile_id: Some("task-disposable".to_string()),
+                    ..StartBrowserTaskRequest::default()
+                },
+                Some("mcp-tab-a"),
+            )
+            .expect("caller A task");
+        let task_b = registry
+            .start_task_for_agent_session(
+                StartBrowserTaskRequest {
+                    goal: "Caller B private navigation".to_string(),
+                    profile_id: Some("agent-work".to_string()),
+                    ..StartBrowserTaskRequest::default()
+                },
+                Some("mcp-tab-b"),
+            )
+            .expect("caller B task");
+        {
+            let mut state = lock_or_recover(&registry.state);
+            state.history.extend([
+                BrowserHistoryEntry {
+                    history_id: "history-a".to_string(),
+                    task_id: Some(task_a.task_id.clone()),
+                    profile_id: "task-disposable".to_string(),
+                    url: "https://caller-a.invalid/private".to_string(),
+                    title: Some("Caller A".to_string()),
+                    visited_at_ms: 3,
+                },
+                BrowserHistoryEntry {
+                    history_id: "history-b".to_string(),
+                    task_id: Some(task_b.task_id.clone()),
+                    profile_id: "agent-work".to_string(),
+                    url: "https://caller-b.invalid/private".to_string(),
+                    title: Some("Caller B".to_string()),
+                    visited_at_ms: 2,
+                },
+                BrowserHistoryEntry {
+                    history_id: "history-personal".to_string(),
+                    task_id: None,
+                    profile_id: "personal".to_string(),
+                    url: "https://personal.invalid/private".to_string(),
+                    title: Some("Personal".to_string()),
+                    visited_at_ms: 1,
+                },
+            ]);
+        }
+        for (task, label) in [(&task_a, "a"), (&task_b, "b")] {
+            registry
+                .request_download_intent(BrowserDownloadRequest {
+                    task_id: Some(task.task_id.clone()),
+                    url: format!("https://caller-{label}.invalid/private-download"),
+                    reason: format!("Caller {label} download"),
+                    ..BrowserDownloadRequest::default()
+                })
+                .expect("task-owned download");
+            registry
+                .request_upload_intent(BrowserUploadRequest {
+                    task_id: Some(task.task_id.clone()),
+                    file_path: format!("/synthetic/caller-{label}.txt"),
+                    reason: format!("Caller {label} upload"),
+                    ..BrowserUploadRequest::default()
+                })
+                .expect("task-owned upload");
+            registry
+                .record_agent_console_log(
+                    BrowserConsoleLogRequest {
+                        task_id: Some(task.task_id.clone()),
+                        level: "info".to_string(),
+                        message: format!("caller-{label}-private-log"),
+                        ..BrowserConsoleLogRequest::default()
+                    },
+                    if label == "a" {
+                        "mcp-tab-a"
+                    } else {
+                        "mcp-tab-b"
+                    },
+                )
+                .expect("task-owned log");
+            registry
+                .record_network_observed(BrowserNetworkRecordRequest {
+                    task_id: Some(task.task_id.clone()),
+                    method: "GET".to_string(),
+                    url: format!("https://caller-{label}.invalid/private-network"),
+                    ..BrowserNetworkRecordRequest::default()
+                })
+                .expect("task-owned network");
+            registry
+                .request_session_grant(BrowserSessionGrantRequest {
+                    task_id: Some(task.task_id.clone()),
+                    from_profile_id: "personal".to_string(),
+                    to_profile_id: task.profile_id.clone(),
+                    reason: format!("Caller {label} grant"),
+                    ..BrowserSessionGrantRequest::default()
+                })
+                .expect("task-owned grant");
+        }
+
+        let summary = registry.summary_for_agent_session("mcp-tab-a");
+        assert_eq!(summary.counts.tasks, 1);
+        assert_eq!(summary.counts.tabs, 1);
+        assert_eq!(summary.counts.history, 1);
+        assert_eq!(summary.counts.bookmarks, 0);
+        assert_eq!(
+            registry
+                .task_summaries_for_agent_session("mcp-tab-a")
+                .into_iter()
+                .map(|task| task.task_id)
+                .collect::<Vec<_>>(),
+            vec![task_a.task_id.clone()]
+        );
+        let tabs = registry.tabs_for_agent_session("mcp-tab-a");
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].task_id.as_deref(), Some(task_a.task_id.as_str()));
+        let history = registry.history_for_agent_session("mcp-tab-a", None);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].history_id, "history-a");
+        assert!(history.iter().all(|entry| entry.profile_id != "personal"));
+        assert_eq!(registry.downloads_for_agent_session("mcp-tab-a").len(), 1);
+        assert_eq!(registry.uploads_for_agent_session("mcp-tab-a").len(), 1);
+        assert_eq!(
+            registry
+                .console_logs_for_agent_session("mcp-tab-a", None)
+                .len(),
+            1
+        );
+        assert_eq!(
+            registry
+                .network_entries_for_agent_session("mcp-tab-a", None)
+                .len(),
+            1
+        );
+        assert_eq!(
+            registry
+                .session_grants_for_agent_session("mcp-tab-a", None)
+                .len(),
+            1
+        );
+        assert!(registry
+            .receipts_for_agent_session("mcp-tab-a", None)
+            .iter()
+            .all(|receipt| receipt.task_id.as_deref() == Some(task_a.task_id.as_str())));
+        assert!(registry
+            .downloads_for_agent_session("mcp-tab-a")
+            .iter()
+            .all(|entry| !entry
+                .url
+                .as_deref()
+                .unwrap_or_default()
+                .contains("caller-b")));
+    }
+
+    #[test]
+    fn browser_vault_actor_uses_authenticated_caller_not_request_owner() {
+        let registry = ShellxBrowserRegistry::default();
+        let task = registry
+            .start_task_for_agent_session(
+                StartBrowserTaskRequest {
+                    goal: "Bound Vault actor".to_string(),
+                    profile_id: Some("task-disposable".to_string()),
+                    ..StartBrowserTaskRequest::default()
+                },
+                Some("mcp-tab-a"),
+            )
+            .expect("caller task");
+        let action = BrowserActionRequest {
+            task_id: Some(task.task_id),
+            action: "fillFromVaultGrant".to_string(),
+            owner_agent_id: Some("spoofed-agent-b".to_string()),
+            ..BrowserActionRequest::default()
+        };
+        let authenticated =
+            crate::shellx_browser_caller::shellx_mcp_agent_identity(Some("mcp-tab-a"))
+                .expect("authenticated actor");
+        let actor = registry
+            .vault_grant_actor_context_for_action(&action, Some(&authenticated))
+            .expect("actor context");
+        assert_eq!(actor.agent_id.as_deref(), Some(authenticated.as_str()));
+        assert_ne!(actor.agent_id.as_deref(), Some("spoofed-agent-b"));
     }
 }

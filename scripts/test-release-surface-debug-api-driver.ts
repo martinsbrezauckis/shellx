@@ -215,6 +215,28 @@ const browserPendingRequestMutations = [
 const browserRenderedCheckMutations = [
   "/browser/rendered-check",
 ] as const;
+const browserTeachDeveloperSurfaces = [
+  {
+    method: "GET",
+    path: "/browser/teach/drafts",
+    oracleId: "debug-api:GET-browser-teach-drafts:owned-agent-readback",
+  },
+  {
+    method: "POST",
+    path: "/browser/developer/inspect",
+    oracleId: "debug-api:POST-browser-developer-inspect:developer-mode-denial",
+  },
+  {
+    method: "POST",
+    path: "/browser/teach/prepare",
+    oracleId: "debug-api:POST-browser-teach-prepare:owned-agent-draft",
+  },
+  {
+    method: "POST",
+    path: "/browser/teach/revise",
+    oracleId: "debug-api:POST-browser-teach-revise:owned-agent-revision",
+  },
+] as const;
 const previewLifecycleMutations = [
   "/preview/work/start",
   "/preview/work/restart",
@@ -278,6 +300,7 @@ const tauriInvokeRelayMutations = [
 ] as const;
 const nativePickerLifecycles = ["POST", "GET", "DELETE"] as const;
 const ownedTauriInvokeRelayPath = /^\/release-test\/tauri-invokes\/rti-[0-9a-f]{32}(?:\/(?:claim|complete))?$/;
+const ownedTeachDraftsPath = /^\/browser\/teach\/drafts\?taskId=release-browser-settle-task-[a-f0-9]{16}(?:-\d+)?&limit=1$/;
 const ownedFsUnwatchPath = /^\/tools\/fs_watch\/fsw-[0-9a-f-]{36}$/;
 const ownedProviderConnectPath = /^\/connect\?tabId=shellx-release-provider-[0-9a-f-]{36}$/;
 const ownedProviderAbortPath = /^\/abort\?tabId=shellx-release-provider-[0-9a-f-]{36}$/;
@@ -646,6 +669,22 @@ try {
         oracleId: "debug-api:post-browser-rendered-check:semantic-effect",
         cleanupId: "debug-api:destroy-owned-browser-hidden-renderer",
       })),
+      ...browserTeachDeveloperSurfaces.map(({ method, path, oracleId }) => ({
+        surface: {
+          id: `debug-api-route:${method} ${path}`,
+          kind: "debug-api-route" as const,
+          name: `${method} ${path}`,
+          source: path === "/browser/developer/inspect"
+            ? "src-tauri/src/debug_api_browser_developer_inspection.rs"
+            : "src-tauri/src/debug_api_browser_teach.rs",
+          platforms: ["linux-installed", "windows-installed", "macos-installed"] as Array<"linux-installed" | "windows-installed" | "macos-installed">,
+          delivery: "installed-app" as const,
+        },
+        fixtureId: "debug-api:isolated-browser-teach-agent-task",
+        expectedEffect: `${method} ${path} proves its exact owned Browser Teach or Developer boundary`,
+        oracleId,
+        cleanupId: "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
+      })),
       ...previewLifecycleMutations.map((path) => ({
         surface: {
           id: `debug-api-route:POST ${path}`,
@@ -993,6 +1032,7 @@ try {
       + browserRobotMutations.length
       + browserPendingRequestMutations.length
       + browserRenderedCheckMutations.length
+      + browserTeachDeveloperSurfaces.length
       + connectionMutations.length + outsideConnectorMutations.length
       + operatorGates.length + safeRefusalRoutes.length + vaultE2eMutations.length + vaultOwnedGrantMutations.length
       + vaultSetupMutations.length + vaultAgentRequestMutations.length + fsWatchMutations.length
@@ -1036,6 +1076,10 @@ try {
       "debug-api:delete-owned-transfer-file-close-task-and-candidate-teardown",
       "debug-api:delete-owned-transfer-file-close-task-and-candidate-teardown",
       "debug-api:delete-owned-vault-deposit-close-task-and-candidate-teardown",
+      "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
+      "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
+      "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
+      "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
     ].sort(),
   );
   for (const privateValue of [
@@ -1190,6 +1234,8 @@ try {
       : ownedProviderSessionAbortPath.test(path) ? "/provider-sessions/abort?tabId=:owned_provider_tab"
       : ownedTauriInvokeRelayPath.test(path)
         ? path.replace(/rti-[0-9a-f]{32}/, ":owned_invoke_id")
+      : ownedTeachDraftsPath.test(path)
+        ? "/browser/teach/drafts?taskId=:owned_teach_task&limit=1"
       : path
   ));
   const expectedRequests = [
@@ -1269,6 +1315,7 @@ try {
     "/browser/summary",
     "/browser/rendered-check",
     "/browser/summary",
+    ...browserTeachDeveloperSurfaces.flatMap(expectedBrowserTeachDeveloperRequestPaths),
     ...previewLifecycleMutations.flatMap((path) => expectedPreviewLifecycleRequestPaths(path, sourceCommit)),
     "/connections",
     "/connections",
@@ -1707,6 +1754,33 @@ function expectedBrowserLifecycleRequestPaths(
   sequence.push("/browser/tabs/close");
   sequence.push("/browser/state");
   return sequence;
+}
+
+function expectedBrowserTeachDeveloperRequestPaths(
+  surface: typeof browserTeachDeveloperSurfaces[number],
+): string[] {
+  const setup = [
+    "/browser/task/start",
+    "/browser/state",
+    "/browser/settle",
+    "/browser/action",
+    "/browser/flight-recorder/export",
+    "/browser/task/finish",
+  ];
+  const cleanup = [
+    "/browser/state",
+    "/browser/state",
+    "/browser/tabs/close",
+    "/browser/state",
+  ];
+  if (surface.path === "/browser/developer/inspect") return [...setup, surface.path, ...cleanup];
+  if (surface.path === "/browser/teach/prepare") {
+    return [...setup, surface.path, "/browser/teach/drafts?taskId=:owned_teach_task&limit=1", ...cleanup];
+  }
+  if (surface.path === "/browser/teach/revise") {
+    return [...setup, "/browser/teach/prepare", surface.path, "/browser/teach/drafts?taskId=:owned_teach_task&limit=1", ...cleanup];
+  }
+  return [...setup, "/browser/teach/prepare", "/browser/teach/drafts?taskId=:owned_teach_task&limit=1", ...cleanup];
 }
 
 function expectedGoalLifecycleRequestPaths(

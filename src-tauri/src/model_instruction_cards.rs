@@ -7,8 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const MODEL_INSTRUCTION_CARDS_VERSION: &str = "2026-06-06.1";
-pub const MODEL_INSTRUCTION_CARDS_REVIEWED_ON: &str = "2026-06-06";
+pub const MODEL_INSTRUCTION_CARDS_VERSION: &str = "2026-08-11.1";
+pub const MODEL_INSTRUCTION_CARDS_REVIEWED_ON: &str = "2026-08-11";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -120,6 +120,8 @@ pub fn model_instruction_cards_state() -> ModelInstructionCardsState {
             grok_imagine_video_card(),
             grok_imagine_image_card(),
             codex_gpt_image_card(),
+            antigravity_nano_banana_image_card(),
+            antigravity_video_generation_card(),
             codex_cli_card(),
             claude_code_card(),
             antigravity_cli_card(),
@@ -322,6 +324,130 @@ fn codex_gpt_image_card() -> ModelInstructionCard {
             source: "codex-routed:gpt-image".to_string(),
             refresh_hint: "Refresh from Codex provider probes and official OpenAI image generation docs before a release when image tooling changes.".to_string(),
         },
+    }
+}
+
+fn antigravity_nano_banana_image_card() -> ModelInstructionCard {
+    ModelInstructionCard {
+        id: "antigravity-nano-banana-image".to_string(),
+        display_name: "Antigravity Image Generation".to_string(),
+        provider_id: "antigravity-cli".to_string(),
+        category: "media-generation".to_string(),
+        status: "bundled".to_string(),
+        route_mode: "explicitOnly".to_string(),
+        shellx_may_auto_route: false,
+        intent_examples: vec![
+            "generate an image with Antigravity".to_string(),
+            "use Nano Banana to create this image".to_string(),
+            "ask Antigravity to make an image from these source images".to_string(),
+        ],
+        preflight_checks: vec![
+            preflight(
+                "antigravityAvailable",
+                "Antigravity CLI is available in this environment",
+                true,
+            ),
+            preflight(
+                "antigravityAuthenticated",
+                "Antigravity is authenticated for the selected provider session",
+                true,
+            ),
+            preflight(
+                "antigravityImageToolVisible",
+                "The native generate_image tool is visible in the installed Antigravity session",
+                true,
+            ),
+            preflight(
+                "mediaInputReady",
+                "Prompt and any user-supplied source images are ready",
+                true,
+            ),
+        ],
+        capabilities: vec![
+            capability(
+                "generateImage",
+                "Image generation",
+                "native",
+                "Use the installed Antigravity/Nano Banana generate_image tool. Prompt, ImageName, toolAction, and toolSummary are required by the current native surface.",
+            ),
+            capability(
+                "sourceImageInputs",
+                "Source image inputs",
+                "native",
+                "Pass AspectRatio or ImagePaths only when the user supplied those inputs.",
+            ),
+        ],
+        tool_exposure: antigravity_image_tool_exposure(),
+        invocation: CardInvocation {
+            surface: "antigravity-native-or-provider-handoff".to_string(),
+            debug_api_path: Some("/provider-sessions/start".to_string()),
+            command_hint: Some("Antigravity image recipe: in an already-running Antigravity session, call native generate_image directly. From a different ShellX-host-enabled provider/session, call send_prompt_to_provider with providerId=antigravity-cli and userApproved=true; omit targetTabId for the same visible tab, use ShellX's long media timeout, and set includeShellxTooling=false to select the target provider session's existing off/no-ShellX-tooling mode unless the task independently needs ShellX tooling. Request generate_image with an operator-visible ImageName and returned artifact path or receipt. Pass AspectRatio or ImagePaths only when the user supplied them.".to_string()),
+            requires_user_visible_selection: true,
+        },
+        agent_instructions: vec![
+            "Use this card only when the user explicitly asks for Antigravity image generation or approves Antigravity for the handoff.".to_string(),
+            "In an already-running Antigravity session, use native generate_image directly; do not hand off to Antigravity from Antigravity.".to_string(),
+            "From a different ShellX-host-enabled provider/session, call send_prompt_to_provider with providerId=antigravity-cli and userApproved=true. Use the same visible tab by default; omit targetTabId unless the user names another tab.".to_string(),
+            "For that cross-provider handoff, preserve ShellX's long media timeout and set includeShellxTooling=false to select the target provider session's existing off/no-ShellX-tooling mode unless the task independently needs ShellX tooling.".to_string(),
+            "Request generate_image with an operator-visible ImageName and returned artifact path or receipt.".to_string(),
+            "Pass AspectRatio or ImagePaths only when the user supplied them.".to_string(),
+            "Do not replace native generate_image with Browser automation, Vision Describe, raw shell commands, or another provider.".to_string(),
+            "If Antigravity or generate_image is unavailable, report the failed preflight instead of silently switching providers.".to_string(),
+        ],
+        receipt_kinds: vec![
+            "media-requested".to_string(),
+            "provider-health-checked".to_string(),
+            "artifact-created".to_string(),
+        ],
+        fallback_rule: "Ask the user before using GPT Image, Grok Imagine, or another image provider.".to_string(),
+        provenance: antigravity_media_provenance(),
+    }
+}
+
+fn antigravity_video_generation_card() -> ModelInstructionCard {
+    ModelInstructionCard {
+        id: "antigravity-video-generation".to_string(),
+        display_name: "Antigravity Video Generation".to_string(),
+        provider_id: "antigravity-cli".to_string(),
+        category: "media-generation".to_string(),
+        status: "provider-unavailable".to_string(),
+        route_mode: "explicitOnly".to_string(),
+        shellx_may_auto_route: false,
+        intent_examples: vec![
+            "generate a video with Antigravity".to_string(),
+            "make this prompt into an Antigravity video".to_string(),
+            "use Nano Banana to create a video".to_string(),
+        ],
+        preflight_checks: vec![preflight(
+            "antigravityVideoToolVisible",
+            "The installed Antigravity CLI exposes a native video-generation tool (currently unavailable)",
+            true,
+        )],
+        capabilities: vec![capability(
+            "videoGeneration",
+            "Video generation",
+            "not-supported",
+            "The current native Antigravity CLI has no video-generation tool. Video attachment or analysis and ShellX Browser WebM recording do not satisfy this capability.",
+        )],
+        tool_exposure: unavailable_media_tool_exposure(),
+        invocation: CardInvocation {
+            surface: "provider-capability-boundary".to_string(),
+            debug_api_path: None,
+            command_hint: None,
+            requires_user_visible_selection: true,
+        },
+        agent_instructions: vec![
+            "The current native Antigravity CLI has no video-generation tool; do not launch Antigravity solely for this unsupported request.".to_string(),
+            "Video attachment or analysis and ShellX Browser WebM recording are not Antigravity video generation.".to_string(),
+            "State that the named capability is unavailable, then ask the user before routing to Grok Imagine or another future video provider.".to_string(),
+            "When the installed Antigravity version changes, refresh this boundary by re-probing the official tool catalogue and one live no-tool ShellX canary.".to_string(),
+        ],
+        receipt_kinds: vec![
+            "provider-capability-unavailable".to_string(),
+            "provider-capability-reviewed".to_string(),
+        ],
+        fallback_rule: "Ask the user before routing to Grok Imagine or any future video provider.".to_string(),
+        provenance: antigravity_media_provenance(),
     }
 }
 
@@ -687,6 +813,31 @@ fn media_handoff_tool_exposure(surface: &str) -> CardToolExposurePolicy {
     )
 }
 
+fn antigravity_image_tool_exposure() -> CardToolExposurePolicy {
+    card_tool_exposure(
+        "nativeFirst",
+        "In an already-running Antigravity session, use native generate_image directly; do not emulate image output with local scripts.",
+        "Only a different ShellX-host-enabled provider/session may use the explicit user-approved handoff bridge into Antigravity. The target session stays in its requested no-ShellX-tooling mode.",
+        &[
+            "model_instruction_cards",
+            "provider_adapters",
+            "provider_sessions",
+            "session_tooling",
+            "send_prompt_to_provider",
+            "import_session_asset",
+        ],
+    )
+}
+
+fn unavailable_media_tool_exposure() -> CardToolExposurePolicy {
+    card_tool_exposure(
+        "off",
+        "Do not invoke Antigravity for an unavailable native media capability.",
+        "Do not use a ShellX handoff to launch Antigravity for this unsupported request.",
+        &[],
+    )
+}
+
 fn coding_agent_tool_exposure() -> CardToolExposurePolicy {
     card_tool_exposure(
         "nativeFirst",
@@ -740,6 +891,13 @@ fn bundled_provenance() -> CardProvenance {
     CardProvenance {
         source: "bundled-shellx-card".to_string(),
         refresh_hint: "Refresh from provider capability probes, official CLI docs, and live session observations before a release when providers change.".to_string(),
+    }
+}
+
+fn antigravity_media_provenance() -> CardProvenance {
+    CardProvenance {
+        source: "antigravity-native-tool-canary:2026-08-11".to_string(),
+        refresh_hint: "When the installed Antigravity version changes, re-probe the official tool catalogue and one live ShellX canary without ShellX tooling before changing this card.".to_string(),
     }
 }
 
@@ -865,6 +1023,85 @@ mod tests {
             .tool_exposure
             .shellx_tool_rule
             .contains("explicit user-approved handoff"));
+    }
+
+    #[test]
+    fn antigravity_media_cards_keep_image_native_and_video_unavailable() {
+        let state = model_instruction_cards_state();
+        let image = state
+            .cards
+            .iter()
+            .find(|card| card.id == "antigravity-nano-banana-image")
+            .expect("missing antigravity-nano-banana-image card");
+
+        assert_eq!(image.provider_id, "antigravity-cli");
+        assert_eq!(image.category, "media-generation");
+        assert_eq!(image.status, "bundled");
+        assert!(image
+            .preflight_checks
+            .iter()
+            .any(|check| check.id == "antigravityImageToolVisible" && check.required));
+        assert!(image
+            .capabilities
+            .iter()
+            .any(|capability| capability.id == "generateImage" && capability.level == "native"));
+        assert!(image
+            .agent_instructions
+            .iter()
+            .any(|line| line.contains("generate_image")));
+        assert!(
+            image
+                .agent_instructions
+                .iter()
+                .any(|line| line.contains("Browser automation")
+                    && line.contains("raw shell commands"))
+        );
+        assert_eq!(image.tool_exposure.default_mode, "nativeFirst");
+        assert!(image
+            .tool_exposure
+            .native_tool_rule
+            .contains("already-running Antigravity session"));
+        assert!(image
+            .agent_instructions
+            .iter()
+            .any(|line| line.contains("do not hand off to Antigravity from Antigravity")));
+        assert!(image
+            .tool_exposure
+            .allowed_shellx_tools
+            .iter()
+            .any(|tool| tool == "send_prompt_to_provider"));
+        assert!(!image
+            .tool_exposure
+            .allowed_shellx_tools
+            .iter()
+            .any(|tool| tool == "send_prompt_to_session"));
+
+        let video = state
+            .cards
+            .iter()
+            .find(|card| card.id == "antigravity-video-generation")
+            .expect("missing antigravity-video-generation card");
+
+        assert_eq!(video.provider_id, "antigravity-cli");
+        assert_eq!(video.category, "media-generation");
+        assert_eq!(video.status, "provider-unavailable");
+        assert_eq!(video.tool_exposure.default_mode, "off");
+        assert!(video.tool_exposure.allowed_shellx_tools.is_empty());
+        assert!(video.invocation.command_hint.is_none());
+        assert!(video
+            .capabilities
+            .iter()
+            .any(|capability| capability.id == "videoGeneration"
+                && capability.level == "not-supported"));
+        assert!(video.agent_instructions.iter().any(|line| {
+            line.contains("do not launch Antigravity solely")
+                && line.contains("unsupported request")
+        }));
+        assert!(video
+            .agent_instructions
+            .iter()
+            .any(|line| line.contains("WebM recording")
+                && line.contains("not Antigravity video generation")));
     }
 
     #[test]

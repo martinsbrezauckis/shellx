@@ -74,6 +74,10 @@ try {
   assert(manualHtml.includes('<span class="manual-muted" aria-label="Drive manual coming later">Drive</span>')
     && !manualHtml.includes('href="../drive/"'),
     "ShellX manual must not link to the unreleased Drive manual");
+  assert(manualHtml.includes('<a href="../motion/">Motion</a>'),
+    "ShellX manual must link to the live Motion manual");
+  assert(manualHtml.includes('<span class="manual-muted" aria-label="Browser manual coming later">Browser</span>'),
+    "ShellX manual must keep Browser visible as an unreleased manual");
   for (const relative of [
     "docs/public/SHELLX_MANUAL.md",
     "docs/public/manual/shellx/content.json",

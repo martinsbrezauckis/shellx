@@ -52,8 +52,8 @@ expected Browser contract does not match the installed host.
 
 | Method | Path |
 | --- | --- |
-| GET | `/health`, `/shellxagent.json`, `/.well-known/shellxagent.json`, `/agent-doc`, `/agent-doc/manifest`, `/agent-doc/skills/shellx-host/SKILL.md`, `/agent-doc/shellx-host/SKILL.md`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/files`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/tabs/report`, `/state/agent_runs`, `/state/session_assets`, `/state/marketplace_health`, `/state/session_tooling`, `/state/environment`, `/state/grok_environment`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/state/model_instruction_cards`, `/state/agent_cli_setup`, `/panels`, `/preview`, `/preview/work/state`, `/preview/work/logs`, `/preview/work/diagnose`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/provider-adapters/state`, `/provider-sessions/state`, `/vault/status`, `/vault/grants`, `/vault/agent-requests`, `/vault/keys`, `/vault/resources`, `/vault/e2e/audit`, `/connections`, `/outside-connectors`, `/outside-connectors/capabilities`, `/outside-connectors/events`, `/browser/check`, `/browser/summary`, `/browser/state`, `/browser/settle`, `/browser/tabs`, `/browser/profiles`, `/browser/tasks`, `/browser/history`, `/browser/requests`, `/browser/bookmarks`, `/browser/receipts`, `/browser/evidence`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/developer-mode`, `/browser/downloads`, `/browser/uploads`, `/browser/logs`, `/browser/storage-state`, `/browser/dialogs`, `/browser/permissions`, `/browser/popups`, `/browser/network`, `/browser/robots`, `/release-test/tauri-invokes/:id` |
-| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/preview/work/start`, `/preview/work/stop`, `/preview/work/restart`, `/preview/work/diagnose`, `/state/environment/trace_export`, `/state/grok_environment/trace_export`, `/state/session_git/checkpoint`, `/state/session_git/worktree`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/recheck_blocker`, `/build/operator_note`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/provider-adapters/run`, `/provider-sessions/start`, `/provider-sessions/abort`, `/agent_cli_setup/install/prepare`, `/agent_cli_setup/install/confirm`, `/agent_cli_setup/install/cancel`, `/agent_cli_setup/recheck`, `/diagnostics`, `/github/pr/create`, `/vault/lock`, `/vault/setup/begin`, `/vault/setup/confirm-recovery`, `/vault/remember-device`, `/vault/grants`, `/vault/grants/:grant_id/revoke`, `/vault/agent-requests`, `/vault/agent-requests/:request_id/cancel`, `/vault/get`, `/vault/set`, `/vault/delete`, `/vault/open-panel`, `/vault/e2e/reset`, `/vault/e2e/seed-secret`, `/vault/e2e/probe-use`, `/vault/e2e/approve-grant`, `/vault/e2e/deny-grant`, `/vault/e2e/revoke-grant`, `/vault/e2e/expire-grant`, `/connections`, `/connections/provider-scan`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test`, `/outside-connectors/:id/simulate`, `/browser/open`, `/browser/tabs/open`, `/browser/tabs/focus`, `/browser/tabs/reorder`, `/browser/tabs/close`, `/browser/tabs/lock`, `/browser/tabs/heartbeat`, `/browser/tabs/unlock`, `/browser/task/start`, `/browser/task/autonomy`, `/browser/task/control`, `/browser/task/finish`, `/browser/action`, `/browser/bookmarks`, `/browser/bookmarks/reorder`, `/browser/rendered-check`, `/browser/logs`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/shields/site`, `/browser/developer-mode`, `/browser/developer-mode/approval`, `/browser/downloads/request`, `/browser/downloads/complete`, `/browser/uploads/request`, `/browser/uploads/complete`, `/browser/cdp/execute`, `/browser/trace/export`, `/browser/flight-recorder/export`, `/browser/evaluations`, `/browser/har/export`, `/browser/performance/export`, `/browser/recipes/export`, `/browser/recipes/replay`, `/browser/robots/schedule`, `/browser/robots/run`, `/browser/robots/cancel`, `/browser/storage-state/export`, `/browser/dialogs`, `/browser/dialogs/resolve`, `/browser/permissions`, `/browser/permissions/resolve`, `/browser/popups`, `/browser/session-grants/request`, `/browser/session-grants/resolve`, `/browser/session-grants/apply`, `/browser/vault-deposits`, `/browser/vault/fill-receipt`, `/browser/vault/generate-receipt`, `/browser/report`, `/release-test/clipboard`, `/release-test/browser/trusted-vault-fixture`, `/release-test/tauri-invokes`, `/release-test/tauri-invokes/:id/claim`, `/release-test/tauri-invokes/:id/complete` |
+| GET | `/health`, `/shellxagent.json`, `/.well-known/shellxagent.json`, `/agent-doc`, `/agent-doc/manifest`, `/agent-doc/skills/shellx-host/SKILL.md`, `/agent-doc/shellx-host/SKILL.md`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/files`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/tabs/report`, `/state/agent_runs`, `/state/session_assets`, `/state/marketplace_health`, `/state/session_tooling`, `/state/environment`, `/state/grok_environment`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/state/model_instruction_cards`, `/state/agent_cli_setup`, `/panels`, `/preview`, `/preview/work/state`, `/preview/work/logs`, `/preview/work/diagnose`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/provider-adapters/state`, `/provider-sessions/state`, `/vault/status`, `/vault/grants`, `/vault/agent-requests`, `/vault/keys`, `/vault/resources`, `/vault/e2e/audit`, `/connections`, `/outside-connectors`, `/outside-connectors/capabilities`, `/outside-connectors/events`, `/browser/check`, `/browser/summary`, `/browser/state`, `/browser/settle`, `/browser/tabs`, `/browser/profiles`, `/browser/tasks`, `/browser/history`, `/browser/requests`, `/browser/bookmarks`, `/browser/receipts`, `/browser/evidence`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/developer-mode`, `/browser/teach/drafts`, `/browser/downloads`, `/browser/uploads`, `/browser/logs`, `/browser/storage-state`, `/browser/dialogs`, `/browser/permissions`, `/browser/popups`, `/browser/network`, `/browser/robots`, `/release-test/tauri-invokes/:id` |
+| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/preview/work/start`, `/preview/work/stop`, `/preview/work/restart`, `/preview/work/diagnose`, `/state/environment/trace_export`, `/state/grok_environment/trace_export`, `/state/session_git/checkpoint`, `/state/session_git/worktree`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/recheck_blocker`, `/build/operator_note`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/provider-adapters/run`, `/provider-sessions/start`, `/provider-sessions/abort`, `/agent_cli_setup/install/prepare`, `/agent_cli_setup/install/confirm`, `/agent_cli_setup/install/cancel`, `/agent_cli_setup/recheck`, `/diagnostics`, `/github/pr/create`, `/vault/lock`, `/vault/setup/begin`, `/vault/setup/confirm-recovery`, `/vault/remember-device`, `/vault/grants`, `/vault/grants/:grant_id/revoke`, `/vault/agent-requests`, `/vault/agent-requests/:request_id/cancel`, `/vault/get`, `/vault/set`, `/vault/delete`, `/vault/open-panel`, `/vault/e2e/reset`, `/vault/e2e/seed-secret`, `/vault/e2e/probe-use`, `/vault/e2e/approve-grant`, `/vault/e2e/deny-grant`, `/vault/e2e/revoke-grant`, `/vault/e2e/expire-grant`, `/connections`, `/connections/provider-scan`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test`, `/outside-connectors/:id/simulate`, `/browser/open`, `/browser/tabs/open`, `/browser/tabs/focus`, `/browser/tabs/reorder`, `/browser/tabs/close`, `/browser/tabs/lock`, `/browser/tabs/heartbeat`, `/browser/tabs/unlock`, `/browser/task/start`, `/browser/task/autonomy`, `/browser/task/control`, `/browser/task/finish`, `/browser/action`, `/browser/bookmarks`, `/browser/bookmarks/reorder`, `/browser/rendered-check`, `/browser/logs`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/shields/site`, `/browser/developer-mode`, `/browser/developer-mode/approval`, `/browser/developer/inspect`, `/browser/teach/prepare`, `/browser/teach/revise`, `/browser/downloads/request`, `/browser/downloads/complete`, `/browser/uploads/request`, `/browser/uploads/complete`, `/browser/cdp/execute`, `/browser/trace/export`, `/browser/flight-recorder/export`, `/browser/evaluations`, `/browser/har/export`, `/browser/performance/export`, `/browser/recipes/export`, `/browser/recipes/replay`, `/browser/robots/schedule`, `/browser/robots/run`, `/browser/robots/cancel`, `/browser/storage-state/export`, `/browser/dialogs`, `/browser/dialogs/resolve`, `/browser/permissions`, `/browser/permissions/resolve`, `/browser/popups`, `/browser/session-grants/request`, `/browser/session-grants/resolve`, `/browser/session-grants/apply`, `/browser/vault-deposits`, `/browser/vault/fill-receipt`, `/browser/vault/generate-receipt`, `/browser/report`, `/release-test/clipboard`, `/release-test/browser/trusted-vault-fixture`, `/release-test/tauri-invokes`, `/release-test/tauri-invokes/:id/claim`, `/release-test/tauri-invokes/:id/complete` |
 | DELETE | `/tools/fs_watch/:watchId`, `/connections/:id`, `/outside-connectors/:id`, `/browser/bookmarks/:bookmark_id`, `/browser/shields/site/:host`, `/release-test/tauri-invokes/:id` |
 | GET | `/release-test/native-picker` |
 | POST | `/release-test/native-picker` |
@@ -211,12 +211,15 @@ grants, Vault deposits, and receipts under the user's local control. Provider
 agents should use this surface through ShellX observations/refs/actions rather
 than receiving browser credentials or raw cookies.
 
-Host MCP advertises six compact entry tools totaling 5,876 serialized bytes:
+Host MCP advertises eight compact entry tools totaling 7,778 serialized bytes:
 `capabilities_summary`, `search_tool`, read-class `host_read`, permission-gated
-`host_act`, read-class `browser_read`, and permission-gated `browser_act`.
-The 101 exact underlying Host schemas remain searchable and every non-Browser
-handler is mapped into exactly one Host gateway. Agents query the legacy action
-name with `search_tool`, then pass its exact fields inside gateway `params`.
+`host_act`, read-class `browser_read`, permission-gated `browser_act`, read-class
+`cut_read`, and permission-gated `cut_act`.
+The 97 exact underlying Host schemas remain searchable; the two Host gateways
+and two dispatch-only compatibility aliases complete the 107-surface callable
+inventory. Every non-Browser/non-Cut handler is mapped into exactly one Host
+gateway. Agents query the legacy action name with `search_tool`, then pass its
+exact fields inside gateway `params`.
 Host text reads are also response-bounded: `host_read` with `action:"fs_read"`
 returns 16 KiB by default and includes `offset_bytes`, `bytes_returned`,
 `next_offset_bytes`, `truncated`, and `approx_tokens`. Continue with the exact
@@ -224,8 +227,21 @@ next offset only when another page is necessary. An explicit page is capped at
 1 MiB, so a single tool call cannot inject an unbounded document into the
 provider context.
 
+The ShellX Cut pair keeps Cut's generated catalog out of the default provider
+prompt. `cut_read action=status` verifies the installed/running editor;
+`action=search` returns a bounded match list and `action=schema` returns one
+exact Cut input schema. The catalog is loaded only for those discovery calls
+and cached by installed `cutd` executable identity. `cut_act` calls one exact
+verb through Cut's existing MCP proxy and the running editor's single engine;
+it does not create a second timeline authority. Every `cut_act` call is
+write-class and tab-permission-gated because the current Cut `tools/list` does
+not publish reliable read-versus-mutation annotations. Direct Cut discovery was
+measured from current Cut source at 262 tools and a 294,151-byte JSON-RPC reply,
+while each installed Cut version reports its own exact total. The ShellX Cut
+gateway itself remains two compact schemas.
+
 The Browser pair replaces a 32-tool, 82,893-byte advertised catalog with a
-two-tool, 2,331-byte catalog. The named `browser_*` tools remain
+two-tool, 2,601-byte catalog. The named `browser_*` tools remain
 callable compatibility aliases and their exact schemas remain available through
 targeted `search_tool` queries, but they are not injected into every provider
 prompt. Agents should treat the routed tools as the native ShellX Browser web
@@ -274,6 +290,30 @@ scope identities and writes the deterministic report, and
 recent identities. The two write actions remain permission-gated; their larger
 exact schemas are search-only compatibility specs.
 
+Developer inspection also stays inside the compact pair. `browser_read
+action=developerInspect` runs one fixed, Developer Mode-gated native inspection
+for a caller-owned task and returns at most 3,072 bytes of sanitized document,
+console, network, performance, and deterministic issue summaries. Callers
+cannot supply JavaScript, CDP methods, headers, cookies, bodies, storage reads,
+or an external-Chrome target. The desktop Evidence panel uses an operator-only
+Tauri adapter for the fuller 32 KiB view and separate **Export HAR** and
+**Export performance** actions; those export buttons return receipt identity,
+bytes, and SHA-256 only, never the private artifact path.
+
+Browser Teach turns a complete, caller-owned Flight Recorder attempt from a
+completed task into a deterministic review draft. `browser_act
+action=teachPrepare` accepts
+`attemptId`; `browser_read action=teachDrafts` accepts `taskId` and an optional
+`limit` from 1 to 20 and returns only compact draft identities. The authenticated
+Debug API additionally exposes prepare, list, and compare-and-swap revise
+routes. Recipe approval and dry-run rehearsal are operator-owned Tauri actions
+inside the Evidence panel and are absent from Host MCP and raw HTTP. Approval
+requires the exact current revision ID/hash, resolved blocking issues, safe
+query-free navigation values, and any required opaque Vault binding references;
+it writes an ordinary Action Recipe V2 but does not run it. Rehearsal accepts
+the exact approved recipe ID/hash, calls the existing dry-run planner, returns
+no artifact path, and always reports `stepsApplied: 0`.
+
 Taskless Host MCP Browser mutations create or reuse a `task-disposable` task
 bound to the calling ShellX MCP tab/session. A different MCP session cannot act
 on or control that bound task implicitly; agents must pass an explicit `taskId`
@@ -306,7 +346,7 @@ budget by default, and its final MCP tool envelope is regression-tested below
 4,000 bytes even for a synthetic heavy page. It reports `mcpSerializedBytes`
 and `mcpApproxTokens`; `fullObservation=true` is the explicit unbudgeted escape
 hatch. Together with the general Host gateways, the always-advertised MCP
-catalog is now bounded to 5,876 bytes instead of roughly 51.7 KB without
+catalog is now bounded to 7,778 bytes instead of roughly 51.7 KB without
 removing exact handlers. Page-mutating Browser MCP calls and trace exports
 remain write-class host tools
 and require the same ShellX MCP write gate as other host mutations.
@@ -392,6 +432,16 @@ session grants, permission prompts, unsafe downloads/uploads, Developer Mode,
 privacy/Shields writes, and Personal Browser Lock changes remain mediated by
 the ShellX UI/Tauri operator path.
 
+ShellX Host MCP attaches an authenticated caller identity to Browser reads.
+Summary, check/settle, tabs, tasks, profiles, history, requests, transfers,
+receipts, logs, and network rows are filtered to that caller's task-owned
+Browser context. Personal and other-agent activity remains available to the
+local operator UI. Bookmark reads expose the Agent workflow catalog rather
+than personal links. A caller must also prove one exact caller-owned task/tab
+pair before any Browser action reaches Vault mediation or the native WebView.
+Direct Debug API access without the Host MCP caller header is the local
+operator/debug view and uses the full registry described below.
+
 Read routes:
 
 | Method | Path | Notes |
@@ -406,7 +456,7 @@ Read routes:
 | GET | `/browser/tasks?detail=summary|full&includeObservation=false&limit=200` | Summary is the default. Full task detail remains bounded by `limit`; prior `lastObservation` data is included only when explicitly requested. |
 | GET | `/browser/history?limit=500` | Bounded Browser history slice for the visible History panel. |
 | GET | `/browser/requests` | Browser request-center slice: session grants, deposits, dialogs, and permissions. |
-| GET | `/browser/bookmarks` | Bookmark tree plus toolbar view; links and folders only, no page storage values. |
+| GET | `/browser/bookmarks` | Persistent bookmark tree plus toolbar view, including links, folders, pins, and workflow metadata; no page storage values. |
 | GET | `/browser/receipts?limit=200` | Most recent browser receipts. |
 | GET | `/browser/privacy` | Current global/profile ad mode settings and low-entropy identity policy. |
 | GET | `/browser/personal-lock` | Current Personal Browser Lock state: enabled flag, timeout, auth mode, locked flag, and redacted PIN-configured flag. Mutations are operator/Tauri-only. |
@@ -481,6 +531,10 @@ state for a later reopen.
 | POST | `/browser/developer-mode/approval` | Debug API denial path for operator-owned Developer Mode host approvals; returns `developer_mode_requires_operator`. |
 | Tauri | `shellx_browser_update_developer_mode` | Operator/UI-only `{ request: { enabled?, fullCdpAccess?, policyDisabled?, approvedHosts? } }`. Debug API `POST /browser/developer-mode` is forbidden with `developer_mode_requires_operator`. |
 | Tauri | `shellx_browser_approve_developer_mode_host` | Operator/UI-only `{ request: { host?, currentUrl?, taskId?, fullCdpAccess? } }`. Debug API `POST /browser/developer-mode/approval` is forbidden with `developer_mode_requires_operator`. |
+| POST | `/browser/developer/inspect` | Caller-session-bound `{ taskId, browserTabId? }`; runs the fixed native inspection only after Developer Mode/full-CDP preflight and returns a sanitized 32 KiB maximum response. No caller-supplied CDP method or script is accepted. |
+| Tauri | `shellx_browser_operator_developer_inspect` | Operator/UI-only `{ request: { taskId, browserTabId? } }`; returns the same sanitized inspection contract to Browser Evidence without manufacturing an MCP caller identity. |
+| Tauri | `shellx_browser_operator_export_har` | Operator/UI-only `{ request: { taskId?, browserTabId?, reason? } }`; writes the existing sanitized private HAR artifact and returns only `{ kind, artifactId, receiptId, bytes, sha256, createdAtMs, entries? }`. |
+| Tauri | `shellx_browser_operator_export_performance` | Operator/UI-only `{ request: { taskId?, browserTabId?, reason? } }`; writes the existing sanitized private performance artifact and returns the same path-free compact receipt shape. |
 | POST | `/browser/downloads/request` | `{ taskId?, browserTabId?, url, fileName?, destinationDir?, reason }` |
 | POST | `/browser/downloads/complete` | `{ transferId, finalPath, mimeType?, bytes, sha256, sourceUrl?, destination?, retentionReason, approvalId }` |
 | POST | `/browser/uploads/request` | `{ taskId?, browserTabId?, filePath, displayName?, destinationOrigin?, refId?, reason }` |
@@ -493,11 +547,19 @@ state for a later reopen.
 | POST | `/browser/performance/export` | `{ taskId?, browserTabId?, reason? }`; writes sanitized navigation/resource timing metrics. |
 | POST | `/browser/recipes/export` | `{ taskId?, browserTabId?, reason? }`; converts recent receipts into a redacted replay recipe. |
 | POST | `/browser/recipes/replay` | `{ taskId?, browserTabId?, recipePath?, recipe?, dryRun?, reason? }`; dry-runs by default, or applies saved navigation/click/wait/select/press/verify route steps when `dryRun:false`; a path-based saved recipe must byte-for-byte match its in-session `browserRecipeExported` receipt (path, byte count, SHA-256, source, recipe, and task identity), while changed or unreceipted artifacts fail closed; redacted, live-bound, or unsupported steps are skipped with reasons, and an applied replay with skips returns `ok:false`, `status:"incomplete"`. |
+| POST | `/browser/teach/prepare` | Caller-session-bound `{ attemptId }`; verifies one complete private Flight Recorder artifact and returns its deterministic Teach bundle, current revision, and draft summary. |
+| GET | `/browser/teach/drafts?taskId=<id>&limit=<n>` | Caller-session-bound bounded list of current Teach draft identities; default 8, hard cap 20, with no private artifact paths. |
+| POST | `/browser/teach/revise` | Caller-session-bound compare-and-swap revision using `{ draftId, expectedRevisionId, expectedRevisionSha256, goal?, orderedStepIds?, valueEdits?, vaultBindings?, requiredCapabilities?, ambiguityResolutions?, revisionNote? }`. It creates an immutable revision and never approves or runs a recipe. |
+| Tauri | `shellx_browser_operator_prepare_teach_draft` | Operator/UI-only `{ request: { attemptId } }` adapter for the Evidence panel. |
+| Tauri | `shellx_browser_operator_list_teach_drafts` | Operator/UI-only `{ taskId, limit? }` bounded list adapter. |
+| Tauri | `shellx_browser_operator_revise_teach_draft` | Operator/UI-only `{ request: { draftId, expectedRevisionId, expectedRevisionSha256, ...edits } }` compare-and-swap revision adapter. |
+| Tauri | `shellx_browser_operator_approve_teach_draft` | Operator/UI-only `{ request: { draftId, revisionId, revisionSha256 } }`; writes a private Action Recipe V2 plus approval receipt and does not execute it. |
+| Tauri | `shellx_browser_operator_rehearse_teach_recipe` | Operator/UI-only `{ request: { recipeId, sha256 } }`; requires matching approval and export receipts, runs the existing planner with `dryRun:true`, returns a compact receipt, and applies zero steps. |
 | POST | `/browser/robots/schedule` | `{ taskId?, browserTabId?, recipePath?, runAtMs?, kind?, reason }`; records a receipt-backed recipe job and due-time metadata. |
 | POST | `/browser/robots/run` | `{ jobId, dryRun? }`; executes the saved recipe dry-run or live replay before setting the job's terminal status. |
 | POST | `/browser/robots/cancel` | `{ jobId, reason? }` |
 | POST | `/browser/storage-state/export` | `{ profileId?, reason? }` |
-| Tauri | `shellx_browser_clear_history` | Operator/UI-only local history clearing. Agent `clearHistory` stays blocked with `destructiveActionApproval`; registry mutation without the operator path returns `browser_destructive_action_requires_operator`. |
+| Tauri | `shellx_browser_clear_history` | Operator/UI-only `{ request: { scope: "user" | "agent" | "all" } }`. User and Agent remove only their selected partition; the Browser UI presents a dedicated confirmation before All. Agent `clearHistory` stays blocked with `destructiveActionApproval`; registry mutation without the operator path returns `browser_destructive_action_requires_operator`. |
 | POST | `/browser/dialogs` | `{ taskId?, browserTabId?, dialogType, text, url?, requiresApproval? }` |
 | POST | `/browser/dialogs/resolve` | Agent may resolve only its own pending `beforeunload` dialog for an agent-owned non-personal task tab using `{ dialogId, taskId, action: "accept" | "dismiss" }`. Operator-owned, personal/delegated, prompt, confirm, and permission decisions return `browser_prompt_resolution_requires_operator`. |
 | Tauri | `shellx_browser_resolve_dialog` | Operator/UI-only `{ request: { dialogId, action?, promptValue?, approvalId? } }`; applies accepted beforeunload navigation when relevant. |
@@ -587,8 +649,9 @@ currently visible History, Actions, Errors, Requests, bookmark, or transfer
 slices. While the event stream is disconnected it polls only
 `/browser/summary` every 15 seconds and fetches core/detail data when the state
 revision changes. MCP `browser_state` also returns `/browser/summary` by
-default; callers must name heavy `include` slices such as `history`, `receipts`,
-`network`, `logs`, or `observations`.
+default; every returned slice is caller-scoped, and callers must name heavy
+`include` slices such as `history`, `receipts`, `network`, `logs`, or
+`observations`.
 For a state check that must not alter the coworking surface, MCP `browser_check`
 uses `/browser/check`. For a public/incognito JavaScript-rendered text, title, or
 selector check that needs no interaction, MCP `browser_rendered_check` uses the
@@ -890,8 +953,11 @@ trail.
 safe manifests only: profile id, storage root, cookie/local-storage policy,
 retention policy, session grant status, and artifact hash when exported. They
 never return cookie values, local-storage values, session-storage values,
-headers, or network bodies. `POST /browser/session-grants/request` records an
-agent request for profile session reuse. Session grant decisions are
+headers, or network bodies. Task Disposable manifests report
+`taskScopedEphemeral: true` and omit a reusable `storageRoot`; ShellX allocates
+one marker-owned storage lease per task and retires it after the task or tab
+ends. `POST /browser/session-grants/request` records an agent request for
+profile session reuse. Session grant decisions are
 operator-owned: Debug API resolve calls return
 `browser_session_grant_resolution_requires_operator`, while the
 `shellx_browser_resolve_session_grant` Tauri command applies the operator/UI
@@ -999,11 +1065,28 @@ Claude Code, or Antigravity CLI on the same visible tab/environment. ShellX
 still does not pick fallback providers.
 
 Media cards include direct recipes for GPT Image via Codex, Grok Imagine image,
-and Grok Imagine video. Agents should invoke the named ShellX handoff tool
-immediately after the user names the provider, rather than running raw provider
-CLIs or searching provider logs first. ShellX clamps named media handoff
-timeouts below `900000` ms so short agent-supplied watchdogs do not kill image
-or video generation.
+Grok Imagine video, and Antigravity image generation. The Antigravity image
+card permits a cross-provider route through `send_prompt_to_provider` with
+`providerId: "antigravity-cli"` only from a different ShellX-host-enabled
+provider/session. An already-running Antigravity session calls native
+`generate_image` directly and never hands off to itself. Cross-provider
+handoffs keep the same visible tab by default, use the long media timeout, and
+set `includeShellxTooling: false` to select the target provider session's
+existing off/no-ShellX-tooling mode unless the task independently needs ShellX
+tooling. They require an operator-visible output name and an artifact path or
+receipt. Aspect ratio or source-image paths are passed only when the user
+supplied them. In a ShellX-host-enabled source session, agents should invoke a
+named ShellX handoff tool immediately after the user names a supported provider,
+rather than running raw provider CLIs or searching provider logs first. ShellX
+clamps named media handoff timeouts below `900000` ms so short agent-supplied
+watchdogs do not kill image or video generation.
+
+The separate Antigravity video card is deliberately `provider-unavailable`: the
+current native Antigravity CLI has no video-generation tool. Video attachments
+or analysis and ShellX Browser WebM recording are different capabilities, not
+Antigravity video generation. That card has no command hint, and agents must
+not launch Antigravity solely for the unavailable request. They must report the
+boundary and ask before using Grok Imagine or any future video provider.
 
 ShellX does not silently route to a different provider based on these cards.
 Every bundled card currently uses `routeMode: "explicitOnly"` and
@@ -1346,7 +1429,8 @@ present, `shellxToolExposure` wins.
 For Codex and Claude, ShellX injects the `shellx-host-http` MCP server so
 provider sessions can call ShellX host tools. The default prompt advertises
 `capabilities_summary`, `search_tool`, `host_read`, `host_act`, `browser_read`,
-and `browser_act`; exact `fs_*`, `process_*`, `vision_describe`, `Agent`,
+`browser_act`, `cut_read`, and `cut_act`; exact `fs_*`, `process_*`,
+`vision_describe`, `Agent`,
 receipt, and related schemas are discovered by name and routed through the
 appropriate Host gateway. These host `fs_*` tools execute on the ShellX parent
 host filesystem. In WSL/SSH provider tabs they are not the provider machine's

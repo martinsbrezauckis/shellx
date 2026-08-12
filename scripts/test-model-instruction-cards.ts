@@ -91,6 +91,7 @@ assert(
 );
 
 const apiDocs = readFileSync(new URL("../docs/public/API.md", import.meta.url), "utf8");
+const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 assert(
   apiDocs.includes("GET /state/model_instruction_cards"),
   "API docs must document model instruction card route",
@@ -152,9 +153,17 @@ const cardsSource = readFileSync(
   new URL("../src-tauri/src/model_instruction_cards.rs", import.meta.url),
   "utf8",
 );
+const providerHandoffSource = readFileSync(
+  new URL("../src-tauri/src/host_mcp/provider_handoff_cli.rs", import.meta.url),
+  "utf8",
+);
+const hostMcpToolSpecsSource = readFileSync(
+  new URL("../src-tauri/src/host_mcp/tool_specs_core.rs", import.meta.url),
+  "utf8",
+);
 assert(
-  cardsSource.includes('MODEL_INSTRUCTION_CARDS_VERSION: &str = "2026-06-06.1"') &&
-    cardsSource.includes('MODEL_INSTRUCTION_CARDS_REVIEWED_ON: &str = "2026-06-06"'),
+  cardsSource.includes('MODEL_INSTRUCTION_CARDS_VERSION: &str = "2026-08-11.1"') &&
+    cardsSource.includes('MODEL_INSTRUCTION_CARDS_REVIEWED_ON: &str = "2026-08-11"'),
   "runtime model instruction card metadata must reflect the current reviewed recipe set",
 );
 assert(
@@ -187,6 +196,37 @@ assert(
     cardsSource.includes("send_prompt_to_session"),
   "Grok Imagine image/video cards must include explicit ShellX handoff recipes",
 );
+assert(
+  cardsSource.includes("antigravity-nano-banana-image") &&
+    cardsSource.includes('display_name: "Antigravity Image Generation"') &&
+    cardsSource.includes('provider_id: "antigravity-cli"') &&
+    cardsSource.includes('status: "bundled"') &&
+    cardsSource.includes("generate_image") &&
+    cardsSource.includes("includeShellxTooling=false") &&
+    cardsSource.includes("already-running Antigravity session") &&
+    cardsSource.includes("do not hand off to Antigravity from Antigravity") &&
+    cardsSource.includes(
+      '"nativeFirst",\n        "In an already-running Antigravity session, use native generate_image directly',
+    ),
+  "Antigravity image card must use native generate_image directly and reserve the ShellX bridge for another provider session",
+);
+assert(
+  hostMcpToolSpecsSource.includes('"includeShellxTooling": { "type": "boolean"') &&
+    hostMcpToolSpecsSource.includes("Defaults true for generic coding-agent handoffs") &&
+    providerHandoffSource.includes("provider_handoff_include_shellx_tooling") &&
+    providerHandoffSource.includes('"includeShellxTooling": options.include_shellx_tooling'),
+  "provider handoff must advertise and forward optional target-session ShellX tooling control",
+);
+assert(
+  cardsSource.includes("antigravity-video-generation") &&
+    cardsSource.includes('display_name: "Antigravity Video Generation"') &&
+    cardsSource.includes('status: "provider-unavailable"') &&
+    cardsSource.includes("provider-capability-boundary") &&
+    cardsSource.includes("do not launch Antigravity solely for this unsupported request") &&
+    cardsSource.includes("WebM recording") &&
+    cardsSource.includes("command_hint: None"),
+  "Antigravity video card must be explicitly unavailable without a launchable command hint",
+);
 
 const shellxHostSkill = readFileSync(
   new URL("../skills/shellx-host/SKILL.md", import.meta.url),
@@ -208,8 +248,29 @@ assert(
   shellxHostSkill.includes("Media Handoff Recipes") &&
     shellxHostSkill.includes("GPT Image via Codex") &&
     shellxHostSkill.includes("Grok Imagine image") &&
-    shellxHostSkill.includes("Grok Imagine video"),
+    shellxHostSkill.includes("Grok Imagine video") &&
+    shellxHostSkill.includes("Antigravity image generation") &&
+    shellxHostSkill.includes("native `generate_image`") &&
+    shellxHostSkill.includes("Antigravity video generation (unavailable)") &&
+    shellxHostSkill.includes("Antigravity solely for this unsupported request") &&
+    shellxHostSkill.includes("do not hand off to Antigravity from Antigravity") &&
+    shellxHostSkill.includes("off/no-ShellX-tooling mode") &&
+    shellxHostSkill.includes("per-tab rows merging active Grok ACP and\n  provider-session context"),
   "shellx-host skill must expose direct media handoff recipes in a confirmed ShellX host session",
+);
+assert(
+  apiDocs.includes('providerId: "antigravity-cli"') &&
+    apiDocs.includes("current native Antigravity CLI has no video-generation tool") &&
+    apiDocs.includes("must\nnot launch Antigravity solely") &&
+    apiDocs.includes("never hands off to itself") &&
+    apiDocs.includes("off/no-ShellX-tooling mode"),
+  "public API docs must describe the context-correct Antigravity image route and unavailable video boundary",
+);
+assert(
+  readme.includes("Antigravity receives only isolated session rules") &&
+    readme.includes("does\n  not receive the ShellX Host MCP surface") &&
+    readme.includes("Host MCP bridge remains\n  disabled"),
+  "README must not imply that Antigravity receives the disabled ShellX Host MCP bridge",
 );
 
 console.log("test-model-instruction-cards ok");

@@ -70,7 +70,14 @@ const selectedDriverIds = readArgs(args, "--driver-id")
   .flatMap((value) => value.split(","))
   .map((value) => value.trim())
   .filter(Boolean);
-const targetedClosure = selectedDriverIds.length > 0;
+const selectedSurfaceIds = readArgs(args, "--surface-id")
+  .flatMap((value) => value.split(","))
+  .map((value) => value.trim())
+  .filter(Boolean);
+if (selectedSurfaceIds.length > 0 && selectedDriverIds.length === 0) {
+  throw new Error("--surface-id requires one or more exact --driver-id values");
+}
+const targetedClosure = selectedDriverIds.length > 0 || selectedSurfaceIds.length > 0;
 requireExecutionWindow(args, targetedClosure);
 const runId = requiredArg(args, "--run-id");
 const preparationPath = regularFile(requiredArg(args, "--preparation"), "candidate preparation");
@@ -122,7 +129,15 @@ if (resolve(driverOutputDir) === resolve(providerOutputDir)) {
 
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
 if (dirty.trim()) throw new Error("macOS candidate orchestration requires a clean frozen source checkout");
-const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const controllerSourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const candidateSourceCommitArg = readArg(args, "--candidate-source-commit");
+if (candidateSourceCommitArg && !targetedClosure) {
+  throw new Error("--candidate-source-commit is valid only for targeted post-matrix closure");
+}
+const sourceCommit = candidateSourceCommitArg ?? controllerSourceCommit;
+if (!/^[a-f0-9]{40,64}$/.test(sourceCommit)) {
+  throw new Error("candidate source commit must be a lowercase Git object id");
+}
 const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
 const inventory = JSON.parse(readFileSync(join(root, "release", "surface-inventory.json"), "utf8")) as ReleaseSurfaceInventory;
 const plan = loadFinalSurfaceDriverPlan(join(root, "release", "surface-driver-plan.json"));
@@ -133,7 +148,7 @@ const providerPlanErrors = validateReleaseSurfaceProviderRouteBatchPlan({
   contract,
   platform: "macos-installed",
 });
-if (providerPlanErrors.length > 0) {
+if (!targetedClosure && providerPlanErrors.length > 0) {
   throw new Error(`invalid macOS provider route batch plan: ${providerPlanErrors.join("; ")}`);
 }
 
@@ -247,13 +262,15 @@ try {
     bindingIdentity,
     connection: { base: candidate.runtime.debugBase, token },
   });
-  healthCollector = await startReleaseSurfaceMacosHealthCollector({
-    candidate,
-    candidateToken: token,
-    inventory,
-    outputPath: healthPath,
-  });
-  await healthCollector.discoverRenderedLinks(installedInput);
+  if (!targetedClosure) {
+    healthCollector = await startReleaseSurfaceMacosHealthCollector({
+      candidate,
+      candidateToken: token,
+      inventory,
+      outputPath: healthPath,
+    });
+    await healthCollector.discoverRenderedLinks(installedInput);
+  }
   const manifest = runReleaseSurfaceDrivers({
     rootDir: root,
     plan,
@@ -261,28 +278,34 @@ try {
     contract,
     platform: "macos-installed",
     sourceCommit,
+    controllerSourceCommit,
     version,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath: candidatePath,
     installationReceiptPath,
     outputDir: driverOutputDir,
-    ...(targetedClosure ? { selectedDriverIds } : {}),
+    ...(targetedClosure ? {
+      selectedDriverIds,
+      ...(selectedSurfaceIds.length > 0 ? { selectedSurfaceIds } : {}),
+    } : {}),
     macosNativeInput: {
       helperPath,
       bindingReceiptPath: bindingPath,
     },
   });
   const driverManifestPath = join(driverOutputDir, "run-manifest.json");
-  const providerRoutes = await collectReleaseSurfaceProviderRouteBatch({
-    plan: providerPlan,
-    contract,
-    candidate,
-    token,
-    outputDir: providerOutputDir,
-  });
   const failedDriverIds = releaseSurfaceDriverRunFailedDriverIds(manifest, driverOutputDir);
-  const shutdownRequestedAt = healthCollector.beginShutdown();
+  const providerRoutes = targetedClosure
+    ? null
+    : await collectReleaseSurfaceProviderRouteBatch({
+      plan: providerPlan,
+      contract,
+      candidate,
+      token,
+      outputDir: providerOutputDir,
+    });
+  const shutdownRequestedAt = healthCollector?.beginShutdown();
   const finalizer = spawnSync(process.execPath, releaseSurfaceControllerNodeArguments(
     resolve(root, "scripts/finalize-release-surface-macos-candidate.ts"), [
       "--run-id", runId,
@@ -291,33 +314,41 @@ try {
       "--macos-native-input-binding", join(driverOutputDir, "macos-native-input-binding.json"),
       "--profile-cleanup-out", profileCleanupPath,
       "--candidate-teardown-out", candidateTeardownPath,
+      ...(targetedClosure ? ["--candidate-source-commit", sourceCommit] : []),
     ],
   ), { cwd: root, encoding: "utf8", timeout: 60_000, maxBuffer: 1024 * 1024 });
   if (finalizer.status !== 0) {
     throw new Error(`macOS candidate finalization failed: ${(finalizer.stderr || finalizer.stdout).trim()}`);
   }
   const cleanup = JSON.parse(readFileSync(profileCleanupPath, "utf8")) as { completedAt?: unknown };
-  if (typeof cleanup.completedAt !== "string" || Date.parse(cleanup.completedAt) < Date.parse(shutdownRequestedAt)) {
+  if (typeof cleanup.completedAt !== "string"
+    || (shutdownRequestedAt && Date.parse(cleanup.completedAt) < Date.parse(shutdownRequestedAt))) {
     throw new Error("macOS profile cleanup did not return a valid post-shutdown observation time");
   }
-  const health = await healthCollector.finalize({
-    shutdownObservedAt: cleanup.completedAt,
-    mechanism: "macos-native-candidate-finalizer",
-  });
-  writeScenarioReport({
-    path: scenarioPath,
-    healthPath: health.outputPath,
-    candidate,
-    inventoryDigest: inventory.digest,
-    providerRoutes: providerRoutes.batch.routes,
-    health: health.evidence,
-    scenarioStartedAt: health.scenarioStartedAt,
-    contract,
-  });
+  const health = healthCollector
+    ? await healthCollector.finalize({
+      shutdownObservedAt: cleanup.completedAt,
+      mechanism: "macos-native-candidate-finalizer",
+    })
+    : null;
+  if (health && providerRoutes) {
+    writeScenarioReport({
+      path: scenarioPath,
+      healthPath: health.outputPath,
+      candidate,
+      inventoryDigest: inventory.digest,
+      providerRoutes: providerRoutes.batch.routes,
+      health: health.evidence,
+      scenarioStartedAt: health.scenarioStartedAt,
+      contract,
+    });
+  }
   const orchestration = {
     schema: RELEASE_SURFACE_MACOS_CANDIDATE_ORCHESTRATION_SCHEMA,
     mode: "final-frozen-candidate",
     status: failedDriverIds.length === 0 ? "pass" : "failed",
+    executionWindow: targetedClosure ? "targeted-post-matrix" : "immediately-before-publish",
+    ...(manifest.targetedClosure ? { targetedClosure: manifest.targetedClosure } : {}),
     platform: "macos-installed",
     runId,
     sourceCommit,
@@ -327,9 +358,11 @@ try {
     candidateAttestation: candidateIdentity,
     nativeInputBinding: fileIdentity(bindingPath),
     driverRunManifest: fileIdentity(driverManifestPath),
-    providerRouteManifest: fileIdentity(providerRoutes.manifestPath),
-    health: fileIdentity(healthPath),
-    scenario: fileIdentity(scenarioPath),
+    ...(providerRoutes ? { providerRouteManifest: fileIdentity(providerRoutes.manifestPath) } : {}),
+    ...(health ? {
+      health: fileIdentity(healthPath),
+      scenario: fileIdentity(scenarioPath),
+    } : {}),
     profileCleanup: fileIdentity(profileCleanupPath),
     candidateTeardown: fileIdentity(candidateTeardownPath),
   } as const;
@@ -341,12 +374,14 @@ try {
   finalized = true;
   if (failedDriverIds.length > 0) {
     throw new Error(
-      `complete discovery matrix recorded failed driver sections: ${failedDriverIds.join(", ")}`,
+      `${targetedClosure ? "targeted closure" : "complete discovery matrix"} recorded failed driver sections: `
+      + failedDriverIds.join(", "),
     );
   }
   console.log(
-    `Final macOS candidate passed ${manifest.driverReports.reduce((sum, report) => sum + report.outcomes, 0)} `
-    + `exact surfaces and ${providerRoutes.batch.routes.length} provider routes: ${orchestrationPath}`,
+    `${targetedClosure ? "Targeted" : "Final"} macOS candidate passed `
+    + `${manifest.driverReports.reduce((sum, report) => sum + report.outcomes, 0)} exact surfaces`
+    + `${providerRoutes ? ` and ${providerRoutes.batch.routes.length} provider routes` : ""}: ${orchestrationPath}`,
   );
 } finally {
   if (!finalized) {

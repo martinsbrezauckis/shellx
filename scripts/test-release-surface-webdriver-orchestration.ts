@@ -49,6 +49,7 @@ try {
   });
   assert.equal(passed.value, "completed");
   assert.equal(passed.receipt.status, "pass");
+  assert.equal(passed.receipt.executionWindow, "immediately-before-publish");
   assert.equal(passed.receipt.workCompleted, true);
   assert.equal(passed.receipt.application.bound, true);
   assert.match(passed.receipt.application.executableSha256 ?? "", /^[a-f0-9]{64}$/);
@@ -65,6 +66,30 @@ try {
   assert.equal(JSON.stringify(passed.receipt).includes("fixture-pass-session-0001"), false);
   assert.deepEqual(JSON.parse(readFileSync(passedInput.orchestrationEvidencePath, "utf8")), passed.receipt);
   assertShutdownAudit("pass", { sessionCreated: true, sessionDeleted: true, signal: "SIGTERM" });
+
+  const targetedInput = await orchestrationInput("targeted");
+  targetedInput.targetedClosure = true;
+  const targeted = await withReleaseSurfaceWebDriverOrchestration(targetedInput, async (_session, context) => {
+    const app = await launchFixtureApplication();
+    context.bindApplication({
+      processId: app.pid!,
+      executableNodePath: process.execPath,
+      executableLaunchPath: process.execPath,
+    });
+    const boundEvidence = writeBoundCandidateEvidence("targeted", app.pid!, context);
+    const targetedManifest = JSON.parse(readFileSync(boundEvidence.manifestPath, "utf8"));
+    targetedManifest.targetedClosure = { driverIds: ["ui-control-bounded-installed"] };
+    writeFileSync(boundEvidence.manifestPath, `${JSON.stringify(targetedManifest, null, 2)}\n`);
+    context.bindCandidateAttestation(boundEvidence.candidatePath);
+    context.bindDriverRunManifest(boundEvidence.manifestPath);
+    return "targeted-completed";
+  });
+  assert.equal(targeted.value, "targeted-completed");
+  assert.equal(targeted.receipt.executionWindow, "targeted-post-matrix");
+  assert.equal(targeted.receipt.providerRouteBatch, undefined);
+  assert.equal(targeted.receipt.healthEvidence, undefined);
+  assert.equal(targeted.receipt.scenarioReport, undefined);
+  assert.equal(targeted.receipt.candidateTeardown?.status, "pass");
 
   const callbackInput = await orchestrationInput("callback-failure");
   const callbackError = await expectFailure(callbackInput, async (_session, context) => {

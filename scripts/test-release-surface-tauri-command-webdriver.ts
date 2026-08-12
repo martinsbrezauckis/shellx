@@ -131,8 +131,16 @@ const commands = [
   "shellx_browser_grant_transfer",
   "shellx_browser_open_window",
   "shellx_browser_open_vault_panel",
+  "shellx_browser_operator_approve_teach_draft",
+  "shellx_browser_operator_developer_inspect",
   "shellx_browser_operator_evidence_summary",
+  "shellx_browser_operator_export_har",
   "shellx_browser_operator_export_flight_recorder",
+  "shellx_browser_operator_export_performance",
+  "shellx_browser_operator_list_teach_drafts",
+  "shellx_browser_operator_prepare_teach_draft",
+  "shellx_browser_operator_rehearse_teach_recipe",
+  "shellx_browser_operator_revise_teach_draft",
   "shellx_browser_remove_site_shields",
   "shellx_browser_resolve_dialog",
   "shellx_browser_resolve_permission",
@@ -363,7 +371,18 @@ try {
     report.outcomes
       .filter((outcome) => outcome.cleanup === "deferred-candidate-teardown")
       .map((outcome) => outcome.cleanupEvidence?.cleanupId),
-    ["tauri:discard-with-candidate-profile", "tauri:discard-with-candidate-profile"],
+    [
+      "tauri:discard-with-candidate-profile",
+      "tauri:discard-with-candidate-profile",
+      "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+      "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+      "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+      "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+      "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+      "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+      "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+      "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
+    ],
   );
   assert.equal(failedOutcomes.length, 0);
   for (const privateValue of [
@@ -441,7 +460,8 @@ try {
     assert(!reportText.includes(privateValue), `driver report retained private command data: ${privateValue}`);
   }
 
-  const audit = await fetch(`${candidateBase}/audit`, { headers: { Authorization: `Bearer ${token}` } });
+  const liveToken = readFileSync(tokenPath, "utf8").trim();
+  const audit = await fetch(`${candidateBase}/audit`, { headers: { Authorization: `Bearer ${liveToken}` } });
   assert.equal(audit.status, 200);
   const auditBody = await audit.json() as {
     invoked: Array<{ command: string; args: unknown }>;
@@ -837,7 +857,16 @@ try {
     false,
     "owned screenshot fixture must be removed",
   );
-  assert.equal(readFileSync(tokenPath, "utf8"), token, "token rotation must restore the exact original token");
+  assert.match(
+    readFileSync(tokenPath, "utf8"),
+    /^[a-f0-9]{32}$/,
+    "token rotation must preserve the live rotated authority until candidate teardown",
+  );
+  assert.notEqual(
+    readFileSync(tokenPath, "utf8"),
+    token,
+    "token rotation must not restore a stale on-disk token over the live process authority",
+  );
   assert.equal(existsSync(join(temp, ".shellx", "mcp-marketplace.json")), false, "marketplace state must restore absence");
   assert.equal(existsSync(join(temp, ".grok", "config.toml")), false, "Grok marketplace config must restore absence");
   assert.equal(existsSync(join(temp, "vault-e2e")), false, "Vault agent-state fixture must restore profile-directory absence");
@@ -965,7 +994,7 @@ try {
     /__TAURI_INTERNALS__|executeReleaseSurfaceWebDriverScript/,
     "the installed command driver must not execute arbitrary renderer scripts",
   );
-  const browserState = await fetch(`${candidateBase}/browser/state`, { headers: { Authorization: `Bearer ${token}` } });
+  const browserState = await fetch(`${candidateBase}/browser/state`, { headers: { Authorization: `Bearer ${liveToken}` } });
   const browserStateBody = await browserState.json() as { tabs?: unknown[]; enginePool?: { engines?: unknown[] } };
   assert.deepEqual(browserStateBody.tabs, [], "Browser engine sync cleanup must remove the exact owned tab");
   assert.deepEqual(browserStateBody.enginePool?.engines, [], "Browser engine sync cleanup must remove the exact owned engine");
@@ -1033,6 +1062,27 @@ function expectedInvocationSequence(command: string): string[] {
   if (command === "shellx_browser_open_window") return [command, "shellx_browser_state"];
   if (command === "shellx_browser_operator_evidence_summary") {
     return ["shellx_browser_operator_export_flight_recorder", command];
+  }
+  if (command === "shellx_browser_operator_prepare_teach_draft") {
+    return ["shellx_browser_operator_export_flight_recorder", command];
+  }
+  if (command === "shellx_browser_operator_list_teach_drafts") {
+    return ["shellx_browser_operator_export_flight_recorder", "shellx_browser_operator_prepare_teach_draft", command];
+  }
+  if (command === "shellx_browser_operator_revise_teach_draft") {
+    return ["shellx_browser_operator_export_flight_recorder", "shellx_browser_operator_prepare_teach_draft", command, "shellx_browser_operator_list_teach_drafts"];
+  }
+  if (command === "shellx_browser_operator_approve_teach_draft") {
+    return ["shellx_browser_operator_export_flight_recorder", "shellx_browser_operator_prepare_teach_draft", command, "shellx_browser_state"];
+  }
+  if (command === "shellx_browser_operator_rehearse_teach_recipe") {
+    return ["shellx_browser_operator_export_flight_recorder", "shellx_browser_operator_prepare_teach_draft", "shellx_browser_operator_approve_teach_draft", command, "shellx_browser_state"];
+  }
+  if (command === "shellx_browser_operator_developer_inspect") {
+    return ["shellx_browser_operator_export_flight_recorder", command];
+  }
+  if (command === "shellx_browser_operator_export_har" || command === "shellx_browser_operator_export_performance") {
+    return ["shellx_browser_operator_export_flight_recorder", command, "shellx_browser_state"];
   }
   if (command === "shellx_browser_sync_engine") return ["shellx_browser_state", command, "shellx_browser_state"];
   if (["shellx_browser_update_developer_mode", "shellx_browser_update_download_folder", "shellx_browser_update_shields"].includes(command)) {
@@ -1109,6 +1159,17 @@ function testOracleId(command: string): string {
   if (command === "shellx_browser_operator_export_flight_recorder") {
     return "tauri:shellx_browser_operator_export_flight_recorder:owned-artifact";
   }
+  if (command === "shellx_browser_operator_developer_inspect") {
+    return "tauri:shellx_browser_operator_developer_inspect:developer-mode-denial";
+  }
+  if (command === "shellx_browser_operator_export_har" || command === "shellx_browser_operator_export_performance") {
+    return `tauri:${command}:owned-artifact-receipt`;
+  }
+  if (command === "shellx_browser_operator_prepare_teach_draft") return `tauri:${command}:owned-draft`;
+  if (command === "shellx_browser_operator_list_teach_drafts") return `tauri:${command}:owned-draft-readback`;
+  if (command === "shellx_browser_operator_revise_teach_draft") return `tauri:${command}:owned-revision`;
+  if (command === "shellx_browser_operator_approve_teach_draft") return `tauri:${command}:owned-approval-receipt`;
+  if (command === "shellx_browser_operator_rehearse_teach_recipe") return `tauri:${command}:dry-run-receipt`;
   if (command === "shellx_browser_sync_engine") {
     return "tauri:shellx_browser_sync_engine:owned-engine-preserved";
   }
@@ -1219,6 +1280,11 @@ function testOracleId(command: string): string {
 
 function testFixtureId(command: string): string {
   if (command === "release_test_take_native_picker") return "tauri:isolated-native-picker-lease";
+  if (command.startsWith("shellx_browser_operator_")
+    && command !== "shellx_browser_operator_evidence_summary"
+    && command !== "shellx_browser_operator_export_flight_recorder") {
+    return "tauri:isolated-browser-operator-workflow";
+  }
   return command === "start_grok_session"
     ? "tauri:isolated-local-grok-session"
     : "tauri:installed-read-model";
@@ -1231,6 +1297,11 @@ function testCleanupId(command: string): string {
   }
   if (command === "renderer_error" || command === "shellx_browser_open_window") {
     return "tauri:discard-with-candidate-profile";
+  }
+  if (command.startsWith("shellx_browser_operator_")
+    && command !== "shellx_browser_operator_evidence_summary"
+    && command !== "shellx_browser_operator_export_flight_recorder") {
+    return "tauri:close-owned-browser-operator-workflow-and-candidate-teardown";
   }
   return "tauri:delete-invoke-state";
 }

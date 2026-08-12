@@ -110,7 +110,7 @@ assert.deepEqual(driver?.platforms, {
 const bounded = plan.assignments
   .filter((row) => row.driverId === UI_CONTROL_BOUNDED_INSTALLED_DRIVER_ID)
   .map(assignmentWithSurface);
-assert.equal(bounded.length, 364);
+assert.equal(bounded.length, 369);
 assert(bounded.every(supportsBoundedInstalledUiControl));
 assert.doesNotThrow(() => assertBoundedInstalledUiControlAssignments(bounded));
 
@@ -137,14 +137,22 @@ const manifest = JSON.parse(described.stdout) as {
   id?: string;
   invocationTransport?: string;
   controllerFiles?: string[];
+  maxAssignmentsPerProcess?: number;
 };
 assert.equal(manifest.id, UI_CONTROL_BOUNDED_INSTALLED_DRIVER_ID);
 assert.equal(manifest.invocationTransport, "native-installed-input");
+assert.equal(manifest.maxAssignmentsPerProcess, 125);
 assert(manifest.controllerFiles?.includes("scripts/release-drivers/ui-control-installed.ts"));
 assert(manifest.controllerFiles?.includes("scripts/release-drivers/ui-control-bounded-installed-assignments.ts"));
 assert(!installedDriverSource.includes("SHELLX_VAULT_PASSWORD_GENERATOR_LOCAL_STATE"));
 assert(!installedDriverSource.includes("SHELLX_OWNED_INPUT_STATE"));
 assert(installedDriverSource.includes("observeReleaseSurfaceInstalledInputElement(webdriver, control, [field])"));
+const browserCloseSource = installedDriverSource.slice(
+  installedDriverSource.indexOf("async function closeBrowserWindow"),
+  installedDriverSource.indexOf("async function waitForBrowserWindowClosedState"),
+);
+assert(browserCloseSource.includes("await closeReleaseSurfaceWebDriverWindow(webdriver);"));
+assert(browserCloseSource.includes("await waitForBrowserWindowClosedState(connection);"));
 const settingsTabWaitSource = installedDriverSource.slice(
   installedDriverSource.indexOf("async function waitForSettingsTab"),
   installedDriverSource.indexOf("async function setRightRailTab"),
@@ -274,7 +282,7 @@ for (const [relativePath, expectedCount] of boundedTextObservationSources) {
   );
 }
 
-console.log("Release surface bounded installed UI routing tests passed (364 cross-platform bounded assignments, 0 generic assignments)");
+console.log("Release surface bounded installed UI routing tests passed (369 cross-platform bounded assignments, 0 generic assignments)");
 
 function requiredSurface(id: string): ReleaseSurfaceItem {
   const surface = surfaceById.get(id);

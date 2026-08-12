@@ -134,6 +134,13 @@ const css = readFileSync(new URL("../src/browser/browserEvidence.css", import.me
 
 assert(sidebar.includes('data-debug-id="shellx-browser-right-tab-evidence"'), "wires a dedicated Evidence tab");
 assert(sidebar.includes('aria-controls="shellx-browser-panel-evidence"'), "links the Evidence tab to its panel");
+assert(
+  sidebar.includes('lazy(async () =>')
+    && sidebar.includes('import("./BrowserEvidencePanel")')
+    && sidebar.includes('<Suspense')
+    && sidebar.includes('rightPanelTab === "evidence"'),
+  "loads the heavier Evidence workflow only when its tab opens",
+);
 assert(panel.includes('data-debug-id="shellx-browser-evidence-refresh"'), "wires a real refresh action");
 assert(
   panel.includes("data-browser-evidence-manual-refresh-sequence")
@@ -141,6 +148,16 @@ assert(
   "publishes a bounded successful manual-refresh receipt",
 );
 assert(panel.includes('data-debug-id="shellx-browser-evidence-record"'), "wires a current-task recorder action");
+assert(
+  css.includes(".shellx-browser-evidence-list")
+    && css.includes("border-top: 1px solid var(--hairline)")
+    && css.includes("border-left: 2px solid var(--shellx-browser-ref-ink)")
+    && css.includes(".shellx-browser-evidence-row.evaluation")
+    && css.includes("border-left-color: var(--ok)")
+    && !css.includes("rgba(59, 130, 246")
+    && !css.includes("rgba(34, 197, 94"),
+  "uses tokenized divider rows rather than competing colored evidence cards",
+);
 assert(panel.includes("activeTaskId") && panel.includes("evidence.recordAttempt(activeTaskId)"), "binds manual recording to the current browser task");
 assert(panel.includes("Attempt recorded with evidence gaps"), "reports an incomplete recorder attempt honestly");
 assert(panel.includes("evidence.error") && panel.includes("rows.length === 0"), "renders error and empty states");

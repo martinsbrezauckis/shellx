@@ -3,7 +3,6 @@ import { lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProper
 import { inTauri } from "../lib/tauri-bridge";
 import {
   browserApiPostJson,
-  clearBrowserHistoryCommand,
   openBrowserVaultPanel,
   removeBrowserSiteShields,
   resolveBrowserSessionGrant,
@@ -15,10 +14,12 @@ import { AgentSidebar } from "../browser/components/AgentSidebar";
 import { BookmarkToolbar } from "../browser/components/BookmarkToolbar";
 import { BrowserChrome } from "../browser/components/BrowserChrome";
 import { BrowserNativeSecurityNotice } from "../browser/components/BrowserNativeSecurityNotice";
-import type {
-  BrowserHistoryDateFilter,
-  BrowserHistoryScope,
-} from "../browser/components/BrowserHistorySidecar";
+import type { BrowserHistoryDateFilter, BrowserHistoryScope } from "../browser/components/BrowserHistorySidecar";
+import { clearScopedBrowserHistory, type BrowserHistoryClearStatus } from "../browser/historyClear";
+import {
+  browserHistoryEntriesForScope,
+  type BrowserHistoryScope as BrowserHistoryClearScope,
+} from "../browser/historyScope";
 import { EngineViewport } from "../browser/components/EngineViewport";
 import {
   BrowserAdFilterMenu,
@@ -51,7 +52,7 @@ import { useBrowserPageActions } from "../browser/hooks/useBrowserPageActions";
 import { useBrowserPersonalLock } from "../browser/hooks/useBrowserPersonalLock";
 import { useBrowserShellEffects } from "../browser/hooks/useBrowserShellEffects";
 import { useBrowserSidebarResize } from "../browser/hooks/useBrowserSidebarResize";
-import { useBrowserTabLeases, useBrowserTabs } from "../browser/hooks/useBrowserTabs";
+import { selectBrowserHandoffTask, useBrowserTabLeases, useBrowserTabs } from "../browser/hooks/useBrowserTabs";
 import { useBrowserTasks } from "../browser/hooks/useBrowserTasks";
 import { useBrowserVaultFill } from "../browser/hooks/useBrowserVaultFill";
 import { useNativeEngineSync } from "../browser/hooks/useNativeEngineSync";
@@ -105,6 +106,7 @@ const BrowserShieldsPanel = lazy(() => import("../browser/components/BrowserShie
   .then((module) => ({ default: module.BrowserShieldsPanel })));
 const BrowserVaultFillPanel = lazy(() => import("../browser/components/BrowserVaultFillPanel")
   .then((module) => ({ default: module.BrowserVaultFillPanel })));
+const BrowserTabHandoffConfirmation = lazy(() => import("../browser/components/BrowserTabHandoffConfirmation").then((module) => ({ default: module.BrowserTabHandoffConfirmation })));
 type BrowserRightPanelId = "chat" | "requests" | "actions" | "evidence" | "errors";
 
 export function ShellxBrowserApp(): JSX.Element {
@@ -123,6 +125,7 @@ export function ShellxBrowserApp(): JSX.Element {
   const [historyScope, setHistoryScope] = useState<BrowserHistoryScope>("user");
   const [historySearch, setHistorySearch] = useState("");
   const [historyDateFilter, setHistoryDateFilter] = useState<BrowserHistoryDateFilter>("all");
+  const [historyClearStatus, setHistoryClearStatus] = useState<BrowserHistoryClearStatus | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<BrowserRightPanelId>(CHAT_PANEL);
   const [addressCopied, setAddressCopied] = useState(false);
   const [colorMode, setColorMode] = useState<BrowserColorMode>(initialColorMode);
@@ -205,12 +208,12 @@ export function ShellxBrowserApp(): JSX.Element {
   });
   browserCoworkSessionEventRef.current = browserCowork.onSessionEvent;
   browserCoworkUiStateRef.current = browserCowork.onUiState;
-
   const tabs = state?.tabs ?? [];
   const activeBrowserTab = useMemo(() => {
     if (!state?.activeBrowserTabId) return tabs.find((tab) => tab.active) ?? null;
     return tabs.find((tab) => tab.browserTabId === state.activeBrowserTabId) ?? null;
   }, [state?.activeBrowserTabId, tabs]);
+  const activeBrowserTabTerminal = ["completed", "blocked", "aborted"].includes(activeBrowserTab?.status ?? "");
   const activeTaskForActiveTab = activeBrowserTab?.taskId === activeTask?.taskId ? activeTask : null;
   const manualVaultFillAllowed = (activeBrowserTab?.ownerKind ?? "user") === "user";
   const personalLock = state?.personalLock ?? defaultPersonalLockSettings();
@@ -227,10 +230,11 @@ export function ShellxBrowserApp(): JSX.Element {
   });
   const browserTabs = useBrowserTabs({
     activeBrowserTab,
-    activeTask,
+    activeTask: selectBrowserHandoffTask(activeTask, state?.tasks ?? []),
     homeUrl,
     leases: browserTabLeases.leases,
     personalBrowserLocked: personalLock.enabled && personalLock.locked,
+    profiles: state?.profiles ?? [],
     runBusy: (action) => withBusy(action),
     setAddress,
     setError,
@@ -280,8 +284,8 @@ export function ShellxBrowserApp(): JSX.Element {
   );
   const historyEntries = state?.history ?? [];
   const enginePool = state?.enginePool ?? null;
-  const userHistory = useMemo(() => historyEntries.filter((entry) => entry.profileId === USER_DEFAULT_PROFILE_ID && !entry.taskId), [historyEntries]);
-  const agentHistory = useMemo(() => historyEntries.filter((entry) => entry.profileId !== USER_DEFAULT_PROFILE_ID || Boolean(entry.taskId)), [historyEntries]);
+  const userHistory = useMemo(() => browserHistoryEntriesForScope("user", historyEntries), [historyEntries]);
+  const agentHistory = useMemo(() => browserHistoryEntriesForScope("agent", historyEntries), [historyEntries]);
   const tasks = state?.tasks ?? [];
   const receipts = state?.receipts ?? [];
   const sessionGrants = state?.sessionGrants ?? [];
@@ -376,7 +380,7 @@ export function ShellxBrowserApp(): JSX.Element {
   });
 
   useNativeEngineSync({
-    enabled: inTauri() && tabs.length > 0,
+    enabled: inTauri() && tabs.length > 0 && !activeBrowserTabTerminal,
     slotRef: engineSlotRef,
     activeEngineId: activeBrowserTab?.engineId ?? null,
     activeBrowserTabId: activeBrowserTab?.browserTabId ?? null,
@@ -572,13 +576,9 @@ export function ShellxBrowserApp(): JSX.Element {
     onSaveStart: () => setHeaderMenu(null),
   });
 
-  const clearHistory = () => {
-    if (historyEntries.length === 0 || busy) return;
-    if (!window.confirm("Clear browser history?")) return;
-    void withBusy(async () => {
-      await clearBrowserHistoryCommand();
-    });
-  };
+  const clearHistory = (scope: BrowserHistoryClearScope): Promise<boolean> => clearScopedBrowserHistory({
+    scope, historyEntries, busy, refresh, setBusy, setError, setStatus: setHistoryClearStatus,
+  });
 
   const updateProfileAdMode = (mode: BrowserVisibleAdMode | null) => {
     void withBusy(async () => {
@@ -788,6 +788,7 @@ export function ShellxBrowserApp(): JSX.Element {
         onToggleOptions={toggleOptionsPanel}
       />
 
+      {browserTabs.handoffConfirmation && <LazySurface label="Browser tab handoff" onDismiss={browserTabs.cancelHandOffActiveTab}><BrowserTabHandoffConfirmation busy={busy} confirmation={browserTabs.handoffConfirmation} status={browserTabs.handoffStatus} onCancel={browserTabs.cancelHandOffActiveTab} onConfirm={browserTabs.confirmHandOffActiveTab} /></LazySurface>}
       {error && (
         <div
           className={`shellx-browser-error ${personalLockNoticeVisible ? "shellx-browser-lock-notice" : ""}`}
@@ -854,9 +855,13 @@ export function ShellxBrowserApp(): JSX.Element {
           userHistory={userHistory}
           agentHistory={agentHistory}
           formatHistoryTime={formatHistoryTime}
-          onHistoryScopeChange={setHistoryScope}
+          onHistoryScopeChange={(scope) => {
+            setHistoryScope(scope);
+            setHistoryClearStatus(null);
+          }}
           onHistorySearchChange={setHistorySearch}
           onHistoryDateFilterChange={setHistoryDateFilter}
+          historyClearStatus={historyClearStatus}
           onClearHistory={clearHistory}
           onNavigateToUrl={navigateToUrl}
           onClose={() => setHeaderMenu(null)}

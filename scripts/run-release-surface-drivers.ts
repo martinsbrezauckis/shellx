@@ -15,7 +15,14 @@ const selectedDriverIds = readArgs(args, "--driver-id")
   .flatMap((value) => value.split(","))
   .map((value) => value.trim())
   .filter(Boolean);
-const targetedClosure = selectedDriverIds.length > 0;
+const selectedSurfaceIds = readArgs(args, "--surface-id")
+  .flatMap((value) => value.split(","))
+  .map((value) => value.trim())
+  .filter(Boolean);
+if (selectedSurfaceIds.length > 0 && selectedDriverIds.length === 0) {
+  throw new Error("--surface-id requires one or more exact --driver-id values");
+}
+const targetedClosure = selectedDriverIds.length > 0 || selectedSurfaceIds.length > 0;
 const expectedExecutionWindow = targetedClosure
   ? "targeted-post-matrix"
   : "immediately-before-publish";
@@ -51,7 +58,15 @@ if (platform !== "macos-installed" && macosNativeInputHelperPath) {
 
 const status = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
 if (status.trim()) throw new Error("frozen-candidate driver run requires a clean source checkout");
-const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const controllerSourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const candidateSourceCommitArg = readArg(args, "--candidate-source-commit");
+if (candidateSourceCommitArg && !targetedClosure) {
+  throw new Error("--candidate-source-commit is valid only for targeted post-matrix closure");
+}
+const sourceCommit = candidateSourceCommitArg ?? controllerSourceCommit;
+if (!/^[a-f0-9]{40,64}$/.test(sourceCommit)) {
+  throw new Error("candidate source commit must be a lowercase Git object id");
+}
 const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
 const inventory = JSON.parse(readFileSync(join(root, "release", "surface-inventory.json"), "utf8")) as ReleaseSurfaceInventory;
 const nativeWebDriver = webdriverSessionPath ? readNativeWebDriverSession(webdriverSessionPath) : undefined;
@@ -62,13 +77,17 @@ const manifest = runReleaseSurfaceDrivers({
   contract: loadFinalSurfaceContract(join(root, "release", "surface-contract.json")),
   platform,
   sourceCommit,
+  controllerSourceCommit,
   version,
   artifactPath,
   signatureReceiptPath,
   candidateAttestationPath,
   installationReceiptPath,
   outputDir,
-  ...(targetedClosure ? { selectedDriverIds } : {}),
+  ...(targetedClosure ? {
+    selectedDriverIds,
+    ...(selectedSurfaceIds.length > 0 ? { selectedSurfaceIds } : {}),
+  } : {}),
   nativeWebDriver,
   ...(macosNativeInputHelperPath && macosNativeInputBindingPath
     ? { macosNativeInput: {

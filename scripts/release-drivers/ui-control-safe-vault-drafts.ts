@@ -348,7 +348,6 @@ async function prepareRecoveryChallenge(
   connection: Connection,
   webdriver: WebDriver,
 ): Promise<string> {
-  await resetDisposableVault(connection);
   const baselineSetupMode = await openVaultDraft(connection, webdriver, { setup: true, setupMode: "local" });
   if (!baselineSetupMode) throw new Error("Vault recovery setup omitted its baseline mode");
   await replaceInput(
@@ -1254,6 +1253,9 @@ async function openVaultDraft(
   webdriver: WebDriver,
   config: Pick<TextConfig | ChoiceConfig, "tab" | "setup" | "setupMode">,
 ): Promise<string | null> {
+  await resetDisposableVault(connection);
+  await postUi(connection, { openModal: "close", source: "final-surface-safe-vault-remount" });
+  await waitForReleaseSurfaceWebDriverElementAbsent(webdriver, SETTINGS_DIALOG);
   await postUi(connection, { openModal: "settings", source: "final-surface-safe-vault-draft" });
   await waitForReleaseSurfaceWebDriverElement(webdriver, SETTINGS_DIALOG);
   await clickSelector(webdriver, SETTINGS_VAULT_TAB);

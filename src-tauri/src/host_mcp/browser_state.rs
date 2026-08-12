@@ -1,8 +1,8 @@
 use serde_json::{json, Value};
 
 use super::{
-    browser_mcp_result, debug_api_get_json, debug_api_post_json_for_caller, encode_query_component,
-    json_string, mcp_arg_bool, mcp_arg_string, mcp_arg_u64,
+    browser_mcp_result, debug_api_get_json_for_caller, debug_api_post_json_for_caller,
+    encode_query_component, json_string, mcp_arg_bool, mcp_arg_string, mcp_arg_u64,
 };
 
 const ALLOWED_INCLUDES: &[&str] = &[
@@ -16,7 +16,6 @@ const ALLOWED_INCLUDES: &[&str] = &[
     "logs",
     "requests",
     "transfers",
-    "settings",
     "observations",
 ];
 
@@ -29,10 +28,13 @@ pub(super) fn browser_mcp_navigation_response_should_wait(action: &str, data: &V
 pub(super) async fn browser_mcp_wait_for_navigation_settle(
     response: &Value,
     timeout_secs: u64,
+    caller_session_id: Option<&str>,
 ) -> Result<(), String> {
     let timeout_ms = timeout_secs.clamp(1, 120) * 1_000;
     let path = browser_mcp_settle_path(response, timeout_ms);
-    let settle = debug_api_get_json(&path, timeout_secs.clamp(1, 120) + 2).await?;
+    let settle =
+        debug_api_get_json_for_caller(&path, timeout_secs.clamp(1, 120) + 2, caller_session_id)
+            .await?;
     if settle
         .get("settled")
         .and_then(Value::as_bool)
@@ -59,12 +61,15 @@ pub(super) fn browser_mcp_settle_path(response: &Value, timeout_ms: u64) -> Stri
     format!("/browser/settle?{}", query.join("&"))
 }
 
-pub(super) async fn tool_browser_state(args: Value) -> Result<Value, String> {
+pub(super) async fn tool_browser_state(
+    args: Value,
+    caller_session_id: Option<&str>,
+) -> Result<Value, String> {
     let includes = requested_includes(&args)?;
     let limit = mcp_arg_u64(&args, &["limit"])
         .unwrap_or(100)
         .clamp(1, 1_000);
-    let summary = debug_api_get_json("/browser/summary", 10).await?;
+    let summary = debug_api_get_json_for_caller("/browser/summary", 10, caller_session_id).await?;
     if includes.is_empty() {
         return Ok(browser_mcp_result(
             browser_summary_text("browser_state", &summary),
@@ -76,12 +81,12 @@ pub(super) async fn tool_browser_state(args: Value) -> Result<Value, String> {
     let mut details = serde_json::Map::new();
     for include in &includes {
         let (key, path) = include_path(include, limit);
-        let value = debug_api_get_json(&path, 10).await?;
+        let value = debug_api_get_json_for_caller(&path, 10, caller_session_id).await?;
         details.insert(key.to_string(), value);
         if *include == "transfers" {
             details.insert(
                 "uploads".to_string(),
-                debug_api_get_json("/browser/uploads", 10).await?,
+                debug_api_get_json_for_caller("/browser/uploads", 10, caller_session_id).await?,
             );
         }
     }
@@ -97,13 +102,16 @@ pub(super) async fn tool_browser_state(args: Value) -> Result<Value, String> {
     ))
 }
 
-pub(super) async fn tool_browser_check(args: Value) -> Result<Value, String> {
+pub(super) async fn tool_browser_check(
+    args: Value,
+    caller_session_id: Option<&str>,
+) -> Result<Value, String> {
     let timeout_ms = mcp_arg_u64(&args, &["timeoutMs", "timeout_ms"])
         .unwrap_or_default()
         .min(120_000);
     let path = browser_quiet_check_path(&args, timeout_ms);
     let timeout_secs = timeout_ms.saturating_add(999) / 1_000 + 2;
-    let data = debug_api_get_json(&path, timeout_secs).await?;
+    let data = debug_api_get_json_for_caller(&path, timeout_secs, caller_session_id).await?;
     Ok(browser_mcp_result(
         browser_quiet_check_text(&data),
         data,
@@ -269,7 +277,6 @@ fn include_path(include: &str, limit: u64) -> (&'static str, String) {
         "logs" => ("logs", format!("/browser/logs?limit={limit}")),
         "requests" => ("requests", format!("/browser/requests?limit={limit}")),
         "transfers" => ("downloads", "/browser/downloads".to_string()),
-        "settings" => ("settings", "/browser/state?view=core".to_string()),
         _ => unreachable!("validated browser_state include"),
     }
 }

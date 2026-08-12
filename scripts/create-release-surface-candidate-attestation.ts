@@ -28,6 +28,7 @@ import {
   isReleaseSurfacePathInsideRoot,
   sameReleaseSurfaceInstalledPayloadManifest,
 } from "./lib/release-surface-installed-payload-manifest";
+import { resolveReleaseSurfaceControllerProvenance } from "./lib/release-surface-driver-runner";
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -56,7 +57,15 @@ const mcpPort = Number(parsedMcpBase.port);
 if (mcpPort === debugPort) throw new Error("--mcp-base must use a port distinct from --debug-base");
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
 if (dirty.trim()) throw new Error("candidate attestation requires a clean frozen source checkout");
-const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const controllerSourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const candidateSourceCommitArg = optionalArg(args, "--candidate-source-commit");
+const sourceCommit = candidateSourceCommitArg ?? controllerSourceCommit;
+resolveReleaseSurfaceControllerProvenance({
+  rootDir: root,
+  candidateSourceCommit: sourceCommit,
+  controllerSourceCommit,
+  targetedClosure: Boolean(candidateSourceCommitArg && sourceCommit !== controllerSourceCommit),
+});
 const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
 
 const artifact = identifyRegularFile(artifactPath, "distribution artifact");

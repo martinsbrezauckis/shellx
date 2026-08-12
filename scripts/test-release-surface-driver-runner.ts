@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,8 +16,11 @@ import {
 } from "./lib/release-surface-driver-plan";
 import {
   RELEASE_SURFACE_DRIVER_RUN_SCHEMA,
+  RELEASE_SURFACE_DRIVER_TIMEOUT_MS,
+  releaseSurfaceDriverAssignmentBatches,
   releaseSurfaceDriverRunFailedDriverIds,
   resolveReleaseSurfaceDriverSelection,
+  resolveReleaseSurfaceControllerProvenance,
   runReleaseSurfaceDrivers,
 } from "./lib/release-surface-driver-runner";
 import { composeFinalSurfaceReceipt } from "./lib/release-surface-receipt-composer";
@@ -83,6 +86,27 @@ import {
 } from "./lib/release-surface-webdriver-lifecycle";
 
 const root = resolve(import.meta.dirname, "..");
+assert.equal(
+  RELEASE_SURFACE_DRIVER_TIMEOUT_MS,
+  60 * 60_000,
+  "one installed driver receives a bounded hour so the 157-command Tauri lane can complete its per-command deadlines",
+);
+assert.deepEqual(
+  releaseSurfaceDriverAssignmentBatches(Array.from({ length: 369 }, (_, index) => index), 125)
+    .map((batch) => batch.length),
+  [125, 125, 119],
+  "a long installed UI lane must retain every assignment across bounded child processes",
+);
+assert.deepEqual(
+  releaseSurfaceDriverAssignmentBatches([1, 2, 3]),
+  [[1, 2, 3]],
+  "drivers without an explicit process bound must keep their established single-process contract",
+);
+assert.throws(
+  () => releaseSurfaceDriverAssignmentBatches([1, 2], 0),
+  /positive safe integer/,
+  "an invalid process bound must fail closed",
+);
 for (const script of [
   "scripts/run-release-surface-webdriver-candidate.ts",
   "scripts/run-release-surface-macos-candidate.ts",
@@ -91,11 +115,61 @@ for (const script of [
   assert.match(source, /readArgs\(args, "--driver-id"\)/, `${script} must accept targeted driver selectors`);
   assert.match(source, /targeted-post-matrix/, `${script} must require the targeted execution window`);
   assert.match(source, /selectedDriverIds/, `${script} must pass targeted selectors to the driver runner`);
+  assert.match(source, /--candidate-source-commit/, `${script} must support an exact targeted candidate/controller split`);
+}
+
+{
+  const provenanceRoot = mkdtempSync(join(tmpdir(), "shellx-targeted-controller-provenance-"));
+  try {
+    runGitFixture(provenanceRoot, ["init"]);
+    runGitFixture(provenanceRoot, ["config", "user.email", "release-fixture@example.invalid"]);
+    runGitFixture(provenanceRoot, ["config", "user.name", "Release Fixture"]);
+    mkdirSync(join(provenanceRoot, "scripts"), { recursive: true });
+    writeFileSync(join(provenanceRoot, "scripts", "controller.ts"), "export const fixture = 1;\n", "utf8");
+    runGitFixture(provenanceRoot, ["add", "scripts/controller.ts"]);
+    runGitFixture(provenanceRoot, ["-c", "commit.gpgsign=false", "commit", "-m", "candidate"]);
+    const candidateCommit = gitFixtureText(provenanceRoot, ["rev-parse", "HEAD"]);
+    writeFileSync(join(provenanceRoot, "scripts", "controller.ts"), "export const fixture = 2;\n", "utf8");
+    runGitFixture(provenanceRoot, ["add", "scripts/controller.ts"]);
+    runGitFixture(provenanceRoot, ["-c", "commit.gpgsign=false", "commit", "-m", "controller fix"]);
+    const controllerCommit = gitFixtureText(provenanceRoot, ["rev-parse", "HEAD"]);
+    const provenance = resolveReleaseSurfaceControllerProvenance({
+      rootDir: provenanceRoot,
+      candidateSourceCommit: candidateCommit,
+      controllerSourceCommit: controllerCommit,
+      targetedClosure: true,
+    });
+    assert.equal(provenance.controllerSourceCommit, controllerCommit);
+    assert.deepEqual(provenance.controllerDelta?.changedPaths, ["scripts/controller.ts"]);
+    assert.equal(provenance.controllerDelta?.candidateSourceCommit, candidateCommit);
+    assert.match(provenance.controllerDelta?.patchSha256 ?? "", /^[a-f0-9]{64}$/);
+    assert.throws(() => resolveReleaseSurfaceControllerProvenance({
+      rootDir: provenanceRoot,
+      candidateSourceCommit: candidateCommit,
+      controllerSourceCommit: controllerCommit,
+      targetedClosure: false,
+    }), /only a targeted post-matrix closure/);
+    mkdirSync(join(provenanceRoot, "src"), { recursive: true });
+    writeFileSync(join(provenanceRoot, "src", "app.ts"), "export const app = true;\n", "utf8");
+    runGitFixture(provenanceRoot, ["add", "src/app.ts"]);
+    runGitFixture(provenanceRoot, ["-c", "commit.gpgsign=false", "commit", "-m", "application drift"]);
+    const driftedControllerCommit = gitFixtureText(provenanceRoot, ["rev-parse", "HEAD"]);
+    assert.throws(() => resolveReleaseSurfaceControllerProvenance({
+      rootDir: provenanceRoot,
+      candidateSourceCommit: candidateCommit,
+      controllerSourceCommit: driftedControllerCommit,
+      targetedClosure: true,
+    }), /outside scripts\/\*\*/);
+  } finally {
+    rmSync(provenanceRoot, { recursive: true, force: true });
+  }
 }
 {
   const source = readFileSync(resolve(root, "scripts/prepare-release-surface-macos-candidate.ts"), "utf8");
   assert.match(source, /readArgs\(values, "--driver-id"\)/, "macOS preparation must recognize targeted driver selectors");
   assert.match(source, /targeted-post-matrix/, "macOS preparation must allow only the targeted execution window for a closure run");
+  assert.match(source, /--candidate-source-commit/, "macOS preparation must bind the signed candidate separately from a targeted controller descendant");
+  assert.match(source, /resolveReleaseSurfaceControllerProvenance/, "macOS preparation must enforce the scripts-only targeted controller delta");
 }
 assert.equal(
   fileURLToPath(releaseSurfaceControllerTsxLoaderSpecifier()),
@@ -447,8 +521,12 @@ try {
     installationReceiptPath,
     outputDir: targetedOutputDir,
     selectedDriverIds: ["fixture-installed"],
+    selectedSurfaceIds: ["tauri-command:followup-fixture"],
   });
-  assert.deepEqual(targeted.targetedClosure, { driverIds: ["fixture-installed"] });
+  assert.deepEqual(targeted.targetedClosure, {
+    driverIds: ["fixture-installed"],
+    surfaceIds: ["tauri-command:followup-fixture"],
+  });
   assert.deepEqual(
     targeted.driverReports.map((report) => report.driverId),
     ["fixture-installed"],
@@ -1639,4 +1717,15 @@ function fixtureHealthGit(args: string[]): string {
     return "scripts/create-release-surface-health-evidence.ts\nscripts/lib/release-surface-health-evidence.ts\n";
   }
   throw new Error(`unexpected health evidence git probe ${args.join(" ")}`);
+}
+
+function runGitFixture(rootDir: string, args: string[]): void {
+  const result = spawnSync("git", ["-C", rootDir, ...args], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+}
+
+function gitFixtureText(rootDir: string, args: string[]): string {
+  const result = spawnSync("git", ["-C", rootDir, ...args], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return result.stdout.trim();
 }

@@ -189,7 +189,8 @@ fn validate_picker_lease(kind: &str, path: &str) -> Result<PickerLease, String> 
         return Err(format!("release native-picker path is not a {kind}"));
     }
 
-    let profile_root = crate::debug_api::shellxagent_token_path()
+    let token_path = crate::debug_api::shellxagent_token_path()?;
+    let profile_root = token_path
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| {

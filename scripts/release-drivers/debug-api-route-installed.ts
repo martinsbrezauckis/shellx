@@ -59,6 +59,18 @@ import {
   type DebugApiBrowserSettleFixture,
 } from "./debug-api-browser-settle-fixture";
 import {
+  apiJson as browserTeachApiJson,
+  browserTeachCallerId,
+  cleanupBrowserTeachEvidenceFixture,
+  prepareBrowserTeachEvidenceFixture,
+  teachPrepareRequest,
+  teachRevisionRequest,
+  verifyBrowserDeveloperModeDenial,
+  verifyBrowserTeachListed,
+  verifyBrowserTeachPrepared,
+  verifyBrowserTeachRevised,
+} from "./browser-teach-developer-fixture";
+import {
   cleanupDebugApiFilesFixture,
   debugApiFilesRequestPath,
   prepareDebugApiFilesFixture,
@@ -154,6 +166,7 @@ const manifest: ReleaseSurfaceDriverManifest = {
     "debug-api:isolated-git-repository-mutation",
     "debug-api:isolated-absent-session",
     "debug-api:isolated-browser-bookmark",
+    "debug-api:isolated-browser-teach-agent-task",
     "debug-api:operator-gated-read-only",
     "debug-api:isolated-vault-secret",
     "debug-api:isolated-vault-setup-lifecycle",
@@ -198,6 +211,7 @@ const manifest: ReleaseSurfaceDriverManifest = {
     "debug-api:delete-owned-git-fixture",
     "debug-api:delete-owned-git-fixture-and-checkpoint",
     "debug-api:delete-owned-browser-bookmark",
+    "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
     "debug-api:delete-owned-vault-secret",
     "debug-api:restore-browser-engine-pool",
     "debug-api:restore-panel-baseline",
@@ -313,6 +327,10 @@ const manifest: ReleaseSurfaceDriverManifest = {
     "debug-api:GET-vault-resources",
     "debug-api:POST-browser-bookmarks:semantic-effect",
     "debug-api:POST-browser-action:semantic-effect",
+    "debug-api:GET-browser-teach-drafts:owned-agent-readback",
+    "debug-api:POST-browser-developer-inspect:developer-mode-denial",
+    "debug-api:POST-browser-teach-prepare:owned-agent-draft",
+    "debug-api:POST-browser-teach-revise:owned-agent-revision",
     "debug-api:POST-browser-cdp-execute:semantic-effect",
     "debug-api:delete-browser-bookmarks-bookmark-id:semantic-effect",
     "debug-api:post-browser-bookmarks-reorder:semantic-effect",
@@ -1009,6 +1027,9 @@ async function exerciseRoute(
   if (method === "POST" && canonicalPath === "/browser/bookmarks/reorder") {
     return exerciseBrowserBookmarkReorder(connection, request, assignment);
   }
+  if (isBrowserTeachDeveloperSurface(assignment.surface.name)) {
+    return exerciseBrowserTeachDeveloperSurface(connection, assignment);
+  }
   if (isDebugApiBrowserLifecycleMutation(assignment.surface.name)) {
     return exerciseDebugApiBrowserLifecycleMutation(connection, assignment);
   }
@@ -1177,6 +1198,116 @@ async function exerciseRoute(
     outcome.observedEffect = effect;
   } catch (error) {
     outcome.error = error instanceof Error ? error.message : String(error);
+  }
+  return outcome;
+}
+
+function isBrowserTeachDeveloperSurface(surfaceName: string): boolean {
+  return new Set([
+    "GET /browser/teach/drafts",
+    "POST /browser/developer/inspect",
+    "POST /browser/teach/prepare",
+    "POST /browser/teach/revise",
+  ]).has(surfaceName);
+}
+
+async function exerciseBrowserTeachDeveloperSurface(
+  connection: { base: string; token: string },
+  assignment: ReleaseSurfaceDriverRequest["assignments"][number],
+): Promise<ReleaseSurfaceDriverOutcome> {
+  const outcome: ReleaseSurfaceDriverOutcome = {
+    id: assignment.surface.id,
+    expectedEffect: assignment.expectedEffect,
+    oracleId: assignment.oracleId,
+    present: "fail",
+    invoke: "fail",
+    effect: "fail",
+    cleanup: "fail",
+    observedEffect: "No owned Browser Teach or Developer result was observed.",
+  };
+  let fixture: Awaited<ReturnType<typeof prepareBrowserTeachEvidenceFixture>> | null = null;
+  try {
+    const callerSessionId = browserTeachCallerId();
+    fixture = await prepareBrowserTeachEvidenceFixture(connection, callerSessionId);
+    outcome.present = "pass";
+    if (assignment.surface.name === "POST /browser/developer/inspect") {
+      const inspection = await browserTeachApiJson(connection, "POST", "/browser/developer/inspect", {
+        taskId: fixture.browser.taskId,
+        browserTabId: fixture.browser.browserTabId,
+      }, callerSessionId);
+      outcome.invoke = "pass";
+      verifyBrowserDeveloperModeDenial(inspection, fixture);
+      outcome.effect = "pass";
+      outcome.observedEffect = "POST /browser/developer/inspect returned the fixed Developer Mode denial for one exact agent-owned task without enabling Developer Mode, evaluating arbitrary CDP, or changing Browser task state.";
+      return outcome;
+    }
+
+    const prepared = await browserTeachApiJson(
+      connection,
+      "POST",
+      "/browser/teach/prepare",
+      teachPrepareRequest(fixture),
+      callerSessionId,
+    );
+    const draft = verifyBrowserTeachPrepared(prepared, fixture);
+    if (assignment.surface.name === "POST /browser/teach/prepare") {
+      outcome.invoke = "pass";
+      const listed = await browserTeachApiJson(
+        connection,
+        "GET",
+        `/browser/teach/drafts?taskId=${encodeURIComponent(fixture.browser.taskId)}&limit=1`,
+        undefined,
+        callerSessionId,
+      );
+      verifyBrowserTeachListed(listed, fixture, draft);
+      outcome.effect = "pass";
+      outcome.observedEffect = "POST /browser/teach/prepare derived one immutable draft and revision from exact owned Flight Recorder evidence and confirmed it through the matching agent-scoped draft readback; no approval or recipe replay route was invoked.";
+      return outcome;
+    }
+    if (assignment.surface.name === "GET /browser/teach/drafts") {
+      outcome.invoke = "pass";
+      const listed = await browserTeachApiJson(
+        connection,
+        "GET",
+        `/browser/teach/drafts?taskId=${encodeURIComponent(fixture.browser.taskId)}&limit=1`,
+        undefined,
+        callerSessionId,
+      );
+      verifyBrowserTeachListed(listed, fixture, draft);
+      outcome.effect = "pass";
+      outcome.observedEffect = "GET /browser/teach/drafts returned exactly the draft owned by the matching MCP task session after fixture preparation; no operator approval or replay authority was exposed.";
+      return outcome;
+    }
+    const revised = await browserTeachApiJson(
+      connection,
+      "POST",
+      "/browser/teach/revise",
+      teachRevisionRequest(draft),
+      callerSessionId,
+    );
+    outcome.invoke = "pass";
+    const current = verifyBrowserTeachRevised(revised, fixture, draft);
+    const listed = await browserTeachApiJson(
+      connection,
+      "GET",
+      `/browser/teach/drafts?taskId=${encodeURIComponent(fixture.browser.taskId)}&limit=1`,
+      undefined,
+      callerSessionId,
+    );
+    verifyBrowserTeachListed(listed, fixture, current);
+    outcome.effect = "pass";
+    outcome.observedEffect = "POST /browser/teach/revise performed one compare-and-swap revision for the exact agent-owned draft and confirmed the new current revision through task-owner readback; approval and application remained unavailable.";
+  } catch (error) {
+    outcome.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (fixture) {
+      const cleanupError = await cleanupBrowserTeachEvidenceFixture(connection, fixture);
+      if (cleanupError) {
+        outcome.error = outcome.error ? `${outcome.error}; cleanup: ${cleanupError}` : `cleanup: ${cleanupError}`;
+      } else {
+        outcome.cleanup = "pass";
+      }
+    }
   }
   return outcome;
 }
@@ -2426,11 +2557,12 @@ async function exerciseDiagnosticsAuthRead(
     }
     const auth = requireObject(checks[0], "POST /diagnostics auth check");
     requireExactKeys(auth, ["detail", "name", "status"], "POST /diagnostics auth check");
-    if (auth.name !== "auth" || auth.status !== "pass" || auth.detail !== "shellxagent token ok") {
-      throw new Error("POST /diagnostics did not prove the installed bearer-token file");
+    if (auth.name !== "auth" || auth.status !== "pass"
+      || auth.detail !== "Debug API token authority initialized") {
+      throw new Error("POST /diagnostics did not prove the installed process token authority");
     }
     outcome.effect = "pass";
-    outcome.observedEffect = "POST /diagnostics ran only the bounded auth check and proved the installed bearer-token file without retaining token material.";
+    outcome.observedEffect = "POST /diagnostics ran only the bounded auth check and proved the installed process token authority without retaining token material.";
   } catch (error) {
     outcome.error = error instanceof Error ? error.message : String(error);
   }

@@ -24,7 +24,7 @@ import type { ReleaseSurfaceDriverRunManifest } from "./release-surface-driver-r
 import type { ReleaseSurfaceWebDriverSession } from "./release-surface-webdriver-binding";
 
 export const RELEASE_SURFACE_WEBDRIVER_ORCHESTRATION_SCHEMA =
-  "shellx/release-surface-webdriver-orchestration@4";
+  "shellx/release-surface-webdriver-orchestration@5";
 
 type Platform = ReleaseSurfaceRunProfile["platform"];
 type BoundApplication = { processId: number; executableNodePath: string; executableLaunchPath: string };
@@ -32,6 +32,7 @@ type BoundApplication = { processId: number; executableNodePath: string; executa
 export interface ReleaseSurfaceWebDriverOrchestrationReceipt {
   schema: typeof RELEASE_SURFACE_WEBDRIVER_ORCHESTRATION_SCHEMA;
   mode: "final-frozen-candidate";
+  executionWindow: "immediately-before-publish" | "targeted-post-matrix";
   status: "pass" | "failed";
   platform: Platform;
   runId: string;
@@ -73,6 +74,7 @@ export interface ReleaseSurfaceWebDriverOrchestrationInput {
   orchestrationEvidencePath: string;
   requireProviderRouteBatch?: boolean;
   requireHealthEvidence?: boolean;
+  targetedClosure?: boolean;
 }
 
 export interface ReleaseSurfaceWebDriverOrchestrationContext {
@@ -272,6 +274,9 @@ export async function withReleaseSurfaceWebDriverOrchestration<T>(
   const receipt: ReleaseSurfaceWebDriverOrchestrationReceipt = {
     schema: RELEASE_SURFACE_WEBDRIVER_ORCHESTRATION_SCHEMA,
     mode: "final-frozen-candidate",
+    executionWindow: input.targetedClosure
+      ? "targeted-post-matrix"
+      : "immediately-before-publish",
     status: primaryError ? "failed" : "pass",
     platform: input.platform,
     runId: input.runId,

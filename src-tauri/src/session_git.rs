@@ -965,7 +965,51 @@ where
     }
     file.write_all(bytes.as_ref())
         .map_err(|e| format!("{label} write failed: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("{label} sync failed: {e}"))?;
     Ok(())
+}
+
+/// Atomically replace a same-directory private temporary file with its final
+/// name. Windows `std::fs::rename` does not replace an existing destination,
+/// so use the Win32 replace-and-write-through operation explicitly there.
+#[cfg(windows)]
+fn atomic_replace_private_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::iter;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source_wide = source
+        .as_os_str()
+        .encode_wide()
+        .chain(iter::once(0))
+        .collect::<Vec<_>>();
+    let destination_wide = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: both paths are NUL-terminated UTF-16 buffers held for the whole
+    // call. The caller creates `source` in `destination`'s directory, so this
+    // is a same-volume replacement rather than a copy/delete fallback.
+    let replaced = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if replaced == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn atomic_replace_private_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
 }
 
 pub(crate) fn atomic_write_private_file<P, B>(path: P, bytes: B, label: &str) -> Result<(), String>
@@ -983,16 +1027,25 @@ where
         .and_then(|value| value.to_str())
         .unwrap_or("state");
     let tmp = parent.join(format!(".{file_name}.shellx-tmp-{}", uuid::Uuid::new_v4()));
-    write_private_file(&tmp, bytes, label)?;
-    if let Err(error) = std::fs::rename(&tmp, path) {
+    if let Err(error) = write_private_file(&tmp, bytes, label) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(format!("{label} rename failed: {error}"));
+        return Err(error);
+    }
+    if let Err(error) = atomic_replace_private_file(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("{label} atomic replace failed: {error}"));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .map_err(|error| format!("{label} chmod failed: {error}"))?;
+    }
+    #[cfg(unix)]
+    {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("{label} directory sync failed: {error}"))?;
     }
     Ok(())
 }
@@ -2177,7 +2230,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn atomic_private_writer_replaces_content_without_leaving_temp_files() {
+    fn atomic_private_writer_replaces_existing_destination_repeatedly() {
         let dir = tempfile::tempdir().expect("tempdir");
         let private_dir = dir.path().join("state");
         std::fs::create_dir_all(&private_dir).expect("create state dir");
@@ -2194,8 +2247,10 @@ mod tests {
         }
 
         atomic_write_private_file(&path, b"new", "test private state")
-            .expect("replace private file");
-        assert_eq!(std::fs::read(&path).expect("read replaced file"), b"new");
+            .expect("replace existing private file");
+        atomic_write_private_file(&path, b"newer", "test private state")
+            .expect("replace existing private file a second time");
+        assert_eq!(std::fs::read(&path).expect("read replaced file"), b"newer");
         let leftovers = std::fs::read_dir(&private_dir)
             .expect("read state dir")
             .flatten()

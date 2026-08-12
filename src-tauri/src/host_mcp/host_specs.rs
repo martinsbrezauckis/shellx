@@ -8,6 +8,7 @@ fn host_gateway_actions(write_class: bool) -> Vec<String> {
         .filter_map(|spec| spec.get("name").and_then(Value::as_str).map(str::to_string))
         .filter(|name| {
             !name.starts_with("browser_")
+                && !name.starts_with("cut_")
                 && !matches!(
                     name.as_str(),
                     "capabilities_summary" | "search_tool" | "host_read" | "host_act"
@@ -81,6 +82,11 @@ pub(super) fn route_host_entry(
             "{entry_name} does not route Browser tools; use browser_read or browser_act"
         ));
     }
+    if action.starts_with("cut_") || matches!(action, "cut_read" | "cut_act") {
+        return Err(format!(
+            "{entry_name} does not route ShellX Cut tools; use cut_read or cut_act"
+        ));
+    }
     if matches!(action, "host_read" | "host_act") {
         return Err(format!(
             "{entry_name} cannot recursively route a Host gateway"
@@ -146,6 +152,9 @@ mod tests {
                 .unwrap_err()
                 .contains("browser_read")
         );
+        assert!(route_host_entry("host_act", json!({"action": "cut_act"}))
+            .unwrap_err()
+            .contains("cut_read"));
     }
 
     #[test]
@@ -160,6 +169,7 @@ mod tests {
         for spec in tool_specs() {
             let name = spec["name"].as_str().expect("tool name");
             if name.starts_with("browser_")
+                || name.starts_with("cut_")
                 || matches!(name, "capabilities_summary" | "search_tool")
             {
                 continue;

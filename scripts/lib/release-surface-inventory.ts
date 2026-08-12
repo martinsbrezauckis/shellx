@@ -201,6 +201,7 @@ function collectHostMcpTools(root: string): ReleaseSurfaceItem[] {
   const sources = [
     "src-tauri/src/host_mcp/tool_specs_core.rs",
     "src-tauri/src/host_mcp/browser_specs.rs",
+    "src-tauri/src/host_mcp/cut_mcp.rs",
     "src-tauri/src/host_mcp/host_specs.rs",
     "src-tauri/src/host_mcp/tool_specs_extended.rs",
   ];

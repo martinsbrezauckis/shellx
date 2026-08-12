@@ -242,6 +242,8 @@ function renderHtml(content, visuals) {
         <a href="../canvas/">Design Studio</a>
         <span class="manual-muted" aria-label="Drive manual coming later">Drive</span>
         <a href="../vault/">Vault</a>
+        <a href="../motion/">Motion</a>
+        <span class="manual-muted" aria-label="Browser manual coming later">Browser</span>
       </nav>
     </header>
     <div class="manual-shell">

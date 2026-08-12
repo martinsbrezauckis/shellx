@@ -1,5 +1,4 @@
 import {
-  acceptReleaseSurfaceInstalledInputAlert,
   clickReleaseSurfaceInstalledInputElement,
   closeReleaseSurfaceInstalledInputWindow,
   findReleaseSurfaceInstalledInputElement,
@@ -26,23 +25,42 @@ type HistoryEntry = {
   url: string;
 };
 type BrowserTab = { browserTabId: string; taskId?: string | null; url?: string | null };
-type Kind = "entry" | "clear";
+type BrowserReceipt = {
+  kind?: string;
+  evidence?: { scope?: unknown; removed?: unknown } | null;
+};
+type Kind = "entry" | "clear" | "all-clear-sheet" | "clear-cancel" | "all-clear-confirm";
 
 const OWNER = "[data-debug-id='shellx-browser-history-menu']";
 const PANEL = "#shellx-browser-history-sidecar[aria-labelledby='shellx-browser-history-menu']";
 const USER_SCOPE = "[data-debug-id='shellx-browser-history-user']";
 const AGENT_SCOPE = "[data-debug-id='shellx-browser-history-agent']";
 const CLEAR = "[data-debug-id='shellx-browser-clear-history']";
-const CLEAR_CONFIRMATION = "Clear browser history?";
+const CLEAR_ALL = "[data-debug-id='shellx-browser-clear-all-history']";
+const CLEAR_CONFIRMATION = "[data-debug-id='shellx-browser-history-clear-confirmation']";
+const CLEAR_CANCEL = "[data-debug-id='shellx-browser-history-clear-cancel']";
+const CLEAR_CONFIRM = "[data-debug-id='shellx-browser-history-clear-confirm']";
 const SURFACES: Record<string, Kind> = {
   "src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id^=\"shellx-browser-history-entry-\"]": "entry",
   "src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-clear-history\"]": "clear",
+  "src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-clear-all-history\"]": "all-clear-sheet",
+  "src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-history-clear-cancel\"]": "clear-cancel",
+  "src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-history-clear-confirm\"]": "all-clear-confirm",
 };
-export const OWNED_BROWSER_HISTORY_FIXTURES = ["ui:browser-owned-history-sidecar"] as const;
-export const OWNED_BROWSER_HISTORY_CLEANUPS = ["ui:clear-owned-browser-history-abort-task-and-window-loopback"] as const;
+export const OWNED_BROWSER_HISTORY_FIXTURES = [
+  "ui:browser-owned-history-sidecar",
+  "ui:browser-history-clear-sheet-owned-baseline",
+] as const;
+export const OWNED_BROWSER_HISTORY_CLEANUPS = [
+  "ui:clear-owned-browser-history-abort-task-and-window-loopback",
+  "ui:restore-owned-browser-history-clear-sheet",
+] as const;
 export const OWNED_BROWSER_HISTORY_ORACLES = [
   "ui:activation:owned-browser-history-entry-navigation",
   "ui:activation:owned-browser-history-clear",
+  "ui:activation:owned-browser-history-all-clear-sheet",
+  "ui:activation:owned-browser-history-clear-cancel",
+  "ui:activation:owned-browser-history-all-clear-receipt",
 ] as const;
 
 export function supportsOwnedBrowserHistoryControl(assignment: Assignment): boolean {
@@ -59,6 +77,7 @@ export async function exerciseOwnedBrowserHistoryControl(
   const cleanupErrors: string[] = [];
   let page: OwnedBrowserHomePage | null = null;
   let taskId: string | null = null;
+  let personalTabId: string | null = null;
   let originalWindow: string | null = null;
   let browserWindowOpen = false;
   let baselineScope: "user" | "agent" | null = null;
@@ -76,6 +95,7 @@ export async function exerciseOwnedBrowserHistoryControl(
       profileId: "task-disposable",
       autonomy: "assistedAutonomous",
       startUrl: page.startUrl,
+      expectedDomains: ["127.0.0.1"],
     });
     taskId = requiredString(started.taskId, "Browser history taskId");
     await navigate(connection, taskId, page.firstUrl);
@@ -84,13 +104,20 @@ export async function exerciseOwnedBrowserHistoryControl(
       history.some((entry) => entry.taskId === taskId && entry.url === page!.firstUrl)
       && history.some((entry) => entry.taskId === taskId && entry.url === page!.secondUrl)
     ));
+    if (isAllScopeKind(kind)) {
+      personalTabId = await createOwnedPersonalHistory(connection, page.startUrl);
+      await waitForHistory(connection, (history) => (
+        history.some((entry) => isUserHistory(entry) && entry.url === page!.startUrl)
+        && history.some((entry) => !isUserHistory(entry) && entry.taskId === taskId)
+      ));
+    }
 
     const switched = await switchReleaseSurfaceInstalledInputWindowByTitle(webdriver, "ShellX Browser");
     originalWindow = switched.originalHandle;
     browserWindowOpen = true;
     await openHistory(webdriver);
     baselineScope = await readScope(webdriver);
-    await setScope(webdriver, "agent");
+    await setScope(webdriver, kind === "all-clear-sheet" || kind === "clear-cancel" ? "user" : "agent");
 
     if (kind === "entry") {
       const state = await readBrowserState(connection);
@@ -104,30 +131,81 @@ export async function exerciseOwnedBrowserHistoryControl(
       await waitForTaskUrl(connection, taskId, page.firstUrl);
       outcome.effect = "pass";
       outcome.observedEffect = "Installed input selected the exact owned Agent-history row and navigated its task tab to the recorded loopback URL.";
-    } else {
+    } else if (kind === "clear") {
       const control = await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR);
       outcome.present = "pass";
       await clickReleaseSurfaceInstalledInputElement(webdriver, control);
-      await acceptReleaseSurfaceInstalledInputAlert(webdriver, CLEAR_CONFIRMATION);
+      await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CONFIRMATION);
+      await clickReleaseSurfaceInstalledInputElement(
+        webdriver,
+        await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CONFIRM),
+      );
       outcome.invoke = "pass";
       await waitForHistory(connection, (history) => history.length === 0);
       outcome.effect = "pass";
-      outcome.observedEffect = "Installed input accepted the exact operator confirmation and removed every entry from the isolated owned Browser-history baseline.";
+      outcome.observedEffect = "Installed input opened ShellX's exact Agent-history confirmation sheet and removed every entry from the isolated owned Browser-history baseline.";
+    } else if (kind === "all-clear-sheet") {
+      const mixedHistory = await requireMixedHistory(connection);
+      const control = await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_ALL);
+      outcome.present = "pass";
+      await clickReleaseSurfaceInstalledInputElement(webdriver, control);
+      outcome.invoke = "pass";
+      await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CONFIRMATION);
+      await requireMixedHistory(connection, mixedHistory.length);
+      outcome.effect = "pass";
+      outcome.observedEffect = "Installed input opened the exact All-history confirmation sheet over a mixed owned User and Agent baseline without removing either history class.";
+    } else if (kind === "clear-cancel") {
+      const mixedHistory = await requireMixedHistory(connection);
+      await openAllHistoryClearSheet(webdriver);
+      const control = await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CANCEL);
+      outcome.present = "pass";
+      await clickReleaseSurfaceInstalledInputElement(webdriver, control);
+      outcome.invoke = "pass";
+      await waitForHistoryClearSheetClosed(webdriver);
+      await requireMixedHistory(connection, mixedHistory.length);
+      outcome.effect = "pass";
+      outcome.observedEffect = "Installed input cancelled the exact All-history confirmation sheet and preserved the mixed owned User and Agent history baseline.";
+    } else {
+      const mixedHistory = await requireMixedHistory(connection);
+      await openAllHistoryClearSheet(webdriver);
+      const control = await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CONFIRM);
+      outcome.present = "pass";
+      await clickReleaseSurfaceInstalledInputElement(webdriver, control);
+      outcome.invoke = "pass";
+      await waitForHistory(connection, (history) => history.length === 0);
+      await waitForReleaseSurfaceInstalledInputElement(
+        webdriver,
+        "[data-debug-id='shellx-browser-history-clear-status']",
+      );
+      await requireAllClearReceipt(connection, mixedHistory.length);
+      outcome.effect = "pass";
+      outcome.observedEffect = "Installed input confirmed the exact All-history sheet, removed the mixed owned User and Agent baseline, and observed the matching all-scope receipt and success status.";
     }
   } catch (error) {
     outcome.error = errorText(error);
   } finally {
     if (browserWindowOpen && ownedEmptyBaseline) {
       await cleanupAttempt(cleanupErrors, async () => {
+        if (await findReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CONFIRMATION)) {
+          await clickReleaseSurfaceInstalledInputElement(
+            webdriver,
+            await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CANCEL),
+          );
+          await waitForHistoryClearSheetClosed(webdriver);
+        }
         const state = await readBrowserState(connection);
         if (state.history.length > 0) {
           await openHistory(webdriver);
-          await setScope(webdriver, "agent");
+          await setScope(webdriver, "user");
           await clickReleaseSurfaceInstalledInputElement(
             webdriver,
-            await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR),
+            await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_ALL),
           );
-          await acceptReleaseSurfaceInstalledInputAlert(webdriver, CLEAR_CONFIRMATION);
+          await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CONFIRMATION);
+          await clickReleaseSurfaceInstalledInputElement(
+            webdriver,
+            await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CONFIRM),
+          );
           await waitForHistory(connection, (history) => history.length === 0);
         }
         if (!await findReleaseSurfaceInstalledInputElement(webdriver, PANEL)) await openHistory(webdriver);
@@ -139,7 +217,11 @@ export async function exerciseOwnedBrowserHistoryControl(
       await cleanupAttempt(cleanupErrors, async () => {
         const result = await cleanupOwnedBrowserLifecycle(
           (method, path, body) => apiJson(connection, method, path, body),
-          { taskIds: [taskId!], label: "final surface Browser history" },
+          {
+            taskIds: [taskId!],
+            tabIds: personalTabId ? [personalTabId] : [],
+            label: "final surface Browser history",
+          },
         );
         if (result.errors.length > 0) throw new Error(result.errors.join("; "));
       });
@@ -200,6 +282,74 @@ async function readBrowserState(connection: Connection): Promise<{ history: Hist
     history: Array.isArray(state.history) ? state.history.map((value) => record(value, "Browser history entry") as HistoryEntry) : [],
     tabs: Array.isArray(state.tabs) ? state.tabs.map((value) => record(value, "Browser tab") as BrowserTab) : [],
   };
+}
+
+function isAllScopeKind(kind: Kind): boolean {
+  return kind === "all-clear-sheet" || kind === "clear-cancel" || kind === "all-clear-confirm";
+}
+
+function isUserHistory(entry: HistoryEntry): boolean {
+  return entry.profileId === "personal" && !entry.taskId?.trim();
+}
+
+async function createOwnedPersonalHistory(connection: Connection, url: string): Promise<string> {
+  const opened = await apiJson(connection, "POST", "/browser/tabs/open", {
+    profileId: "personal",
+    url: "about:blank",
+  });
+  const tab = record(opened.tab, "owned Browser personal tab");
+  const browserTabId = requiredString(tab.browserTabId, "owned Browser personal tab id");
+  const response = await apiJson(connection, "POST", "/browser/action", {
+    browserTabId,
+    action: "navigate",
+    url,
+  });
+  if (response.ok !== true || response.status !== "applied") {
+    throw new Error("Browser history personal baseline navigation was not applied");
+  }
+  return browserTabId;
+}
+
+async function requireMixedHistory(connection: Connection, expectedCount?: number): Promise<HistoryEntry[]> {
+  const state = await readBrowserState(connection);
+  const user = state.history.filter(isUserHistory);
+  const agent = state.history.filter((entry) => !isUserHistory(entry));
+  if (user.length === 0 || agent.length === 0 || (expectedCount !== undefined && state.history.length !== expectedCount)) {
+    throw new Error("owned Browser history fixture did not preserve the exact mixed User and Agent baseline");
+  }
+  return state.history;
+}
+
+async function openAllHistoryClearSheet(webdriver: WebDriver): Promise<void> {
+  await clickReleaseSurfaceInstalledInputElement(
+    webdriver,
+    await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_ALL),
+  );
+  await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CONFIRMATION);
+}
+
+async function waitForHistoryClearSheetClosed(webdriver: WebDriver): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (!await findReleaseSurfaceInstalledInputElement(webdriver, CLEAR_CONFIRMATION)) return;
+    await delay(50);
+  }
+  throw new Error("Browser history clear confirmation sheet did not close");
+}
+
+async function requireAllClearReceipt(connection: Connection, removed: number): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const response = await apiJson(connection, "GET", "/browser/receipts?limit=20");
+    const receipts = Array.isArray(response.receipts) ? response.receipts as BrowserReceipt[] : [];
+    if (receipts.some((receipt) => (
+      receipt.kind === "browserHistoryCleared"
+      && receipt.evidence?.scope === "all"
+      && receipt.evidence?.removed === removed
+    ))) return;
+    await delay(50);
+  }
+  throw new Error(`Browser history did not emit the expected all-scope clear receipt for ${removed} entries`);
 }
 
 async function waitForHistory(connection: Connection, predicate: (history: HistoryEntry[]) => boolean): Promise<void> {

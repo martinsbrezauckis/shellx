@@ -361,7 +361,9 @@ pub(super) async fn tool_browser_run_steps(
             }
         };
         if browser_mcp_navigation_response_should_wait(&action, &data) {
-            if let Err(error) = browser_mcp_wait_for_navigation_settle(&data, timeout_secs).await {
+            if let Err(error) =
+                browser_mcp_wait_for_navigation_settle(&data, timeout_secs, caller_session_id).await
+            {
                 last_response = data;
                 results.push(browser_run_steps_failure_entry(
                     index,

@@ -1,11 +1,21 @@
-import { useMemo, type JSX } from "react";
+import { useMemo, useRef, useState, type JSX } from "react";
 
 import { ShellIcon } from "../../components/icons";
+import { useModalFocus } from "../../lib/useModalFocus";
+import type { BrowserHistoryClearStatus } from "../historyClear";
+import {
+  browserHistoryClearActionLabel,
+  browserHistoryCountLabel,
+  browserHistoryEntriesForScope,
+  browserHistoryScopeCategory,
+  browserHistoryScopeLabel,
+  type BrowserHistoryClass,
+  type BrowserHistoryScope as BrowserHistoryClearScope,
+} from "../historyScope";
 import type { BrowserHistoryEntry } from "../types";
 
-export type BrowserHistoryScope = "user" | "agent";
+export type BrowserHistoryScope = BrowserHistoryClass;
 export type BrowserHistoryDateFilter = "all" | "today" | "yesterday" | "last7";
-
 interface BrowserHistorySidecarProps {
   open: boolean;
   busy: boolean;
@@ -19,7 +29,8 @@ interface BrowserHistorySidecarProps {
   onHistoryScopeChange: (scope: BrowserHistoryScope) => void;
   onHistorySearchChange: (value: string) => void;
   onHistoryDateFilterChange: (filter: BrowserHistoryDateFilter) => void;
-  onClearHistory: () => void;
+  historyClearStatus: BrowserHistoryClearStatus | null;
+  onClearHistory: (scope: BrowserHistoryClearScope) => Promise<boolean>;
   onNavigateToUrl: (url: string) => void;
   onClose: () => void;
 }
@@ -55,11 +66,24 @@ export function BrowserHistorySidecar({
   onHistoryScopeChange,
   onHistorySearchChange,
   onHistoryDateFilterChange,
+  historyClearStatus,
   onClearHistory,
   onNavigateToUrl,
   onClose,
 }: BrowserHistorySidecarProps): JSX.Element | null {
+  const [pendingClearScope, setPendingClearScope] = useState<BrowserHistoryClearScope | null>(null);
+  const confirmationRef = useRef<HTMLDivElement | null>(null);
   const scopedHistory = historyScope === "user" ? userHistory : agentHistory;
+  const pendingClearCount = pendingClearScope === null
+    ? 0
+    : browserHistoryEntriesForScope(pendingClearScope, historyEntries).length;
+  useModalFocus(
+    pendingClearScope !== null,
+    confirmationRef,
+    () => {
+      if (!busy) setPendingClearScope(null);
+    },
+  );
   const filteredHistory = useMemo(
     () => scopedHistory.filter((entry) =>
       historyMatchesSearch(entry, historySearch) &&
@@ -67,6 +91,11 @@ export function BrowserHistorySidecar({
     ),
     [historyDateFilter, historySearch, scopedHistory],
   );
+
+  const confirmClearHistory = async (scope: BrowserHistoryClearScope): Promise<void> => {
+    if (busy) return;
+    if (await onClearHistory(scope)) setPendingClearScope(null);
+  };
 
   if (!open) return null;
 
@@ -134,16 +163,38 @@ export function BrowserHistorySidecar({
             <option value="last7">Last 7 days</option>
           </select>
         </div>
-        {historyEntries.length > 0 && (
-          <button
-            type="button"
-            className="shellx-browser-utility-row"
-            onClick={onClearHistory}
-            disabled={busy}
-            data-debug-id="shellx-browser-clear-history"
+        {historyClearStatus && (
+          <div
+            className={`shellx-browser-history-clear-status ${historyClearStatus.tone}`}
+            data-debug-id="shellx-browser-history-clear-status"
+            role={historyClearStatus.tone === "error" ? "alert" : "status"}
           >
-            Clear history
-          </button>
+            {historyClearStatus.message}
+          </div>
+        )}
+        {historyEntries.length > 0 && (
+          <div className="shellx-browser-history-actions" aria-label="Clear history">
+            <button
+              type="button"
+              className="shellx-browser-utility-row shellx-browser-history-clear-scope"
+              onClick={() => setPendingClearScope(historyScope)}
+              disabled={busy || scopedHistory.length === 0}
+              data-debug-id="shellx-browser-clear-history"
+              data-history-scope={historyScope}
+            >
+              {browserHistoryClearActionLabel(historyScope)}
+            </button>
+            <button
+              type="button"
+              className="shellx-browser-utility-row shellx-browser-history-clear-all"
+              onClick={() => setPendingClearScope("all")}
+              disabled={busy || historyEntries.length === 0}
+              data-debug-id="shellx-browser-clear-all-history"
+              data-history-scope="all"
+            >
+              {browserHistoryClearActionLabel("all")}
+            </button>
+          </div>
         )}
       </div>
       <section className="shellx-browser-history-list" data-debug-id="shellx-browser-history-list" aria-label="Browser history">
@@ -164,6 +215,55 @@ export function BrowserHistorySidecar({
         {scopedHistory.length === 0 && <div className="shellx-browser-empty-state">No {historyScope} history yet</div>}
         {scopedHistory.length > 0 && filteredHistory.length === 0 && <div className="shellx-browser-empty-state">No matching history</div>}
       </section>
+      {pendingClearScope && (
+        <div
+          ref={confirmationRef}
+          className="shellx-browser-history-confirmation"
+          role="alertdialog"
+          aria-modal="true"
+          aria-busy={busy}
+          aria-labelledby="shellx-browser-history-clear-title"
+          aria-describedby="shellx-browser-history-clear-description"
+          data-debug-id="shellx-browser-history-clear-confirmation"
+          tabIndex={-1}
+        >
+          <div className="shellx-browser-history-confirmation-topbar">
+            <span>Destructive action</span>
+            <span>{browserHistoryScopeLabel(pendingClearScope)} scope</span>
+          </div>
+          <h3 id="shellx-browser-history-clear-title">
+            {browserHistoryClearActionLabel(pendingClearScope)}?
+          </h3>
+          <p id="shellx-browser-history-clear-description">
+            Remove {browserHistoryCountLabel(pendingClearScope, pendingClearCount)}.
+          </p>
+          <p className="shellx-browser-history-confirmation-category">
+            Affected: {browserHistoryScopeCategory(pendingClearScope)}.
+          </p>
+          <div className="shellx-browser-history-confirmation-actions">
+            <button
+              type="button"
+              className="shellx-browser-utility-row"
+              data-dialog-initial-focus="true"
+              onClick={() => setPendingClearScope(null)}
+              disabled={busy}
+              data-debug-id="shellx-browser-history-clear-cancel"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="shellx-browser-utility-row shellx-browser-history-confirm-danger"
+              onClick={() => void confirmClearHistory(pendingClearScope)}
+              disabled={busy || pendingClearCount === 0}
+              data-debug-id="shellx-browser-history-clear-confirm"
+              data-history-scope={pendingClearScope}
+            >
+              {busy ? `Clearing ${browserHistoryScopeLabel(pendingClearScope)} history…` : browserHistoryClearActionLabel(pendingClearScope)}
+            </button>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

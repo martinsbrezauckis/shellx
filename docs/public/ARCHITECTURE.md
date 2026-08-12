@@ -156,12 +156,12 @@ gate. This is by design: stdio is a parent-process relationship.
 
 ### 3. Host MCP stdio + tool surface (`host_mcp.rs`)
 
-The callable catalog contains 105 host-MCP surfaces in the current release
+The callable catalog contains 107 host-MCP surfaces in the current release
 inventory. Families include `fs_*`, Browser read/action/workflow tools, Vault
 grants and mediated secret operations, build/goal orchestration, provider
 handoffs, `net_fetch`, vision, voice, X search, `mem_*`, `Agent` fan-out,
-`process_*`, screenshots, clock/sleep, `capabilities_summary`, and
-`search_tool`. The authoritative count and names live in
+`process_*`, screenshots, clock/sleep, compact ShellX Cut discovery/execution,
+`capabilities_summary`, and `search_tool`. The authoritative count and names live in
 `release/surface-inventory.json`. Tools are reachable as
   `grok-shell-host__<tool>` or, for the shellX-managed HTTP transport,
   `shellx-host-http__<tool>`. Mutating/tab-aware calls should prefer

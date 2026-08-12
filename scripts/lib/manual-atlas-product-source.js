@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
-export const MANUAL_ATLAS_PRODUCT_SOURCE_SCHEMA = "shellx/manual-atlas-product-source@1";
+export const MANUAL_ATLAS_PRODUCT_SOURCE_SCHEMA = "shellx/manual-atlas-product-source@2";
 
 const PRODUCT_EXACT_PATHS = [
   "index.html",
@@ -61,8 +61,18 @@ export function calculateManualAtlasProductSourceSha256FromGit(repoRoot, sourceC
 }
 
 export function isProductSourcePath(path) {
-  return PRODUCT_EXACT_PATHS.includes(path)
+  const included = PRODUCT_EXACT_PATHS.includes(path)
     || PRODUCT_PATH_PREFIXES.some((prefix) => path.startsWith(prefix));
+  if (!included) return false;
+  const segments = path.split("/");
+  return !segments.some((segment) => (
+    segment === "__tests__"
+    || segment === "test"
+    || segment === "tests"
+    || segment.endsWith("_tests")
+  ))
+    && !/(?:_test|_tests)\.rs$/u.test(path)
+    && !/\.(?:test|spec)\.[^/]+$/u.test(path);
 }
 
 function collectRegularFiles(root, directory, entries) {

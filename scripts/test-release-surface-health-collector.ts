@@ -9,9 +9,53 @@ import {
   startReleaseSurfaceHealthCollector,
   waitForReleaseSurfaceRenderedAnchor,
 } from "./lib/release-surface-health-collector";
+import { checkReleaseSurfaceHttpLink } from "./lib/release-surface-http-link-check";
 import type { ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
 
 const root = resolve(import.meta.dirname, "..");
+
+{
+  let attempts = 0;
+  const result = await checkReleaseSurfaceHttpLink("https://example.com/retry", {
+    fetchImpl: async () => new Response("transient", { status: ++attempts < 3 ? 503 : 200 }),
+    wait: async () => undefined,
+  });
+  assert.equal(result, "ok");
+  assert.equal(attempts, 3, "transient link failures receive three bounded attempts");
+  assert.equal(await checkReleaseSurfaceHttpLink("http://example.com", {
+    fetchImpl: async () => new Response(null, { status: 200 }),
+    wait: async () => undefined,
+  }), "broken", "release link checks remain HTTPS-only");
+  const secureRedirects: string[] = [];
+  assert.equal(await checkReleaseSurfaceHttpLink("https://example.com/start", {
+    fetchImpl: async (url) => {
+      secureRedirects.push(String(url));
+      return String(url).endsWith("/start")
+        ? new Response(null, { status: 302, headers: { location: "/finish" } })
+        : new Response(null, { status: 204 });
+    },
+    wait: async () => undefined,
+  }), "ok", "bounded HTTPS-to-HTTPS redirects remain valid");
+  assert.deepEqual(secureRedirects, ["https://example.com/start", "https://example.com/finish"]);
+  assert.equal(await checkReleaseSurfaceHttpLink("https://example.com/start", {
+    fetchImpl: async () => new Response(null, {
+      status: 302,
+      headers: { location: "http://example.com/downgraded" },
+    }),
+    wait: async () => undefined,
+  }), "broken", "HTTPS-to-HTTP redirects fail closed");
+  assert.equal(await checkReleaseSurfaceHttpLink("https://example.com/start", {
+    fetchImpl: async () => new Response(null, { status: 302 }),
+    wait: async () => undefined,
+  }), "broken", "redirects without a Location fail closed");
+  assert.equal(await checkReleaseSurfaceHttpLink("https://example.com/start", {
+    fetchImpl: async () => new Response(null, {
+      status: 302,
+      headers: { location: "/start" },
+    }),
+    wait: async () => undefined,
+  }), "broken", "redirect loops fail closed");
+}
 const temp = mkdtempSync(join(tmpdir(), "shellx-health-collector-"));
 let fixtureStaleElementReturned = false;
 const webdriverServer = await createFixtureWebDriverServer();
@@ -289,6 +333,7 @@ function fixtureHealthGit(args: string[]): string {
     return [
       "scripts/lib/release-surface-health-collector.ts",
       "scripts/lib/release-surface-health-evidence.ts",
+      "scripts/lib/release-surface-http-link-check.ts",
       "scripts/lib/release-surface-webdriver-client.ts",
       "scripts/lib/release-surface-webdriver-lifecycle.ts",
       "",

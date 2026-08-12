@@ -14,7 +14,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { calculateManualAtlasProductSourceSha256 } from "./lib/manual-atlas-product-source.js";
+import {
+  calculateManualAtlasProductSourceSha256,
+  isProductSourcePath,
+} from "./lib/manual-atlas-product-source.js";
 
 const root = resolve(import.meta.dirname, "..");
 const workspace = mkdtempSync(join(tmpdir(), "shellx-public-export-test-"));
@@ -184,6 +187,11 @@ function runSyntheticPolicyFixture(input: {
 console.log("\n=== public export boundary ===");
 
 try {
+  assert(isProductSourcePath("src/components/Browser.tsx"), "visual product identity includes shipped frontend source");
+  assert(isProductSourcePath("src-tauri/src/shellx_browser.rs"), "visual product identity includes shipped native source");
+  assert(!isProductSourcePath("src/components/Browser.test.tsx"), "visual product identity excludes colocated frontend tests");
+  assert(!isProductSourcePath("src-tauri/src/shellx_browser_tests.rs"), "visual product identity excludes native test modules");
+  assert(!isProductSourcePath("src-tauri/src/host_mcp/tests/contract.rs"), "visual product identity excludes nested native tests");
   const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   const outputText = runExporter(output);
   assert(outputText.includes(`SHELLX_PUBLIC_EXPORT_OK ${sourceCommit}`), "export reports exact committed source identity");
@@ -431,7 +439,15 @@ try {
   const manualNavigationIds = [...manualHtml.matchAll(/data-feature-link="([^"]+)"/g)].map((match) => match[1] ?? "");
   assert(manualNavigationIds.length === manualFeatureIds.size, "manual renders one interactive navigation item for every feature");
   assert(manualNavigationIds.every((id) => manualFeatureIds.has(id)), "every manual navigation item resolves to a generated article");
-  const familyRoutes = new Set(["../../", "../canvas/", "../cut/", "../drive/", "../vault/"]);
+  const familyRoutes = new Set([
+    "../../",
+    "../browser/",
+    "../canvas/",
+    "../cut/",
+    "../drive/",
+    "../motion/",
+    "../vault/",
+  ]);
   const brokenManualAssets: string[] = [];
   for (const match of manualHtml.matchAll(/(?:href|src)="([^"]+)"/g)) {
     const target = match[1];

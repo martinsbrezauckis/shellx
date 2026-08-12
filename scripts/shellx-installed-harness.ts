@@ -11,7 +11,7 @@ import {
   requireStringProperty,
 } from "./runtime-json";
 
-export const HARNESS_SCHEMA = "shellx.installed-harness.v2";
+export const HARNESS_SCHEMA = "shellx.installed-harness.v3";
 
 export type InstalledHarnessState = {
   schemaVersion: typeof HARNESS_SCHEMA;
@@ -100,7 +100,7 @@ function powerShellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-function runPowerShell(script: string): string {
+function runPowerShell(script: string, stage: string): string {
   const result = spawnSync("powershell.exe", [
     "-NoProfile",
     "-NonInteractive",
@@ -110,7 +110,8 @@ function runPowerShell(script: string): string {
     script,
   ], { encoding: "utf8" });
   if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || result.error?.message || "PowerShell failed").trim());
+    const detail = (result.stderr || result.stdout || result.error?.message || "PowerShell failed").trim();
+    throw new Error(`${stage}: ${detail}`);
   }
   return result.stdout.trim();
 }
@@ -155,7 +156,10 @@ function discoverWindowsLaunch(): WindowsLaunchMetadata {
     `$profile = Join-Path $env:TEMP ${powerShellLiteral(`shellx-final-webdriver-${suffix}`)}`,
     "try {",
     "$vault = Join-Path $profile 'vault-e2e'",
-    "New-Item -ItemType Directory -Path $vault -Force | Out-Null",
+    "$localAppData = Join-Path $profile 'AppData\\Local'",
+    "$roamingAppData = Join-Path $profile 'AppData\\Roaming'",
+    "$temp = Join-Path $profile 'Temp'",
+    "New-Item -ItemType Directory -Path $vault,$localAppData,$roamingAppData,$temp -Force | Out-Null",
     "$sourceItem = Get-Item -LiteralPath $exe",
     "$sourcePath = $sourceItem.FullName",
     ...(configuredCandidate ? [
@@ -188,7 +192,7 @@ function discoverWindowsLaunch(): WindowsLaunchMetadata {
     "  Remove-Item -LiteralPath $profile -Recurse -Force -ErrorAction SilentlyContinue",
     "  throw",
     "}",
-  ].join("\n")));
+  ].join("\n"), "discover Windows candidate"));
   const metadata: WindowsLaunchMetadata = {
     candidateSourcePath: requireStringProperty(parsed, "candidateSourcePath", "PowerShell launch metadata"),
     executablePath: requireStringProperty(parsed, "executablePath", "PowerShell launch metadata"),
@@ -215,6 +219,10 @@ function startWindowsProcess(metadata: WindowsLaunchMetadata): number {
     "[IO.File]::WriteAllText($markerPath, $markerJson, (New-Object Text.UTF8Encoding($false)))",
     `$env:HOME = ${powerShellLiteral(metadata.profilePath)}`,
     `$env:USERPROFILE = ${powerShellLiteral(metadata.profilePath)}`,
+    `$env:LOCALAPPDATA = Join-Path ${powerShellLiteral(metadata.profilePath)} 'AppData\\Local'`,
+    `$env:APPDATA = Join-Path ${powerShellLiteral(metadata.profilePath)} 'AppData\\Roaming'`,
+    `$env:TEMP = Join-Path ${powerShellLiteral(metadata.profilePath)} 'Temp'`,
+    `$env:TMP = $env:TEMP`,
     "$env:SHELLX_TEST_INSTANCE = '1'",
     `$env:SHELLX_TEST_INSTANCE_ID = ${powerShellLiteral(metadata.instanceId)}`,
     "$env:SHELLX_MIGRATE_DATA_DIR = '0'",
@@ -224,7 +232,7 @@ function startWindowsProcess(metadata: WindowsLaunchMetadata): number {
     `$env:SHELLX_VAULT_PROFILE_DIR = ${powerShellLiteral(metadata.vaultProfilePath)}`,
     `$process = Start-Process -FilePath ${powerShellLiteral(metadata.executablePath)} -PassThru`,
     "[pscustomobject]@{ pid = $process.Id } | ConvertTo-Json -Compress",
-  ].join("\n")));
+  ].join("\n"), "launch isolated Windows candidate"));
   const pid = requireIntegerProperty(result, "pid", "PowerShell process result");
   if (pid <= 0) throw new Error("Installed ShellX launch did not return a PID");
   return pid;
@@ -283,7 +291,7 @@ function ensureOwnedWindowsProcess(pid: number, executablePath: string): void {
     `$expected = [IO.Path]::GetFullPath(${powerShellLiteral(executablePath)})`,
     "$actual = [IO.Path]::GetFullPath($process.Path)",
     "if (-not $actual.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) { throw \"PID image mismatch: $actual\" }",
-  ].join("\n"));
+  ].join("\n"), "verify owned Windows candidate");
 }
 
 function stopOwnedWindowsProcess(pid: number, executablePath: string): void {
@@ -295,7 +303,7 @@ function stopOwnedWindowsProcess(pid: number, executablePath: string): void {
     "if (-not $actual.Equals($expected, [StringComparison]::OrdinalIgnoreCase)) { throw \"Refusing to stop PID image mismatch: $actual\" }",
     `Stop-Process -Id ${pid} -Force`,
     `Wait-Process -Id ${pid} -Timeout 10 -ErrorAction SilentlyContinue`,
-  ].join("\n"));
+  ].join("\n"), "stop owned Windows candidate");
 }
 
 function removeWindowsProfile(profilePath: string): void {
@@ -314,7 +322,7 @@ function removeWindowsProfile(profilePath: string): void {
     "  Start-Sleep -Milliseconds 250",
     "} while ([DateTime]::UtcNow -lt $deadline)",
     "if (Test-Path -LiteralPath $profile) { throw 'Disposable ShellX profile still exists after bounded cleanup retries' }",
-  ].join("\n"));
+  ].join("\n"), "remove isolated Windows profile");
 }
 
 function semverPrefix(version: string): string | null {

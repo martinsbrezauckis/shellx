@@ -1,7 +1,7 @@
 {
   "schema": "shellx/final-surface-driver-plan@2",
   "mode": "final-frozen-candidate",
-  "inventoryDigest": "fc0cbe965feb61a98eceabc772b5f4447e79a13225a0677d1b7adb10b52616ad",
+  "inventoryDigest": "dd12512b65f7e02f13056d85d6235595f46865e966e38da032563237fddcb259",
   "releaseReady": true,
   "drivers": [
     {
@@ -298,6 +298,46 @@
       "id": "ui-debug-browser-delegation-installed",
       "kind": "ui-debug-surface",
       "entrypoint": "scripts/release-drivers/ui-debug-browser-delegation-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "ui-control-browser-developer-evidence-installed",
+      "kind": "ui-control",
+      "entrypoint": "scripts/release-drivers/ui-control-browser-developer-evidence-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "ui-debug-browser-developer-evidence-installed",
+      "kind": "ui-debug-surface",
+      "entrypoint": "scripts/release-drivers/ui-debug-browser-developer-evidence-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "ui-control-browser-teach-review-installed",
+      "kind": "ui-control",
+      "entrypoint": "scripts/release-drivers/ui-control-browser-teach-review-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "ui-debug-browser-teach-review-installed",
+      "kind": "ui-debug-surface",
+      "entrypoint": "scripts/release-drivers/ui-debug-browser-teach-review-installed.ts",
       "platforms": {
         "windows-installed": "ready",
         "macos-installed": "ready",
@@ -1419,7 +1459,7 @@
       "cleanupId": "tauri:delete-invoke-state"
     },
     {
-      "surfaceId": "ui-control:src/browser/components/BrowserEvidencePanel.tsx:[data-debug-id=\"shellx-browser-evidence-refresh\"]@src/browser/components/BrowserEvidencePanel.tsx#2",
+      "surfaceId": "ui-control:src/browser/components/BrowserEvidencePanel.tsx:[data-debug-id=\"shellx-browser-evidence-refresh\"]@src/browser/components/BrowserEvidencePanel.tsx#3",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:browser-evidence-current-task",
       "expectedEffect": "A native click completes one exact Flight Recorder evidence reload and publishes its local completion receipt.",
@@ -1859,6 +1899,14 @@
       "cleanupId": "debug-api:read-only"
     },
     {
+      "surfaceId": "debug-api-route:GET /browser/teach/drafts",
+      "driverId": "debug-api-route-installed",
+      "fixtureId": "debug-api:isolated-browser-teach-agent-task",
+      "expectedEffect": "GET /browser/teach/drafts reads exactly one draft prepared from owned evidence for the matching MCP task owner; it neither approves nor applies a recipe.",
+      "oracleId": "debug-api:GET-browser-teach-drafts:owned-agent-readback",
+      "cleanupId": "debug-api:close-owned-browser-teach-task-and-candidate-teardown"
+    },
+    {
       "surfaceId": "debug-api-route:GET /browser/uploads",
       "driverId": "debug-api-route-installed",
       "fixtureId": "debug-api:installed-read-model",
@@ -2227,6 +2275,14 @@
       "cleanupId": "debug-api:read-only"
     },
     {
+      "surfaceId": "debug-api-route:POST /browser/developer/inspect",
+      "driverId": "debug-api-route-installed",
+      "fixtureId": "debug-api:isolated-browser-teach-agent-task",
+      "expectedEffect": "POST /browser/developer/inspect proves the fixed task-owned inspection remains Developer-Mode-gated and returns its expected structured denial without enabling Developer Mode or executing arbitrary CDP.",
+      "oracleId": "debug-api:POST-browser-developer-inspect:developer-mode-denial",
+      "cleanupId": "debug-api:close-owned-browser-teach-task-and-candidate-teardown"
+    },
+    {
       "surfaceId": "debug-api-route:POST /browser/dialogs",
       "driverId": "debug-api-route-installed",
       "fixtureId": "debug-api:isolated-browser-pending-request",
@@ -2545,6 +2601,22 @@
       "expectedEffect": "POST /browser/task/start performs its exact owned task/tab transition against a loopback-only page.",
       "oracleId": "debug-api:POST-browser-task-start:semantic-effect",
       "cleanupId": "debug-api:close-owned-browser-task-and-server"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /browser/teach/prepare",
+      "driverId": "debug-api-route-installed",
+      "fixtureId": "debug-api:isolated-browser-teach-agent-task",
+      "expectedEffect": "POST /browser/teach/prepare derives one immutable draft and current revision from exact owned Flight Recorder evidence for the matching MCP task owner; approval remains unavailable on Debug API.",
+      "oracleId": "debug-api:POST-browser-teach-prepare:owned-agent-draft",
+      "cleanupId": "debug-api:close-owned-browser-teach-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /browser/teach/revise",
+      "driverId": "debug-api-route-installed",
+      "fixtureId": "debug-api:isolated-browser-teach-agent-task",
+      "expectedEffect": "POST /browser/teach/revise creates one compare-and-swap revision for the exact owned agent draft and confirms it through owner-scoped draft readback; it cannot approve or apply a recipe.",
+      "oracleId": "debug-api:POST-browser-teach-revise:owned-agent-revision",
+      "cleanupId": "debug-api:close-owned-browser-teach-task-and-candidate-teardown"
     },
     {
       "surfaceId": "debug-api-route:POST /browser/trace/export",
@@ -3592,6 +3664,22 @@
       "fixtureId": "host-mcp:installed-read-fixture",
       "expectedEffect": "Installed Host MCP clock_now returns its exact bounded read-only contract against the attested candidate without retaining returned host data in release evidence.",
       "oracleId": "host-mcp:clock_now:installed-read-effect",
+      "cleanupId": "host-mcp:delete-owned-read-fixture"
+    },
+    {
+      "surfaceId": "host-mcp-tool:cut_act",
+      "driverId": "host-mcp-tool-installed",
+      "fixtureId": "host-mcp:installed-mutation-fixture",
+      "expectedEffect": "Installed Host MCP cut_act passes the exact write-class permission gate and proves its bounded disposable effect, metadata-only operation, or pre-effect safety refusal without mutating user or external state.",
+      "oracleId": "host-mcp:cut_act:installed-mutation-effect",
+      "cleanupId": "host-mcp:delete-owned-mutation-fixture-and-restore-autonomy"
+    },
+    {
+      "surfaceId": "host-mcp-tool:cut_read",
+      "driverId": "host-mcp-tool-installed",
+      "fixtureId": "host-mcp:installed-read-fixture",
+      "expectedEffect": "Installed Host MCP cut_read returns its exact bounded read-only contract against the attested candidate without retaining returned host data in release evidence.",
+      "oracleId": "host-mcp:cut_read:installed-read-effect",
       "cleanupId": "host-mcp:delete-owned-read-fixture"
     },
     {
@@ -4838,7 +4926,7 @@
       "surfaceId": "tauri-command:shellx_browser_clear_history",
       "driverId": "tauri-command-installed",
       "fixtureId": "tauri:isolated-browser-history",
-      "expectedEffect": "Installed Tauri IPC shellx_browser_clear_history clears exactly one owned loopback history entry, proves empty readback, closes the owned task and tab, and leaves its monotonic receipt only until candidate teardown.",
+      "expectedEffect": "Installed Tauri IPC shellx_browser_clear_history clears exactly one owned loopback history entry through an explicit all-scope request, proves empty readback, closes the owned task and tab, and leaves its monotonic receipt only until candidate teardown.",
       "oracleId": "tauri:shellx_browser_clear_history:owned-history-cleared",
       "cleanupId": "tauri:close-owned-browser-history-fixture"
     },
@@ -4907,6 +4995,22 @@
       "cleanupId": "tauri:discard-with-candidate-profile"
     },
     {
+      "surfaceId": "tauri-command:shellx_browser_operator_approve_teach_draft",
+      "driverId": "tauri-command-installed",
+      "fixtureId": "tauri:isolated-browser-operator-workflow",
+      "expectedEffect": "Installed operator Tauri IPC creates one operator-approved Action Recipe V2 draft and matching approval receipt without applying it; Debug API has no approval or replay authority, and the exact task, tab, loopback page, and private candidate artifacts end with cleanup and candidate teardown.",
+      "oracleId": "tauri:shellx_browser_operator_approve_teach_draft:owned-approval-receipt",
+      "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:shellx_browser_operator_developer_inspect",
+      "driverId": "tauri-command-installed",
+      "fixtureId": "tauri:isolated-browser-operator-workflow",
+      "expectedEffect": "Installed operator Tauri IPC invokes the fixed Browser developer inspector for one owned task and proves its expected Developer Mode denial without granting approval, enabling Developer Mode, or mutating the page.",
+      "oracleId": "tauri:shellx_browser_operator_developer_inspect:developer-mode-denial",
+      "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
+    },
+    {
       "surfaceId": "tauri-command:shellx_browser_operator_evidence_summary",
       "driverId": "tauri-command-installed",
       "fixtureId": "tauri:isolated-browser-evidence",
@@ -4921,6 +5025,54 @@
       "expectedEffect": "Installed operator Tauri IPC writes one bounded Flight Recorder artifact for an exact owned task, verifies its bytes and SHA-256, then removes the file, task, and tab.",
       "oracleId": "tauri:shellx_browser_operator_export_flight_recorder:owned-artifact",
       "cleanupId": "tauri:close-owned-browser-evidence-fixture"
+    },
+    {
+      "surfaceId": "tauri-command:shellx_browser_operator_export_har",
+      "driverId": "tauri-command-installed",
+      "fixtureId": "tauri:isolated-browser-operator-workflow",
+      "expectedEffect": "Installed operator Tauri IPC exports one bounded owned Browser HAR artifact and returns only its compact receipt; the task, tab, loopback page, and private candidate artifacts end with exact cleanup and candidate teardown.",
+      "oracleId": "tauri:shellx_browser_operator_export_har:owned-artifact-receipt",
+      "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:shellx_browser_operator_export_performance",
+      "driverId": "tauri-command-installed",
+      "fixtureId": "tauri:isolated-browser-operator-workflow",
+      "expectedEffect": "Installed operator Tauri IPC exports one bounded owned Browser performance artifact and returns only its compact receipt; the task, tab, loopback page, and private candidate artifacts end with exact cleanup and candidate teardown.",
+      "oracleId": "tauri:shellx_browser_operator_export_performance:owned-artifact-receipt",
+      "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:shellx_browser_operator_list_teach_drafts",
+      "driverId": "tauri-command-installed",
+      "fixtureId": "tauri:isolated-browser-operator-workflow",
+      "expectedEffect": "Installed operator Tauri IPC reads back one exact owned operator Teach draft; Debug API has no approval or replay authority, and the exact task, tab, loopback page, and private candidate artifacts end with cleanup and candidate teardown.",
+      "oracleId": "tauri:shellx_browser_operator_list_teach_drafts:owned-draft-readback",
+      "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:shellx_browser_operator_prepare_teach_draft",
+      "driverId": "tauri-command-installed",
+      "fixtureId": "tauri:isolated-browser-operator-workflow",
+      "expectedEffect": "Installed operator Tauri IPC derives one immutable operator Teach draft from exact owned Flight Recorder evidence; Debug API has no approval or replay authority, and the exact task, tab, loopback page, and private candidate artifacts end with cleanup and candidate teardown.",
+      "oracleId": "tauri:shellx_browser_operator_prepare_teach_draft:owned-draft",
+      "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:shellx_browser_operator_rehearse_teach_recipe",
+      "driverId": "tauri-command-installed",
+      "fixtureId": "tauri:isolated-browser-operator-workflow",
+      "expectedEffect": "Installed operator Tauri IPC dry-runs one approved Teach recipe with zero applied steps and records one rehearsal receipt; Debug API has no approval or replay authority, and the exact task, tab, loopback page, and private candidate artifacts end with cleanup and candidate teardown.",
+      "oracleId": "tauri:shellx_browser_operator_rehearse_teach_recipe:dry-run-receipt",
+      "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:shellx_browser_operator_revise_teach_draft",
+      "driverId": "tauri-command-installed",
+      "fixtureId": "tauri:isolated-browser-operator-workflow",
+      "expectedEffect": "Installed operator Tauri IPC creates one compare-and-swap operator Teach revision and reads it back; Debug API has no approval or replay authority, and the exact task, tab, loopback page, and private candidate artifacts end with cleanup and candidate teardown.",
+      "oracleId": "tauri:shellx_browser_operator_revise_teach_draft:owned-revision",
+      "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
     },
     {
       "surfaceId": "tauri-command:shellx_browser_remove_site_shields",
@@ -5142,9 +5294,9 @@
       "surfaceId": "tauri-command:shellxagent_token_regenerate",
       "driverId": "tauri-command-installed",
       "fixtureId": "tauri:isolated-token-rotation",
-      "expectedEffect": "Installed Tauri IPC rotates the isolated candidate token, proves its format, disk persistence, and command readback, then restores the exact original token.",
+      "expectedEffect": "Installed Tauri IPC rotates the isolated candidate token, proves its format, disk persistence, and command readback, then preserves the live token only until disposable candidate teardown.",
       "oracleId": "tauri:shellxagent_token_regenerate:owned-token-rotation",
-      "cleanupId": "tauri:restore-attested-token"
+      "cleanupId": "tauri:preserve-rotated-token-until-candidate-teardown"
     },
     {
       "surfaceId": "tauri-command:start_build_mode",
@@ -5638,7 +5790,7 @@
       "surfaceId": "ui-control:src/browser/components/BrowserChrome.tsx:[data-debug-id=\"shellx-browser-handoff-tab\"]@src/browser/components/BrowserChrome.tsx#7",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:browser-owned-tab-delegation",
-      "expectedEffect": "Installed input accepts the exact trusted-user confirmation and delegates one owned user tab to the exact active Browser agent task without granting Vault access, then takes it back and restores task, ownership, active-tab, tab-set, and window state.",
+      "expectedEffect": "Installed input opens and confirms the exact ShellX-owned trusted-user handoff sheet, delegates one owned user tab to the exact active Browser agent task without granting Vault access, then takes it back and restores task, ownership, active-tab, tab-set, and window state.",
       "oracleId": "ui:activation:owned-browser-tab-delegation-transition",
       "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
     },
@@ -5715,7 +5867,55 @@
       "cleanupId": "vault-fill:reset-isolated-vault-close-owned-user-tab-and-restore-browser"
     },
     {
-      "surfaceId": "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id^=\"shellx-browser-history-entry-\"]@src/browser/components/BrowserHistorySidecar.tsx#7",
+      "surfaceId": "ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id=\"shellx-browser-developer-approve-current-site\"]@src/browser/components/BrowserDeveloperInspection.tsx#4",
+      "driverId": "ui-control-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-task",
+      "expectedEffect": "A native installed-app click approves Developer Mode only for the exact owned loopback host and exposes bounded partial inspection state.",
+      "oracleId": "ui:activation:browser-developer-site-approved",
+      "cleanupId": "ui:clear-browser-developer-site-approval-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id=\"shellx-browser-developer-disable-mode\"]@src/browser/components/BrowserDeveloperInspection.tsx#5",
+      "driverId": "ui-control-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-task",
+      "expectedEffect": "A native installed-app click disables Browser Developer Mode, clears the exact owned site approval, and removes private inspection receipt state.",
+      "oracleId": "ui:activation:browser-developer-mode-disabled",
+      "cleanupId": "ui:clear-browser-developer-site-approval-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id=\"shellx-browser-developer-export-har\"]@src/browser/components/BrowserDeveloperInspection.tsx#2",
+      "driverId": "ui-control-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-task",
+      "expectedEffect": "A native installed-app click exports one private sanitized Browser Developer artifact and proves only its compact receipt identity, byte count, and SHA-256 without exposing a filesystem path.",
+      "oracleId": "ui:activation:browser-developer-artifact-receipt",
+      "cleanupId": "ui:clear-browser-developer-site-approval-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id=\"shellx-browser-developer-export-performance\"]@src/browser/components/BrowserDeveloperInspection.tsx#3",
+      "driverId": "ui-control-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-task",
+      "expectedEffect": "A native installed-app click exports one private sanitized Browser Developer artifact and proves only its compact receipt identity, byte count, and SHA-256 without exposing a filesystem path.",
+      "oracleId": "ui:activation:browser-developer-artifact-receipt",
+      "cleanupId": "ui:clear-browser-developer-site-approval-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserDeveloperInspection.tsx:[data-debug-id=\"shellx-browser-developer-inspect\"]@src/browser/components/BrowserDeveloperInspection.tsx#1",
+      "driverId": "ui-control-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-task",
+      "expectedEffect": "A native installed-app click exposes the pending Browser Developer inspection state and then its exact Developer Mode denial for the owned loopback site without granting CDP access.",
+      "oracleId": "ui:activation:browser-developer-inspection-denied",
+      "cleanupId": "ui:clear-browser-developer-site-approval-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserEvidencePanel.tsx:[data-debug-id=\"shellx-browser-evidence-teach-workflow\"]@src/browser/components/BrowserEvidencePanel.tsx#2",
+      "driverId": "ui-control-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-task",
+      "expectedEffect": "A native installed-app click records one complete owned Flight Recorder attempt and enters Browser Teach with one reversible draft identity; neither approval nor recipe replay is invoked.",
+      "oracleId": "ui:activation:browser-evidence-teach-owned-draft",
+      "cleanupId": "ui:clear-browser-developer-site-approval-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id^=\"shellx-browser-history-entry-\"]@src/browser/components/BrowserHistorySidecar.tsx#8",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:browser-owned-history-sidecar",
       "expectedEffect": "Native input selects one exact synthetic Agent-history row and navigates its owned Browser task tab to the recorded loopback URL before clearing only the isolated history baseline and restoring scope, panel, task, loopback server, and window state.",
@@ -5723,10 +5923,18 @@
       "cleanupId": "ui:clear-owned-browser-history-abort-task-and-window-loopback"
     },
     {
+      "surfaceId": "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-clear-all-history\"]@src/browser/components/BrowserHistorySidecar.tsx#7",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:browser-history-clear-sheet-owned-baseline",
+      "expectedEffect": "Native input opens the exact All-history confirmation sheet over a mixed owned User and Agent history baseline without removing either class before exact panel, scope, task, personal tab, loopback server, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-history-all-clear-sheet",
+      "cleanupId": "ui:restore-owned-browser-history-clear-sheet"
+    },
+    {
       "surfaceId": "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-clear-history\"]@src/browser/components/BrowserHistorySidecar.tsx#6",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:browser-owned-history-sidecar",
-      "expectedEffect": "Native input accepts the exact operator confirmation and clears the isolated owned Browser-history baseline before restoring scope, panel, task, loopback server, and window state.",
+      "expectedEffect": "Native input confirms the exact ShellX Agent-history sheet and clears the isolated owned Browser-history baseline before restoring scope, panel, task, loopback server, and window state.",
       "oracleId": "ui:activation:owned-browser-history-clear",
       "cleanupId": "ui:clear-owned-browser-history-abort-task-and-window-loopback"
     },
@@ -5737,6 +5945,22 @@
       "expectedEffect": "A native click selects Agent history from a User baseline before exact scope, panel, task, and window restoration.",
       "oracleId": "ui:boolean-state-transition",
       "cleanupId": "ui:restore-browser-history-filter-abort-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-history-clear-cancel\"]@src/browser/components/BrowserHistorySidecar.tsx#9",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:browser-history-clear-sheet-owned-baseline",
+      "expectedEffect": "Native input cancels the exact All-history confirmation sheet over a mixed owned User and Agent history baseline and preserves both classes before exact panel, scope, task, personal tab, loopback server, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-history-clear-cancel",
+      "cleanupId": "ui:restore-owned-browser-history-clear-sheet"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-history-clear-confirm\"]@src/browser/components/BrowserHistorySidecar.tsx#10",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:browser-history-clear-sheet-owned-baseline",
+      "expectedEffect": "Native input confirms the exact All-history sheet over a mixed owned User and Agent history baseline, then verifies the all-scope receipt and success status before exact panel, scope, task, personal tab, loopback server, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-history-all-clear-receipt",
+      "cleanupId": "ui:restore-owned-browser-history-clear-sheet"
     },
     {
       "surfaceId": "ui-control:src/browser/components/BrowserHistorySidecar.tsx:[data-debug-id=\"shellx-browser-history-close\"]@src/browser/components/BrowserHistorySidecar.tsx#1",
@@ -6025,6 +6249,118 @@
       "expectedEffect": "Native input changes the owned loopback site's HTTPS-upgrade setting in both bounded rendered and Browser API state before removing the exact site override, task, window, and loopback page.",
       "oracleId": "ui:boolean-state-transition",
       "cleanupId": "ui:reset-owned-site-shields-restore-global-abort-task-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTabHandoffConfirmation.tsx:[data-debug-id=\"shellx-browser-handoff-cancel\"]@src/browser/components/BrowserTabHandoffConfirmation.tsx#1",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:browser-owned-tab-delegation",
+      "expectedEffect": "Installed input opens the exact ShellX handoff review, verifies its sanitized tab, profile, persistence, owner, target-task, and Vault-boundary receipts, exercises Cancel with focus restoration, then reopens and confirms the owned handoff before exact take-back, task, tab-set, active-tab, and window cleanup.",
+      "oracleId": "ui:activation:owned-browser-tab-delegation-transition",
+      "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTabHandoffConfirmation.tsx:[data-debug-id=\"shellx-browser-handoff-confirm\"]@src/browser/components/BrowserTabHandoffConfirmation.tsx#2",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:browser-owned-tab-delegation",
+      "expectedEffect": "Installed input opens the exact ShellX handoff review, verifies its sanitized tab, profile, persistence, owner, target-task, and Vault-boundary receipts, exercises Cancel with focus restoration, then makes one trusted Confirm and observes its pending-to-success handoff before exact take-back, task, tab-set, active-tab, and window cleanup.",
+      "oracleId": "ui:activation:owned-browser-tab-delegation-transition",
+      "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id^=\"shellx-browser-teach-issue-action-\"]@src/browser/components/BrowserTeachReview.tsx#4",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id^=\"shellx-browser-teach-issue-action-\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id^=\"shellx-browser-teach-value-label-\"]@src/browser/components/BrowserTeachReview.tsx#5",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id^=\"shellx-browser-teach-value-label-\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id^=\"shellx-browser-teach-value-literal-\"]@src/browser/components/BrowserTeachReview.tsx#7",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id^=\"shellx-browser-teach-value-literal-\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id^=\"shellx-browser-teach-vault-binding-\"]@src/browser/components/BrowserTeachReview.tsx#6",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id^=\"shellx-browser-teach-vault-binding-\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-approve-recipe\"]@src/browser/components/BrowserTeachReview.tsx#10",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-approve-recipe\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-approval-receipt\"]@src/browser/components/BrowserTeachReview.tsx#11",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-approval-receipt\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-rehearsal-receipt\"]@src/browser/components/BrowserTeachReview.tsx#12",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-rehearsal-receipt\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-goal\"]@src/browser/components/BrowserTeachReview.tsx#3",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-goal\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-rehearse\"]@src/browser/components/BrowserTeachReview.tsx#9",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-rehearse\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-reload-stale\"]@src/browser/components/BrowserTeachReview.tsx#2",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-reload-stale\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-retry\"]@src/browser/components/BrowserTeachReview.tsx#1",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-retry\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-save-draft\"]@src/browser/components/BrowserTeachReview.tsx#8",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-save-draft\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
     {
       "surfaceId": "ui-control:src/browser/components/BrowserVaultFillPanel.tsx:[data-debug-id=\"shellx-browser-vault-fill-suggestion\"]@src/browser/components/BrowserVaultFillPanel.tsx#1",
@@ -11195,7 +11531,15 @@
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-clear-history@src/browser/components/BrowserHistorySidecar.tsx#7",
+      "surfaceId": "ui-debug-surface:shellx-browser-clear-all-history@src/browser/components/BrowserHistorySidecar.tsx#9",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:browser-history-owned-task",
+      "expectedEffect": "shellx-browser-clear-all-history resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-clear-history@src/browser/components/BrowserHistorySidecar.tsx#8",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-history-owned-task",
       "expectedEffect": "shellx-browser-clear-history resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -11275,6 +11619,166 @@
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
     {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-*-receipt@src/browser/components/BrowserDeveloperInspection.tsx#1",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-*-receipt resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-access-active@src/browser/components/BrowserDeveloperInspection.tsx#18",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-access-active resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-access-required@src/browser/components/BrowserDeveloperInspection.tsx#16",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-access-required resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-approve-current-site@src/browser/components/BrowserDeveloperInspection.tsx#17",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-approve-current-site resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-artifacts@src/browser/components/BrowserDeveloperInspection.tsx#20",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-artifacts resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-clean@src/browser/components/BrowserDeveloperInspection.tsx#9",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-clean resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-console-summary@src/browser/components/BrowserDeveloperInspection.tsx#5",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-console-summary resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-disable-mode@src/browser/components/BrowserDeveloperInspection.tsx#19",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-disable-mode resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-export-har@src/browser/components/BrowserDeveloperInspection.tsx#13",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-export-har resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-export-performance@src/browser/components/BrowserDeveloperInspection.tsx#14",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-export-performance resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-inspect@src/browser/components/BrowserDeveloperInspection.tsx#12",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-inspect resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-inspection@src/browser/components/BrowserDeveloperInspection.tsx#11",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-inspection resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-issues@src/browser/components/BrowserDeveloperInspection.tsx#8",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-issues resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-last-inspected@src/browser/components/BrowserDeveloperInspection.tsx#3",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-last-inspected resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-network-summary@src/browser/components/BrowserDeveloperInspection.tsx#6",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-network-summary resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-page-summary@src/browser/components/BrowserDeveloperInspection.tsx#4",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-page-summary resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-partial@src/browser/components/BrowserDeveloperInspection.tsx#10",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-partial resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-performance-summary@src/browser/components/BrowserDeveloperInspection.tsx#7",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-performance-summary resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-state-*@src/browser/components/BrowserDeveloperInspection.tsx#15",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-state-* resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-developer-summary@src/browser/components/BrowserDeveloperInspection.tsx#2",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-developer-summary resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
+    },
+    {
       "surfaceId": "ui-debug-surface:shellx-browser-download-folder-choose@src/browser/components/DownloadSidecar.tsx#4",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-downloads-owned-task",
@@ -11347,7 +11851,7 @@
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-evidence-empty@src/browser/components/BrowserEvidencePanel.tsx#4",
+      "surfaceId": "ui-debug-surface:shellx-browser-evidence-empty@src/browser/components/BrowserEvidencePanel.tsx#5",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-evidence-owned-task",
       "expectedEffect": "shellx-browser-evidence-empty resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -11371,12 +11875,20 @@
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-evidence-refresh@src/browser/components/BrowserEvidencePanel.tsx#3",
+      "surfaceId": "ui-debug-surface:shellx-browser-evidence-refresh@src/browser/components/BrowserEvidencePanel.tsx#4",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-evidence-owned-task",
       "expectedEffect": "shellx-browser-evidence-refresh resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
       "oracleId": "ui:visible-nonempty-rectangle",
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-evidence-teach-workflow@src/browser/components/BrowserEvidencePanel.tsx#3",
+      "driverId": "ui-debug-browser-developer-evidence-installed",
+      "fixtureId": "ui:browser-developer-evidence-owned-marker-state",
+      "expectedEffect": "shellx-browser-evidence-teach-workflow resolves only after native installed input establishes the exact owned Browser Evidence-to-Teach or Developer inspection state; Developer Mode site approval, private receipt state, task, tab, window, and loopback page are cleared during cleanup.",
+      "oracleId": "ui:visible-browser-developer-evidence-marker",
+      "cleanupId": "ui:clear-browser-developer-marker-state-close-owned-task-and-window"
     },
     {
       "surfaceId": "ui-debug-surface:shellx-browser-forward@src/browser/components/BrowserChrome.tsx#13",
@@ -11395,6 +11907,54 @@
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
     {
+      "surfaceId": "ui-debug-surface:shellx-browser-handoff-cancel@src/browser/components/BrowserTabHandoffConfirmation.tsx#6",
+      "driverId": "ui-debug-browser-delegation-installed",
+      "fixtureId": "ui:browser-owned-tab-delegation-marker",
+      "expectedEffect": "shellx-browser-handoff-cancel becomes reachable through the genuine native-input trusted handoff/take-back lifecycle on an exact owned disposable Browser tab, followed by exact tab, task, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-tab-delegation-marker",
+      "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-handoff-confirm@src/browser/components/BrowserTabHandoffConfirmation.tsx#7",
+      "driverId": "ui-debug-browser-delegation-installed",
+      "fixtureId": "ui:browser-owned-tab-delegation-marker",
+      "expectedEffect": "shellx-browser-handoff-confirm becomes reachable through the genuine native-input trusted handoff/take-back lifecycle on an exact owned disposable Browser tab, followed by exact tab, task, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-tab-delegation-marker",
+      "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-handoff-confirmation-backdrop@src/browser/components/BrowserTabHandoffConfirmation.tsx#1",
+      "driverId": "ui-debug-browser-delegation-installed",
+      "fixtureId": "ui:browser-owned-tab-delegation-marker",
+      "expectedEffect": "shellx-browser-handoff-confirmation-backdrop becomes reachable through the genuine native-input trusted handoff/take-back lifecycle on an exact owned disposable Browser tab, followed by exact tab, task, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-tab-delegation-marker",
+      "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-handoff-confirmation@src/browser/components/BrowserTabHandoffConfirmation.tsx#2",
+      "driverId": "ui-debug-browser-delegation-installed",
+      "fixtureId": "ui:browser-owned-tab-delegation-marker",
+      "expectedEffect": "shellx-browser-handoff-confirmation becomes reachable through the genuine native-input trusted handoff/take-back lifecycle on an exact owned disposable Browser tab, followed by exact tab, task, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-tab-delegation-marker",
+      "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-handoff-context@src/browser/components/BrowserTabHandoffConfirmation.tsx#3",
+      "driverId": "ui-debug-browser-delegation-installed",
+      "fixtureId": "ui:browser-owned-tab-delegation-marker",
+      "expectedEffect": "shellx-browser-handoff-context becomes reachable through the genuine native-input trusted handoff/take-back lifecycle on an exact owned disposable Browser tab, followed by exact tab, task, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-tab-delegation-marker",
+      "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-handoff-status@src/browser/components/BrowserTabHandoffConfirmation.tsx#5",
+      "driverId": "ui-debug-browser-delegation-installed",
+      "fixtureId": "ui:browser-owned-tab-delegation-marker",
+      "expectedEffect": "shellx-browser-handoff-status becomes reachable through the genuine native-input trusted handoff/take-back lifecycle on an exact owned disposable Browser tab, followed by exact tab, task, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-tab-delegation-marker",
+      "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
+    },
+    {
       "surfaceId": "ui-debug-surface:shellx-browser-handoff-tab@src/browser/components/BrowserChrome.tsx#8",
       "driverId": "ui-debug-browser-delegation-installed",
       "fixtureId": "ui:browser-owned-tab-delegation-marker",
@@ -11403,10 +11963,50 @@
       "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
     },
     {
+      "surfaceId": "ui-debug-surface:shellx-browser-handoff-vault-notice@src/browser/components/BrowserTabHandoffConfirmation.tsx#4",
+      "driverId": "ui-debug-browser-delegation-installed",
+      "fixtureId": "ui:browser-owned-tab-delegation-marker",
+      "expectedEffect": "shellx-browser-handoff-vault-notice becomes reachable through the genuine native-input trusted handoff/take-back lifecycle on an exact owned disposable Browser tab, followed by exact tab, task, and window restoration.",
+      "oracleId": "ui:activation:owned-browser-tab-delegation-marker",
+      "cleanupId": "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
+    },
+    {
       "surfaceId": "ui-debug-surface:shellx-browser-history-agent@src/browser/components/BrowserHistorySidecar.tsx#4",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-history-owned-task",
       "expectedEffect": "shellx-browser-history-agent resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-history-clear-cancel@src/browser/components/BrowserHistorySidecar.tsx#13",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:browser-history-clear-sheet-owned-task",
+      "expectedEffect": "shellx-browser-history-clear-cancel resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-history-clear-confirm@src/browser/components/BrowserHistorySidecar.tsx#14",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:browser-history-clear-sheet-owned-task",
+      "expectedEffect": "shellx-browser-history-clear-confirm resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-history-clear-confirmation@src/browser/components/BrowserHistorySidecar.tsx#12",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:browser-history-clear-sheet-owned-task",
+      "expectedEffect": "shellx-browser-history-clear-confirmation resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-history-clear-status@src/browser/components/BrowserHistorySidecar.tsx#7",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:browser-history-clear-status-owned-task",
+      "expectedEffect": "shellx-browser-history-clear-status resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
       "oracleId": "ui:visible-nonempty-rectangle",
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
@@ -11427,7 +12027,7 @@
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-history-entry-*@src/browser/components/BrowserHistorySidecar.tsx#9",
+      "surfaceId": "ui-debug-surface:shellx-browser-history-entry-*@src/browser/components/BrowserHistorySidecar.tsx#11",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-history-owned-task",
       "expectedEffect": "shellx-browser-history-entry-* resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -11435,7 +12035,7 @@
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-history-list@src/browser/components/BrowserHistorySidecar.tsx#8",
+      "surfaceId": "ui-debug-surface:shellx-browser-history-list@src/browser/components/BrowserHistorySidecar.tsx#10",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:browser-history-owned-task",
       "expectedEffect": "shellx-browser-history-list resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -11953,6 +12553,222 @@
       "expectedEffect": "shellx-browser-task-* resolves on the attested browser renderer after its exact owned fixture state is established; no control activation is claimed.",
       "oracleId": "ui:visible-nonempty-rectangle",
       "cleanupId": "ui:close-owned-browser-task-with-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-action-summary@src/browser/components/BrowserTeachReview.tsx#8",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-action-summary becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-approval-receipt@src/browser/components/BrowserTeachReview.tsx#24",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-approval-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-approve-recipe@src/browser/components/BrowserTeachReview.tsx#23",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-approve-recipe becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-blocking@src/browser/components/BrowserTeachReview.tsx#9",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-blocking becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-copy-approval-receipt@src/browser/components/BrowserTeachReview.tsx#25",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-copy-approval-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-copy-rehearsal-receipt@src/browser/components/BrowserTeachReview.tsx#27",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-copy-rehearsal-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-goal@src/browser/components/BrowserTeachReview.tsx#7",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-goal becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-issue-*@src/browser/components/BrowserTeachReview.tsx#11",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-issue-* becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-issue-action-*@src/browser/components/BrowserTeachReview.tsx#12",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-issue-action-* becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-issues@src/browser/components/BrowserTeachReview.tsx#10",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-issues becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-redaction@src/browser/components/BrowserTeachReview.tsx#6",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-redaction becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-rehearsal-receipt@src/browser/components/BrowserTeachReview.tsx#26",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-rehearsal-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-rehearse@src/browser/components/BrowserTeachReview.tsx#22",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-rehearse becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-reload-stale@src/browser/components/BrowserTeachReview.tsx#4",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-reload-stale becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-retry@src/browser/components/BrowserTeachReview.tsx#3",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-retry becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-review@src/browser/components/BrowserTeachReview.tsx#1",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-review becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-save-draft@src/browser/components/BrowserTeachReview.tsx#21",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-save-draft becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-source@src/browser/components/BrowserTeachReview.tsx#5",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-source becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-state-*@src/browser/components/BrowserTeachReview.tsx#2",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-state-* becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-step-*@src/browser/components/BrowserTeachReview.tsx#14",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-step-* becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-steps@src/browser/components/BrowserTeachReview.tsx#13",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-steps becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-value-*@src/browser/components/BrowserTeachReview.tsx#16",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-value-* becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-value-label-*@src/browser/components/BrowserTeachReview.tsx#17",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-value-label-* becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-value-literal-*@src/browser/components/BrowserTeachReview.tsx#19",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-value-literal-* becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-values@src/browser/components/BrowserTeachReview.tsx#15",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-values becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-vault-binding-*@src/browser/components/BrowserTeachReview.tsx#18",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-vault-binding-* becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-vault-unavailable@src/browser/components/BrowserTeachReview.tsx#20",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-vault-unavailable becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
     {
       "surfaceId": "ui-debug-surface:shellx-browser-toggle-right-sidebar-button@src/browser/components/AgentSidebar.tsx#2",

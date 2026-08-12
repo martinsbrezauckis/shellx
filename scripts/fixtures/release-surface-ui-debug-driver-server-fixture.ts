@@ -80,6 +80,8 @@ let vaultGrant: Record<string, unknown> | null = null;
 let browserSidebarVisible = true;
 let browserTaskActive = false;
 let browserHistoryEntryCount = 0;
+let browserHistoryClearSheetOpen = false;
+let browserHistoryClearStatusVisible = false;
 let browserWorkflowPreviewVisible = false;
 let browserErrorVisible = false;
 let taskStartCount = 0;
@@ -200,6 +202,8 @@ const server = createServer(async (request, response) => {
     browserTaskActive = true;
     browserSidebarVisible = true;
     browserHistoryEntryCount += 1;
+    browserHistoryClearSheetOpen = false;
+    browserHistoryClearStatusVisible = false;
     taskStartCount += 1;
     return json(response, 200, {
       taskId: "owned-ui-debug-task",
@@ -606,6 +610,8 @@ const server = createServer(async (request, response) => {
       browserRightTab,
       browserOverlay,
       browserHistoryEntryCount,
+      browserHistoryClearSheetOpen,
+      browserHistoryClearStatusVisible,
       browserWorkflowPreviewVisible,
       browserErrorVisible,
       builtinDocOpen,
@@ -945,7 +951,16 @@ function highlightResult(surface: Surface, highlight: Highlight): HighlightResul
       || (selector === "[data-debug-id=\"shellx-browser-options-sidecar\"]" && browserOverlay === "options")
       || (selector === "[data-debug-id=\"shellx-browser-chrome-menu-dock\"]" && browserOverlay === "options")
       || (selector === "[data-debug-id=\"shellx-browser-clear-history\"]"
-        && browserOverlay === "history" && browserHistoryEntryCount > 0)
+        && browserOverlay === "history" && browserHistoryEntryCount > 0 && !browserHistoryClearSheetOpen)
+      || (selector === "[data-debug-id=\"shellx-browser-clear-all-history\"]"
+        && browserOverlay === "history" && browserHistoryEntryCount > 0 && !browserHistoryClearSheetOpen)
+      || (new Set([
+        "[data-debug-id=\"shellx-browser-history-clear-confirmation\"]",
+        "[data-debug-id=\"shellx-browser-history-clear-cancel\"]",
+        "[data-debug-id=\"shellx-browser-history-clear-confirm\"]",
+      ]).has(selector) && browserHistoryClearSheetOpen)
+      || (selector === "[data-debug-id=\"shellx-browser-history-clear-status\"]"
+        && browserOverlay === "history" && browserHistoryClearStatusVisible)
       || (selector === "[data-debug-id^=\"shellx-browser-history-entry-\"]"
         && browserOverlay === "history" && browserHistoryEntryCount > 0)
       || (selector === "[data-debug-id=\"shellx-browser-evidence-empty\"]" && browserRightTab === "evidence")
@@ -1085,7 +1100,18 @@ function handleDebugClick(surface: Surface, selector: string, text?: string): vo
   if (selector === "[data-debug-id='shellx-browser-options']") browserOverlay = "options";
   else if (selector === "[data-debug-id='shellx-browser-options-close']") browserOverlay = "none";
   else if (selector === "[data-debug-id='shellx-browser-history-menu']") browserOverlay = "history";
-  else if (selector === "[data-debug-id='shellx-browser-history-close']") browserOverlay = "none";
+  else if (selector === "[data-debug-id='shellx-browser-history-close']") {
+    browserOverlay = "none";
+    browserHistoryClearSheetOpen = false;
+    browserHistoryClearStatusVisible = false;
+  }
+  else if (selector === "[data-debug-id='shellx-browser-clear-all-history']"
+    && browserOverlay === "history" && browserHistoryEntryCount > 0) browserHistoryClearSheetOpen = true;
+  else if (selector === "[data-debug-id='shellx-browser-history-clear-cancel']") browserHistoryClearSheetOpen = false;
+  else if (selector === "[data-debug-id='shellx-browser-history-clear-confirm']" && browserHistoryClearSheetOpen) {
+    browserHistoryClearSheetOpen = false;
+    browserHistoryClearStatusVisible = true;
+  }
   else if (selector === "[data-debug-id='shellx-browser-bookmarks-menu']") browserOverlay = "bookmarks-list";
   else if (selector === "[data-debug-id='shellx-browser-bookmark-manager-toggle']") browserOverlay = "bookmarks-manager";
   else if (selector === "[data-debug-id='shellx-browser-bookmark-manager-close']") browserOverlay = "none";

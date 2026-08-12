@@ -8,6 +8,7 @@ import {
 } from "./lib/release-surface-candidate-attestation";
 import {
   RELEASE_SURFACE_DRIVER_RUN_SCHEMA,
+  resolveReleaseSurfaceControllerProvenance,
   type ReleaseSurfaceDriverRunManifest,
 } from "./lib/release-surface-driver-runner";
 import {
@@ -18,6 +19,7 @@ import {
 import {
   createReleaseSurfaceCandidateTeardownReceipt,
 } from "./lib/release-surface-candidate-teardown";
+import { verifyReleaseSurfaceControllerBinding } from "./lib/release-surface-controller-binding";
 import {
   releaseSurfaceMacosNativeInputFileIdentity,
   validateReleaseSurfaceMacosNativeInputBinding,
@@ -39,20 +41,46 @@ const teardownPath = createOnlyPath(requiredArg(args, "--candidate-teardown-out"
 if (!/^[a-f0-9]{16,64}$/.test(runId)) throw new Error("release run id must be 16 to 64 lowercase hexadecimal characters");
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
 if (dirty.trim()) throw new Error("macOS candidate finalization requires a clean frozen source checkout");
-const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const controllerSourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 
 const candidate = loadReleaseSurfaceCandidateAttestation(candidatePath);
-if (candidate.platform !== "macos-installed" || candidate.sourceCommit !== sourceCommit) {
-  throw new Error("macOS candidate attestation is not bound to the frozen source checkout");
-}
 const manifest = JSON.parse(readFileSync(driverManifestPath, "utf8")) as ReleaseSurfaceDriverRunManifest;
+const targetedClosure = Boolean(manifest.targetedClosure);
+const candidateSourceCommitArg = readArg(process.argv.slice(2), "--candidate-source-commit");
+if (targetedClosure !== Boolean(candidateSourceCommitArg)) {
+  throw new Error("targeted macOS finalization requires exactly one explicit candidate source commit");
+}
+const sourceCommit = candidateSourceCommitArg ?? controllerSourceCommit;
+if (!/^[a-f0-9]{40,64}$/.test(sourceCommit)) {
+  throw new Error("macOS candidate source commit must be a lowercase Git object id");
+}
+if (candidate.platform !== "macos-installed" || candidate.sourceCommit !== sourceCommit) {
+  throw new Error("macOS candidate attestation is not bound to the exact signed candidate source");
+}
 if (manifest.schema !== RELEASE_SURFACE_DRIVER_RUN_SCHEMA
   || manifest.mode !== "final-frozen-candidate"
-  || manifest.targetedClosure
   || manifest.platform !== "macos-installed"
   || manifest.sourceCommit !== sourceCommit
   || manifest.version !== candidate.version) {
   throw new Error("macOS driver manifest is not bound to the exact frozen candidate");
+}
+const controllerErrors = verifyReleaseSurfaceControllerBinding({
+  rootDir: root,
+  binding: manifest.controller,
+  requireClean: true,
+});
+if (controllerErrors.length > 0) {
+  throw new Error(`macOS finalizer controller is invalid: ${controllerErrors.join("; ")}`);
+}
+const controllerProvenance = resolveReleaseSurfaceControllerProvenance({
+  rootDir: root,
+  candidateSourceCommit: sourceCommit,
+  controllerSourceCommit,
+  targetedClosure,
+});
+if (JSON.stringify(manifest.targetedClosure?.controllerDelta)
+  !== JSON.stringify(controllerProvenance.controllerDelta)) {
+  throw new Error("macOS driver manifest controller delta does not match the live finalizer checkout");
 }
 const binding = loadReleaseSurfaceMacosNativeInputBinding(bindingPath);
 const profileRoot = releaseSurfaceProfileLaunchRootFromDebugTokenPath(
@@ -166,4 +194,11 @@ function requiredArg(values: string[], name: string): string {
   const value = index >= 0 ? values[index + 1] : values.find((entry) => entry.startsWith(`${name}=`))?.slice(name.length + 1);
   if (!value?.trim()) throw new Error(`${name} is required`);
   return value;
+}
+
+function readArg(values: string[], name: string): string | undefined {
+  const index = values.indexOf(name);
+  return index >= 0
+    ? values[index + 1]
+    : values.find((entry) => entry.startsWith(`${name}=`))?.slice(name.length + 1);
 }

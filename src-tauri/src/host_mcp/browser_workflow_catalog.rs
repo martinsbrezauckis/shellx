@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 
 use super::{
     browser_mcp_result, browser_mcp_timeout_secs, browser_mcp_usize_arg,
-    canonical_workflow_task_type, compact_browser_summary_value, debug_api_get_json, json_string,
-    mcp_arg_string, shared_workflow_slug,
+    canonical_workflow_task_type, compact_browser_summary_value, debug_api_get_json_for_caller,
+    json_string, mcp_arg_string, shared_workflow_slug,
 };
 
 fn browser_collect_toolbar_bookmark_ids(value: Option<&Value>, ids: &mut HashSet<String>) {
@@ -377,9 +377,14 @@ pub(super) fn browser_workflows_text_summary(data: &Value) -> String {
     }
 }
 
-pub(super) async fn tool_browser_workflows(args: Value) -> Result<Value, String> {
+pub(super) async fn tool_browser_workflows(
+    args: Value,
+    caller_session_id: Option<&str>,
+) -> Result<Value, String> {
     let timeout_secs = browser_mcp_timeout_secs(&args, 10_000);
-    let state = debug_api_get_json("/browser/bookmarks", timeout_secs).await?;
+    let state =
+        debug_api_get_json_for_caller("/browser/bookmarks", timeout_secs, caller_session_id)
+            .await?;
     let limit = browser_mcp_usize_arg(&args, &["limit"], 20, 100);
     let filters = BrowserWorkflowFilters {
         query: mcp_arg_string(&args, &["query", "q"]),

@@ -78,7 +78,7 @@ Write-only Vault deposits use a split receipt model:
 
 Host MCP advertises two routed Browser tools: read-class `browser_read` and
 permission-gated `browser_act`. This keeps the initial Browser schema catalog at
-2,331 bytes instead of injecting 32 compatibility schemas (82,893 bytes) into
+2,601 bytes instead of injecting 32 compatibility schemas (82,893 bytes) into
 every provider prompt. Named `browser_*` aliases remain callable and searchable
 for exact field documentation. Agents should use this native Browser flow for
 web tasks: `browser_read action=tabs`, `browser_act action=navigate`, then
@@ -96,6 +96,12 @@ each baseline/candidate attempt, `browser_act action=evaluationWrite` with exact
 artifact identities and a fixed timestamp, and `browser_read action=evidence`
 to inspect only this caller session's recent receipts. Larger exact schemas stay
 available through targeted search rather than the advertised prompt catalog.
+Use `browser_read action=developerInspect` for one fixed, Developer Mode-gated,
+sanitized developer summary; it does not accept arbitrary CDP or external
+Chrome input. Use `browser_act action=teachPrepare` with one complete owned
+Flight Recorder `attemptId`, then `browser_read action=teachDrafts` for bounded
+draft identities. Revision, approval, and dry-run rehearsal stay in the
+operator-owned Evidence UI; approval creates a recipe and never runs it.
 Default observation structured content is capped at 3,000 serialized bytes and
 reports `mcpSerializedBytes` plus `mcpApproxTokens`; a full unbudgeted dump needs
 explicit `fullObservation=true`. When `browser_read action=observe`

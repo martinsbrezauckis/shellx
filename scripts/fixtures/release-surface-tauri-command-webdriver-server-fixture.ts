@@ -40,12 +40,24 @@ const historyLines = [
 const mediaDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const mediaBytes = Buffer.from(mediaDataUrl.slice(mediaDataUrl.indexOf(",") + 1), "base64");
 const rotatedToken = createHash("sha256").update(`${token}:${sourceCommit}`).digest("hex").slice(0, 32);
+let runtimeToken = token;
 const invoked: Array<{ command: string; args: unknown }> = [];
 const rawEvents: Array<Record<string, unknown>> = [];
 const activeStates = new Map<string, unknown>();
 const activeGrokTabs = new Map<string, string>();
 let relaySequence = 0;
 let browserEvidenceSequence = 0;
+let browserTeachSequence = 0;
+const browserTeachDrafts = new Map<string, {
+  draftId: string;
+  taskId: string;
+  browserTabId: string;
+  attemptId: string;
+  revision: number;
+  revisionId: string;
+  revisionSha256: string;
+}>();
+const browserTeachRecipes = new Map<string, { sha256: string; taskId: string; browserTabId: string; approvalId: string }>();
 const goalStates = new Map<string, Record<string, unknown>>();
 let userData: Record<string, unknown> = {};
 let connectionPresets: Record<string, unknown>[] = [{
@@ -161,6 +173,18 @@ const candidate = createServer(async (request, response) => {
       })),
     });
   }
+  if (request.url === "/goal/stop" && request.method === "POST") {
+    const body = await requestJson(request);
+    if (typeof body.tabId !== "string" || body.releaseTestClearState !== true) {
+      return json(response, 400, { error: "invalid owned Goal release-test cleanup" });
+    }
+    goalStates.delete(body.tabId);
+    return json(response, 200, {
+      ok: true,
+      tabId: body.tabId,
+      releaseTestCleared: true,
+    });
+  }
   if (request.url === "/release-test/tauri-invokes" && request.method === "POST") {
     const body = await requestJson(request);
     const command = typeof body.command === "string" ? body.command : "";
@@ -211,6 +235,7 @@ const candidate = createServer(async (request, response) => {
     state.tabs = [{ browserTabId, taskId, engineId, profileId: "task-disposable", url: startUrl, lock: null }];
     state.activeTaskId = taskId;
     state.activeBrowserTabId = browserTabId;
+    state.receipts = [];
     state.engine = structuredClone(engine);
     state.enginePool = { engines: [engine], waiting: [], parkedTabs: [], windowState: "foreground" };
     state.history = [{
@@ -701,6 +726,7 @@ function commandResult(command: string, invokeArgs: Record<string, unknown>): un
 
   if (command === "shellxagent_token_regenerate") {
     writeFileSync(join(profileRoot, ".shellx", "shellxagent.token"), rotatedToken, { encoding: "utf8", mode: 0o600 });
+    runtimeToken = rotatedToken;
     return rotatedToken;
   }
   if (command === "shellxagent_token_read") {
@@ -718,6 +744,27 @@ function commandResult(command: string, invokeArgs: Record<string, unknown>): un
   }
   if (command === "shellx_browser_operator_export_flight_recorder") {
     return createBrowserEvidenceArtifact(invokeArgs);
+  }
+  if (command === "shellx_browser_operator_prepare_teach_draft") {
+    return prepareBrowserTeachDraft(invokeArgs);
+  }
+  if (command === "shellx_browser_operator_list_teach_drafts") {
+    return listBrowserTeachDrafts(invokeArgs);
+  }
+  if (command === "shellx_browser_operator_revise_teach_draft") {
+    return reviseBrowserTeachDraft(invokeArgs);
+  }
+  if (command === "shellx_browser_operator_approve_teach_draft") {
+    return approveBrowserTeachDraft(invokeArgs);
+  }
+  if (command === "shellx_browser_operator_rehearse_teach_recipe") {
+    return rehearseBrowserTeachRecipe(invokeArgs);
+  }
+  if (command === "shellx_browser_operator_developer_inspect") {
+    return browserDeveloperModeDenialForOperator(invokeArgs);
+  }
+  if (command === "shellx_browser_operator_export_har" || command === "shellx_browser_operator_export_performance") {
+    return createBrowserOperatorDiagnosticReceipt(command, invokeArgs);
   }
   if (command === "shellx_browser_operator_evidence_summary") {
     const limit = typeof invokeArgs.limit === "number" && Number.isSafeInteger(invokeArgs.limit)
@@ -805,18 +852,31 @@ function commandResult(command: string, invokeArgs: Record<string, unknown>): un
     };
   }
   if (command === "shellx_browser_clear_history") {
+    const request = requireRecord(invokeArgs.request, `${command}.request`);
+    const scope = request.scope;
+    if (scope !== "user" && scope !== "agent" && scope !== "all") {
+      throw new Error(`${command}.request.scope must be user, agent, or all`);
+    }
     const state = requireRecord(commandResults.shellx_browser_state, "Browser fixture state");
-    const cleared = Array.isArray(state.history) ? state.history.length : 0;
-    state.history = [];
+    if (!Array.isArray(state.history)) throw new Error("Browser fixture history must be an array");
+    const history = state.history.map((entry) => requireRecord(entry, "Browser fixture history entry"));
+    const matchesScope = (entry: Record<string, unknown>): boolean => {
+      if (scope === "all") return true;
+      const isUser = entry.profileId === "personal"
+        && (entry.taskId === null || entry.taskId === undefined || String(entry.taskId).trim() === "");
+      return scope === "user" ? isUser : !isUser;
+    };
+    const removed = history.filter(matchesScope).length;
+    state.history = history.filter((entry) => !matchesScope(entry));
     const receipt = {
       receiptId: "final-surface-history-cleared-receipt",
       kind: "browserHistoryCleared",
       taskId: state.activeTaskId,
       profileId: "task-disposable",
-      summary: `Cleared ${cleared} Browser history entries`,
+      summary: `Cleared ${removed} ${scope} Browser history entries`,
       t: Date.now(),
       sequence: 1,
-      evidence: { cleared },
+      evidence: { scope, removed },
     };
     (state.receipts as unknown[]).push(receipt);
     return receipt;
@@ -1178,6 +1238,280 @@ function createBrowserEvidenceArtifact(invokeArgs: Record<string, unknown>): Rec
   };
 }
 
+function prepareBrowserTeachDraft(invokeArgs: Record<string, unknown>): Record<string, unknown> {
+  const request = requireRecord(invokeArgs.request, "operator Teach prepare request");
+  const attemptId = String(request.attemptId ?? "");
+  const state = requireRecord(commandResults.shellx_browser_state, "Browser fixture state");
+  const sourceReceipt = (state.receipts as Array<Record<string, unknown>>).find((receipt) => (
+    receipt.kind === "browserFlightRecorderExported"
+    && requireRecord(receipt.evidence, "operator Teach source evidence").attemptId === attemptId
+  ));
+  if (!sourceReceipt) throw new Error("operator Teach prepare requires one exact Flight Recorder receipt");
+  const sourceEvidence = requireRecord(sourceReceipt.evidence, "operator Teach source evidence");
+  const taskId = String(sourceEvidence.taskId ?? "");
+  const browserTabId = String(sourceEvidence.browserTabId ?? "");
+  const task = (state.tasks as Array<Record<string, unknown>>).find((entry) => entry.taskId === taskId);
+  const tab = (state.tabs as Array<Record<string, unknown>>).find((entry) => entry.browserTabId === browserTabId && entry.taskId === taskId);
+  if (!task || !tab) throw new Error("operator Teach prepare lost its exact owned Browser task or tab");
+  browserTeachSequence += 1;
+  const draftId = `fixture-teach-draft-${browserTeachSequence}`;
+  const draft = {
+    draftId,
+    taskId,
+    browserTabId,
+    attemptId,
+    revision: 1,
+    revisionId: `fixture-teach-revision-${browserTeachSequence}-1`,
+    revisionSha256: createHash("sha256").update(`${draftId}:1`).digest("hex"),
+  };
+  browserTeachDrafts.set(draftId, draft);
+  return browserTeachPreparedResponse(draft);
+}
+
+function listBrowserTeachDrafts(invokeArgs: Record<string, unknown>): Record<string, unknown> {
+  const taskId = typeof invokeArgs.taskId === "string" ? invokeArgs.taskId : "";
+  const limit = invokeArgs.limit === 1 ? 1 : 8;
+  const drafts = [...browserTeachDrafts.values()]
+    .filter((draft) => draft.taskId === taskId)
+    .slice(-limit)
+    .reverse()
+    .map(browserTeachDraftSummary);
+  if (!taskId || drafts.length !== 1) throw new Error("operator Teach drafts request omitted its exact owned task or limit");
+  return { taskId, drafts, limit };
+}
+
+function reviseBrowserTeachDraft(invokeArgs: Record<string, unknown>): Record<string, unknown> {
+  const request = requireRecord(invokeArgs.request, "operator Teach revise request");
+  const draft = browserTeachDrafts.get(String(request.draftId ?? ""));
+  if (!draft || request.expectedRevisionId !== draft.revisionId
+    || request.expectedRevisionSha256 !== draft.revisionSha256
+    || request.goal !== "Confirm owned Browser Teach release fixture"
+    || request.revisionNote !== "release-surface-owned-fixture") {
+    throw new Error("operator Teach revise requires the exact owned current revision");
+  }
+  const parentRevisionId = draft.revisionId;
+  draft.revision += 1;
+  draft.revisionId = `fixture-teach-revision-${browserTeachSequence}-${draft.revision}`;
+  draft.revisionSha256 = createHash("sha256").update(`${draft.draftId}:${draft.revision}`).digest("hex");
+  return { revision: browserTeachRevision(draft, parentRevisionId), draft: browserTeachDraftSummary(draft) };
+}
+
+function approveBrowserTeachDraft(invokeArgs: Record<string, unknown>): Record<string, unknown> {
+  const request = requireRecord(invokeArgs.request, "operator Teach approval request");
+  const draft = browserTeachDrafts.get(String(request.draftId ?? ""));
+  if (!draft || request.revisionId !== draft.revisionId || request.revisionSha256 !== draft.revisionSha256) {
+    throw new Error("operator Teach approval requires the exact owned current revision");
+  }
+  const state = requireRecord(commandResults.shellx_browser_state, "Browser fixture state");
+  browserTeachSequence += 1;
+  const recipeId = `fixture-teach-recipe-${browserTeachSequence}`;
+  const sha256 = createHash("sha256").update(`${recipeId}:${draft.revisionSha256}`).digest("hex");
+  const approvalId = `fixture-teach-approval-${browserTeachSequence}`;
+  const receiptId = `fixture-teach-approved-receipt-${browserTeachSequence}`;
+  browserTeachRecipes.set(recipeId, { sha256, taskId: draft.taskId, browserTabId: draft.browserTabId, approvalId });
+  (state.receipts as Array<Record<string, unknown>>).push({
+    receiptId,
+    kind: "browserTeachDraftApproved",
+    taskId: draft.taskId,
+    profileId: "task-disposable",
+    summary: "Fixture Teach draft approved",
+    t: Date.now(),
+    sequence: browserTeachSequence,
+    evidence: { approvalId, draftId: draft.draftId, revisionId: draft.revisionId, recipeId, recipeSha256: sha256 },
+  });
+  return {
+    recipe: {
+      recipeId,
+      taskId: draft.taskId,
+      browserTabId: draft.browserTabId,
+      bytes: 128,
+      sha256,
+      steps: 0,
+      source: "shellx-browser-recorder",
+      teachSource: "shellx-browser-teach",
+      createdAtMs: Date.now(),
+    },
+    approval: { approvalId, draftId: draft.draftId, revisionId: draft.revisionId, recipeId, createdAtMs: Date.now(), status: "recipeDraftCreated" },
+  };
+}
+
+function rehearseBrowserTeachRecipe(invokeArgs: Record<string, unknown>): Record<string, unknown> {
+  const request = requireRecord(invokeArgs.request, "operator Teach rehearsal request");
+  const recipeId = String(request.recipeId ?? "");
+  const recipe = browserTeachRecipes.get(recipeId);
+  if (!recipe || request.sha256 !== recipe.sha256) throw new Error("operator Teach rehearsal requires the exact approved recipe");
+  const state = requireRecord(commandResults.shellx_browser_state, "Browser fixture state");
+  browserTeachSequence += 1;
+  const receiptId = `fixture-teach-rehearsal-receipt-${browserTeachSequence}`;
+  (state.receipts as Array<Record<string, unknown>>).push({
+    receiptId,
+    kind: "browserTeachRecipeRehearsed",
+    taskId: recipe.taskId,
+    profileId: "task-disposable",
+    summary: "Fixture Teach recipe rehearsed",
+    t: Date.now(),
+    sequence: browserTeachSequence,
+    evidence: { recipeId, sha256: recipe.sha256, dryRun: true, stepsApplied: 0 },
+  });
+  return {
+    recipeId,
+    sha256: recipe.sha256,
+    dryRun: true,
+    stepsPlanned: 0,
+    stepsSkipped: 0,
+    stepsApplied: 0,
+    receipt: { receiptId, kind: "browserTeachRecipeRehearsed", createdAtMs: Date.now(), sequence: browserTeachSequence },
+  };
+}
+
+function browserDeveloperModeDenialForOperator(invokeArgs: Record<string, unknown>): Record<string, unknown> {
+  const request = requireRecord(invokeArgs.request, "operator Browser developer inspection request");
+  const taskId = String(request.taskId ?? "");
+  const browserTabId = String(request.browserTabId ?? "");
+  const state = requireRecord(commandResults.shellx_browser_state, "Browser fixture state");
+  const task = (state.tasks as Array<Record<string, unknown>>).find((entry) => entry.taskId === taskId);
+  const tab = (state.tabs as Array<Record<string, unknown>>).find((entry) => entry.browserTabId === browserTabId && entry.taskId === taskId);
+  if (!task || !tab) throw new Error("operator Browser developer inspection requires one exact owned task and tab");
+  return {
+    schemaVersion: "sx.browserDeveloperInspection.v1",
+    ok: false,
+    status: "blocked",
+    requiredApproval: "browserDeveloperModeApproval",
+    inspected: { taskId, browserTabId, origin: null, path: null },
+    withheldSections: ["document", "console", "network", "performance", "issues"],
+    truncation: { engineUnavailable: false, developerModeRequired: true },
+    serializedBytes: 0,
+  };
+}
+
+function createBrowserOperatorDiagnosticReceipt(command: string, invokeArgs: Record<string, unknown>): Record<string, unknown> {
+  const request = requireRecord(invokeArgs.request, `${command} request`);
+  const taskId = String(request.taskId ?? "");
+  const browserTabId = String(request.browserTabId ?? "");
+  if (request.reason !== "Final release operator workflow fixture") {
+    throw new Error(`${command} fixture received an unexpected diagnostic reason`);
+  }
+  const state = requireRecord(commandResults.shellx_browser_state, "Browser fixture state");
+  const task = (state.tasks as Array<Record<string, unknown>>).find((entry) => entry.taskId === taskId);
+  const tab = (state.tabs as Array<Record<string, unknown>>).find((entry) => entry.browserTabId === browserTabId && entry.taskId === taskId);
+  if (!task || !tab) throw new Error(`${command} requires one exact owned Browser task and tab`);
+  browserTeachSequence += 1;
+  const kind = command.endsWith("export_har") ? "har" : "performance";
+  const artifactId = `fixture-${kind}-${browserTeachSequence}`;
+  const receiptId = `fixture-${kind}-receipt-${browserTeachSequence}`;
+  const sha256 = createHash("sha256").update(`${artifactId}:${taskId}:${browserTabId}`).digest("hex");
+  const receiptKind = kind === "har" ? "browserHarExported" : "browserPerformanceExported";
+  (state.receipts as Array<Record<string, unknown>>).push({
+    receiptId,
+    kind: receiptKind,
+    taskId,
+    profileId: "task-disposable",
+    summary: `Fixture ${kind} export`,
+    t: Date.now(),
+    sequence: browserTeachSequence,
+    evidence: { artifactId, browserTabId, sha256 },
+  });
+  return {
+    kind,
+    artifactId,
+    receiptId,
+    bytes: 128,
+    sha256,
+    createdAtMs: Date.now(),
+    ...(kind === "har" ? { entries: 0 } : {}),
+  };
+}
+
+function browserTeachDraftSummary(draft: {
+  draftId: string;
+  taskId: string;
+  browserTabId: string;
+  attemptId: string;
+  revision: number;
+  revisionId: string;
+  revisionSha256: string;
+}): Record<string, unknown> {
+  return {
+    draftId: draft.draftId,
+    bundleId: `fixture-teach-bundle-${draft.draftId}`,
+    bundleSha256: createHash("sha256").update(`bundle:${draft.draftId}`).digest("hex"),
+    taskId: draft.taskId,
+    browserTabId: draft.browserTabId,
+    attemptId: draft.attemptId,
+    currentRevisionId: draft.revisionId,
+    currentRevisionSha256: draft.revisionSha256,
+    revision: draft.revision,
+    stepCount: 0,
+    valueCount: 0,
+    blockingIssues: 0,
+    createdAtMs: 1_000 + draft.revision,
+  };
+}
+
+function browserTeachPreparedResponse(draft: {
+  draftId: string;
+  taskId: string;
+  browserTabId: string;
+  attemptId: string;
+  revision: number;
+  revisionId: string;
+  revisionSha256: string;
+}): Record<string, unknown> {
+  const summary = browserTeachDraftSummary(draft);
+  return {
+    bundle: {
+      schemaVersion: "sx.browserTeachBundle.v1",
+      bundleId: summary.bundleId,
+      createdAtMs: 1_000,
+      source: {
+        attemptId: draft.attemptId,
+        taskId: draft.taskId,
+        browserTabId: draft.browserTabId,
+        bytes: 128,
+        sha256: createHash("sha256").update(`attempt:${draft.attemptId}`).digest("hex"),
+        createdAtMs: 1_000,
+        ownerSessionId: null,
+        evidenceComplete: true,
+      },
+      steps: [], values: [], ambiguities: [], loss: [], bytes: 128, sha256: summary.bundleSha256,
+      redactionReceipt: { secretExposed: false },
+    },
+    revision: browserTeachRevision(draft, null),
+    draft: summary,
+  };
+}
+
+function browserTeachRevision(
+  draft: {
+    draftId: string;
+    taskId: string;
+    browserTabId: string;
+    attemptId: string;
+    revision: number;
+    revisionId: string;
+    revisionSha256: string;
+  },
+  parentRevisionId: string | null,
+): Record<string, unknown> {
+  const summary = browserTeachDraftSummary(draft);
+  return {
+    schemaVersion: "sx.browserTeachRevision.v1",
+    revisionId: draft.revisionId,
+    revision: draft.revision,
+    parentRevisionId,
+    bundleId: summary.bundleId,
+    bundleSha256: summary.bundleSha256,
+    goal: "Confirm owned Browser Teach release fixture",
+    steps: [], values: [], requiredVaultBindings: [], requiredCapabilities: [], ambiguityResolutions: [],
+    actionSummary: { reads: 0, derives: 1, actions: 0, assertions: 0, decisionPoints: 0, blockingIssues: 0 },
+    revisionNote: draft.revision === 1 ? null : "release-surface-owned-fixture",
+    authorSurface: "tauri-operator",
+    createdAtMs: 1_000 + draft.revision,
+    bytes: 128,
+    sha256: draft.revisionSha256,
+  };
+}
+
 function writeBrowserSettingsFixture(state: Record<string, unknown>): void {
   const directory = join(profileRoot, ".shellx");
   mkdirSync(directory, { recursive: true });
@@ -1300,8 +1634,7 @@ function requiredArg(name: string): string {
 }
 
 function authorized(request: IncomingMessage): boolean {
-  const current = readFileSync(join(profileRoot, ".shellx", "shellxagent.token"), "utf8").trim();
-  return request.headers.authorization === `Bearer ${current}`;
+  return request.headers.authorization === `Bearer ${runtimeToken}`;
 }
 
 async function requestJson(request: IncomingMessage): Promise<Record<string, unknown>> {

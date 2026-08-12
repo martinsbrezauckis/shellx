@@ -94,7 +94,7 @@ const hostSkill = read("skills/shellx-host/SKILL.md");
 const skillInstaller = read("src-tauri/src/skill_install.rs");
 const inventory = JSON.parse(read("release/surface-inventory.json")) as {
   counts: Record<string, number>;
-  items: Array<{ kind: string; name: string }>;
+  items: Array<{ kind: string; name: string; aliasOf?: string }>;
 };
 
 const implementedRoutes = implementedDebugApiRoutes();
@@ -109,11 +109,25 @@ assert.equal(inventory.counts["debug-api-route"], implementedRoutes.size);
 const hostTools = inventory.items.filter((item) => item.kind === "host-mcp-tool").map((item) => item.name);
 assert.equal(inventory.counts["host-mcp-tool"], hostTools.length);
 assert(architecture.includes(`contains ${hostTools.length} host-MCP surfaces`), "architecture must use the live Host MCP inventory count");
-const compactCatalogEntries = new Set(["capabilities_summary", "search_tool", "browser_read", "browser_act"]);
-const exactUnderlyingTools = hostTools.filter((name) => !compactCatalogEntries.has(name));
+const compactCatalogEntries = new Set([
+  "capabilities_summary", "search_tool", "browser_read", "browser_act", "cut_read", "cut_act",
+]);
+const dispatchOnlyAliases = new Set(
+  inventory.items
+    .filter((item) => item.kind === "host-mcp-tool" && typeof item.aliasOf === "string")
+    .map((item) => item.name),
+);
+const exactUnderlyingTools = hostTools.filter((name) => (
+  !compactCatalogEntries.has(name)
+  && name !== "host_read"
+  && name !== "host_act"
+  && !dispatchOnlyAliases.has(name)
+));
 assert(apiDocs.includes(`The ${exactUnderlyingTools.length} exact underlying Host schemas remain searchable`), "API guide must use the live searchable Host schema count");
 
-for (const gateway of ["capabilities_summary", "search_tool", "host_read", "host_act", "browser_read", "browser_act"]) {
+for (const gateway of [
+  "capabilities_summary", "search_tool", "host_read", "host_act", "browser_read", "browser_act", "cut_read", "cut_act",
+]) {
   assert(apiDocs.includes(`\`${gateway}\``), `API guide must name compact gateway ${gateway}`);
   assert(hostSkill.includes(gateway), `installed host skill must name compact gateway ${gateway}`);
 }

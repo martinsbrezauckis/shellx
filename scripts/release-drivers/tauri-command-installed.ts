@@ -5,6 +5,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmdirSync,
   rmSync,
@@ -41,6 +42,16 @@ import {
   prepareDebugApiBrowserSettleFixture,
   type DebugApiBrowserSettleFixture,
 } from "./debug-api-browser-settle-fixture";
+import {
+  teachPrepareRequest,
+  teachRevisionRequest,
+  verifyBrowserDeveloperModeDenial,
+  verifyBrowserTeachListed,
+  verifyBrowserTeachPrepared,
+  verifyBrowserTeachRevised,
+  type BrowserTeachDraftIdentity,
+  type BrowserTeachEvidenceFixture,
+} from "./browser-teach-developer-fixture";
 import {
   cleanupTauriCommandBrowserEngineSyncFixture,
   prepareTauriCommandBrowserEngineSyncFixture,
@@ -167,8 +178,16 @@ const COMMANDS = [
   "shellx_browser_grant_transfer",
   "shellx_browser_open_window",
   "shellx_browser_open_vault_panel",
+  "shellx_browser_operator_approve_teach_draft",
+  "shellx_browser_operator_developer_inspect",
   "shellx_browser_operator_evidence_summary",
+  "shellx_browser_operator_export_har",
   "shellx_browser_operator_export_flight_recorder",
+  "shellx_browser_operator_export_performance",
+  "shellx_browser_operator_list_teach_drafts",
+  "shellx_browser_operator_prepare_teach_draft",
+  "shellx_browser_operator_rehearse_teach_recipe",
+  "shellx_browser_operator_revise_teach_draft",
   "shellx_browser_replay_cowork_prompt_notifications",
   "shellx_browser_remove_site_shields",
   "shellx_browser_resolve_dialog",
@@ -279,6 +298,10 @@ type TokenRotationFixture = {
   mode: number;
   generated: string | null;
 };
+type BrowserHistoryMutationFixture = {
+  browser: DebugApiBrowserSettleFixture;
+  baselineCount: number;
+};
 type GitMutationFixture = {
   checkpointRoot: string;
   checkpointRootExisted: boolean;
@@ -301,6 +324,11 @@ type BrowserSettingMutationFixture = {
   settingsFile: { path: string; existed: boolean; content: Buffer | null; mode: number | null };
   downloadApiPath: string | null;
   downloadNodePath: string | null;
+};
+type BrowserTeachOperatorWorkflowFixture = {
+  evidence: BrowserTeachEvidenceFixture;
+  draft: BrowserTeachDraftIdentity | null;
+  recipe: { recipeId: string; sha256: string; approvalId: string } | null;
 };
 
 const OWNED_CONNECTION_ID = "final-surface-owned-connection";
@@ -358,6 +386,16 @@ const BROWSER_SETTING_MUTATION_COMMANDS = new Set<SupportedCommand>([
   "shellx_browser_update_developer_mode",
   "shellx_browser_update_download_folder",
   "shellx_browser_update_shields",
+]);
+const BROWSER_OPERATOR_WORKFLOW_COMMANDS = new Set<SupportedCommand>([
+  "shellx_browser_operator_approve_teach_draft",
+  "shellx_browser_operator_developer_inspect",
+  "shellx_browser_operator_export_har",
+  "shellx_browser_operator_export_performance",
+  "shellx_browser_operator_list_teach_drafts",
+  "shellx_browser_operator_prepare_teach_draft",
+  "shellx_browser_operator_rehearse_teach_recipe",
+  "shellx_browser_operator_revise_teach_draft",
 ]);
 const EXPECTED_REJECTIONS = new Map<SupportedCommand, string>([
   ["add_build_operator_note", "operator note is empty"],
@@ -422,8 +460,8 @@ const manifest: ReleaseSurfaceDriverManifest = {
     "scripts/release-drivers/windows-desktop-integration-lifecycle.ts",
     "scripts/probe-release-surface-windows-desktop-integration.ps1",
   ],
-  supportedFixtures: ["tauri:installed-read-model", "tauri:installed-vault-panel-closed", "tauri:attested-debug-token", "tauri:isolated-profile-marker", "tauri:isolated-session-slot", "tauri:isolated-local-grok-session", "tauri:isolated-absent-session", "tauri:isolated-absent-permission", "tauri:isolated-absent-mcp-children", "tauri:isolated-fail-closed-validation", "tauri:isolated-absent-state", "tauri:isolated-connection-mutation", "tauri:isolated-outside-connector-mutation", "tauri:isolated-file-mutation", "tauri:isolated-git-repository", "tauri:isolated-git-mutation", "tauri:isolated-user-data-store", "tauri:isolated-user-data-mutation", "tauri:isolated-vault-read-model", "tauri:isolated-vault-mutation", "tauri:isolated-vault-agent-state", "tauri:isolated-marketplace-mutation", "tauri:isolated-session-history", "tauri:isolated-session-history-mutation", "tauri:isolated-goal-state", "tauri:isolated-media-file", "tauri:isolated-screenshot-file", "tauri:isolated-token-rotation", "tauri:isolated-browser-setting-mutation", "tauri:isolated-browser-history", "tauri:isolated-browser-evidence", "tauri:isolated-browser-engine-sync", "tauri:isolated-native-picker-lease", "tauri:isolated-monotonic-event", "tauri:windows-desktop-integration-empty-baseline"],
-  supportedCleanups: ["tauri:delete-invoke-state", "tauri:close-vault-panel-after-retries", "tauri:preserve-owned-profile-marker", "tauri:drop-owned-session-slot", "tauri:abort-owned-grok-session-and-drop-slot", "tauri:delete-owned-connection", "tauri:delete-owned-outside-connector", "tauri:delete-owned-file-fixture", "tauri:delete-owned-git-fixture", "tauri:delete-owned-git-mutation", "tauri:read-only-user-data", "tauri:restore-empty-user-data", "tauri:delete-owned-session-history", "tauri:clear-owned-goal-state", "tauri:delete-owned-media-file", "tauri:delete-owned-screenshot", "tauri:delete-owned-vault-secret", "tauri:restore-vault-agent-state", "tauri:restore-attested-token", "tauri:restore-marketplace-files", "tauri:restore-browser-setting-state", "tauri:close-owned-browser-history-fixture", "tauri:close-owned-browser-evidence-fixture", "tauri:close-owned-browser-engine-sync", "tauri:clear-native-picker-lease-delete-fixture", "tauri:remove-owned-windows-desktop-integration", "tauri:discard-with-candidate-profile"],
+  supportedFixtures: ["tauri:installed-read-model", "tauri:installed-vault-panel-closed", "tauri:attested-debug-token", "tauri:isolated-profile-marker", "tauri:isolated-session-slot", "tauri:isolated-local-grok-session", "tauri:isolated-absent-session", "tauri:isolated-absent-permission", "tauri:isolated-absent-mcp-children", "tauri:isolated-fail-closed-validation", "tauri:isolated-absent-state", "tauri:isolated-connection-mutation", "tauri:isolated-outside-connector-mutation", "tauri:isolated-file-mutation", "tauri:isolated-git-repository", "tauri:isolated-git-mutation", "tauri:isolated-user-data-store", "tauri:isolated-user-data-mutation", "tauri:isolated-vault-read-model", "tauri:isolated-vault-mutation", "tauri:isolated-vault-agent-state", "tauri:isolated-marketplace-mutation", "tauri:isolated-session-history", "tauri:isolated-session-history-mutation", "tauri:isolated-goal-state", "tauri:isolated-media-file", "tauri:isolated-screenshot-file", "tauri:isolated-token-rotation", "tauri:isolated-browser-setting-mutation", "tauri:isolated-browser-history", "tauri:isolated-browser-evidence", "tauri:isolated-browser-operator-workflow", "tauri:isolated-browser-engine-sync", "tauri:isolated-native-picker-lease", "tauri:isolated-monotonic-event", "tauri:windows-desktop-integration-empty-baseline"],
+  supportedCleanups: ["tauri:delete-invoke-state", "tauri:close-vault-panel-after-retries", "tauri:preserve-owned-profile-marker", "tauri:drop-owned-session-slot", "tauri:abort-owned-grok-session-and-drop-slot", "tauri:delete-owned-connection", "tauri:delete-owned-outside-connector", "tauri:delete-owned-file-fixture", "tauri:delete-owned-git-fixture", "tauri:delete-owned-git-mutation", "tauri:read-only-user-data", "tauri:restore-empty-user-data", "tauri:delete-owned-session-history", "tauri:clear-owned-goal-state", "tauri:delete-owned-media-file", "tauri:delete-owned-screenshot", "tauri:delete-owned-vault-secret", "tauri:restore-vault-agent-state", "tauri:preserve-rotated-token-until-candidate-teardown", "tauri:restore-marketplace-files", "tauri:restore-browser-setting-state", "tauri:close-owned-browser-history-fixture", "tauri:close-owned-browser-evidence-fixture", "tauri:close-owned-browser-operator-workflow-and-candidate-teardown", "tauri:close-owned-browser-engine-sync", "tauri:clear-native-picker-lease-delete-fixture", "tauri:remove-owned-windows-desktop-integration", "tauri:discard-with-candidate-profile"],
   supportedOracles: COMMANDS.map(commandOracleId),
 };
 
@@ -477,6 +515,7 @@ async function exerciseCommand(
   let mediaFixture: TauriCommandMediaFixture | null = null;
   let goalFixture: GoalFixture | null = null;
   let fileFixture: FileMutationFixture | null = null;
+  let userDataBaseline: Json | null = null;
   let vaultFixture: VaultMutationFixture | null = null;
   let screenshotFixture: ScreenshotFixture | null = null;
   let tokenRotationFixture: TokenRotationFixture | null = null;
@@ -484,9 +523,11 @@ async function exerciseCommand(
   let marketplaceFixture: MarketplaceMutationFixture | null = null;
   let vaultAgentStateFixture: VaultAgentStateFixture | null = null;
   let browserSettingMutationFixture: BrowserSettingMutationFixture | null = null;
-  let browserHistoryFixture: DebugApiBrowserSettleFixture | null = null;
+  let browserHistoryFixture: BrowserHistoryMutationFixture | null = null;
   let browserEvidenceFixture: DebugApiBrowserSettleFixture | null = null;
   const browserEvidenceArtifactPaths = new Set<string>();
+  let browserOperatorWorkflowFixture: BrowserTeachOperatorWorkflowFixture | null = null;
+  const browserOperatorWorkflowArtifactPaths = new Set<string>();
   let browserEngineSyncFixture: TauriCommandBrowserEngineSyncFixture | null = null;
   let nativePickerFixture: NativePickerFixture | null = null;
   let vaultPanelInvokedAtMs: number | null = null;
@@ -559,10 +600,11 @@ async function exerciseCommand(
         await invokeTemporaryTauriCommand(webdriver, "shellx_browser_state", {}),
         "Browser history baseline",
       );
-      if (requireArray(state.history, "Browser history baseline").length !== 0) {
-        throw new Error("isolated candidate Browser history was not empty before the owned fixture");
-      }
-      browserHistoryFixture = await prepareDebugApiBrowserSettleFixture(debugApiConnectionForRequest(request));
+      const baselineCount = requireArray(state.history, "Browser history baseline").length;
+      browserHistoryFixture = {
+        browser: await prepareDebugApiBrowserSettleFixture(debugApiConnectionForRequest(request)),
+        baselineCount,
+      };
     }
     if (command === "shellx_browser_operator_evidence_summary"
       || command === "shellx_browser_operator_export_flight_recorder") {
@@ -578,6 +620,38 @@ async function exerciseCommand(
         browserEvidenceArtifactPaths.add(
           verifyOperatorFlightRecorderArtifact(prepared, request, browserEvidenceFixture).nodePath,
         );
+      }
+    }
+    if (BROWSER_OPERATOR_WORKFLOW_COMMANDS.has(command)) {
+      const browser = await prepareDebugApiBrowserSettleFixture(debugApiConnectionForRequest(request));
+      const evidence: BrowserTeachEvidenceFixture = { browser, attemptId: "", flightArtifactPath: "" };
+      const exported = await invokeTemporaryTauriCommand(
+        webdriver,
+        "shellx_browser_operator_export_flight_recorder",
+        browserEvidenceExportArgs(browser),
+      );
+      const artifact = verifyOperatorFlightRecorderArtifact(exported, request, browser);
+      evidence.attemptId = artifact.attemptId;
+      evidence.flightArtifactPath = artifact.nodePath;
+      browserOperatorWorkflowArtifactPaths.add(artifact.nodePath);
+      browserOperatorWorkflowFixture = { evidence, draft: null, recipe: null };
+      if (requiresOperatorTeachDraft(command)) {
+        const prepared = await invokeTemporaryTauriCommand(
+          webdriver,
+          "shellx_browser_operator_prepare_teach_draft",
+          { request: teachPrepareRequest(evidence) },
+        );
+        browserOperatorWorkflowFixture.draft = verifyBrowserTeachPrepared(prepared, evidence);
+      }
+      if (command === "shellx_browser_operator_rehearse_teach_recipe") {
+        const draft = browserOperatorWorkflowFixture.draft;
+        if (!draft) throw new Error("owned operator Teach draft is unavailable for rehearsal");
+        const approved = await invokeTemporaryTauriCommand(
+          webdriver,
+          "shellx_browser_operator_approve_teach_draft",
+          { request: { draftId: draft.draftId, revisionId: draft.revisionId, revisionSha256: draft.revisionSha256 } },
+        );
+        browserOperatorWorkflowFixture.recipe = verifyOperatorTeachApproval(approved, browserOperatorWorkflowFixture);
       }
     }
     if (command === "shellx_browser_sync_engine") {
@@ -604,7 +678,7 @@ async function exerciseCommand(
       if (prepared !== 128_000) throw new Error("drop_tab_session setup did not create the exact fallback context slot");
     }
     if (USER_DATA_MUTATION_COMMANDS.has(command)) {
-      await prepareUserDataMutation(webdriver, command);
+      userDataBaseline = await prepareUserDataMutation(webdriver, command);
     }
     if (goalFixture && command !== "set_goal_mode") {
       await prepareGoalState(webdriver, command, goalFixture);
@@ -627,6 +701,7 @@ async function exerciseCommand(
         marketplaceFixture,
         browserSettingMutationFixture,
         browserEvidenceFixture,
+        browserOperatorWorkflowFixture,
         browserEngineSyncFixture,
       ),
       EXPECTED_REJECTIONS.has(command),
@@ -656,6 +731,7 @@ async function exerciseCommand(
         mediaFixture,
         goalFixture,
         fileFixture,
+        userDataBaseline,
         vaultFixture,
         screenshotFixture,
         tokenRotationFixture,
@@ -664,6 +740,7 @@ async function exerciseCommand(
         browserSettingMutationFixture,
         browserHistoryFixture,
         browserEvidenceFixture,
+        browserOperatorWorkflowFixture,
         browserEngineSyncFixture,
       );
     if (command === "desktop_integration_install_windows_context_menu") {
@@ -779,7 +856,7 @@ async function exerciseCommand(
     if (browserHistoryFixture) {
       const cleanupError = await cleanupDebugApiBrowserSettleFixture(
         debugApiConnectionForRequest(request),
-        browserHistoryFixture,
+        browserHistoryFixture.browser,
       );
       if (cleanupError) cleanupErrors.push(cleanupError);
     }
@@ -792,10 +869,26 @@ async function exerciseCommand(
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
     }
+    for (const artifactPath of browserOperatorWorkflowArtifactPaths) {
+      try {
+        if (!existsSync(artifactPath)) throw new Error("owned Browser operator workflow evidence disappeared before cleanup");
+        rmSync(artifactPath);
+        if (existsSync(artifactPath)) throw new Error("owned Browser operator workflow evidence remained after cleanup");
+      } catch (error) {
+        cleanupErrors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
     if (browserEvidenceFixture) {
       const cleanupError = await cleanupDebugApiBrowserSettleFixture(
         debugApiConnectionForRequest(request),
         browserEvidenceFixture,
+      );
+      if (cleanupError) cleanupErrors.push(cleanupError);
+    }
+    if (browserOperatorWorkflowFixture) {
+      const cleanupError = await cleanupDebugApiBrowserSettleFixture(
+        debugApiConnectionForRequest(request),
+        browserOperatorWorkflowFixture.evidence.browser,
       );
       if (cleanupError) cleanupErrors.push(cleanupError);
     }
@@ -849,14 +942,15 @@ async function exerciseCommand(
     }
     if (USER_DATA_MUTATION_COMMANDS.has(command)) {
       try {
-        await cleanupUserDataMutation(webdriver);
+        if (!userDataBaseline) throw new Error("owned user-data baseline is unavailable for cleanup");
+        await cleanupUserDataMutation(webdriver, userDataBaseline);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
     }
     if (goalFixture) {
       try {
-        await cleanupGoalState(webdriver, goalFixture);
+        await cleanupGoalState(webdriver, request, goalFixture);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -1066,6 +1160,7 @@ function invocationArgs(
   marketplaceFixture: MarketplaceMutationFixture | null,
   browserSettingFixture: BrowserSettingMutationFixture | null,
   browserEvidenceFixture: DebugApiBrowserSettleFixture | null,
+  browserOperatorWorkflowFixture: BrowserTeachOperatorWorkflowFixture | null,
   browserEngineSyncFixture: TauriCommandBrowserEngineSyncFixture | null,
 ): Json {
   if (command === "abort_session") return { tabId: "final-surface-abort-session" };
@@ -1174,6 +1269,7 @@ function invocationArgs(
       },
     };
   }
+  if (command === "shellx_browser_clear_history") return { request: { scope: "all" } };
   if (command === "shellx_browser_finish_task") {
     return { taskId: "final-surface-absent-browser-task", status: "completed", reason: null };
   }
@@ -1208,6 +1304,31 @@ function invocationArgs(
   if (command === "shellx_browser_operator_export_flight_recorder") {
     if (!browserEvidenceFixture) throw new Error("owned Browser evidence fixture is unavailable");
     return browserEvidenceExportArgs(browserEvidenceFixture);
+  }
+  if (BROWSER_OPERATOR_WORKFLOW_COMMANDS.has(command)) {
+    if (!browserOperatorWorkflowFixture) throw new Error("owned Browser operator workflow fixture is unavailable");
+    const { evidence, draft, recipe } = browserOperatorWorkflowFixture;
+    if (command === "shellx_browser_operator_developer_inspect") {
+      return { request: { taskId: evidence.browser.taskId, browserTabId: evidence.browser.browserTabId } };
+    }
+    if (command === "shellx_browser_operator_export_har" || command === "shellx_browser_operator_export_performance") {
+      return {
+        request: {
+          taskId: evidence.browser.taskId,
+          browserTabId: evidence.browser.browserTabId,
+          reason: "Final release operator workflow fixture",
+        },
+      };
+    }
+    if (command === "shellx_browser_operator_prepare_teach_draft") return { request: teachPrepareRequest(evidence) };
+    if (!draft) throw new Error("owned Browser operator Teach draft is unavailable");
+    if (command === "shellx_browser_operator_list_teach_drafts") return { taskId: evidence.browser.taskId, limit: 1 };
+    if (command === "shellx_browser_operator_revise_teach_draft") return { request: teachRevisionRequest(draft) };
+    if (command === "shellx_browser_operator_approve_teach_draft") {
+      return { request: { draftId: draft.draftId, revisionId: draft.revisionId, revisionSha256: draft.revisionSha256 } };
+    }
+    if (!recipe) throw new Error("owned Browser operator Teach recipe is unavailable");
+    return { request: { recipeId: recipe.recipeId, sha256: recipe.sha256 } };
   }
   if (command === "shellx_browser_sync_engine") {
     if (!browserEngineSyncFixture) throw new Error("owned Browser engine-sync fixture is unavailable");
@@ -1550,6 +1671,129 @@ function verifyOperatorFlightRecorderArtifact(
   return { nodePath, attemptId };
 }
 
+function requiresOperatorTeachDraft(command: SupportedCommand): boolean {
+  return new Set<SupportedCommand>([
+    "shellx_browser_operator_approve_teach_draft",
+    "shellx_browser_operator_list_teach_drafts",
+    "shellx_browser_operator_revise_teach_draft",
+    "shellx_browser_operator_rehearse_teach_recipe",
+  ]).has(command);
+}
+
+function verifyOperatorTeachApproval(
+  value: unknown,
+  fixture: BrowserTeachOperatorWorkflowFixture,
+): { recipeId: string; sha256: string; approvalId: string } {
+  const draft = fixture.draft;
+  if (!draft) throw new Error("operator Teach approval requires an owned current draft");
+  const body = requireRecord(value, "operator Teach approval");
+  const recipe = requireRecord(body.recipe, "operator Teach approval recipe");
+  const approval = requireRecord(body.approval, "operator Teach approval receipt");
+  const recipeId = requireStringValue(recipe, "recipeId", "operator Teach approval recipe");
+  const sha256 = requireStringValue(recipe, "sha256", "operator Teach approval recipe");
+  const approvalId = requireStringValue(approval, "approvalId", "operator Teach approval receipt");
+  if (!/^[a-f0-9]{64}$/i.test(sha256) || recipe.taskId !== fixture.evidence.browser.taskId
+    || recipe.browserTabId !== fixture.evidence.browser.browserTabId || !Number.isSafeInteger(recipe.bytes)
+    || Number(recipe.bytes) <= 0 || !Number.isSafeInteger(recipe.steps) || Number(recipe.steps) < 0
+    || recipe.source !== "shellx-browser-recorder" || recipe.teachSource !== "shellx-browser-teach"
+    || approval.draftId !== draft.draftId || approval.revisionId !== draft.revisionId
+    || approval.recipeId !== recipeId || approval.status !== "recipeDraftCreated") {
+    throw new Error("operator Teach approval omitted its exact recipe identity and approval receipt");
+  }
+  return { recipeId, sha256, approvalId };
+}
+
+async function verifyBrowserOperatorWorkflowCommand(
+  command: SupportedCommand,
+  value: unknown,
+  webdriver: TauriCommandTransport,
+  fixture: BrowserTeachOperatorWorkflowFixture,
+): Promise<string> {
+  const { evidence, draft, recipe } = fixture;
+  if (command === "shellx_browser_operator_developer_inspect") {
+    verifyBrowserDeveloperModeDenial(value, evidence);
+    return "Installed operator IPC invoked the fixed Browser developer inspector for one exact owned task and confirmed the structured Developer Mode denial without enabling Developer Mode or mutating the page.";
+  }
+  if (command === "shellx_browser_operator_export_har" || command === "shellx_browser_operator_export_performance") {
+    const receipt = requireRecord(value, `${command} receipt`);
+    const kind = command.endsWith("export_har") ? "har" : "performance";
+    const expectedReceiptKind = kind === "har" ? "browserHarExported" : "browserPerformanceExported";
+    const artifactId = requireStringValue(receipt, "artifactId", `${command} receipt`);
+    const receiptId = requireStringValue(receipt, "receiptId", `${command} receipt`);
+    const sha256 = requireStringValue(receipt, "sha256", `${command} receipt`);
+    if (receipt.kind !== kind || !/^[a-f0-9]{64}$/i.test(sha256)
+      || !Number.isSafeInteger(receipt.bytes) || Number(receipt.bytes) <= 0
+      || !Number.isSafeInteger(receipt.createdAtMs) || Number(receipt.createdAtMs) <= 0
+      || (kind === "har" && (!Number.isSafeInteger(receipt.entries) || Number(receipt.entries) < 0))
+      || (kind === "performance" && receipt.entries !== undefined)) {
+      throw new Error(`${command} omitted its bounded operator artifact receipt`);
+    }
+    const state = requireRecord(await invokeTemporaryTauriCommand(webdriver, "shellx_browser_state", {}), `${command} readback`);
+    const receipts = requireArray(state.receipts, `${command} readback receipts`).map((entry) => requireRecord(entry, `${command} readback receipt`));
+    const matching = receipts.filter((entry) => entry.receiptId === receiptId
+      && entry.kind === expectedReceiptKind && entry.taskId === evidence.browser.taskId
+      && requireRecord(entry.evidence, `${command} readback receipt evidence`).artifactId === artifactId);
+    if (matching.length !== 1) throw new Error(`${command} did not retain one matching compact operator receipt`);
+    return `Installed operator IPC exported one bounded ${kind.toUpperCase()} artifact for the exact owned Browser task and confirmed its compact receipt without exposing an artifact path or payload.`;
+  }
+  if (command === "shellx_browser_operator_prepare_teach_draft") {
+    verifyBrowserTeachPrepared(value, evidence);
+    return "Installed operator IPC derived one immutable Teach draft and current revision from exact owned Flight Recorder evidence.";
+  }
+  if (!draft) throw new Error("operator Teach workflow command requires an owned draft");
+  if (command === "shellx_browser_operator_list_teach_drafts") {
+    verifyBrowserTeachListed(value, evidence, draft);
+    return "Installed operator IPC returned exactly one current Teach draft for the owned Browser task.";
+  }
+  if (command === "shellx_browser_operator_revise_teach_draft") {
+    const current = verifyBrowserTeachRevised(value, evidence, draft);
+    const listed = await invokeTemporaryTauriCommand(webdriver, "shellx_browser_operator_list_teach_drafts", {
+      taskId: evidence.browser.taskId,
+      limit: 1,
+    });
+    verifyBrowserTeachListed(listed, evidence, current);
+    return "Installed operator IPC created one compare-and-swap Teach revision and confirmed the exact current revision through a bounded draft readback.";
+  }
+  if (command === "shellx_browser_operator_approve_teach_draft") {
+    const approved = verifyOperatorTeachApproval(value, fixture);
+    await verifyOperatorTeachReceiptState(webdriver, evidence, approved.recipeId, null, "browserTeachDraftApproved", approved.approvalId);
+    return "Installed operator IPC created one Action Recipe V2 draft and matching approval receipt for the exact Teach revision without applying the recipe.";
+  }
+  if (!recipe) throw new Error("operator Teach rehearsal requires an owned approved recipe");
+  const rehearsed = requireRecord(value, "operator Teach rehearsal");
+  const receipt = requireRecord(rehearsed.receipt, "operator Teach rehearsal receipt");
+  if (rehearsed.recipeId !== recipe.recipeId || rehearsed.sha256 !== recipe.sha256
+    || rehearsed.dryRun !== true || rehearsed.stepsApplied !== 0
+    || !Number.isSafeInteger(rehearsed.stepsPlanned) || Number(rehearsed.stepsPlanned) < 0
+    || !Number.isSafeInteger(rehearsed.stepsSkipped) || Number(rehearsed.stepsSkipped) < 0
+    || receipt.kind !== "browserTeachRecipeRehearsed" || typeof receipt.receiptId !== "string") {
+    throw new Error("operator Teach rehearsal did not preserve its dry-run-only receipt boundary");
+  }
+  await verifyOperatorTeachReceiptState(webdriver, evidence, recipe.recipeId, String(receipt.receiptId), "browserTeachRecipeRehearsed");
+  return "Installed operator IPC dry-ran the exact approved Teach recipe with zero applied steps and confirmed one matching rehearsal receipt.";
+}
+
+async function verifyOperatorTeachReceiptState(
+  webdriver: TauriCommandTransport,
+  evidence: BrowserTeachEvidenceFixture,
+  recipeId: string,
+  receiptId: string | null,
+  kind: string,
+  approvalId?: string,
+): Promise<void> {
+  const state = requireRecord(await invokeTemporaryTauriCommand(webdriver, "shellx_browser_state", {}), "operator Teach receipt readback");
+  const receipts = requireArray(state.receipts, "operator Teach receipt readback rows")
+    .map((entry) => requireRecord(entry, "operator Teach receipt readback row"));
+  const matches = receipts.filter((entry) => {
+    const rowEvidence = requireRecord(entry.evidence, "operator Teach receipt readback evidence");
+    return (receiptId === null || entry.receiptId === receiptId)
+      && entry.kind === kind && entry.taskId === evidence.browser.taskId
+      && rowEvidence.recipeId === recipeId
+      && (approvalId === undefined || rowEvidence.approvalId === approvalId);
+  });
+  if (matches.length !== 1) throw new Error("operator Teach receipt readback did not retain one exact owned receipt");
+}
+
 function verifyExpectedRejection(command: SupportedCommand, completed: InvokeState): string {
   const expected = EXPECTED_REJECTIONS.get(command);
   if (!expected) throw new Error(`${command} has no declared rejection contract`);
@@ -1569,14 +1813,16 @@ async function verifyCommandResult(
   mediaFixture: TauriCommandMediaFixture | null,
   goalFixture: GoalFixture | null,
   fileFixture: FileMutationFixture | null,
+  userDataBaseline: Json | null,
   vaultFixture: VaultMutationFixture | null,
   screenshotFixture: ScreenshotFixture | null,
   tokenRotationFixture: TokenRotationFixture | null,
   gitMutationFixture: GitMutationFixture | null,
   marketplaceFixture: MarketplaceMutationFixture | null,
   browserSettingFixture: BrowserSettingMutationFixture | null,
-  browserHistoryFixture: DebugApiBrowserSettleFixture | null,
+  browserHistoryFixture: BrowserHistoryMutationFixture | null,
   browserEvidenceFixture: DebugApiBrowserSettleFixture | null,
+  browserOperatorWorkflowFixture: BrowserTeachOperatorWorkflowFixture | null,
   browserEngineSyncFixture: TauriCommandBrowserEngineSyncFixture | null,
 ): Promise<string> {
   if (command === "get_debug_token" || command === "shellxagent_token_read") {
@@ -1714,6 +1960,10 @@ async function verifyCommandResult(
     }
     return "Installed operator IPC returned one exact owned Flight Recorder row through a bounded summary, then removed its artifact, task, and tab.";
   }
+  if (BROWSER_OPERATOR_WORKFLOW_COMMANDS.has(command)) {
+    if (!browserOperatorWorkflowFixture) throw new Error("owned Browser operator workflow verifier fixture is unavailable");
+    return verifyBrowserOperatorWorkflowCommand(command, value, webdriver, browserOperatorWorkflowFixture);
+  }
   if (BROWSER_SETTING_MUTATION_COMMANDS.has(command)) {
     if (!browserSettingFixture) throw new Error("owned Browser setting mutation verifier is unavailable");
     return verifyBrowserSettingMutation(command, value, webdriver, browserSettingFixture);
@@ -1722,8 +1972,10 @@ async function verifyCommandResult(
     if (!browserHistoryFixture) throw new Error("owned Browser history fixture is unavailable");
     const receipt = requireRecord(value, command);
     const evidence = requireRecord(receipt.evidence, `${command}.evidence`);
-    if (receipt.kind !== "browserHistoryCleared" || evidence.cleared !== 1) {
-      throw new Error(`${command} did not report exactly one cleared owned history entry`);
+    if (receipt.kind !== "browserHistoryCleared"
+      || evidence.scope !== "all"
+      || evidence.removed !== browserHistoryFixture.baselineCount + 1) {
+      throw new Error(`${command} did not report its explicit all-scope owned history receipt`);
     }
     const state = requireRecord(
       await invokeTemporaryTauriCommand(webdriver, "shellx_browser_state", {}),
@@ -1732,7 +1984,7 @@ async function verifyCommandResult(
     if (requireArray(state.history, `${command} readback history`).length !== 0) {
       throw new Error(`${command} left Browser history entries behind`);
     }
-    return "Installed IPC cleared exactly one owned loopback Browser history entry and proved empty readback before task, tab, and candidate teardown.";
+    return "Installed IPC cleared the complete disposable-candidate Browser history, including the newly owned loopback entry, and proved empty readback before task, tab, and candidate teardown.";
   }
   if (command === "renderer_error") {
     requireVoidResult(value, command);
@@ -1752,7 +2004,8 @@ async function verifyCommandResult(
     return "Installed IPC recorded one exact bounded renderer-error event in the authenticated candidate ledger; the monotonic event ends with candidate teardown.";
   }
   if (USER_DATA_MUTATION_COMMANDS.has(command)) {
-    return verifyUserDataMutation(command, value, request, webdriver);
+    if (!userDataBaseline) throw new Error("owned user-data baseline is unavailable");
+    return verifyUserDataMutation(command, value, request, webdriver, userDataBaseline);
   }
   if (command === "append_session_log" || command === "rename_past_session" || command === "delete_session_files") {
     return verifySessionHistoryMutation(command, value, request, webdriver, sessionFixture);
@@ -1961,10 +2214,10 @@ async function verifyCommandResult(
   }
   if (command === "read_user_data") {
     const body = requireRecord(value, command);
-    if (Object.keys(body).length !== 0) {
-      throw new Error("isolated release profile unexpectedly contained persisted user data");
+    for (const key of ["releaseSurfaceWriteFixture", "releaseSurfaceDeleteFixture", "releaseSurfacePreservedFixture"]) {
+      if (key in body) throw new Error(`isolated release profile retained owned user-data key ${key}`);
     }
-    return "Installed IPC confirmed the isolated release profile starts with an empty user-data store; no user data was retained.";
+    return "Installed IPC returned the isolated renderer-owned user-data baseline without any retained release fixture; no values were retained.";
   }
   if (command === "read_session_jsonl" || command === "read_session_jsonl_tail") {
     return verifyTauriSessionJsonl(command, value, sessionFixture);
@@ -2417,22 +2670,27 @@ function readBrowserSettingsFixture(path: string, label: string): Json {
 async function prepareUserDataMutation(
   webdriver: TauriCommandTransport,
   command: SupportedCommand,
-): Promise<void> {
+): Promise<Json> {
   const baseline = requireRecord(
     await invokeTemporaryTauriCommand(webdriver, "read_user_data", {}),
     "isolated user-data baseline",
   );
-  if (Object.keys(baseline).length !== 0) {
-    throw new Error("isolated release profile did not start with an empty user-data store");
+  for (const key of [
+    "releaseSurfaceWriteFixture",
+    "releaseSurfaceDeleteFixture",
+    "releaseSurfacePreservedFixture",
+  ]) {
+    if (key in baseline) throw new Error(`isolated release profile retained owned user-data key ${key}`);
   }
   if (command === "delete_user_data_section") {
     const prepared = await invokeTemporaryTauriCommand(
       webdriver,
       "write_user_data",
-      { data: userDataDeleteFixture() },
+      { data: { ...baseline, ...userDataDeleteFixture() } },
     );
     requireVoidResult(prepared, "delete_user_data_section setup");
   }
+  return baseline;
 }
 
 function profileRootForRequest(request: ReleaseSurfaceDriverRequest): string {
@@ -2716,15 +2974,17 @@ function verifyTokenRotationResult(value: unknown, fixture: TokenRotationFixture
     throw new Error("shellxagent token regeneration did not atomically persist its return value");
   }
   fixture.generated = value;
-  return "Installed IPC rotated the isolated candidate token to a fresh 128-bit value, proved disk/readback agreement, and restored the original token without retaining either value.";
+  return "Installed IPC rotated the isolated candidate token to a fresh 128-bit value and proved disk/readback agreement; the disposable candidate retains the live token only until profile teardown.";
 }
 
 function cleanupTokenRotationFixture(fixture: TokenRotationFixture): string | null {
   try {
-    writeFileSync(fixture.nodePath, fixture.original, { flag: "w", mode: fixture.mode });
-    if (process.platform !== "win32") chmodSync(fixture.nodePath, fixture.mode);
-    if (!readFileSync(fixture.nodePath).equals(fixture.original)) {
-      return "original shellxagent token was not restored exactly";
+    const persisted = readFileSync(fixture.nodePath, "utf8").trim();
+    if (!fixture.generated || persisted !== fixture.generated) {
+      return "rotated shellxagent token did not remain aligned with the live candidate authority";
+    }
+    if (process.platform !== "win32" && (statSync(fixture.nodePath).mode & 0o777) !== fixture.mode) {
+      return "rotated shellxagent token permissions changed unexpectedly";
     }
     return null;
   } catch (error) {
@@ -2739,7 +2999,12 @@ function prepareGitMutationFixture(request: ReleaseSurfaceDriverRequest): GitMut
     request.platform,
   );
   const checkpointRootExisted = existsSync(checkpointRoot);
-  if (checkpointRootExisted) throw new Error("isolated candidate unexpectedly contained Git checkpoints");
+  if (checkpointRootExisted && !statSync(checkpointRoot).isDirectory()) {
+    throw new Error("isolated candidate Git checkpoint root was not a directory");
+  }
+  if (checkpointRootExisted && readdirSync(checkpointRoot).length !== 0) {
+    throw new Error("isolated candidate unexpectedly contained Git checkpoints");
+  }
   return { checkpointRoot, checkpointRootExisted, checkpointPath: null, worktreePath: null };
 }
 
@@ -3108,16 +3373,17 @@ async function verifyOutsideConnectorMutation(
 
 async function cleanupUserDataMutation(
   webdriver: TauriCommandTransport,
+  baseline: Json,
 ): Promise<void> {
   requireVoidResult(
-    await invokeTemporaryTauriCommand(webdriver, "write_user_data", { data: {} }),
+    await invokeTemporaryTauriCommand(webdriver, "write_user_data", { data: baseline }),
     "user-data cleanup",
   );
   const after = requireRecord(
     await invokeTemporaryTauriCommand(webdriver, "read_user_data", {}),
     "user-data cleanup readback",
   );
-  if (Object.keys(after).length !== 0) throw new Error("isolated user-data store was not restored to empty");
+  requireExactJson(after, baseline, "user-data cleanup");
 }
 
 async function verifyUserDataMutation(
@@ -3125,6 +3391,7 @@ async function verifyUserDataMutation(
   value: unknown,
   request: ReleaseSurfaceDriverRequest,
   webdriver: TauriCommandTransport,
+  baseline: Json,
 ): Promise<string> {
   if (command === "write_user_data") {
     requireVoidResult(value, command);
@@ -3135,8 +3402,12 @@ async function verifyUserDataMutation(
   if (command === "delete_user_data_section") {
     if (value !== true) throw new Error("delete_user_data_section did not remove its exact prepared key");
     const observed = await invokeTemporaryTauriCommand(webdriver, "read_user_data", {});
-    requireExactJson(observed, { releaseSurfacePreservedFixture: userDataPreservedValue() }, command);
-    return "Installed IPC removed exactly one prepared user-data section, preserved its sibling, and then restored the isolated store to empty; content was not retained.";
+    const expected = { ...baseline, releaseSurfacePreservedFixture: userDataPreservedValue() };
+    if ("releaseSurfaceDeleteFixture" in requireRecord(observed, command)) {
+      throw new Error("delete_user_data_section did not remove only its exact prepared key");
+    }
+    requireExactJson(observed, expected, command);
+    return "Installed IPC removed exactly one prepared user-data section, preserved its sibling and renderer baseline, and then restored the baseline; content was not retained.";
   }
   throw new Error(`${command} is not a user-data mutation`);
 }
@@ -3232,6 +3503,7 @@ async function prepareGoalState(
 
 async function cleanupGoalState(
   webdriver: TauriCommandTransport,
+  request: ReleaseSurfaceDriverRequest,
   fixture: GoalFixture,
 ): Promise<void> {
   requireVoidResult(
@@ -3244,6 +3516,16 @@ async function cleanupGoalState(
     { tabId: fixture.tabId },
   );
   if (after !== null) throw new Error("owned goal-state slot remained after cleanup");
+  const cleared = requireRecord(
+    await debugApiJson(request, "POST", "/goal/stop", {
+      tabId: fixture.tabId,
+      releaseTestClearState: true,
+    }),
+    "goal-state release-test cleanup",
+  );
+  if (cleared.ok !== true || cleared.releaseTestCleared !== true) {
+    throw new Error("owned goal-state tombstone was not cleared after the Tauri command");
+  }
   if (existsSync(fixture.nodeGoalPath)) rmSync(fixture.nodeGoalPath);
   if (existsSync(fixture.nodeGoalPath)) throw new Error("owned goal.md remained after cleanup");
 }
@@ -3458,16 +3740,23 @@ async function debugApiJson(
   path: string,
   body?: Json,
 ): Promise<unknown> {
-  const connection = debugApiConnectionForRequest(request);
-  const response = await fetch(`${connection.base}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${connection.token}`,
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(10_000),
-  });
+  const authRebindDeadline = Date.now() + 2_000;
+  let response: Response;
+  while (true) {
+    const connection = debugApiConnectionForRequest(request);
+    response = await fetch(`${connection.base}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${connection.token}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.status !== 401 || Date.now() >= authRebindDeadline) break;
+    await response.arrayBuffer();
+    await delay(100);
+  }
   const text = await response.text();
   if (!response.ok) throw new Error(`${method} ${path} failed ${response.status}: ${text.slice(0, 1_200)}`);
   return text.trim() ? JSON.parse(text) as unknown : null;
@@ -3543,6 +3832,17 @@ function commandOracleId(command: SupportedCommand): string {
   if (command === "shellx_browser_operator_export_flight_recorder") {
     return "tauri:shellx_browser_operator_export_flight_recorder:owned-artifact";
   }
+  if (command === "shellx_browser_operator_developer_inspect") {
+    return "tauri:shellx_browser_operator_developer_inspect:developer-mode-denial";
+  }
+  if (command === "shellx_browser_operator_export_har" || command === "shellx_browser_operator_export_performance") {
+    return `tauri:${command}:owned-artifact-receipt`;
+  }
+  if (command === "shellx_browser_operator_prepare_teach_draft") return `tauri:${command}:owned-draft`;
+  if (command === "shellx_browser_operator_list_teach_drafts") return `tauri:${command}:owned-draft-readback`;
+  if (command === "shellx_browser_operator_revise_teach_draft") return `tauri:${command}:owned-revision`;
+  if (command === "shellx_browser_operator_approve_teach_draft") return `tauri:${command}:owned-approval-receipt`;
+  if (command === "shellx_browser_operator_rehearse_teach_recipe") return `tauri:${command}:dry-run-receipt`;
   if (command === "shellx_browser_sync_engine") {
     return "tauri:shellx_browser_sync_engine:owned-engine-preserved";
   }

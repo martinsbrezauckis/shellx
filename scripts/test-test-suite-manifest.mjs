@@ -9,8 +9,8 @@ const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 
 assert.equal(pkg.scripts.pretest, "node scripts/run-test-suite.mjs pretest");
 assert.equal(pkg.scripts.test, "node scripts/run-test-suite.mjs test");
-assert.equal(TEST_SUITES.pretest.length, 76);
-assert.equal(TEST_SUITES.test.length, 105);
+assert.equal(TEST_SUITES.pretest.length, 79);
+assert.equal(TEST_SUITES.test.length, 112);
 assert.deepEqual(
   testCommandInvocation(["node", "scripts/example.mjs", "--check"]),
   { executable: process.execPath, args: ["scripts/example.mjs", "--check"] },
@@ -26,11 +26,11 @@ assert.throws(
   /unsupported test runtime/,
   "unknown suite runtimes must fail closed",
 );
-assert.deepEqual(testSuiteRange(["--from", "41", "--to", "105"], 105), { startIndex: 40, endIndex: 105 });
-assert.deepEqual(testSuiteRange([], 105), { startIndex: 0, endIndex: 105 });
-assert.throws(() => testSuiteRange(["--from", "0"], 105), /1 <= from <= to <= 105/);
-assert.throws(() => testSuiteRange(["--to", "106"], 105), /1 <= from <= to <= 105/);
-assert.throws(() => testSuiteRange(["--unknown", "1"], 105), /accepts only/);
+assert.deepEqual(testSuiteRange(["--from", "41", "--to", "112"], 112), { startIndex: 40, endIndex: 112 });
+assert.deepEqual(testSuiteRange([], 112), { startIndex: 0, endIndex: 112 });
+assert.throws(() => testSuiteRange(["--from", "0"], 112), /1 <= from <= to <= 112/);
+assert.throws(() => testSuiteRange(["--to", "113"], 112), /1 <= from <= to <= 112/);
+assert.throws(() => testSuiteRange(["--unknown", "1"], 112), /accepts only/);
 
 for (const [suiteName, commands] of Object.entries(TEST_SUITES)) {
   assert(Object.isFrozen(commands), `${suiteName} command registry must be immutable`);
@@ -50,6 +50,22 @@ for (const required of REQUIRED_RELEASE_GATES) {
 assert(
   TEST_SUITES.test.some((row) => row.join(" ") === "node scripts/test-test-suite-manifest.mjs"),
   "the explicit test registry must verify itself",
+);
+assert(
+  TEST_SUITES.test.some((row) => row.join(" ") === "tsx scripts/test-shellx-browser-disposable-profile.ts"),
+  "the disposable Browser storage contract must remain in the canonical test registry",
+);
+assert(
+  TEST_SUITES.test.some((row) => row.join(" ") === "tsx scripts/test-browser-tab-handoff-confirmation.ts"),
+  "the Browser tab handoff confirmation contract must remain in the canonical test registry",
+);
+assert(
+  TEST_SUITES.pretest.some((row) => row.join(" ") === "tsx scripts/test-release-surface-ui-browser-developer-evidence.ts"),
+  "the Browser Developer and Evidence installed driver must remain in the canonical pretest registry",
+);
+assert(
+  TEST_SUITES.pretest.some((row) => row.join(" ") === "tsx scripts/test-release-surface-ui-browser-teach-review-driver.ts"),
+  "the Browser Teach installed driver must remain in the canonical pretest registry",
 );
 
 console.log(`ShellX test-suite manifest passed: ${TEST_SUITES.pretest.length} pretest + ${TEST_SUITES.test.length} test commands`);

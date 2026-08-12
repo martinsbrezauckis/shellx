@@ -24,6 +24,13 @@ const EXPECTED_CI_SCRIPT = [
   "pnpm test",
 ].join(" && ");
 
+const REQUIRED_LINUX_NATIVE_PACKAGES = Object.freeze([
+  "libwebkit2gtk-4.1-dev",
+  "libappindicator3-dev",
+  "librsvg2-dev",
+  "patchelf",
+]);
+
 export function ciSurfaceCoverageErrors({
   ciSource,
   buildScript,
@@ -40,6 +47,9 @@ export function ciSurfaceCoverageErrors({
   const frontendJob = workflowJobBlock(ciSource, "frontend");
   if (!frontendJob.includes("run: pnpm run typecheck")) {
     errors.push("frontend CI does not invoke the canonical strict TypeScript gate");
+  }
+  if (!frontendJob.includes("run: pnpm build")) {
+    errors.push("frontend CI does not build the production bundle");
   }
   if (packageScripts?.typecheck !== EXPECTED_TYPECHECK_SCRIPT) {
     errors.push("typecheck must reject unused locals and parameters");
@@ -72,6 +82,25 @@ export function ciSurfaceCoverageErrors({
   }
   if (!ciSource.includes("debug-api,windows-test-manifest")) {
     errors.push("Windows Rust CI is missing the test-only Common Controls manifest feature");
+  }
+  const linuxNativeJob = workflowJobBlock(ciSource, "rust-linux-native");
+  if (!linuxNativeJob) {
+    errors.push("CI is missing the Linux native Rust job");
+  } else {
+    if (!linuxNativeJob.includes("runs-on: ubuntu-22.04")) {
+      errors.push("Linux native Rust CI must pin the Ubuntu 22.04 runner");
+    }
+    for (const packageName of REQUIRED_LINUX_NATIVE_PACKAGES) {
+      if (!linuxNativeJob.includes(packageName)) {
+        errors.push(`Linux native Rust CI is missing pinned package ${packageName}`);
+      }
+    }
+    if (!linuxNativeJob.includes("run: cargo check --all-targets --features debug-api")) {
+      errors.push("Linux native Rust CI is missing the debug-api cargo check gate");
+    }
+    if (!linuxNativeJob.includes("run: cargo test --all-targets --features debug-api")) {
+      errors.push("Linux native Rust CI is missing the debug-api cargo test gate");
+    }
   }
   if (!buildScript?.includes("WindowsAttributes::new_without_app_manifest()")) {
     errors.push("the Windows test manifest feature must suppress Tauri's duplicate app manifest resource");

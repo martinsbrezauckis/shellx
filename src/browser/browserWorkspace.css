@@ -205,8 +205,8 @@ button.shellx-browser-bookmark-list-row:hover {
   outline: none;
 }
 .shellx-browser-bookmark-row-main:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+  border-color: var(--shellx-browser-focus-ring);
+  box-shadow: 0 0 0 2px var(--shellx-browser-focus-ring);
 }
 .shellx-browser-bookmark-row-main span,
 .shellx-browser-bookmark-row-main small {

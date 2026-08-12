@@ -245,6 +245,20 @@ try {
   assert.deepEqual(validateReleaseSurfaceDriverReport(teardownRequest, teardownReport), []);
   assert.equal(releaseSurfaceDriverPhaseReportPassed(teardownReport), true);
 
+  const rotatedTokenRequest = structuredClone(request);
+  rotatedTokenRequest.assignments[0]!.cleanupId =
+    "tauri:preserve-rotated-token-until-candidate-teardown";
+  const rotatedTokenReport = sealReleaseSurfaceDriverReport(
+    rotatedTokenRequest,
+    structuredClone(report),
+  );
+  assert.equal(rotatedTokenReport.outcomes[0]?.cleanup, "deferred-candidate-teardown");
+  assert.equal(
+    rotatedTokenReport.outcomes[0]?.cleanupEvidence?.status,
+    "deferred-candidate-teardown",
+  );
+  assert.deepEqual(validateReleaseSurfaceDriverReport(rotatedTokenRequest, rotatedTokenReport), []);
+
   const forgedTeardownPass = structuredClone(teardownReport);
   forgedTeardownPass.outcomes[0]!.cleanup = "pass";
   forgedTeardownPass.outcomes[0]!.cleanupEvidence!.status = "pass";

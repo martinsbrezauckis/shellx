@@ -9,7 +9,7 @@ use crate::shellx_browser::lock_or_recover;
 
 #[cfg(windows)]
 pub(crate) const SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS: &str = concat!(
-    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+    "--disable-features=msWebOOUI,msPdfOOUI",
     " --autoplay-policy=no-user-gesture-required",
     " --disable-background-timer-throttling",
     " --disable-backgrounding-occluded-windows",

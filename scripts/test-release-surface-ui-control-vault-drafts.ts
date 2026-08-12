@@ -526,7 +526,7 @@ try {
   assert.equal(audit.vaultChangeSetupCount, 1);
   assert.equal(audit.vaultLockCount, 6);
   assert.equal(audit.vaultUnlockCount, 2);
-  assert.equal(audit.vaultResetCount, 30);
+  assert.equal(audit.vaultResetCount, 73);
   assert.equal(audit.vaultGrantsRefreshCount, 1);
   assert.equal(audit.vaultGrantRevokeCount, 1);
   assert.equal(audit.vaultRememberDeviceEnableCount, 2);

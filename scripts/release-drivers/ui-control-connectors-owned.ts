@@ -12,7 +12,7 @@ import type {
   ReleaseSurfaceDriverOutcome,
   ReleaseSurfaceDriverRequest,
 } from "../lib/release-surface-driver-protocol";
-import { postUi } from "./ui-control-work-preview-start";
+import { apiJson, postUi } from "./ui-control-work-preview-start";
 
 type Assignment = ReleaseSurfaceDriverRequest["assignments"][number];
 type Connection = { base: string; token: string };
@@ -222,10 +222,10 @@ async function cleanupFixture(
 }
 
 async function readSettingsTab(connection: Connection): Promise<SettingsTab> {
-  const state = await apiJson<Record<string, unknown>>(connection, "GET", "/state/ui");
-  const tab = String(state.settingsTab ?? "");
+  const state = await apiJson(connection, "GET", "/state/ui");
+  const tab = String(state.settingsTab ?? "general");
   if (!["general", "vault", "connections", "connectors", "desktop", "shellxagent", "data", "about"].includes(tab)) {
-    throw new Error("public UI state did not expose a supported Settings baseline tab");
+    throw new Error("Debug UI state did not expose a supported Settings baseline tab");
   }
   return tab as SettingsTab;
 }
@@ -271,15 +271,6 @@ async function assertUnsafeControlsDisabled(installedInput: InstalledInput): Pro
     observed += 1;
   }
   if (observed < 3) throw new Error("owned Connectors fixture exposed fewer than three bounded mutation locks");
-}
-
-async function apiJson<T>(connection: Connection, method: string, path: string): Promise<T> {
-  const response = await fetch(`${connection.base}${path}`, {
-    method,
-    headers: { authorization: `Bearer ${connection.token}` },
-  });
-  if (!response.ok) throw new Error(`${method} ${path} failed: ${response.status} ${await response.text()}`);
-  return await response.json() as T;
 }
 
 function emptyOutcome(assignment: Assignment, observedEffect: string): ReleaseSurfaceDriverOutcome {

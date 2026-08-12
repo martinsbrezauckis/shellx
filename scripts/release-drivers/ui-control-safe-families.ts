@@ -512,7 +512,7 @@ async function exerciseConnectorDraftLifecycle(
   );
   let baselineTab: SettingsTabId | null = null;
   try {
-    baselineTab = await readSettingsTab(connection);
+    baselineTab = await readSettingsTab(webdriver);
     await openSettingsTab(connection, webdriver, "connectors");
     if (!opening) {
       if (!(await readConnectorState(webdriver)).draftOpen) await clickSelector(webdriver, CONNECTOR_NEW);
@@ -550,7 +550,7 @@ async function exerciseConnectorProvider(connection: Connection, webdriver: WebD
   const outcome = emptyOutcome(assignment, "No native Connectors provider-draft effect was observed.");
   let baselineTab: SettingsTabId | null = null;
   try {
-    baselineTab = await readSettingsTab(connection);
+    baselineTab = await readSettingsTab(webdriver);
     await openConnectorDraft(connection, webdriver);
     await waitForConnectorState(webdriver, { providerKind: "telegram" });
     const control = await waitForReleaseSurfaceWebDriverElement(webdriver, CONNECTOR_PROVIDER_DISCORD);
@@ -578,7 +578,7 @@ async function exerciseConnectorState(connection: Connection, webdriver: WebDriv
   const outcome = emptyOutcome(assignment, "No native Connectors state-draft effect was observed.");
   let baselineTab: SettingsTabId | null = null;
   try {
-    baselineTab = await readSettingsTab(connection);
+    baselineTab = await readSettingsTab(webdriver);
     await openConnectorDraft(connection, webdriver);
     await clickSelector(webdriver, config.setup);
     await waitForConnectorState(webdriver, config.setupState);
@@ -608,7 +608,7 @@ async function exerciseConnectorTarget(connection: Connection, webdriver: WebDri
   const outcome = emptyOutcome(assignment, "No native Connectors target-draft effect was observed.");
   let baselineTab: SettingsTabId | null = null;
   try {
-    baselineTab = await readSettingsTab(connection);
+    baselineTab = await readSettingsTab(webdriver);
     await openConnectorDraft(connection, webdriver);
     const control = await waitForReleaseSurfaceWebDriverElement(webdriver, CONNECTOR_TARGET);
     outcome.present = "pass";
@@ -639,7 +639,7 @@ async function exerciseConnectorText(connection: Connection, webdriver: WebDrive
   const outcome = emptyOutcome(assignment, "No native Connectors text-draft effect was observed.");
   let baselineTab: SettingsTabId | null = null;
   try {
-    baselineTab = await readSettingsTab(connection);
+    baselineTab = await readSettingsTab(webdriver);
     if (config.draftScoped) await openConnectorDraft(connection, webdriver);
     else await openSettingsTab(connection, webdriver, "connectors");
     const control = await waitForReleaseSurfaceWebDriverElement(webdriver, config.control);
@@ -1453,11 +1453,14 @@ async function openConnectorDraft(connection: Connection, webdriver: WebDriver):
 
 type SettingsTabId = "general" | "vault" | "connections" | "connectors" | "desktop" | "shellxagent" | "data" | "about";
 
-async function readSettingsTab(connection: Connection): Promise<SettingsTabId> {
-  const state = await apiJson<Record<string, unknown>>(connection, "GET", "/state/ui");
-  const tab = String(state.settingsTab ?? "");
+async function readSettingsTab(webdriver: WebDriver): Promise<SettingsTabId> {
+  const tab = String(await executeReleaseSurfaceWebDriverScript(
+    webdriver,
+    "return window.localStorage.getItem(arguments[0]);",
+    ["shellX.settingsTab.v2"],
+  ) ?? "general");
   if (!["general", "vault", "connections", "connectors", "desktop", "shellxagent", "data", "about"].includes(tab)) {
-    throw new Error("public UI state did not expose a supported Settings tab");
+    throw new Error("renderer storage did not expose a supported Settings tab");
   }
   return tab as SettingsTabId;
 }
@@ -1630,7 +1633,7 @@ async function cleanupConnectorSettings(
   if (baselineTab) await cleanupStep(outcome, async () => {
     if (await visibleElement(webdriver, SETTINGS_DIALOG)) {
       const selector = `[data-debug-id='settings-tab-${baselineTab}']`;
-      if ((await readSettingsTab(connection)) !== baselineTab) await clickSelector(webdriver, selector);
+      if ((await readSettingsTab(webdriver)) !== baselineTab) await clickSelector(webdriver, selector);
       await waitForReleaseSurfaceWebDriverElement(webdriver, `${selector}[aria-selected='true']`);
     }
   });

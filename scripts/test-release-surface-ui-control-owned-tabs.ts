@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { FinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
@@ -13,6 +13,7 @@ import {
 } from "./fixtures/release-surface-controller-binding-fixture";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
 import { UI_CONTROL_INSTALLED_CONTROLLER_FILES } from "./release-drivers/ui-control-installed-manifest";
+import { UI_CONTROL_BOUNDED_INSTALLED_SURFACE_NAMES } from "./release-drivers/ui-control-bounded-installed-assignments";
 
 const root = resolve(import.meta.dirname, "..");
 const temp = mkdtempSync(join(tmpdir(), "shellx-ui-control-owned-tabs-"));
@@ -43,6 +44,8 @@ const FORWARD = "[data-debug-id='shellx-browser-forward']";
 const RELOAD = "[data-debug-id='shellx-browser-reload']";
 const LOCK_TAB = "[data-debug-id='shellx-browser-lock-tab']";
 const HANDOFF_TAB = "[data-debug-id='shellx-browser-handoff-tab']";
+const HANDOFF_CANCEL = "[data-debug-id='shellx-browser-handoff-cancel']";
+const HANDOFF_CONFIRM = "[data-debug-id='shellx-browser-handoff-confirm']";
 const TAKE_BACK_TAB = "[data-debug-id='shellx-browser-take-back-tab']";
 const controllerFiles = [...UI_CONTROL_INSTALLED_CONTROLLER_FILES];
 const debugControllerFiles = [
@@ -86,8 +89,19 @@ try {
         cleanupId: assignment.cleanupId,
       };
     });
-  assert.equal(assignments.length, 11, "the owned Browser tab fixture must cover exactly eleven promoted controls");
-  assert.equal(new Set(assignments.map((assignment) => assignment.surface.id)).size, 11);
+  const handoffControls = assignments.filter(({ surface }) => (
+    surface.kind === "ui-control" && surface.source === "src/browser/components/BrowserTabHandoffConfirmation.tsx"
+  ));
+  assert.deepEqual(
+    handoffControls.map((assignment) => assignment.surface.name).sort(),
+    [
+      'src/browser/components/BrowserTabHandoffConfirmation.tsx:[data-debug-id="shellx-browser-handoff-cancel"]',
+      'src/browser/components/BrowserTabHandoffConfirmation.tsx:[data-debug-id="shellx-browser-handoff-confirm"]',
+    ],
+    "the owned handoff fixture must close exactly the two handoff-sheet controls",
+  );
+  assert.equal(assignments.length, 13, "the owned Browser tab fixture must cover exactly thirteen promoted controls");
+  assert.equal(new Set(assignments.map((assignment) => assignment.surface.id)).size, 13);
   assert(assignments.every((assignment) => (
     assignment.cleanupId === "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
   )));
@@ -104,12 +118,17 @@ try {
         cleanupId: assignment.cleanupId,
       };
     });
-  assert.equal(debugAssignments.length, 2, "both trusted Browser delegation markers must use the native lifecycle");
+  const handoffMarkers = debugAssignments.filter(({ surface }) => (
+    surface.kind === "ui-debug-surface" && surface.source === "src/browser/components/BrowserTabHandoffConfirmation.tsx"
+  ));
+  assert.equal(handoffMarkers.length, 7, "the owned handoff fixture must close exactly seven durable handoff markers");
+  assert.equal(debugAssignments.length, 9, "all trusted Browser delegation markers must use the native lifecycle");
   assert(debugAssignments.every((assignment) => (
     assignment.fixtureId === "ui:browser-owned-tab-delegation-marker"
     && assignment.oracleId === "ui:activation:owned-browser-tab-delegation-marker"
     && assignment.cleanupId === "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window"
   )));
+  assert(handoffControls.every((assignment) => UI_CONTROL_BOUNDED_INSTALLED_SURFACE_NAMES.has(assignment.surface.name)));
 
   writeFileSync(tokenPath, token, { encoding: "utf8", mode: 0o600 });
   fixture = spawn(process.execPath, [
@@ -190,11 +209,11 @@ try {
     "--import", "tsx", resolve(root, "scripts/release-drivers/ui-control-installed.ts"),
     "--request", requestPath,
     "--out", reportPath,
-  ], { cwd: root, encoding: "utf8", timeout: 90_000 });
-  assert.equal(run.status, 0, run.stderr || run.stdout);
+  ], { cwd: root, encoding: "utf8", timeout: 360_000 });
+  assert.equal(run.status, 0, `${run.stderr || run.stdout}\n${existsSync(reportPath) ? readFileSync(reportPath, "utf8") : ""}`);
   const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
   assert.equal(report.schema, "shellx/release-surface-driver-report@7");
-  assert.equal(report.outcomes.length, 11);
+  assert.equal(report.outcomes.length, 13);
   assert(report.outcomes.every((outcome) => (
     outcome.present === "pass"
     && outcome.invoke === "pass"
@@ -234,10 +253,10 @@ try {
     "--import", "tsx", resolve(root, "scripts/release-drivers/ui-debug-browser-delegation-installed.ts"),
     "--request", debugRequestPath,
     "--out", debugReportPath,
-  ], { cwd: root, encoding: "utf8", timeout: 90_000 });
-  assert.equal(debugRun.status, 0, debugRun.stderr || debugRun.stdout);
+  ], { cwd: root, encoding: "utf8", timeout: 360_000 });
+  assert.equal(debugRun.status, 0, `${debugRun.stderr || debugRun.stdout}\n${existsSync(debugReportPath) ? readFileSync(debugReportPath, "utf8") : ""}`);
   const debugReport = JSON.parse(readFileSync(debugReportPath, "utf8")) as ReleaseSurfaceDriverReport;
-  assert.equal(debugReport.outcomes.length, 2);
+  assert.equal(debugReport.outcomes.length, 9);
   assert(debugReport.outcomes.every((outcome) => (
     outcome.present === "pass"
     && outcome.invoke === "pass"
@@ -257,8 +276,8 @@ try {
     optionsOpen: boolean;
     homeValue: string;
     homeStored: string | null;
-    pendingAlert: unknown;
-    acceptedAlertCount: number;
+    pendingHandoff: unknown;
+    vaultGrantCount: number;
     clickedSelectors: string[];
   };
   assert.deepEqual(audit.tabs, []);
@@ -268,9 +287,9 @@ try {
   assert.equal(audit.optionsOpen, false);
   assert.equal(audit.homeValue, "https://example.com/");
   assert.equal(audit.homeStored, null);
-  assert.equal(audit.pendingAlert, null);
-  assert.equal(audit.acceptedAlertCount, 4);
-  for (const selector of [HEADER_BROWSER, NEW_TAB, NEW_DISPOSABLE_TAB, HOME, BACK, FORWARD, RELOAD, LOCK_TAB, HANDOFF_TAB, TAKE_BACK_TAB]) {
+  assert.equal(audit.pendingHandoff, null);
+  assert.equal(audit.vaultGrantCount, 0, "Browser handoff proof must not mint or consume a Vault grant");
+  for (const selector of [HEADER_BROWSER, NEW_TAB, NEW_DISPOSABLE_TAB, HOME, BACK, FORWARD, RELOAD, LOCK_TAB, HANDOFF_TAB, HANDOFF_CANCEL, HANDOFF_CONFIRM, TAKE_BACK_TAB]) {
     assert(audit.clickedSelectors.includes(selector), `fixture did not observe ${selector}`);
   }
   assert(audit.clickedSelectors.some((selector) => selector.startsWith("[data-debug-id='shellx-browser-tab-")));
@@ -280,10 +299,10 @@ try {
     "--import", "tsx", resolve(root, "scripts/release-drivers/ui-control-installed.ts"),
     "--request", requestPath,
     "--out", reportPath,
-  ], { cwd: root, encoding: "utf8", timeout: 90_000 });
+  ], { cwd: root, encoding: "utf8", timeout: 360_000 });
   assert.notEqual(overwrite.status, 0, "owned Browser tab evidence output must remain create-only");
 
-  console.log("Release surface owned Browser tabs passed: 11 controls plus 2 trusted delegation markers");
+  console.log("Release surface owned Browser tabs passed: 13 controls plus 9 trusted delegation markers");
 } finally {
   process.off("SIGINT", onTerminationSignal);
   process.off("SIGTERM", onTerminationSignal);

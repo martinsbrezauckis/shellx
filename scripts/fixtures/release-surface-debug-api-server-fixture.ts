@@ -25,6 +25,17 @@ const browserTasks = new Map<string, string>();
 const browserTaskCallerSessions = new Map<string, string | null>();
 const browserTabs = new Map<string, string>();
 const browserTaskUrls = new Map<string, string>();
+const browserFlightAttempts = new Map<string, { taskId: string; browserTabId: string }>();
+const browserTeachDrafts = new Map<string, {
+  draftId: string;
+  taskId: string;
+  browserTabId: string;
+  attemptId: string;
+  revision: number;
+  revisionId: string;
+  revisionSha256: string;
+}>();
+let browserTeachIndex = 0;
 const browserTabLocks = new Map<string, Record<string, unknown>>();
 let activeBrowserTabId: string | null = null;
 let bookmarkReceiptIndex = 0;
@@ -613,6 +624,26 @@ const server = createServer(async (request, response) => {
     const body = await requestJson(request);
     const taskId = typeof body.taskId === "string" ? body.taskId : "";
     const browserTabId = typeof body.browserTabId === "string" ? body.browserTabId : "";
+    if (browserTasks.get(taskId) === "running" && browserTabs.get(browserTabId) === taskId
+      && body.action === "fillRef" && body.selector === "#shellx-release-teach-input"
+      && body.value === "owned-teach-fixture-input") {
+      browserMonotonicIndex += 1;
+      return json(response, 200, {
+        ok: true,
+        status: "applied",
+        taskId,
+        currentUrl: browserTaskUrls.get(taskId),
+        requiredApproval: null,
+        requiresEngine: true,
+        message: "Browser input applied with its value redacted",
+        receipt: monotonicReceipt("browserEngineActionApplied", taskId, {
+          browserTabId,
+          action: "fillRef",
+          selector: "#shellx-release-teach-input",
+          valueRedacted: true,
+        }),
+      });
+    }
     if (browserTasks.get(taskId) !== "running" || browserTabs.get(browserTabId) !== taskId
       || body.action !== "verify" || body.key !== "text"
       || body.value !== "Owned Browser settle fixture ready") {
@@ -650,6 +681,7 @@ const server = createServer(async (request, response) => {
     browserArtifactIndex += 1;
     const attemptId = `release-flight-attempt-${browserArtifactIndex}`;
     const createdAtMs = Date.now();
+    browserFlightAttempts.set(attemptId, { taskId, browserTabId });
     const artifact = writeBrowserArtifact("shellx-browser-flight-recorder", attemptId, createdAtMs, {
       schemaVersion: "sx.flightRecorder.v1",
       attemptId,
@@ -682,6 +714,48 @@ const server = createServer(async (request, response) => {
         attemptId, path: artifact.path, bytes: artifact.bytes, sha256: artifact.sha256,
       }),
     });
+  }
+  if (path === "/browser/teach/prepare" && request.method === "POST") {
+    const body = await requestJson(request);
+    const callerSessionId = browserCallerId(request);
+    const attemptId = typeof body.attemptId === "string" ? body.attemptId : "";
+    const source = browserFlightAttempts.get(attemptId);
+    if (!callerSessionId || !source || browserTasks.get(source.taskId) !== "completed"
+      || browserTaskCallerSessions.get(source.taskId) !== callerSessionId) {
+      return json(response, 403, { ok: false, error: "Browser Teach task owner control is required" });
+    }
+    browserTeachIndex += 1;
+    const draft = browserTeachDraftFixture(source, attemptId, browserTeachIndex);
+    browserTeachDrafts.set(draft.draftId, draft);
+    return json(response, 200, browserTeachPreparedResponse(draft));
+  }
+  if (path === "/browser/teach/revise" && request.method === "POST") {
+    const body = await requestJson(request);
+    const callerSessionId = browserCallerId(request);
+    const draftId = typeof body.draftId === "string" ? body.draftId : "";
+    const draft = browserTeachDrafts.get(draftId);
+    if (!callerSessionId || !draft || browserTaskCallerSessions.get(draft.taskId) !== callerSessionId
+      || body.expectedRevisionId !== draft.revisionId || body.expectedRevisionSha256 !== draft.revisionSha256
+      || body.goal !== "Confirm owned Browser Teach release fixture"
+      || body.revisionNote !== "release-surface-owned-fixture") {
+      return json(response, 403, { ok: false, error: "Browser Teach revision requires the exact task owner and current revision" });
+    }
+    draft.revision += 1;
+    const parentRevisionId = draft.revisionId;
+    draft.revisionId = `release-teach-revision-${browserTeachIndex}-${draft.revision}`;
+    draft.revisionSha256 = createHash("sha256").update(`${draft.draftId}:${draft.revision}`).digest("hex");
+    return json(response, 200, browserTeachRevisedResponse(draft, parentRevisionId));
+  }
+  if (path === "/browser/developer/inspect" && request.method === "POST") {
+    const body = await requestJson(request);
+    const callerSessionId = browserCallerId(request);
+    const taskId = typeof body.taskId === "string" ? body.taskId : "";
+    const browserTabId = typeof body.browserTabId === "string" ? body.browserTabId : "";
+    if (!callerSessionId || browserTaskCallerSessions.get(taskId) !== callerSessionId
+      || browserTabs.get(browserTabId) !== taskId) {
+      return json(response, 403, { ok: false, error: "Browser developer inspection task owner control is required" });
+    }
+    return json(response, 200, browserDeveloperModeDenial(taskId, browserTabId));
   }
   if (path === "/browser/evaluations" && request.method === "POST") {
     const body = await requestJson(request);
@@ -1466,7 +1540,7 @@ const server = createServer(async (request, response) => {
     }
     return json(response, 200, {
       summary: { pass: 1, fail: 0, elapsedMs: 0, version: "1.0" },
-      checks: [{ name: "auth", status: "pass", detail: "shellxagent token ok" }],
+      checks: [{ name: "auth", status: "pass", detail: "Debug API token authority initialized" }],
     });
   }
   if (path === "/github/pr/create" && request.method === "POST") {
@@ -2541,6 +2615,21 @@ const server = createServer(async (request, response) => {
     return json(response, 200, settings);
   }
   if (path === "/connections") return json(response, 200, { presets: connections });
+  if (requestUrl.pathname === "/browser/teach/drafts") {
+    const callerSessionId = browserCallerId(request);
+    const taskId = requestUrl.searchParams.get("taskId") ?? "";
+    const requestedLimit = Number(requestUrl.searchParams.get("limit") ?? "8");
+    const limit = Number.isSafeInteger(requestedLimit) ? Math.min(20, Math.max(1, requestedLimit)) : 8;
+    if (!callerSessionId || browserTaskCallerSessions.get(taskId) !== callerSessionId) {
+      return json(response, 403, { ok: false, error: "Browser Teach task owner control is required" });
+    }
+    const drafts = [...browserTeachDrafts.values()]
+      .filter((draft) => draft.taskId === taskId)
+      .slice(-limit)
+      .reverse()
+      .map(browserTeachDraftSummary);
+    return json(response, 200, { taskId, drafts, limit });
+  }
   if (path === "/browser/summary") {
     return json(response, 200, {
       browserProtocolVersion: "shellx-browser/1",
@@ -3586,6 +3675,144 @@ function bookmarkReceipt(kind: string): Record<string, unknown> {
     sequence: bookmarkReceiptIndex,
     evidence: {},
   };
+}
+
+function browserTeachDraftFixture(
+  source: { taskId: string; browserTabId: string },
+  attemptId: string,
+  index: number,
+): {
+  draftId: string;
+  taskId: string;
+  browserTabId: string;
+  attemptId: string;
+  revision: number;
+  revisionId: string;
+  revisionSha256: string;
+} {
+  const draftId = `release-teach-draft-${index}`;
+  return {
+    draftId,
+    taskId: source.taskId,
+    browserTabId: source.browserTabId,
+    attemptId,
+    revision: 1,
+    revisionId: `release-teach-revision-${index}-1`,
+    revisionSha256: createHash("sha256").update(`${draftId}:1`).digest("hex"),
+  };
+}
+
+function browserTeachDraftSummary(draft: {
+  draftId: string;
+  taskId: string;
+  browserTabId: string;
+  attemptId: string;
+  revision: number;
+  revisionId: string;
+  revisionSha256: string;
+}): Record<string, unknown> {
+  return {
+    draftId: draft.draftId,
+    bundleId: `release-teach-bundle-${draft.draftId}`,
+    bundleSha256: createHash("sha256").update(`bundle:${draft.draftId}`).digest("hex"),
+    taskId: draft.taskId,
+    browserTabId: draft.browserTabId,
+    attemptId: draft.attemptId,
+    currentRevisionId: draft.revisionId,
+    currentRevisionSha256: draft.revisionSha256,
+    revision: draft.revision,
+    stepCount: 1,
+    valueCount: 0,
+    blockingIssues: 0,
+    createdAtMs: 1_000 + draft.revision,
+  };
+}
+
+function browserTeachPreparedResponse(draft: ReturnType<typeof browserTeachDraftFixture>): Record<string, unknown> {
+  const summary = browserTeachDraftSummary(draft);
+  const bundle = {
+    schemaVersion: "sx.browserTeachBundle.v1",
+    bundleId: summary.bundleId,
+    createdAtMs: 1_000,
+    source: {
+      attemptId: draft.attemptId,
+      taskId: draft.taskId,
+      browserTabId: draft.browserTabId,
+      bytes: 128,
+      sha256: createHash("sha256").update(`attempt:${draft.attemptId}`).digest("hex"),
+      createdAtMs: 1_000,
+      ownerSessionId: browserTaskCallerSessions.get(draft.taskId),
+      evidenceComplete: true,
+    },
+    steps: [],
+    values: [],
+    ambiguities: [],
+    loss: [],
+    bytes: 128,
+    sha256: summary.bundleSha256,
+    redactionReceipt: { secretExposed: false },
+  };
+  return {
+    bundle,
+    revision: browserTeachRevision(draft, null),
+    draft: summary,
+  };
+}
+
+function browserTeachRevisedResponse(
+  draft: ReturnType<typeof browserTeachDraftFixture>,
+  parentRevisionId: string,
+): Record<string, unknown> {
+  return {
+    revision: browserTeachRevision(draft, parentRevisionId),
+    draft: browserTeachDraftSummary(draft),
+  };
+}
+
+function browserTeachRevision(
+  draft: ReturnType<typeof browserTeachDraftFixture>,
+  parentRevisionId: string | null,
+): Record<string, unknown> {
+  const summary = browserTeachDraftSummary(draft);
+  return {
+    schemaVersion: "sx.browserTeachRevision.v1",
+    revisionId: draft.revisionId,
+    revision: draft.revision,
+    parentRevisionId,
+    bundleId: summary.bundleId,
+    bundleSha256: summary.bundleSha256,
+    goal: "Confirm owned Browser Teach release fixture",
+    steps: [],
+    values: [],
+    requiredVaultBindings: [],
+    requiredCapabilities: [],
+    ambiguityResolutions: [],
+    actionSummary: { reads: 0, derives: 1, actions: 0, assertions: 0, decisionPoints: 0, blockingIssues: 0 },
+    revisionNote: draft.revision === 1 ? null : "release-surface-owned-fixture",
+    authorSurface: "debug-api",
+    createdAtMs: 1_000 + draft.revision,
+    bytes: 128,
+    sha256: draft.revisionSha256,
+  };
+}
+
+function browserDeveloperModeDenial(taskId: string, browserTabId: string): Record<string, unknown> {
+  return {
+    schemaVersion: "sx.browserDeveloperInspection.v1",
+    ok: false,
+    status: "blocked",
+    requiredApproval: "browserDeveloperModeApproval",
+    inspected: { taskId, browserTabId, origin: null, path: null },
+    withheldSections: ["document", "console", "network", "performance", "issues"],
+    truncation: { engineUnavailable: false, developerModeRequired: true },
+    serializedBytes: 0,
+  };
+}
+
+function browserCallerId(request: IncomingMessage): string | null {
+  const value = request.headers["x-shellx-mcp-caller-id"];
+  const caller = Array.isArray(value) ? value[0] : value;
+  return typeof caller === "string" && caller.trim() ? caller.trim() : null;
 }
 
 function vaultE2eReceipt(

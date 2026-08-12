@@ -1,4 +1,6 @@
-use crate::shellx_browser::{BrowserClearHistoryRequest, BrowserReceipt, ShellxBrowserRegistry};
+use crate::shellx_browser::{
+    BrowserClearHistoryRequest, BrowserHistoryScope, BrowserReceipt, ShellxBrowserRegistry,
+};
 
 pub const BROWSER_DESTRUCTIVE_ACTION_OPERATOR_ERROR_CODE: &str =
     "browser_destructive_action_requires_operator";
@@ -15,8 +17,12 @@ pub fn mark_browser_destructive_action_operator_approved(request: &mut BrowserCl
 
 pub fn clear_browser_history_from_operator(
     registry: &ShellxBrowserRegistry,
+    scope: BrowserHistoryScope,
 ) -> Result<BrowserReceipt, String> {
-    let mut request = BrowserClearHistoryRequest::default();
+    let mut request = BrowserClearHistoryRequest {
+        scope,
+        operator_approved: false,
+    };
     mark_browser_destructive_action_operator_approved(&mut request);
     registry.clear_history(request)
 }

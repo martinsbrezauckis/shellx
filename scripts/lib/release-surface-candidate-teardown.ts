@@ -26,7 +26,7 @@ import {
 } from "./release-surface-macos-native-input";
 
 export const RELEASE_SURFACE_CANDIDATE_TEARDOWN_SCHEMA =
-  "shellx/release-surface-candidate-teardown@2";
+  "shellx/release-surface-candidate-teardown@3";
 
 type CandidateTeardownPlatform = Extract<
   ReleaseSurfaceCandidateAttestation["platform"],
@@ -36,6 +36,7 @@ type CandidateTeardownPlatform = Extract<
 export interface ReleaseSurfaceCandidateTeardownReceipt {
   schema: typeof RELEASE_SURFACE_CANDIDATE_TEARDOWN_SCHEMA;
   mode: "final-frozen-candidate";
+  executionWindow: "immediately-before-publish" | "targeted-post-matrix";
   status: "pass";
   platform: CandidateTeardownPlatform;
   sourceCommit: string;
@@ -99,6 +100,9 @@ export function createReleaseSurfaceCandidateTeardownReceipt(
   return {
     schema: RELEASE_SURFACE_CANDIDATE_TEARDOWN_SCHEMA,
     mode: "final-frozen-candidate",
+    executionWindow: input.driverRunManifest.targetedClosure
+      ? "targeted-post-matrix"
+      : "immediately-before-publish",
     status: "pass",
     platform: input.platform,
     sourceCommit: candidate.sourceCommit,
@@ -190,8 +194,14 @@ function validateCandidateTeardownInputs(input: ReleaseSurfaceCandidateTeardownI
   if (manifest.schema !== RELEASE_SURFACE_DRIVER_RUN_SCHEMA || manifest.mode !== "final-frozen-candidate") {
     errors.push("candidate teardown requires the exact driver run manifest schema");
   }
-  if (manifest.targetedClosure) {
-    errors.push("candidate teardown requires the complete discovery manifest, not a targeted closure");
+  if (manifest.targetedClosure && manifest.targetedClosure.driverIds.length === 0) {
+    errors.push("targeted candidate teardown requires at least one exact driver id");
+  }
+  if (manifest.targetedClosure?.surfaceIds
+    && (manifest.targetedClosure.surfaceIds.length === 0
+      || new Set(manifest.targetedClosure.surfaceIds).size !== manifest.targetedClosure.surfaceIds.length
+      || manifest.targetedClosure.surfaceIds.some((id) => !id.trim()))) {
+    errors.push("surface-level targeted candidate teardown requires unique non-empty surface ids");
   }
   if (manifest.platform !== input.platform
     || manifest.sourceCommit !== candidate.sourceCommit

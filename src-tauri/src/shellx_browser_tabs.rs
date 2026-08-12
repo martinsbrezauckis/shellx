@@ -130,6 +130,17 @@ impl ShellxBrowserRegistry {
     pub fn focus_tab(&self, request: BrowserTabFocusRequest) -> Result<BrowserTabResponse, String> {
         let mut state = lock_or_recover(&self.state);
         let tab_idx = find_tab_index(&state, &request.browser_tab_id)?;
+        if state.tabs[tab_idx].profile_id == "task-disposable"
+            && state.tabs[tab_idx]
+                .task_id
+                .as_deref()
+                .and_then(|task_id| state.tasks.iter().find(|task| task.task_id == task_id))
+                .is_some_and(|task| browser_task_is_terminal(&task.status))
+        {
+            return Err(
+                "terminal task-disposable Browser tabs cannot remount native storage".to_string(),
+            );
+        }
         if let Some(response) = tab_lock_denial_for_parts(
             &mut state,
             tab_idx,
@@ -240,6 +251,7 @@ impl ShellxBrowserRegistry {
             .iter()
             .any(|item| item.engine_id == closed_engine_id)
         {
+            state.engine_event_bindings.remove(&closed_engine_id);
             state
                 .engine_pool
                 .engines

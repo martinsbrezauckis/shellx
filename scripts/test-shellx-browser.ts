@@ -23,10 +23,10 @@ const browserActionScriptSource = readRequiredSource("src-tauri/src/shellx_brows
 const browserCoordinateInputSource = readRequiredSource("src-tauri/src/shellx_browser_coordinate_input.rs");
 const browserActionsSource = readRequiredSource("src-tauri/src/shellx_browser_actions.rs");
 const browserObservationsSource = readRequiredSource("src-tauri/src/shellx_browser_observations.rs");
-const browserBookmarksSource = readRequiredSource("src-tauri/src/shellx_browser_bookmarks.rs");
+const browserBookmarksSource = readRequiredSource("src-tauri/src/shellx_browser_bookmarks.rs") + readRequiredSource("src-tauri/src/shellx_browser_history.rs");
 const browserCdpRuntimeSource = readRequiredSource("src-tauri/src/shellx_browser_cdp_runtime.rs");
 const browserEngineSource = readRequiredSource("src-tauri/src/shellx_browser_engine.rs");
-const browserEngineRuntimeSource = ["src-tauri/src/shellx_browser_engine_runtime.rs", "src-tauri/src/shellx_browser_initialization.rs", "src-tauri/src/shellx_browser_webview_runtime.rs"].map(readRequiredSource).join("\n");
+const browserEngineRuntimeSource = ["src-tauri/src/shellx_browser_engine_runtime.rs", "src-tauri/src/shellx_browser_engine_lifecycle.rs", "src-tauri/src/shellx_browser_engine_webview_config.rs", "src-tauri/src/shellx_browser_initialization.rs", "src-tauri/src/shellx_browser_webview_runtime.rs"].map(readRequiredSource).join("\n");
 const browserRenderedCheckSource = readRequiredSource("src-tauri/src/shellx_browser_rendered_check.rs");
 const browserVaultRuntimeSource = readRequiredSource("src-tauri/src/shellx_browser_vault.rs");
 const browserWindowOpenRuntimeSource = readRequiredSource("src-tauri/src/shellx_browser_window_open_runtime.rs");
@@ -91,7 +91,7 @@ const uiSource = (() => {
 })();
 const browserTypesSource = readRequiredSource("src/browser/types.ts"), browserAppConstantsSource = readRequiredSource("src/browser/browserAppConstants.ts");
 const browserNativeSecurityNoticeSource = readRequiredSource("src/browser/components/BrowserNativeSecurityNotice.tsx");
-const browserPreferencesSource = readRequiredSource("src/browser/browserPreferences.ts");
+const browserPreferencesSource = readRequiredSource("src/browser/browserPreferences.ts"), browserHistoryClearSource = readRequiredSource("src/browser/historyClear.ts");
 const browserPresentationSource = readRequiredSource("src/browser/browserPresentation.ts");
 const browserDebugBridgeSource = readRequiredSource("src/browser/debugBridge.ts");
 const browserTaskIntentSource = readRequiredSource("src/browser/taskIntent.ts");
@@ -340,6 +340,7 @@ assert(rustBrowser.includes("BrowserPermissionResolveRequest"), "Browser page pe
 assert(
   browserEngineRuntimeSource.includes("PermissionRequestedEventHandler") &&
     browserEngineRuntimeSource.includes("add_PermissionRequested") &&
+    browserEngineRuntimeSource.includes("record_bound_engine_permission_event") &&
     browserEngineRuntimeSource.includes("browser_permission_report_initialization_script") &&
     browserEngineRuntimeSource.includes("__shellxPermissionRequests") &&
     browserActionsSource.includes("record_queued_browser_permission_reports") &&
@@ -348,6 +349,7 @@ assert(
     browserScriptsSource.includes("ensureShellxPermissionReporter"),
   "native WebView and action-drained page permission requests are bridged into Browser permission events",
 );
+assert(browserEngineRuntimeSource.indexOf("args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)") < browserEngineRuntimeSource.indexOf("record_bound_engine_permission_event") && rustBrowserPrompts.includes("engine_event_bindings") && rustBrowserPrompts.includes("Some(event_binding)") && browserTabsSource.includes("state.engine_event_bindings.remove(&closed_engine_id)"), "native permission evidence is generation-bound and logical tab close retires the old callback identity after preserving DENY");
 assert(rustBrowser.includes("BrowserPopupEvent"), "Browser popup events are modeled");
 assert(rustBrowser.includes("BrowserNetworkEntry"), "Browser network metadata entries are modeled");
 assert(rustBrowser.includes("BrowserScreenshotArtifact"), "Browser actions can return structured screenshot artifacts");
@@ -524,7 +526,7 @@ assert(
 assert(browserEngineRuntimeSource.includes("WebviewBuilder::new"), "Browser engine creates a native child webview");
 assert(browserEngineRuntimeSource.includes("add_child"), "Browser engine mounts inside the Browser chrome window");
 assert(browserEngineRuntimeSource.includes("set_bounds"), "Browser engine can resize to the viewport");
-const windowsWebviewArgs = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding";
+const windowsWebviewArgs = "--disable-features=msWebOOUI,msPdfOOUI --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding";
 assert(
   [browserEngineRuntimeSource, browserWindowOpenRuntimeSource, browserRenderedCheckSource, browserVaultRuntimeSource].every((source) => source.includes("SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS")) &&
     browserEngineRuntimeSource.includes("additional_browser_args(SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS)") && tauriConfSource.includes(`"additionalBrowserArgs": "${windowsWebviewArgs}"`) &&
@@ -763,11 +765,7 @@ assert(
 assert(rustBrowserShields.includes("__shellxPrivacyStats"), "Browser ad filter exposes local privacy stats for UI and tests");
 assert(rustBrowser.includes("reapply_browser_privacy_to_active_engine"), "Browser reapplies ad filtering when privacy or shields settings change");
 assert(browserEngineRuntimeSource.includes("install_strict_browser_request_filter"), "Browser strict ad mode installs native request filtering");
-assert(
-  browserEngineRuntimeSource.includes("AddWebResourceRequestedFilter") &&
-    browserEngineRuntimeSource.includes("WebResourceRequestedEventHandler"),
-  "Browser strict ad mode hooks WebView2 request interception",
-);
+assert(browserEngineRuntimeSource.includes("AddWebResourceRequestedFilter") && browserEngineRuntimeSource.includes("WebResourceRequestedEventHandler") && browserEngineRuntimeSource.includes("record_bound_strict_request_blocked") && rustBrowser.includes("record_bound_strict_request_blocked") && rustBrowser.includes("Some(event_binding)"), "Browser strict ad mode hooks WebView2 request interception");
 assert(rustBrowser.includes("browserStrictRequestBlocked"), "Browser strict request filtering emits block receipts");
 assert(rustBrowserShields.includes("window.fetch = function") && rustBrowserShields.includes("navigator.sendBeacon = function"), "Browser ad filter guards fetch and beacon tracker calls");
 assert(
@@ -1932,7 +1930,7 @@ assert(
 );
 assert(
   browserApiSource.includes("shellx_browser_clear_history") &&
-    uiSource.includes("clearBrowserHistoryCommand"),
+    browserHistoryClearSource.includes("clearBrowserHistoryCommand"),
   "browser UI can call the local clear-history command",
 );
 assert(browserMenusSource.includes("data-debug-id=\"shellx-browser-toggle-right-sidebar\""), "browser UI can hide the right sidebar");
@@ -2108,7 +2106,7 @@ assert(
     uiSource.includes("useNativeEngineSync"),
   "browser UI syncs the native engine",
 );
-assert(uiSource.includes("inTauri()"), "browser UI gates native engine sync when rendered in web-only visual QA");
+assert(uiSource.includes("inTauri()") && uiSource.includes('const activeBrowserTabTerminal = ["completed", "blocked", "aborted"].includes') && uiSource.includes("tabs.length > 0 && !activeBrowserTabTerminal"), "browser UI gates native engine sync in web QA and after terminal disposable task cleanup");
 assert(
   browserChromeSource.includes("shellx-browser-chrome-shell") &&
     browserChromeSource.includes("data-debug-id=\"shellx-browser-chrome-menu-dock\"") &&
@@ -2477,7 +2475,7 @@ assert(rustBuildScript.includes("SHELLX_BUILD_COMMIT") && rustBuildScript.includ
 assert(rustBuildMetadata.includes('BROWSER_PROTOCOL_VERSION: &str = "1.5.0"') && rustBuildMetadata.includes("BROWSER_SCHEMA_REVISION") && rustBuildMetadata.includes("browserCoworkSession"), "Browser protocol, schema, and cowork identity are centralized");
 assert(debugApi.includes("browserProtocolVersion") && debugApi.includes("browserSchemaRevision") && debugApi.includes("browserFeatureFlags"), "Debug API health and discovery expose Browser protocol identity");
 assert(hostMcp.includes("browserProtocolVersion") && hostMcp.includes("browserSchemaRevision") && hostMcp.includes("buildCommit"), "Host MCP initialize exposes matching Browser and build identity");
-assert(debugApi.includes("write_private_text_file") && debugApi.includes(".mode(0o600)"), "shellxagent.json is written as a private local descriptor on Unix");
+assert(debugApi.includes("write_private_text_file") && debugApi.includes("atomic_write_private_file"), "shellxagent.json delegates to the atomic private-file writer");
 assert(apiDocs.includes("shellxagent.json") && apiDocs.includes("rawCdpExposed: false"), "API docs describe shellxagent.json without raw CDP");
 assert(apiDocs.includes("~/.shellx/agent-docs/shellx-host/SKILL.md") && apiDocs.includes("direct CLI sessions stay unchanged"), "API docs describe session-scoped host activation and product-owned docs");
 assert(skillInstallSource.includes('legacy_global_shellx_host_skill_targets_for_home') && skillInstallSource.includes('join("agent-docs")') && skillInstallSource.includes("SHELLX_SESSION_RULES"), "Installer runtime migrates global host skills and keeps the manifest in ShellX-owned docs");
@@ -2531,7 +2529,7 @@ for (const tool of [
 ]) {
   assert(hostMcp.includes(`"name": "${tool}"`), `Host MCP exposes ${tool}`);
 }
-assert(hostMcp.includes("tool_browser_action") && hostMcp.includes("advertised_tool_specs") && hostMcp.includes("browser_entry_tool_specs()") && hostMcp.includes("specs.extend(browser_tool_specs())") && hostMcp.includes("DEFAULT_OBSERVE_STRUCTURED_BYTES") && hostMcp.includes("mcpSerializedBytes") && hostMcp.includes("mcpApproxTokens") && apiDocs.includes("32-tool, 82,893-byte") && apiDocs.includes("two-tool, 2,331-byte") && apiDocs.includes("3,000-byte") && moduleReadme.includes("32 compatibility schemas (82,893 bytes)") && !moduleReadme.includes("29 compatibility schemas"), "Host MCP Browser actions use one wrapper, advertise the compact gateway, retain all 32 searchable aliases, and enforce the measured observation budget");
+assert(hostMcp.includes("tool_browser_action") && hostMcp.includes("advertised_tool_specs") && hostMcp.includes("browser_entry_tool_specs()") && hostMcp.includes("specs.extend(browser_tool_specs())") && hostMcp.includes("DEFAULT_OBSERVE_STRUCTURED_BYTES") && hostMcp.includes("mcpSerializedBytes") && hostMcp.includes("mcpApproxTokens") && apiDocs.includes("32-tool, 82,893-byte") && apiDocs.includes("two-tool, 2,601-byte") && apiDocs.includes("3,000-byte") && moduleReadme.includes("32 compatibility schemas (82,893 bytes)") && !moduleReadme.includes("29 compatibility schemas"), "Host MCP Browser actions use one wrapper, advertise the compact gateway, retain all 32 searchable aliases, and enforce the measured observation budget");
 assert(hostMcp.includes("/browser/action"), "Host MCP Browser action tools call the Browser Debug API action route");
 assert(hostMcp.includes("browser_action_body"), "Host MCP maps MCP Browser tool arguments to the Debug API body");
 assert(hostMcp.includes("browserTabId must also pass the owning taskId"), "Host MCP Browser tools reject raw taskless browserTabId targeting");
@@ -2555,7 +2553,7 @@ assert(hostMcp.includes('"browser_resolve_dialog"'), "Host MCP exposes task-owne
 assert(hostMcp.includes("personal/delegated user tabs and page permissions still require the ShellX operator UI"), "Host MCP scopes Browser dialog resolution away from user-owned prompts");
 assert(hostMcp.includes('"browser_screenshot"'), "Host MCP capability summary includes Browser screenshots");
 assert(hostMcp.includes("Do not dump raw `/browser/state` or observation JSON into the current working directory or user folders"), "Host MCP warns agents not to dump raw Browser state/observe JSON into cwd/user folders");
-assert(hostMcp.includes('debug_api_get_json("/browser/summary", 10)') && hostMcp.includes('args.get("include")') && hostMcp.includes('debug_api_get_json(&path, timeout_secs)') && hostMcp.includes('"browser_check"'), "Host MCP exposes bounded browser_state and UI-silent browser_check paths");
+assert(hostMcp.includes('debug_api_get_json_for_caller("/browser/summary", 10, caller_session_id)') && hostMcp.includes('args.get("include")') && hostMcp.includes('debug_api_get_json_for_caller(&path, timeout_secs, caller_session_id)') && hostMcp.includes('"browser_check"'), "Host MCP exposes caller-scoped bounded browser_state and UI-silent browser_check paths");
 assert(hostMcp.includes("browser_mcp_settle_path") && !hostMcp.includes("Duration::from_millis(75)"), "Host MCP navigation uses the compact settle endpoint instead of 75 ms full-state polling");
 assert(shellxHostSkill.includes("prior observations") && shellxHostSkill.includes("opt-in slices"), "ShellX host skill teaches bounded Browser state orientation");
 assert(hostMcp.includes("Do not write raw observation dumps to the current working directory or user folders"), "Browser observe tool description points agents to trace artifacts instead of raw dumps");

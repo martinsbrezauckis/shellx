@@ -3,6 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { apiDeleteJson, apiGet, apiPostJson, debugApiBase, getDebugToken } from "../lib/debug-api";
 import { inTauri } from "../lib/tauri-bridge";
 import type {
+  BrowserTeachApprovalRequest,
+  BrowserTeachPrepareRequest,
+  BrowserTeachRehearsalRequest,
+  BrowserTeachReviseRequest,
+} from "./browserTeach";
+import type {
   BrowserAutonomy,
   BrowserPersonalLockSettings,
   BrowserReceipt,
@@ -11,6 +17,7 @@ import type {
   BrowserTask,
   BrowserVisibleAdMode,
 } from "./types";
+import type { BrowserHistoryScope } from "./historyScope";
 
 export interface BrowserEngineSyncRequest {
   engineId: string | null;
@@ -172,6 +179,111 @@ export async function exportBrowserFlightRecorderForOperator(request: {
   return await invoke<unknown>("shellx_browser_operator_export_flight_recorder", { request });
 }
 
+export interface BrowserDeveloperInspectionRequest {
+  taskId: string;
+  browserTabId?: string | null;
+}
+
+export interface BrowserDeveloperArtifactExportRequest {
+  taskId: string;
+  browserTabId?: string | null;
+  reason?: string | null;
+}
+
+export interface BrowserDeveloperModeApprovalRequest {
+  taskId: string;
+  fullCdpAccess: true;
+}
+
+export interface BrowserDeveloperModeUpdateRequest {
+  enabled: false;
+  fullCdpAccess: false;
+  approvedHosts: [];
+}
+
+/** Operator adapter for the D1 fixed-CDP inspector; never general CDP IPC. */
+export async function inspectBrowserPageForOperator(
+  request: BrowserDeveloperInspectionRequest,
+): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Developer inspection is available only inside the ShellX desktop app.");
+  }
+  return await invoke<unknown>("shellx_browser_operator_developer_inspect", { request });
+}
+
+/** Operator-only, current-task approval for the exact current Browser host. */
+export async function approveBrowserDeveloperModeHostForOperator(
+  request: BrowserDeveloperModeApprovalRequest,
+): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Browser Developer Mode approval is available only inside the ShellX desktop app.");
+  }
+  return await invoke<unknown>("shellx_browser_approve_developer_mode_host", { request });
+}
+
+/** Operator-only global disable that also clears every previously approved host. */
+export async function disableBrowserDeveloperModeForOperator(): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Browser Developer Mode settings are available only inside the ShellX desktop app.");
+  }
+  const request: BrowserDeveloperModeUpdateRequest = {
+    enabled: false,
+    fullCdpAccess: false,
+    approvedHosts: [],
+  };
+  return await invoke<unknown>("shellx_browser_update_developer_mode", { request });
+}
+
+export async function exportBrowserHarForOperator(
+  request: BrowserDeveloperArtifactExportRequest,
+): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Browser HAR export is available only inside the ShellX desktop app.");
+  }
+  return await invoke<unknown>("shellx_browser_operator_export_har", { request });
+}
+
+export async function exportBrowserPerformanceForOperator(
+  request: BrowserDeveloperArtifactExportRequest,
+): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Browser performance export is available only inside the ShellX desktop app.");
+  }
+  return await invoke<unknown>("shellx_browser_operator_export_performance", { request });
+}
+
+/**
+ * T2 is deliberately native-only: Teach preparation and revisions must not
+ * turn the task-owned HTTP gateway into an operator approval surface.
+ */
+export async function prepareBrowserTeachDraftForOperator(request: BrowserTeachPrepareRequest): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Browser Teach is available only inside the ShellX desktop app.");
+  }
+  return await invoke<unknown>("shellx_browser_operator_prepare_teach_draft", { request });
+}
+
+export async function reviseBrowserTeachDraftForOperator(request: BrowserTeachReviseRequest): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Browser Teach is available only inside the ShellX desktop app.");
+  }
+  return await invoke<unknown>("shellx_browser_operator_revise_teach_draft", { request });
+}
+
+export async function approveBrowserTeachDraftForOperator(request: BrowserTeachApprovalRequest): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Browser Teach approval is available only inside the ShellX desktop app.");
+  }
+  return await invoke<unknown>("shellx_browser_operator_approve_teach_draft", { request });
+}
+
+export async function rehearseBrowserTeachRecipeForOperator(request: BrowserTeachRehearsalRequest): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Browser Teach rehearsal is available only inside the ShellX desktop app.");
+  }
+  return await invoke<unknown>("shellx_browser_operator_rehearse_teach_recipe", { request });
+}
+
 export async function syncBrowserEngine(request: BrowserEngineSyncRequest): Promise<void> {
   await invoke("shellx_browser_sync_engine", { request });
 }
@@ -203,8 +315,15 @@ export async function fillUserVaultSecret(request: {
   return normalizeBrowserVaultFillActionResponse(response);
 }
 
-export async function clearBrowserHistoryCommand(): Promise<void> {
-  await invoke("shellx_browser_clear_history");
+export interface BrowserHistoryClearReceipt extends BrowserReceipt {
+  evidence: {
+    scope?: BrowserHistoryScope;
+    removed?: number;
+  };
+}
+
+export async function clearBrowserHistoryCommand(scope: BrowserHistoryScope): Promise<BrowserHistoryClearReceipt> {
+  return await invoke<BrowserHistoryClearReceipt>("shellx_browser_clear_history", { request: { scope } });
 }
 
 export async function controlBrowserTaskFromOperator(request: BrowserTaskControlCommandRequest): Promise<void> {

@@ -96,7 +96,7 @@ const checks: Array<[string, boolean]> = [
       installed.includes("/browser/settle?taskId") &&
       installed.includes("artifactSha256") &&
       installed.includes("cleanupOwnedBrowserLifecycle") &&
-      installed.includes("{ [CALLER_HEADER]: TAB_ID }") &&
+      installed.includes("{ [CALLER_HEADER]: tabId }") &&
       installed.includes("cleanup.errors.length === 0") &&
       packageJson.includes("test:shellx-browser-flight-recorder-installed"),
   ],

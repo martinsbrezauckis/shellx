@@ -5916,7 +5916,7 @@ checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shellx"
-version = "0.3.51"
+version = "0.3.52"
 dependencies = [
  "arboard",
  "axum 0.7.9",
@@ -5927,6 +5927,7 @@ dependencies = [
  "cc",
  "chacha20poly1305",
  "chrono",
+ "fs2",
  "futures-util",
  "hex",
  "ignore",

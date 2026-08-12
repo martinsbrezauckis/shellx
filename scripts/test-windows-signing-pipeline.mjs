@@ -5,12 +5,27 @@ const readSource = (url) => readFileSync(url, "utf8").replaceAll("\r\n", "\n");
 const buildScript = readSource(new URL("./build-windows-from-wsl.sh", import.meta.url));
 const adapter = readSource(new URL("./windows-artifact-sign-command.sh", import.meta.url));
 const signer = readSource(new URL("./windows-artifact-sign.ps1", import.meta.url));
+const verifier = readSource(new URL("./verify-release-build-input.mjs", import.meta.url));
 
 assert.match(buildScript, /signCommand:\{cmd:process\.env\.SHELLX_SIGN_COMMAND_PATH,args:\["%1"\]\}/);
 assert.match(buildScript, /export SHELLX_WINDOWS_SIGNING_METADATA_PATH="\$metadata_path"/);
 assert.match(buildScript, /-VerifyOnly/);
 assert.match(buildScript, /signing_required="\$\{SHELLX_WINDOWS_SIGNING_REQUIRED:-1\}"/);
 assert.match(buildScript, /updater_required="\$\{SHELLX_WINDOWS_UPDATER_REQUIRED:-1\}"/);
+assert.match(buildScript, /SHELLX_EXPECTED_SOURCE_COMMIT/);
+assert.match(buildScript, /SHELLX_RELEASE_SOURCE_REPO/);
+assert.match(buildScript, /verify-release-build-input\.mjs/);
+assert.doesNotMatch(buildScript, /sed -n 's\/\^Source commit:/);
+assert.match(buildScript, /export SHELLX_BUILD_COMMIT="\$build_commit"/);
+assert.ok(
+  buildScript.indexOf('export SHELLX_BUILD_COMMIT="$build_commit"') <
+    buildScript.indexOf('pnpm "${tauri_args[@]}"'),
+  "the canonical source identity must be exported before the Tauri build",
+);
+assert.ok(
+  (buildScript.match(/verify_build_input/g) ?? []).length >= 4,
+  "exact build input is checked initially, after the Tauri build, and before updater signing",
+);
 assert.doesNotMatch(buildScript, /--password=/, "updater key passphrase must not be exposed in argv");
 assert.equal(
   buildScript.match(/TAURI_SIGNING_PRIVATE_KEY_PASSWORD="\$\{TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-\}"/g)?.length,
@@ -48,6 +63,17 @@ assert.ok(
 
 assert.match(adapter, /wslpath -w "\$artifact_path"/);
 assert.match(adapter, /windows-artifact-sign\.ps1/);
+assert.match(adapter, /verify-release-build-input\.mjs/);
+assert.match(adapter, /--expected-commit "\$expected_commit"/);
+assert.ok(
+  adapter.indexOf('node "$verifier"') < adapter.indexOf("windows-artifact-sign.ps1"),
+  "the canonical tree is reverified before every Authenticode signing invocation",
+);
+assert.match(verifier, /shellx\/public-export-manifest@4/);
+assert.match(verifier, /regenerateExpectedExport/);
+assert.match(verifier, /assertExactFileTree/);
+assert.match(verifier, /requireCleanGitCheckout\(sourceRepo, "canonical source checkout"\)/);
+assert.match(verifier, /`\$\{label\} has tracked or staged changes`/);
 assert.match(signer, /\[switch\] \$VerifyOnly/);
 assert.match(signer, /if \(-not \$VerifyOnly\)/);
 assert.match(signer, /Authenticode verifying/);

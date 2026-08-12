@@ -838,6 +838,9 @@ try {
     "ui:activation:owned-browser-tab-delegation-transition",
     "ui:activation:owned-browser-history-entry-navigation",
     "ui:activation:owned-browser-history-clear",
+    "ui:activation:owned-browser-history-all-clear-sheet",
+    "ui:activation:owned-browser-history-clear-cancel",
+    "ui:activation:owned-browser-history-all-clear-receipt",
     "ui:value-state-transition",
     "ui:activation:browser-personal-lock-settings-opened",
     "ui:activation:browser-personal-lock-enabled",
@@ -1372,7 +1375,24 @@ try {
   assert.equal(audit.workPreviewLogHeightStored, null);
   assert.equal(audit.ownedModalOpen, null);
   assert.equal(audit.previewTarget, null);
-  assert.equal(existsSync(join(profileRoot, "ui-work-preview-start")), false);
+  for (const lane of [
+    "start",
+    "refresh",
+    "doctor",
+    "file-mode",
+    "work-mode",
+    "open",
+    "restart",
+    "stop",
+    "reload",
+    "viewport-phone",
+    "viewport-tablet",
+    "viewport-desktop",
+    "external-panel",
+    "external-stage",
+  ]) {
+    assert.equal(existsSync(join(profileRoot, `ui-work-preview-${lane}`)), false);
+  }
   assert.equal(existsSync(join(profileRoot, "ui-file-preview-modes")), false);
   assert.equal(audit.browserRightTab, "chat");
   assert.equal(audit.activeTaskId, null);
@@ -2840,7 +2860,7 @@ function request(candidateBase: string, webdriverBase: string): ReleaseSurfaceDr
       },
       {
         surface: {
-          id: "ui-control:src/browser/components/BrowserEvidencePanel.tsx:[data-debug-id=\"shellx-browser-evidence-refresh\"]@src/browser/components/BrowserEvidencePanel.tsx#2",
+          id: "ui-control:src/browser/components/BrowserEvidencePanel.tsx:[data-debug-id=\"shellx-browser-evidence-refresh\"]@src/browser/components/BrowserEvidencePanel.tsx#3",
           kind: "ui-control" as const,
           name: "src/browser/components/BrowserEvidencePanel.tsx:[data-debug-id=\"shellx-browser-evidence-refresh\"]",
           source: "src/browser/components/BrowserEvidencePanel.tsx",

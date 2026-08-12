@@ -1,12 +1,12 @@
 import { createServer, type Server } from "node:http";
 import type { Socket } from "node:net";
 import {
-  acceptReleaseSurfaceInstalledInputAlert as acceptReleaseSurfaceWebDriverAlert,
   clearReleaseSurfaceInstalledInputElement as clearReleaseSurfaceWebDriverElement,
   clickReleaseSurfaceInstalledInputElement as clickReleaseSurfaceWebDriverElement,
   closeReleaseSurfaceInstalledInputWindow as closeReleaseSurfaceWebDriverWindow,
   dragReleaseSurfaceInstalledInputElementToElement as dragReleaseSurfaceWebDriverElementToElement,
   observeReleaseSurfaceInstalledInputElement as observeReleaseSurfaceWebDriverElement,
+  performReleaseSurfaceInstalledInputKeyChord,
   setReleaseSurfaceInstalledInputElementValue as setReleaseSurfaceWebDriverElementValue,
   switchReleaseSurfaceInstalledInputWindow as switchReleaseSurfaceWebDriverWindow,
   switchReleaseSurfaceInstalledInputWindowByTitle as switchReleaseSurfaceWebDriverWindowByTitle,
@@ -40,6 +40,7 @@ type BrowserTab = {
   active?: boolean;
   ownerKind: "user" | "agent" | "delegatedToAgent";
   delegatedTaskId?: string | null;
+  delegatedGrantId?: string | null;
   lock?: {
     leaseId: string;
     ownerAgentId: string;
@@ -74,7 +75,13 @@ const RELOAD = "[data-debug-id='shellx-browser-reload']";
 const LOCK_TAB = "[data-debug-id='shellx-browser-lock-tab']";
 const HANDOFF_TAB = "[data-debug-id='shellx-browser-handoff-tab']";
 const TAKE_BACK_TAB = "[data-debug-id='shellx-browser-take-back-tab']";
-const HANDOFF_CONFIRMATION = "Hand this tab to the active Browser agent task? Vault secrets will still require separate approval.";
+const HANDOFF_CONFIRMATION = "[data-debug-id='shellx-browser-handoff-confirmation']";
+const HANDOFF_BACKDROP = "[data-debug-id='shellx-browser-handoff-confirmation-backdrop']";
+const HANDOFF_CONTEXT = "[data-debug-id='shellx-browser-handoff-context']";
+const HANDOFF_VAULT_NOTICE = "[data-debug-id='shellx-browser-handoff-vault-notice']";
+const HANDOFF_STATUS = "[data-debug-id='shellx-browser-handoff-status']";
+const HANDOFF_CANCEL = "[data-debug-id='shellx-browser-handoff-cancel']";
+const HANDOFF_CONFIRM = "[data-debug-id='shellx-browser-handoff-confirm']";
 const OPTIONS_OWNER = "[data-debug-id='shellx-browser-options']";
 const OPTIONS_PANEL = "#shellx-browser-options-sidecar[aria-labelledby='shellx-browser-options']";
 const HOME_INPUT = "[data-debug-id='shellx-browser-homepage']";
@@ -106,11 +113,14 @@ const TAB_SURFACES = {
   lock: "src/browser/components/BrowserChrome.tsx:[data-debug-id=\"shellx-browser-lock-tab\"]",
   handoff: "src/browser/components/BrowserChrome.tsx:[data-debug-id=\"shellx-browser-handoff-tab\"]",
   takeback: "src/browser/components/BrowserChrome.tsx:[data-debug-id=\"shellx-browser-take-back-tab\"]",
+  handoffCancel: "src/browser/components/BrowserTabHandoffConfirmation.tsx:[data-debug-id=\"shellx-browser-handoff-cancel\"]",
+  handoffConfirm: "src/browser/components/BrowserTabHandoffConfirmation.tsx:[data-debug-id=\"shellx-browser-handoff-confirm\"]",
 } as const;
 type TabControlKind = keyof typeof TAB_SURFACES;
 const tabKindBySurface = new Map<string, TabControlKind>(
   Object.entries(TAB_SURFACES).map(([kind, surface]) => [surface, kind as TabControlKind]),
 );
+type BrowserTabControlOptions = { handoffMarkerSelector?: string };
 
 type OwnedHomepageState = { value: string; storage: "default" | "custom" };
 
@@ -322,6 +332,7 @@ export async function exerciseOwnedBrowserTabControl(
   connection: Connection,
   webdriver: WebDriver,
   assignment: Assignment,
+  options: BrowserTabControlOptions = {},
 ): Promise<ReleaseSurfaceDriverOutcome> {
   const kind = tabKindBySurface.get(assignment.surface.name);
   const outcome = emptyTabOutcome(assignment);
@@ -344,7 +355,7 @@ export async function exerciseOwnedBrowserTabControl(
     if (kind === "home" || kind === "back" || kind === "forward" || kind === "reload") {
       page = await startOwnedBrowserHomePage();
     }
-    const delegationKind = kind === "handoff" || kind === "takeback";
+    const delegationKind = kind === "handoff" || kind === "takeback" || kind === "handoffCancel" || kind === "handoffConfirm";
     const seedCount = kind === "focus" || kind === "close" ? 2 : 1;
     if (delegationKind) {
       const started = await apiJson<Record<string, unknown>>(connection, "POST", "/browser/task/start", {
@@ -420,31 +431,27 @@ export async function exerciseOwnedBrowserTabControl(
       await waitForBrowserTabLock(connection, target.browserTabId, false);
       outcome.effect = "pass";
       outcome.observedEffect = "Installed input acquired an exact UI-owned lease on one owned Browser tab, then released that lease and restored the unlocked baseline.";
-    } else if (kind === "handoff" || kind === "takeback") {
+    } else if (delegationKind) {
       if (!taskId || !delegatedTabId) throw new Error("owned Browser delegation fixture omitted its task or user tab");
-      const handoff = await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_TAB);
-      if (kind === "handoff") outcome.present = "pass";
-      await clickReleaseSurfaceWebDriverElement(webdriver, handoff);
-      await acceptReleaseSurfaceWebDriverAlert(webdriver, HANDOFF_CONFIRMATION);
-      await waitForBrowserTabOwnership(connection, delegatedTabId, {
-        ownerKind: "delegatedToAgent",
-        taskId,
-        delegatedTaskId: taskId,
-      });
-      if (kind === "handoff") {
+      await exerciseOwnedBrowserTabHandoffSheet(
+        connection,
+        webdriver,
+        { browserTabId: delegatedTabId, taskId },
+        options.handoffMarkerSelector,
+      );
+      await takeBackOwnedBrowserTab(connection, webdriver, delegatedTabId);
+      if (kind === "handoff" || kind === "handoffCancel" || kind === "handoffConfirm") {
+        outcome.present = "pass";
         outcome.invoke = "pass";
         outcome.effect = "pass";
-        outcome.observedEffect = "Installed input accepted the exact trusted-user confirmation and delegated one owned user tab to the exact active Browser agent task without granting Vault access.";
+        outcome.observedEffect = kind === "handoffCancel"
+          ? "Installed input opened the ShellX-owned trusted-user handoff sheet, verified its bounded review receipts, exercised Cancel and Escape with focus restoration to Handoff, then reopened and confirmed the exact owned handoff without granting Vault access."
+          : kind === "handoffConfirm"
+            ? "Installed input opened the ShellX-owned trusted-user handoff sheet, verified its bounded review receipts, exercised Cancel and Escape with focus restoration, then made one trusted Confirm through pending to success without granting Vault access."
+            : "Installed input opened and confirmed the ShellX-owned trusted-user handoff sheet after its bounded review, Cancel-first focus, Cancel and Escape restoration, and pending-to-success receipts, then delegated one owned user tab to the exact active Browser agent task without granting Vault access.";
       } else {
-        const takeback = await waitForReleaseSurfaceWebDriverElement(webdriver, TAKE_BACK_TAB);
         outcome.present = "pass";
-        await clickReleaseSurfaceWebDriverElement(webdriver, takeback);
         outcome.invoke = "pass";
-        await waitForBrowserTabOwnership(connection, delegatedTabId, {
-          ownerKind: "user",
-          taskId: null,
-          delegatedTaskId: null,
-        });
         outcome.effect = "pass";
         outcome.observedEffect = "Installed input took one exactly delegated Browser tab back from its active agent task and restored user ownership with no delegated task binding.";
       }
@@ -639,6 +646,7 @@ async function listBrowserTabs(connection: Connection): Promise<BrowserTab[]> {
       active: tab.active === true,
       ownerKind: browserTabOwnerKind(tab.ownerKind),
       delegatedTaskId: typeof tab.delegatedTaskId === "string" ? tab.delegatedTaskId : null,
+      delegatedGrantId: typeof tab.delegatedGrantId === "string" ? tab.delegatedGrantId : null,
       lock: parseBrowserTabLock(tab.lock),
     };
   });
@@ -662,6 +670,7 @@ async function openOwnedBrowserTab(
     active: tab.active === true,
     ownerKind: browserTabOwnerKind(tab.ownerKind),
     delegatedTaskId: typeof tab.delegatedTaskId === "string" ? tab.delegatedTaskId : null,
+    delegatedGrantId: typeof tab.delegatedGrantId === "string" ? tab.delegatedGrantId : null,
     lock: parseBrowserTabLock(tab.lock),
   };
 }
@@ -769,7 +778,7 @@ async function waitForBrowserTabOwnership(
   connection: Connection,
   browserTabId: string,
   expected: Pick<BrowserTab, "ownerKind" | "taskId" | "delegatedTaskId">,
-): Promise<void> {
+): Promise<BrowserTab> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const tab = (await listBrowserTabs(connection)).find((candidate) => candidate.browserTabId === browserTabId);
@@ -778,10 +787,113 @@ async function waitForBrowserTabOwnership(
       tab.ownerKind === expected.ownerKind
       && (tab.taskId ?? null) === (expected.taskId ?? null)
       && (tab.delegatedTaskId ?? null) === (expected.delegatedTaskId ?? null)
-    ) return;
+    ) return tab;
     await delay(50);
   }
   throw new Error(`owned Browser tab ${browserTabId} did not reach its exact ${expected.ownerKind} ownership state`);
+}
+
+export async function exerciseOwnedBrowserTabHandoffSheet(
+  connection: Connection,
+  webdriver: WebDriver,
+  expected: { browserTabId: string; taskId: string },
+  markerSelector?: string,
+): Promise<void> {
+  await clickSelector(webdriver, HANDOFF_TAB);
+  await verifyOwnedBrowserTabHandoffReview(webdriver, { taskId: expected.taskId }, markerSelector);
+
+  const cancelState = await observeReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CANCEL, ["focused", "disabled"]);
+  if (!cancelState.present || !cancelState.visible || cancelState.focused !== true || cancelState.disabled !== false) {
+    throw new Error("Browser handoff sheet did not expose an enabled Cancel initial focus target");
+  }
+  await clickSelector(webdriver, HANDOFF_CANCEL);
+  await waitForReleaseSurfaceWebDriverElementAbsent(webdriver, HANDOFF_CONFIRMATION, { timeoutMs: 5_000, pollMs: 50 });
+  await assertOwnedBrowserHandoffFocusRestored(webdriver, "Cancel");
+
+  await clickSelector(webdriver, HANDOFF_TAB);
+  await verifyOwnedBrowserTabHandoffReview(webdriver, { taskId: expected.taskId }, markerSelector);
+  await performReleaseSurfaceInstalledInputKeyChord(webdriver, ["\uE00C"]);
+  await waitForReleaseSurfaceWebDriverElementAbsent(webdriver, HANDOFF_CONFIRMATION, { timeoutMs: 5_000, pollMs: 50 });
+  await assertOwnedBrowserHandoffFocusRestored(webdriver, "Escape");
+
+  await clickSelector(webdriver, HANDOFF_TAB);
+  await verifyOwnedBrowserTabHandoffReview(webdriver, { taskId: expected.taskId }, markerSelector);
+  const confirm = await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CONFIRM);
+  await clickReleaseSurfaceWebDriverElement(webdriver, confirm);
+  const delegated = await waitForBrowserTabOwnership(connection, expected.browserTabId, {
+    ownerKind: "delegatedToAgent",
+    taskId: expected.taskId,
+    delegatedTaskId: expected.taskId,
+  });
+  if (delegated.delegatedGrantId) {
+    throw new Error("Browser handoff unexpectedly attached a delegated Vault or session grant");
+  }
+  await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_STATUS, { timeoutMs: 5_000, pollMs: 50 });
+  const statusState = await observeReleaseSurfaceWebDriverElement(webdriver, HANDOFF_STATUS, ["title"]);
+  if (!statusState.present || !statusState.visible || typeof statusState.title !== "string" || !/handed off|delegated/i.test(statusState.title)) {
+    throw new Error("Browser handoff did not expose a truthful bounded success status");
+  }
+  if (markerSelector === HANDOFF_STATUS) await waitForReleaseSurfaceWebDriverElement(webdriver, markerSelector);
+  await clickSelector(webdriver, HANDOFF_CANCEL);
+  await waitForReleaseSurfaceWebDriverElementAbsent(webdriver, HANDOFF_CONFIRMATION, { timeoutMs: 5_000, pollMs: 50 });
+}
+
+async function assertOwnedBrowserHandoffFocusRestored(webdriver: WebDriver, action: "Cancel" | "Escape"): Promise<void> {
+  const restoredFocus = await observeReleaseSurfaceWebDriverElement(webdriver, HANDOFF_TAB, ["focused"]);
+  if (!restoredFocus.present || !restoredFocus.visible || restoredFocus.focused !== true) {
+    throw new Error(`Browser handoff ${action} did not restore focus to its triggering Handoff control`);
+  }
+}
+
+async function verifyOwnedBrowserTabHandoffReview(
+  webdriver: WebDriver,
+  expected: { taskId: string },
+  markerSelector?: string,
+): Promise<void> {
+  await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_BACKDROP);
+  await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CONFIRMATION);
+  await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CONTEXT);
+  await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_VAULT_NOTICE);
+  await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CANCEL);
+  await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CONFIRM);
+  if (markerSelector && markerSelector !== HANDOFF_STATUS) {
+    await waitForReleaseSurfaceWebDriverElement(webdriver, markerSelector);
+  }
+  const context = await observeReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CONTEXT, ["title"]);
+  if (!context.present || !context.visible || typeof context.title !== "string") {
+    throw new Error("Browser handoff review omitted its bounded context receipt");
+  }
+  for (const fragment of [
+    "Origin about context",
+    "URL Local or non-web URL context is withheld",
+    "(task-disposable)",
+    "Persistence Disposable task storage",
+    "Owner User-controlled",
+    `Task ${expected.taskId}:`,
+  ]) {
+    if (!context.title.includes(fragment)) {
+      throw new Error(`Browser handoff review context omitted ${JSON.stringify(fragment)}`);
+    }
+  }
+  const vault = await observeReleaseSurfaceWebDriverElement(webdriver, HANDOFF_VAULT_NOTICE, ["title"]);
+  const expectedVaultNotice = "Vault secrets still require a separate approval. This handoff does not grant Vault access.";
+  if (!vault.present || !vault.visible || vault.title !== expectedVaultNotice) {
+    throw new Error("Browser handoff review did not prove the separate Vault approval boundary");
+  }
+}
+
+async function takeBackOwnedBrowserTab(
+  connection: Connection,
+  webdriver: WebDriver,
+  browserTabId: string,
+): Promise<void> {
+  const takeback = await waitForReleaseSurfaceWebDriverElement(webdriver, TAKE_BACK_TAB);
+  await clickReleaseSurfaceWebDriverElement(webdriver, takeback);
+  await waitForBrowserTabOwnership(connection, browserTabId, {
+    ownerKind: "user",
+    taskId: null,
+    delegatedTaskId: null,
+  });
 }
 
 async function ensureOwnedBrowserTabTakenBack(
@@ -789,12 +901,28 @@ async function ensureOwnedBrowserTabTakenBack(
   webdriver: WebDriver,
   browserTabId: string,
 ): Promise<void> {
-  const tab = (await listBrowserTabs(connection)).find((candidate) => candidate.browserTabId === browserTabId);
+  let tab = (await listBrowserTabs(connection)).find((candidate) => candidate.browserTabId === browserTabId);
+  if (!tab) return;
+  if (tab.ownerKind === "delegatedToAgent") await focusBrowserTab(connection, browserTabId);
+  const sheet = await observeReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CONFIRMATION, ["disabled"]);
+  if (sheet.present && sheet.visible) {
+    const cancel = await waitForReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CANCEL);
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const state = await observeReleaseSurfaceWebDriverElement(webdriver, HANDOFF_CANCEL, ["disabled"]);
+      if (state.present && state.visible && state.disabled === false) {
+        await clickReleaseSurfaceWebDriverElement(webdriver, cancel);
+        await waitForReleaseSurfaceWebDriverElementAbsent(webdriver, HANDOFF_CONFIRMATION, { timeoutMs: 5_000, pollMs: 50 });
+        break;
+      }
+      await delay(25);
+    }
+  }
+  tab = (await listBrowserTabs(connection)).find((candidate) => candidate.browserTabId === browserTabId);
   if (!tab || tab.ownerKind === "user") return;
   if (tab.ownerKind !== "delegatedToAgent" || !tab.taskId || tab.delegatedTaskId !== tab.taskId) {
     throw new Error(`owned Browser tab ${browserTabId} acquired unexpected foreign ownership`);
   }
-  await focusBrowserTab(connection, browserTabId);
   const takeback = await waitForReleaseSurfaceWebDriverElement(webdriver, TAKE_BACK_TAB);
   await clickReleaseSurfaceWebDriverElement(webdriver, takeback);
   await waitForBrowserTabOwnership(connection, browserTabId, {
@@ -866,19 +994,20 @@ export type OwnedBrowserHomePage = {
   close: () => Promise<void>;
 };
 
-export async function startOwnedBrowserHomePage(): Promise<OwnedBrowserHomePage> {
+export async function startOwnedBrowserHomePage(options: { title?: string } = {}): Promise<OwnedBrowserHomePage> {
   const sockets = new Set<Socket>();
   const requests = new Map<string, number>();
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
     requests.set(path, (requests.get(path) ?? 0) + 1);
-    const label = path === "/home"
+    const defaultLabel = path === "/home"
       ? "ShellX owned Home destination"
       : path === "/second"
         ? "ShellX owned Browser history second page"
         : path === "/first"
           ? "ShellX owned Browser history first page"
           : "ShellX owned Home starting page";
+    const label = options.title ?? defaultLabel;
     response.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",

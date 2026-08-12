@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   constants,
   copyFileSync,
@@ -37,6 +37,7 @@ import {
   completionTimestamp,
   validateReleaseSurfaceDriverReport,
   releaseSurfaceDriverPhaseReportPassed,
+  type ReleaseSurfaceDriverManifest,
   type ReleaseSurfaceDriverReport,
   type ReleaseSurfaceDriverRequest,
 } from "./release-surface-driver-protocol";
@@ -77,6 +78,7 @@ import {
 } from "./release-surface-macos-native-input";
 
 export const RELEASE_SURFACE_DRIVER_RUN_SCHEMA = "shellx/release-surface-driver-run@7";
+export const RELEASE_SURFACE_DRIVER_TIMEOUT_MS = 60 * 60_000;
 
 export interface ReleaseSurfaceDriverRunInput {
   rootDir: string;
@@ -85,6 +87,7 @@ export interface ReleaseSurfaceDriverRunInput {
   contract: FinalSurfaceContract;
   platform: ReleasePlatform;
   sourceCommit: string;
+  controllerSourceCommit?: string;
   version: string;
   artifactPath: string;
   signatureReceiptPath: string;
@@ -92,6 +95,7 @@ export interface ReleaseSurfaceDriverRunInput {
   installationReceiptPath: string;
   outputDir: string;
   selectedDriverIds?: string[];
+  selectedSurfaceIds?: string[];
   nativeWebDriver?: ReleaseSurfaceWebDriverSession;
   macosNativeInput?: {
     helperPath: string;
@@ -104,6 +108,8 @@ export interface ReleaseSurfaceDriverRunManifest {
   mode: "final-frozen-candidate";
   targetedClosure?: {
     driverIds: string[];
+    surfaceIds?: string[];
+    controllerDelta?: ReleaseSurfaceTargetedControllerDelta;
   };
   platform: ReleasePlatform;
   sourceCommit: string;
@@ -144,6 +150,13 @@ export interface ReleaseSurfaceDriverRunManifest {
     beforeProbe: FileIdentity;
     afterProbe: FileIdentity;
   }>;
+}
+
+export interface ReleaseSurfaceTargetedControllerDelta {
+  candidateSourceCommit: string;
+  controllerSourceCommit: string;
+  changedPaths: string[];
+  patchSha256: string;
 }
 
 type FileIdentity = ReleaseSurfaceFileIdentity;
@@ -189,9 +202,92 @@ export function resolveReleaseSurfaceDriverSelection(
   return [...requested].sort();
 }
 
+export function resolveReleaseSurfaceControllerProvenance(input: {
+  rootDir: string;
+  candidateSourceCommit: string;
+  controllerSourceCommit: string;
+  targetedClosure: boolean;
+}): {
+  controllerSourceCommit: string;
+  controllerDelta?: ReleaseSurfaceTargetedControllerDelta;
+} {
+  const root = resolve(input.rootDir);
+  const candidateSourceCommit = input.candidateSourceCommit.trim().toLowerCase();
+  const controllerSourceCommit = input.controllerSourceCommit.trim().toLowerCase();
+  if (!/^[a-f0-9]{40,64}$/.test(candidateSourceCommit)
+    || !/^[a-f0-9]{40,64}$/.test(controllerSourceCommit)) {
+    throw new Error("release candidate and controller commits must be lowercase Git object ids");
+  }
+  const head = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+  }).trim().toLowerCase();
+  if (head !== controllerSourceCommit) {
+    throw new Error("release controller source commit must match the exact clean checkout HEAD");
+  }
+  if (candidateSourceCommit === controllerSourceCommit) return { controllerSourceCommit };
+  if (!input.targetedClosure) {
+    throw new Error("only a targeted post-matrix closure may use a descendant controller commit");
+  }
+  const ancestor = spawnSync(
+    "git",
+    ["-C", root, "merge-base", "--is-ancestor", candidateSourceCommit, controllerSourceCommit],
+    { encoding: "utf8" },
+  );
+  if (ancestor.status !== 0) {
+    throw new Error("targeted controller commit must descend from the exact signed candidate commit");
+  }
+  const changedPaths = execFileSync(
+    "git",
+    ["-C", root, "diff", "--name-only", "--no-renames", "-z", `${candidateSourceCommit}..${controllerSourceCommit}`],
+    { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
+  ).split("\0").filter(Boolean);
+  if (changedPaths.length === 0 || changedPaths.length > 256) {
+    throw new Error("targeted controller delta must contain one to 256 changed files");
+  }
+  const deletedPaths = execFileSync(
+    "git",
+    ["-C", root, "diff", "--name-only", "--no-renames", "--diff-filter=D", "-z", `${candidateSourceCommit}..${controllerSourceCommit}`],
+    { encoding: "utf8", maxBuffer: 1024 * 1024 },
+  ).split("\0").filter(Boolean);
+  if (deletedPaths.length > 0) {
+    throw new Error(`targeted controller delta refuses deleted files: ${deletedPaths.slice(0, 5).join(", ")}`);
+  }
+  for (const path of changedPaths) {
+    if (!path.startsWith("scripts/") || path.includes("\\") || /[\r\n\0]/.test(path)
+      || path.split("/").some((part) => !part || part === "." || part === "..")) {
+      throw new Error(`targeted controller delta is outside scripts/**: ${JSON.stringify(path)}`);
+    }
+    const stat = lstatSync(resolve(root, path));
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error(`targeted controller delta path must be a regular non-link file: ${path}`);
+    }
+  }
+  const patch = execFileSync(
+    "git",
+    ["-C", root, "diff", "--binary", "--full-index", "--no-renames", `${candidateSourceCommit}..${controllerSourceCommit}`, "--", "scripts"],
+    { maxBuffer: 32 * 1024 * 1024 },
+  );
+  return {
+    controllerSourceCommit,
+    controllerDelta: {
+      candidateSourceCommit,
+      controllerSourceCommit,
+      changedPaths,
+      patchSha256: createHash("sha256").update(patch).digest("hex"),
+    },
+  };
+}
+
 export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): ReleaseSurfaceDriverRunManifest {
   const root = resolve(input.rootDir);
   const outputDir = resolve(input.outputDir);
+  const controllerProvenance = resolveReleaseSurfaceControllerProvenance({
+    rootDir: root,
+    candidateSourceCommit: input.sourceCommit,
+    controllerSourceCommit: input.controllerSourceCommit ?? input.sourceCommit,
+    targetedClosure: input.selectedDriverIds !== undefined || input.selectedSurfaceIds !== undefined,
+  });
   const planVerification = verifyFinalSurfaceDriverPlan(input.plan, input.inventory, root);
   if (planVerification.status !== "ready") {
     throw new Error(
@@ -205,9 +301,24 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
     input.selectedDriverIds,
   );
   const selectedDriverIdSet = new Set(selectedDriverIds);
-  const selectedSurfaceIds = new Set(input.plan.assignments
+  const driverSurfaceIds = new Set(input.plan.assignments
     .filter((assignment) => selectedDriverIdSet.has(assignment.driverId))
     .map((assignment) => assignment.surfaceId));
+  const requestedSurfaceIds = input.selectedSurfaceIds?.map((id) => id.trim()).filter(Boolean);
+  if (requestedSurfaceIds && input.selectedDriverIds === undefined) {
+    throw new Error("surface-level targeted closure requires one or more exact driver ids");
+  }
+  if (requestedSurfaceIds && requestedSurfaceIds.length === 0) {
+    throw new Error("surface-level targeted closure requires at least one non-empty surface id");
+  }
+  if (requestedSurfaceIds && new Set(requestedSurfaceIds).size !== requestedSurfaceIds.length) {
+    throw new Error("surface-level targeted closure surface ids must be unique");
+  }
+  const unavailableSurfaceIds = (requestedSurfaceIds ?? []).filter((id) => !driverSurfaceIds.has(id));
+  if (unavailableSurfaceIds.length > 0) {
+    throw new Error(`surface-level targeted closure names assignments outside the selected drivers: ${unavailableSurfaceIds.join(", ")}`);
+  }
+  const selectedSurfaceIds = new Set(requestedSurfaceIds ?? driverSurfaceIds);
   const applicable = input.inventory.items.filter((surface) =>
     surface.platforms.includes(input.platform) && selectedSurfaceIds.has(surface.id));
   if (input.selectedDriverIds !== undefined && applicable.length === 0) {
@@ -279,7 +390,7 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
   }
   const runnerController = createReleaseSurfaceControllerBinding({
     rootDir: root,
-    sourceCommit: input.sourceCommit,
+    sourceCommit: controllerProvenance.controllerSourceCommit,
     entrypoint: relative(root, resolve(process.argv[1] ?? "")),
     auxiliaryFiles: [
       "scripts/lib/release-surface-driver-runner.ts",
@@ -303,6 +414,7 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
   const inventoryById = new Map(input.inventory.items.map((surface) => [surface.id, surface]));
   const assignmentsByDriver = new Map<string, FinalSurfaceDriverPlan["assignments"]>();
   for (const assignment of input.plan.assignments) {
+    if (!selectedSurfaceIds.has(assignment.surfaceId)) continue;
     const surface = inventoryById.get(assignment.surfaceId);
     if (!surface) throw new Error(`assignment names missing inventory surface ${assignment.surfaceId}`);
     if (!surface.platforms.includes(input.platform)) continue;
@@ -367,7 +479,7 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
     if (typeof described === "string") throw new Error(described);
     const controller = createReleaseSurfaceControllerBinding({
       rootDir: root,
-      sourceCommit: input.sourceCommit,
+      sourceCommit: controllerProvenance.controllerSourceCommit,
       entrypoint: driver.entrypoint,
       auxiliaryFiles: described.controllerFiles,
       requireClean: true,
@@ -430,10 +542,14 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
     const afterProbePath = join(outputDir, `${stem}.runtime-after.json`);
     writeFileSync(requestPath, `${JSON.stringify(request, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
     const beforeProbe = runRuntimeProbe(root, request, requestPath, beforeProbePath, "before-driver");
-    const result = spawnSync(process.execPath, releaseSurfaceControllerNodeArguments(resolve(root, driver.entrypoint), [
-      "--request", requestPath,
-      "--out", reportPath,
-    ]), { cwd: root, encoding: "utf8", timeout: 30 * 60_000, maxBuffer: 10 * 1024 * 1024 });
+    const result = runReleaseSurfaceDriverProcess({
+      rootDir: root,
+      entrypoint: resolve(root, driver.entrypoint),
+      request,
+      requestPath,
+      reportPath,
+      maxAssignmentsPerProcess: described.maxAssignmentsPerProcess,
+    });
     let afterProbe: FileIdentity | null = null;
     let afterProbeError: string | null = null;
     try {
@@ -504,8 +620,14 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
   const manifest: ReleaseSurfaceDriverRunManifest = {
     schema: RELEASE_SURFACE_DRIVER_RUN_SCHEMA,
     mode: "final-frozen-candidate",
-    ...(input.selectedDriverIds !== undefined
-      ? { targetedClosure: { driverIds: selectedDriverIds } }
+    ...(input.selectedDriverIds !== undefined || input.selectedSurfaceIds !== undefined
+      ? { targetedClosure: {
+        driverIds: selectedDriverIds,
+        ...(requestedSurfaceIds ? { surfaceIds: [...requestedSurfaceIds].sort() } : {}),
+        ...(controllerProvenance.controllerDelta
+          ? { controllerDelta: controllerProvenance.controllerDelta }
+          : {}),
+      } }
       : {}),
     platform: input.platform,
     sourceCommit: input.sourceCommit,
@@ -550,6 +672,125 @@ export function runReleaseSurfaceDrivers(input: ReleaseSurfaceDriverRunInput): R
   };
   writeFileSync(join(outputDir, "run-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
   return manifest;
+}
+
+interface ReleaseSurfaceDriverProcessResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+export function releaseSurfaceDriverAssignmentBatches<T>(
+  assignments: readonly T[],
+  maxAssignmentsPerProcess?: number,
+): T[][] {
+  if (maxAssignmentsPerProcess !== undefined
+    && (!Number.isSafeInteger(maxAssignmentsPerProcess) || maxAssignmentsPerProcess < 1)) {
+    throw new Error("release driver assignment process bound must be a positive safe integer");
+  }
+  if (maxAssignmentsPerProcess === undefined || assignments.length <= maxAssignmentsPerProcess) {
+    return [[...assignments]];
+  }
+  const batches: T[][] = [];
+  for (let index = 0; index < assignments.length; index += maxAssignmentsPerProcess) {
+    batches.push(assignments.slice(index, index + maxAssignmentsPerProcess));
+  }
+  return batches;
+}
+
+function runReleaseSurfaceDriverProcess(input: {
+  rootDir: string;
+  entrypoint: string;
+  request: ReleaseSurfaceDriverRequest;
+  requestPath: string;
+  reportPath: string;
+  maxAssignmentsPerProcess?: ReleaseSurfaceDriverManifest["maxAssignmentsPerProcess"];
+}): ReleaseSurfaceDriverProcessResult {
+  const batches = releaseSurfaceDriverAssignmentBatches(
+    input.request.assignments,
+    input.maxAssignmentsPerProcess,
+  );
+  if (batches.length === 1) {
+    return spawnSync(process.execPath, releaseSurfaceControllerNodeArguments(input.entrypoint, [
+      "--request", input.requestPath,
+      "--out", input.reportPath,
+    ]), {
+      cwd: input.rootDir,
+      encoding: "utf8",
+      timeout: RELEASE_SURFACE_DRIVER_TIMEOUT_MS,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  }
+
+  const reports: ReleaseSurfaceDriverReport[] = [];
+  const errors: string[] = [];
+  let combinedStdout = "";
+  let combinedStderr = "";
+  for (const [index, assignments] of batches.entries()) {
+    const suffix = `.part-${index + 1}-of-${batches.length}`;
+    const partRequestPath = input.requestPath.replace(/\.request\.json$/, `${suffix}.request.json`);
+    const partReportPath = input.reportPath.replace(/\.report\.json$/, `${suffix}.report.json`);
+    const partRequest: ReleaseSurfaceDriverRequest = { ...input.request, assignments };
+    writeFileSync(partRequestPath, `${JSON.stringify(partRequest, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    const result = spawnSync(process.execPath, releaseSurfaceControllerNodeArguments(input.entrypoint, [
+      "--request", partRequestPath,
+      "--out", partReportPath,
+    ]), {
+      cwd: input.rootDir,
+      encoding: "utf8",
+      timeout: RELEASE_SURFACE_DRIVER_TIMEOUT_MS,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    combinedStdout += result.stdout ?? "";
+    combinedStderr += result.stderr ?? "";
+    if (!existsSync(partReportPath)) {
+      errors.push(`part ${index + 1}/${batches.length} returned no report: ${(result.stderr || result.stdout).trim()}`);
+      continue;
+    }
+    const report = JSON.parse(readFileSync(partReportPath, "utf8")) as ReleaseSurfaceDriverReport;
+    const reportErrors = validateReleaseSurfaceDriverReport(partRequest, report);
+    if (reportErrors.length > 0) {
+      errors.push(`part ${index + 1}/${batches.length} returned invalid evidence: ${reportErrors.join("; ")}`);
+      continue;
+    }
+    if (result.status !== 0 && releaseSurfaceDriverPhaseReportPassed(report)) {
+      errors.push(`part ${index + 1}/${batches.length} exited unsuccessfully despite a passing report`);
+      continue;
+    }
+    reports.push(report);
+  }
+  if (errors.length > 0 || reports.length !== batches.length) {
+    return {
+      status: 1,
+      stdout: combinedStdout,
+      stderr: [...errors, combinedStderr.trim()].filter(Boolean).join("; "),
+    };
+  }
+
+  const outcomes = new Map(reports.flatMap((report) => report.outcomes.map((outcome) => [outcome.id, outcome] as const)));
+  if (outcomes.size !== input.request.assignments.length) {
+    return {
+      status: 1,
+      stdout: combinedStdout,
+      stderr: "partitioned release driver returned duplicate or missing surface outcomes",
+    };
+  }
+  const combined: ReleaseSurfaceDriverReport = {
+    ...reports[0]!,
+    startedAt: reports.map((report) => report.startedAt).sort()[0]!,
+    completedAt: reports.map((report) => report.completedAt).sort().at(-1)!,
+    outcomes: input.request.assignments.map((assignment) => {
+      const outcome = outcomes.get(assignment.surface.id);
+      if (!outcome) throw new Error(`partitioned release driver omitted ${assignment.surface.id}`);
+      return outcome;
+    }),
+  };
+  writeFileSync(input.reportPath, `${JSON.stringify(combined, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  return {
+    status: releaseSurfaceDriverPhaseReportPassed(combined) ? 0 : 1,
+    stdout: combinedStdout,
+    stderr: combinedStderr,
+  };
 }
 
 function proveMacosNativeInputBinding(input: {

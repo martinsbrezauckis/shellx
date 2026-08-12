@@ -65,7 +65,7 @@ export async function exerciseWorkPreviewStartControl(
     if (!supportsWorkPreviewStartControl(assignment)) {
       throw new Error(`Work Preview start driver does not support ${assignment.surface.name}`);
     }
-    fixture = prepareFixture(request);
+    fixture = prepareFixture(request, "start");
     await hydrateFixtureBaseline(connection, fixture);
     await postUi(connection, {
       rightTab: "Preview",
@@ -115,7 +115,10 @@ export async function exerciseWorkPreviewStartControl(
   return outcome;
 }
 
-export function prepareFixture(request: ReleaseSurfaceDriverRequest): PreviewFixture {
+export function prepareFixture(request: ReleaseSurfaceDriverRequest, lane = "start"): PreviewFixture {
+  if (!/^[a-z0-9-]{1,48}$/.test(lane)) {
+    throw new Error("Work Preview UI fixture lane was not a bounded identifier");
+  }
   const tokenPath = nodeReadablePath(request.runtime.debugTokenPath, request.platform);
   const tokenStat = lstatSync(tokenPath);
   if (tokenStat.isSymbolicLink() || !tokenStat.isFile()) {
@@ -125,7 +128,8 @@ export function prepareFixture(request: ReleaseSurfaceDriverRequest): PreviewFix
     throw new Error("Work Preview UI fixture requires the installed candidate's .shellx token path");
   }
   const nodeProfileRoot = dirname(dirname(tokenPath));
-  const nodeRoot = resolve(nodeProfileRoot, "ui-work-preview-start");
+  const rootName = `ui-work-preview-${lane}`;
+  const nodeRoot = resolve(nodeProfileRoot, rootName);
   const rel = relative(resolve(nodeProfileRoot), nodeRoot);
   if (!rel || rel === "." || rel === ".." || rel.startsWith(`..${sep}`)) {
     throw new Error("Work Preview UI fixture escaped the disposable profile");
@@ -136,7 +140,7 @@ export function prepareFixture(request: ReleaseSurfaceDriverRequest): PreviewFix
   const nodeFilePath = join(nodeRoot, WORK_PREVIEW_FILE_ENTRY);
   writeFileSync(nodeFilePath, WORK_PREVIEW_FILE_CONTENT, { encoding: "utf8", flag: "wx", mode: 0o600 });
   const launchProfileRoot = portableParent(portableParent(request.runtime.debugTokenPath, request.platform), request.platform);
-  const launchRoot = portableJoin(launchProfileRoot, "ui-work-preview-start", request.platform);
+  const launchRoot = portableJoin(launchProfileRoot, rootName, request.platform);
   return {
     nodeRoot,
     launchRoot,

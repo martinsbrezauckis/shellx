@@ -305,6 +305,7 @@ function fixtureHealthGit(args: string[]): string {
     return [
       "scripts/lib/release-surface-macos-health-collector.ts",
       "scripts/lib/release-surface-health-evidence.ts",
+      "scripts/lib/release-surface-http-link-check.ts",
       "scripts/lib/release-surface-installed-input-client.ts",
       "src/lib/debug-element-observation.ts",
       "src/components/ReleaseSurfaceRendererHealthObserver.tsx",

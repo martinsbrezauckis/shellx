@@ -1,12 +1,13 @@
 use axum::{
     extract::{Path as AxumPath, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
 
 use crate::debug_api::{browser_registry, ApiState};
+use crate::debug_api_browser_caller::browser_mcp_caller_id;
 use crate::debug_api_browser_events::emit_browser_latest;
 
 pub(crate) fn browser_settings_routes() -> Router<ApiState> {
@@ -57,16 +58,35 @@ pub(crate) fn browser_settings_routes() -> Router<ApiState> {
         )
 }
 
-pub(crate) async fn browser_bookmarks_http(State(s): State<ApiState>) -> Response {
+pub(crate) async fn browser_bookmarks_http(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    Json(serde_json::json!({
-        "bookmarks": registry.bookmarks(),
-        "bookmarkToolbar": registry.bookmark_toolbar(),
-    }))
-    .into_response()
+    if browser_mcp_caller_id(&headers).is_some() {
+        // A provider may discover the deliberately agent-facing workflow
+        // catalog, but never receives personal bookmark links or folders.
+        let bookmarks = registry
+            .bookmarks()
+            .into_iter()
+            .filter(|bookmark| bookmark.agent_workflow.is_some())
+            .collect::<Vec<_>>();
+        Json(serde_json::json!({
+            "bookmarks": bookmarks,
+            "bookmarkToolbar": [],
+            "scope": "agentWorkflowsOnly",
+        }))
+        .into_response()
+    } else {
+        Json(serde_json::json!({
+            "bookmarks": registry.bookmarks(),
+            "bookmarkToolbar": registry.bookmark_toolbar(),
+        }))
+        .into_response()
+    }
 }
 
 pub(crate) async fn browser_bookmarks_post_http(

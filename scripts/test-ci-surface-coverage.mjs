@@ -64,6 +64,24 @@ const missingTypecheckJob = ciSurfaceCoverageErrors({
 });
 assert(missingTypecheckJob.some((error) => error.includes("canonical strict TypeScript gate")));
 
+const missingProductionBuild = ciSurfaceCoverageErrors({
+  ...input,
+  ciSource: ciSource.replace("run: pnpm build", "run: pnpm exec vite build"),
+});
+assert(missingProductionBuild.some((error) => error.includes("production bundle")));
+
+const missingLinuxNative = ciSurfaceCoverageErrors({
+  ...input,
+  ciSource: ciSource.replace("  rust-linux-native:\n", "  linux-native-disabled:\n"),
+});
+assert(missingLinuxNative.some((error) => error.includes("Linux native Rust job")));
+
+const missingLinuxNativePackage = ciSurfaceCoverageErrors({
+  ...input,
+  ciSource: ciSource.replace("            libwebkit2gtk-4.1-dev \\\n", ""),
+});
+assert(missingLinuxNativePackage.some((error) => error.includes("libwebkit2gtk-4.1-dev")));
+
 const staleNodeBaseline = ciSurfaceCoverageErrors({
   ...input,
   ciSource: ciSource.replaceAll("node-version: 22", "node-version: 20"),

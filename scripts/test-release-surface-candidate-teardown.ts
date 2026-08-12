@@ -155,6 +155,7 @@ const evidence: ReleaseSurfaceCandidateTeardownInput = {
 
 const receipt = createReleaseSurfaceCandidateTeardownReceipt(evidence);
 assert.equal(receipt.status, "pass");
+assert.equal(receipt.executionWindow, "immediately-before-publish");
 assert.equal(receipt.candidate.processId, candidate.process.pid);
 assert.equal(receipt.profileCleanup.processCountAfter, 0);
 assert.equal(receipt.profileCleanup.debugListenerCountAfter, 0);
@@ -174,6 +175,23 @@ listenerLeak.profileCleanup.listeners.debugCountAfter = 1;
 assert.throws(
   () => createReleaseSurfaceCandidateTeardownReceipt(listenerLeak),
   /loopback listeners remain/,
+);
+
+const targetedEvidence = structuredClone(evidence);
+targetedEvidence.driverRunManifest.targetedClosure = {
+  driverIds: ["ui-control-bounded-installed"],
+};
+const targetedReceipt = createReleaseSurfaceCandidateTeardownReceipt(targetedEvidence);
+assert.equal(targetedReceipt.executionWindow, "targeted-post-matrix");
+assert.deepEqual(
+  validateReleaseSurfaceCandidateTeardownReceipt({ receipt: targetedReceipt, evidence: targetedEvidence }),
+  [],
+);
+const emptyTargetedEvidence = structuredClone(targetedEvidence);
+emptyTargetedEvidence.driverRunManifest.targetedClosure!.driverIds = [];
+assert.throws(
+  () => createReleaseSurfaceCandidateTeardownReceipt(emptyTargetedEvidence),
+  /at least one exact driver id/,
 );
 
 const earlyCleanup = structuredClone(evidence);

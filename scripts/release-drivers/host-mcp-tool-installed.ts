@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -69,6 +70,7 @@ const manifest: ReleaseSurfaceDriverManifest = {
     "host-mcp:Agent_poll_all:installed-read-effect",
     "host-mcp:Agent_status:installed-read-effect",
     "host-mcp:capabilities_summary:installed-read-effect",
+    "host-mcp:cut_read:installed-read-effect",
     "host-mcp:browser_locks:installed-read-effect",
     "host-mcp:browser_check:installed-read-effect",
     "host-mcp:browser_downloads:installed-read-effect",
@@ -141,6 +143,7 @@ const manifest: ReleaseSurfaceDriverManifest = {
     "host-mcp:fs_write:installed-mutation-effect",
     "host-mcp:fs_watch:installed-mutation-effect",
     "host-mcp:host_act:installed-mutation-effect",
+    "host-mcp:cut_act:installed-mutation-effect",
     "host-mcp:mem_delete:installed-mutation-effect",
     "host-mcp:mem_set:installed-mutation-effect",
     "host-mcp:browser_act:installed-mutation-effect",
@@ -236,6 +239,7 @@ const MUTATION_TOOLS = new Set([
   "Agent",
   "Agent_kill",
   "browser_act",
+  "cut_act",
   "browser_clear_site_data",
   "browser_evaluation_write",
   "browser_flight_recorder_export",
@@ -640,6 +644,43 @@ async function exerciseTool(
       outcome.effect = "pass";
       return outcome;
     }
+    if (name === "cut_read" || name === "cut_act") {
+      const mutation = name === "cut_act";
+      const result = await mcpRequest(
+        connection,
+        "tools/call",
+        { name, arguments: argumentsFor(name, fixtures, browserFixture) },
+        mutation,
+      );
+      const structured = isRecord(result.structuredContent) ? result.structuredContent : null;
+      const text = requireArray(result, "content", `${name} result`)
+        .filter(isRecord)
+        .map((entry) => entry.text)
+        .find((value): value is string => typeof value === "string") ?? "";
+      if (result.isError === true) {
+        const honestUnavailable = text.includes("ShellX Cut is not installed")
+          || text.includes("ShellX Cut MCP")
+          || text.includes("cutd");
+        const typedCutFailure = structured?.ok === false
+          && (typeof structured.error === "string" || isRecord(structured.error));
+        if (!honestUnavailable && !typedCutFailure) {
+          throw new Error(`${name} returned an unclassified ShellX Cut failure`);
+        }
+        outcome.observedEffect = mutation
+          ? "Host MCP permission-gated cut_act and returned the exact installed/running Cut availability result without changing a video project."
+          : "Host MCP returned the exact installed/running ShellX Cut availability result without starting an editor or changing a video project.";
+      } else {
+        if (!structured || structured.ok !== true) {
+          throw new Error(`${name} successful Cut result omitted the typed Cut envelope`);
+        }
+        outcome.observedEffect = mutation
+          ? "Host MCP permission-gated cut_act and reached system.doctor through the running Cut MCP engine without changing a video project."
+          : "Host MCP cut_read reached system.doctor through the running Cut MCP engine without changing a video project.";
+      }
+      outcome.invoke = "pass";
+      outcome.effect = "pass";
+      return outcome;
+    }
     if (name === "preview_start") {
       const result = await callTool(
         connection,
@@ -766,6 +807,8 @@ function argumentsFor(
     case "fs_watch": return { path: fixtures.launchRoot, recursive: false, debounce_ms: 50 };
     case "host_read": return { action: "fs_read", params: { path: fixtures.textLaunchPath, max_bytes: 4_096 } };
     case "host_act": return { action: "fs_write", params: { path: fixtures.gatewayLaunchPath, content: GATEWAY_CONTENT } };
+    case "cut_read": return { action: "status", timeoutMs: 30_000 };
+    case "cut_act": return { verb: "system_doctor", arguments: {}, timeoutMs: 30_000 };
     case "mem_delete": return { namespace: fixtures.memoryNamespace, key: fixtures.memoryDeleteKey };
     case "mem_get": return { namespace: fixtures.memoryNamespace, key: fixtures.memoryMissingKey };
     case "mem_list": return { namespace: fixtures.memoryNamespace, prefix: fixtures.memoryListPrefix };
@@ -2175,7 +2218,13 @@ function samePortablePath(
   platform: ReleaseSurfaceDriverRequest["platform"],
 ): boolean {
   if (typeof actual !== "string" || !actual.trim()) return false;
-  if (platform !== "windows-installed") return resolve(actual) === resolve(expected);
+  if (platform !== "windows-installed") {
+    try {
+      return realpathSync(actual) === realpathSync(expected);
+    } catch {
+      return resolve(actual) === resolve(expected);
+    }
+  }
   const normalize = (value: string) => value
     .replaceAll("/", "\\")
     .replace(/^\\\\\?\\/, "")

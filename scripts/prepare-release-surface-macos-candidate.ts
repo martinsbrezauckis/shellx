@@ -9,6 +9,7 @@ import {
   type ReleaseSurfaceRunProfile,
 } from "./lib/release-surface-run-profile";
 import { releaseSurfaceControllerNodeArguments } from "./lib/release-surface-controller-binding";
+import { resolveReleaseSurfaceControllerProvenance } from "./lib/release-surface-driver-runner";
 import { releaseSurfaceMacosNativeInputFileIdentity } from "./lib/release-surface-macos-native-input";
 
 export const RELEASE_SURFACE_MACOS_CANDIDATE_PREPARATION_SCHEMA =
@@ -20,6 +21,9 @@ if (process.platform !== "darwin") {
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
+const targetedClosure = readArgs(args, "--driver-id")
+  .flatMap((value) => value.split(","))
+  .some((value) => value.trim().length > 0);
 requireFinalWindow(args);
 const runId = requiredArg(args, "--run-id");
 const artifactPath = regularFile(requiredArg(args, "--artifact"), "distribution artifact");
@@ -57,7 +61,18 @@ for (const output of [candidatePath, preparationPath]) {
 
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
 if (dirty.trim()) throw new Error("macOS candidate preparation requires a clean frozen source checkout");
-const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const controllerSourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const candidateSourceCommitArg = readArg(args, "--candidate-source-commit");
+if (candidateSourceCommitArg && !targetedClosure) {
+  throw new Error("--candidate-source-commit is valid only for targeted post-matrix closure");
+}
+const sourceCommit = candidateSourceCommitArg ?? controllerSourceCommit;
+resolveReleaseSurfaceControllerProvenance({
+  rootDir: root,
+  candidateSourceCommit: sourceCommit,
+  controllerSourceCommit,
+  targetedClosure,
+});
 const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
 let profile: ReleaseSurfaceRunProfile | null = null;
 let processId: number | null = null;
@@ -104,6 +119,7 @@ try {
       "--artifact", artifactPath,
       "--installed-payload", applicationPath,
       "--installation-receipt", installationReceiptPath,
+      "--candidate-source-commit", sourceCommit,
       "--pid", String(processId),
       "--debug-base", profile.debugBase,
       "--debug-token-file", profile.debugTokenLaunchPath,

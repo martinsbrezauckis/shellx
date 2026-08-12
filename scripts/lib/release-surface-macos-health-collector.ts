@@ -22,10 +22,12 @@ import {
   assertReleaseSurfaceCollectorSource,
   type ReleaseSurfaceGitRunner,
 } from "./release-surface-source-provenance";
+import { checkReleaseSurfaceHttpLink } from "./release-surface-http-link-check";
 
 const MACOS_HEALTH_TRACKED_SOURCES = [
   "scripts/lib/release-surface-macos-health-collector.ts",
   "scripts/lib/release-surface-health-evidence.ts",
+  "scripts/lib/release-surface-http-link-check.ts",
   "scripts/lib/release-surface-installed-input-client.ts",
   "src/lib/debug-element-observation.ts",
   "src/components/ReleaseSurfaceRendererHealthObserver.tsx",
@@ -563,20 +565,7 @@ function requireExactCandidateHealth(value: unknown, candidate: ReleaseSurfaceCa
   }
 }
 
-async function checkHttpLink(href: string): Promise<"ok" | "broken"> {
-  try {
-    const response = await fetch(href, {
-      method: "GET",
-      redirect: "follow",
-      headers: { "User-Agent": "ShellX-Release-Link-Check/1" },
-      signal: AbortSignal.timeout(15_000),
-    });
-    await response.body?.cancel();
-    return response.status >= 200 && response.status < 400 ? "ok" : "broken";
-  } catch {
-    return "broken";
-  }
-}
+const checkHttpLink = checkReleaseSurfaceHttpLink;
 
 function expectedConsoleError(
   message: string,

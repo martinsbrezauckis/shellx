@@ -363,7 +363,7 @@ async function handleMcp(request: IncomingMessage, response: ServerResponse): Pr
   if (body.method === "tools/list") {
     if (request.headers.authorization !== `Bearer ${mcpToken}`) return json(response, 401, { error: "unauthorized" });
     return json(response, 200, rpcResult(id, {
-      tools: ["capabilities_summary", "search_tool", "host_read", "host_act", "browser_read", "browser_act"]
+      tools: ["capabilities_summary", "search_tool", "host_read", "host_act", "browser_read", "browser_act", "cut_read", "cut_act"]
         .map((name) => ({ name, inputSchema: { type: "object", properties: {} } })),
     }));
   }
@@ -445,6 +445,20 @@ function dispatchTool(name: string, toolArgs: Record<string, unknown>, callerTab
       taskId: browserTask.taskId,
       currentUrl: browserTask.currentUrl,
       receipt: { kind: "fixtureBrowserNavigated" },
+    };
+  }
+  if (name === "cut_read") {
+    if (toolArgs.action !== "status") throw new Error("fixture cut_read supports only action=status");
+    return {
+      ok: true,
+      result: { schema: "shellx-cut/doctor/1", essential_ok: true, cards: [] },
+    };
+  }
+  if (name === "cut_act") {
+    if (toolArgs.verb !== "system_doctor") throw new Error("fixture cut_act supports only system_doctor");
+    return {
+      ok: true,
+      result: { schema: "shellx-cut/doctor/1", essential_ok: true, cards: [] },
     };
   }
   if (name === "browser_navigate") {
@@ -1153,7 +1167,7 @@ function isMutationTool(name: string): boolean {
   return [
     "Agent", "Agent_kill", "browser_act", "browser_clear_site_data", "browser_click_at", "browser_click_ref", "browser_evaluation_write", "browser_fill_ref",
     "browser_flight_recorder_export", "browser_navigate", "browser_resolve_dialog", "browser_run_steps", "browser_save_page", "browser_screenshot", "browser_trace_open", "browser_type_text", "browser_workflow_replay", "browser_workflow_save", "build_checkpoint", "build_complete", "build_receipt",
-    "goal_complete", "host_act", "fs_append", "fs_copy", "fs_delete", "fs_ensure_dir",
+    "goal_complete", "host_act", "cut_act", "fs_append", "fs_copy", "fs_delete", "fs_ensure_dir",
     "fs_watch", "fs_write", "mem_delete", "mem_set", "net_fetch", "process_signal", "preview_start", "secret_delete",
     "secret_set", "security_scan", "send_prompt_to_provider", "send_prompt_to_session",
     "vault_agent_request", "vault_generate", "vault_request_grant", "vision_describe", "vision_describe_v2",

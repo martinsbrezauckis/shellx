@@ -267,7 +267,7 @@ export function PluginsModal({
                     built-in
                   </span>
                 </div>
-                <p className="mp-desc">Native Browser, Vault Request Center, fs/process/screenshot, provider handoffs, Agent, and memory tools.</p>
+                <p className="mp-desc">Native Browser, Vault Request Center, ShellX Cut video editing, fs/process/screenshot, provider handoffs, Agent, and memory tools.</p>
                 <div className="mp-row-foot">
                   <span className="mp-source">built into ShellX provider sessions</span>
                   <span className="plugin-toggle-lbl" data-debug-id="plugins-shellx-host-scope">
@@ -276,7 +276,7 @@ export function PluginsModal({
                 </div>
                 <div className="plugin-row-hint">
                   <span className="plugin-row-hint-info">
-                    Available only to agents launched from ShellX; direct CLI sessions stay unchanged.
+                    Available only to host-capable agents launched from ShellX; direct CLI sessions stay unchanged. Cut actions activate when ShellX Cut is installed and running.
                   </span>
                 </div>
               </div>

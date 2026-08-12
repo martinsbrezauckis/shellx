@@ -2,13 +2,13 @@
 
 # ShellX Manual
 
-Version: 0.3.51
+Version: 0.3.52
 
-Updated: 2026-08-10
+Updated: 2026-08-12
 
 ShellX is a desktop workspace for local and remote coding agents. It keeps conversations, project files, Browser tasks, Vault approvals, previews, Git state, and test evidence visible in one operator-controlled shell.
 
-> This manual covers ShellX v0.3.51. Verify the installed version from Settings → About when comparing behavior with these instructions.
+> This manual covers ShellX v0.3.52. Verify the installed version from Settings → About when comparing behavior with these instructions.
 
 Web manual: https://docs.theshellx.com/manual/shellx/
 
@@ -591,7 +591,7 @@ Creates a normal tab in the currently selected Browser profile. The visible prof
 
 <a id="shellx.browser.ui.disposable_tab"></a>
 
-Creates a task-disposable tab intended for bounded agent work and separate cleanup from personal browsing.
+Creates a task-disposable tab with separate per-task web storage. Finishing or aborting the task, or closing its tab, retires that storage so a later disposable task starts empty.
 
 ### Browser tabs: Agent tab lock
 
@@ -609,7 +609,7 @@ Locks personal Browser content immediately or opens lock setup when no personal 
 
 <a id="shellx.browser.ui.handoff"></a>
 
-Hands the exact active tab to the active agent task while ownership remains visible in the banner.
+Opens a ShellX-owned review of the sanitized page context, profile persistence, current owner, selected task, and separate Vault boundary before handing the exact active tab to the agent task.
 
 ### Browser tabs: Take back
 
@@ -891,7 +891,7 @@ Receipts expands or collapses the recent bounded Browser action receipts used to
 
 <a id="shellx.browser.panel.evidence"></a>
 
-Records a bounded, redacted attempt for the current Browser task and reviews Flight Recorder attempt and evaluation identities, exact hashes, completeness, and comparison counts without exposing private artifact paths or page content. Record attempt is disabled until a current task exists; Refresh reloads the bounded receipt list.
+Records a bounded, redacted attempt for the current Browser task and reviews Flight Recorder identities, hashes, completeness, and comparisons. Developer Inspection summarizes the live task; after completion, Teach workflow selects the most recent complete attempt for review, approval, and zero-action rehearsal. Private artifact paths and page content stay out of the panel.
 
 ### Browser right panel: Errors
 
@@ -921,7 +921,7 @@ Filters the selected history scope by text and date without deleting stored entr
 
 <a id="shellx.browser.sidecar.clear_history"></a>
 
-Explicitly clears Browser history after an operator action; filtering alone never deletes it.
+Clears the selected User or Agent history scope. Choosing All opens a dedicated confirmation, while search and date filtering leave stored entries unchanged.
 
 ### Bookmarks sidecar: List
 
@@ -933,7 +933,7 @@ Browses bookmarks and folders and opens the chosen saved URL.
 
 <a id="shellx.browser.sidecar.bookmark_manager"></a>
 
-Creates links and folders, renames labels, edits URLs, pins toolbar items, sorts by drag, and confirms deletion.
+Creates persistent links, folders, toolbar pins, and workflow bookmarks; rename, URL, order, and deletion changes remain in place after ShellX restarts.
 
 ### Downloads sidecar: Default folder
 
@@ -1051,13 +1051,14 @@ ShellX coding-agent sessions run in provider-native Full Auto.
 
 <a id="shellx.agents.mcp"></a>
 
-Confirmed ShellX sessions can receive tab-bound host tools for status, Browser, Vault, previews, processes, media, and provider handoffs.
+Confirmed ShellX sessions can receive tab-bound host tools for status, Browser, Vault, ShellX Cut video editing, previews, processes, media, and provider handoffs.
 
 1. Start with the compact capability summary when it is advertised.
 2. Browser automation is advertised through two routed tools: browser_read for bounded observations and browser_act for permission-gated changes; verbose compatibility schemas remain on-demand instead of entering every prompt.
-3. Browser observations default to a 3,000-byte structured-response budget and expose their serialized byte and approximate token counts; use extraction or an explicit larger/full request only when necessary.
-4. Prefer provider-native file tools for the selected remote cwd; ShellX host file tools address the parent host filesystem.
-5. Use mutating host tools only when the ShellX UI and active tab make the authority visible.
+3. ShellX Cut is advertised through cut_read for bounded status/search/schema discovery and cut_act for permission-gated use of one exact video-editing verb; Cut's generated catalog stays out of the default prompt.
+4. Browser observations default to a 3,000-byte structured-response budget and expose their serialized byte and approximate token counts; use extraction or an explicit larger/full request only when necessary.
+5. Prefer provider-native file tools for the selected remote cwd; ShellX host file tools address the parent host filesystem.
+6. Use mutating host tools only when the ShellX UI and active tab make the authority visible.
 
 ## Integrated Browser
 

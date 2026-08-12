@@ -82,6 +82,8 @@ mod debug_api_browser_artifacts;
 #[cfg(feature = "debug-api")]
 mod debug_api_browser_caller;
 #[cfg(feature = "debug-api")]
+mod debug_api_browser_developer_inspection;
+#[cfg(feature = "debug-api")]
 mod debug_api_browser_events;
 #[cfg(feature = "debug-api")]
 mod debug_api_browser_recipe_replay;
@@ -93,6 +95,8 @@ mod debug_api_browser_security;
 mod debug_api_browser_settings;
 #[cfg(feature = "debug-api")]
 mod debug_api_browser_state;
+#[cfg(feature = "debug-api")]
+mod debug_api_browser_teach;
 #[cfg(feature = "debug-api")]
 mod debug_api_release_browser_fixture;
 #[cfg(feature = "debug-api")]
@@ -137,15 +141,20 @@ pub(crate) mod shellx_browser_control;
 pub(crate) mod shellx_browser_coordinate_input;
 pub(crate) mod shellx_browser_cowork;
 pub(crate) mod shellx_browser_destructive_actions;
+pub(crate) mod shellx_browser_developer_inspection;
 pub(crate) mod shellx_browser_developer_mode;
 pub(crate) mod shellx_browser_diagnostics;
 pub(crate) mod shellx_browser_dom_traversal;
 pub(crate) mod shellx_browser_element_identity;
 pub(crate) mod shellx_browser_element_targets;
 pub(crate) mod shellx_browser_engine;
+pub(crate) mod shellx_browser_engine_lifecycle;
 pub(crate) mod shellx_browser_engine_model;
 pub(crate) mod shellx_browser_engine_runtime;
 pub(crate) mod shellx_browser_engine_state;
+pub(crate) mod shellx_browser_engine_webview_config;
+pub(crate) mod shellx_browser_ephemeral_lifecycle;
+pub(crate) mod shellx_browser_ephemeral_roots;
 pub(crate) mod shellx_browser_evaluation_identity;
 pub(crate) mod shellx_browser_evaluation_model;
 pub(crate) mod shellx_browser_evaluations;
@@ -153,10 +162,12 @@ pub(crate) mod shellx_browser_evidence;
 pub(crate) mod shellx_browser_flight_recorder;
 pub(crate) mod shellx_browser_flight_recorder_model;
 pub(crate) mod shellx_browser_flight_recorder_sanitization;
+pub(crate) mod shellx_browser_history;
 pub(crate) mod shellx_browser_initialization;
 pub(crate) mod shellx_browser_model;
 pub(crate) mod shellx_browser_observation_model;
 pub(crate) mod shellx_browser_observations;
+pub(crate) mod shellx_browser_operator_diagnostics;
 pub(crate) mod shellx_browser_persistence;
 pub(crate) mod shellx_browser_personal_lock;
 pub(crate) mod shellx_browser_policy;
@@ -182,6 +193,7 @@ pub(crate) mod shellx_browser_tabs;
 pub(crate) mod shellx_browser_task_control;
 pub(crate) mod shellx_browser_task_model;
 pub(crate) mod shellx_browser_tasks;
+pub(crate) mod shellx_browser_teach;
 pub(crate) mod shellx_browser_transfer_privacy;
 pub(crate) mod shellx_browser_transfers;
 pub(crate) mod shellx_browser_vault;
@@ -1976,7 +1988,7 @@ async fn capture_app_screenshot_to_file() -> Result<String, String> {
         if port == 0 {
             return Err("debug API is not bound".to_string());
         }
-        let token = crate::debug_api::resolve_or_create_debug_token();
+        let token = crate::debug_api::current_debug_token()?;
         let url = format!("http://127.0.0.1:{}/screenshot", port);
         let response = reqwest::Client::builder()
             .timeout(Duration::from_secs(8))
@@ -4601,28 +4613,30 @@ async fn read_text_file_if_text(
 /// authenticate its `fetch` calls to the published shellXagent loopback port.
 ///
 /// SECURITY: this command is reachable from the WebView only (Tauri
-/// commands aren't network-exposed). The token is the same one stored at
-/// `~/.shellx/shellxagent.token` (mode 0600) and used by external
-/// drivers like `pnpm drive`. Returning it here is intentional — the
-/// WebView IS the trusted client we built the auth gate for; this just
-/// closes C-NEW-1 from reviewer pass #2.
+/// commands aren't network-exposed). The token is the process-authoritative
+/// Debug API value; profile-backed startup persists it at
+/// `~/.shellx/shellxagent.token` (mode 0600), while an explicit environment
+/// override remains process-only. Returning it here is intentional — the
+/// WebView IS the trusted client we built the auth gate for; this just closes
+/// C-NEW-1 from reviewer pass #2.
 ///
 /// Called once by `src/lib/debug-api.ts::getDebugToken` and cached in
-/// module state for the lifetime of the page. Stale token (e.g. user
-/// rotated debug.token externally) requires a window reload.
+/// module state for the lifetime of the page. A Settings rotation updates the
+/// process authority immediately; an already-cached renderer token requires a
+/// window reload.
 ///
 /// When debug-api feature is disabled at compile time the function still
 /// exists for invoke_handler completeness but the token it returns won't
 /// authenticate anything because the server isn't running.
 #[tauri::command]
-fn get_debug_token() -> String {
+fn get_debug_token() -> Result<String, String> {
     #[cfg(feature = "debug-api")]
     {
-        crate::debug_api::resolve_or_create_debug_token()
+        crate::debug_api::current_debug_token()
     }
     #[cfg(not(feature = "debug-api"))]
     {
-        String::new()
+        Ok(String::new())
     }
 }
 
@@ -4786,19 +4800,17 @@ fn workflow_skill_statuses() -> Vec<skill_install::WorkflowSkillStatus> {
 /// echoing it to the chat log.
 #[tauri::command]
 fn shellxagent_token_read() -> Result<String, String> {
-    Ok(debug_api::resolve_or_create_debug_token())
+    debug_api::current_debug_token()
 }
 
 /// Rotate the shellXagent bearer token.
-/// Mints a fresh 32-char hex token, writes it atomically to
-/// `~/.shellx/shellxagent.token` with chmod 0600. The auth
-/// middleware re-reads from disk on every request so the new token
-/// takes effect immediately — no restart needed. Returns the new
-/// token so the UI can copy it to the clipboard once.
+/// Mints a fresh 32-char hex token and atomically persists it to
+/// `~/.shellx/shellxagent.token` with private permissions before updating the
+/// process authority. The old token remains valid if persistence fails.
+/// Returns the new token so the UI can copy it to the clipboard once.
 #[tauri::command]
 fn shellxagent_token_regenerate() -> Result<String, String> {
-    let path = debug_api::shellxagent_token_path();
-    Ok(debug_api::write_new_shellxagent_token(&path))
+    debug_api::rotate_debug_token()
 }
 
 // ─── MCP marketplace Tauri command wrappers ───────
@@ -7185,6 +7197,14 @@ pub fn run() {
             crate::shellx_browser::shellx_browser_finish_task,
             crate::shellx_browser_evidence::shellx_browser_operator_evidence_summary,
             crate::shellx_browser_evidence::shellx_browser_operator_export_flight_recorder,
+            crate::shellx_browser_teach::shellx_browser_operator_prepare_teach_draft,
+            crate::shellx_browser_teach::shellx_browser_operator_list_teach_drafts,
+            crate::shellx_browser_teach::shellx_browser_operator_revise_teach_draft,
+            crate::shellx_browser_teach::shellx_browser_operator_rehearse_teach_recipe,
+            crate::shellx_browser_teach::shellx_browser_operator_approve_teach_draft,
+            crate::shellx_browser_operator_diagnostics::shellx_browser_operator_developer_inspect,
+            crate::shellx_browser_operator_diagnostics::shellx_browser_operator_export_har,
+            crate::shellx_browser_operator_diagnostics::shellx_browser_operator_export_performance,
             crate::shellx_browser_cowork::shellx_browser_claim_cowork_prompt,
             crate::shellx_browser_cowork::shellx_browser_replay_cowork_prompt_notifications,
             crate::shellx_browser_cowork::shellx_browser_send_cowork_prompt,
@@ -7394,50 +7414,64 @@ pub fn run() {
             #[cfg(feature = "debug-api")]
             {
                 if is_debug_enabled() {
-                    let handle = _app.handle().clone();
-                    log_to_file("scheduling debug-api server");
-                    tauri::async_runtime::spawn(async move {
-                        // Write before AND after the await so we can tell
-                        // whether bind succeeded.
-                        if let Some(h) = std::env::var("HOME")
-                            .ok()
-                            .or_else(|| std::env::var("USERPROFILE").ok())
-                        {
-                            let p = std::path::PathBuf::from(h)
-                                .join(".shellx")
-                                .join("startup.log");
-                            let _ = std::fs::OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(&p)
-                                .and_then(|mut f| {
-                                    use std::io::Write as _;
-                                    writeln!(f, "[debug-api task] entered async block")
-                                });
+                    // Resolve and persist the authority before the WebView can
+                    // invoke `get_debug_token`. The server reuses this same
+                    // once-initialized authority when its async task begins.
+                    match crate::debug_api::initialize_debug_token_authority() {
+                        Ok(_) => {
+                            let handle = _app.handle().clone();
+                            log_to_file("scheduling debug-api server");
+                            tauri::async_runtime::spawn(async move {
+                                // Write before AND after the await so we can tell
+                                // whether bind succeeded.
+                                if let Some(h) = std::env::var("HOME")
+                                    .ok()
+                                    .or_else(|| std::env::var("USERPROFILE").ok())
+                                {
+                                    let p = std::path::PathBuf::from(h)
+                                        .join(".shellx")
+                                        .join("startup.log");
+                                    let _ = std::fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(&p)
+                                        .and_then(|mut f| {
+                                            use std::io::Write as _;
+                                            writeln!(f, "[debug-api task] entered async block")
+                                        });
+                                }
+                                let res = crate::debug_api::start_debug_server(handle).await;
+                                if let Some(h) = std::env::var("HOME")
+                                    .ok()
+                                    .or_else(|| std::env::var("USERPROFILE").ok())
+                                {
+                                    let p = std::path::PathBuf::from(h)
+                                        .join(".shellx")
+                                        .join("startup.log");
+                                    let _ = std::fs::OpenOptions::new()
+                                        .create(true)
+                                        .append(true)
+                                        .open(&p)
+                                        .and_then(|mut f| {
+                                            use std::io::Write as _;
+                                            writeln!(f, "[debug-api task] exit res={:?}", res)
+                                        });
+                                }
+                                if let Err(e) = res {
+                                    warn!("debug-api server stopped: {}", e);
+                                }
+                            });
+                            info!("debug-api hub initialized + server scheduled");
+                            log_to_file("debug-api server spawn issued");
                         }
-                        let res = crate::debug_api::start_debug_server(handle).await;
-                        if let Some(h) = std::env::var("HOME")
-                            .ok()
-                            .or_else(|| std::env::var("USERPROFILE").ok())
-                        {
-                            let p = std::path::PathBuf::from(h)
-                                .join(".shellx")
-                                .join("startup.log");
-                            let _ = std::fs::OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(&p)
-                                .and_then(|mut f| {
-                                    use std::io::Write as _;
-                                    writeln!(f, "[debug-api task] exit res={:?}", res)
-                                });
+                        Err(error) => {
+                            warn!(
+                                "debug-api token authority unavailable; server not started: {}",
+                                error
+                            );
+                            log_to_file("debug-api token authority initialization failed");
                         }
-                        if let Err(e) = res {
-                            warn!("debug-api server stopped: {}", e);
-                        }
-                    });
-                    info!("debug-api hub initialized + server scheduled");
-                    log_to_file("debug-api server spawn issued");
+                    }
                 } else {
                     log_to_file("debug-api DISABLED (is_debug_enabled()=false)");
                 }

@@ -29,7 +29,10 @@ pub(crate) fn default_profiles() -> Vec<BrowserProfile> {
             agent_default: false,
             cookies_enabled: false,
             persistent: false,
-            storage_root: Some(browser_profile_storage_root("task-disposable")),
+            // A disposable WebView root is allocated from its exact task and
+            // engine identity at native mount time.  There is intentionally no
+            // stable profile directory to expose or reuse here.
+            storage_root: None,
         },
     ]
 }

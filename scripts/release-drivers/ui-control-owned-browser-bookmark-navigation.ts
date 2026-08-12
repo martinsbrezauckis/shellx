@@ -1,5 +1,4 @@
 import {
-  acceptReleaseSurfaceInstalledInputAlert,
   clickReleaseSurfaceInstalledInputElement,
   closeReleaseSurfaceInstalledInputWindow,
   findReleaseSurfaceInstalledInputElement,
@@ -37,7 +36,11 @@ const LIST_MODE = "[data-debug-id='shellx-browser-bookmark-list-mode']";
 const BOOKMARK_CURRENT = "[data-debug-id='shellx-browser-bookmark-current']";
 const HISTORY_OWNER = "[data-debug-id='shellx-browser-history-menu']";
 const HISTORY_PANEL = "#shellx-browser-history-sidecar[aria-labelledby='shellx-browser-history-menu']";
+const HISTORY_USER_SCOPE = "[data-debug-id='shellx-browser-history-user']";
+const HISTORY_AGENT_SCOPE = "[data-debug-id='shellx-browser-history-agent']";
 const CLEAR_HISTORY = "[data-debug-id='shellx-browser-clear-history']";
+const CLEAR_HISTORY_CONFIRMATION = "[data-debug-id='shellx-browser-history-clear-confirmation']";
+const CLEAR_HISTORY_CONFIRM = "[data-debug-id='shellx-browser-history-clear-confirm']";
 const ROOT_ID = "final-surface-navigation-link";
 const FOLDER_ID = "final-surface-navigation-folder";
 const CHILD_ID = "final-surface-navigation-child";
@@ -91,6 +94,7 @@ export async function exerciseOwnedBrowserBookmarkNavigation(
       profileId: "task-disposable",
       autonomy: "assistedAutonomous",
       startUrl: page.startUrl,
+      expectedDomains: ["127.0.0.1"],
     });
     taskId = requiredString(started.taskId, "Browser bookmark navigation taskId");
     const switched = await switchReleaseSurfaceInstalledInputWindowByTitle(webdriver, "ShellX Browser");
@@ -266,14 +270,26 @@ async function clearOwnedHistory(connection: Connection, webdriver: WebDriver): 
     await clickReleaseSurfaceInstalledInputElement(webdriver, await waitForReleaseSurfaceInstalledInputElement(webdriver, HISTORY_OWNER));
     await waitForReleaseSurfaceInstalledInputElement(webdriver, HISTORY_PANEL);
   }
+  await clickReleaseSurfaceInstalledInputElement(
+    webdriver,
+    await waitForReleaseSurfaceInstalledInputElement(webdriver, HISTORY_AGENT_SCOPE),
+  );
   await clickReleaseSurfaceInstalledInputElement(webdriver, await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_HISTORY));
-  await acceptReleaseSurfaceInstalledInputAlert(webdriver, "Clear browser history?");
+  await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_HISTORY_CONFIRMATION);
+  await clickReleaseSurfaceInstalledInputElement(
+    webdriver,
+    await waitForReleaseSurfaceInstalledInputElement(webdriver, CLEAR_HISTORY_CONFIRM),
+  );
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     if (await historyCount(connection) === 0) break;
     await delay(50);
   }
   if (await historyCount(connection) !== 0) throw new Error("owned bookmark navigation history cleanup failed");
+  await clickReleaseSurfaceInstalledInputElement(
+    webdriver,
+    await waitForReleaseSurfaceInstalledInputElement(webdriver, HISTORY_USER_SCOPE),
+  );
   if (await findReleaseSurfaceInstalledInputElement(webdriver, HISTORY_PANEL)) {
     await clickReleaseSurfaceInstalledInputElement(webdriver, await waitForReleaseSurfaceInstalledInputElement(webdriver, HISTORY_OWNER));
   }

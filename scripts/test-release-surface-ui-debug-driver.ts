@@ -60,7 +60,7 @@ try {
   const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
   assert.equal(report.schema, RELEASE_SURFACE_DRIVER_REPORT_SCHEMA);
   assert.deepEqual(validateReleaseSurfaceDriverReport(request, report), []);
-  assert.equal(report.outcomes.length, 150);
+  assert.equal(report.outcomes.length, 155);
   assert(report.outcomes.every((outcome) => (
     outcome.present === "pass"
     && outcome.invoke === "pass"
@@ -87,9 +87,9 @@ try {
     token,
   );
   assert.equal(fixtureState.browserTaskActive, false, "every owned Browser fixture task must be aborted");
-  assert.equal(fixtureState.taskStartCount, 12);
-  assert.equal(fixtureState.taskAbortCount, 12);
-  assert.equal(fixtureState.browserHistoryEntryCount, 12, "owned Browser tasks leave only candidate-scoped monotonic history");
+  assert.equal(fixtureState.taskStartCount, 17);
+  assert.equal(fixtureState.taskAbortCount, 17);
+  assert.equal(fixtureState.browserHistoryEntryCount, 17, "owned Browser tasks leave only candidate-scoped monotonic history");
   assert.equal(fixtureState.openModal, "close");
   assert.equal(fixtureState.buildPlanFixtureActive, false, "the inert Build plan fixture must be exactly cleared");
   assert.equal(fixtureState.shellxagentFixtureActive, false, "the inert ShellX Agent fixture must be exactly cleared");
@@ -103,6 +103,8 @@ try {
   assert.equal(fixtureState.settingsTab, "data", "the previously selected Settings tab must be restored");
   assert.equal(fixtureState.browserRightTab, "chat");
   assert.equal(fixtureState.browserOverlay, "none", "every opened Browser sidecar must be closed");
+  assert.equal(fixtureState.browserHistoryClearSheetOpen, false, "the owned All-history confirmation sheet must close during cleanup");
+  assert.equal(fixtureState.browserHistoryClearStatusVisible, false, "the owned history clear status must unmount during cleanup");
   assert.equal(fixtureState.browserWorkflowPreviewVisible, false, "the owned missing-workflow preview must not survive cleanup");
   assert.equal(fixtureState.browserErrorVisible, false, "the owned missing-workflow error must not survive cleanup");
   assert.equal(fixtureState.builtinDocOpen, false, "the opened Builtin Doc modal must be closed");
@@ -413,6 +415,11 @@ function newUiDebugCohortAssignments(
     ["surface-components-activitybrowsermodal-19", "src/components/ActivityBrowserModal.tsx", 13, 1130, "[data-debug-id=\"surface-components-activitybrowsermodal-19\"]", false, "ui:owned-activity-timeline-visible"],
     ["surface-components-activitybrowsermodal-21", "src/components/ActivityBrowserModal.tsx", 17, 1405, "[data-debug-id=\"surface-components-activitybrowsermodal-21\"]", false, "ui:owned-activity-evidence-rows-visible"],
     ["shellx-browser-evidence-empty", "src/browser/components/BrowserEvidencePanel.tsx", 4, 132, "[data-debug-id=\"shellx-browser-evidence-empty\"]", false, "ui:browser-evidence-owned-task"],
+    ["shellx-browser-clear-all-history", "src/browser/components/BrowserHistorySidecar.tsx", 9, 192, "[data-debug-id=\"shellx-browser-clear-all-history\"]", false, "ui:browser-history-owned-task"],
+    ["shellx-browser-history-clear-confirmation", "src/browser/components/BrowserHistorySidecar.tsx", 12, 227, "[data-debug-id=\"shellx-browser-history-clear-confirmation\"]", false, "ui:browser-history-clear-sheet-owned-task"],
+    ["shellx-browser-history-clear-cancel", "src/browser/components/BrowserHistorySidecar.tsx", 13, 250, "[data-debug-id=\"shellx-browser-history-clear-cancel\"]", false, "ui:browser-history-clear-sheet-owned-task"],
+    ["shellx-browser-history-clear-confirm", "src/browser/components/BrowserHistorySidecar.tsx", 14, 259, "[data-debug-id=\"shellx-browser-history-clear-confirm\"]", false, "ui:browser-history-clear-sheet-owned-task"],
+    ["shellx-browser-history-clear-status", "src/browser/components/BrowserHistorySidecar.tsx", 7, 169, "[data-debug-id=\"shellx-browser-history-clear-status\"]", false, "ui:browser-history-clear-status-owned-task"],
     ["shellx-browser-show-right-sidebar-button", "src/browser/components/BrowserChrome.tsx", 10, 316, "[data-debug-id=\"shellx-browser-show-right-sidebar-button\"]", false, "ui:browser-right-sidebar-hidden-owned-task"],
     ["surface-components-rightrail-2", "src/components/RightRail.tsx", 2, 745, "[data-debug-id=\"surface-components-rightrail-2\"]", false, "ui:right-rail-tooling-visible"],
     ["surface-components-rightrail-9", "src/components/RightRail.tsx", 3, 1091, "[data-debug-id=\"surface-components-rightrail-9\"]", false, "ui:right-rail-tooling-visible"],

@@ -124,7 +124,13 @@ pub(crate) fn browser_storage_state_manifests(
         })
         .map(|profile| BrowserStorageStateManifest {
             profile_id: profile.profile_id.clone(),
-            storage_root: profile.storage_root.clone(),
+            // The task-disposable identity and retention policy are public;
+            // the per-task native filesystem root is deliberately not.
+            storage_root: if profile.persistent {
+                profile.storage_root.clone()
+            } else {
+                None
+            },
             cookies_enabled: profile.cookies_enabled,
             local_storage_enabled: profile.persistent && profile.profile_id != "task-disposable",
             persistent: profile.persistent,

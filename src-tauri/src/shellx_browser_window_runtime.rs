@@ -34,8 +34,12 @@ pub async fn shellx_browser_sync_engine(
 #[tauri::command]
 pub async fn shellx_browser_clear_history(
     registry: State<'_, Arc<ShellxBrowserRegistry>>,
+    request: BrowserClearHistoryRequest,
 ) -> Result<BrowserReceipt, String> {
-    crate::shellx_browser_destructive_actions::clear_browser_history_from_operator(&registry)
+    crate::shellx_browser_destructive_actions::clear_browser_history_from_operator(
+        &registry,
+        request.scope,
+    )
 }
 
 #[tauri::command]
@@ -47,20 +51,42 @@ pub async fn shellx_browser_state(
 
 #[tauri::command]
 pub async fn shellx_browser_control_task(
+    app: AppHandle,
     registry: State<'_, Arc<ShellxBrowserRegistry>>,
     request: BrowserTaskControlRequest,
 ) -> Result<BrowserTaskControlResponse, String> {
-    registry.control_task_from_operator(request)
+    let response = registry.control_task_from_operator(request)?;
+    if response.task.profile_id == "task-disposable"
+        && crate::shellx_browser_tasks::browser_task_is_terminal(&response.task.status)
+    {
+        crate::shellx_browser_ephemeral_roots::close_disposable_task_webviews_and_cleanup(
+            &app,
+            &registry,
+            &response.task.task_id,
+        )
+        .await?;
+    }
+    Ok(response)
 }
 
 #[tauri::command]
 pub async fn shellx_browser_finish_task(
+    app: AppHandle,
     registry: State<'_, Arc<ShellxBrowserRegistry>>,
     #[allow(non_snake_case)] taskId: Option<String>,
     status: Option<String>,
     reason: Option<String>,
 ) -> Result<BrowserTaskSnapshot, String> {
-    registry.finish_task_from_operator(taskId, status, reason)
+    let task = registry.finish_task_from_operator(taskId, status, reason)?;
+    if task.profile_id == "task-disposable" {
+        crate::shellx_browser_ephemeral_roots::close_disposable_task_webviews_and_cleanup(
+            &app,
+            &registry,
+            &task.task_id,
+        )
+        .await?;
+    }
+    Ok(task)
 }
 
 #[tauri::command]
@@ -141,6 +167,11 @@ pub async fn rollback_failed_task_engine_sync(
     for engine_id in &rollback.engine_ids_to_close {
         if let Err(error) = close_browser_engine_webview(app, engine_id).await {
             cleanup_errors.push(error);
+        } else {
+            crate::shellx_browser_ephemeral_roots::cleanup_disposable_roots_after_engine_close(
+                registry, engine_id,
+            )
+            .await;
         }
     }
     if let Some(active_tab_id) = rollback.restored_active_browser_tab_id.as_deref() {

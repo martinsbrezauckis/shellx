@@ -72,6 +72,28 @@ fn debug_ui_state_normalizes_known_tab_wire_values() {
 }
 
 #[test]
+fn debug_ui_partial_patch_preserves_setup_guide_dismissal() {
+    let hub = DebugHub::new();
+    hub.ui_apply(UiStatePatch {
+        setup_guide_dismissed: Some(true),
+        ..UiStatePatch::default()
+    });
+
+    hub.ui_apply(UiStatePatch {
+        bottom_tab: Some("logs".to_string()),
+        ..UiStatePatch::default()
+    });
+
+    assert_eq!(hub.ui_snapshot().setup_guide_dismissed, Some(true));
+
+    hub.ui_apply(UiStatePatch {
+        setup_guide_dismissed: Some(false),
+        ..UiStatePatch::default()
+    });
+    assert_eq!(hub.ui_snapshot().setup_guide_dismissed, Some(false));
+}
+
+#[test]
 fn debug_ui_preview_can_restore_an_explicit_empty_baseline() {
     let hub = DebugHub::new();
     hub.ui_apply(UiStatePatch {

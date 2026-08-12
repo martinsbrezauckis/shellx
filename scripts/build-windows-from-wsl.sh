@@ -49,6 +49,9 @@ need_command pnpm
 need_command cargo
 need_command powershell.exe
 need_command wslpath
+need_command node
+need_command git
+need_command tar
 cargo xwin --version >/dev/null 2>&1 || {
   echo "cargo-xwin is required (cargo install cargo-xwin)" >&2
   exit 1
@@ -56,6 +59,78 @@ cargo xwin --version >/dev/null 2>&1 || {
 
 started="$(date +%s)"
 version="$(node -p "require('./package.json').version")"
+release_identity_required=0
+if [[ "$signing_required" == "1" || "$updater_required" == "1" \
+  || -n "${SHELLX_WINDOWS_SIGNING_METADATA_PATH:-}" ]]; then
+  release_identity_required=1
+fi
+expected_source_commit="${SHELLX_EXPECTED_SOURCE_COMMIT:-}"
+release_source_repo="${SHELLX_RELEASE_SOURCE_REPO:-}"
+if [[ -n "$release_source_repo" ]]; then
+  release_source_repo="$(to_wsl_path "$release_source_repo")"
+  if [[ -d "$release_source_repo" ]]; then
+    release_source_repo="$(cd "$release_source_repo" && pwd -P)"
+  fi
+fi
+if [[ "$release_identity_required" == "1" ]]; then
+  if [[ -z "$expected_source_commit" || ! "$expected_source_commit" =~ ^[0-9a-f]{40,64}$ ]]; then
+    echo "FAIL: signed/updater release builds require SHELLX_EXPECTED_SOURCE_COMMIT" >&2
+    exit 1
+  fi
+  if [[ -z "$release_source_repo" || ! -d "$release_source_repo" ]]; then
+    echo "FAIL: signed/updater release builds require SHELLX_RELEASE_SOURCE_REPO" >&2
+    exit 1
+  fi
+  verifier="$release_source_repo/scripts/verify-release-build-input.mjs"
+else
+  if [[ -z "$release_source_repo" && ! -f PUBLIC_EXPORT_MANIFEST.json ]]; then
+    release_source_repo="$repo_root"
+  fi
+  if [[ -z "$expected_source_commit" && -n "$release_source_repo" ]]; then
+    expected_source_commit="$(git -C "$release_source_repo" rev-parse HEAD)"
+  fi
+  verifier="${release_source_repo:-$repo_root}/scripts/verify-release-build-input.mjs"
+fi
+if [[ ! -f "$verifier" ]]; then
+  echo "FAIL: exact release build-input verifier is missing: $verifier" >&2
+  exit 1
+fi
+
+verify_build_input() {
+  local identity
+  local args=("$verifier" --build-root "$repo_root")
+  if [[ -n "$release_source_repo" ]]; then
+    args+=(--source-repo "$release_source_repo" --expected-commit "$expected_source_commit")
+  else
+    args+=(--allow-manifest-only-development)
+  fi
+  identity="$(node "${args[@]}")"
+  if [[ -z "$identity" ]]; then
+    echo "FAIL: release build-input verifier returned no identity" >&2
+    exit 1
+  fi
+  printf '%s\n' "$identity"
+}
+
+build_identity="$(verify_build_input)"
+build_commit="$(printf '%s' "$build_identity" | node -e '
+let body="";
+process.stdin.on("data", chunk => body += chunk);
+process.stdin.on("end", () => {
+  const value = JSON.parse(body);
+  if (!/^[0-9a-f]{40,64}$/.test(value.sourceCommit ?? "")) process.exit(2);
+  process.stdout.write(value.sourceCommit);
+});
+')"
+if [[ -n "${SHELLX_BUILD_COMMIT:-}" && "$SHELLX_BUILD_COMMIT" != "$build_commit" ]]; then
+  echo "FAIL: ambient SHELLX_BUILD_COMMIT conflicts with verified source identity" >&2
+  exit 1
+fi
+export SHELLX_BUILD_COMMIT="$build_commit"
+export SHELLX_EXPECTED_SOURCE_COMMIT="$expected_source_commit"
+export SHELLX_RELEASE_SOURCE_REPO="$release_source_repo"
+export SHELLX_RELEASE_BUILD_ROOT="$repo_root"
+export SHELLX_RELEASE_BUILD_INPUT_VERIFIER="$verifier"
 target_dir="src-tauri/target/$target/$mode"
 bundle_dir="$target_dir/bundle"
 exe="$target_dir/shellx.exe"
@@ -88,6 +163,7 @@ elif [[ "$signing_required" == "1" ]]; then
 fi
 
 echo "[build-windows] installing JavaScript dependencies"
+echo "[build-windows] embedding source commit $build_commit"
 pnpm install --frozen-lockfile
 
 echo "[build-windows] removing stale Windows bundle output"
@@ -95,7 +171,7 @@ rm -rf "$bundle_dir"
 
 tauri_config='{"bundle":{"createUpdaterArtifacts":false}}'
 if [[ -n "$metadata_path" ]]; then
-  sign_command="$repo_root/scripts/windows-artifact-sign-command.sh"
+  sign_command="$release_source_repo/scripts/windows-artifact-sign-command.sh"
   if [[ ! -x "$sign_command" ]]; then
     echo "FAIL: Windows signing command is not executable: $sign_command" >&2
     exit 1
@@ -122,6 +198,9 @@ if ! pnpm "${tauri_args[@]}" 2>&1 | tee "$build_log"; then
   echo "FAIL: Tauri Windows build failed; full output is shown above" >&2
   exit 1
 fi
+
+echo "[verify] release build input remains bound before artifact acceptance"
+verify_build_input >/dev/null
 
 if [[ ! -f "$exe" ]]; then
   echo "FAIL: Windows app exe was not produced: $exe" >&2
@@ -191,7 +270,7 @@ else
 fi
 
 if [[ -n "$metadata_path" ]]; then
-  sign_script="$repo_root/scripts/windows-artifact-sign.ps1"
+  sign_script="$release_source_repo/scripts/windows-artifact-sign.ps1"
   artifacts_win=("$(wslpath -w "$dest_nsis")")
   if [[ -n "$dest_msi" ]]; then
     artifacts_win+=("$(wslpath -w "$dest_msi")")
@@ -206,6 +285,8 @@ else
   echo "[build-windows] Authenticode signing skipped by explicit SHELLX_WINDOWS_SIGNING_REQUIRED=0 development opt-out."
 fi
 
+echo "[verify] release build input remains bound before updater signing"
+verify_build_input >/dev/null
 if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
   echo "[build-windows] creating Tauri updater signature from the process environment"
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \

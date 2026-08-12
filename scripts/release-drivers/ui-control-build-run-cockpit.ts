@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   clickReleaseSurfaceInstalledInputElement,
@@ -255,9 +255,9 @@ type OwnedBuildFixture = {
   nodeProject: string;
   launchProject: string;
   nodeBuildStoreRoot: string;
+  nodeBuildTabRoot: string;
   nodeCheckpointRoot: string;
-  buildStoreRootExisted: boolean;
-  checkpointRootExisted: boolean;
+  ownedCheckpointPath: string | null;
 };
 
 async function exerciseBuildRunAction(
@@ -357,16 +357,20 @@ async function exerciseBuildRunAction(
     }
     if (fixture) {
       try {
-        if (!fixture.checkpointRootExisted && existsSync(fixture.nodeCheckpointRoot)) {
-          rmSync(fixture.nodeCheckpointRoot, { recursive: true });
+        if (fixture.ownedCheckpointPath && existsSync(fixture.ownedCheckpointPath)) {
+          rmSync(fixture.ownedCheckpointPath, { recursive: true });
         }
+        if (existsSync(fixture.nodeBuildTabRoot)) rmSync(fixture.nodeBuildTabRoot, { recursive: true });
         if (existsSync(fixture.nodeProject)) rmSync(fixture.nodeProject, { recursive: true });
-        if (!fixture.buildStoreRootExisted && existsSync(fixture.nodeBuildStoreRoot)) {
+        if (existsSync(fixture.nodeBuildStoreRoot) && readdirSync(fixture.nodeBuildStoreRoot).length === 0) {
           rmdirSync(fixture.nodeBuildStoreRoot);
         }
+        if (existsSync(fixture.nodeCheckpointRoot) && readdirSync(fixture.nodeCheckpointRoot).length === 0) {
+          rmdirSync(fixture.nodeCheckpointRoot);
+        }
         if (existsSync(fixture.nodeProject)
-          || (!fixture.checkpointRootExisted && existsSync(fixture.nodeCheckpointRoot))
-          || (!fixture.buildStoreRootExisted && existsSync(fixture.nodeBuildStoreRoot))) {
+          || existsSync(fixture.nodeBuildTabRoot)
+          || (fixture.ownedCheckpointPath !== null && existsSync(fixture.ownedCheckpointPath))) {
           throw new Error("owned Build project, checkpoint, or store namespace remained");
         }
       } catch (error) {
@@ -422,11 +426,10 @@ function prepareOwnedBuildFixture(
     throw new Error("Build lifecycle project is not a fresh direct candidate-home child");
   }
   const nodeBuildStoreRoot = resolve(shellxHome, "build-runs");
+  const nodeBuildTabRoot = resolve(nodeBuildStoreRoot, tabId);
   const nodeCheckpointRoot = resolve(shellxHome, "git-checkpoints");
-  const buildStoreRootExisted = existsSync(nodeBuildStoreRoot);
-  const checkpointRootExisted = existsSync(nodeCheckpointRoot);
-  if (buildStoreRootExisted || checkpointRootExisted) {
-    throw new Error("Build lifecycle requires empty isolated Build and Git checkpoint roots");
+  if (existsSync(nodeBuildTabRoot)) {
+    throw new Error("Build lifecycle exact owned tab namespace was not fresh");
   }
   mkdirSync(nodeProject, { mode: 0o700 });
   try {
@@ -448,9 +451,9 @@ function prepareOwnedBuildFixture(
     nodeProject,
     launchProject: portableJoin(launchShellxHome, directory, request.platform),
     nodeBuildStoreRoot,
+    nodeBuildTabRoot,
     nodeCheckpointRoot,
-    buildStoreRootExisted,
-    checkpointRootExisted,
+    ownedCheckpointPath: null,
   };
 }
 
@@ -586,8 +589,11 @@ function verifyBuildActionEffect(
     const path = nodeReadablePath(typeof data?.path === "string" ? data.path : "", request.platform);
     if (state.checkpointId !== data?.checkpointId
       || !resolve(path).startsWith(`${resolve(fixture.nodeCheckpointRoot)}${sep}`)
-      || data?.repoRoot !== fixture.launchProject
-      || !existsSync(join(path, "checkpoint.json"))
+      || data?.repoRoot !== fixture.launchProject) {
+      throw new Error("Build checkpoint escaped its exact owned Git namespace");
+    }
+    fixture.ownedCheckpointPath = path;
+    if (!existsSync(join(path, "checkpoint.json"))
       || !existsSync(join(path, "unstaged.patch"))
       || !existsSync(join(path, "untracked.json"))) {
       throw new Error("Build checkpoint did not attach its exact complete owned Git snapshot");

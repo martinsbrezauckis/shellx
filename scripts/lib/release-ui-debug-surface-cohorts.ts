@@ -578,6 +578,26 @@ const fixtures = [
     "[data-debug-id='shellx-browser-history-close']",
     "[data-debug-id='shellx-browser-history-sidecar']",
   ),
+  browserFixture("ui:browser-history-clear-sheet-owned-task", "chat", {
+    steps: [
+      clickStep("[data-debug-id='shellx-browser-history-menu']"),
+      clickStep("[data-debug-id='shellx-browser-clear-all-history']"),
+    ],
+    cleanupSteps: [
+      clickStep("[data-debug-id='shellx-browser-history-clear-cancel']"),
+      clickStep("[data-debug-id='shellx-browser-history-close']"),
+    ],
+    cleanupAbsentSelector: "[data-debug-id='shellx-browser-history-sidecar']",
+  }),
+  browserFixture("ui:browser-history-clear-status-owned-task", "chat", {
+    steps: [
+      clickStep("[data-debug-id='shellx-browser-history-menu']"),
+      clickStep("[data-debug-id='shellx-browser-clear-all-history']"),
+      clickStep("[data-debug-id='shellx-browser-history-clear-confirm']"),
+    ],
+    cleanupSteps: [clickStep("[data-debug-id='shellx-browser-history-close']")],
+    cleanupAbsentSelector: "[data-debug-id='shellx-browser-history-sidecar']",
+  }),
   browserMenuFixture(
     "ui:browser-downloads-owned-task",
     "[data-debug-id='shellx-browser-downloads-menu']",
@@ -1261,7 +1281,16 @@ cohort("ui:browser-history-owned-task", "src/browser/components/BrowserHistorySi
   "shellx-browser-history-date-filter",
   "shellx-browser-history-list",
   "shellx-browser-clear-history",
+  "shellx-browser-clear-all-history",
   "shellx-browser-history-entry-*",
+]);
+cohort("ui:browser-history-clear-sheet-owned-task", "src/browser/components/BrowserHistorySidecar.tsx", [
+  "shellx-browser-history-clear-confirmation",
+  "shellx-browser-history-clear-cancel",
+  "shellx-browser-history-clear-confirm",
+]);
+cohort("ui:browser-history-clear-status-owned-task", "src/browser/components/BrowserHistorySidecar.tsx", [
+  "shellx-browser-history-clear-status",
 ]);
 cohort("ui:browser-downloads-owned-task", "src/browser/components/DownloadSidecar.tsx", [
   "shellx-browser-download-sidecar",

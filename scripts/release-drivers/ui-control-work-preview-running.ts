@@ -82,7 +82,7 @@ export async function exerciseWorkPreviewRunningControl(
   let fixture: PreviewFixture | null = null;
   try {
     if (!action) throw new Error(`running Work Preview driver does not support ${assignment.surface.name}`);
-    fixture = await startOwnedPreview(connection, webdriver, request);
+    fixture = await startOwnedPreview(connection, webdriver, request, action);
     const before = await previewState(connection, fixture.tabId);
     const beforeUrl = verifyRunningState(before, fixture);
     if (action === "open" || action === "restart" || action === "stop" || action === "external-panel") {
@@ -182,8 +182,9 @@ async function startOwnedPreview(
   connection: Connection,
   webdriver: WebDriver,
   request: ReleaseSurfaceDriverRequest,
+  lane: string,
 ): Promise<PreviewFixture> {
-  const fixture = prepareFixture(request);
+  const fixture = prepareFixture(request, lane);
   await hydrateFixtureBaseline(connection, fixture);
   await postUi(connection, {
     rightTab: "Preview",

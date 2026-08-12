@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearReleaseSurfaceInstalledInputElement,
+  clickReleaseSurfaceInstalledInputAccessibilityButton,
   clickReleaseSurfaceInstalledInputElement,
   clickReleaseSurfaceInstalledInputElementAtFraction,
   contextClickReleaseSurfaceInstalledInputElement,
@@ -12,10 +13,12 @@ import {
   dragReleaseSurfaceInstalledInputElementToElement,
   executeReleaseSurfaceInstalledInputScript,
   findReleaseSurfaceInstalledInputElement,
+  focusReleaseSurfaceInstalledInputMainWindow,
   observeReleaseSurfaceInstalledInputElement,
   performReleaseSurfaceInstalledInputKeyChord,
   selectReleaseSurfaceInstalledInputPickerPath,
   setReleaseSurfaceInstalledInputElementValue,
+  submitReleaseSurfaceInstalledInputPrompt,
   closeReleaseSurfaceInstalledInputWindow,
   switchReleaseSurfaceInstalledInputWindow,
   switchReleaseSurfaceInstalledInputWindowByTitle,
@@ -31,6 +34,7 @@ import {
 import type { ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
 import { validateReleaseSurfaceElementObservation } from "./lib/release-surface-bounded-observation";
 import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surface-posix-native-runtime-fixture";
+import { closeReleaseSurfaceWindowsNativeWindow } from "./lib/release-surface-windows-native-window";
 
 const temp = mkdtempSync(join(tmpdir(), "shellx-installed-input-client-"));
 const profile = join(temp, "shellx-final-webdriver-0123456789abcdef");
@@ -148,11 +152,17 @@ try {
   await clearReleaseSurfaceInstalledInputElement(session, element);
   await setReleaseSurfaceInstalledInputElementValue(session, element, "bounded fixture text");
   await performReleaseSurfaceInstalledInputKeyChord(session, ["meta", "k"]);
+  await clickReleaseSurfaceInstalledInputAccessibilityButton(session, "Reset UI");
   await selectReleaseSurfaceInstalledInputPickerPath(session, {
     ownedRootPath: profile,
     pickerPath,
     pickerKind: "file",
   });
+  await submitReleaseSurfaceInstalledInputPrompt(
+    session,
+    "Find what in the attached files?",
+    "  SHELLX_RELEASE_FIND_CANARY_035  ",
+  );
   assert.equal(await findReleaseSurfaceInstalledInputElement(session, ".absent"), null);
   await waitForReleaseSurfaceInstalledInputElementAbsent(session, ".absent", { timeoutMs: 100, pollMs: 1 });
   await waitForReleaseSurfaceInstalledInputElementAbsent(session, ".transient-absent", {
@@ -198,26 +208,32 @@ try {
 
   assert.deepEqual(helperRequests.map((row) => row.action), [
     "click", "click", "contextClick", "drag", "clear", "typeText", "keyChord",
-    "selectPickerPath", "preflight", "click", "keyChord", "preflight", "click",
+    "clickAccessibilityButton", "selectPickerPath", "submitPrompt", "preflight", "click", "keyChord", "preflight", "click",
   ]);
   assert.deepEqual(helperRequests[1]?.target?.rect, { left: 20, top: 26, width: 1, height: 1 });
   assert.deepEqual(helperRequests[3]?.destinationTarget?.rect, { left: 10, top: 20, width: 100, height: 30 });
-  assert(helperRequests.slice(0, 8).every((row) => row.target?.windowNumber === 71));
-  assert(helperRequests.slice(8, 11).every((row) => row.target?.windowNumber === undefined || row.target.windowNumber === 72));
-  assert.equal(helperRequests[11]?.target?.windowNumber, 71);
-  assert.equal(helperRequests[12]?.target?.windowNumber, 71);
+  assert(helperRequests.slice(0, 7).every((row) => row.target?.windowNumber === 71));
+  assert.equal(helperRequests[7]?.target, undefined);
+  assert.equal(helperRequests[7]?.accessibilityLabel, "Reset UI");
+  assert.equal(helperRequests[8]?.target?.windowNumber, 71);
+  assert.equal(helperRequests[9]?.target, undefined);
+  assert(helperRequests.slice(10, 13).every((row) => row.target?.windowNumber === undefined || row.target.windowNumber === 72));
+  assert.equal(helperRequests[13]?.target?.windowNumber, 71);
+  assert.equal(helperRequests[14]?.target?.windowNumber, 71);
   assert(helperRequests.every((row) => row.candidate.processId === request.runtime.processId));
   assert(helperRequests.every((row) => row.candidate.executableSha256 === request.runtime.executableSha256));
   assert.equal(helperRequests[5]?.text, "bounded fixture text");
   assert.equal(helperRequests[5]?.replaceAll, false);
   assert.deepEqual(helperRequests[6]?.keys, ["meta", "k"]);
-  assert.equal(helperRequests[7]?.ownedRootPath, profile);
-  assert.equal(helperRequests[7]?.pickerPath, pickerPath);
-  assert.equal(helperRequests[7]?.pickerKind, "file");
-  assert.equal(helperRequests[8]?.candidate.expectedWindowTitle, "ShellX Browser");
-  assert.equal(helperRequests[9]?.candidate.expectedWindowTitle, "ShellX Browser");
-  assert.deepEqual(helperRequests[10]?.keys, ["meta", "w"]);
-  assert.equal(helperRequests[11]?.candidate.expectedWindowTitle, "shellX");
+  assert.equal(helperRequests[8]?.ownedRootPath, profile);
+  assert.equal(helperRequests[8]?.pickerPath, pickerPath);
+  assert.equal(helperRequests[8]?.pickerKind, "file");
+  assert.equal(helperRequests[9]?.promptText, "Find what in the attached files?");
+  assert.equal(helperRequests[9]?.promptResponseText, "  SHELLX_RELEASE_FIND_CANARY_035  ");
+  assert.equal(helperRequests[10]?.candidate.expectedWindowTitle, "ShellX Browser");
+  assert.equal(helperRequests[11]?.candidate.expectedWindowTitle, "ShellX Browser");
+  assert.deepEqual(helperRequests[12]?.keys, ["meta", "w"]);
+  assert.equal(helperRequests[13]?.candidate.expectedWindowTitle, "shellX");
   assert.equal(api.activeHighlight(), null, "every target lookup must clear its renderer highlight");
   assert(api.clearCount() >= 11, "success, absence, key-chord, and two-window target lookups must all clean up");
 
@@ -237,16 +253,81 @@ try {
 
   const webdriverOnly = structuredClone(request);
   delete webdriverOnly.macosNativeInput;
+  delete webdriverOnly.runtime.posixNative;
   webdriverOnly.platform = "windows-installed";
+  webdriverOnly.runtime.installedPayloadPath = "C:\\Program Files\\ShellX\\shellx.exe";
+  webdriverOnly.runtime.windowsNative = {
+    schema: "shellx/release-surface-windows-native-binding@1",
+    process: {
+      pid: webdriverOnly.runtime.processId,
+      startId: "2026-07-28T17:59:00.000Z",
+      imagePath: webdriverOnly.runtime.installedPayloadPath,
+      imageSha256: webdriverOnly.runtime.executableSha256,
+      imageBytes: 1024,
+      imageFileId: `abcd1234:0x${"1".repeat(32)}`,
+    },
+    listener: { address: "127.0.0.1", port: 31_001, owningPid: webdriverOnly.runtime.processId },
+  };
+  const nativeCloseScript = readFileSync(
+    join(import.meta.dirname, "close-release-surface-windows-window.ps1"),
+    "utf8",
+  );
+  assert(nativeCloseScript.includes("Get-ExactCandidateProcess"));
+  assert(nativeCloseScript.includes("EnumWindows"));
+  assert(nativeCloseScript.includes("$matches.Count -ne 1"));
+  assert(nativeCloseScript.includes("$wmClose = [uint32]0x0010"));
+  const closeReceipt = closeReleaseSurfaceWindowsNativeWindow(
+    webdriverOnly.runtime.windowsNative,
+    "ShellX Browser",
+    {
+      scriptPath: "C:\\fixture\\close-release-surface-windows-window.ps1",
+      run: ((_command: string, args: readonly string[]) => {
+        assert(args.includes(String(webdriverOnly.runtime.processId)));
+        assert(args.includes(webdriverOnly.runtime.windowsNative!.process.startId));
+        assert(args.includes(webdriverOnly.runtime.installedPayloadPath));
+        assert(args.includes("ShellX Browser"));
+        return {
+          status: 0,
+          stdout: `${JSON.stringify({
+            schema: "shellx/release-surface-windows-window-close@1",
+            processId: webdriverOnly.runtime.processId,
+            processStartId: webdriverOnly.runtime.windowsNative!.process.startId,
+            title: "ShellX Browser",
+            closed: true,
+          })}\n`,
+          stderr: "",
+        };
+      }) as never,
+    },
+  );
+  assert.equal(closeReceipt.closed, true);
   webdriverOnly.nativeWebDriver = {
     base: "http://127.0.0.1:31111",
     sessionId: "fixture-session-0001",
     evidence: { basename: "webdriver.json", sha256: "9".repeat(64), bytes: 10 },
   };
+  let windowsNativeCloseCount = 0;
   const webdriverSession = createReleaseSurfaceInstalledInputSession(webdriverOnly, {
     base: webdriverOnly.runtime.debugBase,
     token: "fixture-debug-token-that-is-long-enough",
+  }, {
+    closeWindowsNativeWindow: (binding, title) => {
+      windowsNativeCloseCount += 1;
+      assert.equal(binding.process.pid, webdriverOnly.runtime.processId);
+      assert.equal(title, "ShellX Browser");
+      return {
+        schema: "shellx/release-surface-windows-window-close@1",
+        processId: binding.process.pid,
+        processStartId: binding.process.startId,
+        title,
+        closed: true,
+      };
+    },
   });
+  await assert.rejects(
+    clickReleaseSurfaceInstalledInputAccessibilityButton(webdriverSession, "Reset UI"),
+    /available only to the attested macOS native-input helper/,
+  );
   await clickReleaseSurfaceInstalledInputElementAtFraction(
     webdriverSession,
     { id: "fixture-backdrop", selector: "body" },
@@ -307,6 +388,28 @@ try {
       ],
     }],
   }]);
+  await closeReleaseSurfaceInstalledInputWindow(webdriverSession);
+  assert.equal(
+    windowsNativeCloseCount,
+    1,
+    "ShellX Browser cleanup must request its candidate-owned native multi-WebView window close",
+  );
+
+  const linuxWebdriverOnly = structuredClone(webdriverOnly);
+  linuxWebdriverOnly.platform = "linux-installed";
+  delete linuxWebdriverOnly.runtime.windowsNative;
+  const linuxWebdriverSession = createReleaseSurfaceInstalledInputSession(linuxWebdriverOnly, {
+    base: linuxWebdriverOnly.runtime.debugBase,
+    token: "fixture-debug-token-that-is-long-enough",
+  });
+  await closeReleaseSurfaceInstalledInputWindow(linuxWebdriverSession);
+  assert.equal(api.browserCloseRequestCount(), 1);
+  assert.equal(api.webdriverWindowDeleteCount(), 1);
+  assert.equal(
+    await focusReleaseSurfaceInstalledInputMainWindow(linuxWebdriverSession),
+    "main-shell",
+    "a stale Browser renderer handle must be purged before the exact shellX main window is restored",
+  );
 
   console.log("Release surface installed-input client tests passed");
 } finally {
@@ -363,20 +466,61 @@ function fakeCandidateApi(): {
   clearCount: () => number;
   highlightRequestCount: (selector: string) => number;
   pointerActions: () => unknown[];
+  browserCloseRequestCount: () => number;
+  webdriverWindowDeleteCount: () => number;
 } {
   let active: { id: string; selector: string; observe: string[]; surface: "app" | "browser" } | null = null;
   let clears = 0;
   const highlightRequests = new Map<string, number>();
   const pointerActions: unknown[] = [];
+  let currentWindow = "browser-shell";
+  let browserWindowOpen = true;
+  let browserCloseRequests = 0;
+  let webdriverWindowDeletes = 0;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     if (url.startsWith("http://127.0.0.1:31111/session/")) {
+      if ((init?.method ?? "GET") === "GET" && url.endsWith("/title")) {
+        return jsonResponse({ value: currentWindow === "main-shell" ? "shellX" : "ShellX Browser" });
+      }
+      if ((init?.method ?? "GET") === "GET" && url.endsWith("/window")) {
+        return jsonResponse({ value: currentWindow });
+      }
+      if ((init?.method ?? "GET") === "GET" && url.endsWith("/window/handles")) {
+        return jsonResponse({ value: browserWindowOpen ? ["main-shell", "browser-shell"] : ["main-shell"] });
+      }
+      if (init?.method === "POST" && url.endsWith("/window")) {
+        const handle = String(JSON.parse(String(init.body ?? "{}")).handle ?? "");
+        if (handle !== "main-shell" && (handle !== "browser-shell" || !browserWindowOpen)) {
+          return jsonResponse({ value: { error: "no such window", message: "fixture window is absent" } }, 404);
+        }
+        currentWindow = handle;
+        return jsonResponse({ value: null });
+      }
+      if (init?.method === "POST" && url.endsWith("/execute/sync")) {
+        const script = String(JSON.parse(String(init.body ?? "{}")).script ?? "");
+        if (currentWindow !== "browser-shell" || !script.includes('internals.invoke("plugin:window|close"')) {
+          return jsonResponse({ value: { error: "unknown command", message: "fixture script is not allowlisted" } }, 400);
+        }
+        browserCloseRequests += 1;
+        return jsonResponse({ value: true });
+      }
+      if (init?.method === "DELETE" && url.endsWith("/window")) {
+        if (currentWindow !== "browser-shell" || !browserWindowOpen) {
+          return jsonResponse({ value: { error: "no such window", message: "fixture Browser window is absent" } }, 404);
+        }
+        webdriverWindowDeletes += 1;
+        browserWindowOpen = false;
+        currentWindow = "main-shell";
+        return jsonResponse({ value: ["main-shell"] });
+      }
       if ((init?.method ?? "GET") === "GET" && url.endsWith("/element/fixture-backdrop/rect")) {
         return jsonResponse({ value: { x: 100, y: 50, width: 400, height: 300 } });
       }
       if (init?.method === "POST" && url.endsWith("/actions")) {
-        pointerActions.push(JSON.parse(String(init.body ?? "{}")));
+        const action = JSON.parse(String(init.body ?? "{}"));
+        pointerActions.push(action);
         return jsonResponse({ value: null });
       }
       if (init?.method === "DELETE" && url.endsWith("/actions")) return jsonResponse({ value: null });
@@ -454,6 +598,8 @@ function fakeCandidateApi(): {
     clearCount: () => clears,
     highlightRequestCount: (selector) => highlightRequests.get(selector) ?? 0,
     pointerActions: () => structuredClone(pointerActions),
+    browserCloseRequestCount: () => browserCloseRequests,
+    webdriverWindowDeleteCount: () => webdriverWindowDeletes,
   };
 }
 
@@ -464,6 +610,7 @@ function appliedResponse(
   const browser = action.candidate.expectedWindowTitle === "ShellX Browser";
   const preflight = action.action === "preflight";
   const picker = action.action === "selectPickerPath";
+  const prompt = action.action === "submitPrompt";
   return {
     schema: RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_RESPONSE_SCHEMA,
     ok: true,
@@ -479,7 +626,7 @@ function appliedResponse(
       eventPostingTrusted: true,
       promptRequested: false,
     },
-    window: {
+    ...(!prompt ? { window: {
       number: browser ? 72 : 71,
       ownerProcessId: request.runtime.processId,
       titleSha256: createHash("sha256").update(action.candidate.expectedWindowTitle).digest("hex"),
@@ -487,13 +634,13 @@ function appliedResponse(
       webAreaBounds: { left: 0, top: 0, width: 1200, height: 800 },
       webAreaSource: "ax-web-area",
     },
-    mapping: { valid: true, screenX: 60, screenY: 35 },
+    mapping: { valid: true, screenX: 60, screenY: 35 } } : {}),
     ...(action.action === "drag" ? {
       destinationMapping: { valid: true, screenX: 90, screenY: 65 },
     } : {}),
     effect: {
       applicationActivated: !preflight,
-      eventsPosted: preflight ? 0 : picker || action.action === "drag" ? 8 : action.action === "clear" ? 6 : action.action === "typeText" ? 4 : 2,
+      eventsPosted: preflight ? 0 : prompt || picker || action.action === "drag" ? 8 : action.action === "clear" ? 6 : action.action === "typeText" ? 4 : 2,
     },
     ...(picker ? {
       picker: {
@@ -502,6 +649,14 @@ function appliedResponse(
         pathSha256: createHash("sha256").update(action.pickerPath!).digest("hex"),
         kind: action.pickerKind!,
         rootVerified: true as const,
+        dialogOwnedByCandidate: true as const,
+      },
+    } : {}),
+    ...(prompt ? {
+      prompt: {
+        role: "AXSheet" as const,
+        promptTextSha256: createHash("sha256").update(action.promptText!).digest("hex"),
+        responseTextSha256: createHash("sha256").update(action.promptResponseText!).digest("hex"),
         dialogOwnedByCandidate: true as const,
       },
     } : {}),

@@ -1,12 +1,12 @@
 {
   "schemaVersion": "shellx.public-marketing-assets.v2",
-  "reviewedAt": "2026-08-10T19:39:53Z",
+  "reviewedAt": "2026-08-12T01:44:41Z",
   "revalidation": {
     "status": "reviewed",
-    "sourceCommit": "98faae740e86460bb9b5451f346ba526bd145278",
-    "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-    "reviewedAt": "2026-08-11T05:04:08Z",
-    "evidenceSha256": "d7dfc75690264c6bdeb2ddee1f070266d99e3de9cc54d8e976746af48c93cb82"
+    "sourceCommit": "6cfdfb800d48573c5638324d006b7b0e3423c0e6",
+    "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+    "reviewedAt": "2026-08-13T09:41:58Z",
+    "evidenceSha256": "a6e7659491e4dd661936887ae2f59b01a9e8e6b44d24f446e02d26013bd05a95"
   },
   "generation": {
     "mode": "gpt-image-background-plus-reviewed-product-composite",
@@ -15,75 +15,74 @@
     "content": {
       "mode": "gpt-image-rendered-inside-installed-shellx-preview-center",
       "prompt": "Use case: ads-marketing\nAsset type: wide landscape artwork to be visibly opened as user content inside the real ShellX Preview Center\nPrimary request: a breathtaking photorealistic snow leopard standing on a rain-dark basalt ridge above a vast alpine valley at blue hour, with luminous aurora-like cyan clouds and a restrained warm amber sunrise breaking through distant peaks\nScene/backdrop: sweeping high-altitude wilderness, mist layers, wet rock, distant waterfalls, dramatic but believable weather\nSubject: one majestic snow leopard, full body, sharply detailed natural fur, calm alert gaze, anatomically realistic\nStyle/medium: premium cinematic wildlife photography, photorealistic, editorial quality\nComposition/framing: 16:9 horizontal, animal slightly off-center with strong depth and readable silhouette, no cropped paws or tail, visually striking at desktop-preview size\nLighting/mood: high contrast cyan-blue atmosphere with a focused warm amber rim light, awe-inspiring and refined rather than fantasy kitsch\nMaterials/textures: realistic wet basalt, fine fur, drifting mist, snow crystals\nConstraints: image content only; no application interface, no windows, no devices, no text, no letters, no logos, no badges, no watermark\nAvoid: extra animals, artificial neon outlines, oversaturation, cartoon styling, malformed anatomy",
-      "sha256": "d73962f3b0ab26a35355ba6ca572f3fc9c586b2326ec7ae23fe94bd4ca152d79"
+      "sha256": "56654cab4b1b0bde5c707166b77c33bf0c4060897c3521937194d54814aa32be"
     },
     "uiPolicy": "Generated pixels are restricted to the outer presentation backdrop and the snow-leopard image visibly opened as user content inside the real installed ShellX Preview Center. No generated or retouched pixels replace ShellX controls, chrome, labels, or layout.",
-    "compositionPolicy": "Product sources are uniformly resized to 1280x800 and placed at +128+16 on the 1536x864 presentation plate. The Browser source combines exact installed chrome with the live same-URL Windows page viewport cropped from the installed candidate at +10+228 and placed at +0+184 inside the measured native engine bounds."
+    "compositionPolicy": "Product sources are uniformly resized to 1280x800 and placed at +128+16 on the 1536x864 presentation plate. The Browser source combines exact installed chrome with the live same-URL Windows page viewport cropped at +10+213 and placed at +0+168 inside the measured native engine bounds."
   },
   "assets": [
     {
-      "file": "shellx-desktop-0.3.51.png",
+      "file": "shellx-desktop-0.3.52.png",
       "status": "reviewed",
-      "review": "Accepted populated ShellX 0.3.51 work session with the real Preview Center open on a high-contrast generated snow-leopard image, the installed workspace visible behind it, and no private profile data.",
-      "sha256": "cfa48a8c92c8dd5dfbb4dfd6d67c0c24b5ba31f2d5aa6a85f6a1cd815cc777ec",
-      "source": "../marketing-sources/shellx-workspace-preview-0.3.51.png",
-      "sourceSha256": "7354dbbd2a59d3dbd7776bd35b028955cae03d71da4a320d253bbf664dd761d8",
+      "review": "Accepted populated ShellX 0.3.52 work session with the real Preview Center open on a high-contrast generated snow-leopard image, the installed workspace visible behind it, and no private profile data.",
+      "sha256": "1bae1cb4f2b1979a8e48af120ef1ca4737af6e1d81514a7f10ba00f74a2cee11",
+      "source": "../marketing-sources/shellx-workspace-preview-0.3.52.png",
+      "sourceSha256": "cb8deb149c27eb79804174e202ee8647e06499246c9666e60686e3f4b9b932fb",
       "sourceReview": {
         "status": "reviewed",
         "kind": "installed-candidate",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "7354dbbd2a59d3dbd7776bd35b028955cae03d71da4a320d253bbf664dd761d8",
-        "reviewedAt": "2026-08-10T19:39:53Z",
-        "evidenceSha256": "afb96ce7a2bf29197427480f6ef07a342c067dc9f36a626aa881bbdf07e6c199"
+        "sha256": "cb8deb149c27eb79804174e202ee8647e06499246c9666e60686e3f4b9b932fb",
+        "reviewedAt": "2026-08-12T01:44:41Z",
+        "evidenceSha256": "64dfbedcaf04d660086e9d3d81ae6d67faa67d318b93681c24735331672c0c41"
       }
     },
     {
-      "file": "shellx-browser-0.3.51.png",
+      "file": "shellx-browser-0.3.52.png",
       "status": "reviewed",
-      "review": "Accepted ShellX Browser 0.3.51 with exact installed Windows chrome, secure Agent profile state, https://theshellx.com in the address bar, the live public homepage rendered in the measured native engine bounds, and the Chat sidecar visible.",
-      "sha256": "127df4177f1ae3ec216dfe59f636b68eb405af74012b8a0f54767fc1d2094b7d",
-      "source": "../marketing-sources/shellx-browser-theshellx-0.3.51.png",
-      "sourceSha256": "267097a5e54b80ce39a88dfa5d339197fbfd446e322ffa7f44fbe7beb9bfa49c",
+      "review": "Accepted ShellX Browser 0.3.52 with exact installed Windows chrome, secure Personal profile state, https://theshellx.com in the address bar, a live public feature view rendered in the measured native engine bounds, and the Chat sidecar visible.",
+      "sha256": "66a3134e68c4eea44593ebefb78d5ab22dad3c1b37b5c3ebb9e2524a7d2da6c4",
+      "source": "../marketing-sources/shellx-browser-theshellx-0.3.52.png",
+      "sourceSha256": "3d471d289193c991799012905c72b6cf3447c7966cb1c01be481453cafd4f9c6",
       "sourceReview": {
         "status": "reviewed",
         "kind": "installed-browser-live-site-composite",
-        "sourceCommit": "7d099fcff23d40c593c66f3b2c78fa6c214418f6",
-        "productSourceSha256": "533d5fb90fdaf8fd9469b4710b0d439ca37cd3ec3f1812d959f241e88d41c2a6",
-        "appVersion": "0.3.51",
+        "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
+        "productSourceSha256": "3ff715ed39435e5fd809e8424e6b49d70c4ebd77876b140fa228860d97c728ef",
+        "appVersion": "0.3.52",
         "platform": "windows-installed",
-        "sha256": "267097a5e54b80ce39a88dfa5d339197fbfd446e322ffa7f44fbe7beb9bfa49c",
-        "reviewedAt": "2026-08-10T19:39:53Z",
+        "sha256": "3d471d289193c991799012905c72b6cf3447c7966cb1c01be481453cafd4f9c6",
+        "reviewedAt": "2026-08-12T01:44:41Z",
         "liveUrl": "https://theshellx.com/",
         "liveTitle": "shellX — Grok, Claude Code, Codex & Antigravity in one app",
-        "composition": "The live native page viewport was cropped at +10+228 to 1061x818 from the installed Windows capture and placed at +0+184 inside the 1602x1002 WebDriver chrome capture. Those physical bounds are the 1.5-DPR projection of the candidate-reported logical engine bounds x=0, y=122.66667175292967, width=707, height=545.3333740234375.",
+        "composition": "The live native page viewport was cropped at +10+213 to 1060x833 from the installed Windows capture and placed at +0+168 inside the 1601x1001 WebDriver chrome capture. Those physical bounds are the 1.5-DPR projection of the candidate-reported logical engine bounds x=0, y=112, width=706.3333740234375, height=555.3333740234375.",
         "components": [
           {
             "role": "installed-browser-chrome",
-            "sha256": "1fbdd945792b4da306308b57272e71de4e51199bdc7c929d5c908508e587699b"
+            "sha256": "828ff2d8ec1b9d76d0f2baf7ee38cd435acf8c6ff2f37eab96988661f8fa07e9"
           },
           {
             "role": "live-page-window-capture",
-            "sha256": "98c7a94cbecaf43e2b297154244873a9c6291ca07df4f1977331421f62f2e7dc"
+            "sha256": "9822c8dcf7a82623aafff3cd37f1b4da83ff09a229fc1c6f38374ab787c1e86b"
           },
           {
             "role": "live-engine-viewport-crop",
-            "sha256": "307185be542921b2c17674b387576f9f9823887afd9268e07a33805ca3b4a9eb"
+            "sha256": "a3a3eedea1182e93c7a38a0479f79de50e44d90a2f7fa804c4019bcc2faebb32"
           }
         ],
-        "evidenceSha256": "52b73997f20a055e2b6ea1431399dabb89ece532fb98da52cfa6015db5b67efb",
-        "observationTextSha256": "9d856458a7809d07284f5b241bc3f9fa133f38ee4e7a0dcf688a4b08deca2a05"
+        "evidenceSha256": "64dfbedcaf04d660086e9d3d81ae6d67faa67d318b93681c24735331672c0c41"
       }
     },
     {
-      "file": "shellx-vault-0.3.51.png",
+      "file": "shellx-vault-0.3.52.png",
       "status": "reviewed",
-      "review": "Accepted current ShellX 0.3.51 Vault settings with an empty disposable profile and the password, profile-card, and agent-wallet tabs visible.",
-      "sha256": "46ab3168eb48f9c4202a1a5ecaffa3604ddba96fd6b420a935be0e0ce3ee933b",
+      "review": "Accepted current ShellX 0.3.52 Vault settings with an empty disposable profile and the password, profile-card, and agent-wallet tabs visible.",
+      "sha256": "e32b3d8bcfbe33628babcaf16b30bde41ab3b1bdeac15729cb1241053649a25d",
       "source": "../manual/shellx/assets/settings-vault.png",
-      "sourceSha256": "6b08415f2ec56be0902e5e358bcb7be544d641a121d87f25dc19a0be388d5863"
+      "sourceSha256": "166241395163934877af90482c3bfef424ce0b409a68ea61311abae7d6307b7b"
     }
   ]
 }

@@ -9,6 +9,7 @@ import {
   clickReleaseSurfaceInstalledInputElement as clickReleaseSurfaceWebDriverElement,
   createReleaseSurfaceInstalledInputSession,
   findReleaseSurfaceInstalledInputElement as findReleaseSurfaceWebDriverElement,
+  focusReleaseSurfaceInstalledInputMainWindow,
   observeReleaseSurfaceInstalledInputElement,
   performReleaseSurfaceInstalledInputKeyChord as performReleaseSurfaceWebDriverKeyChord,
   switchReleaseSurfaceInstalledInputWindow as switchReleaseSurfaceWebDriverWindow,
@@ -928,6 +929,19 @@ export async function executeUiControlInstalled(request: ReleaseSurfaceDriverReq
   for (const assignment of request.assignments) {
     if (process.env.SHELLX_RELEASE_DRIVER_TRACE === "1") {
       process.stderr.write(`[ui-control-installed] ${assignment.surface.name}\n`);
+    }
+    try {
+      await focusReleaseSurfaceInstalledInputMainWindow(installedInput);
+    } catch (error) {
+      outcomes.push(finalizeOutcome({
+        ...emptyOutcome(
+          assignment,
+          "The exact installed shellX main window could not be restored before this isolated assignment.",
+        ),
+        cleanup: "pass",
+        error: `assignment baseline failed before fixture setup: ${error instanceof Error ? error.message : String(error)}`,
+      }));
+      continue;
     }
     const selector = assignment.surface.selector ?? "";
     if (selector === BROWSER_EVIDENCE_RECORD_SELECTOR || selector === BROWSER_EVIDENCE_REFRESH_SELECTOR) {
@@ -1944,7 +1958,7 @@ async function exerciseBrowserDownloadFolderTextInput(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -2037,7 +2051,7 @@ async function exerciseBrowserOptionsToggle(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -2170,7 +2184,7 @@ async function exerciseBrowserSidebarResize(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -2242,7 +2256,7 @@ async function exerciseBrowserSidebarVisibility(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -2352,7 +2366,7 @@ async function exerciseBrowserOptionsTextInput(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -2488,7 +2502,7 @@ async function exerciseBrowserOptionsSelect(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -2632,7 +2646,7 @@ async function exerciseBrowserEngineSelect(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -2771,7 +2785,7 @@ async function exerciseBrowserProfileSelect(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -2894,7 +2908,7 @@ async function exerciseBrowserHistoryFilter(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -3160,7 +3174,7 @@ async function cleanupBrowserBookmarkExercise(
   }
   if (browserWindowOpen && originalWindow) {
     try {
-      await closeBrowserWindow(webdriver, originalWindow);
+      await closeBrowserWindow(connection, webdriver, originalWindow);
     } catch (error) {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
@@ -3259,7 +3273,7 @@ async function exerciseBrowserTransientText(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -3403,7 +3417,7 @@ async function exerciseBrowserTaskControl(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -4057,7 +4071,7 @@ async function exerciseBrowserDisclosureClose(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -4504,7 +4518,7 @@ async function exerciseBrowserDisclosure(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -4816,8 +4830,7 @@ async function exerciseHeaderBrowser(
   } finally {
     try {
       if (browserWindowOpen && originalWindow) {
-        await closeBrowserWindow(webdriver, originalWindow);
-        await waitForBrowserWindowClosedState(connection);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       }
       else if (originalWindow) await switchReleaseSurfaceWebDriverWindow(webdriver, originalWindow);
       outcome.cleanup = "pass";
@@ -4866,7 +4879,7 @@ async function exerciseBrowserRightPanelTab(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -4902,9 +4915,33 @@ async function openBrowserWindow(webdriver: WebDriver): Promise<{ originalHandle
   throw lastError instanceof Error ? lastError : new Error("ShellX Browser window did not open before timeout");
 }
 
-async function closeBrowserWindow(webdriver: WebDriver, originalHandle: string): Promise<void> {
-  await closeReleaseSurfaceWebDriverWindow(webdriver);
-  await switchReleaseSurfaceWebDriverWindow(webdriver, originalHandle);
+async function closeBrowserWindow(
+  connection: Connection,
+  webdriver: WebDriver,
+  originalHandle: string,
+): Promise<void> {
+  let closeError: unknown = null;
+  let restoreError: unknown = null;
+  try {
+    await closeReleaseSurfaceWebDriverWindow(webdriver);
+    await waitForBrowserWindowClosedState(connection);
+  } catch (error) {
+    closeError = error;
+  }
+  try {
+    await switchReleaseSurfaceWebDriverWindow(webdriver, originalHandle);
+  } catch (error) {
+    restoreError = error;
+  }
+  if (closeError || restoreError) {
+    const closeDetail = closeError
+      ? `Browser close failed: ${closeError instanceof Error ? closeError.message : String(closeError)}`
+      : "";
+    const restoreDetail = restoreError
+      ? `main-window restore failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`
+      : "";
+    throw new Error([closeDetail, restoreDetail].filter(Boolean).join("; "));
+  }
 }
 
 async function waitForBrowserWindowClosedState(connection: Connection): Promise<void> {
@@ -5041,7 +5078,7 @@ async function exerciseBrowserEvidenceRecord(
     }
     if (browserWindowOpen && originalWindow) {
       try {
-        await closeBrowserWindow(webdriver, originalWindow);
+        await closeBrowserWindow(connection, webdriver, originalWindow);
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }

@@ -27,7 +27,7 @@ import {
   type ReleaseSurfaceMacosNativeInputRequestBinding,
 } from "./release-surface-macos-native-input";
 
-export const RELEASE_SURFACE_DRIVER_MANIFEST_SCHEMA = "shellx/release-surface-driver-manifest@4";
+export const RELEASE_SURFACE_DRIVER_MANIFEST_SCHEMA = "shellx/release-surface-driver-manifest@5";
 export const RELEASE_SURFACE_DRIVER_REQUEST_SCHEMA = "shellx/release-surface-driver-request@7";
 export const RELEASE_SURFACE_DRIVER_REPORT_SCHEMA = "shellx/release-surface-driver-report@7";
 
@@ -48,6 +48,7 @@ export interface ReleaseSurfaceDriverManifest {
   supportedCleanups: string[];
   supportedOracles: string[];
   controllerFiles?: string[];
+  maxAssignmentsPerProcess?: number;
 }
 
 export interface ReleaseSurfaceDriverRequest {
@@ -99,10 +100,14 @@ const CANDIDATE_TEARDOWN_CLEANUP_IDS = new Set([
   "debug-api:delete-owned-browser-robot-recipe-close-task-and-candidate-teardown",
   "debug-api:delete-owned-transfer-file-close-task-and-candidate-teardown",
   "debug-api:delete-owned-vault-deposit-close-task-and-candidate-teardown",
+  "debug-api:close-owned-browser-teach-task-and-candidate-teardown",
   "debug-api:close-browser-window-with-candidate-teardown",
   "tauri:discard-with-candidate-profile",
+  "tauri:preserve-rotated-token-until-candidate-teardown",
+  "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
   "ui:close-owned-browser-task-with-candidate-teardown",
   "ui:reset-disposable-vault-with-candidate-teardown",
+  "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown",
 ]);
 
 export interface ReleaseSurfaceDriverOutcome {
@@ -170,9 +175,10 @@ export function validateReleaseSurfaceDriverRequest(
   if (!request.artifact?.basename?.trim()) errors.push("request artifact basename is required");
   if (!/^[a-f0-9]{64}$/.test(request.artifact?.sha256 ?? "")) errors.push("request artifact sha256 must be 64 lowercase hex characters");
   errors.push(...validateReleaseSurfaceControllerBinding(request.controller));
-  if (request.controller?.sourceCommit !== request.sourceCommit) {
-    errors.push("request controller sourceCommit must match the exact frozen source commit");
-  }
+  // A targeted post-matrix run may bind a scripts-only descendant controller
+  // while the installed candidate remains on its signed source commit. The
+  // orchestrator proves ancestry, path scope, and patch digest before it can
+  // construct this request; the driver still binds every executable file.
   const expectedControllerFiles = [...(manifest.controllerFiles ?? [])].sort();
   const actualControllerFiles = Array.isArray(request.controller?.auxiliaryFiles)
     ? request.controller.auxiliaryFiles.map((file) => file.relativePath).sort()

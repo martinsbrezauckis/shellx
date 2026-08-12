@@ -8,7 +8,9 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   clearReleaseSurfaceInstalledInputElement,
+  clickReleaseSurfaceInstalledInputAccessibilityButton,
   clickReleaseSurfaceInstalledInputElement,
+  executeReleaseSurfaceInstalledInputScript,
   findReleaseSurfaceInstalledInputElement,
   observeReleaseSurfaceInstalledInputElement,
   setReleaseSurfaceInstalledInputElementValue,
@@ -81,7 +83,7 @@ const PR_BOUNDARY_RECEIPT = "[data-release-pr-create-receipt='boundary']";
 const ARTIFACT_ARCHIVE = "[aria-label='Download Grok session artifacts']";
 const PR_RECEIPT_TITLE = "release fixture PR create stopped before remote mutation";
 const ARTIFACT_RECEIPT_TITLE = "release fixture artifact archive stopped before save picker";
-const APP_COMPOSER = "[data-debug-id='composer-prompt']";
+const APP_RECOVERY_MARKER = ".shell";
 const RELEASE_RENDERER_CRASH = "SHELLX_RELEASE_TEST_RENDERER_CRASH_035";
 const OWNED_EXTERNAL_URL = "https://example.invalid/shellx/release-docs";
 const OWNED_UPDATE_URL = "https://github.com/martinsbrezauckis/shellx/releases/tag/v0.3.5-release-fixture";
@@ -375,33 +377,66 @@ async function exerciseErrorBoundaryRecovery(
   const selector = action === "reload" ? ERROR_BOUNDARY_RELOAD : ERROR_BOUNDARY_RESET;
   let prepared = false;
   try {
+    const macosAccessibilityRecovery = webdriver.transport === "macos-native-input";
     const baseline = await debugWebSocketHealth(connection);
     if (baseline.active < 1 || baseline.processId === null || baseline.instanceId === null) {
       throw new Error("ErrorBoundary recovery requires an identified candidate with an active renderer stream");
     }
+    await waitForReleaseSurfaceInstalledInputElement(webdriver, APP_RECOVERY_MARKER);
     const baselineErrors = await rendererCrashEvents(connection);
     await postUi(connection, {
       releaseTestRendererCrash: true,
       source: `final-surface-error-boundary-${action}`,
     });
     prepared = true;
-    const control = await waitForReleaseSurfaceInstalledInputElement(webdriver, selector);
-    outcome.present = "pass";
-    await waitForRendererCrashEvent(connection, baselineErrors.length + 1);
-    await clickReleaseSurfaceInstalledInputElement(webdriver, control);
-    outcome.invoke = "pass";
+    if (!macosAccessibilityRecovery) {
+      await waitForRendererCrashEvent(connection, baselineErrors.length + 1);
+    }
+    let reloadNavigationInterruptedClick = false;
+    if (macosAccessibilityRecovery) {
+      // The release fixture unmounts App, including the renderer-side IPC and
+      // Debug UI observers. On macOS the exact, candidate-bound Accessibility
+      // button is therefore the native proof that the crash card rendered;
+      // waiting for renderer telemetry first deadlocks the action that restores
+      // those observers. The helper refuses every label except these two,
+      // requires exactly one bounded AXButton in the attested WebArea, and posts
+      // one native click before we verify the reconnected renderer below.
+      await waitForDebugWebSocketDisconnect(connection);
+      await waitForCrashPatchReplayWindowToExpire(connection);
+      await clickReleaseSurfaceInstalledInputAccessibilityButton(
+        webdriver,
+        action === "reload" ? "Reload window" : "Reset UI",
+      );
+      outcome.present = "pass";
+    } else {
+      const control = await waitForReleaseSurfaceInstalledInputElement(webdriver, selector);
+      outcome.present = "pass";
+      try {
+        await clickReleaseSurfaceInstalledInputElement(webdriver, control);
+      } catch (error) {
+        if (action !== "reload") throw error;
+        reloadNavigationInterruptedClick = true;
+      }
+    }
     await waitForReleaseSurfaceInstalledInputElementAbsent(webdriver, ERROR_BOUNDARY_ALERT);
-    await waitForReleaseSurfaceInstalledInputElement(webdriver, APP_COMPOSER);
+    await waitForReleaseSurfaceInstalledInputElement(webdriver, APP_RECOVERY_MARKER);
     const restored = await waitForDebugWebSocketReconnect(connection, baseline.generation);
     if (restored.processId !== baseline.processId || restored.instanceId !== baseline.instanceId) {
       throw new Error("ErrorBoundary recovery replaced or drifted the isolated backend identity");
     }
     const finalErrors = await rendererCrashEvents(connection);
-    if (finalErrors.length !== baselineErrors.length + 1) {
+    if (!macosAccessibilityRecovery && finalErrors.length !== baselineErrors.length + 1) {
       throw new Error("ErrorBoundary recovery did not record exactly one owned renderer error");
     }
+    if (macosAccessibilityRecovery
+      && (finalErrors.length < baselineErrors.length || finalErrors.length > baselineErrors.length + 1)) {
+      throw new Error("macOS ErrorBoundary recovery observed an unexpected owned renderer-error count");
+    }
+    outcome.invoke = "pass";
     outcome.effect = "pass";
-    outcome.observedEffect = `A native WebDriver click ${action === "reload" ? "reloaded the renderer document" : "reset the React error boundary"} after the exact owned render crash, restored the app composer, preserved backend process ${baseline.processId}, and advanced the Debug UI stream from generation ${baseline.generation} to ${restored.generation}.`;
+    outcome.observedEffect = macosAccessibilityRecovery
+      ? `The candidate-bound macOS Accessibility helper found exactly one allowlisted ${action === "reload" ? "Reload window" : "Reset UI"} button inside the attested ShellX WebArea, posted its bounded semantic press, restored the stable app-shell control, preserved backend process ${baseline.processId}, and advanced the Debug UI stream from generation ${baseline.generation} to ${restored.generation}.`
+      : `A native WebDriver click ${action === "reload" ? "reloaded the renderer document" : "reset the React error boundary"} after the exact owned render crash, restored the stable app-shell control, preserved backend process ${baseline.processId}, and advanced the Debug UI stream from generation ${baseline.generation} to ${restored.generation}.${reloadNavigationInterruptedClick ? " The WebDriver click response ended with the replaced document, and the post-navigation renderer/backend oracle proved the trusted click completed." : ""}`;
   } catch (error) {
     outcome.error = errorText(error);
   } finally {
@@ -409,9 +444,20 @@ async function exerciseErrorBoundaryRecovery(
     if (prepared) {
       try {
         await waitForReleaseSurfaceInstalledInputElementAbsent(webdriver, ERROR_BOUNDARY_ALERT);
-        await waitForReleaseSurfaceInstalledInputElement(webdriver, APP_COMPOSER);
+        await waitForReleaseSurfaceInstalledInputElement(webdriver, APP_RECOVERY_MARKER);
       } catch (error) {
-        errors.push(errorText(error));
+        try {
+          if (webdriver.transport === "macos-native-input") {
+            await clickReleaseSurfaceInstalledInputAccessibilityButton(webdriver, "Reload window");
+          } else {
+            const reload = await waitForReleaseSurfaceInstalledInputElement(webdriver, ERROR_BOUNDARY_RELOAD);
+            await clickReleaseSurfaceInstalledInputElement(webdriver, reload).catch(() => undefined);
+          }
+          await waitForReleaseSurfaceInstalledInputElementAbsent(webdriver, ERROR_BOUNDARY_ALERT);
+          await waitForReleaseSurfaceInstalledInputElement(webdriver, APP_RECOVERY_MARKER);
+        } catch (recoveryError) {
+          errors.push(`${errorText(error)}; bounded reload recovery failed: ${errorText(recoveryError)}`);
+        }
       }
     } else {
       errors.push("ErrorBoundary crash fixture was not prepared");
@@ -543,6 +589,29 @@ async function waitForDebugWebSocketReconnect(
   throw new Error(`Debug UI WebSocket generation did not advance beyond ${baselineGeneration}`);
 }
 
+async function waitForDebugWebSocketDisconnect(connection: Connection): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const current = await debugWebSocketHealth(connection);
+    if (current.active === 0) return;
+    await delay(50);
+  }
+  throw new Error("ErrorBoundary crash did not close the owned renderer stream before native recovery");
+}
+
+async function waitForCrashPatchReplayWindowToExpire(connection: Connection): Promise<void> {
+  const state = await apiJson(connection, "GET", "/state/ui");
+  const patchMs = Number(state.lastUiPatchMs);
+  if (!Number.isFinite(patchMs) || patchMs <= 0 || patchMs > Date.now() + 1_000) {
+    throw new Error("ErrorBoundary crash patch omitted a valid authoritative timestamp");
+  }
+  // A newly mounted App initializes its event cursor to `Date.now() - 500`.
+  // Waiting beyond that exact replay horizon prevents the isolated one-shot
+  // crash command in the WebSocket backlog from crashing the recovered App.
+  const remaining = patchMs + 750 - Date.now();
+  if (remaining > 0) await delay(remaining);
+}
+
 async function exerciseUpdateLifecycle(
   connection: Connection,
   webdriver: WebDriver,
@@ -563,10 +632,21 @@ async function exerciseUpdateLifecycle(
   let prepared = false;
   try {
     const state = await apiJson(connection, "GET", "/state/ui");
+    const storedSettingsTab = await executeReleaseSurfaceInstalledInputScript(
+      webdriver,
+      "return window.localStorage.getItem(arguments[0]);",
+      ["shellX.settingsTab.v2"],
+    );
+    const settingsTab = typeof storedSettingsTab === "string" && [
+      "general", "vault", "connections", "connectors", "desktop", "shellxagent", "data", "about",
+    ].includes(storedSettingsTab) ? storedSettingsTab : "general";
     baseline = {
       rightTab: typeof state.rightTab === "string" ? state.rightTab : "",
-      settingsOpen: state.settingsOpen === true,
-      settingsTab: typeof state.settingsTab === "string" ? state.settingsTab : "general",
+      settingsOpen: Boolean(await findReleaseSurfaceInstalledInputElement(
+        webdriver,
+        "[role='dialog'][aria-label='Settings']",
+      )),
+      settingsTab,
     };
     if (!baseline.rightTab) throw new Error("updater lifecycle requires a restorable right-rail baseline");
     await postUi(connection, {
@@ -619,9 +699,18 @@ async function exerciseUpdateLifecycle(
           }
         }
         const restored = await apiJson(connection, "GET", "/state/ui");
+        const restoredSettingsOpen = Boolean(await findReleaseSurfaceInstalledInputElement(
+          webdriver,
+          "[role='dialog'][aria-label='Settings']",
+        ));
+        const restoredSettingsTab = await executeReleaseSurfaceInstalledInputScript(
+          webdriver,
+          "return window.localStorage.getItem(arguments[0]);",
+          ["shellX.settingsTab.v2"],
+        );
         if (restored.rightTab !== baseline.rightTab
-          || (isAbout && restored.settingsOpen !== baseline.settingsOpen)
-          || (isAbout && restored.settingsTab !== baseline.settingsTab)) {
+          || (isAbout && restoredSettingsOpen !== baseline.settingsOpen)
+          || (isAbout && String(restoredSettingsTab ?? "general") !== baseline.settingsTab)) {
           throw new Error("updater lifecycle cleanup did not restore the exact UI baseline");
         }
       } catch (error) {

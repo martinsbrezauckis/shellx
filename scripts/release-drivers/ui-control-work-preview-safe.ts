@@ -252,7 +252,7 @@ async function prepareIdleRenderer(
   request: ReleaseSurfaceDriverRequest,
   source: string,
 ): Promise<PreviewFixture> {
-  const fixture = prepareFixture(request);
+  const fixture = prepareFixture(request, source);
   await hydrateFixtureBaseline(connection, fixture);
   await postUi(connection, {
     rightTab: "Preview",

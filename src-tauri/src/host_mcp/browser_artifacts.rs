@@ -2,8 +2,11 @@ use serde_json::{json, Value};
 
 use super::{
     browser_action_body, browser_ensure_agent_task_target, browser_insert_optional_string,
-    browser_mcp_result, browser_mcp_timeout_secs, debug_api_get_json,
-    debug_api_get_json_for_caller, debug_api_post_json_for_caller, mcp_arg_string, mcp_arg_u64,
+    browser_mcp_result, browser_mcp_timeout_secs, debug_api_get_json_for_caller,
+    debug_api_post_json_for_caller, mcp_arg_string, mcp_arg_u64,
+};
+use crate::shellx_browser_developer_inspection::{
+    compact_developer_inspection_for_mcp, developer_inspection_text_summary,
 };
 
 fn required_browser_evidence_caller(caller_session_id: Option<&str>) -> Result<&str, String> {
@@ -32,6 +35,39 @@ pub(super) async fn tool_browser_evidence(
         format!("browser_evidence: {count} owned recorder/evaluation receipt(s)"),
         data,
         false,
+    ))
+}
+
+pub(super) async fn tool_browser_developer_inspect(
+    args: Value,
+    caller_session_id: Option<&str>,
+) -> Result<Value, String> {
+    let caller_session_id = required_browser_evidence_caller(caller_session_id)?;
+    let timeout_secs = browser_mcp_timeout_secs(&args, 30_000);
+    let task_id = mcp_arg_string(&args, &["taskId", "task_id", "task"])
+        .ok_or_else(|| "browser_read developerInspect requires taskId".to_string())?;
+    let mut body = json!({ "taskId": task_id });
+    if let Some(map) = body.as_object_mut() {
+        browser_insert_optional_string(
+            map,
+            &args,
+            "browserTabId",
+            &["browserTabId", "browser_tab_id", "browserTab"],
+        );
+    }
+    let data = debug_api_post_json_for_caller(
+        "/browser/developer/inspect",
+        &body,
+        timeout_secs,
+        Some(caller_session_id),
+    )
+    .await?;
+    let compact = compact_developer_inspection_for_mcp(&data);
+    let ok = compact.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    Ok(browser_mcp_result(
+        developer_inspection_text_summary(&compact),
+        compact,
+        !ok,
     ))
 }
 
@@ -146,8 +182,10 @@ pub(super) async fn tool_browser_evaluation_write(
     ))
 }
 
-pub(super) async fn tool_browser_downloads() -> Result<Value, String> {
-    let data = debug_api_get_json("/browser/downloads", 10).await?;
+pub(super) async fn tool_browser_downloads(
+    caller_session_id: Option<&str>,
+) -> Result<Value, String> {
+    let data = debug_api_get_json_for_caller("/browser/downloads", 10, caller_session_id).await?;
     let count = data
         .get("downloads")
         .and_then(|value| value.as_array())
@@ -259,7 +297,7 @@ pub(super) async fn tool_browser_save_page(
     let destination_dir = match mcp_arg_string(&args, &["destinationDir", "destination_dir", "dir"])
     {
         Some(value) => Some(value),
-        None => browser_state_download_folder(timeout_secs).await,
+        None => browser_state_download_folder(timeout_secs, caller_session_id).await,
     };
     let artifact = crate::shellx_browser_transfers::shellx_browser_write_text_artifact(
         crate::shellx_browser_transfers::BrowserLocalTextArtifactRequest {
@@ -307,8 +345,17 @@ fn browser_save_page_default_file_name(extracted: &Value, extension: &str) -> St
     format!("{title}.{extension}")
 }
 
-async fn browser_state_download_folder(timeout_secs: u64) -> Option<String> {
-    debug_api_get_json("/browser/state", timeout_secs)
+async fn browser_state_download_folder(
+    timeout_secs: u64,
+    caller_session_id: Option<&str>,
+) -> Option<String> {
+    if caller_session_id.is_some() {
+        // The operator's configured folder is private application state. Agent
+        // saves without an explicit destination use the transfer module's
+        // project-owned default instead of reading that setting.
+        return None;
+    }
+    debug_api_get_json_for_caller("/browser/state", timeout_secs, None)
         .await
         .ok()
         .and_then(|state| {

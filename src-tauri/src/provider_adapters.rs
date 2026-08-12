@@ -2830,7 +2830,7 @@ async fn run_command_capture_with_setup_stdin(
     setup_stdin: &[u8],
 ) -> Result<CommandRunOutput, String> {
     let started = Instant::now();
-    let (spawn_program, spawn_args) = provider_spawn_command_parts(program, args);
+    let (spawn_program, spawn_args) = provider_spawn_command_parts(program, args)?;
     let mut cmd = Command::new(&spawn_program);
     cmd.args(&spawn_args)
         .stdin(if setup_stdin.is_empty() {
@@ -2982,17 +2982,39 @@ fn is_wsl_spawn_program(program: &str) -> bool {
 pub(crate) fn provider_spawn_command_parts(
     program: &str,
     args: &[String],
-) -> (String, Vec<String>) {
+) -> Result<(String, Vec<String>), String> {
     let resolved = resolve_binary(&[program]).unwrap_or_else(|| program.to_string());
     #[cfg(windows)]
     {
         if is_windows_command_script(&resolved) {
-            let mut wrapped_args = vec!["/d".to_string(), "/c".to_string(), resolved];
+            // Never concatenate provider arguments into a `cmd.exe /c` command
+            // line. cmd.exe reparses metacharacters (and `%NAME%`) even when
+            // the original caller supplied a structured argv, which lets an
+            // untrusted prompt escape an npm-style `.cmd`/`.bat` provider shim.
+            // npm installs an argv-preserving PowerShell shim beside its cmd
+            // shim; use that regular file as the interpreter boundary. A
+            // command script without the safe sibling fails closed and can be
+            // replaced by a native executable or standard npm installation.
+            let powershell_shim = Path::new(&resolved).with_extension("ps1");
+            if !powershell_shim.is_file() {
+                return Err(format!(
+                    "refusing unsafe Windows command-script provider shim without an adjacent PowerShell shim: {resolved}"
+                ));
+            }
+            let mut wrapped_args = vec![
+                "-NoLogo".to_string(),
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                powershell_shim.to_string_lossy().to_string(),
+            ];
             wrapped_args.extend(args.iter().cloned());
-            return ("cmd.exe".to_string(), wrapped_args);
+            return Ok(("powershell.exe".to_string(), wrapped_args));
         }
     }
-    (resolved, args.to_vec())
+    Ok((resolved, args.to_vec()))
 }
 
 #[cfg(windows)]
@@ -3131,20 +3153,87 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn provider_spawn_wraps_windows_command_shims() {
-        let args = vec!["--version".to_string()];
-        let (program, wrapped_args) = provider_spawn_command_parts("C:\\Tools\\claude.cmd", &args);
+    fn provider_spawn_uses_argv_safe_windows_powershell_shims() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let command_shim = temp.path().join("claude.cmd");
+        let powershell_shim = temp.path().join("claude.ps1");
+        std::fs::write(&command_shim, "@echo off\r\n").expect("cmd shim");
+        std::fs::write(&powershell_shim, "Write-Output $args\n").expect("PowerShell shim");
+        let hostile_prompt = "review & whoami | calc %PATH% $(Get-Process)".to_string();
+        let args = vec!["--version".to_string(), hostile_prompt.clone()];
+        let (program, wrapped_args) =
+            provider_spawn_command_parts(command_shim.to_string_lossy().as_ref(), &args)
+                .expect("safe shim bridge");
 
-        assert_eq!(program, "cmd.exe");
+        assert_eq!(program, "powershell.exe");
         assert_eq!(
             wrapped_args,
             vec![
-                "/d".to_string(),
-                "/c".to_string(),
-                "C:\\Tools\\claude.cmd".to_string(),
+                "-NoLogo".to_string(),
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                powershell_shim.to_string_lossy().to_string(),
                 "--version".to_string(),
+                hostile_prompt,
             ]
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn provider_spawn_preserves_hostile_prompt_as_one_literal_argument() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let command_shim = temp.path().join("provider.cmd");
+        let powershell_shim = temp.path().join("provider.ps1");
+        let sentinel = temp.path().join("must-not-exist.txt");
+        std::fs::write(&command_shim, "@echo off\r\n").expect("cmd shim");
+        std::fs::write(
+            &powershell_shim,
+            "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n$args | ConvertTo-Json -Compress\n",
+        )
+        .expect("PowerShell shim");
+        let hostile_prompt = format!(
+            "alpha & whoami | calc > \"{}\" %PATH% $(Get-Process) `n beta\n\"quoted\" 'single'",
+            sentinel.display()
+        );
+        let expected = vec!["--prompt".to_string(), hostile_prompt];
+        let (program, args) =
+            provider_spawn_command_parts(command_shim.to_string_lossy().as_ref(), &expected)
+                .expect("safe shim bridge");
+        let output = std::process::Command::new(program)
+            .args(args)
+            .output()
+            .expect("PowerShell shim execution");
+        assert!(
+            output.status.success(),
+            "PowerShell shim failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let observed: Vec<String> =
+            serde_json::from_slice(&output.stdout).expect("PowerShell argv JSON");
+        assert_eq!(observed, expected);
+        assert!(
+            !sentinel.exists(),
+            "prompt metacharacters executed outside provider"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn provider_spawn_rejects_command_shim_without_safe_sibling() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let command_shim = temp.path().join("provider.cmd");
+        std::fs::write(&command_shim, "@echo off\r\n").expect("cmd shim");
+
+        let error = provider_spawn_command_parts(
+            command_shim.to_string_lossy().as_ref(),
+            &["prompt & whoami".to_string()],
+        )
+        .expect_err("unsafe command shim must fail closed");
+        assert!(error.contains("refusing unsafe Windows command-script provider shim"));
     }
 
     #[test]

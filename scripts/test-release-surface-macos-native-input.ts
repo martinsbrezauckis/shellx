@@ -6,6 +6,7 @@ import { join, relative, resolve } from "node:path";
 import type { ReleaseSurfaceCandidateAttestation } from "./lib/release-surface-candidate-attestation";
 import { validateReleaseSurfaceMacosNativeInputComposition } from "./lib/release-surface-receipt-composer";
 import {
+  RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_REQUEST_SCHEMA,
   RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_RESPONSE_SCHEMA,
   ReleaseSurfaceMacosAccessibilityBlockedError,
   proveReleaseSurfaceMacosNativeInputBinding,
@@ -27,7 +28,7 @@ try {
   writeFileSync(helperPath, "fixture helper bytes\n", { encoding: "utf8", mode: 0o700 });
   assert.throws(
     () => runReleaseSurfaceMacosNativeInputHelper(helperPath, {
-      schema: "shellx/release-surface-macos-native-input-helper-request@3",
+      schema: RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_REQUEST_SCHEMA,
       action: "selectPickerPath",
       candidate: {
         processId: candidate.runtime.processId,
@@ -367,8 +368,15 @@ function assertStaticNativeHelperContract(): void {
     "RENDERER_VIEWPORT_MISMATCH",
     "PROCESS_HASH_MISMATCH",
     "WINDOW_IDENTITY_MISMATCH",
+    "kAXFocusedWindowAttribute",
+    "kAXRaiseAction",
+    "WINDOW_FOCUS_FAILED",
     "eventsPosted: 0",
     'case "selectPickerPath"',
+    'case "clickAccessibilityButton"',
+    'label == "Reset UI" || label == "Reload window"',
+    "kAXPressAction",
+    "ACCESSIBILITY_BUTTON_PRESS_FAILED",
     'case "drag"',
     "postMouseDrag",
     ".leftMouseDragged",
@@ -379,6 +387,12 @@ function assertStaticNativeHelperContract(): void {
     "markerSize <= 16_384",
     "candidate picker unexpectedly contains renderer web content",
     "dialogOwnedByCandidate: true",
+    'request.action == "submitPrompt"',
+    "bindPrompt",
+    "PROMPT_IDENTITY_MISMATCH",
+    "PROMPT_FIELD_MISMATCH",
+    "promptTextSha256: sha256(expectedText)",
+    "responseTextSha256: sha256(responseText)",
   ]) {
     assert(swift.includes(required), `native helper must contain ${required}`);
   }
@@ -451,6 +465,13 @@ function assertStaticNativeHelperContract(): void {
       && swift.includes("postKeyChord(processId: request.candidate.processId")
       && swift.includes("postUnicode(processId: request.candidate.processId"),
     "bounded keyboard and Unicode input must post only to the exact candidate process",
+  );
+  assert(
+    swift.includes("matchingPromptSurfaces(request.candidate, expectedText: expectedText)")
+      && swift.includes("promptEvents += try postMouseClick(at: CGPoint(x: fieldRect.midX, y: fieldRect.midY))")
+      && swift.includes("promptEvents += try postMouseClick(at: CGPoint(x: buttonRect.midX, y: buttonRect.midY))")
+      && swift.includes("guard !promptRemains"),
+    "bounded prompt submission must bind exact text, use candidate-owned controls, and prove dismissal",
   );
   assert.match(
     swift,

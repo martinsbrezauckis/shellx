@@ -363,6 +363,17 @@ class VaultRequestPromptRuntimeFixture {
       return webdriverValue(null);
     }
     if (method === "GET" && route === "/title") return webdriverValue(this.currentWindow === "main" ? "shellX" : "ShellX Browser");
+    if (method === "POST" && route === "/execute/sync") {
+      const script = String(body.script ?? "");
+      if (this.currentWindow !== "browser" || !script.includes('internals.invoke("plugin:window|close"')) {
+        return webdriverError("fixture refuses unbounded script execution", 400);
+      }
+      this.browserWindow = false;
+      this.currentWindow = "main";
+      this.browserRequestsOpen = false;
+      this.fillPanelOpen = false;
+      return webdriverValue(true);
+    }
     if (method === "DELETE" && route === "/window") {
       if (this.currentWindow !== "browser") return webdriverError("fixture refuses main close", 400);
       this.browserWindow = false;

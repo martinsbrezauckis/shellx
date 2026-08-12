@@ -14,7 +14,7 @@ import { exerciseOwnedBrowserTabControl } from "./ui-control-owned-browser-bookm
 const FIXTURE_ID = "ui:browser-owned-tab-delegation-marker";
 const CLEANUP_ID = "ui:delete-owned-browser-tabs-restore-home-active-tab-and-window";
 const ORACLE_ID = "ui:activation:owned-browser-tab-delegation-marker";
-const markerTargets = new Map<string, { name: string; selector: string; label: string }>([
+const markerTargets = new Map<string, { name: string; selector: string; label: string; handoffMarkerSelector?: string }>([
   [
     "ui-debug-surface:shellx-browser-handoff-tab@src/browser/components/BrowserChrome.tsx#8",
     {
@@ -31,6 +31,23 @@ const markerTargets = new Map<string, { name: string; selector: string; label: s
       label: "take-back",
     },
   ],
+  ...([
+    ["shellx-browser-handoff-confirmation-backdrop", "handoff review backdrop"],
+    ["shellx-browser-handoff-confirmation", "handoff review dialog"],
+    ["shellx-browser-handoff-context", "sanitized handoff context"],
+    ["shellx-browser-handoff-vault-notice", "separate Vault approval notice"],
+    ["shellx-browser-handoff-status", "handoff success status"],
+    ["shellx-browser-handoff-cancel", "handoff Cancel control"],
+    ["shellx-browser-handoff-confirm", "trusted handoff Confirm control"],
+  ] as const).map(([debugId, label], index) => [
+    `ui-debug-surface:${debugId}@src/browser/components/BrowserTabHandoffConfirmation.tsx#${index + 1}`,
+    {
+      name: 'src/browser/components/BrowserChrome.tsx:[data-debug-id="shellx-browser-handoff-tab"]',
+      selector: '[data-debug-id="shellx-browser-handoff-tab"]',
+      label,
+      handoffMarkerSelector: `[data-debug-id='${debugId}']`,
+    },
+  ] as const),
 ]);
 
 const manifest: ReleaseSurfaceDriverManifest = {
@@ -70,7 +87,7 @@ async function execute(request: ReleaseSurfaceDriverRequest): Promise<ReleaseSur
         name: target.name,
         selector: target.selector,
       },
-    });
+    }, { handoffMarkerSelector: target.handoffMarkerSelector });
     if (outcome.effect === "pass") {
       outcome.observedEffect = `The genuine Browser ${target.label} marker became native-input reachable in its exact owned delegation state. ${outcome.observedEffect}`;
     }

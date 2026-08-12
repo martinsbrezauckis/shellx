@@ -284,8 +284,11 @@ pub(super) fn vault_grant_matches_filter(
     }
 }
 
-pub(super) async fn tool_vault_request_grant(args: Value) -> Result<Value, String> {
-    let body = vault_grant_request_body(args)?;
+pub(super) async fn tool_vault_request_grant(
+    args: Value,
+    caller_session_id: Option<&str>,
+) -> Result<Value, String> {
+    let body = vault_grant_request_body(args, caller_session_id)?;
     let data = debug_api_post_json("/vault/grants", &body, 10).await?;
     let grant = data.get("grant").cloned().unwrap_or_else(|| data.clone());
     Ok(json!({
@@ -355,13 +358,7 @@ pub(super) async fn tool_vault_agent_request(
 }
 
 pub(super) fn vault_agent_actor_id(caller_session_id: Option<&str>) -> String {
-    caller_session_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            let digest = blake3::hash(value.as_bytes()).to_hex().to_string();
-            format!("shellx-agent-session:{}", &digest[..16])
-        })
+    crate::shellx_browser_caller::shellx_mcp_agent_identity(caller_session_id)
         .unwrap_or_else(|| "shellx-agent-session:default".to_string())
 }
 
@@ -448,7 +445,10 @@ pub(super) fn vault_agent_request_body(args: &Value, actor_id: &str) -> Result<V
     }))
 }
 
-pub(super) fn vault_grant_request_body(args: Value) -> Result<Value, String> {
+pub(super) fn vault_grant_request_body(
+    args: Value,
+    caller_session_id: Option<&str>,
+) -> Result<Value, String> {
     let secret_ref = mcp_arg_string(
         &args,
         &["secretRef", "secret_ref", "resourceRef", "resource_ref"],
@@ -457,7 +457,7 @@ pub(super) fn vault_grant_request_body(args: Value) -> Result<Value, String> {
     let operation = mcp_arg_string(&args, &["operation", "op"])
         .ok_or_else(|| "vault_request_grant requires operation".to_string())
         .and_then(|value| normalize_vault_grant_operation(&value))?;
-    let actor_scope = vault_grant_actor_scope_body(&args)?;
+    let actor_scope = vault_grant_actor_scope_body(&args, caller_session_id)?;
     let origin =
         mcp_arg_string(&args, &["origin", "browserOrigin", "browser_origin"]).or_else(|| {
             actor_scope
@@ -520,10 +520,27 @@ pub(super) fn normalize_vault_grant_operation(raw: &str) -> Result<String, Strin
     }
 }
 
-pub(super) fn vault_grant_actor_scope_body(args: &Value) -> Result<Value, String> {
+pub(super) fn vault_grant_actor_scope_body(
+    args: &Value,
+    caller_session_id: Option<&str>,
+) -> Result<Value, String> {
     if let Some(scope) = args.get("actorScope").or_else(|| args.get("actor_scope")) {
-        if scope.is_object() {
-            return Ok(scope.clone());
+        if let Some(object) = scope.as_object() {
+            let is_agent = object
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("agent"));
+            if !is_agent {
+                return Ok(scope.clone());
+            }
+            let agent_id = crate::shellx_browser_caller::shellx_mcp_agent_identity(
+                caller_session_id,
+            )
+            .ok_or_else(|| {
+                "vault_request_grant actorKind=agent requires an authenticated Host MCP caller"
+                    .to_string()
+            })?;
+            return Ok(json!({ "kind": "agent", "agentId": agent_id }));
         }
         return Err("vault_request_grant actorScope must be an object".to_string());
     }
@@ -544,7 +561,8 @@ pub(super) fn vault_grant_actor_scope_body(args: &Value) -> Result<Value, String
         "allshellxagents" | "allagents" => Ok(json!({ "kind": "allShellxAgents" })),
         "agent" => Ok(json!({
             "kind": "agent",
-            "agentId": mcp_arg_string(args, &["agentId", "agent_id"]).ok_or_else(|| "vault_request_grant actorKind=agent requires agentId".to_string())?
+            "agentId": crate::shellx_browser_caller::shellx_mcp_agent_identity(caller_session_id)
+                .ok_or_else(|| "vault_request_grant actorKind=agent requires an authenticated Host MCP caller".to_string())?
         })),
         "provider" => Ok(json!({
             "kind": "provider",

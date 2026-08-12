@@ -17,6 +17,7 @@ import {
 const manifest: ReleaseSurfaceDriverManifest = {
   ...UI_CONTROL_INSTALLED_MANIFEST,
   id: UI_CONTROL_BOUNDED_INSTALLED_DRIVER_ID,
+  maxAssignmentsPerProcess: 125,
   controllerFiles: [
     "scripts/release-drivers/ui-control-installed.ts",
     "scripts/release-drivers/ui-control-bounded-installed-assignments.ts",

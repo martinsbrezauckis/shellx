@@ -4,8 +4,8 @@ import CryptoKit
 import Foundation
 import Darwin
 
-let requestSchema = "shellx/release-surface-macos-native-input-helper-request@3"
-let responseSchema = "shellx/release-surface-macos-native-input-helper-response@4"
+let requestSchema = "shellx/release-surface-macos-native-input-helper-request@5"
+let responseSchema = "shellx/release-surface-macos-native-input-helper-response@6"
 let maxInputBytes = 256 * 1024
 
 struct Rect: Codable {
@@ -55,9 +55,12 @@ struct HelperRequest: Codable {
     let text: String?
     let replaceAll: Bool?
     let keys: [String]?
+    let accessibilityLabel: String?
     let ownedRootPath: String?
     let pickerPath: String?
     let pickerKind: String?
+    let promptText: String?
+    let promptResponseText: String?
 }
 
 struct CandidateResponse: Codable {
@@ -101,6 +104,13 @@ struct PickerResponse: Codable {
     let dialogOwnedByCandidate: Bool
 }
 
+struct PromptResponse: Codable {
+    let role: String
+    let promptTextSha256: String
+    let responseTextSha256: String
+    let dialogOwnedByCandidate: Bool
+}
+
 struct ErrorResponse: Codable {
     let code: String
     let message: String
@@ -118,6 +128,7 @@ struct HelperResponse: Codable {
     let destinationMapping: MappingResponse?
     let effect: EffectResponse?
     let picker: PickerResponse?
+    let prompt: PromptResponse?
     let error: ErrorResponse?
 }
 
@@ -133,11 +144,24 @@ struct BoundWindow {
     let bounds: CGRect
     let webAreaBounds: CGRect
     let webAreaSource: String
+    let accessibilityElement: AXUIElement
+}
+
+struct BoundRecoveryButton {
+    let element: AXUIElement
+    let rect: CGRect
 }
 
 struct BoundPicker {
     let role: String
     let title: String
+}
+
+struct BoundPrompt {
+    let role: String
+    let dialog: AXUIElement
+    let textField: AXUIElement
+    let confirmButton: AXUIElement
 }
 
 struct RunProfileMarker: Decodable {
@@ -358,8 +382,29 @@ func bindWindow(_ request: CandidateRequest, target: TargetRequest?) throws -> B
         title: request.expectedWindowTitle,
         bounds: cg.bounds,
         webAreaBounds: webAreaBounds,
-        webAreaSource: webArea.source
+        webAreaSource: webArea.source,
+        accessibilityElement: axWindow
     )
+}
+
+func focusBoundWindow(_ candidate: CandidateRequest, _ window: BoundWindow) throws {
+    let applicationElement = AXUIElementCreateApplication(pid_t(candidate.processId))
+    _ = AXUIElementSetAttributeValue(
+        applicationElement,
+        kAXFocusedWindowAttribute as CFString,
+        window.accessibilityElement
+    )
+    let raised = AXUIElementPerformAction(window.accessibilityElement, kAXRaiseAction as CFString)
+    guard raised == .success else {
+        throw fail("WINDOW_FOCUS_FAILED", "Accessibility could not raise the exact candidate window")
+    }
+    Thread.sleep(forTimeInterval: 0.08)
+    guard let focused = axElementAttribute(applicationElement, kAXFocusedWindowAttribute),
+          axString(focused, kAXTitleAttribute) == window.title,
+          let focusedBounds = axRect(focused),
+          rectDistance(focusedBounds, window.bounds) <= 4 else {
+        throw fail("WINDOW_FOCUS_FAILED", "the exact candidate window did not become focused")
+    }
 }
 
 func hasRole(_ root: AXUIElement, role: String, depth: Int = 0, remaining: inout Int) -> Bool {
@@ -419,6 +464,114 @@ func bindPicker(_ request: CandidateRequest) throws -> BoundPicker {
         throw fail("PICKER_WEB_CONTENT_REFUSED", "the candidate picker unexpectedly contains renderer web content")
     }
     return BoundPicker(role: role, title: axString(picker, kAXTitleAttribute) ?? "")
+}
+
+func collectElements(
+    _ root: AXUIElement,
+    roles: Set<String>,
+    depth: Int = 0,
+    remaining: inout Int,
+    into matches: inout [AXUIElement]
+) {
+    guard depth <= 12, remaining > 0 else { return }
+    remaining -= 1
+    if roles.contains(axString(root, kAXRoleAttribute) ?? "") { matches.append(root) }
+    for child in axChildren(root) {
+        collectElements(child, roles: roles, depth: depth + 1, remaining: &remaining, into: &matches)
+    }
+}
+
+func bindExactRecoveryButton(_ window: BoundWindow, label: String) throws -> BoundRecoveryButton {
+    guard label == "Reset UI" || label == "Reload window" else {
+        throw fail("ACCESSIBILITY_BUTTON_REFUSED", "the requested Accessibility button is outside the exact renderer-recovery allowlist")
+    }
+    var budget = 4_096
+    var buttons: [AXUIElement] = []
+    collectElements(window.accessibilityElement, roles: ["AXButton"], remaining: &budget, into: &buttons)
+    let matches = buttons.filter { button in
+        [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute].contains { attribute in
+            axString(button, attribute) == label
+        }
+    }
+    guard matches.count == 1, let button = matches.first, let rect = axRect(button),
+          rect.width > 0, rect.height > 0,
+          window.bounds.insetBy(dx: -2, dy: -2).contains(rect),
+          window.webAreaBounds.insetBy(dx: -2, dy: -2).contains(rect) else {
+        throw fail("ACCESSIBILITY_BUTTON_MISMATCH", "Accessibility did not expose exactly one bounded candidate-owned renderer-recovery button")
+    }
+    return BoundRecoveryButton(element: button, rect: rect)
+}
+
+func containsExactAccessibilityText(_ root: AXUIElement, expected: String) -> Bool {
+    var remaining = 4_096
+    var stack: [(AXUIElement, Int)] = [(root, 0)]
+    while let (element, depth) = stack.popLast(), remaining > 0 {
+        remaining -= 1
+        for attribute in [kAXTitleAttribute, kAXValueAttribute, kAXDescriptionAttribute, kAXHelpAttribute] {
+            if axString(element, attribute) == expected { return true }
+        }
+        if depth < 12 {
+            for child in axChildren(element) { stack.append((child, depth + 1)) }
+        }
+    }
+    return false
+}
+
+func matchingPromptSurfaces(_ request: CandidateRequest, expectedText: String) throws -> [AXUIElement] {
+    let applicationElement = AXUIElementCreateApplication(pid_t(request.processId))
+    guard let focusedWindow = axElementAttribute(applicationElement, kAXFocusedWindowAttribute) else {
+        throw fail("PROMPT_NOT_FOCUSED", "the exact candidate process has no focused prompt window")
+    }
+    var remaining = 4_096
+    var dialogs: [AXUIElement] = []
+    collectElements(focusedWindow, roles: ["AXSheet", "AXDialog"], remaining: &remaining, into: &dialogs)
+    if dialogs.isEmpty {
+        let role = axString(focusedWindow, kAXRoleAttribute) ?? ""
+        let title = axString(focusedWindow, kAXTitleAttribute) ?? ""
+        var webAreaBudget = 4_096
+        let containsWebArea = hasRole(focusedWindow, role: "AXWebArea", remaining: &webAreaBudget)
+        if role == "AXWindow" && title != request.expectedWindowTitle && !containsWebArea {
+            dialogs = [focusedWindow]
+        }
+    }
+    return dialogs.filter { containsExactAccessibilityText($0, expected: expectedText) }
+}
+
+func bindPrompt(_ request: CandidateRequest, expectedText: String) throws -> BoundPrompt {
+    let matches = try matchingPromptSurfaces(request, expectedText: expectedText)
+    guard matches.count == 1, let dialog = matches.first else {
+        throw fail("PROMPT_IDENTITY_MISMATCH", "Accessibility did not expose exactly one candidate-owned prompt with the exact expected text")
+    }
+    let role = axString(dialog, kAXRoleAttribute) ?? ""
+    guard role == "AXSheet" || role == "AXDialog" || role == "AXWindow" else {
+        throw fail("PROMPT_ROLE_MISMATCH", "the exact candidate-owned prompt has a non-allowlisted role")
+    }
+    var webAreaBudget = 4_096
+    guard !hasRole(dialog, role: "AXWebArea", remaining: &webAreaBudget) else {
+        throw fail("PROMPT_WEB_CONTENT_REFUSED", "the candidate prompt unexpectedly contains renderer web content")
+    }
+    var fieldBudget = 4_096
+    var fields: [AXUIElement] = []
+    collectElements(dialog, roles: ["AXTextField", "AXTextArea"], remaining: &fieldBudget, into: &fields)
+    guard fields.count == 1, let textField = fields.first else {
+        throw fail("PROMPT_FIELD_MISMATCH", "the exact candidate prompt did not expose one response field")
+    }
+    var buttonBudget = 4_096
+    var buttons: [AXUIElement] = []
+    collectElements(dialog, roles: ["AXButton"], remaining: &buttonBudget, into: &buttons)
+    let defaultButton = axElementAttribute(dialog, kAXDefaultButtonAttribute)
+    let titledButtons = buttons.filter {
+        let title = (axString($0, kAXTitleAttribute) ?? "").lowercased()
+        return title == "ok" || title == "submit"
+    }
+    guard let confirmButton = defaultButton ?? (titledButtons.count == 1 ? titledButtons.first : nil),
+          let dialogRect = axRect(dialog), let fieldRect = axRect(textField), let buttonRect = axRect(confirmButton),
+          fieldRect.width > 0, fieldRect.height > 0, buttonRect.width > 0, buttonRect.height > 0,
+          dialogRect.insetBy(dx: -2, dy: -2).contains(fieldRect),
+          dialogRect.insetBy(dx: -2, dy: -2).contains(buttonRect) else {
+        throw fail("PROMPT_CONTROL_MISMATCH", "the exact candidate prompt did not expose one bounded response field and default action")
+    }
+    return BoundPrompt(role: role, dialog: dialog, textField: textField, confirmButton: confirmButton)
 }
 
 func standardizedPath(_ path: String) -> String {
@@ -647,7 +800,7 @@ func postKeyChord(processId: Int32, _ keys: [String]) throws -> Int {
 func emit(_ response: HelperResponse, exitCode: Int32) -> Never {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
-    let data = (try? encoder.encode(response)) ?? Data("{\"schema\":\"shellx/release-surface-macos-native-input-helper-response@4\",\"ok\":false,\"action\":\"preflight\",\"status\":\"failed\"}".utf8)
+    let data = (try? encoder.encode(response)) ?? Data("{\"schema\":\"shellx/release-surface-macos-native-input-helper-response@6\",\"ok\":false,\"action\":\"preflight\",\"status\":\"failed\"}".utf8)
     FileHandle.standardOutput.write(data)
     FileHandle.standardOutput.write(Data([0x0a]))
     exit(exitCode)
@@ -671,7 +824,7 @@ do {
     let request = try decoder.decode(HelperRequest.self, from: data)
     action = request.action
     guard request.schema == requestSchema else { throw fail("INVALID_SCHEMA", "helper request schema mismatch") }
-    guard ["preflight", "click", "contextClick", "drag", "typeText", "clear", "keyChord", "selectPickerPath"].contains(request.action) else {
+    guard ["preflight", "click", "contextClick", "drag", "typeText", "clear", "keyChord", "clickAccessibilityButton", "selectPickerPath", "submitPrompt"].contains(request.action) else {
         throw fail("INVALID_ACTION", "unsupported bounded native-input action")
     }
     if request.action == "selectPickerPath" {
@@ -684,6 +837,26 @@ do {
         try validateOwnedPickerPath(rootPath: rootPath, pickerPath: pickerPath, kind: pickerKind)
     } else if request.ownedRootPath != nil || request.pickerPath != nil || request.pickerKind != nil {
         throw fail("INVALID_PICKER_REQUEST", "picker fields are forbidden outside the dedicated picker action")
+    }
+    if request.action == "submitPrompt" {
+        guard let promptText = request.promptText,
+              let promptResponseText = request.promptResponseText,
+              !promptText.isEmpty, promptText.utf8.count <= 4_096, !promptText.contains("\0"),
+              !promptResponseText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              promptResponseText.utf8.count <= 4_096, !promptResponseText.contains("\0"),
+              request.target == nil else {
+            throw fail("INVALID_PROMPT_REQUEST", "prompt submission requires exact bounded prompt and response text without a renderer target")
+        }
+    } else if request.promptText != nil || request.promptResponseText != nil {
+        throw fail("INVALID_PROMPT_REQUEST", "prompt fields are forbidden outside the dedicated prompt action")
+    }
+    if request.action == "clickAccessibilityButton" {
+        guard request.target == nil,
+              request.accessibilityLabel == "Reset UI" || request.accessibilityLabel == "Reload window" else {
+            throw fail("INVALID_ACCESSIBILITY_BUTTON_REQUEST", "Accessibility button input requires one exact renderer-recovery label without a renderer target")
+        }
+    } else if request.accessibilityLabel != nil {
+        throw fail("INVALID_ACCESSIBILITY_BUTTON_REQUEST", "Accessibility labels are forbidden outside the dedicated button action")
     }
     if request.action == "drag" {
         guard let sourceTarget = request.target, let destinationTarget = request.destinationTarget else {
@@ -718,17 +891,75 @@ do {
             destinationMapping: nil,
             effect: EffectResponse(applicationActivated: false, eventsPosted: 0),
             picker: nil,
+            prompt: nil,
             error: ErrorResponse(
                 code: "ACCESSIBILITY_PERMISSION_REQUIRED",
                 message: "Grant Accessibility to this exact helper executable in System Settings, then rerun; the helper never requests or changes permission"
             )
         ), exitCode: 3)
     }
+    if request.action == "submitPrompt" {
+        guard let expectedText = request.promptText, let responseText = request.promptResponseText else {
+            throw fail("INVALID_PROMPT_REQUEST", "prompt payload disappeared after validation")
+        }
+        guard boundProcess.application.activate() else {
+            throw fail("ACTIVATION_FAILED", "the exact candidate application could not be activated")
+        }
+        Thread.sleep(forTimeInterval: 0.08)
+        guard boundProcess.application.isActive,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == request.candidate.processId else {
+            throw fail("ACTIVATION_LOST", "the exact candidate was not frontmost immediately before prompt input")
+        }
+        let prompt = try bindPrompt(request.candidate, expectedText: expectedText)
+        guard let fieldRect = axRect(prompt.textField), let buttonRect = axRect(prompt.confirmButton) else {
+            throw fail("PROMPT_CONTROL_MISMATCH", "the exact prompt controls lost their bounded geometry")
+        }
+        var promptEvents = 0
+        promptEvents += try postMouseClick(at: CGPoint(x: fieldRect.midX, y: fieldRect.midY))
+        promptEvents += try postKey(processId: request.candidate.processId, code: 0, flags: .maskCommand)
+        promptEvents += try postUnicode(processId: request.candidate.processId, responseText)
+        promptEvents += try postMouseClick(at: CGPoint(x: buttonRect.midX, y: buttonRect.midY))
+        let dismissalDeadline = Date().addingTimeInterval(2.0)
+        var promptRemains = true
+        repeat {
+            Thread.sleep(forTimeInterval: 0.04)
+            promptRemains = !(try matchingPromptSurfaces(request.candidate, expectedText: expectedText)).isEmpty
+        } while promptRemains && Date() < dismissalDeadline
+        guard !promptRemains else {
+            throw fail("PROMPT_NOT_DISMISSED", "the exact candidate-owned prompt remained after its default action")
+        }
+        emit(HelperResponse(
+            schema: responseSchema,
+            ok: true,
+            action: request.action,
+            status: "applied",
+            candidate: boundProcess.candidate,
+            permissions: permissions,
+            window: nil,
+            mapping: nil,
+            destinationMapping: nil,
+            effect: EffectResponse(applicationActivated: true, eventsPosted: promptEvents),
+            picker: nil,
+            prompt: PromptResponse(
+                role: prompt.role,
+                promptTextSha256: sha256(expectedText),
+                responseTextSha256: sha256(responseText),
+                dialogOwnedByCandidate: true
+            ),
+            error: nil
+        ), exitCode: 0)
+    }
     let window = try bindWindow(request.candidate, target: request.target)
+    let recoveryButton: BoundRecoveryButton?
     let point: CGPoint?
-    if let target = request.target {
+    if request.action == "clickAccessibilityButton", let label = request.accessibilityLabel {
+        recoveryButton = try bindExactRecoveryButton(window, label: label)
+        point = recoveryButton.map { CGPoint(x: $0.rect.midX, y: $0.rect.midY) }
+    } else if let target = request.target {
+        recoveryButton = nil
         point = try mapTarget(target, window)
     } else {
+        recoveryButton = nil
         point = nil
     }
     let destinationPoint: CGPoint?
@@ -761,6 +992,7 @@ do {
             destinationMapping: nil,
             effect: EffectResponse(applicationActivated: false, eventsPosted: 0),
             picker: nil,
+            prompt: nil,
             error: nil
         ), exitCode: 0)
     }
@@ -768,6 +1000,7 @@ do {
     guard boundProcess.application.activate() else {
         throw fail("ACTIVATION_FAILED", "the exact candidate application could not be activated")
     }
+    try focusBoundWindow(request.candidate, window)
     Thread.sleep(forTimeInterval: 0.08)
     guard boundProcess.application.isActive,
           NSWorkspace.shared.frontmostApplication?.processIdentifier == request.candidate.processId else {
@@ -799,6 +1032,14 @@ do {
         eventsPosted += try postKey(processId: request.candidate.processId, code: 51)
     case "keyChord":
         eventsPosted += try postKeyChord(processId: request.candidate.processId, request.keys ?? [])
+    case "clickAccessibilityButton":
+        guard point != nil, let recoveryButton else {
+            throw fail("ACCESSIBILITY_BUTTON_MISMATCH", "the exact renderer-recovery button lost its bounded identity")
+        }
+        guard AXUIElementPerformAction(recoveryButton.element, kAXPressAction as CFString) == .success else {
+            throw fail("ACCESSIBILITY_BUTTON_PRESS_FAILED", "Accessibility could not press the exact candidate-owned renderer-recovery button")
+        }
+        eventsPosted += 1
     case "selectPickerPath":
         guard let rootPath = request.ownedRootPath,
               let pickerPath = request.pickerPath,
@@ -837,6 +1078,7 @@ do {
         destinationMapping: destinationMapping,
         effect: EffectResponse(applicationActivated: true, eventsPosted: eventsPosted),
         picker: pickerResponse,
+        prompt: nil,
         error: nil
     ), exitCode: 0)
 } catch let error as HelperFailure {
@@ -856,6 +1098,7 @@ do {
         destinationMapping: nil,
         effect: EffectResponse(applicationActivated: false, eventsPosted: 0),
         picker: nil,
+        prompt: nil,
         error: ErrorResponse(code: error.code, message: error.message)
     ), exitCode: 2)
 } catch {
@@ -875,6 +1118,7 @@ do {
         destinationMapping: nil,
         effect: EffectResponse(applicationActivated: false, eventsPosted: 0),
         picker: nil,
+        prompt: nil,
         error: ErrorResponse(code: "INVALID_REQUEST", message: "helper request could not be decoded or validated")
     ), exitCode: 2)
 }

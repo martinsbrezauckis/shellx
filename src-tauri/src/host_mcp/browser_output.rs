@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::{debug_api_get_json, mcp_arg_bool, mcp_arg_u64};
+use super::{debug_api_get_json_for_caller, mcp_arg_bool, mcp_arg_u64};
 
 const DEFAULT_MAX_REFS: usize = 32;
 const DEFAULT_MAX_FORM_FIELDS: usize = 16;
@@ -293,8 +293,8 @@ pub(super) fn browser_compact_observe_result_for_mcp(mut data: Value, args: &Val
     data
 }
 
-pub(super) async fn tool_browser_tabs() -> Result<Value, String> {
-    let data = debug_api_get_json("/browser/tabs", 10).await?;
+pub(super) async fn tool_browser_tabs(caller_session_id: Option<&str>) -> Result<Value, String> {
+    let data = debug_api_get_json_for_caller("/browser/tabs", 10, caller_session_id).await?;
     Ok(browser_mcp_result(
         browser_tabs_text_summary("browser_tabs", &data),
         data,
@@ -588,8 +588,8 @@ fn push_count(
     }
 }
 
-pub(super) async fn tool_browser_locks() -> Result<Value, String> {
-    let data = debug_api_get_json("/browser/tabs", 10).await?;
+pub(super) async fn tool_browser_locks(caller_session_id: Option<&str>) -> Result<Value, String> {
+    let data = debug_api_get_json_for_caller("/browser/tabs", 10, caller_session_id).await?;
     let locks: Vec<Value> = data
         .get("tabs")
         .and_then(Value::as_array)

@@ -27,6 +27,7 @@ type BrowserTab = {
   active: boolean;
   ownerKind: "user" | "agent" | "delegatedToAgent";
   delegatedTaskId: string | null;
+  delegatedGrantId: string | null;
   lock: {
     leaseId: string;
     ownerAgentId: string;
@@ -41,9 +42,15 @@ type HistoryEntry = {
   title: string | null;
   visitedAtMs: number;
 };
-type PendingAlert =
-  | { kind: "handoff"; text: string; browserTabId: string; taskId: string }
-  | { kind: "clearHistory"; text: string };
+type PendingHandoff = {
+  browserTabId: string;
+  taskId: string;
+  phase: "review" | "pending" | "success";
+};
+type BrowserReceipt = {
+  kind: "browserHistoryCleared";
+  evidence: { scope: "user" | "agent" | "all"; removed: number };
+};
 
 const bookmarks = new Map<string, Bookmark>();
 const tabs = new Map<string, BrowserTab>();
@@ -69,13 +76,16 @@ let activeBrowserTabId: string | null = null;
 let optionsOpen = false;
 let homeValue = "https://example.com/";
 let homeStored: string | null = null;
-let pendingAlert: PendingAlert | null = null;
-let acceptedAlertCount = 0;
+let pendingHandoff: PendingHandoff | null = null;
+let handoffPendingObserved = false;
+let focusedSelector: string | null = null;
+let vaultGrantCount = 0;
+let pendingHistoryClearScope: "user" | "agent" | "all" | null = null;
 let historyOpen = false;
 let historyScope: "user" | "agent" = "user";
+let historyClearStatus: { tone: "success"; message: string } | null = null;
+const historyClearReceipts: BrowserReceipt[] = [];
 let openToolbarFolderId: string | null = null;
-
-const HANDOFF_CONFIRMATION = "Hand this tab to the active Browser agent task? Vault secrets will still require separate approval.";
 
 const candidate = createServer(async (request, response) => {
   try {
@@ -97,6 +107,9 @@ const candidate = createServer(async (request, response) => {
         tasks: taskId ? [{ taskId, status: taskStatus }] : [],
         history: historyEntries,
       });
+    }
+    if (request.method === "GET" && request.url?.startsWith("/browser/receipts")) {
+      return json(response, 200, { receipts: historyClearReceipts });
     }
     if (request.method === "POST" && request.url === "/browser/task/start") {
       const body = await requestJson(request);
@@ -247,6 +260,9 @@ const candidate = createServer(async (request, response) => {
         historyEntries,
         historyOpen,
         historyScope,
+        pendingHistoryClearScope,
+        historyClearStatus,
+        historyClearReceipts,
         openToolbarFolderId,
         labelDrafts: Object.fromEntries(labelDrafts),
         urlDrafts: Object.fromEntries(urlDrafts),
@@ -265,8 +281,9 @@ const candidate = createServer(async (request, response) => {
         optionsOpen,
         homeValue,
         homeStored,
-        pendingAlert,
-        acceptedAlertCount,
+        pendingHandoff,
+        focusedSelector,
+        vaultGrantCount,
         clickedSelectors,
         draggedSelectors,
       });
@@ -282,33 +299,6 @@ const webdriver = createServer(async (request, response) => {
     const path = request.url ?? "";
     const prefix = `/session/${encodeURIComponent(sessionId)}`;
     if (!path.startsWith(prefix)) return webdriverError(response, 404, "invalid session id", "unknown fixture session");
-    if (request.method === "GET" && path === `${prefix}/alert/text`) {
-      return pendingAlert
-        ? webdriverValue(response, pendingAlert.text)
-        : webdriverError(response, 404, "no such alert", "fixture has no pending alert");
-    }
-    if (request.method === "POST" && path === `${prefix}/alert/accept`) {
-      if (!pendingAlert) return webdriverError(response, 404, "no such alert", "fixture has no pending alert");
-      if (pendingAlert.kind === "clearHistory") {
-        historyEntries = [];
-        pendingAlert = null;
-        acceptedAlertCount += 1;
-        return webdriverValue(response, null);
-      }
-      const tab = tabs.get(pendingAlert.browserTabId);
-      if (!tab || taskId !== pendingAlert.taskId || taskStatus !== "running") {
-        return webdriverError(response, 409, "invalid argument", "fixture handoff owner disappeared");
-      }
-      tab.ownerKind = "delegatedToAgent";
-      tab.taskId = pendingAlert.taskId;
-      tab.delegatedTaskId = pendingAlert.taskId;
-      pendingAlert = null;
-      acceptedAlertCount += 1;
-      return webdriverValue(response, null);
-    }
-    if (pendingAlert) {
-      return webdriverError(response, 500, "unexpected alert open", pendingAlert.text);
-    }
     if (request.method === "GET" && path === `${prefix}/window`) return webdriverValue(response, currentWindow);
     if (request.method === "GET" && path === `${prefix}/window/handles`) {
       return webdriverValue(response, browserWindowOpen ? ["main-window", "browser-window"] : ["main-window"]);
@@ -322,7 +312,7 @@ const webdriver = createServer(async (request, response) => {
       return webdriverValue(response, null);
     }
     if (request.method === "GET" && path === `${prefix}/title`) {
-      return webdriverValue(response, currentWindow === "browser-window" ? "ShellX Browser" : "ShellX");
+      return webdriverValue(response, currentWindow === "browser-window" ? "ShellX Browser" : "shellX");
     }
     if (request.method === "DELETE" && path === `${prefix}/window`) {
       if (currentWindow !== "browser-window") return webdriverError(response, 400, "invalid argument", "main window is not disposable");
@@ -332,17 +322,40 @@ const webdriver = createServer(async (request, response) => {
       optionsOpen = false;
       historyOpen = false;
       openToolbarFolderId = null;
+      pendingHandoff = null;
+      focusedSelector = null;
       return webdriverValue(response, ["main-window"]);
     }
     if (request.method === "POST" && path === `${prefix}/execute/sync`) {
       const body = await requestJson(request);
       const script = typeof body.script === "string" ? body.script : "";
       const scriptArgs = Array.isArray(body.args) ? body.args : [];
+      if (script.includes('internals.invoke("plugin:window|close", { label })')) {
+        if (currentWindow !== "browser-window" || !browserWindowOpen) return webdriverValue(response, false);
+        browserWindowOpen = false;
+        currentWindow = "main-window";
+        disclosureOpen = false;
+        optionsOpen = false;
+        historyOpen = false;
+        openToolbarFolderId = null;
+        pendingHandoff = null;
+        focusedSelector = null;
+        return webdriverValue(response, true);
+      }
+      if (script.includes("__shellxReleaseHandoffPendingObserver?.disconnect()") && script.includes("MutationObserver")) {
+        handoffPendingObserved = pendingHandoff?.phase === "pending";
+        return webdriverValue(response, true);
+      }
+      if (script.includes("return globalThis.__shellxReleaseHandoffPendingObserved === true")) {
+        return webdriverValue(response, handoffPendingObserved || pendingHandoff?.phase === "pending");
+      }
       if (script.includes("SHELLX_BOUNDED_ELEMENT_OBSERVATION")
         && typeof scriptArgs[0] === "string"
         && Array.isArray(scriptArgs[1])) {
         const selector = scriptArgs[0];
         const fields = scriptArgs[1];
+        const handoffObservation = observedHandoffElement(selector, fields);
+        if (handoffObservation) return webdriverValue(response, handoffObservation);
         if (fields.includes("value") && (isInput(selector) || selector === draftFolderSelector())) {
           const observation: Record<string, unknown> = {
             value: selector === draftFolderSelector() ? draftFolder : inputValue(selector),
@@ -379,7 +392,8 @@ const webdriver = createServer(async (request, response) => {
     }
     if (request.method === "POST" && path === `${prefix}/actions`) {
       const body = await requestJson(request);
-      handlePointerDragActions(body);
+      if (isHandoffEscape(body)) handleHandoffEscape();
+      else handlePointerDragActions(body);
       return webdriverValue(response, null);
     }
     if (request.method === "DELETE" && path === `${prefix}/actions`) {
@@ -437,6 +451,20 @@ const webdriver = createServer(async (request, response) => {
 function displayed(selector: string): boolean {
   if (currentWindow === "main-window") return selector === headerBrowserSelector();
   if (currentWindow !== "browser-window") return false;
+  if (pendingHandoff) {
+    return selector === handoffConfirmationSelector()
+      || selector === handoffBackdropSelector()
+      || selector === handoffContextSelector()
+      || selector === handoffVaultNoticeSelector()
+      || selector === handoffConfirmSelector()
+      || selector === handoffCancelSelector()
+      || (pendingHandoff.phase === "success" && selector === handoffStatusSelector());
+  }
+  if (pendingHistoryClearScope) {
+    return selector === historyClearConfirmationSelector()
+      || selector === historyClearConfirmSelector()
+      || selector === historyClearCancelSelector();
+  }
   if (
     selector === newTabSelector()
     || selector === newDisposableTabSelector()
@@ -461,11 +489,15 @@ function displayed(selector: string): boolean {
   if (selector === historyPanelSelector() || selector === historyUserSelector() || selector === historyAgentSelector()) {
     return historyOpen;
   }
-  if (selector === clearHistorySelector()) return historyOpen && historyEntries.length > 0;
+  if (selector === historyClearStatusSelector()) return historyOpen && historyClearStatus !== null;
+  if (selector === clearHistorySelector()) return historyOpen && historyEntries.some((entry) => (
+    historyScope === "agent" ? !isUserHistoryEntry(entry) : isUserHistoryEntry(entry)
+  ));
+  if (selector === clearAllHistorySelector()) return historyOpen && historyEntries.length > 0;
   const historyEntry = dynamicHistorySelector(selector);
   if (historyEntry) {
     return historyOpen && historyEntries.some((entry) => (
-      entry.historyId === historyEntry && (historyScope === "agent" ? entry.taskId !== null : entry.taskId === null)
+      entry.historyId === historyEntry && (historyScope === "agent" ? !isUserHistoryEntry(entry) : isUserHistoryEntry(entry))
     ));
   }
   const toolbar = dynamicToolbarSelector(selector);
@@ -494,6 +526,87 @@ function displayed(selector: string): boolean {
   return true;
 }
 
+function observedHandoffElement(
+  selector: string,
+  fields: unknown[],
+): { present: boolean; visible: boolean; observation: Record<string, unknown> } | null {
+  const handoffSelector = [
+    handoffTabSelector(),
+    handoffConfirmationSelector(),
+    handoffBackdropSelector(),
+    handoffContextSelector(),
+    handoffVaultNoticeSelector(),
+    handoffStatusSelector(),
+    handoffCancelSelector(),
+    handoffConfirmSelector(),
+  ].includes(selector);
+  if (!handoffSelector) return null;
+  const observation: Record<string, unknown> = {};
+  if (fields.includes("focused")) observation.focused = focusedSelector === selector;
+  if (fields.includes("disabled")) {
+    if (selector === handoffConfirmSelector()) observation.disabled = pendingHandoff?.phase === "pending";
+    else if (selector === handoffCancelSelector()) observation.disabled = pendingHandoff?.phase === "pending";
+    else observation.disabled = false;
+  }
+  if (fields.includes("title")) {
+    if (selector === handoffContextSelector() && pendingHandoff) {
+      observation.title = handoffContextTitle(pendingHandoff);
+    } else if (selector === handoffVaultNoticeSelector()) {
+      observation.title = "Vault secrets still require a separate approval. This handoff does not grant Vault access.";
+    } else if (selector === handoffStatusSelector() && pendingHandoff?.phase === "success") {
+      observation.title = "Tab handed off to the active Browser agent task.";
+    }
+  }
+  return {
+    present: displayed(selector),
+    visible: displayed(selector),
+    observation,
+  };
+}
+
+function handoffContextTitle(handoff: PendingHandoff): string {
+  const value = [
+    "Origin about context",
+    "URL Local or non-web URL context is withheld",
+    "Profile Task disposable (task-disposable)",
+    "Persistence Disposable task storage",
+    "Owner User-controlled",
+    `Task ${handoff.taskId}: Final surface owned Browser tab handoff proof`,
+  ].join("; ");
+  return value.length > 240 ? `${value.slice(0, 239)}…` : value;
+}
+
+function isHandoffEscape(body: Record<string, unknown>): boolean {
+  const sources = Array.isArray(body.actions) ? body.actions : [];
+  if (sources.length !== 1) return false;
+  const source = record(sources[0]);
+  const actions = Array.isArray(source.actions) ? source.actions.map(record) : [];
+  return source.type === "key"
+    && source.id === "shellx-release-keyboard"
+    && actions.length === 2
+    && actions[0]?.type === "keyDown" && actions[0]?.value === "\uE00C"
+    && actions[1]?.type === "keyUp" && actions[1]?.value === "\uE00C";
+}
+
+function handleHandoffEscape(): void {
+  if (!pendingHandoff || pendingHandoff.phase === "pending") {
+    throw new Error("fixture Browser handoff Escape requires a cancellable review state");
+  }
+  pendingHandoff = null;
+  focusedSelector = handoffTabSelector();
+}
+
+function completeHandoff(): void {
+  if (!pendingHandoff || pendingHandoff.phase !== "pending") return;
+  const tab = tabs.get(pendingHandoff.browserTabId);
+  if (!tab || taskId !== pendingHandoff.taskId || taskStatus !== "running" || tab.ownerKind !== "user") return;
+  tab.ownerKind = "delegatedToAgent";
+  tab.taskId = pendingHandoff.taskId;
+  tab.delegatedTaskId = pendingHandoff.taskId;
+  tab.delegatedGrantId = null;
+  pendingHandoff.phase = "success";
+}
+
 function handleClick(selector: string): void {
   if (selector === headerBrowserSelector()) {
     browserWindowOpen = true;
@@ -515,8 +628,26 @@ function handleClick(selector: string): void {
   } else if (selector === historyAgentSelector()) {
     historyScope = "agent";
   } else if (selector === clearHistorySelector()) {
-    if (historyEntries.length === 0) throw new Error("fixture Clear history action requires owned history");
-    pendingAlert = { kind: "clearHistory", text: "Clear browser history?" };
+    if (!historyEntries.some((entry) => historyScope === "agent" ? !isUserHistoryEntry(entry) : isUserHistoryEntry(entry))) {
+      throw new Error("fixture scoped Clear history action requires matching owned history");
+    }
+    pendingHistoryClearScope = historyScope;
+  } else if (selector === clearAllHistorySelector()) {
+    if (historyEntries.length === 0) throw new Error("fixture Clear all history action requires owned history");
+    pendingHistoryClearScope = "all";
+  } else if (selector === historyClearConfirmSelector()) {
+    if (!pendingHistoryClearScope) throw new Error("fixture History clear confirmation requires a pending scope");
+    const scope = pendingHistoryClearScope;
+    const removed = historyEntries.filter((entry) => scope === "all" || (scope === "user") === isUserHistoryEntry(entry)).length;
+    historyEntries = historyEntries.filter((entry) => scope !== "all" && (scope === "user") !== isUserHistoryEntry(entry));
+    historyClearReceipts.unshift({ kind: "browserHistoryCleared", evidence: { scope, removed } });
+    historyClearStatus = {
+      tone: "success",
+      message: `Cleared ${scope === "all" ? `${removed} Browser history` : `${removed} ${scope === "user" ? "User" : "Agent"} history`} ${removed === 1 ? "entry" : "entries"}.`,
+    };
+    pendingHistoryClearScope = null;
+  } else if (selector === historyClearCancelSelector()) {
+    pendingHistoryClearScope = null;
   } else if (dynamicHistorySelector(selector)) {
     const entry = historyEntries.find((candidate) => candidate.historyId === dynamicHistorySelector(selector));
     if (!entry || !activeBrowserTabId) throw new Error("fixture history entry action requires an active owned tab");
@@ -576,7 +707,24 @@ function handleClick(selector: string): void {
     }
     const tab = tabs.get(activeBrowserTabId);
     if (!tab || tab.ownerKind !== "user") throw new Error("fixture Handoff action requires user ownership");
-    pendingAlert = { kind: "handoff", text: HANDOFF_CONFIRMATION, browserTabId: activeBrowserTabId, taskId };
+    pendingHandoff = { browserTabId: activeBrowserTabId, taskId, phase: "review" };
+    focusedSelector = handoffCancelSelector();
+  } else if (selector === handoffConfirmSelector()) {
+    if (!pendingHandoff) throw new Error("fixture Browser handoff confirmation requires a pending handoff");
+    if (pendingHandoff.phase !== "review") throw new Error("fixture Browser handoff confirmation is not ready for a trusted confirmation");
+    const tab = tabs.get(pendingHandoff.browserTabId);
+    if (!tab || taskId !== pendingHandoff.taskId || taskStatus !== "running" || tab.ownerKind !== "user") {
+      throw new Error("fixture Browser handoff confirmation lost its active user tab or task");
+    }
+    pendingHandoff.phase = "pending";
+    handoffPendingObserved = true;
+    setTimeout(() => completeHandoff(), 75);
+  } else if (selector === handoffCancelSelector()) {
+    if (pendingHandoff?.phase === "pending") {
+      throw new Error("fixture Browser handoff cannot cancel while its trusted confirmation is pending");
+    }
+    pendingHandoff = null;
+    focusedSelector = handoffTabSelector();
   } else if (selector === takeBackTabSelector()) {
     if (!activeBrowserTabId) throw new Error("fixture Take back action requires an active Browser tab");
     const tab = tabs.get(activeBrowserTabId);
@@ -784,6 +932,7 @@ function createTab(
     active: true,
     ownerKind,
     delegatedTaskId: null,
+    delegatedGrantId: null,
     lock: null,
   };
   tabs.set(browserTabId, tab);
@@ -849,6 +998,13 @@ function reloadSelector() { return "[data-debug-id='shellx-browser-reload']"; }
 function lockTabSelector() { return "[data-debug-id='shellx-browser-lock-tab']"; }
 function bookmarkCurrentSelector() { return "[data-debug-id='shellx-browser-bookmark-current']"; }
 function handoffTabSelector() { return "[data-debug-id='shellx-browser-handoff-tab']"; }
+function handoffBackdropSelector() { return "[data-debug-id='shellx-browser-handoff-confirmation-backdrop']"; }
+function handoffConfirmationSelector() { return "[data-debug-id='shellx-browser-handoff-confirmation']"; }
+function handoffContextSelector() { return "[data-debug-id='shellx-browser-handoff-context']"; }
+function handoffVaultNoticeSelector() { return "[data-debug-id='shellx-browser-handoff-vault-notice']"; }
+function handoffStatusSelector() { return "[data-debug-id='shellx-browser-handoff-status']"; }
+function handoffConfirmSelector() { return "[data-debug-id='shellx-browser-handoff-confirm']"; }
+function handoffCancelSelector() { return "[data-debug-id='shellx-browser-handoff-cancel']"; }
 function takeBackTabSelector() { return "[data-debug-id='shellx-browser-take-back-tab']"; }
 function optionsOwnerSelector() { return "[data-debug-id='shellx-browser-options']"; }
 function optionsPanelSelector() { return "#shellx-browser-options-sidecar[aria-labelledby='shellx-browser-options']"; }
@@ -858,6 +1014,14 @@ function historyPanelSelector() { return "#shellx-browser-history-sidecar[aria-l
 function historyUserSelector() { return "[data-debug-id='shellx-browser-history-user']"; }
 function historyAgentSelector() { return "[data-debug-id='shellx-browser-history-agent']"; }
 function clearHistorySelector() { return "[data-debug-id='shellx-browser-clear-history']"; }
+function clearAllHistorySelector() { return "[data-debug-id='shellx-browser-clear-all-history']"; }
+function historyClearStatusSelector() { return "[data-debug-id='shellx-browser-history-clear-status']"; }
+function historyClearConfirmationSelector() { return "[data-debug-id='shellx-browser-history-clear-confirmation']"; }
+function historyClearConfirmSelector() { return "[data-debug-id='shellx-browser-history-clear-confirm']"; }
+function historyClearCancelSelector() { return "[data-debug-id='shellx-browser-history-clear-cancel']"; }
+function isUserHistoryEntry(entry: HistoryEntry): boolean {
+  return entry.profileId === "personal" && !entry.taskId?.trim();
+}
 function ownerSelector() { return "[data-debug-id='shellx-browser-bookmarks-menu']"; }
 function panelSelector() { return "#shellx-browser-bookmark-manager-dock[aria-labelledby='shellx-browser-bookmarks-menu']"; }
 function closeSelector() { return "[data-debug-id='shellx-browser-bookmark-manager-close']"; }

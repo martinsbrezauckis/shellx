@@ -255,6 +255,7 @@ pub(crate) async fn browser_vault_resource_receipt_action_http(
     s: &ApiState,
     registry: &Arc<crate::shellx_browser::ShellxBrowserRegistry>,
     body: &crate::shellx_browser::BrowserActionRequest,
+    authenticated_agent_id: Option<&str>,
     operation: &crate::shellx_vault::GrantOperation,
     action: &str,
 ) -> Response {
@@ -297,7 +298,7 @@ pub(crate) async fn browser_vault_resource_receipt_action_http(
                 .into_response();
         }
     };
-    let actor = match registry.vault_grant_actor_context_for_action(body) {
+    let actor = match registry.vault_grant_actor_context_for_action(body, authenticated_agent_id) {
         Ok(actor) => actor,
         Err(e) => {
             return (

@@ -40,6 +40,8 @@ const toolNames = [
   "Agent_status",
   "Agent_kill",
   "capabilities_summary",
+  "cut_read",
+  "cut_act",
   "browser_act",
   "browser_check",
   "browser_capture_secret_to_vault",
@@ -138,7 +140,7 @@ const toolNames = [
   "host_act",
 ];
 const mutationTools = new Set([
-  "Agent", "Agent_kill", "browser_act", "browser_clear_site_data", "browser_click_at", "browser_click_ref", "browser_evaluation_write", "browser_fill_ref", "browser_flight_recorder_export", "browser_navigate", "browser_resolve_dialog",
+  "Agent", "Agent_kill", "browser_act", "cut_act", "browser_clear_site_data", "browser_click_at", "browser_click_ref", "browser_evaluation_write", "browser_fill_ref", "browser_flight_recorder_export", "browser_navigate", "browser_resolve_dialog",
   "browser_run_steps", "browser_save_page", "browser_screenshot", "browser_trace_open", "browser_type_text", "browser_workflow_replay", "browser_workflow_save", "build_checkpoint", "build_complete", "build_receipt", "fs_append", "fs_copy",
   "fs_delete", "fs_ensure_dir", "fs_watch", "fs_write", "goal_complete", "host_act", "mem_delete", "mem_set", "net_fetch",
   "process_signal", "secret_delete", "secret_set", "security_scan", "send_prompt_to_provider", "send_prompt_to_session",
@@ -264,6 +266,7 @@ try {
     resolve(root, "scripts/release-drivers/host-mcp-tool-installed.ts"),
     "utf8",
   );
+  assert(driverSource.includes("realpathSync(actual) === realpathSync(expected)"));
   assert(
     driverSource.includes('writeFileSync(join(nodeRoot, ".git"), "gitdir: .shellx-release-missing-gitdir\\n", {'),
     "Host MCP release fixture must stop Git discovery at its exact owned boundary",
@@ -336,7 +339,7 @@ try {
   };
   assert.deepEqual(
     listEnvelope.result.tools.map((tool) => tool.name).sort(),
-    ["browser_act", "browser_read", "capabilities_summary", "host_act", "host_read", "search_tool"],
+    ["browser_act", "browser_read", "capabilities_summary", "cut_act", "cut_read", "host_act", "host_read", "search_tool"],
     "promoted hidden coverage must not re-expand the optimized always-advertised schema",
   );
   const auditResponse = await fetch(`${request.runtime.debugBase}/audit`, {
@@ -381,9 +384,11 @@ try {
   );
   const called = new Set(audit.calls.map((call) => call.name));
   for (const name of toolNames) assert(called.has(name), `driver did not invoke exact Host MCP tool ${name}`);
+  const advertisedNames = new Set(listEnvelope.result.tools.map((tool) => tool.name));
+  const assignedAdvertisedCount = toolNames.filter((name) => advertisedNames.has(name)).length;
   assert.equal(
     audit.calls.filter((call) => call.name === "search_tool").length,
-    toolNames.length - 5,
+    toolNames.length - assignedAdvertisedCount + Number(toolNames.includes("search_tool")),
     "every hidden direct tool must be discovered through the optimized catalog before its exact call",
   );
 

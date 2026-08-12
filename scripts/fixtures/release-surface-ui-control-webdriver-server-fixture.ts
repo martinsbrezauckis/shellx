@@ -200,6 +200,21 @@ let recorderIndex = 0;
 let recorderStatusVisible = false;
 let browserEvidenceManualRefreshSequence = 0;
 let browserEvidenceManualRefreshCompletedAtMs: number | null = null;
+type BrowserDeveloperFixtureState = "idle" | "loading" | "developer-mode-required" | "partial" | "empty-clean";
+type BrowserDeveloperArtifactKind = "har" | "performance";
+type BrowserDeveloperArtifactFixture = {
+  receiptId: string;
+  bytes: number;
+  sha256: string;
+};
+let browserDeveloperState: BrowserDeveloperFixtureState = "idle";
+let browserDeveloperBusyAction: "inspect" | "approve" | "har" | "performance" | null = null;
+let browserDeveloperModeEnabled = false;
+let browserDeveloperSiteApproved = false;
+let browserDeveloperInspectionCount = 0;
+let browserDeveloperArtifactSequence = 0;
+const browserDeveloperArtifacts: Partial<Record<BrowserDeveloperArtifactKind, BrowserDeveloperArtifactFixture>> = {};
+let browserTeachDraftId: string | null = null;
 const browserProfileAdModes = new Map<string, "balanced" | "strict" | "off">();
 let currentWindow = "main-window";
 let browserWindowOpen = false;
@@ -1128,6 +1143,53 @@ function selectorDisplayed(selector: string): boolean {
     }
     if (selector === ".shellx-browser-evidence-recorded[role='status']") {
       return browserRightTab === "evidence" && recorderStatusVisible;
+    }
+    if (selector === "[data-debug-id='shellx-browser-evidence-teach-workflow']") {
+      return browserRightTab === "evidence";
+    }
+    if (selector === "[data-debug-id='shellx-browser-teach-review']") {
+      return browserRightTab === "evidence" && browserTeachDraftId !== null;
+    }
+    if (selector === "[data-debug-id='shellx-browser-developer-inspection']"
+      || selector === "[data-debug-id='shellx-browser-developer-inspect']"
+      || selector === "[data-debug-id='shellx-browser-developer-export-har']"
+      || selector === "[data-debug-id='shellx-browser-developer-export-performance']"
+      || selector === "[data-debug-id='shellx-browser-developer-artifacts']") {
+      return browserRightTab === "evidence" && activeTaskStatus === "running";
+    }
+    const developerStateMatch = selector.match(/^\[data-debug-id='shellx-browser-developer-state-([^']+)'\]$/);
+    if (developerStateMatch) {
+      return browserRightTab === "evidence" && activeTaskStatus === "running"
+        && browserDeveloperState === developerStateMatch[1];
+    }
+    if (selector === "[data-debug-id='shellx-browser-developer-access-required']"
+      || selector === "[data-debug-id='shellx-browser-developer-approve-current-site']") {
+      return browserRightTab === "evidence" && browserDeveloperState === "developer-mode-required";
+    }
+    if (selector === "[data-debug-id='shellx-browser-developer-access-active']"
+      || selector === "[data-debug-id='shellx-browser-developer-disable-mode']") {
+      return browserRightTab === "evidence" && browserDeveloperModeEnabled
+        && (browserDeveloperState === "partial" || browserDeveloperState === "empty-clean");
+    }
+    if (selector === "[data-debug-id='shellx-browser-developer-summary']"
+      || selector === "[data-debug-id='shellx-browser-developer-last-inspected']"
+      || selector === "[data-debug-id='shellx-browser-developer-page-summary']"
+      || selector === "[data-debug-id='shellx-browser-developer-console-summary']"
+      || selector === "[data-debug-id='shellx-browser-developer-network-summary']"
+      || selector === "[data-debug-id='shellx-browser-developer-performance-summary']"
+      || selector === "[data-debug-id='shellx-browser-developer-issues']") {
+      return browserRightTab === "evidence"
+        && (browserDeveloperState === "partial" || browserDeveloperState === "empty-clean");
+    }
+    if (selector === "[data-debug-id='shellx-browser-developer-partial']") {
+      return browserRightTab === "evidence" && browserDeveloperState === "partial";
+    }
+    if (selector === "[data-debug-id='shellx-browser-developer-clean']") {
+      return browserRightTab === "evidence" && browserDeveloperState === "empty-clean";
+    }
+    const developerReceiptMatch = selector.match(/^\[data-debug-id='shellx-browser-developer-(har|performance)-receipt'\](?: span)?$/);
+    if (developerReceiptMatch) {
+      return browserRightTab === "evidence" && browserDeveloperArtifacts[developerReceiptMatch[1] as BrowserDeveloperArtifactKind] !== undefined;
     }
     return false;
   }
@@ -2418,6 +2480,57 @@ function completeBrowserSaveAction(selector: string): boolean {
   return true;
 }
 
+function resetBrowserDeveloperEvidenceFixture(): void {
+  browserDeveloperState = "idle";
+  browserDeveloperBusyAction = null;
+  browserDeveloperModeEnabled = false;
+  browserDeveloperSiteApproved = false;
+  browserDeveloperInspectionCount = 0;
+  browserDeveloperArtifactSequence = 0;
+  delete browserDeveloperArtifacts.har;
+  delete browserDeveloperArtifacts.performance;
+  browserTeachDraftId = null;
+}
+
+function scheduleBrowserDeveloperInspection(): void {
+  browserDeveloperBusyAction = "inspect";
+  browserDeveloperState = "loading";
+  setTimeout(() => {
+    browserDeveloperBusyAction = null;
+    if (!browserDeveloperModeEnabled || !browserDeveloperSiteApproved) {
+      browserDeveloperState = "developer-mode-required";
+      return;
+    }
+    browserDeveloperInspectionCount += 1;
+    browserDeveloperState = browserDeveloperInspectionCount === 1 ? "partial" : "empty-clean";
+  }, 25);
+}
+
+function scheduleBrowserDeveloperApproval(): void {
+  browserDeveloperBusyAction = "approve";
+  setTimeout(() => {
+    browserDeveloperBusyAction = null;
+    browserDeveloperModeEnabled = true;
+    browserDeveloperSiteApproved = true;
+    browserDeveloperInspectionCount = 1;
+    browserDeveloperState = "partial";
+  }, 25);
+}
+
+function scheduleBrowserDeveloperArtifact(kind: BrowserDeveloperArtifactKind): void {
+  browserDeveloperBusyAction = kind;
+  setTimeout(() => {
+    browserDeveloperBusyAction = null;
+    browserDeveloperArtifactSequence += 1;
+    const receiptId = `fixture-browser-developer-${kind}-receipt-${browserDeveloperArtifactSequence}`;
+    browserDeveloperArtifacts[kind] = {
+      receiptId,
+      bytes: kind === "har" ? 1536 : 768,
+      sha256: createHash("sha256").update(`${kind}:${activeTaskId}:${receiptId}`).digest("hex"),
+    };
+  }, 25);
+}
+
 function browserSaveDisplayName(reason: string): string {
   if (reason === "userPageSave:media") return "Media copy job";
   if (reason === "userPageSave:code") return "Code copy job";
@@ -2558,6 +2671,7 @@ const candidate = createServer(async (request, response) => {
       const effectiveAdMode = browserProfileAdModes.get(browserProfileId) ?? "balanced";
       return json(response, 200, {
         activeTaskId,
+        activeBrowserTabId: browserTaskTabId,
         downloadFolder: browserDownloadFolder,
         downloads: browserDownloads,
         privacy: {
@@ -2565,6 +2679,12 @@ const candidate = createServer(async (request, response) => {
           profileModes: [...browserProfileAdModes].map(([profileId, adMode]) => ({ profileId, adMode })),
         },
         personalLock: browserPersonalLock,
+        developerMode: {
+          enabled: browserDeveloperModeEnabled,
+          fullCdpAccess: browserDeveloperModeEnabled,
+          policyDisabled: false,
+          approvedHosts: browserDeveloperSiteApproved && browserActiveHost ? [browserActiveHost] : [],
+        },
         windowOpen: browserWindowOpen,
         engine: {
           engineId: "browser-engine-foreground",
@@ -2713,6 +2833,7 @@ const candidate = createServer(async (request, response) => {
       recorderStatusVisible = false;
       browserEvidenceManualRefreshSequence = 0;
       browserEvidenceManualRefreshCompletedAtMs = null;
+      resetBrowserDeveloperEvidenceFixture();
       browserWindowOpen = true;
       browserPersonalLockNotice = false;
       return json(response, 200, {
@@ -2801,10 +2922,13 @@ const candidate = createServer(async (request, response) => {
         && request.headers["x-shellx-mcp-caller-id"] !== browserTaskOwnerSessionId) {
         return json(response, 403, { error: "Browser fixture task owner session mismatch" });
       }
-      if (body.taskId !== browserTaskId || body.status !== "aborted" || !activeTaskStatus) {
+      if (body.taskId !== browserTaskId
+        || !["aborted", "blocked", "completed"].includes(String(body.status))
+        || !activeTaskStatus) {
         return json(response, 400, { error: "invalid task finish" });
       }
-      if (!["aborted", "blocked", "completed"].includes(activeTaskStatus)) activeTaskStatus = "aborted";
+      if (!["aborted", "blocked", "completed"].includes(activeTaskStatus)) activeTaskStatus = String(body.status);
+      else if (activeTaskStatus !== body.status) return json(response, 400, { error: "task is already terminal" });
       activeTaskId = null;
       return json(response, 200, { taskId: browserTaskId, status: activeTaskStatus });
     }
@@ -2825,6 +2949,7 @@ const candidate = createServer(async (request, response) => {
       }
       const closed = browserTaskTabId;
       browserTaskTabId = null;
+      resetBrowserDeveloperEvidenceFixture();
       return json(response, 200, { ok: true, tab: { browserTabId: closed, active: false } });
     }
     if (request.url === "/browser/engine-pool" && request.method === "GET") {
@@ -3844,6 +3969,13 @@ const candidate = createServer(async (request, response) => {
         browserDownloadFolder,
         browserDownloads,
         recorderIndex,
+        browserTeachDraftId,
+        browserDeveloperState,
+        browserDeveloperBusyAction,
+        browserDeveloperModeEnabled,
+        browserDeveloperSiteApproved,
+        browserDeveloperInspectionCount,
+        browserDeveloperArtifacts,
         currentWindow,
         browserWindowOpen,
         activityOpen,
@@ -4003,7 +4135,7 @@ const webdriver = createServer(async (request, response) => {
       return webdriverValue(response, null);
     }
     if (request.method === "GET" && path === `${prefix}/title`) {
-      return webdriverValue(response, currentWindow === "browser-window" ? "ShellX Browser" : "ShellX");
+      return webdriverValue(response, currentWindow === "browser-window" ? "ShellX Browser" : "shellX");
     }
     if (request.method === "GET" && path === `${prefix}/alert/text`) {
       if (!pendingAlertText) return webdriverError(response, 404, "no such alert", "fixture has no pending alert");
@@ -4070,6 +4202,15 @@ const webdriver = createServer(async (request, response) => {
       const body = await requestJson(request);
       const script = typeof body.script === "string" ? body.script : "";
       const args = Array.isArray(body.args) ? body.args : [];
+      if (script.includes('internals.invoke("plugin:window|close", { label })')) {
+        if (currentWindow !== "browser-window" || !browserWindowOpen) {
+          return webdriverValue(response, false);
+        }
+        browserWindowOpen = false;
+        browserDisclosure = null;
+        currentWindow = "main-window";
+        return webdriverValue(response, true);
+      }
       if (script === "return window.localStorage.getItem(arguments[0]);" && args[0] === "shellX.settingsTab.v2") {
         return webdriverValue(response, settingsTab);
       }
@@ -4222,6 +4363,11 @@ const webdriver = createServer(async (request, response) => {
         if (selector === "[data-debug-id='shellx-browser-evidence-refresh']" && requested.includes("title")) {
           observation.title = `Flight Recorder refresh receipt · sequence=${browserEvidenceManualRefreshSequence} · completedAtMs=${browserEvidenceManualRefreshCompletedAtMs ?? "none"}`;
         }
+        const developerReceiptTitle = selector.match(/^\[data-debug-id='shellx-browser-developer-(har|performance)-receipt'\] span$/)?.[1] as BrowserDeveloperArtifactKind | undefined;
+        if (developerReceiptTitle && requested.includes("title")) {
+          const artifact = browserDeveloperArtifacts[developerReceiptTitle];
+          if (artifact) observation.title = `${artifact.receiptId} · ${artifact.bytes} B · sha256 ${artifact.sha256}`;
+        }
         if (requested.includes("disabled")) {
           if (selector === "[data-debug-id='surface-components-prcreatemodal-10']") {
             observation.disabled = !prApprovalChecked
@@ -4243,6 +4389,9 @@ const webdriver = createServer(async (request, response) => {
           else if (selector === "[data-debug-id='tasks-agent-runs-refresh']"
             || selector === "[data-debug-id='surface-components-connectorinboxmodal-4']") observation.disabled = false;
           else if (selector === "[data-debug-id='shellx-browser-evidence-record']") observation.disabled = !activeTaskStatus;
+          else if (selector === "[data-debug-id='shellx-browser-evidence-teach-workflow']") {
+            observation.disabled = activeTaskStatus !== "completed" || !recorderStatusVisible || browserTeachDraftId !== null;
+          }
           else if (selector === "[data-debug-id='shellx-browser-evidence-refresh']") observation.disabled = false;
           else if (selector === "[data-debug-id='shellx-browser-personal-lock-set-pin']") observation.disabled = browserPersonalLockPinDraft.trim().length < 4;
           else if (selector === "[data-debug-id='shellx-browser-personal-lock-overlay-unlock']") {
@@ -5099,6 +5248,15 @@ const webdriver = createServer(async (request, response) => {
           if (selector.endsWith("last-of-type")) errorBoundaryDocumentGeneration += 1;
           debugUiWebSocketActive = 1;
           debugUiWebSocketGeneration += 1;
+          if (selector.endsWith("last-of-type")) {
+            clickedSelectors.push(selector);
+            return webdriverError(
+              response,
+              404,
+              "stale element reference",
+              "fixture renderer document was replaced before the click response completed",
+            );
+          }
         }
         clickedSelectors.push(selector);
       }
@@ -6839,6 +6997,44 @@ const webdriver = createServer(async (request, response) => {
       else if (selector === "[data-debug-id='shellx-browser-evidence-refresh']") {
         browserEvidenceManualRefreshSequence += 1;
         browserEvidenceManualRefreshCompletedAtMs = Date.now();
+        clickedSelectors.push(selector);
+      }
+      else if (selector === "[data-debug-id='shellx-browser-evidence-teach-workflow']") {
+        if (!browserTaskId || activeTaskStatus !== "completed" || !recorderStatusVisible || browserTeachDraftId || browserDeveloperBusyAction) {
+          return webdriverError(response, 400, "element not interactable", "Browser Teach requires one exact completed owned evidence attempt");
+        }
+        browserTeachDraftId = `fixture-browser-teach-draft-${recorderIndex}`;
+        clickedSelectors.push(selector);
+      }
+      else if (selector === "[data-debug-id='shellx-browser-developer-inspect']") {
+        if (!activeTaskId || browserDeveloperBusyAction) {
+          return webdriverError(response, 400, "element not interactable", "Browser Developer inspection requires one active owned task");
+        }
+        scheduleBrowserDeveloperInspection();
+        clickedSelectors.push(selector);
+      }
+      else if (selector === "[data-debug-id='shellx-browser-developer-approve-current-site']") {
+        if (!activeTaskId || browserDeveloperState !== "developer-mode-required" || browserDeveloperBusyAction || !browserActiveHost) {
+          return webdriverError(response, 400, "element not interactable", "Browser Developer site approval requires the exact current-site denial");
+        }
+        scheduleBrowserDeveloperApproval();
+        clickedSelectors.push(selector);
+      }
+      else if (selector === "[data-debug-id='shellx-browser-developer-disable-mode']") {
+        if (!browserDeveloperModeEnabled || browserDeveloperBusyAction) {
+          return webdriverError(response, 400, "element not interactable", "Browser Developer Mode is not active");
+        }
+        resetBrowserDeveloperEvidenceFixture();
+        clickedSelectors.push(selector);
+      }
+      else if (selector === "[data-debug-id='shellx-browser-developer-export-har']"
+        || selector === "[data-debug-id='shellx-browser-developer-export-performance']") {
+        const kind: BrowserDeveloperArtifactKind = selector.endsWith("export-har']") ? "har" : "performance";
+        if (!activeTaskId || !browserDeveloperModeEnabled || browserDeveloperBusyAction
+          || (browserDeveloperState !== "partial" && browserDeveloperState !== "empty-clean")) {
+          return webdriverError(response, 400, "element not interactable", "Browser Developer artifact export requires active approved inspection");
+        }
+        scheduleBrowserDeveloperArtifact(kind);
         clickedSelectors.push(selector);
       }
       else {

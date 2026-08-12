@@ -88,6 +88,7 @@ const INSPECT_TEXT = "Inspect the attached file. Summarize what each contains an
 const SUMMARIZE_TEXT = "Summarize the attached file. Keep it concise and include filenames when comparing them.";
 const FIND_DIALOG_TEXT = "Find what in the attached files?";
 const FIND_QUERY = "SHELLX_RELEASE_FIND_CANARY_035";
+const RELEASE_OWNED_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABAAQMAAACQp+OdAAAABlBMVEX0uUIkXKYRUeKqAAAAGElEQVQoz2NgAIL/QMAwysDKGAROGMwMAPMC/wHVW+dzAAAAAElFTkSuQmCC";
 const FIND_TEXT = `Find \"${FIND_QUERY}\" in the attached file. Report every relevant match with filename and context.`;
 const RELEASE_OWNED_MP4_BASE64 = "AAAAJGZ0eXBpc29tAAACAGlzb21pc282aXNvMmF2YzFtcDQxAAAC5m1vb3YAAABsbXZoZAAAAAAAAAAAAAAAAAAAA+gAAAAAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAHodHJhawAAAFx0a2hkAAAAAwAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAQAAAAEAAAAAABhG1kaWEAAAAgbWRoZAAAAAAAAAAAAAAAAAAAQAAAAAAAVcQAAAAAAC1oZGxyAAAAAAAAAAB2aWRlAAAAAAAAAAAAAAAAVmlkZW9IYW5kbGVyAAAAAS9taW5mAAAAFHZtaGQAAAABAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAADvc3RibAAAAKNzdHNkAAAAAAAAAAEAAACTYXZjMQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAQABAASAAAAEgAAAAAAAAAARVMYXZjNjAuMzEuMTAyIGxpYngyNjQAAAAAAAAAAAAAABj//wAAAC1hdmNDAULACv/hABVnQsAK2nsBEAAAAwAQAAADACDxImoBAAVozgOcgAAAABBwYXNwAAAAAQAAAAEAAAAQc3R0cwAAAAAAAAAAAAAAEHN0c2MAAAAAAAAAAAAAABRzdHN6AAAAAAAAAAAAAAAAAAAAEHN0Y28AAAAAAAAAAAAAAChtdmV4AAAAIHRyZXgAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAABidWR0YQAAAFptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAC1pbHN0AAAAJal0b28AAAAdZGF0YQAAAAEAAAAATGF2ZjYwLjE2LjEwMAAAAHhtb29mAAAAEG1maGQAAAAAAAAAAQAAAGB0cmFmAAAAJHRmaGQAAAA5AAAAAQAAAAAAAAMKAABAAAAAAmUBAQAAAAAAFHRmZHQBAAAAAAAAAAAAAAAAAAAgdHJ1bgAAAgUAAAACAAAAgAIAAAAAAAJlAAAACQAAAnZtZGF0AAACUwYF//9P3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE2NCByMzEwOCAzMWUxOWY5IC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyMyAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTAgcmVmPTEgZGVibG9jaz0wOjA6MCBhbmFseXNlPTA6MCBtZT1kaWEgc3VibWU9MCBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0wIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MCA4eDhkY3Q9MCBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0wIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTAgd2VpZ2h0cD0wIGtleWludD0yNTAga2V5aW50X21pbj0xIHNjZW5lY3V0PTAgaW50cmFfcmVmcmVzaD0wIHJjPWNyZiBtYnRyZWU9MCBjcmY9NDAuMCBxY29tcD0wLjYwIHFwbWluPTAgcXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0wAIAAAAAKZYiEOiYoAAgY4AAAAAVBmiAUpQAAAENtZnJhAAAAK3RmcmEBAAAAAAAAAQAAAAAAAAABAAAAAAAAAAAAAAAAAAADCgEBAQAAABBtZnJvAAAAAAAAAEM=";
 interface AttachmentMediaFixture {
@@ -235,7 +236,11 @@ function prepareFixture(request: ReleaseSurfaceDriverRequest): AttachmentMediaFi
   mkdirSync(nodeScopeDir, { mode: 0o700 });
   writeFileSync(join(nodeSourceDir, "release-owned-pending.txt"), "SHELLX_OWNED_PENDING_ATTACHMENT\n", { flag: "wx", mode: 0o600 });
   writeFileSync(join(nodeSourceDir, "release-owned-session.txt"), "SHELLX_OWNED_SESSION_ATTACHMENT\n", { flag: "wx", mode: 0o600 });
-  writeFileSync(join(nodeSourceDir, "release-owned-image.png"), "SHELLX_OWNED_IMAGE_FIXTURE\n", { flag: "wx", mode: 0o600 });
+  writeFileSync(
+    join(nodeSourceDir, "release-owned-image.png"),
+    Buffer.from(RELEASE_OWNED_PNG_BASE64, "base64"),
+    { flag: "wx", mode: 0o600 },
+  );
   writeFileSync(
     join(nodeSourceDir, "release-owned-video.mp4"),
     Buffer.from(RELEASE_OWNED_MP4_BASE64, "base64"),
@@ -423,15 +428,26 @@ async function cleanup(
   fixture: AttachmentMediaFixture,
 ): Promise<string | null> {
   const errors: string[] = [];
+  let nativePreviewCloseError: string | null = null;
   try {
     if (await findReleaseSurfaceInstalledInputElement(webdriver, PREVIEW)) {
       const close = await waitForReleaseSurfaceInstalledInputElement(webdriver, PREVIEW_CLOSE, { timeoutMs: 5_000, pollMs: 50 });
       await clickReleaseSurfaceInstalledInputElement(webdriver, close);
       await waitForReleaseSurfaceInstalledInputElementAbsent(webdriver, PREVIEW, { timeoutMs: 5_000, pollMs: 50 });
     }
+  } catch (error) {
+    nativePreviewCloseError = errorText(error);
+  }
+  let composerRestoreError: string | null = null;
+  try {
     if (await readComposer(webdriver) !== fixture.baselineComposer) {
       await replaceComposer(webdriver, fixture.baselineComposer);
     }
+  } catch (error) {
+    composerRestoreError = errorText(error);
+  }
+  let uiRestoreError: string | null = null;
+  try {
     await postUi(connection, {
       debugRemoveAttachmentPaths: [fixture.launchPendingPath, fixture.launchImportedPath],
       debugRendererFixture: "clear",
@@ -455,7 +471,12 @@ async function cleanup(
       throw new Error("Attachment/Media cleanup did not restore the exact composer baseline");
     }
   } catch (error) {
-    errors.push(errorText(error));
+    uiRestoreError = errorText(error);
+  }
+  if (composerRestoreError || uiRestoreError) {
+    if (nativePreviewCloseError) errors.push(`Preview Center native close: ${nativePreviewCloseError}`);
+    if (composerRestoreError) errors.push(composerRestoreError);
+    if (uiRestoreError) errors.push(uiRestoreError);
   }
   try {
     rmSync(fixture.nodeRoot, { recursive: true });

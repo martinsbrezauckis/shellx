@@ -24,6 +24,7 @@ import {
   assertReleaseSurfaceCollectorSource,
   type ReleaseSurfaceGitRunner,
 } from "./release-surface-source-provenance";
+import { checkReleaseSurfaceHttpLink } from "./release-surface-http-link-check";
 
 const MAX_EVENT_BYTES = 64 * 1024;
 const MAX_EVENTS = 10_000;
@@ -31,6 +32,7 @@ const HEALTH_OBSERVER_KEY = "__shellxReleaseHealthObserverV1";
 const HEALTH_COLLECTOR_TRACKED_SOURCES = [
   "scripts/lib/release-surface-health-collector.ts",
   "scripts/lib/release-surface-health-evidence.ts",
+  "scripts/lib/release-surface-http-link-check.ts",
   "scripts/lib/release-surface-webdriver-client.ts",
   "scripts/lib/release-surface-webdriver-lifecycle.ts",
 ] as const;
@@ -689,20 +691,7 @@ function requireExactCandidateHealth(value: unknown, candidate: ReleaseSurfaceCa
   }
 }
 
-async function checkHttpLink(href: string): Promise<"ok" | "broken"> {
-  try {
-    const response = await fetch(href, {
-      method: "GET",
-      redirect: "follow",
-      headers: { "User-Agent": "ShellX-Release-Link-Check/1" },
-      signal: AbortSignal.timeout(15_000),
-    });
-    await response.body?.cancel();
-    return response.status >= 200 && response.status < 400 ? "ok" : "broken";
-  } catch {
-    return "broken";
-  }
-}
+const checkHttpLink = checkReleaseSurfaceHttpLink;
 
 async function waitForProcessAbsent(
   pid: number,

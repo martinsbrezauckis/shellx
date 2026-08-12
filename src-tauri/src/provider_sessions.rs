@@ -2201,7 +2201,8 @@ async fn start_provider_session_with_command(
     } else {
         command.setup_stdin.as_slice().to_vec()
     };
-    let (spawn_program, spawn_args) = provider_spawn_command_parts(&command.program, &command.args);
+    let (spawn_program, spawn_args) =
+        provider_spawn_command_parts(&command.program, &command.args)?;
     let mut cmd = tokio::process::Command::new(&spawn_program);
     cmd.args(&spawn_args)
         .stdin(if setup_stdin.is_empty() {

@@ -276,6 +276,12 @@ export function describeReadyDriver(
       || new Set(manifest.controllerFiles).size !== manifest.controllerFiles.length)) {
     return `ready driver ${driver.id} declares invalid controller files`;
   }
+  if (manifest.maxAssignmentsPerProcess !== undefined
+    && (!Number.isSafeInteger(manifest.maxAssignmentsPerProcess)
+      || manifest.maxAssignmentsPerProcess < 1
+      || manifest.maxAssignmentsPerProcess > 500)) {
+    return `ready driver ${driver.id} declares an invalid assignment process bound`;
+  }
   return manifest;
 }
 

@@ -2,6 +2,8 @@
 mod actions_and_secrets;
 #[path = "shellx_browser_tests/engine_context.rs"]
 mod engine_context;
+#[path = "shellx_browser_tests/engine_event_generation.rs"]
+mod engine_event_generation;
 #[path = "shellx_browser_tests/recipe_outcomes.rs"]
 mod recipe_outcomes;
 #[path = "shellx_browser_tests/runtime_dialogs.rs"]

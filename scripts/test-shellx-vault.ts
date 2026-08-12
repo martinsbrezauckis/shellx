@@ -447,11 +447,11 @@ const browserActionability = readFileSync(join(root, "src-tauri/src/shellx_brows
 if (!/expectedOrigin[\s\S]*shellxPageOriginMatches[\s\S]*originChanged/.test(browserEngineScripts) || !/shellxPageOriginMatches[\s\S]*location\.origin/.test(browserActionability) || !/expected_origin: Some\(expected_origin\.clone\(\)\)/.test(browserVaultBackend)) {
   throw new Error("Manual Browser Vault fills must recheck the expected origin inside the exact page execution context");
 }
-const browserEngineRuntime = readFileSync(join(root, "src-tauri/src/shellx_browser_engine_runtime.rs"), "utf8");
-if (!/browser_engine_webview_builder[\s\S]*general_autofill_enabled\(false\)/.test(browserEngineRuntime)) {
+const browserEngineWebviewConfig = readFileSync(join(root, "src-tauri/src/shellx_browser_engine_webview_config.rs"), "utf8");
+if (!/browser_engine_webview_builder[\s\S]*general_autofill_enabled\(false\)/.test(browserEngineWebviewConfig)) {
   throw new Error("ShellX Browser must disable native WebView form autofill because ShellX Vault owns credential suggestions");
 }
-if (!/install_browser_native_credential_controls[\s\S]*SetIsGeneralAutofillEnabled\(false\)[\s\S]*SetIsPasswordAutosaveEnabled\(false\)/.test(browserEngineRuntime)) {
+if (!/install_browser_native_credential_controls[\s\S]*SetIsGeneralAutofillEnabled\(false\)[\s\S]*SetIsPasswordAutosaveEnabled\(false\)/.test(browserEngineWebviewConfig)) {
   throw new Error("Windows ShellX Browser must disable both WebView2 autofill and password autosave");
 }
 const browserAppSource = readFileSync(join(root, "src/components/ShellxBrowserApp.tsx"), "utf8");

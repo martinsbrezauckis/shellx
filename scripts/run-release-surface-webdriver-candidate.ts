@@ -39,7 +39,14 @@ const selectedDriverIds = readArgs(args, "--driver-id")
   .flatMap((value) => value.split(","))
   .map((value) => value.trim())
   .filter(Boolean);
-const targetedClosure = selectedDriverIds.length > 0;
+const selectedSurfaceIds = readArgs(args, "--surface-id")
+  .flatMap((value) => value.split(","))
+  .map((value) => value.trim())
+  .filter(Boolean);
+if (selectedSurfaceIds.length > 0 && selectedDriverIds.length === 0) {
+  throw new Error("--surface-id requires one or more exact --driver-id values");
+}
+const targetedClosure = selectedDriverIds.length > 0 || selectedSurfaceIds.length > 0;
 const expectedExecutionWindow = targetedClosure
   ? "targeted-post-matrix"
   : "immediately-before-publish";
@@ -106,7 +113,15 @@ if (new Set([debugPort, mcpPort, driverPort, nativePort, healthPort]).size !== 5
 
 const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
 if (dirty.trim()) throw new Error("frozen-candidate orchestration requires a clean source checkout");
-const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const controllerSourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const candidateSourceCommitArg = readArg(args, "--candidate-source-commit");
+if (candidateSourceCommitArg && !targetedClosure) {
+  throw new Error("--candidate-source-commit is valid only for targeted post-matrix closure");
+}
+const sourceCommit = candidateSourceCommitArg ?? controllerSourceCommit;
+if (!/^[a-f0-9]{40,64}$/.test(sourceCommit)) {
+  throw new Error("candidate source commit must be a lowercase Git object id");
+}
 const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
 const inventory = JSON.parse(readFileSync(join(root, "release", "surface-inventory.json"), "utf8")) as ReleaseSurfaceInventory;
 const plan = loadFinalSurfaceDriverPlan(join(root, "release", "surface-driver-plan.json"));
@@ -117,7 +132,7 @@ const providerRoutePlanErrors = validateReleaseSurfaceProviderRouteBatchPlan({
   contract,
   platform,
 });
-if (providerRoutePlanErrors.length > 0) {
+if (!targetedClosure && providerRoutePlanErrors.length > 0) {
   throw new Error(`invalid provider route batch plan: ${providerRoutePlanErrors.join("; ")}`);
 }
 validateProviderRouteOutputs(providerRouteOutputDir, providerRoutePlan.routes, profileNodePath, driverOutputDir);
@@ -166,8 +181,9 @@ const result = await withReleaseSurfaceWebDriverOrchestration({
   profileCleanupEvidencePath,
   candidateTeardownEvidencePath,
   orchestrationEvidencePath,
-  requireProviderRouteBatch: true,
-  requireHealthEvidence: true,
+  requireProviderRouteBatch: !targetedClosure,
+  requireHealthEvidence: !targetedClosure,
+  targetedClosure,
 }, async (session, context) => {
   const runtime = await waitForCandidateRuntime({
     debugBase: context.profile.debugBase,
@@ -190,6 +206,7 @@ const result = await withReleaseSurfaceWebDriverOrchestration({
     "--artifact", artifactPath,
     "--installed-payload", applicationLaunchPath,
     "--installation-receipt", installationReceiptPath,
+    "--candidate-source-commit", sourceCommit,
     "--pid", String(runtime.processId),
     "--debug-base", context.profile.debugBase,
     "--debug-token-file", context.profile.debugTokenLaunchPath,
@@ -203,44 +220,48 @@ const result = await withReleaseSurfaceWebDriverOrchestration({
   context.bindCandidateAttestation(candidateAttestationPath);
   const candidate = loadReleaseSurfaceCandidateAttestation(candidateAttestationPath);
   const token = readCandidateToken(context.profile.debugTokenNodePath);
-  const healthCollector = await startReleaseSurfaceHealthCollector({
-    candidate,
-    candidateToken: token,
-    session,
-    inventory,
-    platform,
-    healthPort,
-    outputPath: healthEvidencePath,
-    processExists: (processId) => releaseSurfaceCandidateProcessExists(
+  const healthCollector = targetedClosure
+    ? null
+    : await startReleaseSurfaceHealthCollector({
+      candidate,
+      candidateToken: token,
+      session,
+      inventory,
       platform,
-      processId,
-      candidate.process.executablePath,
-    ),
-  });
+      healthPort,
+      outputPath: healthEvidencePath,
+      processExists: (processId) => releaseSurfaceCandidateProcessExists(
+        platform,
+        processId,
+        candidate.process.executablePath,
+      ),
+    });
   let scenarioInputs: {
     providerRoutes: Awaited<ReturnType<typeof collectReleaseSurfaceProviderRouteBatch>>["batch"];
   } | null = null;
-  context.registerSessionDeleteObserver({
-    beforeSessionDelete: healthCollector.sessionDeleteObserver.beforeSessionDelete,
-    afterSessionDelete: async (observation) => {
-      await healthCollector.sessionDeleteObserver.afterSessionDelete(observation);
-      const healthResult = await healthCollector.finalized;
-      if (!scenarioInputs) throw new Error("scenario inputs were not complete before candidate shutdown");
-      writeScenarioReport({
-        path: scenarioReportPath,
-        healthPath: healthResult.outputPath,
-        candidate,
-        inventoryDigest: inventory.digest,
-        providerRoutes: scenarioInputs.providerRoutes.routes,
-        health: healthResult.evidence,
-        scenarioStartedAt: healthResult.scenarioStartedAt,
-        contract,
-      });
-      context.bindHealthEvidence(healthResult.outputPath);
-      context.bindScenarioReport(scenarioReportPath);
-    },
-  });
-  await healthCollector.discoverRenderedLinks();
+  if (healthCollector) {
+    context.registerSessionDeleteObserver({
+      beforeSessionDelete: healthCollector.sessionDeleteObserver.beforeSessionDelete,
+      afterSessionDelete: async (observation) => {
+        await healthCollector.sessionDeleteObserver.afterSessionDelete(observation);
+        const healthResult = await healthCollector.finalized;
+        if (!scenarioInputs) throw new Error("scenario inputs were not complete before candidate shutdown");
+        writeScenarioReport({
+          path: scenarioReportPath,
+          healthPath: healthResult.outputPath,
+          candidate,
+          inventoryDigest: inventory.digest,
+          providerRoutes: scenarioInputs.providerRoutes.routes,
+          health: healthResult.evidence,
+          scenarioStartedAt: healthResult.scenarioStartedAt,
+          contract,
+        });
+        context.bindHealthEvidence(healthResult.outputPath);
+        context.bindScenarioReport(scenarioReportPath);
+      },
+    });
+    await healthCollector.discoverRenderedLinks();
+  }
 
   const manifest = runReleaseSurfaceDrivers({
     rootDir: root,
@@ -249,39 +270,48 @@ const result = await withReleaseSurfaceWebDriverOrchestration({
     contract,
     platform,
     sourceCommit,
+    controllerSourceCommit,
     version,
     artifactPath,
     signatureReceiptPath,
     candidateAttestationPath,
     installationReceiptPath,
     outputDir: driverOutputDir,
-    ...(targetedClosure ? { selectedDriverIds } : {}),
+    ...(targetedClosure ? {
+      selectedDriverIds,
+      ...(selectedSurfaceIds.length > 0 ? { selectedSurfaceIds } : {}),
+    } : {}),
     nativeWebDriver: session,
   });
   const manifestPath = join(resolve(driverOutputDir), "run-manifest.json");
   context.bindDriverRunManifest(manifestPath);
-  const providerRoutes = await collectReleaseSurfaceProviderRouteBatch({
-    plan: providerRoutePlan,
-    contract,
-    candidate,
-    token,
-    outputDir: providerRouteOutputDir,
-  });
-  context.bindProviderRouteBatch(providerRoutes.manifestPath);
-  scenarioInputs = { providerRoutes: providerRoutes.batch };
+  const providerRoutes = targetedClosure
+    ? null
+    : await collectReleaseSurfaceProviderRouteBatch({
+      plan: providerRoutePlan,
+      contract,
+      candidate,
+      token,
+      outputDir: providerRouteOutputDir,
+    });
+  if (providerRoutes) {
+    context.bindProviderRouteBatch(providerRoutes.manifestPath);
+    scenarioInputs = { providerRoutes: providerRoutes.batch };
+  }
   const failedDriverIds = releaseSurfaceDriverRunFailedDriverIds(manifest, driverOutputDir);
   if (failedDriverIds.length > 0) {
     throw new Error(
-      `complete discovery matrix recorded failed driver sections: ${failedDriverIds.join(", ")}`,
+      `${targetedClosure ? "targeted closure" : "complete discovery matrix"} recorded failed driver sections: `
+      + failedDriverIds.join(", "),
     );
   }
-  return { manifest, providerRoutes: providerRoutes.batch };
+  return { manifest, providerRoutes: providerRoutes?.batch ?? null };
 });
 
 console.log(
   `${targetedClosure ? "Targeted" : "Final"} ${platform} WebDriver candidate orchestration passed `
   + `${result.value.manifest.driverReports.reduce((sum, report) => sum + report.outcomes, 0)} exact surface outcomes `
-  + `and ${result.value.providerRoutes.routes.length} exact provider routes.`,
+  + `${result.value.providerRoutes ? `and ${result.value.providerRoutes.routes.length} exact provider routes.` : "without rerunning provider routes."}`,
 );
 
 function assertLinuxDisplayAuthority(value: ReleasePlatform): void {

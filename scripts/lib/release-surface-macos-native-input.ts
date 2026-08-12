@@ -8,9 +8,9 @@ import type {
 } from "./release-surface-candidate-attestation";
 
 export const RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_REQUEST_SCHEMA =
-  "shellx/release-surface-macos-native-input-helper-request@3";
+  "shellx/release-surface-macos-native-input-helper-request@5";
 export const RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_RESPONSE_SCHEMA =
-  "shellx/release-surface-macos-native-input-helper-response@4";
+  "shellx/release-surface-macos-native-input-helper-response@6";
 export const RELEASE_SURFACE_MACOS_NATIVE_INPUT_BINDING_SCHEMA =
   "shellx/release-surface-macos-native-input-binding@2";
 
@@ -25,7 +25,9 @@ export type ReleaseSurfaceMacosNativeInputAction =
   | "typeText"
   | "clear"
   | "keyChord"
-  | "selectPickerPath";
+  | "clickAccessibilityButton"
+  | "selectPickerPath"
+  | "submitPrompt";
 
 export type ReleaseSurfaceNativePickerKind = "file" | "directory";
 
@@ -60,9 +62,12 @@ export interface ReleaseSurfaceMacosNativeInputHelperRequest {
   text?: string;
   replaceAll?: boolean;
   keys?: string[];
+  accessibilityLabel?: "Reset UI" | "Reload window";
   ownedRootPath?: string;
   pickerPath?: string;
   pickerKind?: ReleaseSurfaceNativePickerKind;
+  promptText?: string;
+  promptResponseText?: string;
 }
 
 export interface ReleaseSurfaceMacosNativeInputHelperResponse {
@@ -108,6 +113,12 @@ export interface ReleaseSurfaceMacosNativeInputHelperResponse {
     pathSha256: string;
     kind: ReleaseSurfaceNativePickerKind;
     rootVerified: true;
+    dialogOwnedByCandidate: true;
+  };
+  prompt?: {
+    role: "AXSheet" | "AXDialog" | "AXWindow";
+    promptTextSha256: string;
+    responseTextSha256: string;
     dialogOwnedByCandidate: true;
   };
   error?: {
@@ -635,7 +646,7 @@ async function candidateJson(
 
 function validateHelperRequest(request: ReleaseSurfaceMacosNativeInputHelperRequest): void {
   if (request.schema !== RELEASE_SURFACE_MACOS_NATIVE_INPUT_HELPER_REQUEST_SCHEMA) throw new Error("macOS native-input helper request schema is invalid");
-  if (!(["preflight", "click", "contextClick", "drag", "typeText", "clear", "keyChord", "selectPickerPath"] as string[]).includes(request.action)) {
+  if (!(["preflight", "click", "contextClick", "drag", "typeText", "clear", "keyChord", "clickAccessibilityButton", "selectPickerPath", "submitPrompt"] as string[]).includes(request.action)) {
     throw new Error("macOS native-input helper action is invalid");
   }
   if (!Number.isSafeInteger(request.candidate?.processId) || request.candidate.processId <= 0
@@ -647,7 +658,12 @@ function validateHelperRequest(request: ReleaseSurfaceMacosNativeInputHelperRequ
     || /[\r\n\0]/.test(request.candidate.expectedWindowTitle)) {
     throw new Error("macOS native-input helper candidate identity is invalid");
   }
-  if (request.action !== "keyChord" && !request.target) throw new Error("macOS native-input pointer/text action requires a target mapping");
+  if (request.action !== "keyChord"
+    && request.action !== "clickAccessibilityButton"
+    && request.action !== "submitPrompt"
+    && !request.target) {
+    throw new Error("macOS native-input pointer/text action requires a target mapping");
+  }
   if (request.target && (!validRect(request.target.rect)
     || !Number.isFinite(request.target.viewportWidth) || request.target.viewportWidth <= 0
     || !Number.isFinite(request.target.viewportHeight) || request.target.viewportHeight <= 0
@@ -687,6 +703,14 @@ function validateHelperRequest(request: ReleaseSurfaceMacosNativeInputHelperRequ
   if (request.keys?.some((key) => typeof key !== "string" || !key || key.length > 32 || /[\r\n\0]/.test(key))) {
     throw new Error("macOS native-input key chord contains an invalid key");
   }
+  if (request.action === "clickAccessibilityButton") {
+    if (request.target !== undefined
+      || (request.accessibilityLabel !== "Reset UI" && request.accessibilityLabel !== "Reload window")) {
+      throw new Error("macOS native-input Accessibility button action is outside the exact recovery allowlist");
+    }
+  } else if (request.accessibilityLabel !== undefined) {
+    throw new Error("macOS native-input Accessibility label requires the dedicated button action");
+  }
   if (request.action === "selectPickerPath") {
     if (request.pickerKind !== "file" && request.pickerKind !== "directory") {
       throw new Error("macOS native-input picker kind is invalid");
@@ -709,6 +733,21 @@ function validateHelperRequest(request: ReleaseSurfaceMacosNativeInputHelperRequ
     }
   } else if (request.ownedRootPath !== undefined || request.pickerPath !== undefined || request.pickerKind !== undefined) {
     throw new Error("macOS native-input picker fields require the dedicated picker action");
+  }
+  if (request.action === "submitPrompt") {
+    if (typeof request.promptText !== "string" || !request.promptText || request.promptText.length > 4_096
+      || request.promptText.includes("\0")) {
+      throw new Error("macOS native-input expected prompt text is invalid");
+    }
+    if (typeof request.promptResponseText !== "string" || !request.promptResponseText.trim()
+      || request.promptResponseText.length > 4_096 || request.promptResponseText.includes("\0")) {
+      throw new Error("macOS native-input prompt response is invalid");
+    }
+    if (request.target !== undefined) {
+      throw new Error("macOS native-input prompt action must bind the native dialog directly");
+    }
+  } else if (request.promptText !== undefined || request.promptResponseText !== undefined) {
+    throw new Error("macOS native-input prompt fields require the dedicated prompt action");
   }
 }
 
