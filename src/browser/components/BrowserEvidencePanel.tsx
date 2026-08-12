@@ -2,8 +2,12 @@ import type { JSX } from "react";
 
 import { ShellIcon } from "../../components/icons";
 import type { BrowserEvidenceRow } from "../browserEvidence";
+import { BrowserDeveloperInspection } from "./BrowserDeveloperInspection";
+import { selectBrowserTeachSource } from "../browserTeach";
 import { useBrowserEvidence } from "../hooks/useBrowserEvidence";
+import { useBrowserTeach } from "../hooks/useBrowserTeach";
 import "../browserEvidence.css";
+import { BrowserTeachReview } from "./BrowserTeachReview";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -61,8 +65,46 @@ export function BrowserEvidencePanel({
   activeTaskId?: string | null;
 }): JSX.Element | null {
   const evidence = useBrowserEvidence(open);
-  if (!open) return null;
   const rows = evidence.summary?.rows ?? [];
+  const teachSource = selectBrowserTeachSource({
+    activeTaskId,
+    rows,
+    recordedAttempt: evidence.recordedAttempt,
+    loading: evidence.loading,
+    recording: evidence.recording,
+    error: evidence.error,
+  });
+  const teachTaskId = activeTaskId?.trim()
+    || (teachSource.kind === "ready" || teachSource.kind === "evidenceGapped"
+      ? teachSource.candidate.taskId
+      : null);
+  const teach = useBrowserTeach(teachTaskId);
+  if (!open) return null;
+  const teachPreparing = teach.phase === "preparing";
+  const teachActionEnabled = teachSource.kind === "ready" && !teach.draft && !teachPreparing && teach.phase === "idle";
+  const teachActionTitle = teach.draft
+    ? "Review the current Teach draft below"
+    : teachSource.kind === "noTask"
+      ? "Record and complete a browser task first"
+      : teachSource.kind === "loading"
+        ? "Checking for a complete recorded attempt"
+        : teachSource.kind === "recording"
+          ? "Wait for the Flight Recorder export to finish"
+          : teachSource.kind === "noAttempt"
+            ? "Record one complete Browser attempt for the current task first"
+            : teachSource.kind === "evidenceGapped"
+              ? activeTaskId
+                ? "The current task has only evidence-gapped attempts; record a complete attempt first"
+                : "The most recent completed task has only evidence-gapped attempts; record a complete attempt first"
+              : teachSource.kind === "unavailable"
+                ? "Browser evidence is unavailable; retry once the native runtime is ready"
+                : teach.phase === "error" || teach.phase === "unavailable"
+                  ? "Use the bounded retry in Teach workflow before preparing another draft"
+                  : teach.phase === "stale"
+                    ? "Reload the current revision in Teach workflow before preparing another draft"
+                    : activeTaskId
+                      ? "Prepare a reversible review draft from this exact complete attempt"
+                      : "Prepare a reversible review draft from the most recent complete recorded attempt";
   const durableRecovered = evidence.summary?.durableRecovered ?? 0;
   const durableIndexPartial = Boolean(
     evidence.summary?.durableScanFailed
@@ -104,6 +146,18 @@ export function BrowserEvidencePanel({
           <button
             type="button"
             className="shellx-browser-secondary"
+            onClick={() => teachSource.kind === "ready" && void teach.prepare(teachSource.candidate)}
+            disabled={!teachActionEnabled}
+            data-debug-id="shellx-browser-evidence-teach-workflow"
+            data-shellx-release-observe="disabled title"
+            title={teachActionTitle}
+          >
+            <ShellIcon name="sparkles" size={13} />
+            {teachPreparing ? "Preparing…" : "Teach workflow"}
+          </button>
+          <button
+            type="button"
+            className="shellx-browser-secondary"
             onClick={() => void evidence.refresh()}
             disabled={evidence.loading || evidence.recording}
             data-debug-id="shellx-browser-evidence-refresh"
@@ -130,6 +184,8 @@ export function BrowserEvidencePanel({
           <span>{evidence.error}</span>
         </div>
       )}
+      <BrowserDeveloperInspection activeTaskId={activeTaskId} />
+      <BrowserTeachReview source={teachSource} teach={teach} />
       {!evidence.error && durableIndexPartial && (
         <div className="shellx-browser-evidence-warning" role="status">
           Stored evidence is partially indexed. Current receipts remain available; older or invalid artifacts were omitted.

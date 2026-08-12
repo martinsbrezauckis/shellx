@@ -96,9 +96,10 @@ mod session_state_http;
 mod vault_http;
 
 use assets_http::*;
-use auth_http::{add_api_version, require_auth, shellx_home, write_private_text_file, AuthConfig};
+use auth_http::{add_api_version, require_auth, shellx_home, write_private_text_file};
 pub(crate) use auth_http::{
-    resolve_or_create_debug_token, shellxagent_token_path, write_new_shellxagent_token,
+    current_debug_token, initialize_debug_token_authority, rotate_debug_token,
+    shellxagent_token_path,
 };
 pub(crate) use browser_actions_http::{
     browser_action_http, browser_registry, sync_browser_action_navigation_to_engine,
@@ -182,10 +183,12 @@ pub fn preferred_debug_api_port() -> u16 {
 /// binding alone is NOT a mitigation.
 ///
 /// Token resolution (first match wins):
-/// 1. `SHELLX_DEBUG_SECRET` env var — used as-is
-/// 2. `GROK_SHELL_DEBUG_SECRET` legacy env var — used as-is
-/// 3. `~/.shellx/shellxagent.token` — 32 hex chars, mode 0600,
-/// auto-created if missing. External drivers read this file.
+/// 1. `SHELLX_DEBUG_SECRET` env var — process-authoritative override
+/// 2. `GROK_SHELL_DEBUG_SECRET` legacy env var — process-authoritative override
+/// 3. `~/.shellx/shellxagent.token` — private, atomically written and synced
+///    before startup accepts it. External drivers read this file.
+/// The accepted value is then held by one process authority; middleware never
+/// re-reads the environment or disk per request.
 /// `/health` is exempt for liveness probes.
 ///
 /// Origin/Host allow-list (HTTP + WS upgrade):
@@ -856,7 +859,9 @@ impl DebugHub {
         s.composer_menu = composer_menu;
         s.open_modal = open_modal;
         s.vault_request_center_open = vault_request_center_open;
-        s.setup_guide_dismissed = setup_guide_dismissed;
+        if let Some(dismissed) = setup_guide_dismissed {
+            s.setup_guide_dismissed = Some(dismissed);
+        }
         s.debug_click = debug_click;
         s.debug_input = debug_input;
         s.debug_drag = debug_drag;
@@ -1580,19 +1585,12 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
     // (auto-created mode 0600). Loopback bind alone is not enough — any
     // local browser tab / postinstall script / VS Code extension could
     // otherwise drive grok and read every transcript event.
-    let token = resolve_or_create_debug_token();
-    let token_source = if std::env::var("SHELLX_DEBUG_SECRET").is_ok() {
-        "env SHELLX_DEBUG_SECRET"
-    } else if std::env::var("GROK_SHELL_DEBUG_SECRET").is_ok() {
-        "env GROK_SHELL_DEBUG_SECRET"
-    } else {
-        "~/.shellx/shellxagent.token"
-    };
-    let publish_token_in_descriptor = token_source == "~/.shellx/shellxagent.token";
-    let auth_cfg = AuthConfig {
-        token: token.clone(),
-    };
-    let router = router.layer(middleware::from_fn_with_state(auth_cfg, require_auth));
+    let token_source = initialize_debug_token_authority()?;
+    // Read only the initialized authority. The token is not re-resolved from
+    // disk after startup, so middleware, Tauri, and host-MCP callers all use
+    // the same accepted process value.
+    let _token = current_debug_token()?;
+    let router = router.layer(middleware::from_fn(require_auth));
 
     /* CORS preflight. Windows WebView2 origin is
      * `http://tauri.localhost`; fetches from there to the shellXagent
@@ -1628,7 +1626,11 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
     // value as a "preferred" address.
     let port = preferred_debug_api_port();
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    info!("debug-api preferred {} (auth via {})", addr, token_source);
+    info!(
+        "debug-api preferred {} (auth via {})",
+        addr,
+        token_source.label()
+    );
 
     // #311: try preferred port, fall back through 5759/5761/5763/5765
     // when an orphan from the previous shellX instance is squatting on
@@ -1638,14 +1640,7 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         bind_with_fallback(addr, &[5759, 5761, 5763, 5765], "debug-api").await?;
     let _ = BOUND_DEBUG_API_PORT.set(bound_port);
     publish_bound_port("debug-api", bound_port);
-    publish_shellxagent_descriptor(
-        bound_port,
-        if publish_token_in_descriptor {
-            Some(token.as_str())
-        } else {
-            None
-        },
-    );
+    publish_shellxagent_descriptor(bound_port, token_source);
     info!("debug-api listening on http://127.0.0.1:{}", bound_port);
     axum::serve(listener, router)
         .await
@@ -1806,15 +1801,27 @@ async fn shellx_host_skill_doc_http() -> impl IntoResponse {
 /// current token-gated Debug API without probing ports. This is not a
 /// new browser control surface: it points at the existing `/browser/*`
 /// routes and intentionally does not advertise raw CDP.
-pub(crate) fn publish_shellxagent_descriptor(port: u16, token: Option<&str>) {
-    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
-    let Ok(home) = home else {
-        tracing::warn!("publish_shellxagent_descriptor: HOME/USERPROFILE unset, skipping");
+pub(crate) fn publish_shellxagent_descriptor(port: u16, token_source: auth_http::DebugTokenSource) {
+    let Ok(home) = shellx_home() else {
+        tracing::warn!("publish_shellxagent_descriptor: private profile unavailable, skipping");
         return;
     };
-    let dir = std::path::PathBuf::from(home).join(".shellx");
+    let dir = home.join(".shellx");
     let path = dir.join("shellxagent.json");
-    let descriptor = shellxagent_descriptor_value(port, token);
+    let token = if token_source.persists_to_profile() {
+        match current_debug_token() {
+            Ok(token) => Some(token),
+            Err(_) => {
+                tracing::warn!(
+                    "publish_shellxagent_descriptor: token authority unavailable, skipping"
+                );
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let descriptor = shellxagent_descriptor_value(port, token.as_deref());
     let contents = match serde_json::to_string_pretty(&descriptor) {
         Ok(contents) => contents,
         Err(e) => {

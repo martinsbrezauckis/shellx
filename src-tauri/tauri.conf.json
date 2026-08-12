@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "shellX",
-  "version": "0.3.51",
+  "version": "0.3.52",
   "identifier": "lv.shellx.app",
   "build": {
     "frontendDist": "../dist",
@@ -39,7 +39,7 @@
         "height": 1000,
         "minWidth": 900,
         "minHeight": 560,
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding",
         "resizable": true,
         "fullscreen": false,
         "dragDropEnabled": false

@@ -10,7 +10,7 @@ use super::browser_workflow_catalog::{
 use super::{
     browser_ensure_agent_task_target, browser_insert_optional_string, browser_mcp_result,
     browser_mcp_timeout_secs, canonical_workflow_task_type, compact_browser_summary_value,
-    debug_api_get_json, debug_api_post_json_for_caller, json_string, mcp_arg_bool,
+    debug_api_get_json_for_caller, debug_api_post_json_for_caller, json_string, mcp_arg_bool,
     mcp_arg_optional_bool, mcp_arg_string, now_ms,
 };
 
@@ -455,7 +455,7 @@ pub(super) async fn tool_browser_workflow_save(
     let url = if let Some(url) = mcp_arg_string(&args, &["url"]) {
         Some(url)
     } else {
-        debug_api_get_json("/browser/state", timeout_secs)
+        debug_api_get_json_for_caller("/browser/tabs", timeout_secs, caller_session_id)
             .await
             .ok()
             .and_then(|state| browser_workflow_url_from_state(&state, browser_tab_id.as_deref()))
@@ -550,7 +550,9 @@ pub(super) async fn tool_browser_workflow_replay(
     let mut recipe_path = mcp_arg_string(&args, &["recipePath", "recipe_path"]);
     let mut bookmark_workflow = None;
     if let Some(bookmark_id) = bookmark_id.as_deref() {
-        let state = debug_api_get_json("/browser/bookmarks", timeout_secs).await?;
+        let state =
+            debug_api_get_json_for_caller("/browser/bookmarks", timeout_secs, caller_session_id)
+                .await?;
         bookmark_workflow = browser_workflow_summary_from_bookmarks_state(&state, bookmark_id);
         if recipe_path.is_none() {
             recipe_path = bookmark_workflow

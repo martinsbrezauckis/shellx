@@ -5,7 +5,7 @@ import {
   delegateBrowserTabToAgent,
   takeBackBrowserTabFromAgent,
 } from "../api";
-import type { BrowserTab, BrowserTask } from "../types";
+import type { BrowserProfile, BrowserTab, BrowserTask } from "../types";
 import { DEFAULT_HOME_URL } from "../browserPreferences";
 import { isTrustedShellxUserEvent, type ShellxUserEventLike } from "../../lib/trusted-user-event";
 
@@ -16,6 +16,121 @@ export interface BrowserTabLease {
   leaseId: string;
   ownerAgentId: string;
   ownerRunId: string;
+}
+
+export type BrowserTabHandoffStatus =
+  | { tone: "review" | "pending" }
+  | { tone: "error" | "success"; message: string };
+
+export interface BrowserTabHandoffConfirmation {
+  browserTabId: string;
+  currentOrigin: string;
+  currentUrlContext: string;
+  ownerLabel: string;
+  persistenceLabel: string;
+  profileId: string;
+  profileLabel: string;
+  taskId: string;
+  taskLabel: string;
+}
+
+/** Keeps a handoff review useful without rendering credentials, query values, fragments, or local paths. */
+export function browserTabHandoffUrlContext(url?: string | null): Pick<BrowserTabHandoffConfirmation, "currentOrigin" | "currentUrlContext"> {
+  const candidate = url?.trim();
+  if (!candidate) {
+    return {
+      currentOrigin: "Origin unavailable",
+      currentUrlContext: "No current page context is available",
+    };
+  }
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return {
+        currentOrigin: `${parsed.protocol.replace(/:$/, "")} context`,
+        currentUrlContext: "Local or non-web URL context is withheld",
+      };
+    }
+    const pathname = parsed.pathname || "/";
+    const boundedPathname = pathname.length > 160 ? `${pathname.slice(0, 159)}…` : pathname;
+    return {
+      currentOrigin: parsed.origin,
+      currentUrlContext: `${parsed.origin}${boundedPathname}`,
+    };
+  } catch {
+    return {
+      currentOrigin: "Origin unavailable",
+      currentUrlContext: "Current URL context is unavailable",
+    };
+  }
+}
+
+function handoffOwnerLabel(ownerKind?: BrowserTab["ownerKind"]): string {
+  if (ownerKind === "delegatedToAgent") return "Delegated to agent";
+  if (ownerKind === "agent") return "Agent-controlled";
+  return "User-controlled";
+}
+
+function handoffPersistenceLabel(tab: BrowserTab, profile: BrowserProfile | null): string {
+  if (profile) return profile.persistent ? "Persistent profile storage" : "Disposable task storage";
+  if (tab.storageRoot) return "Persistent Browser storage";
+  return tab.profileId === "task-disposable" ? "Disposable task storage" : "Profile persistence is unavailable";
+}
+
+export function browserTabHandoffConfirmation(
+  tab: BrowserTab,
+  task: BrowserTask,
+  profile: BrowserProfile | null,
+): BrowserTabHandoffConfirmation {
+  return {
+    browserTabId: tab.browserTabId,
+    ...browserTabHandoffUrlContext(tab.url),
+    ownerLabel: handoffOwnerLabel(tab.ownerKind),
+    persistenceLabel: handoffPersistenceLabel(tab, profile),
+    profileId: tab.profileId,
+    profileLabel: profile?.label || tab.profileId,
+    taskId: task.taskId,
+    taskLabel: task.goal || "Untitled Browser task",
+  };
+}
+
+export function browserTabHandoffRevalidationError(
+  confirmation: BrowserTabHandoffConfirmation,
+  activeBrowserTab: BrowserTab | null,
+  activeTask: BrowserTask | null,
+  tabs: BrowserTab[],
+  profiles: BrowserProfile[],
+): string | null {
+  const liveTab = tabs.find((tab) => tab.browserTabId === confirmation.browserTabId);
+  if (!liveTab) return "This tab is no longer open. Review the current Browser state before handing it off.";
+  if (activeBrowserTab?.browserTabId !== confirmation.browserTabId) {
+    return "The active Browser tab changed. Review the current tab before handing it off.";
+  }
+  if (activeTask?.taskId !== confirmation.taskId) {
+    return "The active Browser task changed. Review the current task before handing it off.";
+  }
+  if ((activeTask.goal || "Untitled Browser task") !== confirmation.taskLabel) {
+    return "The target Browser task label changed. Review the current task before handing it off.";
+  }
+  if (liveTab.ownerKind === "agent" || liveTab.ownerKind === "delegatedToAgent") {
+    return "This tab is no longer user-controlled and cannot be handed off again.";
+  }
+  const liveConfirmation = browserTabHandoffConfirmation(
+    liveTab,
+    activeTask,
+    profiles.find((profile) => profile.profileId === liveTab.profileId) ?? null,
+  );
+  if (
+    liveConfirmation.currentOrigin !== confirmation.currentOrigin ||
+    liveConfirmation.currentUrlContext !== confirmation.currentUrlContext ||
+    liveConfirmation.profileId !== confirmation.profileId ||
+    liveConfirmation.profileLabel !== confirmation.profileLabel ||
+    liveConfirmation.persistenceLabel !== confirmation.persistenceLabel ||
+    liveConfirmation.ownerLabel !== confirmation.ownerLabel
+  ) {
+    return "The tab context, profile, persistence, or owner changed. Review the current tab before handing it off.";
+  }
+  return null;
 }
 
 export function useBrowserTabLeases() {
@@ -35,6 +150,7 @@ interface BrowserTabsOptions {
   homeUrl: string;
   leases: Record<string, BrowserTabLease>;
   personalBrowserLocked: boolean;
+  profiles: BrowserProfile[];
   runBusy: (action: () => Promise<void>) => Promise<void>;
   setAddress: (value: string) => void;
   setError: (message: string | null) => void;
@@ -52,6 +168,7 @@ export function useBrowserTabs(options: BrowserTabsOptions) {
     homeUrl,
     leases,
     personalBrowserLocked,
+    profiles,
     runBusy,
     setAddress,
     setError,
@@ -62,6 +179,8 @@ export function useBrowserTabs(options: BrowserTabsOptions) {
     userDefaultProfileId,
   } = options;
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [handoffConfirmation, setHandoffConfirmation] = useState<BrowserTabHandoffConfirmation | null>(null);
+  const [handoffStatus, setHandoffStatus] = useState<BrowserTabHandoffStatus>({ tone: "review" });
   const activeLease = activeBrowserTab ? leases[activeBrowserTab.browserTabId] ?? null : null;
   const canHandOffActiveTab = Boolean(
     activeBrowserTab &&
@@ -202,13 +321,53 @@ export function useBrowserTabs(options: BrowserTabsOptions) {
       setError("Start an agent browser task before handing off a user tab.");
       return;
     }
-    if (!window.confirm("Hand this tab to the active Browser agent task? Vault secrets will still require separate approval.")) return;
+    setHandoffConfirmation(browserTabHandoffConfirmation(
+      activeBrowserTab,
+      activeTask,
+      profiles.find((profile) => profile.profileId === activeBrowserTab.profileId) ?? null,
+    ));
+    setHandoffStatus({ tone: "review" });
+  };
+
+  const cancelHandOffActiveTab = () => {
+    if (handoffStatus.tone === "pending") return;
+    setHandoffConfirmation(null);
+    setHandoffStatus({ tone: "review" });
+  };
+
+  const confirmHandOffActiveTab = (event?: ShellxUserEventLike | null) => {
+    if (!isTrustedShellxUserEvent(event)) {
+      setHandoffStatus({ tone: "error", message: "Browser tab handoff requires a direct confirmation click." });
+      return;
+    }
+    if (!handoffConfirmation || handoffStatus.tone === "pending") return;
+    const revalidationError = browserTabHandoffRevalidationError(
+      handoffConfirmation,
+      activeBrowserTab,
+      activeTask,
+      tabs,
+      profiles,
+    );
+    if (revalidationError) {
+      setHandoffStatus({ tone: "error", message: revalidationError });
+      return;
+    }
+    setHandoffStatus({ tone: "pending" });
     void runBusy(async () => {
-      await delegateBrowserTabToAgent({
-        browserTabId: activeBrowserTab.browserTabId,
-        taskId: activeTask.taskId,
-        reason: "operator handoff from Browser chrome",
-      });
+      try {
+        await delegateBrowserTabToAgent({
+          browserTabId: handoffConfirmation.browserTabId,
+          taskId: handoffConfirmation.taskId,
+          reason: "operator handoff from Browser chrome",
+        });
+        setHandoffStatus({ tone: "success", message: "Tab handed off to the active Browser agent task." });
+      } catch (error) {
+        setHandoffStatus({
+          tone: "error",
+          message: error instanceof Error ? error.message : "Browser tab handoff could not be completed.",
+        });
+        throw error;
+      }
     });
   };
 
@@ -226,14 +385,27 @@ export function useBrowserTabs(options: BrowserTabsOptions) {
     actionContext,
     canHandOffActiveTab,
     canTakeBackActiveTab,
+    cancelHandOffActiveTab,
     closeTab,
+    confirmHandOffActiveTab,
     draggedTabId,
     focusTab,
     handOffActiveTab,
+    handoffConfirmation,
+    handoffStatus,
     newTab,
     reorderTabs,
     setDraggedTabId,
     takeBackActiveTab,
     toggleLockActiveTab,
   };
+}
+
+export function selectBrowserHandoffTask(
+  activeTask: BrowserTask | null,
+  tasks: BrowserTask[],
+): BrowserTask | null {
+  if (activeTask && !["completed", "blocked", "aborted"].includes(activeTask.status)) return activeTask;
+  const available = tasks.filter((task) => !["completed", "blocked", "aborted"].includes(task.status));
+  return available.length === 1 ? available[0]! : null;
 }

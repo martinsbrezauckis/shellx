@@ -248,16 +248,10 @@ pub(super) fn debug_api_base_url() -> Result<String, String> {
 }
 
 pub(super) fn debug_api_token() -> Result<String, String> {
-    if let Ok(token) = std::env::var("SHELLX_DEBUG_SECRET") {
-        let token = token.trim();
-        if !token.is_empty() {
-            return Ok(token.to_string());
-        }
-    }
-    let shellx_dir = shellx_agent_dir()?;
-    std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
-        .map(|s| s.trim().to_string())
-        .map_err(|e| format!("read shellxagent.token: {}", e))
+    // This runs inside the ShellX process, so it must use the same accepted
+    // authority as Debug API middleware instead of re-reading mutable disk or
+    // environment state.
+    crate::debug_api::current_debug_token()
 }
 
 pub(super) fn shellx_agent_dir() -> Result<std::path::PathBuf, String> {

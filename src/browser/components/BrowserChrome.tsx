@@ -292,6 +292,7 @@ export function BrowserChrome({
                   onClick={onHandOffActiveTab}
                   disabled={busy}
                   data-debug-id="shellx-browser-handoff-tab"
+                  data-shellx-release-observe="focused"
                   title="Hand off this tab to the active agent task"
                   aria-label="Hand off this tab to the active agent task"
                 >

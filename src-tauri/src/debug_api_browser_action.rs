@@ -55,6 +55,8 @@ pub(crate) async fn browser_action_http(
         Err(response) => return *response,
     };
     let caller_session_id = browser_mcp_caller_id(&headers);
+    let authenticated_agent_id =
+        crate::shellx_browser_caller::shellx_mcp_agent_identity(caller_session_id.as_deref());
     if let Err(e) = registry.ensure_agent_session_for_action(&body, caller_session_id.as_deref()) {
         return (
             StatusCode::FORBIDDEN,
@@ -265,7 +267,9 @@ pub(crate) async fn browser_action_http(
                     .into_response();
             }
         };
-        let actor = match registry.vault_grant_actor_context_for_action(&body) {
+        let actor = match registry
+            .vault_grant_actor_context_for_action(&body, authenticated_agent_id.as_deref())
+        {
             Ok(actor) => actor,
             Err(e) => {
                 return (
@@ -362,6 +366,7 @@ pub(crate) async fn browser_action_http(
             &s,
             &registry,
             &body,
+            authenticated_agent_id.as_deref(),
             &crate::shellx_vault::GrantOperation::EmailCodeRead,
             "readEmailCodeGrant",
         )
@@ -372,6 +377,7 @@ pub(crate) async fn browser_action_http(
             &s,
             &registry,
             &body,
+            authenticated_agent_id.as_deref(),
             &crate::shellx_vault::GrantOperation::AgentWalletUse,
             "useAgentWalletGrant",
         )
@@ -440,7 +446,9 @@ pub(crate) async fn browser_action_http(
                     .into_response();
             }
         };
-        let actor = match registry.vault_grant_actor_context_for_action(&body) {
+        let actor = match registry
+            .vault_grant_actor_context_for_action(&body, authenticated_agent_id.as_deref())
+        {
             Ok(actor) => actor,
             Err(e) => {
                 return (

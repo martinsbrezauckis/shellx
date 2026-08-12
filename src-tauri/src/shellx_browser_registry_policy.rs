@@ -41,29 +41,37 @@ impl ShellxBrowserRegistry {
         Some(tab.shields.blocked_ad_tracker_count)
     }
 
-    pub fn record_strict_request_blocked(
+    pub(crate) fn record_bound_strict_request_blocked(
         &self,
         engine_id: &str,
+        event_binding: &str,
         profile_id: &str,
         method: &str,
         url: String,
         resource_type: String,
-    ) {
+    ) -> bool {
         let mut state = lock_or_recover(&self.state);
+        let engine_id = clean_string(engine_id);
+        if state
+            .engine_event_bindings
+            .get(&engine_id)
+            .map(String::as_str)
+            != Some(event_binding)
+        {
+            return false;
+        }
         let engine = state
             .engine_pool
             .engines
             .iter()
             .find(|engine| engine.engine_id == engine_id)
+            .or_else(|| (state.engine.engine_id == engine_id).then_some(&state.engine))
             .cloned();
-        let browser_tab_id = engine
-            .as_ref()
-            .and_then(|engine| engine.browser_tab_id.clone())
-            .or_else(|| state.active_browser_tab_id.clone());
-        let task_id = engine
-            .as_ref()
-            .and_then(|engine| engine.task_id.clone())
-            .or_else(|| state.active_task_id.clone());
+        let Some(engine) = engine else {
+            return false;
+        };
+        let browser_tab_id = engine.browser_tab_id.clone();
+        let task_id = engine.task_id.clone();
         let entry = push_network_entry(
             &mut state,
             BrowserNetworkRecordRequest {
@@ -107,6 +115,7 @@ impl ShellxBrowserRegistry {
                 "privacyDecision": entry.privacy_decision,
             }),
         );
+        true
     }
 
     pub fn lock_denial_for_action(
@@ -196,6 +205,7 @@ impl ShellxBrowserRegistry {
         state.window_lifecycle_generation = state.window_lifecycle_generation.saturating_add(1);
         state.window_open = false;
         state.pending_start_url = None;
+        state.engine_event_bindings.clear();
         state.engine_pool.window_state = "closed".to_string();
         if mounted_engine_ids.contains(&state.engine.engine_id) {
             state.engine.mounted = false;
@@ -289,6 +299,7 @@ impl ShellxBrowserRegistry {
                     ..BrowserEngineSnapshot::default()
                 };
                 state.engine_pool.engines.clear();
+                state.engine_event_bindings.clear();
                 state.engine_pool.waiting.clear();
                 state.engine_pool.parked_tabs.clear();
                 state.engine_waitlist = BrowserEngineWaitlistSnapshot::default();

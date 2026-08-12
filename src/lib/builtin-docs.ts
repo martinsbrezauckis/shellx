@@ -133,6 +133,31 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
   copy/delete helpers, and permission/audit-sensitive host mutations.
 - Secrets retrieved from the vault are not echoed in chat.
 
+## Native Browser
+
+- ShellX Browser keeps authenticated web work, profiles, task ownership,
+  approvals, and receipts inside the local desktop workspace.
+- Task Disposable tabs use separate per-task web storage. Finishing or aborting
+  the task, or closing its tab, retires that storage so the next disposable task
+  starts empty.
+- Links, folders, toolbar pins, and workflow bookmarks persist across ShellX
+  restarts. History keeps User and Agent scopes separate, and clearing All
+  requires a dedicated confirmation.
+- Handing a tab to an agent opens an owned review of the sanitized page context,
+  profile persistence, current owner, selected task, and separate Vault
+  boundary before the transfer.
+- Evidence can record one bounded, redacted task attempt and show its exact
+  identity, completeness, hash, and comparison receipts without displaying
+  private artifact paths.
+- **Teach workflow** keeps the most recent complete recorded attempt available
+  after its task completes and turns it into an editable, evidence-bound recipe
+  draft. Saving creates an immutable revision, approval creates but does not
+  run the recipe, and rehearsal is a dry run with zero applied steps.
+- **Developer inspection** stays attached to the live task and summarizes the
+  current page's document checks, console, network, performance, and
+  deterministic issues. Separate HAR and performance exports return compact
+  receipt identities in the UI.
+
 ## Voice and media
 
 - Voice input through Grok STT.
@@ -149,7 +174,8 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
   shellX session when allowlisted.
 - Telegram Session Chat can send active-session text replies and referenced
   image outputs back to the chat.
-- Discord bot messages can be received into the connector inbox.
+- Discord bot messages can route to the connector inbox or an eligible target
+  ShellX session when allowlisted.
 - Connector setup includes credential tests, allowlists, target session
   rules, and inbound simulation.
 

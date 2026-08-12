@@ -2,11 +2,9 @@
 use base64::Engine as _;
 use serde_json::json;
 use std::sync::Arc;
-use std::time::Duration;
 use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Url, WebviewBuilder,
-    WebviewUrl,
+    AppHandle, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Url, WebviewUrl,
 };
 
 #[cfg(windows)]
@@ -19,6 +17,17 @@ use crate::shellx_browser::{
 use crate::shellx_browser_engine::{
     browser_background_engine_bounds, browser_engine_bounds_are_background,
     browser_engine_webview_label,
+};
+pub(crate) use crate::shellx_browser_engine_lifecycle::wait_for_browser_engine_label_release;
+use crate::shellx_browser_engine_lifecycle::{
+    cleanup_unmounted_disposable_mount_failure, close_and_cleanup_failed_browser_engine_mount,
+    handle_disposable_engine_recreation_failure,
+};
+use crate::shellx_browser_engine_webview_config::{
+    browser_engine_webview_builder, install_browser_native_credential_controls,
+};
+use crate::shellx_browser_ephemeral_roots::{
+    cleanup_disposable_root_owner_after_engine_close, cleanup_disposable_roots_after_engine_close,
 };
 use crate::shellx_browser_initialization::browser_page_context_menu_initialization_script;
 use crate::shellx_browser_profiles::browser_profile_storage_root;
@@ -33,42 +42,15 @@ use crate::shellx_browser_shields::{
 };
 use crate::shellx_browser_webview_runtime::navigate_browser_webview;
 #[cfg(windows)]
-use crate::shellx_browser_webview_runtime::{
-    with_windows_browser_webview, SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS,
-};
+use crate::shellx_browser_webview_runtime::with_windows_browser_webview;
 use crate::shellx_browser_window_open_runtime::ensure_browser_window_for_engine;
-
-#[cfg(windows)]
-const BROWSER_ENGINE_WEBVIEW2_RELEASE_QUIESCENCE: Duration = Duration::from_millis(500);
-
-pub(crate) async fn wait_for_browser_engine_label_release(
-    app: &AppHandle,
-    webview_label: &str,
-) -> Result<(), String> {
-    for _ in 0..20 {
-        if app.get_webview(webview_label).is_none() {
-            // WebView2 can release Tauri's label before its profile runtime is
-            // ready for an immediate child-webview recreation. Without this
-            // bounded Windows-only quiescence, a rapid task close/start pair
-            // can mount the replacement engine but never deliver its first
-            // page-load callback.
-            #[cfg(windows)]
-            tokio::time::sleep(BROWSER_ENGINE_WEBVIEW2_RELEASE_QUIESCENCE).await;
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    Err(format!(
-        "Browser engine webview label '{}' is still releasing; retry sync shortly",
-        webview_label
-    ))
-}
 
 #[cfg(windows)]
 async fn install_strict_browser_request_filter<R: tauri::Runtime>(
     webview: &tauri::Webview<R>,
     registry: Arc<ShellxBrowserRegistry>,
     engine_id: String,
+    event_binding: String,
     profile_id: String,
 ) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
@@ -94,6 +76,7 @@ async fn install_strict_browser_request_filter<R: tauri::Runtime>(
                     )?;
                     let event_registry = Arc::clone(&registry);
                     let event_engine_id = engine_id.clone();
+                    let event_binding = event_binding.clone();
                     let event_profile_id = profile_id.clone();
                     let mut token = 0i64;
                     native.add_WebResourceRequested(
@@ -122,8 +105,9 @@ async fn install_strict_browser_request_filter<R: tauri::Runtime>(
                                     ),
                                 )?;
                                 args.SetResponse(&response)?;
-                                event_registry.record_strict_request_blocked(
+                                event_registry.record_bound_strict_request_blocked(
                                     &event_engine_id,
+                                    &event_binding,
                                     &event_profile_id,
                                     &method,
                                     uri,
@@ -148,6 +132,7 @@ async fn install_strict_browser_request_filter<R: tauri::Runtime>(
     _webview: &tauri::Webview<R>,
     _registry: Arc<ShellxBrowserRegistry>,
     _engine_id: String,
+    _event_binding: String,
     _profile_id: String,
 ) -> Result<(), String> {
     Ok(())
@@ -158,6 +143,7 @@ async fn install_browser_permission_gate<R: tauri::Runtime>(
     webview: &tauri::Webview<R>,
     registry: Arc<ShellxBrowserRegistry>,
     engine_id: String,
+    event_binding: String,
 ) -> Result<(), String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_AUTOPLAY,
@@ -171,44 +157,6 @@ async fn install_browser_permission_gate<R: tauri::Runtime>(
     };
     use webview2_com::{take_pwstr, PermissionRequestedEventHandler};
     use windows::core::PWSTR;
-
-    use crate::shellx_browser::BrowserPermissionRecordRequest;
-
-    fn record_browser_permission_request(
-        registry: &ShellxBrowserRegistry,
-        engine_id: &str,
-        permission_kind: String,
-        request_url: Option<String>,
-        user_initiated: bool,
-    ) {
-        let engine = {
-            let state = registry.state();
-            state
-                .engine_pool
-                .engines
-                .iter()
-                .find(|engine| engine.engine_id == engine_id)
-                .or_else(|| (state.engine.engine_id == engine_id).then_some(&state.engine))
-                .cloned()
-        };
-        let fallback_url = engine
-            .as_ref()
-            .and_then(|engine| engine.pending_url.clone().or_else(|| engine.url.clone()));
-        let url = request_url
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .or(fallback_url);
-        let _ = registry.record_permission_event(BrowserPermissionRecordRequest {
-            task_id: engine.as_ref().and_then(|engine| engine.task_id.clone()),
-            browser_tab_id: engine
-                .as_ref()
-                .and_then(|engine| engine.browser_tab_id.clone()),
-            permission_kind,
-            url,
-            user_initiated,
-            requires_approval: true,
-        });
-    }
 
     fn browser_permission_kind_from_webview2(kind: COREWEBVIEW2_PERMISSION_KIND) -> &'static str {
         match kind {
@@ -241,6 +189,7 @@ async fn install_browser_permission_gate<R: tauri::Runtime>(
                     let native = controller.CoreWebView2()?;
                     let event_registry = Arc::clone(&registry);
                     let event_engine_id = engine_id.clone();
+                    let event_binding = event_binding.clone();
                     let mut permission_token = 0i64;
                     native.add_PermissionRequested(
                         &PermissionRequestedEventHandler::create(Box::new(move |_sender, args| {
@@ -254,14 +203,14 @@ async fn install_browser_permission_gate<R: tauri::Runtime>(
                             args.PermissionKind(&mut kind as *mut _)?;
                             let mut is_user_initiated = windows::core::BOOL::from(false);
                             args.IsUserInitiated(&mut is_user_initiated as *mut _)?;
-                            record_browser_permission_request(
-                                &event_registry,
+                            args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+                            let _ = event_registry.record_bound_engine_permission_event(
                                 &event_engine_id,
+                                &event_binding,
                                 browser_permission_kind_from_webview2(kind).to_string(),
                                 Some(requested_url),
                                 is_user_initiated.as_bool(),
                             );
-                            args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
                             Ok(())
                         })),
                         &mut permission_token,
@@ -280,6 +229,7 @@ async fn install_browser_permission_gate<R: tauri::Runtime>(
     _webview: &tauri::Webview<R>,
     _registry: Arc<ShellxBrowserRegistry>,
     _engine_id: String,
+    _event_binding: String,
 ) -> Result<(), String> {
     Ok(())
 }
@@ -402,11 +352,19 @@ pub(crate) async fn sync_native_browser_engine(
     if !browser_engine_bounds_are_background(request.bounds) {
         park_inactive_browser_engine_webviews(app, registry, &engine_id)?;
     }
-    let storage_root = browser_profile_storage_root(&profile_id);
-    crate::session_git::ensure_strict_private_dir(
-        std::path::Path::new(&storage_root),
-        "Browser profile storage",
-    )?;
+    let disposable_root_binding = if profile_id == "task-disposable" {
+        Some(
+            registry
+                .disposable_webview_storage_root(&engine_id, request.browser_tab_id.as_deref())?,
+        )
+    } else {
+        None
+    };
+    let storage_root = disposable_root_binding
+        .as_ref()
+        .map(|binding| binding.root.clone())
+        .unwrap_or_else(|| std::path::PathBuf::from(browser_profile_storage_root(&profile_id)));
+    crate::session_git::ensure_strict_private_dir(&storage_root, "Browser profile storage")?;
     let privacy_mode =
         registry.effective_ad_mode_for_profile_id(Some(&profile_id), Some(target_url.as_str()));
     let strict_native_filter = browser_requires_native_request_filter(&privacy_mode);
@@ -433,6 +391,11 @@ pub(crate) async fn sync_native_browser_engine(
             .as_ref()
             .map(|engine| browser_requires_native_request_filter(&engine.privacy_mode))
             .unwrap_or(false);
+        let active_disposable_root_owner =
+            registry.active_disposable_root_owner_for_engine(&engine_id);
+        let root_identity_changed = disposable_root_binding.as_ref().is_some_and(|binding| {
+            active_disposable_root_owner.as_deref() != Some(binding.owner_identity.as_str())
+        });
         let same_browser_tab = current_engine
             .as_ref()
             .and_then(|engine| engine.browser_tab_id.as_deref())
@@ -440,11 +403,44 @@ pub(crate) async fn sync_native_browser_engine(
         let preserve_existing_page = request.preserve_existing_page && same_browser_tab;
         if current_profile.as_deref() != Some(profile_id.as_str())
             || current_native_filter != strict_native_filter
+            || root_identity_changed
         {
-            webview
-                .close()
-                .map_err(|e| format!("failed to recreate Browser engine for profile: {}", e))?;
-            wait_for_browser_engine_label_release(app, &engine_label).await?;
+            if let Err(error) = webview.close() {
+                handle_disposable_engine_recreation_failure(
+                    registry,
+                    active_disposable_root_owner.as_deref(),
+                    disposable_root_binding.as_ref(),
+                    root_identity_changed,
+                    "Browser engine replacement retained the existing native WebView because close failed",
+                )
+                .await;
+                return Err(format!(
+                    "failed to recreate Browser engine for profile: {error}"
+                ));
+            }
+            if let Err(error) = wait_for_browser_engine_label_release(app, &engine_label).await {
+                handle_disposable_engine_recreation_failure(
+                    registry,
+                    active_disposable_root_owner.as_deref(),
+                    disposable_root_binding.as_ref(),
+                    root_identity_changed,
+                    "Browser engine replacement retained the existing lease because native WebView label release was not confirmed",
+                )
+                .await;
+                return Err(error);
+            }
+            if let Some(previous_owner) = active_disposable_root_owner.as_deref() {
+                cleanup_disposable_root_owner_after_engine_close(
+                    registry,
+                    &engine_id,
+                    previous_owner,
+                )
+                .await;
+            } else if disposable_root_binding.is_none() {
+                cleanup_disposable_roots_after_engine_close(registry, &engine_id).await;
+            } else {
+                registry.record_disposable_engine_closed(&engine_id);
+            }
         } else {
             if !browser_engine_bounds_are_background(request.bounds) {
                 webview
@@ -484,9 +480,16 @@ pub(crate) async fn sync_native_browser_engine(
     }
 
     for attempt in 0..2 {
+        let event_binding = registry.begin_engine_event_binding(&engine_id);
+        let event_binding_for_navigation = event_binding.clone();
+        let event_binding_for_load = event_binding.clone();
+        let event_binding_for_title = event_binding.clone();
+        let event_binding_for_popup = event_binding.clone();
+        let event_binding_for_download = event_binding.clone();
         let engine_id_for_navigation = engine_id.clone();
         let engine_id_for_load = engine_id.clone();
         let engine_id_for_title = engine_id.clone();
+        let engine_id_for_download = engine_id.clone();
         let navigation_registry = Arc::clone(registry);
         let page_load_registry = Arc::clone(registry);
         let title_registry = Arc::clone(registry);
@@ -497,7 +500,7 @@ pub(crate) async fn sync_native_browser_engine(
             .map_err(|e| format!("failed to prepare Browser bootstrap URL: {}", e))?;
         let webview_builder =
             browser_engine_webview_builder(engine_label.clone(), WebviewUrl::External(initial_url))
-                .data_directory(std::path::PathBuf::from(storage_root.clone()))
+                .data_directory(storage_root.clone())
                 .initialization_script_for_all_frames(browser_privacy_initialization_script(
                     &privacy_mode,
                 ))
@@ -509,6 +512,12 @@ pub(crate) async fn sync_native_browser_engine(
                 )
                 .disable_drag_drop_handler()
                 .on_navigation(move |url| {
+                    if !navigation_registry.engine_event_binding_is_current(
+                        &engine_id_for_navigation,
+                        &event_binding_for_navigation,
+                    ) {
+                        return false;
+                    }
                     browser_engine_url_allowed_for_registry_engine(
                         &navigation_registry,
                         &engine_id_for_navigation,
@@ -516,6 +525,12 @@ pub(crate) async fn sync_native_browser_engine(
                     )
                 })
                 .on_new_window(move |url, _features| {
+                    if !popup_registry.engine_event_binding_is_current(
+                        &engine_id_for_popup,
+                        &event_binding_for_popup,
+                    ) {
+                        return NewWindowResponse::Deny;
+                    }
                     let target_url = normalize_browser_new_window_target_url(url.as_str());
                     if !target_url.is_empty() {
                         let opener = {
@@ -547,17 +562,28 @@ pub(crate) async fn sync_native_browser_engine(
                     NewWindowResponse::Deny
                 })
                 .on_page_load(move |_webview, payload| {
-                    page_load_registry.record_engine_load_for_engine(
+                    page_load_registry.record_bound_engine_load(
                         &engine_id_for_load,
+                        &event_binding_for_load,
                         payload.url().to_string(),
                         payload.event(),
                     );
                 })
                 .on_document_title_changed(move |_webview, title| {
-                    title_registry.record_engine_title_for_engine(&engine_id_for_title, title);
+                    title_registry.record_bound_engine_title(
+                        &engine_id_for_title,
+                        &event_binding_for_title,
+                        title,
+                    );
                 })
                 .on_download(move |_webview, event| match event {
                     DownloadEvent::Requested { url, .. } => {
+                        if !download_registry.engine_event_binding_is_current(
+                            &engine_id_for_download,
+                            &event_binding_for_download,
+                        ) {
+                            return false;
+                        }
                         let _ = download_registry.request_download_intent(BrowserDownloadRequest {
                             task_id: None,
                             browser_tab_id: None,
@@ -607,6 +633,7 @@ pub(crate) async fn sync_native_browser_engine(
                         &webview,
                         Arc::clone(registry),
                         engine_id.clone(),
+                        event_binding.clone(),
                     )
                     .await?;
                     if strict_native_filter {
@@ -614,6 +641,7 @@ pub(crate) async fn sync_native_browser_engine(
                             &webview,
                             Arc::clone(registry),
                             engine_id.clone(),
+                            event_binding.clone(),
                             profile_id.clone(),
                         )
                         .await?;
@@ -632,93 +660,76 @@ pub(crate) async fn sync_native_browser_engine(
                 }
                 .await;
                 if let Err(initialization_error) = initialization {
-                    let close_error = webview.close().err().map(|error| error.to_string());
-                    let release_error = wait_for_browser_engine_label_release(app, &engine_label)
-                        .await
-                        .err();
-                    let rollback_detail = match (close_error, release_error) {
-                        (None, None) => "rollback closed the partial Browser engine".to_string(),
-                        (close_error, release_error) => format!(
-                            "rollback incomplete (close: {}; release: {})",
-                            close_error.as_deref().unwrap_or("ok"),
-                            release_error.as_deref().unwrap_or("ok")
-                        ),
-                    };
+                    let rollback_detail = close_and_cleanup_failed_browser_engine_mount(
+                        app,
+                        registry,
+                        &engine_id,
+                        &engine_label,
+                        &webview,
+                        disposable_root_binding.is_some(),
+                        "initialization rollback",
+                    )
+                    .await;
                     return Err(format!(
                         "Browser engine initialization failed: {initialization_error}; {rollback_detail}"
                     ));
+                }
+                if let Some(binding) = disposable_root_binding.as_ref() {
+                    if let Err(mount_error) =
+                        registry.mark_disposable_webview_mounted(&engine_id, binding)
+                    {
+                        let rollback_detail = close_and_cleanup_failed_browser_engine_mount(
+                            app,
+                            registry,
+                            &engine_id,
+                            &engine_label,
+                            &webview,
+                            true,
+                            "native lease activation rollback",
+                        )
+                        .await;
+                        return Err(format!(
+                            "Browser engine lease activation failed: {mount_error}; {rollback_detail}"
+                        ));
+                    }
                 }
                 return Ok(None);
             }
             Err(e) => {
                 let message = e.to_string();
                 if attempt == 0 && message.contains("already exists") {
-                    wait_for_browser_engine_label_release(app, &engine_label).await?;
+                    if let Err(release_error) =
+                        wait_for_browser_engine_label_release(app, &engine_label).await
+                    {
+                        if disposable_root_binding.is_some() {
+                            cleanup_unmounted_disposable_mount_failure(
+                                app,
+                                registry,
+                                &engine_id,
+                                &engine_label,
+                                "Browser engine mount retry could not confirm label release",
+                            )
+                            .await;
+                        }
+                        return Err(release_error);
+                    }
                     continue;
+                }
+                if disposable_root_binding.is_some() {
+                    cleanup_unmounted_disposable_mount_failure(
+                        app,
+                        registry,
+                        &engine_id,
+                        &engine_label,
+                        "Browser engine child WebView creation failed before lease activation",
+                    )
+                    .await;
                 }
                 return Err(format!("failed to mount Browser engine webview: {}", e));
             }
         }
     }
     Ok(None)
-}
-
-fn browser_engine_webview_builder<R: tauri::Runtime>(
-    label: String,
-    url: WebviewUrl,
-) -> WebviewBuilder<R> {
-    #[cfg(windows)]
-    {
-        WebviewBuilder::new(label, url)
-            .general_autofill_enabled(false)
-            .additional_browser_args(SHELLX_BROWSER_WEBVIEW2_ADDITIONAL_ARGS)
-    }
-    #[cfg(not(windows))]
-    {
-        WebviewBuilder::new(label, url).general_autofill_enabled(false)
-    }
-}
-
-#[cfg(windows)]
-async fn install_browser_native_credential_controls<R: tauri::Runtime>(
-    webview: &tauri::Webview<R>,
-) -> Result<(), String> {
-    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings4;
-    use windows::core::Interface;
-
-    with_windows_browser_webview(
-        webview,
-        "applying Browser credential controls",
-        move |platform| {
-            (|| -> windows::core::Result<()> {
-                // SAFETY: the platform value is Tauri's live WebView2
-                // controller. The queried settings interface is used only in
-                // this closure and each COM call propagates its HRESULT.
-                unsafe {
-                    let native = platform.controller().CoreWebView2()?;
-                    let settings = native.Settings()?;
-                    let settings4 = settings.cast::<ICoreWebView2Settings4>()?;
-                    settings4.SetIsGeneralAutofillEnabled(false)?;
-                    settings4.SetIsPasswordAutosaveEnabled(false)?;
-                }
-                Ok(())
-            })()
-            .map_err(|err| {
-                format!(
-                    "failed to disable native Browser credential autofill and password autosave: {}",
-                    err
-                )
-            })
-        },
-    )
-    .await
-}
-
-#[cfg(not(windows))]
-async fn install_browser_native_credential_controls<R: tauri::Runtime>(
-    _webview: &tauri::Webview<R>,
-) -> Result<(), String> {
-    Ok(())
 }
 
 fn park_inactive_browser_engine_webviews(

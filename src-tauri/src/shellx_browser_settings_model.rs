@@ -406,9 +406,45 @@ pub struct BrowserDeveloperModeApprovalRequest {
     pub operator_approved: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum BrowserHistoryScope {
+    User,
+    Agent,
+    All,
+}
+
+impl BrowserHistoryScope {
+    pub fn classify(profile_id: &str, task_id: Option<&str>) -> Self {
+        if profile_id == "personal"
+            && task_id
+                .map(str::trim)
+                .filter(|task_id| !task_id.is_empty())
+                .is_none()
+        {
+            Self::User
+        } else {
+            Self::Agent
+        }
+    }
+
+    pub fn matches(self, profile_id: &str, task_id: Option<&str>) -> bool {
+        self == Self::All || self == Self::classify(profile_id, task_id)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Agent => "agent",
+            Self::All => "all",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserClearHistoryRequest {
+    pub scope: BrowserHistoryScope,
     #[serde(skip)]
     pub operator_approved: bool,
 }

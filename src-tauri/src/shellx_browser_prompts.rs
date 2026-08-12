@@ -10,7 +10,8 @@ use crate::shellx_browser::{
     push_receipt, safe_url_parts, BrowserDialogEvent, BrowserDialogRecordRequest,
     BrowserDialogResolveRequest, BrowserNetworkEntry, BrowserNetworkRecordRequest,
     BrowserPermissionEvent, BrowserPermissionRecordRequest, BrowserPermissionResolveRequest,
-    BrowserPopupEvent, BrowserPopupRecordRequest, BrowserTabOwnerKind, ShellxBrowserRegistry,
+    BrowserPopupEvent, BrowserPopupRecordRequest, BrowserState, BrowserTabOwnerKind,
+    ShellxBrowserRegistry,
 };
 use crate::shellx_browser_tabs::{find_tab_index, profile_id_for_task_or_tab};
 use crate::shellx_browser_tasks::find_task_index;
@@ -214,82 +215,138 @@ impl ShellxBrowserRegistry {
         &self,
         request: BrowserPermissionRecordRequest,
     ) -> Result<BrowserPermissionEvent, String> {
-        let permission_kind = normalize_browser_permission_kind(&request.permission_kind);
         let mut state = lock_or_recover(&self.state);
-        let task_id = request
-            .task_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .or_else(|| state.active_task_id.clone());
-        if let Some(task_id) = task_id.as_deref() {
-            find_task_index(&state, task_id)?;
-        }
-        let browser_tab_id = request
-            .browser_tab_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .or_else(|| state.active_browser_tab_id.clone());
-        if let Some(browser_tab_id) = browser_tab_id.as_deref() {
-            find_tab_index(&state, browser_tab_id)?;
-        }
-        let profile_id =
-            profile_id_for_task_or_tab(&state, task_id.as_deref(), browser_tab_id.as_deref())
-                .or_else(|| state.engine.profile_id.clone());
-        let safe_parts = request
-            .url
-            .as_deref()
-            .map(safe_url_parts)
-            .or_else(|| state.engine.url.as_deref().map(safe_url_parts));
-        let origin = safe_parts.as_ref().and_then(|parts| parts.origin.clone());
-        let path = safe_parts.as_ref().and_then(|parts| parts.path.clone());
-        let permission_id = browser_id("browser-permission");
-        let created_at_ms = now_ms();
-        let receipt = push_receipt(
-            &mut state,
-            "browserPermissionRequested",
-            task_id.clone(),
-            profile_id.clone(),
-            format!("Browser page requested {} permission", permission_kind),
-            json!({
-                "permissionId": permission_id,
-                "browserTabId": browser_tab_id,
-                "permissionKind": permission_kind,
-                "origin": origin,
-                "path": path,
-                "queryRetained": false,
-                "fragmentRetained": false,
-                "userInitiated": request.user_initiated,
-                "status": "pending",
-                "requiresApproval": request.requires_approval,
-            }),
-        );
-        let event = BrowserPermissionEvent {
-            permission_id,
-            task_id,
-            browser_tab_id,
-            profile_id,
-            permission_kind,
-            origin,
-            path,
-            query_retained: false,
-            fragment_retained: false,
-            user_initiated: request.user_initiated,
-            status: "pending".to_string(),
-            requires_approval: request.requires_approval,
-            created_at_ms,
-            resolved_at_ms: None,
-            receipt,
-        };
-        state.permissions.push(event.clone());
-        if state.permissions.len() > 500 {
-            let overflow = state.permissions.len() - 500;
-            state.permissions.drain(0..overflow);
-        }
-        Ok(event)
+        record_permission_event_locked(&mut state, request)
     }
 
+    pub(crate) fn record_bound_engine_permission_event(
+        &self,
+        engine_id: &str,
+        event_binding: &str,
+        permission_kind: String,
+        request_url: Option<String>,
+        user_initiated: bool,
+    ) -> Result<Option<BrowserPermissionEvent>, String> {
+        let engine_id = clean_string(engine_id);
+        let mut state = lock_or_recover(&self.state);
+        if state
+            .engine_event_bindings
+            .get(&engine_id)
+            .map(String::as_str)
+            != Some(event_binding)
+        {
+            return Ok(None);
+        }
+        let engine = state
+            .engine_pool
+            .engines
+            .iter()
+            .find(|engine| engine.engine_id == engine_id)
+            .or_else(|| (state.engine.engine_id == engine_id).then_some(&state.engine))
+            .cloned();
+        let Some(engine) = engine else {
+            return Ok(None);
+        };
+        let fallback_url = engine.pending_url.clone().or_else(|| engine.url.clone());
+        let url = request_url
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or(fallback_url);
+        record_permission_event_locked(
+            &mut state,
+            BrowserPermissionRecordRequest {
+                task_id: engine.task_id,
+                browser_tab_id: engine.browser_tab_id,
+                permission_kind,
+                url,
+                user_initiated,
+                requires_approval: true,
+            },
+        )
+        .map(Some)
+    }
+}
+
+fn record_permission_event_locked(
+    state: &mut BrowserState,
+    request: BrowserPermissionRecordRequest,
+) -> Result<BrowserPermissionEvent, String> {
+    let permission_kind = normalize_browser_permission_kind(&request.permission_kind);
+    let task_id = request
+        .task_id
+        .as_deref()
+        .map(clean_string)
+        .filter(|value| !value.is_empty())
+        .or_else(|| state.active_task_id.clone());
+    if let Some(task_id) = task_id.as_deref() {
+        find_task_index(state, task_id)?;
+    }
+    let browser_tab_id = request
+        .browser_tab_id
+        .as_deref()
+        .map(clean_string)
+        .filter(|value| !value.is_empty())
+        .or_else(|| state.active_browser_tab_id.clone());
+    if let Some(browser_tab_id) = browser_tab_id.as_deref() {
+        find_tab_index(state, browser_tab_id)?;
+    }
+    let profile_id =
+        profile_id_for_task_or_tab(state, task_id.as_deref(), browser_tab_id.as_deref())
+            .or_else(|| state.engine.profile_id.clone());
+    let safe_parts = request
+        .url
+        .as_deref()
+        .map(safe_url_parts)
+        .or_else(|| state.engine.url.as_deref().map(safe_url_parts));
+    let origin = safe_parts.as_ref().and_then(|parts| parts.origin.clone());
+    let path = safe_parts.as_ref().and_then(|parts| parts.path.clone());
+    let permission_id = browser_id("browser-permission");
+    let created_at_ms = now_ms();
+    let receipt = push_receipt(
+        state,
+        "browserPermissionRequested",
+        task_id.clone(),
+        profile_id.clone(),
+        format!("Browser page requested {} permission", permission_kind),
+        json!({
+            "permissionId": permission_id,
+            "browserTabId": browser_tab_id,
+            "permissionKind": permission_kind,
+            "origin": origin,
+            "path": path,
+            "queryRetained": false,
+            "fragmentRetained": false,
+            "userInitiated": request.user_initiated,
+            "status": "pending",
+            "requiresApproval": request.requires_approval,
+        }),
+    );
+    let event = BrowserPermissionEvent {
+        permission_id,
+        task_id,
+        browser_tab_id,
+        profile_id,
+        permission_kind,
+        origin,
+        path,
+        query_retained: false,
+        fragment_retained: false,
+        user_initiated: request.user_initiated,
+        status: "pending".to_string(),
+        requires_approval: request.requires_approval,
+        created_at_ms,
+        resolved_at_ms: None,
+        receipt,
+    };
+    state.permissions.push(event.clone());
+    if state.permissions.len() > 500 {
+        let overflow = state.permissions.len() - 500;
+        state.permissions.drain(0..overflow);
+    }
+    Ok(event)
+}
+
+impl ShellxBrowserRegistry {
     pub fn resolve_permission_event(
         &self,
         request: BrowserPermissionResolveRequest,

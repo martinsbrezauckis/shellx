@@ -18,6 +18,16 @@ pub(super) struct ProviderCliHandoffTarget {
     pub(super) source: String,
 }
 
+pub(super) struct ProviderCliHandoffStartOptions<'a> {
+    pub(super) provider_id: &'a str,
+    pub(super) prompt: &'a str,
+    pub(super) timeout_ms: u64,
+    pub(super) persist_session: bool,
+    pub(super) resume: bool,
+    pub(super) permission_mode: &'a str,
+    pub(super) include_shellx_tooling: bool,
+}
+
 pub(super) async fn tool_send_prompt_to_provider(
     args: Value,
     tab_id: Option<&str>,
@@ -41,17 +51,54 @@ pub(super) async fn tool_send_prompt_to_provider(
     let persist_session =
         mcp_arg_bool(&args, "persistSession") || mcp_arg_bool(&args, "persist_session");
     let resume = mcp_arg_bool(&args, "resume");
+    // Generic coding-agent handoffs historically include ShellX tooling. Forward an
+    // explicit false so provider_sessions selects its existing `off` exposure mode.
+    let include_shellx_tooling = provider_handoff_include_shellx_tooling(&args);
 
+    let body = provider_cli_handoff_start_body(
+        &target,
+        ProviderCliHandoffStartOptions {
+            provider_id: &provider_id,
+            prompt: &prompt,
+            timeout_ms,
+            persist_session,
+            resume,
+            permission_mode: &permission_mode,
+            include_shellx_tooling,
+        },
+    );
+
+    let started = debug_api_post_json("/provider-sessions/start", &body, 15).await?;
+    Ok(json!({
+        "content": [{
+            "type": "text",
+            "text": format!("Provider session started: {} on ShellX tab {}", provider_id, target.tab_id)
+        }],
+        "structuredContent": {
+            "ok": true,
+            "providerId": provider_id,
+            "target": target,
+            "started": started,
+            "reason": mcp_arg_string(&args, &["reason", "auditReason", "audit_reason"]),
+        },
+        "isError": false
+    }))
+}
+
+pub(super) fn provider_cli_handoff_start_body(
+    target: &ProviderCliHandoffTarget,
+    options: ProviderCliHandoffStartOptions<'_>,
+) -> Value {
     let mut body = json!({
         "tabId": target.tab_id,
-        "providerId": provider_id,
+        "providerId": options.provider_id,
         "cwd": target.cwd,
-        "prompt": prompt,
-        "timeoutMs": timeout_ms,
-        "persistSession": persist_session,
-        "resume": resume,
-        "permissionMode": permission_mode,
-        "includeShellxTooling": true,
+        "prompt": options.prompt,
+        "timeoutMs": options.timeout_ms,
+        "persistSession": options.persist_session,
+        "resume": options.resume,
+        "permissionMode": options.permission_mode,
+        "includeShellxTooling": options.include_shellx_tooling,
         "transport": target.transport,
     });
     if let Some(obj) = body.as_object_mut() {
@@ -75,22 +122,11 @@ pub(super) async fn tool_send_prompt_to_provider(
             _ => {}
         }
     }
+    body
+}
 
-    let started = debug_api_post_json("/provider-sessions/start", &body, 15).await?;
-    Ok(json!({
-        "content": [{
-            "type": "text",
-            "text": format!("Provider session started: {} on ShellX tab {}", provider_id, target.tab_id)
-        }],
-        "structuredContent": {
-            "ok": true,
-            "providerId": provider_id,
-            "target": target,
-            "started": started,
-            "reason": mcp_arg_string(&args, &["reason", "auditReason", "audit_reason"]),
-        },
-        "isError": false
-    }))
+pub(super) fn provider_handoff_include_shellx_tooling(args: &Value) -> bool {
+    mcp_arg_optional_bool(args, &["includeShellxTooling", "include_shellx_tooling"]).unwrap_or(true)
 }
 
 pub(super) async fn resolve_provider_cli_handoff_target(

@@ -10,7 +10,7 @@ pub(super) fn browser_entry_tool_specs() -> Vec<Value> {
     vec![
         json!({
             "name": "browser_read",
-            "description": "Read or verify native ShellX Browser state through one token-bounded entry point. Common flow: action=tabs, then navigate with browser_act, then action=observe for refs. Observe defaults to a 3000-byte structured payload; action=evidence lists owned recorder/evaluation receipts. Use search_tool for uncommon exact fields.",
+            "description": "Read or verify native ShellX Browser state through one token-bounded entry point. Common flow: action=tabs, then navigate with browser_act, then action=observe for refs. Observe defaults to a 3000-byte structured payload; action=evidence lists owned recorder/evaluation receipts; action=developerInspect returns a 3072-byte sanitized developer summary for one owned task; action=teachDrafts returns owned Teach identities only. Use search_tool for uncommon exact fields.",
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": true,
@@ -34,7 +34,7 @@ pub(super) fn browser_entry_tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "browser_act",
-            "description": "Mutate the native ShellX Browser through one permission-gated entry point. Use action=navigate, observe with browser_read, then click/fill refs; runSteps batches a short sequence. Recorder export and evaluation use flightRecorderExport/evaluationWrite. Sensitive and artifact actions retain ShellX gates; use search_tool for exact fields.",
+            "description": "Mutate the native ShellX Browser through one permission-gated entry point. Use action=navigate, observe with browser_read, then click/fill refs; runSteps batches a short sequence. Recorder export and evaluation use flightRecorderExport/evaluationWrite; teachPrepare turns one complete owned attempt into a review draft. Sensitive and artifact actions retain ShellX gates; approval and apply are unavailable here.",
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": true,
@@ -68,15 +68,15 @@ pub(super) fn browser_tool_specs() -> Vec<Value> {
         // extraction, and actionability remain owned by /browser/*.
         json!({
             "name": "browser_state",
-            "description": "Read a bounded native ShellX Browser summary through `/browser/summary`. The default response stays under the Browser orientation budget and excludes prior observations, receipts, network, history, and console logs. Pass `include` only for the detail slices needed now; `observations` is explicit and potentially large. Agent flow: orient with browser_state/browser_tabs, use browser_navigate, then browser_observe for current-page refs. Do not save raw state JSON to the current working directory or user folders; use browser_trace_open for bounded evidence.",
+            "description": "Read a bounded, caller-scoped native ShellX Browser summary through `/browser/summary`. Agent calls receive only their authenticated Host MCP session's tasks, tabs, and Agent history; personal and other-agent state stays operator-only. Bookmarks expose only the deliberate Agent workflow catalog. The default response excludes prior observations, receipts, network, history, and console logs. Pass `include` only for the detail slices needed now; `observations` is explicit and potentially large. Agent flow: orient with browser_state/browser_tabs, use browser_navigate, then browser_observe for current-page refs. Do not save raw state JSON to the current working directory or user folders; use browser_trace_open for bounded evidence.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "include": {
                         "type": "array",
-                        "items": { "type": "string", "enum": ["tabs", "tasks", "profiles", "bookmarks", "history", "receipts", "network", "logs", "requests", "transfers", "settings", "observations"] },
-                        "maxItems": 12,
-                        "description": "Optional detail slices. Heavy history, receipts, network, logs, and observations are never returned unless named here."
+                        "items": { "type": "string", "enum": ["tabs", "tasks", "profiles", "bookmarks", "history", "receipts", "network", "logs", "requests", "transfers", "observations"] },
+                        "maxItems": 11,
+                        "description": "Optional detail slices. Agent history is caller-owned and bookmarks are Agent workflow entries only. Heavy receipts, network, logs, and observations are never returned unless named here."
                     },
                     "limit": { "type": "number", "minimum": 1, "maximum": 1000, "default": 100, "description": "Bound for list detail slices." }
                 }

@@ -81,13 +81,14 @@ pub use crate::shellx_browser_model::{
     BrowserEngineVisibilityState, BrowserEngineVisualCaptureState, BrowserEngineWaitlistEntry,
     BrowserEngineWaitlistSnapshot, BrowserFileTransferEntry, BrowserFindTextResult,
     BrowserFormField, BrowserHarArtifact, BrowserHarExportRequest, BrowserHistoryEntry,
-    BrowserLocatorRecoveryCandidate, BrowserLocatorSuggestion, BrowserNativeSecurityCapabilities,
-    BrowserNetworkEntry, BrowserNetworkPrivacyDecision, BrowserNetworkRecordRequest,
-    BrowserObservation, BrowserObservationDelta, BrowserObservationRef, BrowserPageSecurityState,
-    BrowserPendingRequestSummary, BrowserPerformanceArtifact, BrowserPerformanceExportRequest,
-    BrowserPermissionEvent, BrowserPermissionRecordRequest, BrowserPermissionResolveRequest,
-    BrowserPersonalLockAuthMode, BrowserPersonalLockSettings, BrowserPersonalLockUpdateRequest,
-    BrowserPopupEvent, BrowserPopupRecordRequest, BrowserPrivacySettings, BrowserPrivacyStats,
+    BrowserHistoryScope, BrowserLocatorRecoveryCandidate, BrowserLocatorSuggestion,
+    BrowserNativeSecurityCapabilities, BrowserNetworkEntry, BrowserNetworkPrivacyDecision,
+    BrowserNetworkRecordRequest, BrowserObservation, BrowserObservationDelta,
+    BrowserObservationRef, BrowserPageSecurityState, BrowserPendingRequestSummary,
+    BrowserPerformanceArtifact, BrowserPerformanceExportRequest, BrowserPermissionEvent,
+    BrowserPermissionRecordRequest, BrowserPermissionResolveRequest, BrowserPersonalLockAuthMode,
+    BrowserPersonalLockSettings, BrowserPersonalLockUpdateRequest, BrowserPopupEvent,
+    BrowserPopupRecordRequest, BrowserPrivacySettings, BrowserPrivacyStats,
     BrowserPrivacyUpdateRequest, BrowserProfile, BrowserProfilePrivacyMode, BrowserReceipt,
     BrowserRecipeArtifact, BrowserRecipeExportRequest, BrowserRecipeReplayRequest,
     BrowserRecipeReplayResponse, BrowserRecipeReplaySkippedStep, BrowserRecipeReplayStepResult,
@@ -234,6 +235,8 @@ pub(crate) struct BrowserState {
     pub(crate) network_retention_dropped: u64,
     pub(crate) protected_values: Vec<BrowserProtectedValue>,
     pub(crate) tab_observations: BTreeMap<String, BrowserObservation>,
+    pub(crate) teach_drafts: BTreeMap<String, crate::shellx_browser_teach::BrowserTeachDraftIndex>,
+    pub(crate) engine_event_bindings: BTreeMap<String, String>,
 }
 
 impl Default for BrowserState {
@@ -277,6 +280,8 @@ impl Default for BrowserState {
             network_retention_dropped: 0,
             protected_values: Vec::new(),
             tab_observations: BTreeMap::new(),
+            teach_drafts: BTreeMap::new(),
+            engine_event_bindings: BTreeMap::new(),
         }
     }
 }
@@ -287,7 +292,11 @@ pub struct ShellxBrowserRegistry {
     pub(crate) window_open_lock: Arc<AsyncMutex<()>>,
     pub(crate) engine_sync_lock: AsyncMutex<()>,
     pub(crate) engine_action_locks: Mutex<BTreeMap<String, Arc<AsyncMutex<()>>>>,
+    pub(crate) ephemeral_roots:
+        Mutex<crate::shellx_browser_ephemeral_roots::BrowserEphemeralRootLeases>,
     pub(crate) settings_path: Option<PathBuf>,
+    pub(crate) bookmark_store_path: Option<PathBuf>,
+    pub(crate) bookmark_store_error: Option<String>,
 }
 
 impl Default for ShellxBrowserRegistry {

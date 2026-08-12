@@ -79,6 +79,19 @@ fn engine_summary(engine: &crate::shellx_browser::BrowserEngineSnapshot) -> Brow
     }
 }
 
+pub(crate) fn browser_task_belongs_to_agent_session(
+    state: &BrowserState,
+    task_id: Option<&str>,
+    caller_session_id: &str,
+) -> bool {
+    let caller_session_id = caller_session_id.trim();
+    task_id.is_some_and(|task_id| {
+        state.tasks.iter().any(|task| {
+            task.task_id == task_id && task.owner_session_id.as_deref() == Some(caller_session_id)
+        })
+    })
+}
+
 fn engine_pool_snapshot(state: &BrowserState) -> BrowserEnginePoolSnapshot {
     let mut engine_pool = state.engine_pool.clone();
     engine_pool.waiting = engine_pool
@@ -399,12 +412,93 @@ impl ShellxBrowserRegistry {
         }
     }
 
+    /// Return only Browser orientation data owned by one authenticated Host
+    /// MCP session. The operator-facing Debug API omits the caller header and
+    /// continues to receive the complete local Browser registry.
+    pub fn summary_for_agent_session(&self, caller_session_id: &str) -> BrowserSummarySnapshot {
+        let caller_session_id = caller_session_id.trim();
+        let mut summary = self.summary();
+        let tasks = self
+            .tasks()
+            .into_iter()
+            .filter(|task| task.owner_session_id.as_deref() == Some(caller_session_id))
+            .collect::<Vec<_>>();
+        let task_ids = tasks
+            .iter()
+            .map(|task| task.task_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let tabs = self
+            .tabs()
+            .into_iter()
+            .filter(|tab| {
+                tab.task_id
+                    .as_deref()
+                    .is_some_and(|task_id| task_ids.contains(task_id))
+            })
+            .collect::<Vec<_>>();
+        let tab_ids = tabs
+            .iter()
+            .map(|tab| tab.browser_tab_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+
+        summary.active_task = summary
+            .active_task
+            .filter(|task| task_ids.contains(task.task_id.as_str()));
+        summary.active_tab = summary
+            .active_tab
+            .filter(|tab| tab_ids.contains(tab.browser_tab_id.as_str()));
+        summary.active_engine = summary.active_engine.filter(|engine| {
+            engine
+                .task_id
+                .as_deref()
+                .is_some_and(|task_id| task_ids.contains(task_id))
+        });
+        summary.pending_requests.retain(|request| {
+            request
+                .task_id
+                .as_deref()
+                .is_some_and(|task_id| task_ids.contains(task_id))
+        });
+        summary.counts.profiles = tasks
+            .iter()
+            .map(|task| task.profile_id.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        summary.counts.tabs = tabs.len();
+        summary.counts.tasks = tasks.len();
+        summary.counts.running_tasks = tasks.iter().filter(|task| task.status == "running").count();
+        summary.counts.bookmarks = 0;
+        summary.counts.history = self
+            .history_for_agent_session(caller_session_id, None)
+            .len();
+        summary.counts.receipts = 0;
+        summary.counts.console_logs = 0;
+        summary.counts.downloads = 0;
+        summary.counts.uploads = 0;
+        summary.counts.pending_requests = summary.pending_requests.len();
+        summary.counts.waiting_engines = 0;
+        summary.window_open = summary.window_open && !tabs.is_empty();
+        summary.personal_browser_locked = false;
+        summary.pending_start_url = None;
+        summary
+    }
+
     pub fn task_summaries(&self) -> Vec<BrowserTaskSummary> {
         let mut state = lock_or_recover(&self.state);
         crate::shellx_browser_tasks::repair_browser_task_invariants_locked(&mut state);
         let mut tasks = state.tasks.iter().map(task_summary).collect::<Vec<_>>();
         tasks.sort_by_key(|task| std::cmp::Reverse(task.updated_at_ms));
         tasks
+    }
+
+    pub fn task_summaries_for_agent_session(
+        &self,
+        caller_session_id: &str,
+    ) -> Vec<BrowserTaskSummary> {
+        self.task_summaries()
+            .into_iter()
+            .filter(|task| task.owner_session_id.as_deref() == Some(caller_session_id.trim()))
+            .collect()
     }
 
     pub fn task_details(&self, include_observations: bool) -> Vec<BrowserTaskSnapshot> {
@@ -416,6 +510,17 @@ impl ShellxBrowserRegistry {
             }
         }
         tasks
+    }
+
+    pub fn task_details_for_agent_session(
+        &self,
+        caller_session_id: &str,
+        include_observations: bool,
+    ) -> Vec<BrowserTaskSnapshot> {
+        self.task_details(include_observations)
+            .into_iter()
+            .filter(|task| task.owner_session_id.as_deref() == Some(caller_session_id.trim()))
+            .collect()
     }
 
     pub fn settle_state(
@@ -480,8 +585,52 @@ impl ShellxBrowserRegistry {
         lock_or_recover(&self.state).profiles.clone()
     }
 
+    pub fn profiles_for_agent_session(&self, caller_session_id: &str) -> Vec<BrowserProfile> {
+        let state = lock_or_recover(&self.state);
+        let profile_ids = state
+            .tasks
+            .iter()
+            .filter(|task| task.owner_session_id.as_deref() == Some(caller_session_id.trim()))
+            .map(|task| task.profile_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        state
+            .profiles
+            .iter()
+            .filter(|profile| {
+                profile.profile_id != "personal"
+                    && profile_ids.contains(profile.profile_id.as_str())
+            })
+            .cloned()
+            .map(|mut profile| {
+                profile.storage_root = None;
+                profile
+            })
+            .collect()
+    }
+
     pub fn tabs(&self) -> Vec<BrowserTabSnapshot> {
         lock_or_recover(&self.state).tabs.clone()
+    }
+
+    pub fn tabs_for_agent_session(&self, caller_session_id: &str) -> Vec<BrowserTabSnapshot> {
+        let caller_session_id = caller_session_id.trim();
+        let state = lock_or_recover(&self.state);
+        let task_ids = state
+            .tasks
+            .iter()
+            .filter(|task| task.owner_session_id.as_deref() == Some(caller_session_id))
+            .map(|task| task.task_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        state
+            .tabs
+            .iter()
+            .filter(|tab| {
+                tab.task_id
+                    .as_deref()
+                    .is_some_and(|task_id| task_ids.contains(task_id))
+            })
+            .cloned()
+            .collect()
     }
 
     pub fn privacy(&self) -> BrowserPrivacySettings {
@@ -500,11 +649,50 @@ impl ShellxBrowserRegistry {
         lock_or_recover(&self.state).downloads.clone()
     }
 
+    pub fn downloads_for_agent_session(
+        &self,
+        caller_session_id: &str,
+    ) -> Vec<BrowserFileTransferEntry> {
+        let state = lock_or_recover(&self.state);
+        state
+            .downloads
+            .iter()
+            .filter(|entry| {
+                browser_task_belongs_to_agent_session(
+                    &state,
+                    entry.task_id.as_deref(),
+                    caller_session_id,
+                )
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn uploads(&self) -> Vec<BrowserFileTransferEntry> {
         lock_or_recover(&self.state)
             .uploads
             .clone()
             .into_iter()
+            .map(crate::shellx_browser_transfer_privacy::public_upload_transfer_entry)
+            .collect()
+    }
+
+    pub fn uploads_for_agent_session(
+        &self,
+        caller_session_id: &str,
+    ) -> Vec<BrowserFileTransferEntry> {
+        let state = lock_or_recover(&self.state);
+        state
+            .uploads
+            .iter()
+            .filter(|entry| {
+                browser_task_belongs_to_agent_session(
+                    &state,
+                    entry.task_id.as_deref(),
+                    caller_session_id,
+                )
+            })
+            .cloned()
             .map(crate::shellx_browser_transfer_privacy::public_upload_transfer_entry)
             .collect()
     }
@@ -532,6 +720,36 @@ impl ShellxBrowserRegistry {
         history
     }
 
+    pub fn history_for_agent_session(
+        &self,
+        caller_session_id: &str,
+        limit: Option<usize>,
+    ) -> Vec<BrowserHistoryEntry> {
+        let caller_session_id = caller_session_id.trim();
+        let state = lock_or_recover(&self.state);
+        let task_ids = state
+            .tasks
+            .iter()
+            .filter(|task| task.owner_session_id.as_deref() == Some(caller_session_id))
+            .map(|task| task.task_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let mut history = state
+            .history
+            .iter()
+            .filter(|entry| {
+                entry
+                    .task_id
+                    .as_deref()
+                    .is_some_and(|task_id| task_ids.contains(task_id))
+                    && entry.profile_id != "personal"
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        history.sort_by_key(|entry| std::cmp::Reverse(entry.visited_at_ms));
+        history.truncate(limit.unwrap_or(500).min(2_000));
+        history
+    }
+
     pub fn session_grants(&self, limit: Option<usize>) -> Vec<BrowserSessionGrant> {
         let mut grants = lock_or_recover(&self.state).session_grants.clone();
         grants.sort_by_key(|grant| std::cmp::Reverse(grant.created_at_ms));
@@ -539,8 +757,54 @@ impl ShellxBrowserRegistry {
         grants
     }
 
+    pub fn session_grants_for_agent_session(
+        &self,
+        caller_session_id: &str,
+        limit: Option<usize>,
+    ) -> Vec<BrowserSessionGrant> {
+        let state = lock_or_recover(&self.state);
+        let mut grants = state
+            .session_grants
+            .iter()
+            .filter(|grant| {
+                browser_task_belongs_to_agent_session(
+                    &state,
+                    grant.task_id.as_deref(),
+                    caller_session_id,
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        grants.sort_by_key(|grant| std::cmp::Reverse(grant.created_at_ms));
+        grants.truncate(limit.unwrap_or(200).min(1_000));
+        grants
+    }
+
     pub fn vault_deposits(&self, limit: Option<usize>) -> Vec<BrowserVaultDepositResponse> {
         let mut deposits = lock_or_recover(&self.state).vault_deposits.clone();
+        deposits.sort_by_key(|deposit| std::cmp::Reverse(deposit.receipt.t));
+        deposits.truncate(limit.unwrap_or(200).min(1_000));
+        deposits
+    }
+
+    pub fn vault_deposits_for_agent_session(
+        &self,
+        caller_session_id: &str,
+        limit: Option<usize>,
+    ) -> Vec<BrowserVaultDepositResponse> {
+        let state = lock_or_recover(&self.state);
+        let mut deposits = state
+            .vault_deposits
+            .iter()
+            .filter(|deposit| {
+                browser_task_belongs_to_agent_session(
+                    &state,
+                    deposit.task_id.as_deref(),
+                    caller_session_id,
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         deposits.sort_by_key(|deposit| std::cmp::Reverse(deposit.receipt.t));
         deposits.truncate(limit.unwrap_or(200).min(1_000));
         deposits
@@ -554,6 +818,29 @@ impl ShellxBrowserRegistry {
         receipts
     }
 
+    pub fn receipts_for_agent_session(
+        &self,
+        caller_session_id: &str,
+        limit: Option<usize>,
+    ) -> Vec<BrowserReceipt> {
+        let state = lock_or_recover(&self.state);
+        let mut receipts = state
+            .receipts
+            .iter()
+            .filter(|receipt| {
+                browser_task_belongs_to_agent_session(
+                    &state,
+                    receipt.task_id.as_deref(),
+                    caller_session_id,
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        receipts.sort_by_key(|receipt| std::cmp::Reverse(receipt.t));
+        receipts.truncate(limit.unwrap_or(200).min(1_000));
+        receipts
+    }
+
     pub fn dialogs(&self, limit: Option<usize>) -> Vec<BrowserDialogEvent> {
         let mut dialogs = lock_or_recover(&self.state).dialogs.clone();
         dialogs.sort_by_key(|entry| entry.created_at_ms);
@@ -562,11 +849,57 @@ impl ShellxBrowserRegistry {
         dialogs
     }
 
+    pub fn dialogs_for_agent_session(
+        &self,
+        caller_session_id: &str,
+        limit: Option<usize>,
+    ) -> Vec<BrowserDialogEvent> {
+        let state = lock_or_recover(&self.state);
+        let mut dialogs = state
+            .dialogs
+            .iter()
+            .filter(|entry| {
+                browser_task_belongs_to_agent_session(
+                    &state,
+                    entry.task_id.as_deref(),
+                    caller_session_id,
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        dialogs.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_ms));
+        dialogs.truncate(limit.unwrap_or(200).min(1_000));
+        dialogs
+    }
+
     pub fn permissions(&self, limit: Option<usize>) -> Vec<BrowserPermissionEvent> {
         let mut permissions = lock_or_recover(&self.state).permissions.clone();
         permissions.sort_by_key(|entry| entry.created_at_ms);
         permissions.reverse();
         permissions.truncate(limit.unwrap_or(200).min(1000));
+        permissions
+    }
+
+    pub fn permissions_for_agent_session(
+        &self,
+        caller_session_id: &str,
+        limit: Option<usize>,
+    ) -> Vec<BrowserPermissionEvent> {
+        let state = lock_or_recover(&self.state);
+        let mut permissions = state
+            .permissions
+            .iter()
+            .filter(|entry| {
+                browser_task_belongs_to_agent_session(
+                    &state,
+                    entry.task_id.as_deref(),
+                    caller_session_id,
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        permissions.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_ms));
+        permissions.truncate(limit.unwrap_or(200).min(1_000));
         permissions
     }
 
@@ -583,6 +916,29 @@ impl ShellxBrowserRegistry {
         entries.sort_by_key(|entry| entry.t);
         entries.reverse();
         entries.truncate(limit.unwrap_or(200).min(1000));
+        entries
+    }
+
+    pub fn network_entries_for_agent_session(
+        &self,
+        caller_session_id: &str,
+        limit: Option<usize>,
+    ) -> Vec<BrowserNetworkEntry> {
+        let state = lock_or_recover(&self.state);
+        let mut entries = state
+            .network
+            .iter()
+            .filter(|entry| {
+                browser_task_belongs_to_agent_session(
+                    &state,
+                    entry.task_id.as_deref(),
+                    caller_session_id,
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.t));
+        entries.truncate(limit.unwrap_or(200).min(1_000));
         entries
     }
 

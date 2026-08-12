@@ -271,6 +271,9 @@ fn build_flight_selection(
             "source": FLIGHT_SOURCE,
             "shellxSurface": "browser",
             "ownerSessionBound": task.and_then(|task| task.owner_session_id.as_ref()).is_some(),
+            "ownerSessionId": task
+                .and_then(|task| task.owner_session_id.as_deref())
+                .unwrap_or("operator"),
         },
         "summary": {
             "task": task_summary,
@@ -390,13 +393,12 @@ fn resolve_flight_scope(
     let requested_tab = clean_optional_id(request.browser_tab_id.as_deref());
     let no_explicit_scope = requested_task.is_none() && requested_tab.is_none();
     let mut task_id = requested_task;
-    let browser_tab_id = requested_tab.or_else(|| {
-        no_explicit_scope
-            .then(|| state.active_browser_tab_id.clone())
-            .flatten()
-    });
+    let mut browser_tab_id = requested_tab;
     if no_explicit_scope {
         task_id = state.active_task_id.clone();
+        if task_id.is_none() {
+            browser_tab_id = state.active_browser_tab_id.clone();
+        }
     }
     if let Some(tab_id) = browser_tab_id.as_deref() {
         let tab = state
@@ -417,12 +419,42 @@ fn resolve_flight_scope(
             .iter()
             .find(|task| task.task_id == task_id)
             .ok_or_else(|| format!("browser task not found: {task_id}"))?;
+
+        if browser_tab_id.is_none() {
+            let owned_tabs = state
+                .tabs
+                .iter()
+                .filter(|tab| tab.task_id.as_deref() == Some(task_id))
+                .collect::<Vec<_>>();
+            browser_tab_id = state
+                .active_browser_tab_id
+                .as_deref()
+                .and_then(|active_tab_id| {
+                    owned_tabs
+                        .iter()
+                        .find(|tab| tab.browser_tab_id == active_tab_id)
+                        .map(|tab| tab.browser_tab_id.clone())
+                })
+                .or_else(|| (owned_tabs.len() == 1).then(|| owned_tabs[0].browser_tab_id.clone()));
+            if browser_tab_id.is_none() {
+                return Err(if owned_tabs.is_empty() {
+                    format!("Browser Flight Recorder task has no owned browser tab: {task_id}")
+                } else {
+                    "Browser Flight Recorder task owns multiple browser tabs; pass browserTabId or focus the intended tab"
+                        .to_string()
+                });
+            }
+        }
+
         if let Some(tab_id) = browser_tab_id.as_deref() {
             let tab = state
                 .tabs
                 .iter()
                 .find(|tab| tab.browser_tab_id == tab_id)
-                .expect("validated browser tab");
+                .ok_or_else(|| format!("browser tab not found: {tab_id}"))?;
+            if tab.task_id.as_deref() != Some(task_id) {
+                return Err("Browser Flight Recorder task/tab ownership mismatch".to_string());
+            }
             if tab.profile_id != task.profile_id {
                 return Err("Browser Flight Recorder task/tab profile mismatch".to_string());
             }
@@ -505,7 +537,7 @@ fn flight_events(
     }));
     events.extend(state.network.iter().filter_map(|entry| {
         if !optional_id_matches(entry.task_id.as_deref(), task_id)
-            || !optional_id_matches(entry.browser_tab_id.as_deref(), browser_tab_id)
+            || !optional_tab_id_matches(entry.browser_tab_id.as_deref(), task_id, browser_tab_id)
         {
             return None;
         }
@@ -547,13 +579,29 @@ fn receipt_matches(
     browser_tab_id: Option<&str>,
 ) -> bool {
     optional_id_matches(receipt.task_id.as_deref(), task_id)
-        && browser_tab_id
-            .map(|id| receipt.evidence.get("browserTabId").and_then(Value::as_str) == Some(id))
-            .unwrap_or(true)
+        && optional_tab_id_matches(
+            receipt.evidence.get("browserTabId").and_then(Value::as_str),
+            task_id,
+            browser_tab_id,
+        )
 }
 
 fn optional_id_matches(value: Option<&str>, requested: Option<&str>) -> bool {
     requested.map(|id| value == Some(id)).unwrap_or(true)
+}
+
+fn optional_tab_id_matches(
+    value: Option<&str>,
+    requested_task: Option<&str>,
+    requested_tab: Option<&str>,
+) -> bool {
+    requested_tab
+        .map(|id| {
+            value
+                .map(|value| value == id)
+                .unwrap_or(requested_task.is_some())
+        })
+        .unwrap_or(true)
 }
 
 fn event_sort_key(value: &Value) -> (u8, u64, i64, String, String) {
@@ -738,6 +786,9 @@ fn flight_lineage(
         "ownerActorId": task.map(|task| task.owner_actor_id.as_str()),
         "ownerSurface": task.map(|task| task.owner_surface.as_str()),
         "ownerSessionBound": task.and_then(|task| task.owner_session_id.as_ref()).is_some(),
+        "ownerSessionId": task
+            .and_then(|task| task.owner_session_id.as_deref())
+            .unwrap_or("operator"),
         "parentTaskId": Value::Null,
         "childTaskIds": Vec::<String>::new(),
         "handoffReceiptIds": ids_for(|kind| kind.contains("Handoff") || kind.contains("Delegated")),
@@ -809,75 +860,5 @@ fn clean_optional_id(value: Option<&str>) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shellx_browser::{lock_or_recover, push_receipt, StartBrowserTaskRequest};
-    use crate::shellx_browser_protected_values::{
-        register_browser_protected_value_locked, BROWSER_SECRET_REDACTION_PLACEHOLDER,
-    };
-
-    #[test]
-    fn agent_export_rejects_a_different_owner_session() {
-        let registry = ShellxBrowserRegistry::default();
-        let task = registry
-            .start_task_for_agent_session(
-                StartBrowserTaskRequest {
-                    goal: "owned flight".to_string(),
-                    ..StartBrowserTaskRequest::default()
-                },
-                Some("mcp-tab-a"),
-            )
-            .unwrap();
-        let error = registry
-            .export_flight_recorder_for_agent_session(
-                BrowserFlightRecorderExportRequest {
-                    task_id: Some(task.task_id),
-                    ..BrowserFlightRecorderExportRequest::default()
-                },
-                Some("mcp-tab-b"),
-            )
-            .unwrap_err();
-        assert!(error.contains("browser_task_owner_control_required"));
-    }
-
-    #[test]
-    fn flight_export_applies_registered_protected_values_to_the_final_bundle() {
-        let registry = ShellxBrowserRegistry::default();
-        let task = registry
-            .start_task(StartBrowserTaskRequest {
-                goal: "protected flight export".to_string(),
-                ..StartBrowserTaskRequest::default()
-            })
-            .unwrap();
-        let protected = "violet-zebra-compass";
-        {
-            let mut state = lock_or_recover(&registry.state);
-            register_browser_protected_value_locked(
-                &mut state,
-                &task.task_id,
-                protected,
-                "flight-recorder-test",
-            );
-            push_receipt(
-                &mut state,
-                "browserFixtureReceipt",
-                Some(task.task_id.clone()),
-                Some(task.profile_id.clone()),
-                format!("page label contains {protected}"),
-                json!({ "message": format!("unclassified field contains {protected}") }),
-            );
-        }
-
-        let artifact = registry
-            .export_flight_recorder(BrowserFlightRecorderExportRequest {
-                task_id: Some(task.task_id),
-                ..BrowserFlightRecorderExportRequest::default()
-            })
-            .unwrap();
-        let bytes = std::fs::read(&artifact.path).unwrap();
-        let text = String::from_utf8(bytes).unwrap();
-        assert!(!text.contains(protected));
-        assert!(text.contains(BROWSER_SECRET_REDACTION_PLACEHOLDER));
-        std::fs::remove_file(&artifact.path).unwrap();
-    }
-}
+#[path = "shellx_browser_flight_recorder_tests.rs"]
+mod tests;

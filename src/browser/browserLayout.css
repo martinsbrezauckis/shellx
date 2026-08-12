@@ -241,7 +241,7 @@
 .shellx-browser-toggle-row input {
   width: 16px;
   height: 16px;
-  accent-color: var(--accent);
+  accent-color: var(--shellx-browser-focus-ring);
 }
 .shellx-browser-shields-actions {
   display: grid;
@@ -267,8 +267,8 @@
   outline: none;
 }
 .shellx-browser-address-shell:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 34%, transparent);
+  border-color: var(--shellx-browser-focus-ring);
+  box-shadow: 0 0 0 2px var(--shellx-browser-focus-ring);
 }
 .shellx-browser-address-copy {
   width: 24px;
@@ -328,7 +328,7 @@
 }
 .shellx-browser-download-icon-status.pending {
   color: #f59e0b;
-  border-color: color-mix(in srgb, var(--accent) 44%, var(--hairline-2));
+  border-color: color-mix(in srgb, var(--warn) 44%, var(--hairline-2));
 }
 .shellx-browser-download-icon-status.done {
   color: var(--ok);
@@ -638,6 +638,8 @@
 }
 .shellx-browser-history-scope,
 .shellx-browser-history-filters,
+.shellx-browser-history-clear-status,
+.shellx-browser-history-actions,
 .shellx-browser-history-head .shellx-browser-utility-row,
 .shellx-browser-download-folder {
   grid-column: 1 / -1;
@@ -684,6 +686,96 @@
   padding: 0 8px;
   font: inherit;
   font-size: 12px;
+}
+.shellx-browser-history-clear-status {
+  border-left: 2px solid var(--shellx-browser-info-ink);
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+  padding: 4px 7px;
+}
+.shellx-browser-history-clear-status.error {
+  border-left-color: var(--err);
+  color: var(--err);
+}
+.shellx-browser-history-actions {
+  display: grid;
+  gap: 5px;
+}
+.shellx-browser-history-actions .shellx-browser-utility-row {
+  margin: 0;
+}
+.shellx-browser-history-clear-scope,
+.shellx-browser-history-clear-all,
+.shellx-browser-history-confirm-danger {
+  color: var(--err);
+}
+.shellx-browser-history-confirmation {
+  position: absolute;
+  inset: 8px;
+  z-index: 2;
+  min-width: 0;
+  align-self: stretch;
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-card);
+  padding: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+.shellx-browser-history-confirmation-topbar,
+.shellx-browser-history-confirmation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.shellx-browser-history-confirmation-topbar {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.shellx-browser-history-confirmation h3,
+.shellx-browser-history-confirmation p {
+  margin: 0;
+}
+.shellx-browser-history-confirmation h3 {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.shellx-browser-history-confirmation p {
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.4;
+}
+.shellx-browser-history-confirmation-category {
+  color: var(--ink-3) !important;
+  font-family: var(--mono);
+  font-size: 10px !important;
+}
+.shellx-browser-history-confirmation-actions {
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+.shellx-browser-history-confirmation-actions .shellx-browser-utility-row {
+  width: auto;
+  margin: 0;
+  text-align: center;
+}
+.shellx-browser-history-actions .shellx-browser-utility-row:focus-visible,
+.shellx-browser-history-confirmation-actions .shellx-browser-utility-row:focus-visible {
+  outline: 2px solid var(--shellx-browser-focus-ring);
+  outline-offset: 2px;
+}
+.shellx-browser-history-confirm-danger {
+  border-color: var(--err);
+}
+.shellx-browser-history-confirm-danger:hover {
+  background: var(--surface-2);
 }
 .shellx-browser-history-list {
   min-height: 0;

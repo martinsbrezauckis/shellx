@@ -1,12 +1,16 @@
-import { useEffect, useRef, type FormEvent, type JSX, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, type FormEvent, type JSX, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 
 import type { VaultApprovalPrompt } from "../../lib/vault-approval-prompts";
 import type { ShellIconName } from "../../components/icons";
 import { ShellIcon } from "../../components/icons";
 import type { BrowserConsoleLog, BrowserReceipt, BrowserTask, BrowserTransferEntry } from "../types";
 import type { BrowserCoworkMessage } from "../browserCowork";
-import { BrowserEvidencePanel } from "./BrowserEvidencePanel";
 import { VaultPromptCards } from "./VaultPromptCards";
+
+const BrowserEvidencePanel = lazy(async () => {
+  const module = await import("./BrowserEvidencePanel");
+  return { default: module.BrowserEvidencePanel };
+});
 
 export type AgentSidebarPanelId = "chat" | "requests" | "actions" | "evidence" | "errors";
 export type AgentSidebarSectionId = "tasks" | "console" | "receipts";
@@ -506,10 +510,23 @@ export function AgentSidebar({
         </section>
       )}
 
-      <BrowserEvidencePanel
-        open={rightPanelTab === "evidence"}
-        activeTaskId={activeTask?.taskId}
-      />
+      {rightPanelTab === "evidence" && (
+        <Suspense
+          fallback={(
+            <section
+              id="shellx-browser-panel-evidence"
+              role="tabpanel"
+              aria-labelledby="shellx-browser-right-tab-evidence"
+              className="shellx-browser-evidence-panel shellx-browser-scroll-panel"
+              aria-busy="true"
+            >
+              <div className="shellx-browser-empty-state">Loading Evidence…</div>
+            </section>
+          )}
+        >
+          <BrowserEvidencePanel open activeTaskId={activeTask?.taskId} />
+        </Suspense>
+      )}
 
       {rightPanelTab === "errors" && (
         <section id="shellx-browser-panel-errors" role="tabpanel" aria-labelledby="shellx-browser-right-tab-errors" className="shellx-browser-console shellx-browser-scroll-panel" data-debug-id="shellx-browser-console">

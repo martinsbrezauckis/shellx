@@ -7,34 +7,80 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
-## [0.3.51] - 2026-08-10
+## [0.3.52] - 2026-08-13
 
 ### Added
 
-- Release assets can include deterministic, sanitized CycloneDX SBOMs bound to
-  each artifact digest and the exact source commit. These SBOMs are dependency
-  inventories, not signed provenance attestations.
+- Browser Teach keeps the most recent complete Flight Recorder attempt
+  available after its task completes and turns it into a reviewable workflow
+  draft. Users can resolve ambiguity, select Vault key identities, save an
+  immutable revision, approve an Action Recipe without running it, and
+  rehearse it through the zero-action dry-run planner.
+- Browser Evidence includes a fixed native Developer Inspection for bounded
+  document, console, network, performance, and issue summaries, with separate
+  private HAR and performance exports.
+- Antigravity model guidance highlights native Gemini image generation and
+  keeps video routing capability-aware across supported providers.
 
 ### Improved
 
-- Large workspace, Browser, Settings, connection, setup, Vault, and operational
-  panels now load on demand. The interactive Terminal remains in the app and is
-  preloaded when the user signals intent to open it.
+- Browser tab handoff now opens a ShellX-owned review with the sanitized page
+  context, profile persistence, current owner, selected task, and separate
+  Vault boundary before the user confirms the transfer.
+- Browser Teach, Developer Inspection, Flight Recorder, forms, and keyboard
+  focus use a consistent compact hierarchy in light and dark themes, including
+  narrow right-panel layouts.
+
+### Fixed
+
+- Task Disposable Browser profiles start each new task without cookies,
+  local storage, or IndexedDB data left by a previous task, and safely finish
+  cleanup after native tabs close.
+- Browser bookmarks and workflow bookmarks survive application restarts.
+  Clear History now applies only to the selected User, Agent, or confirmed All
+  scope.
+- Windows Browser keeps Microsoft Defender SmartScreen active while applying
+  ShellX privacy and download controls.
+- Browser reads, tab actions, and Vault-assisted page actions stay bound to the
+  exact owning agent task and tab.
+- Debug API credentials remain stable for the running app and fail clearly if
+  their protected descriptor cannot be persisted, avoiding self-inflicted 401
+  errors.
+- Windows provider launchers preserve literal prompt characters when a CLI is
+  installed through a command shim.
+
+## [0.3.51] - 2026-08-10
+
+### Improved
+
+- Large Workspace, Browser, Settings, Connections, setup, Vault, and operational
+  panels now open with less startup work. The interactive Terminal remains in
+  the app and is preloaded when the user signals intent to open it.
 - Plan, Preview, Vault Request Center, Vault status, transcript, and native
-  event refreshes share bounded schedulers or batched updates, reducing idle
-  backend traffic and duplicate renderer work.
+  event refreshes do less duplicate work, improving responsiveness during long
+  sessions and while the app is idle.
 - Browser Workflows, native form controls, connection status, and neighboring
   light/dark surfaces use the established compact ShellX hierarchy and clearer
   recovery states.
 - The Agent CLI setup action now opens the environment-aware setup assistant
   and refreshes provider discovery for the active Local, WSL, or SSH target.
-- Runtime stream buffers and process drains use bounded heap ownership, while
-  provider and Debug API contracts are split from operational clients to keep
-  startup bundles smaller.
+- Telegram and Discord Session chat can route bounded replies through supported
+  Codex, Claude, Antigravity, and Grok sessions instead of treating
+  provider-only tabs as disconnected.
+- Long-running provider sessions retain bounded output and drain process streams
+  more reliably.
 
 ### Fixed
 
-- Bugfixes.
+- Recovery after a missed Debug UI event preserves whether the requested state
+  belongs to the main app or ShellX Browser.
+- The Projects rail keeps its add-project control visible and clickable at
+  narrow widths, preserves an immediate expand/collapse action, and waits for
+  saved project state before rendering it.
+- Rapidly changing preview or search input no longer lets an older asynchronous
+  result replace the current file state.
+- Host filesystem tools resolve permitted WSL UNC paths against the correct
+  containment boundary.
 
 ## [0.3.5] - 2026-08-09
 

@@ -3,11 +3,12 @@ use app_lib::shellx_browser::{
     BrowserBookmarkKind, BrowserBookmarkUpsertRequest, BrowserClearHistoryRequest,
     BrowserConsoleLogRequest, BrowserDeveloperModeApprovalRequest,
     BrowserDeveloperModeUpdateRequest, BrowserDialogRecordRequest, BrowserDialogResolveRequest,
-    BrowserDomSummary, BrowserDownloadRequest, BrowserObservation, BrowserPermissionRecordRequest,
-    BrowserPermissionResolveRequest, BrowserPrivacyUpdateRequest, BrowserSessionGrantApplyRequest,
-    BrowserSessionGrantRequest, BrowserSessionGrantResolveRequest, BrowserShieldUpdateRequest,
-    BrowserSiteShieldOverrideRequest, BrowserSiteShieldRemoveRequest, BrowserTabHeartbeatRequest,
-    BrowserTabLockRequest, BrowserTabUnlockRequest, BrowserTaskAutonomyUpdateRequest,
+    BrowserDomSummary, BrowserDownloadRequest, BrowserHistoryScope, BrowserObservation,
+    BrowserPermissionRecordRequest, BrowserPermissionResolveRequest, BrowserPrivacyUpdateRequest,
+    BrowserSessionGrantApplyRequest, BrowserSessionGrantRequest, BrowserSessionGrantResolveRequest,
+    BrowserShieldUpdateRequest, BrowserSiteShieldOverrideRequest, BrowserSiteShieldRemoveRequest,
+    BrowserTabDelegateRequest, BrowserTabHeartbeatRequest, BrowserTabLockRequest,
+    BrowserTabOpenRequest, BrowserTabUnlockRequest, BrowserTaskAutonomyUpdateRequest,
     BrowserTaskControlRequest, BrowserTransferApprovalRequest, BrowserTransferCompleteRequest,
     BrowserUploadRequest, BrowserVaultCredentialRequest, ShellxBrowserRegistry,
     StartBrowserTaskRequest, BROWSER_ENGINE_WEBVIEW_LABEL,
@@ -40,6 +41,10 @@ fn browser_registry_starts_with_small_owned_profile_set() {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("agent-work")));
+    assert!(state
+        .profiles
+        .iter()
+        .any(|profile| profile.profile_id == "task-disposable" && profile.storage_root.is_none()));
 }
 
 #[test]
@@ -749,11 +754,24 @@ fn browser_privacy_modes_and_profile_storage_are_exposed() {
         "platformDefaultChromiumWebView"
     );
     assert!(!state.privacy.exposes_shellx_identity);
-    assert!(state.profiles.iter().all(|profile| profile
-        .storage_root
-        .as_deref()
-        .unwrap_or("")
-        .contains(".shellx")));
+    assert!(state
+        .profiles
+        .iter()
+        .filter(|profile| profile.persistent)
+        .all(|profile| profile
+            .storage_root
+            .as_deref()
+            .unwrap_or("")
+            .contains(".shellx")));
+    let disposable_manifest = registry
+        .storage_state_manifests(Some("task-disposable"))
+        .expect("task-disposable manifest")
+        .into_iter()
+        .next()
+        .expect("one manifest");
+    assert_eq!(disposable_manifest.profile_id, "task-disposable");
+    assert_eq!(disposable_manifest.retention_policy, "taskScopedEphemeral");
+    assert!(disposable_manifest.storage_root.is_none());
 
     let denied = registry
         .update_privacy(BrowserPrivacyUpdateRequest {
@@ -1237,6 +1255,7 @@ fn browser_history_and_bookmark_current_track_real_navigation() {
     assert_eq!(registry.state().history.len(), 2);
 
     let clear_receipt = registry.clear_history(BrowserClearHistoryRequest {
+        scope: BrowserHistoryScope::All,
         operator_approved: true,
     });
     assert!(clear_receipt.is_ok());
@@ -1269,6 +1288,7 @@ fn browser_clear_history_markers_are_internal() {
     assert_eq!(registry.state().history.len(), 2);
 
     let forged_request: BrowserClearHistoryRequest = serde_json::from_value(serde_json::json!({
+        "scope": "all",
         "operatorApproved": true
     }))
     .expect("forged request should parse");
@@ -1284,11 +1304,122 @@ fn browser_clear_history_markers_are_internal() {
 
     let receipt = registry
         .clear_history(BrowserClearHistoryRequest {
+            scope: BrowserHistoryScope::All,
             operator_approved: true,
         })
         .expect("operator-approved clear-history should succeed");
     assert_eq!(receipt.kind, "browserHistoryCleared");
     assert!(registry.state().history.is_empty());
+}
+
+#[test]
+fn browser_clear_history_user_scope_preserves_agent_history() {
+    let registry = browser_history_scope_fixture();
+
+    let receipt = registry
+        .clear_history(BrowserClearHistoryRequest {
+            scope: BrowserHistoryScope::User,
+            operator_approved: true,
+        })
+        .expect("operator-approved User history clear should succeed");
+
+    assert_eq!(receipt.evidence["scope"], serde_json::json!("user"));
+    assert_eq!(receipt.evidence["removed"], serde_json::json!(1));
+    let state = registry.state();
+    assert_eq!(state.history.len(), 2);
+    assert!(state.history.iter().all(|entry| {
+        BrowserHistoryScope::classify(&entry.profile_id, entry.task_id.as_deref())
+            == BrowserHistoryScope::Agent
+    }));
+    assert!(state.history.iter().all(|entry| entry.task_id.is_some()));
+    assert!(state
+        .history
+        .iter()
+        .any(|entry| entry.url == "https://example.com/personal-task"));
+}
+
+#[test]
+fn browser_clear_history_agent_scope_preserves_user_history() {
+    let registry = browser_history_scope_fixture();
+
+    let receipt = registry
+        .clear_history(BrowserClearHistoryRequest {
+            scope: BrowserHistoryScope::Agent,
+            operator_approved: true,
+        })
+        .expect("operator-approved Agent history clear should succeed");
+
+    assert_eq!(receipt.evidence["scope"], serde_json::json!("agent"));
+    assert_eq!(receipt.evidence["removed"], serde_json::json!(2));
+    let state = registry.state();
+    assert_eq!(state.history.len(), 1);
+    assert_eq!(state.history[0].profile_id, "personal");
+    assert!(state.history[0].task_id.is_none());
+}
+
+#[test]
+fn browser_clear_history_all_scope_removes_mixed_history() {
+    let registry = browser_history_scope_fixture();
+
+    let receipt = registry
+        .clear_history(BrowserClearHistoryRequest {
+            scope: BrowserHistoryScope::All,
+            operator_approved: true,
+        })
+        .expect("operator-approved all-history clear should succeed");
+
+    assert_eq!(receipt.evidence["scope"], serde_json::json!("all"));
+    assert_eq!(receipt.evidence["removed"], serde_json::json!(3));
+    assert!(registry.state().history.is_empty());
+}
+
+fn browser_history_scope_fixture() -> ShellxBrowserRegistry {
+    let registry = ShellxBrowserRegistry::default();
+    let personal_tab = registry
+        .open_tab(BrowserTabOpenRequest {
+            profile_id: Some("personal".to_string()),
+            ..BrowserTabOpenRequest::default()
+        })
+        .expect("Personal tab should open");
+    registry
+        .apply_action(BrowserActionRequest {
+            browser_tab_id: Some(personal_tab.tab.browser_tab_id.clone()),
+            action: "navigate".to_string(),
+            url: Some("https://example.com/personal".to_string()),
+            ..BrowserActionRequest::default()
+        })
+        .expect("Personal navigation should add User history");
+    let agent_task = registry
+        .start_task(StartBrowserTaskRequest {
+            goal: "Agent Work and delegated Personal history remain Agent history".to_string(),
+            start_url: Some("https://example.com/agent".to_string()),
+            profile_id: Some("agent-work".to_string()),
+            autonomy: Some(BrowserAutonomyMode::AssistedAutonomous),
+            expected_domains: Some(vec!["example.com".to_string()]),
+            ..StartBrowserTaskRequest::default()
+        })
+        .expect("Agent Work task should add Agent history");
+    let delegated = registry
+        .delegate_tab_to_agent(BrowserTabDelegateRequest {
+            browser_tab_id: personal_tab.tab.browser_tab_id,
+            task_id: agent_task.task_id.clone(),
+            reason: Some("history scope fixture".to_string()),
+            operator_approved: true,
+            ..BrowserTabDelegateRequest::default()
+        })
+        .expect("Personal tab should be handed to the agent task")
+        .tab;
+    registry
+        .apply_action(BrowserActionRequest {
+            task_id: Some(agent_task.task_id),
+            browser_tab_id: Some(delegated.browser_tab_id),
+            action: "navigate".to_string(),
+            url: Some("https://example.com/personal-task".to_string()),
+            ..BrowserActionRequest::default()
+        })
+        .expect("Delegated Personal navigation should add task-owned Agent history");
+    assert_eq!(registry.state().history.len(), 3);
+    registry
 }
 
 #[test]

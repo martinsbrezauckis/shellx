@@ -26,6 +26,22 @@ use crate::shellx_browser_tabs::find_tab_index;
 use crate::shellx_browser_tasks::{find_task_index, resolve_task_id};
 
 impl ShellxBrowserRegistry {
+    pub(crate) fn begin_engine_event_binding(&self, engine_id: &str) -> String {
+        let engine_id = clean_string(engine_id);
+        let binding = crate::shellx_browser::browser_id("browser-engine-events");
+        lock_or_recover(&self.state)
+            .engine_event_bindings
+            .insert(engine_id, binding.clone());
+        binding
+    }
+
+    pub(crate) fn engine_event_binding_is_current(&self, engine_id: &str, binding: &str) -> bool {
+        lock_or_recover(&self.state)
+            .engine_event_bindings
+            .get(&clean_string(engine_id))
+            .is_some_and(|current| current == binding)
+    }
+
     pub fn normalize_engine_sync_request(
         &self,
         mut request: BrowserEngineSyncRequest,
@@ -238,7 +254,9 @@ impl ShellxBrowserRegistry {
                 tab.engine_id = snapshot.engine_id.clone();
                 tab.engine_webview_label = Some(snapshot.webview_label.clone());
                 tab.engine_state = BrowserEngineTabState::Live;
-                tab.storage_root = Some(browser_profile_storage_root(&profile_id));
+                if profile_id != "task-disposable" {
+                    tab.storage_root = Some(browser_profile_storage_root(&profile_id));
+                }
                 tab.updated_at_ms = engine_updated_at_ms;
             }
         }
@@ -316,8 +334,43 @@ impl ShellxBrowserRegistry {
         url: String,
         event: PageLoadEvent,
     ) -> BrowserEngineSnapshot {
+        self.record_engine_load_for_engine_inner(engine_id, None, url, event)
+    }
+
+    pub(crate) fn record_bound_engine_load(
+        &self,
+        engine_id: &str,
+        event_binding: &str,
+        url: String,
+        event: PageLoadEvent,
+    ) -> BrowserEngineSnapshot {
+        self.record_engine_load_for_engine_inner(engine_id, Some(event_binding), url, event)
+    }
+
+    fn record_engine_load_for_engine_inner(
+        &self,
+        engine_id: &str,
+        event_binding: Option<&str>,
+        url: String,
+        event: PageLoadEvent,
+    ) -> BrowserEngineSnapshot {
         let engine_id = clean_string(engine_id);
         let mut state = lock_or_recover(&self.state);
+        if event_binding.is_some_and(|binding| {
+            state
+                .engine_event_bindings
+                .get(&engine_id)
+                .map(String::as_str)
+                != Some(binding)
+        }) {
+            return state
+                .engine_pool
+                .engines
+                .iter()
+                .find(|engine| engine.engine_id == engine_id)
+                .cloned()
+                .unwrap_or_else(|| state.engine.clone());
+        }
         let url = clean_string(url);
         let engine_idx = state
             .engine_pool
@@ -568,8 +621,41 @@ impl ShellxBrowserRegistry {
         engine_id: &str,
         title: String,
     ) -> BrowserEngineSnapshot {
+        self.record_engine_title_for_engine_inner(engine_id, None, title)
+    }
+
+    pub(crate) fn record_bound_engine_title(
+        &self,
+        engine_id: &str,
+        event_binding: &str,
+        title: String,
+    ) -> BrowserEngineSnapshot {
+        self.record_engine_title_for_engine_inner(engine_id, Some(event_binding), title)
+    }
+
+    fn record_engine_title_for_engine_inner(
+        &self,
+        engine_id: &str,
+        event_binding: Option<&str>,
+        title: String,
+    ) -> BrowserEngineSnapshot {
         let engine_id = clean_string(engine_id);
         let mut state = lock_or_recover(&self.state);
+        if event_binding.is_some_and(|binding| {
+            state
+                .engine_event_bindings
+                .get(&engine_id)
+                .map(String::as_str)
+                != Some(binding)
+        }) {
+            return state
+                .engine_pool
+                .engines
+                .iter()
+                .find(|engine| engine.engine_id == engine_id)
+                .cloned()
+                .unwrap_or_else(|| state.engine.clone());
+        }
         let engine_idx = state
             .engine_pool
             .engines

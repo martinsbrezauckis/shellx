@@ -166,35 +166,14 @@ impl ShellxBrowserRegistry {
                         .unwrap_or_else(|| {
                             crate::shellx_browser_bookmarks::bookmark_label_for_url(&url)
                         });
-                    let now = now_ms();
-                    if let Some(existing) = state
-                        .bookmarks
-                        .iter_mut()
-                        .find(|item| item.url.as_deref() == Some(url.as_str()))
-                    {
-                        existing.label = label.clone();
-                        existing.category = "saved".to_string();
-                        existing.kind = BrowserBookmarkKind::Link;
-                        existing.updated_at_ms = now;
-                    } else {
-                        state.bookmarks.insert(
-                            0,
-                            BrowserBookmark {
-                                bookmark_id: browser_id("browser-bookmark"),
-                                label: label.clone(),
-                                url: Some(url.clone()),
-                                category: "saved".to_string(),
-                                kind: BrowserBookmarkKind::Link,
-                                parent_id: None,
-                                toolbar_pinned: false,
-                                toolbar_order: None,
-                                agent_workflow: None,
-                                created_at_ms: now,
-                                updated_at_ms: now,
-                            },
-                        );
-                    }
-                    state.bookmarks.truncate(100);
+                    let mut bookmarks = state.bookmarks.clone();
+                    crate::shellx_browser_bookmarks::save_current_browser_bookmark(
+                        &mut bookmarks,
+                        &url,
+                        &label,
+                    );
+                    let bookmarks = self.persist_browser_bookmarks(bookmarks)?;
+                    state.bookmarks = bookmarks;
                     let receipt = push_receipt(
                         &mut state,
                         "browserBookmarkSaved",
@@ -406,35 +385,14 @@ impl ShellxBrowserRegistry {
                     .unwrap_or_else(|| {
                         crate::shellx_browser_bookmarks::bookmark_label_for_url(&url)
                     });
-                let now = now_ms();
-                if let Some(existing) = state
-                    .bookmarks
-                    .iter_mut()
-                    .find(|item| item.url.as_deref() == Some(url.as_str()))
-                {
-                    existing.label = label.clone();
-                    existing.category = "saved".to_string();
-                    existing.kind = BrowserBookmarkKind::Link;
-                    existing.updated_at_ms = now;
-                } else {
-                    state.bookmarks.insert(
-                        0,
-                        BrowserBookmark {
-                            bookmark_id: browser_id("browser-bookmark"),
-                            label: label.clone(),
-                            url: Some(url.clone()),
-                            category: "saved".to_string(),
-                            kind: BrowserBookmarkKind::Link,
-                            parent_id: None,
-                            toolbar_pinned: false,
-                            toolbar_order: None,
-                            agent_workflow: None,
-                            created_at_ms: now,
-                            updated_at_ms: now,
-                        },
-                    );
-                }
-                state.bookmarks.truncate(100);
+                let mut bookmarks = state.bookmarks.clone();
+                crate::shellx_browser_bookmarks::save_current_browser_bookmark(
+                    &mut bookmarks,
+                    &url,
+                    &label,
+                );
+                let bookmarks = self.persist_browser_bookmarks(bookmarks)?;
+                state.bookmarks = bookmarks;
                 let task = state.tasks[idx].clone();
                 let receipt = push_receipt(
                     &mut state,

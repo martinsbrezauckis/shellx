@@ -1,9 +1,9 @@
 # shellX CI — pre-merge checks
 #
 # Runs on every push + pull request against any branch. Gates:
-# - Strict TypeScript type-check (including unused-symbol rejection)
+# - Strict TypeScript type-check and the production Vite bundle
 # - Complete 1,636-surface source/driver contract on Linux, Windows, and macOS
-# - Rust test/lint/format suite on macOS
+# - Rust test/lint/format suite on macOS and Linux-native check/test coverage
 # - Rust Windows test suite
 # - Dependency audit (cargo audit + complete pnpm lockfile audit)
 #
@@ -38,6 +38,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Strict TypeScript type-check
         run: pnpm run typecheck
+      - name: Build production frontend bundle
+        run: pnpm build
       - name: Audit complete dependency lockfile
         run: pnpm run audit:dependencies
 
@@ -113,6 +115,55 @@ jobs:
       - name: cargo test --all-targets --features debug-api,windows-test-manifest
         working-directory: src-tauri
         run: cargo test --all-targets --features debug-api,windows-test-manifest
+
+  rust-linux-native:
+    name: Rust Linux native (check + test)
+    # Pin the runner release and explicit native packages so WebKitGTK coverage
+    # does not depend on the mutable ubuntu-latest image.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      # Cache only Cargo outputs; source and system dependencies are restored
+      # every run so the native compile remains a real integration gate.
+      - name: Rust cache
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ./src-tauri -> target
+      - name: Install pinned Linux native build dependencies
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Dpkg::Use-Pty=0 -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - name: Install fake grok shim
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-grok"
+          cat > "$RUNNER_TEMP/fake-grok/grok" <<'EOF'
+          #!/usr/bin/env bash
+          if [[ "${1:-}" == "--version" ]]; then
+            echo "grok fake-ci"
+            exit 0
+          fi
+          echo "fake grok shim for CI" >&2
+          exit 0
+          EOF
+          chmod +x "$RUNNER_TEMP/fake-grok/grok"
+          echo "GROK_BIN=$RUNNER_TEMP/fake-grok/grok" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/fake-grok" >> "$GITHUB_PATH"
+      - name: cargo check --all-targets --features debug-api
+        working-directory: src-tauri
+        run: cargo check --all-targets --features debug-api
+      - name: cargo test --all-targets --features debug-api
+        working-directory: src-tauri
+        run: cargo test --all-targets --features debug-api
 
   audit:
     name: Rust dependency audit

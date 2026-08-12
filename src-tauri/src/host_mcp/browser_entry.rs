@@ -15,6 +15,8 @@ pub(super) const BROWSER_READ_ACTIONS: &[&str] = &[
     "verify",
     "downloads",
     "evidence",
+    "developerInspect",
+    "teachDrafts",
 ];
 
 pub(super) const BROWSER_ACT_ACTIONS: &[&str] = &[
@@ -38,6 +40,7 @@ pub(super) const BROWSER_ACT_ACTIONS: &[&str] = &[
     "traceOpen",
     "flightRecorderExport",
     "evaluationWrite",
+    "teachPrepare",
 ];
 
 fn browser_entry_action_is_write(action: &str) -> Option<bool> {
@@ -55,6 +58,8 @@ fn browser_entry_action_is_write(action: &str) -> Option<bool> {
             | "verify"
             | "downloads"
             | "evidence"
+            | "developerinspect"
+            | "teachdrafts"
     ) {
         Some(false)
     } else if matches!(
@@ -80,6 +85,7 @@ fn browser_entry_action_is_write(action: &str) -> Option<bool> {
             | "traceopen"
             | "flightrecorderexport"
             | "evaluationwrite"
+            | "teachprepare"
     ) {
         Some(true)
     } else {
@@ -115,18 +121,20 @@ pub(super) async fn tool_browser_read(
         ));
     }
     match action.as_str() {
-        "state" => tool_browser_state(args).await,
-        "tabs" => tool_browser_tabs().await,
-        "locks" => tool_browser_locks().await,
-        "check" => tool_browser_check(args).await,
+        "state" => tool_browser_state(args, caller_session_id).await,
+        "tabs" => tool_browser_tabs(caller_session_id).await,
+        "locks" => tool_browser_locks(caller_session_id).await,
+        "check" => tool_browser_check(args, caller_session_id).await,
         "renderedcheck" => tool_browser_rendered_check(args, caller_session_id).await,
         "observe" => tool_browser_action("observe", args, caller_session_id).await,
-        "workflows" => tool_browser_workflows(args).await,
+        "workflows" => tool_browser_workflows(args, caller_session_id).await,
         "waitfor" => tool_browser_action("waitFor", args, caller_session_id).await,
         "extract" => tool_browser_extract(args, caller_session_id).await,
         "verify" => tool_browser_action("verify", args, caller_session_id).await,
-        "downloads" => tool_browser_downloads().await,
+        "downloads" => tool_browser_downloads(caller_session_id).await,
         "evidence" => tool_browser_evidence(args, caller_session_id).await,
+        "developerinspect" => tool_browser_developer_inspect(args, caller_session_id).await,
+        "teachdrafts" => tool_browser_teach_drafts(args, caller_session_id).await,
         _ => unreachable!("browser_read class table and dispatcher must stay synchronized"),
     }
 }
@@ -173,6 +181,7 @@ pub(super) async fn tool_browser_act(
             tool_browser_flight_recorder_export(args, caller_session_id).await
         }
         "evaluationwrite" => tool_browser_evaluation_write(args, caller_session_id).await,
+        "teachprepare" => tool_browser_teach_prepare(args, caller_session_id).await,
         _ => unreachable!("browser_act class table and dispatcher must stay synchronized"),
     }
 }

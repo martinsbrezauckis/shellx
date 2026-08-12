@@ -8,6 +8,7 @@ mod filesystem;
 mod media_wire;
 mod network_tools;
 mod provider_handoff;
+mod security_boundaries;
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     crate::test_env_lock()

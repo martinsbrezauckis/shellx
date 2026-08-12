@@ -73,11 +73,13 @@ mod browser_output;
 mod browser_recovery;
 mod browser_specs;
 mod browser_state;
+mod browser_teach;
 mod browser_workflow;
 mod browser_workflow_catalog;
 mod build_completion;
 mod build_receipts;
 mod build_tools;
+mod cut_mcp;
 mod debug_client;
 mod filesystem_core;
 mod filesystem_grep;
@@ -106,9 +108,9 @@ use browser_action::{
     tool_browser_extract,
 };
 use browser_artifacts::{
-    tool_browser_downloads, tool_browser_evaluation_write, tool_browser_evidence,
-    tool_browser_flight_recorder_export, tool_browser_resolve_dialog, tool_browser_save_page,
-    tool_browser_trace_open,
+    tool_browser_developer_inspect, tool_browser_downloads, tool_browser_evaluation_write,
+    tool_browser_evidence, tool_browser_flight_recorder_export, tool_browser_resolve_dialog,
+    tool_browser_save_page, tool_browser_trace_open,
 };
 use browser_batch::tool_browser_run_steps;
 #[cfg(test)]
@@ -135,6 +137,7 @@ use browser_state::{
     browser_mcp_navigation_response_should_wait, browser_mcp_wait_for_navigation_settle,
     tool_browser_check, tool_browser_rendered_check, tool_browser_state,
 };
+use browser_teach::{tool_browser_teach_drafts, tool_browser_teach_prepare};
 #[cfg(test)]
 use browser_workflow::{
     browser_workflow_apply_contract_block_reason, browser_workflow_contract_apply_block_reason,
@@ -151,6 +154,7 @@ use browser_workflow_catalog::{
 use build_completion::*;
 use build_receipts::*;
 use build_tools::*;
+use cut_mcp::{cut_entry_tool_specs, tool_cut_act, tool_cut_read};
 use debug_client::*;
 use filesystem_core::*;
 pub(crate) use filesystem_core::{
@@ -389,6 +393,9 @@ pub(crate) const WRITE_CLASS_TOOLS: &[&str] = &[
     "send_prompt_to_provider",
     // Browser tools that mutate page state or write trace artifacts.
     "browser_act",
+    // ShellX Cut does not yet publish read/mutation annotations in tools/list,
+    // so every exact verb call stays behind the per-tab permission gate.
+    "cut_act",
     "browser_navigate",
     "browser_click_ref",
     "browser_click_at",
@@ -762,6 +769,7 @@ shellX-host MCP quick map:
 - Shell work: discover `Agent`/status/output/poll schemas, then route them through `host_act`/`host_read`; native `task`, `run_terminal_command`, and `monitor` are not reliable in shellX ACP.
 - Status and routing: use targeted `search_tool`, then `host_read`; user-approved provider handoffs, filesystem/process mutations, external calls, and build/preview mutations use `host_act`. Never fall back to another provider without user approval.
 - Browser: use `browser_read action=tabs`, `browser_act action=navigate`, then `browser_read action=observe` for stable refs. Observe is token-budgeted; use `browser_read action=extract` for page content. Prefer ref actions, use coordinate actions only after screenshot evidence, and use Browser/Vault actions for secrets rather than raw reveal. Use `browser_act action=runSteps` for a short planned generic batch. For repeatable attempt evidence use `browser_act action=flightRecorderExport`, `browser_act action=evaluationWrite`, and scoped `browser_read action=evidence`. Call `search_tool query=browser_<legacy-name>` only for uncommon exact fields; compatibility aliases remain callable but are not advertised. Do not dump raw `/browser/state` or observation JSON into the current working directory or user folders; use bounded ShellX artifacts.
+- Video editing: use `cut_read action=status`, then `cut_read action=search` and `action=schema` to discover one exact ShellX Cut verb. Call it through permission-gated `cut_act`. ShellX keeps Cut's full tool catalog out of the default prompt; never guess argument fields or bypass Cut receipts.
 - Attached images: call HTTP `vision_describe` with the path; do not use `read_file` on PNG/JPEG/WebP/GIF/BMP bytes.
 - Other Host tools remain callable behind the gateways: `mem_*`=cross-tab memory; raw Vault reveal is denied; `net_fetch`=allow-listed HTTP; `x_search`=X posts; `clock_now`/`sleep_ms`=timing.
 - Media generation: one image/video per user request unless variants are requested; shellX renders output cards automatically.
@@ -812,6 +820,7 @@ fn tool_specs() -> Vec<Value> {
     let mut specs = core_tool_specs();
     specs.extend(browser_entry_tool_specs());
     specs.extend(browser_tool_specs());
+    specs.extend(cut_entry_tool_specs());
     specs.extend(extended_tool_specs());
     specs
 }
@@ -832,6 +841,7 @@ fn advertised_tool_specs() -> Vec<Value> {
         .collect::<Vec<_>>();
     specs.extend(host_entry_tool_specs());
     specs.extend(browser_entry_tool_specs());
+    specs.extend(cut_entry_tool_specs());
     specs
 }
 
@@ -920,7 +930,7 @@ async fn handle_tools_call(
         "secret_delete" => tool_secret_delete(arguments).await,
         "vault_list" => tool_vault_list(arguments).await,
         "vault_list_grants" => tool_vault_list_grants(arguments).await,
-        "vault_request_grant" => tool_vault_request_grant(arguments).await,
+        "vault_request_grant" => tool_vault_request_grant(arguments, browser_caller).await,
         "vault_agent_request" => tool_vault_agent_request(arguments, browser_caller).await,
         "vault_generate" => tool_vault_generate(arguments).await,
         "vault_deposit" => tool_vault_deposit(arguments).await,
@@ -946,13 +956,15 @@ async fn handle_tools_call(
         // Typed network fetch + tool-inventory search.
         "net_fetch" => tool_net_fetch(arguments).await,
         "search_tool" => tool_search_tool(arguments).await,
+        "cut_read" => tool_cut_read(arguments).await,
+        "cut_act" => tool_cut_act(arguments).await,
         "browser_read" => tool_browser_read(arguments, browser_caller).await,
         "browser_act" => tool_browser_act(arguments, browser_caller).await,
-        "browser_check" => tool_browser_check(arguments).await,
+        "browser_check" => tool_browser_check(arguments, browser_caller).await,
         "browser_rendered_check" => tool_browser_rendered_check(arguments, browser_caller).await,
-        "browser_state" => tool_browser_state(arguments).await,
-        "browser_tabs" => tool_browser_tabs().await,
-        "browser_locks" => tool_browser_locks().await,
+        "browser_state" => tool_browser_state(arguments, browser_caller).await,
+        "browser_tabs" => tool_browser_tabs(browser_caller).await,
+        "browser_locks" => tool_browser_locks(browser_caller).await,
         "browser_navigate" => tool_browser_action("navigate", arguments, browser_caller).await,
         "browser_observe" => tool_browser_action("observe", arguments, browser_caller).await,
         "browser_click_ref" => tool_browser_action("clickRef", arguments, browser_caller).await,
@@ -963,7 +975,7 @@ async fn handle_tools_call(
             tool_browser_action("clearSiteData", arguments, browser_caller).await
         }
         "browser_run_steps" => tool_browser_run_steps(arguments, browser_caller).await,
-        "browser_workflows" => tool_browser_workflows(arguments).await,
+        "browser_workflows" => tool_browser_workflows(arguments, browser_caller).await,
         "browser_workflow_save" => tool_browser_workflow_save(arguments, browser_caller).await,
         "browser_workflow_replay" => tool_browser_workflow_replay(arguments, browser_caller).await,
         "browser_fill_from_vault" => {
@@ -988,7 +1000,7 @@ async fn handle_tools_call(
         "browser_screenshot" => {
             tool_browser_action("captureScreenshot", arguments, browser_caller).await
         }
-        "browser_downloads" => tool_browser_downloads().await,
+        "browser_downloads" => tool_browser_downloads(browser_caller).await,
         "browser_resolve_dialog" => tool_browser_resolve_dialog(arguments, browser_caller).await,
         "browser_trace_open" => tool_browser_trace_open(arguments, browser_caller).await,
         "browser_evidence" => tool_browser_evidence(arguments, browser_caller).await,

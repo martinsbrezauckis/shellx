@@ -4,6 +4,8 @@
   --shellx-browser-viewport-surface: #050505;
   --shellx-browser-viewport-card: rgba(9, 9, 9, 0.92);
   --shellx-browser-ref-ink: #9cc6ff;
+  --shellx-browser-focus-ring: #9cc6ff;
+  --shellx-browser-info-ink: #8fbcff;
   --shellx-browser-workflow-warn-border: rgba(251, 191, 36, 0.42);
   --shellx-browser-workflow-warn-ink: #fbbf24;
 }
@@ -16,6 +18,8 @@
   --shellx-browser-viewport-surface: #e9ece7;
   --shellx-browser-viewport-card: rgba(255, 255, 255, 0.94);
   --shellx-browser-ref-ink: #245ca6;
+  --shellx-browser-focus-ring: #245ca6;
+  --shellx-browser-info-ink: #245ca6;
   --shellx-browser-workflow-warn-border: rgba(138, 75, 6, 0.42);
   --shellx-browser-workflow-warn-ink: #8a4b06;
 }
@@ -35,6 +39,8 @@
     --shellx-browser-viewport-surface: #e9ece7;
     --shellx-browser-viewport-card: rgba(255, 255, 255, 0.94);
     --shellx-browser-ref-ink: #245ca6;
+    --shellx-browser-focus-ring: #245ca6;
+    --shellx-browser-info-ink: #245ca6;
     --shellx-browser-workflow-warn-border: rgba(138, 75, 6, 0.42);
     --shellx-browser-workflow-warn-ink: #8a4b06;
   }

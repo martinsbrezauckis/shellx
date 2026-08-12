@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use super::{
     browser_action_text_summary, browser_compact_observe_result_for_mcp,
     browser_mcp_maybe_recover_action, browser_mcp_navigation_response_should_wait,
-    browser_mcp_result, browser_mcp_wait_for_navigation_settle, debug_api_get_json,
+    browser_mcp_result, browser_mcp_wait_for_navigation_settle, debug_api_get_json_for_caller,
     debug_api_post_json_for_caller, mcp_arg_bool, mcp_arg_f64, mcp_arg_string, mcp_arg_u64,
 };
 
@@ -281,8 +281,12 @@ pub(super) async fn browser_ensure_agent_task_target(
     if browser_action_body_has_explicit_target(body) {
         return Ok(());
     }
-    if let Ok(state) =
-        debug_api_get_json("/browser/tasks?detail=summary&limit=200", timeout_secs).await
+    if let Ok(state) = debug_api_get_json_for_caller(
+        "/browser/tasks?detail=summary&limit=200",
+        timeout_secs,
+        caller_session_id,
+    )
+    .await
     {
         if let Some(task_id) = browser_state_agent_task_id_for_caller(&state, caller_session_id) {
             browser_insert_task_id_into_body(body, &task_id);
@@ -329,7 +333,7 @@ pub(super) async fn tool_browser_action(
         debug_api_post_json_for_caller("/browser/action", &body, timeout_secs, caller_session_id)
             .await?;
     if browser_mcp_navigation_response_should_wait(action, &data) {
-        browser_mcp_wait_for_navigation_settle(&data, timeout_secs).await?;
+        browser_mcp_wait_for_navigation_settle(&data, timeout_secs, caller_session_id).await?;
     }
     data = browser_mcp_maybe_recover_action(action, &body, data, timeout_secs, caller_session_id)
         .await;

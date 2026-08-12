@@ -5,7 +5,7 @@ use crate::shellx_browser::{
     lock_or_recover, next_browser_evidence_sequence, push_receipt, BrowserBookmark,
     BrowserBookmarkAgentWorkflow, BrowserBookmarkKind, BrowserBookmarkReorderRequest,
     BrowserBookmarkResponse, BrowserBookmarkToolbarItem, BrowserBookmarkUpsertRequest,
-    BrowserClearHistoryRequest, BrowserReceipt, BrowserState, ShellxBrowserRegistry,
+    BrowserReceipt, BrowserState, ShellxBrowserRegistry,
 };
 use crate::shellx_browser_workflow_taxonomy::{
     canonical_workflow_task_type, workflow_slug as browser_workflow_slug,
@@ -17,7 +17,16 @@ impl ShellxBrowserRegistry {
         request: BrowserBookmarkUpsertRequest,
     ) -> Result<BrowserBookmarkResponse, String> {
         let mut state = lock_or_recover(&self.state);
-        upsert_browser_bookmark_locked(&mut state, request)
+        let mut bookmarks = state.bookmarks.clone();
+        let bookmark = upsert_browser_bookmark_collection(&mut bookmarks, request)?;
+        let bookmarks = self.persist_browser_bookmarks(bookmarks)?;
+        let bookmark = bookmarks
+            .iter()
+            .find(|candidate| candidate.bookmark_id == bookmark.bookmark_id)
+            .cloned()
+            .ok_or_else(|| "persisted bookmark is missing after save".to_string())?;
+        state.bookmarks = bookmarks;
+        Ok(bookmark_response_after_commit(&mut state, bookmark))
     }
 
     pub fn reorder_bookmarks(
@@ -25,13 +34,13 @@ impl ShellxBrowserRegistry {
         request: BrowserBookmarkReorderRequest,
     ) -> Result<BrowserReceipt, String> {
         let mut state = lock_or_recover(&self.state);
+        let mut bookmarks = state.bookmarks.clone();
         for item in request.items {
             let bookmark_id = clean_string(&item.bookmark_id);
             if bookmark_id.is_empty() {
                 return Err("bookmark reorder item requires bookmarkId".to_string());
             }
-            let idx = state
-                .bookmarks
+            let idx = bookmarks
                 .iter()
                 .position(|bookmark| bookmark.bookmark_id == bookmark_id)
                 .ok_or_else(|| format!("unknown bookmark {}", bookmark_id))?;
@@ -40,17 +49,19 @@ impl ShellxBrowserRegistry {
                 .as_deref()
                 .map(clean_string)
                 .filter(|value| !value.is_empty());
-            validate_browser_bookmark_parent(&state.bookmarks, &bookmark_id, parent_id.as_deref())?;
-            state.bookmarks[idx].parent_id = parent_id;
+            validate_browser_bookmark_parent(&bookmarks, &bookmark_id, parent_id.as_deref())?;
+            bookmarks[idx].parent_id = parent_id;
             if let Some(toolbar_pinned) = item.toolbar_pinned {
-                state.bookmarks[idx].toolbar_pinned = toolbar_pinned;
+                bookmarks[idx].toolbar_pinned = toolbar_pinned;
             }
             if item.toolbar_order.is_some() {
-                state.bookmarks[idx].toolbar_order = item.toolbar_order;
+                bookmarks[idx].toolbar_order = item.toolbar_order;
             }
-            state.bookmarks[idx].updated_at_ms = now_ms();
+            bookmarks[idx].updated_at_ms = now_ms();
         }
-        let toolbar_items = browser_bookmark_toolbar(&state.bookmarks).len();
+        let bookmarks = self.persist_browser_bookmarks(bookmarks)?;
+        let toolbar_items = browser_bookmark_toolbar(&bookmarks).len();
+        state.bookmarks = bookmarks;
         let receipt = push_receipt(
             &mut state,
             "browserBookmarkToolbarChanged",
@@ -77,11 +88,12 @@ impl ShellxBrowserRegistry {
         {
             return Err(format!("unknown bookmark {}", bookmark_id));
         }
+        let mut bookmarks = state.bookmarks.clone();
         let mut delete_ids = vec![bookmark_id.clone()];
         let mut changed = true;
         while changed {
             changed = false;
-            for bookmark in &state.bookmarks {
+            for bookmark in &bookmarks {
                 if bookmark
                     .parent_id
                     .as_ref()
@@ -94,9 +106,9 @@ impl ShellxBrowserRegistry {
                 }
             }
         }
-        state
-            .bookmarks
-            .retain(|bookmark| !delete_ids.contains(&bookmark.bookmark_id));
+        bookmarks.retain(|bookmark| !delete_ids.contains(&bookmark.bookmark_id));
+        let bookmarks = self.persist_browser_bookmarks(bookmarks)?;
+        state.bookmarks = bookmarks;
         let receipt = push_receipt(
             &mut state,
             "browserBookmarkDeleted",
@@ -110,47 +122,21 @@ impl ShellxBrowserRegistry {
         );
         Ok(receipt)
     }
-
-    pub fn clear_history(
-        &self,
-        request: BrowserClearHistoryRequest,
-    ) -> Result<BrowserReceipt, String> {
-        if crate::shellx_browser_destructive_actions::browser_destructive_action_requires_operator(
-            &request,
-        ) && !request.operator_approved
-        {
-            return Err(format!(
-                "{}: {}",
-                crate::shellx_browser_destructive_actions::BROWSER_DESTRUCTIVE_ACTION_OPERATOR_ERROR_CODE,
-                crate::shellx_browser_destructive_actions::BROWSER_DESTRUCTIVE_ACTION_OPERATOR_ERROR_MESSAGE
-            ));
-        }
-        let mut state = lock_or_recover(&self.state);
-        let cleared = state.history.len();
-        state.history.clear();
-        let active_task_id = state.active_task_id.clone();
-        let active_profile_id = active_task_id.as_deref().and_then(|task_id| {
-            state
-                .tasks
-                .iter()
-                .find(|task| task.task_id == task_id)
-                .map(|task| task.profile_id.clone())
-        });
-        Ok(push_receipt(
-            &mut state,
-            "browserHistoryCleared",
-            active_task_id,
-            active_profile_id,
-            format!("Cleared {} Browser history entries", cleared),
-            json!({ "cleared": cleared }),
-        ))
-    }
 }
 
+#[cfg(test)]
 pub(crate) fn upsert_browser_bookmark_locked(
     state: &mut BrowserState,
     request: BrowserBookmarkUpsertRequest,
 ) -> Result<BrowserBookmarkResponse, String> {
+    let bookmark = upsert_browser_bookmark_collection(&mut state.bookmarks, request)?;
+    Ok(bookmark_response_after_commit(state, bookmark))
+}
+
+fn upsert_browser_bookmark_collection(
+    bookmarks: &mut Vec<BrowserBookmark>,
+    request: BrowserBookmarkUpsertRequest,
+) -> Result<BrowserBookmark, String> {
     let now = now_ms();
     let bookmark_id = request
         .bookmark_id
@@ -158,19 +144,17 @@ pub(crate) fn upsert_browser_bookmark_locked(
         .map(clean_string)
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| browser_id("browser-bookmark"));
-    let existing_idx = state
-        .bookmarks
+    let existing_idx = bookmarks
         .iter()
         .position(|bookmark| bookmark.bookmark_id == bookmark_id);
-    let existing = existing_idx.and_then(|idx| state.bookmarks.get(idx).cloned());
+    let existing = existing_idx.and_then(|idx| bookmarks.get(idx).cloned());
     let kind = request
         .kind
         .clone()
         .or_else(|| existing.as_ref().map(|bookmark| bookmark.kind.clone()))
         .unwrap_or_default();
     if kind == BrowserBookmarkKind::Link
-        && state
-            .bookmarks
+        && bookmarks
             .iter()
             .any(|bookmark| bookmark.parent_id.as_deref() == Some(bookmark_id.as_str()))
     {
@@ -240,7 +224,7 @@ pub(crate) fn upsert_browser_bookmark_locked(
                 .as_ref()
                 .and_then(|bookmark| bookmark.parent_id.clone())
         });
-    validate_browser_bookmark_parent(&state.bookmarks, &bookmark_id, parent_id.as_deref())?;
+    validate_browser_bookmark_parent(bookmarks, &bookmark_id, parent_id.as_deref())?;
     let agent_workflow = request
         .agent_workflow
         .clone()
@@ -276,11 +260,18 @@ pub(crate) fn upsert_browser_bookmark_locked(
         updated_at_ms: now,
     };
     if let Some(idx) = existing_idx {
-        state.bookmarks[idx] = bookmark.clone();
+        bookmarks[idx] = bookmark.clone();
     } else {
-        state.bookmarks.push(bookmark.clone());
+        bookmarks.push(bookmark.clone());
     }
-    let receipt_kind = if kind == BrowserBookmarkKind::Folder {
+    Ok(bookmark)
+}
+
+fn bookmark_response_after_commit(
+    state: &mut BrowserState,
+    bookmark: BrowserBookmark,
+) -> BrowserBookmarkResponse {
+    let receipt_kind = if bookmark.kind == BrowserBookmarkKind::Folder {
         "browserBookmarkFolderSaved"
     } else {
         "browserBookmarkSaved"
@@ -288,7 +279,7 @@ pub(crate) fn upsert_browser_bookmark_locked(
     let receipt = push_bookmark_receipt(
         state,
         receipt_kind,
-        format!("Saved Browser bookmark: {}", label),
+        format!("Saved Browser bookmark: {}", bookmark.label),
         json!({
             "bookmarkId": bookmark.bookmark_id,
             "label": bookmark.label,
@@ -307,11 +298,11 @@ pub(crate) fn upsert_browser_bookmark_locked(
             }),
         );
     }
-    Ok(BrowserBookmarkResponse {
+    BrowserBookmarkResponse {
         ok: true,
         bookmark,
         receipt,
-    })
+    }
 }
 
 pub(crate) fn validate_browser_bookmark_parent(
@@ -401,13 +392,131 @@ pub(crate) fn browser_bookmark_toolbar(
         .collect()
 }
 
+pub(crate) fn normalize_browser_bookmarks_for_persistence(
+    mut bookmarks: Vec<BrowserBookmark>,
+) -> Result<Vec<BrowserBookmark>, String> {
+    const BROWSER_BOOKMARK_LIMIT: usize = 100;
+    if bookmarks.len() > BROWSER_BOOKMARK_LIMIT {
+        return Err(format!(
+            "bookmark store exceeds the {BROWSER_BOOKMARK_LIMIT} item limit"
+        ));
+    }
+
+    let mut bookmark_ids = std::collections::BTreeSet::new();
+    for bookmark in &mut bookmarks {
+        bookmark.bookmark_id = clean_bookmark_text(Some(bookmark.bookmark_id.clone()), 128)
+            .ok_or_else(|| "bookmark store item requires bookmarkId".to_string())?;
+        if !bookmark_ids.insert(bookmark.bookmark_id.clone()) {
+            return Err(format!(
+                "bookmark store contains duplicate bookmarkId {}",
+                bookmark.bookmark_id
+            ));
+        }
+        bookmark.label = clean_bookmark_text(Some(bookmark.label.clone()), 80)
+            .ok_or_else(|| format!("bookmark {} requires a label", bookmark.bookmark_id))?;
+        bookmark.category = clean_bookmark_text(Some(bookmark.category.clone()), 80)
+            .ok_or_else(|| format!("bookmark {} requires a category", bookmark.bookmark_id))?;
+        bookmark.parent_id = bookmark
+            .parent_id
+            .take()
+            .and_then(|value| clean_bookmark_text(Some(value), 128));
+        match &bookmark.kind {
+            BrowserBookmarkKind::Link => {
+                bookmark.url = clean_bookmark_text(bookmark.url.take(), 4096)
+                    .ok_or_else(|| format!("link bookmark {} requires url", bookmark.bookmark_id))
+                    .map(Some)?;
+            }
+            BrowserBookmarkKind::Folder => {
+                if bookmark.url.is_some() {
+                    return Err(format!(
+                        "folder bookmark {} cannot have url",
+                        bookmark.bookmark_id
+                    ));
+                }
+            }
+        }
+        bookmark.agent_workflow = bookmark
+            .agent_workflow
+            .take()
+            .and_then(normalize_agent_workflow);
+    }
+
+    let bookmark_by_id = bookmarks
+        .iter()
+        .enumerate()
+        .map(|(index, bookmark)| (bookmark.bookmark_id.as_str(), index))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for bookmark in &bookmarks {
+        let mut ancestors = std::collections::BTreeSet::new();
+        let mut parent_id = bookmark.parent_id.as_deref();
+        while let Some(current_parent_id) = parent_id {
+            if !ancestors.insert(current_parent_id) {
+                return Err(format!(
+                    "invalidBookmarkTree: bookmark {} is part of a folder cycle",
+                    bookmark.bookmark_id
+                ));
+            }
+            let parent_index = bookmark_by_id.get(current_parent_id).ok_or_else(|| {
+                format!(
+                    "unknown bookmark parent {} for {}",
+                    current_parent_id, bookmark.bookmark_id
+                )
+            })?;
+            let parent = &bookmarks[*parent_index];
+            if parent.kind != BrowserBookmarkKind::Folder {
+                return Err(format!(
+                    "invalidBookmarkTree: parent {} must be a folder",
+                    current_parent_id
+                ));
+            }
+            parent_id = parent.parent_id.as_deref();
+        }
+    }
+    Ok(bookmarks)
+}
+
+pub(crate) fn save_current_browser_bookmark(
+    bookmarks: &mut Vec<BrowserBookmark>,
+    url: &str,
+    label: &str,
+) {
+    let now = now_ms();
+    if let Some(existing) = bookmarks
+        .iter_mut()
+        .find(|item| item.url.as_deref() == Some(url))
+    {
+        existing.label = label.to_string();
+        existing.category = "saved".to_string();
+        existing.kind = BrowserBookmarkKind::Link;
+        existing.updated_at_ms = now;
+    } else {
+        bookmarks.insert(
+            0,
+            BrowserBookmark {
+                bookmark_id: browser_id("browser-bookmark"),
+                label: label.to_string(),
+                url: Some(url.to_string()),
+                category: "saved".to_string(),
+                kind: BrowserBookmarkKind::Link,
+                parent_id: None,
+                toolbar_pinned: false,
+                toolbar_order: None,
+                agent_workflow: None,
+                created_at_ms: now,
+                updated_at_ms: now,
+            },
+        );
+    }
+    bookmarks.truncate(100);
+}
+
 pub(crate) fn default_bookmarks() -> Vec<BrowserBookmark> {
     let now = now_ms();
     vec![
         BrowserBookmark {
             bookmark_id: "docs".to_string(),
             label: "Documentation".to_string(),
-            url: Some("https://example.com/".to_string()),
+            url: Some("https://docs.theshellx.com/manual/shellx/".to_string()),
             category: "workflow".to_string(),
             kind: BrowserBookmarkKind::Link,
             parent_id: None,

@@ -18,6 +18,9 @@ const settings = readFileSync("src/components/Settings.tsx", "utf8");
 const settingsCss = readFileSync("src/components/Settings.css", "utf8");
 const appCss = readFileSync("src/App.css", "utf8");
 const agentSidebar = readFileSync("src/browser/components/AgentSidebar.tsx", "utf8");
+const browserHistorySidecar = readFileSync("src/browser/components/BrowserHistorySidecar.tsx", "utf8");
+const browserTabHandoffConfirmation = readFileSync("src/browser/components/BrowserTabHandoffConfirmation.tsx", "utf8");
+const browserLayoutCss = readFileSync("src/browser/browserLayout.css", "utf8");
 const chatOutput = normalizedTextContent(readFileSync("src/components/ChatOutput.tsx", "utf8"));
 const modalFocus = readFileSync("src/lib/useModalFocus.ts", "utf8");
 const main = readFileSync("src/main.tsx", "utf8");
@@ -106,6 +109,24 @@ assert(
 assert(pluginsModal.includes("useModalFocus(open, dialogRef, onClose)") && pluginsModal.includes('role="dialog"'));
 assert(modalFocus.includes("inertOutsideDialog") && modalFocus.includes('event.key !== "Tab"'));
 assert(modalFocus.includes("previousFocus.focus") && modalFocus.includes('event.key === "Escape"'));
+assert(
+  browserHistorySidecar.includes('role="alertdialog"')
+    && browserHistorySidecar.includes("useModalFocus(")
+    && browserHistorySidecar.includes('data-dialog-initial-focus="true"')
+    && browserHistorySidecar.includes('aria-busy={busy}')
+    && !browserHistorySidecar.includes("window.confirm")
+    && browserLayoutCss.includes(".shellx-browser-history-confirmation-actions .shellx-browser-utility-row:focus-visible"),
+  "Browser history clearing must trap focus, restore to a non-destructive default, cancel with Escape, expose busy state, and avoid native confirms",
+);
+assert(
+  browserTabHandoffConfirmation.includes('role="alertdialog"')
+    && browserTabHandoffConfirmation.includes("useModalFocus(")
+    && browserTabHandoffConfirmation.includes('data-dialog-initial-focus="true"')
+    && browserTabHandoffConfirmation.includes("Cancel")
+    && browserTabHandoffConfirmation.includes('aria-busy={handoffBusy}')
+    && browserTabHandoffConfirmation.includes("if (!handoffBusy) onCancel();"),
+  "Browser tab handoff must trap focus, restore to a non-destructive Cancel default, cancel with Escape, and expose truthful busy state",
+);
 assert(chatOutput.includes('<button\n      type="button"\n      className="row-pill doom-loop"'));
 assert(chatOutput.includes('<button\n      type="button"\n      className="row-pill host-mcp-unreachable"'));
 assert(main.includes('import "./styles/interactionAccessibility.css"'));

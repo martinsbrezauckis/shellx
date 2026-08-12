@@ -172,7 +172,8 @@ pub(crate) fn create_browser_tab(
         engine_state: BrowserEngineTabState::Live,
         last_visual_capture_at_ms: None,
         requires_user_attention: false,
-        storage_root: Some(browser_profile_storage_root(&profile_id)),
+        storage_root: (profile_id != "task-disposable")
+            .then(|| browser_profile_storage_root(&profile_id)),
         privacy_mode,
         owner_kind,
         delegated_task_id: None,
@@ -430,6 +431,7 @@ pub(crate) fn reset_browser_engine_snapshots_for_empty_tabs_locked(state: &mut B
     state.engine = BrowserEngineSnapshot::default();
     state.engine_waitlist = BrowserEngineWaitlistSnapshot::default();
     state.engine_pool.engines.clear();
+    state.engine_event_bindings.clear();
     state.engine_pool.waiting.clear();
     state.engine_pool.parked_tabs.clear();
 }

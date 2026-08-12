@@ -31,7 +31,7 @@ artifacts when CI passes.
 
 ## Preview
 
-These previews use UI captured from the installed 0.3.51 release candidate.
+These previews use UI captured from the current installed release candidate.
 The presentation backdrop and the observatory shown as session content are
 generated; ShellX controls, Browser chrome, and layout have not been repainted.
 The Browser preview opens the live public `https://theshellx.com` homepage in
@@ -39,24 +39,24 @@ the exact installed page bounds.
 
 ### ShellX workspace
 
-![ShellX 0.3.51 work session with Preview Center displaying a high-contrast snow-leopard image](docs/public/assets/shellx-desktop-0.3.51.png)
+![ShellX 0.3.52 work session with Preview Center displaying a high-contrast snow-leopard image](docs/public/assets/shellx-desktop-0.3.52.png)
 
 ### ShellX Browser
 
-![ShellX Browser 0.3.51 with theshellx.com open, secure native navigation chrome, and the agent sidebar visible](docs/public/assets/shellx-browser-0.3.51.png)
+![ShellX Browser 0.3.52 with theshellx.com open, secure native navigation chrome, and the agent sidebar visible](docs/public/assets/shellx-browser-0.3.52.png)
 
 ### ShellX Vault
 
-![ShellX 0.3.51 Vault settings with password, profile-card, and agent-wallet surfaces visible](docs/public/assets/shellx-vault-0.3.51.png)
+![ShellX 0.3.52 Vault settings with password, profile-card, and agent-wallet surfaces visible](docs/public/assets/shellx-vault-0.3.52.png)
 
 ## What it does
 
 - **One UI across local and remote runtimes.** Run the agent locally, in WSL,
   over POSIX SSH, on native Windows OpenSSH, or in WSL reached through Windows
   OpenSSH with the same chat, Vault, previews, and scoped host tools.
-- **Grok Imagine-ready media.** Image and video generations from
-  grok-build render inline when your Grok account exposes Imagine
-  features.
+- **Native media generation.** Grok image and video generations render inline
+  when your account exposes Imagine features. Antigravity sessions can use
+  their native Gemini image tool and return the generated result to ShellX.
 - **Attachment and media board.** File picker, paste, drag/drop,
   screenshots, and Send to shellX create composer chips; Assets keeps
   pending files and generated media in one place.
@@ -93,8 +93,9 @@ the exact installed page bounds.
 - **Session-scoped host guidance.** ShellX-launched Grok sessions and supported
   Codex/Claude provider sessions receive compact runtime rules plus the
   `shellx-host` MCP surface for Vault, Browser, Debug API, `/build`, handoffs,
-  and UI evidence. Antigravity receives isolated session rules, while its Host
-  MCP bridge remains disabled until the CLI can execute discovered MCP tools.
+  and UI evidence. Antigravity receives only isolated session rules; it does
+  not receive the ShellX Host MCP surface while its Host MCP bridge remains
+  disabled until the CLI can execute discovered MCP tools.
   Direct CLI agents do not inherit a global ShellX skill, MCP server, or
   account-wide instruction block.
 - **Light and dark appearance.** Settings offers Black, Black + warm, and
@@ -129,6 +130,12 @@ the exact installed page bounds.
   pause, takeover, abort, and Request Center controls. Compact observations and
   stable ref actions cover the top document, same-origin frames, and open shadow
   roots within bounded traversal limits; cross-origin frames remain isolated.
+  Evidence can turn the most recent complete Flight Recorder attempt from a
+  completed task into a reviewable Teach draft, then create an Action Recipe
+  only after explicit approval and rehearse it through the zero-apply dry-run
+  planner. Developer inspection stays attached to the live task and adds fixed
+  native document, console, network, and performance summaries plus private
+  HAR/performance exports without exposing raw CDP to agents.
   Provider sessions see two routed Browser tools (`browser_read` and
   permission-gated `browser_act`) instead of 32 repeated compatibility schemas. Observe
   responses default to a 3,000-byte structured payload, with larger/full page

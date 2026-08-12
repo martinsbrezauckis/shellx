@@ -114,8 +114,8 @@ tool response could carry prompt-injection text like
   truncation/size metadata. The advertised Browser schema is routed through two
   compact tools. The broader Host MCP now advertises only `host_read` and
   permission-gated `host_act` alongside orientation/search and the Browser
-  pair; exact legacy schemas remain targeted-search results instead of
-  always-injected prompt material.
+  and ShellX Cut pairs; exact legacy schemas and Cut's generated verb catalog
+  remain targeted-search results instead of always-injected prompt material.
 
 ### T6. Local-process eavesdropping on shellXagent / host MCP
 Another process running as the same user could connect to
@@ -334,6 +334,31 @@ grant authorization and before plaintext is read from Vault. Origin changes,
 unobserved targets, ordinary text fields, and cross-origin form actions fail
 closed.
 
+### T16. ShellX Cut proxy inherits Cut's local-machine trust boundary
+`cut_act` starts the installed `cutd mcp` proxy, which reaches the same running
+ShellX Cut engine and open project as the editor UI. Cut's loopback API/MCP is a
+single-personal-workstation surface, not a same-user authentication boundary.
+A substituted executable or another local process able to call Cut directly
+could therefore affect the open project outside ShellX's tab gate.
+
+**Defense**:
+- ShellX resolves `cutd` only from documented installation locations or an
+  explicit absolute `SHELLX_CUT_CUTD` override. It does not search the provider
+  cwd or general `PATH`.
+- The child receives only the fixed `mcp` argument, runs from its installed
+  directory, is tied to the parent lifetime, and has bounded request, stdout,
+  stderr, and execution-time limits.
+- The generated Cut catalog stays behind bounded `cut_read` discovery. Every
+  exact verb call uses permission-gated `cut_act` until Cut publishes reliable
+  read/mutation annotations.
+- ShellX does not expose Cut remotely, copy provider credentials, or create a
+  second project/timeline authority.
+
+**Residual risk**: ShellX trusts the installed Cut binary and Cut's documented
+whole-machine local API posture. Same-user malware can call Cut without going
+through ShellX; preventing that requires a future authenticated Cut transport,
+not another ShellX prompt.
+
 ## Out-of-scope threats
 
 ### O1. Root / Administrator on the local machine
@@ -397,6 +422,7 @@ Same as O1 — out of scope.
 | Platform-dependent Browser controls | T14 | `shellx_browser_engine.rs`, `shellx_browser_security.rs`, degraded-protection UI notice |
 | Browser Flight Recorder and evaluation artifacts | T12 | `shellx_browser_flight_recorder.rs`, `shellx_browser_evaluations.rs`, authenticated Debug API export route, artifact budgets |
 | Browser Vault fill targets | T15 | `shellx_browser_vault.rs`, current observation and same-origin form-action validation |
+| ShellX Cut compact proxy | T16 | `host_mcp/cut_mcp.rs`, standard install-path resolution, process/output bounds, and `cut_act` write-class gate |
 
 ## Known open exposures (acknowledged, tracked)
 

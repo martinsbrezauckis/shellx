@@ -37,14 +37,11 @@
 .shellx-browser-evidence-recorded {
   display: grid;
   gap: 2px;
-  border: 1px solid color-mix(in oklab, var(--ok) 42%, var(--hairline));
-  border-radius: var(--radius-button);
-  padding: 8px 9px;
-  background: color-mix(in oklab, var(--ok) 8%, var(--surface-2));
+  border-left: 2px solid var(--ok);
+  padding: 2px 0 2px 8px;
 }
 .shellx-browser-evidence-recorded.incomplete {
-  border-color: color-mix(in oklab, var(--warn) 46%, var(--hairline));
-  background: color-mix(in oklab, var(--warn) 8%, var(--surface-2));
+  border-left-color: var(--warn);
 }
 .shellx-browser-evidence-recorded strong {
   color: var(--ink);
@@ -56,20 +53,19 @@
 }
 .shellx-browser-evidence-list {
   display: grid;
-  gap: 8px;
+  gap: 0;
+  border-top: 1px solid var(--hairline);
 }
 .shellx-browser-evidence-row {
   min-width: 0;
   display: grid;
-  gap: 6px;
-  border: 1px solid var(--hairline);
-  border-left: 3px solid rgba(59, 130, 246, 0.55);
-  border-radius: var(--radius-button);
-  padding: 9px;
-  background: var(--surface-2);
+  gap: 4px;
+  border-bottom: 1px solid var(--hairline);
+  border-left: 2px solid var(--shellx-browser-ref-ink);
+  padding: 8px 0 8px 8px;
 }
 .shellx-browser-evidence-row.evaluation {
-  border-left-color: rgba(34, 197, 94, 0.58);
+  border-left-color: var(--ok);
 }
 .shellx-browser-evidence-row-head,
 .shellx-browser-evidence-kind,
@@ -88,20 +84,16 @@
   font-weight: 700;
 }
 .shellx-browser-evidence-status {
-  border: 1px solid var(--hairline-2);
-  border-radius: var(--radius-chip);
-  padding: 2px 6px;
+  padding: 0;
   color: var(--ink-2);
   font-size: var(--fs-ui-xs);
   font-weight: 750;
   text-transform: uppercase;
 }
 .shellx-browser-evidence-status.complete {
-  border-color: color-mix(in oklab, var(--ok) 42%, var(--hairline));
   color: var(--ok);
 }
 .shellx-browser-evidence-status.incomplete {
-  border-color: color-mix(in oklab, var(--warn) 46%, var(--hairline));
   color: var(--warn);
 }
 .shellx-browser-evidence-row > strong {
@@ -137,10 +129,10 @@
 .shellx-browser-evidence-error {
   display: grid;
   gap: 3px;
-  border: 1px solid rgba(239, 68, 68, 0.38);
+  border: 1px solid color-mix(in oklab, var(--err) 42%, var(--hairline));
   border-radius: var(--radius-button);
   padding: 9px;
-  background: rgba(239, 68, 68, 0.07);
+  background: color-mix(in oklab, var(--err) 7%, var(--surface-2));
 }
 .shellx-browser-evidence-error strong {
   color: var(--err);
@@ -160,4 +152,767 @@
   color: var(--ink-2);
   font-size: var(--fs-ui-xs);
   line-height: 1.4;
+}
+
+.shellx-browser-developer {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+}
+.shellx-browser-developer-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.shellx-browser-developer-head > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-developer-head strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-developer-head > div:first-child > span,
+.shellx-browser-developer-artifacts > span {
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+}
+.shellx-browser-developer-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.shellx-browser-developer-actions .shellx-browser-secondary {
+  flex: 0 0 auto;
+  height: 28px;
+}
+.shellx-browser-developer-actions .shellx-browser-secondary:focus-visible {
+  outline: 2px solid var(--shellx-browser-focus-ring);
+  outline-offset: 2px;
+}
+.shellx-browser-developer-state {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--shellx-browser-info-ink);
+  border-radius: var(--radius-button);
+  padding: 7px 8px;
+  background: var(--surface-2);
+}
+.shellx-browser-developer-state strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-developer-state span {
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+}
+.shellx-browser-developer-state.state-no-task,
+.shellx-browser-developer-state.state-developer-mode-required,
+.shellx-browser-developer-state.state-partial {
+  border-left-color: var(--warn);
+}
+.shellx-browser-developer-state.state-native-engine-unavailable,
+.shellx-browser-developer-state.state-failed {
+  border-left-color: var(--err);
+}
+.shellx-browser-developer-state.state-empty-clean,
+.shellx-browser-developer-state.state-success {
+  border-left-color: var(--ok);
+}
+.shellx-browser-developer-access {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid color-mix(in oklab, var(--warn) 42%, var(--hairline));
+  border-radius: var(--radius-button);
+  padding: 8px;
+  background: color-mix(in oklab, var(--warn) 7%, var(--surface-2));
+}
+.shellx-browser-developer-access.active {
+  border-color: color-mix(in oklab, var(--ok) 36%, var(--hairline));
+  background: color-mix(in oklab, var(--ok) 6%, var(--surface-2));
+}
+.shellx-browser-developer-access > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-developer-access strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-developer-access span {
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+}
+.shellx-browser-developer-access button {
+  flex: 0 0 auto;
+}
+.shellx-browser-developer-access:not(.active) .shellx-browser-developer-permission-action {
+  border-color: color-mix(in oklab, var(--warn) 52%, var(--hairline));
+  background: var(--surface);
+  color: var(--ink);
+}
+.shellx-browser-developer-access:not(.active) .shellx-browser-developer-permission-action:hover:not(:disabled) {
+  border-color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 8%, var(--surface));
+  color: var(--ink);
+}
+.shellx-browser-developer-access:not(.active) .shellx-browser-developer-permission-action:focus-visible {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+}
+.shellx-browser-developer-summary {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.shellx-browser-developer-identity {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  padding: 8px;
+  background: var(--surface-2);
+}
+.shellx-browser-developer-identity strong,
+.shellx-browser-developer-identity span,
+.shellx-browser-developer-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-developer-identity strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.shellx-browser-developer-identity span,
+.shellx-browser-developer-identity small {
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-developer-identity small { color: var(--ink-3); }
+.shellx-browser-developer-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  margin: 0;
+}
+.shellx-browser-developer-metrics > div,
+.shellx-browser-developer-streams > section {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  padding: 7px;
+  background: var(--surface-2);
+}
+.shellx-browser-developer-metrics dt,
+.shellx-browser-developer-streams strong,
+.shellx-browser-developer-section-head strong,
+.shellx-browser-developer-artifact strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-xs);
+  font-weight: 750;
+}
+.shellx-browser-developer-metrics dd,
+.shellx-browser-developer-streams span,
+.shellx-browser-developer-streams small,
+.shellx-browser-developer-section-head span,
+.shellx-browser-developer-artifact span {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-developer-streams {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.shellx-browser-developer-streams small { color: var(--ink-3); }
+.shellx-browser-developer-issues {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  padding: 8px;
+  background: var(--surface-2);
+}
+.shellx-browser-developer-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.shellx-browser-developer-issues ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shellx-browser-developer-issues li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 7px;
+  border-left: 2px solid var(--hairline-2);
+  padding-left: 7px;
+}
+.shellx-browser-developer-issues li.severity-error { border-left-color: var(--err); }
+.shellx-browser-developer-issues li.severity-warning { border-left-color: var(--warn); }
+.shellx-browser-developer-issues li.severity-info { border-left-color: var(--shellx-browser-info-ink); }
+.shellx-browser-developer-issues li > span {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.shellx-browser-developer-issues li > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-developer-issues li strong { color: var(--ink); font-size: var(--fs-ui-xs); }
+.shellx-browser-developer-issues li p,
+.shellx-browser-developer-issues li small,
+.shellx-browser-developer-clean {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+}
+.shellx-browser-developer-issues li small { color: var(--ink-3); }
+.shellx-browser-developer-clean { color: var(--ok); }
+.shellx-browser-developer-partial,
+.shellx-browser-developer-artifacts {
+  display: grid;
+  gap: 5px;
+  border: 1px solid color-mix(in oklab, var(--warn) 42%, var(--hairline));
+  border-radius: var(--radius-button);
+  padding: 8px;
+  background: color-mix(in oklab, var(--warn) 7%, var(--surface-2));
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.35;
+}
+.shellx-browser-developer-artifacts {
+  border-color: var(--hairline);
+  background: var(--surface-2);
+}
+.shellx-browser-developer-artifact {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-developer-artifact span {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+@media (max-width: 1000px) {
+  .shellx-browser-developer-head { display: grid; }
+  .shellx-browser-developer-actions { justify-content: flex-start; }
+  .shellx-browser-developer-access { align-items: stretch; flex-direction: column; }
+  .shellx-browser-developer-access button { align-self: flex-start; }
+  .shellx-browser-developer-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .shellx-browser-developer-streams { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shellx-browser-developer * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+}
+.shellx-browser-teach-section {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
+}
+.shellx-browser-teach-head,
+.shellx-browser-teach-section-head,
+.shellx-browser-teach-actions,
+.shellx-browser-teach-receipt {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shellx-browser-teach-head {
+  justify-content: space-between;
+}
+.shellx-browser-teach-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-teach-head strong,
+.shellx-browser-teach-section-head strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-sm);
+}
+.shellx-browser-teach-head span,
+.shellx-browser-teach-section-head span {
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-teach-head > code {
+  flex: 0 0 auto;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.shellx-browser-teach-state {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 7px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  padding: 8px 9px;
+  background: var(--surface-2);
+}
+.shellx-browser-teach-state > svg {
+  margin-top: 1px;
+  color: var(--ink-3);
+}
+.shellx-browser-teach-state > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-teach-state strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-teach-state span {
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.4;
+}
+.shellx-browser-teach-state.ready,
+.shellx-browser-teach-state.success {
+  border-left-color: var(--ok);
+}
+.shellx-browser-teach-state.ready > svg,
+.shellx-browser-teach-state.success > svg {
+  color: var(--ok);
+}
+.shellx-browser-teach-state.warning {
+  border-left-color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 7%, var(--surface-2));
+}
+.shellx-browser-teach-state.warning > svg {
+  color: var(--warn);
+}
+.shellx-browser-teach-state.error {
+  border-left-color: var(--err);
+  background: color-mix(in oklab, var(--err) 7%, var(--surface-2));
+}
+.shellx-browser-teach-state.error > svg {
+  color: var(--err);
+}
+.shellx-browser-teach-state.running {
+  border-left-color: var(--shellx-browser-info-ink);
+}
+.shellx-browser-teach-state.running > svg {
+  color: var(--shellx-browser-info-ink);
+}
+.shellx-browser-teach-state .shellx-browser-secondary {
+  align-self: center;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.shellx-browser-teach-source {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 12px;
+  border-bottom: 1px solid var(--hairline);
+  padding: 0 0 9px;
+}
+.shellx-browser-teach-source > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 4px 6px;
+}
+.shellx-browser-teach-source span {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.shellx-browser-teach-source code,
+.shellx-browser-teach-source strong {
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-teach-source small {
+  grid-column: 2;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.shellx-browser-teach-source > .shellx-browser-teach-redaction {
+  grid-column: 1 / -1;
+}
+.shellx-browser-teach-review-body {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+.shellx-browser-teach-goal {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.shellx-browser-teach-goal > span {
+  color: var(--ink-2);
+  font-size: var(--fs-ui-xs);
+  font-weight: 700;
+}
+.shellx-browser-teach-goal textarea {
+  width: 100%;
+  min-height: 66px;
+  resize: vertical;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  padding: 7px 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.42;
+}
+.shellx-browser-teach-goal small {
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.shellx-browser-teach-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.shellx-browser-teach-summary > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 3px 6px;
+  border-bottom: 1px solid var(--hairline);
+  padding-bottom: 6px;
+}
+.shellx-browser-teach-summary span,
+.shellx-browser-teach-summary small {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.shellx-browser-teach-summary strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.shellx-browser-teach-summary small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-teach-blockers {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-button);
+  padding: 7px 8px;
+  background: var(--surface-2);
+}
+.shellx-browser-teach-blockers > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-teach-blockers strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-teach-blockers > div > span {
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.shellx-browser-teach-blocking-status {
+  flex: 0 0 auto;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-chip);
+  padding: 2px 6px;
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.shellx-browser-teach-blocking-status.blocked {
+  border-color: color-mix(in oklab, var(--warn) 48%, var(--hairline));
+  color: var(--warn);
+}
+.shellx-browser-teach-blocking-status.clear {
+  border-color: color-mix(in oklab, var(--ok) 48%, var(--hairline));
+  color: var(--ok);
+}
+.shellx-browser-teach-list-section {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.shellx-browser-teach-section-head {
+  justify-content: space-between;
+}
+.shellx-browser-teach-section-head strong {
+  font-size: var(--fs-ui-xs);
+}
+.shellx-browser-teach-steps {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shellx-browser-teach-steps li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 20px minmax(70px, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 1px solid var(--hairline);
+  padding: 5px 2px;
+}
+.shellx-browser-teach-steps li > span {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.shellx-browser-teach-steps code {
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-teach-steps em {
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-chip);
+  padding: 1px 5px;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-style: normal;
+}
+.shellx-browser-teach-steps small {
+  color: var(--ink-3);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.shellx-browser-teach-issues {
+  display: grid;
+  gap: 5px;
+}
+.shellx-browser-teach-issues > label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  border-left: 2px solid var(--hairline-2);
+  padding: 4px 6px;
+}
+.shellx-browser-teach-issues > label.blocking {
+  border-left-color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 6%, var(--surface-2));
+}
+.shellx-browser-teach-issues > label.resolved {
+  border-left-color: var(--ok);
+  background: color-mix(in oklab, var(--ok) 5%, var(--surface-2));
+}
+.shellx-browser-teach-issues input {
+  width: 14px;
+  height: 14px;
+  margin: 1px 0 0;
+  accent-color: var(--shellx-browser-focus-ring);
+}
+.shellx-browser-teach-issues > label > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.shellx-browser-teach-issues strong {
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.shellx-browser-teach-issues small {
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.shellx-browser-teach-values {
+  display: grid;
+  border-top: 1px solid var(--hairline);
+}
+.shellx-browser-teach-value-row {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  border-bottom: 1px solid var(--hairline);
+  padding: 8px 0;
+}
+.shellx-browser-teach-value-field,
+.shellx-browser-teach-value-kind {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.shellx-browser-teach-value-field > span,
+.shellx-browser-teach-value-kind > span {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.shellx-browser-teach-value-kind strong {
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-teach-value-field input,
+.shellx-browser-teach-value-field select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-button);
+  padding: 0 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+}
+.shellx-browser-teach-value-field select {
+  appearance: none;
+  padding-right: 24px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 12px) 11px, calc(100% - 7px) 11px;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+}
+.shellx-browser-teach-value-field small {
+  color: var(--ink-3);
+  font-size: 10px;
+}
+.shellx-browser-teach-vault-error {
+  border-left: 2px solid var(--warn);
+  padding: 5px 7px;
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.shellx-browser-teach-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.shellx-browser-teach-actions .shellx-browser-primary,
+.shellx-browser-teach-actions .shellx-browser-secondary {
+  min-height: 30px;
+}
+.shellx-browser-teach-receipt {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 8px;
+  color: var(--ink-2);
+  font-size: 10px;
+}
+.shellx-browser-teach-receipt > svg {
+  flex: 0 0 auto;
+  color: var(--ok);
+}
+.shellx-browser-teach-receipt > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.shellx-browser-teach-receipt strong {
+  color: var(--ink-2);
+  font-size: 10px;
+}
+.shellx-browser-teach-receipt small {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shellx-browser-teach-receipt-copy {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px;
+  font-size: 10px;
+}
+.shellx-browser-teach-receipt.blocked > svg {
+  color: var(--warn);
+}
+.shellx-browser-teach-receipt.failed > svg {
+  color: var(--err);
+}
+.shellx-browser-teach-section :is(button, textarea, input, select):focus-visible {
+  outline: 2px solid var(--shellx-browser-focus-ring);
+  outline-offset: 2px;
+}
+@media (max-width: 620px) {
+  .shellx-browser-teach-source,
+  .shellx-browser-teach-summary {
+    grid-template-columns: 1fr;
+  }
+  .shellx-browser-teach-steps li {
+    grid-template-columns: 20px minmax(70px, 1fr) auto;
+  }
+  .shellx-browser-teach-steps small {
+    grid-column: 2 / -1;
+  }
+  .shellx-browser-teach-blockers {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }

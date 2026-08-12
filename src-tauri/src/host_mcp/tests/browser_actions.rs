@@ -37,10 +37,46 @@ fn browser_evidence_actions_stay_routed_searchable_and_write_gated() {
     assert!(!is_write_class_tool("browser_evidence"));
     assert!(is_write_class_tool("browser_flight_recorder_export"));
     assert!(is_write_class_tool("browser_evaluation_write"));
+    let specs = browser_entry_tool_specs();
+    let read_actions = specs[0]["inputSchema"]["properties"]["action"]["enum"]
+        .as_array()
+        .expect("browser_read action enum");
+    let act_actions = specs[1]["inputSchema"]["properties"]["action"]["enum"]
+        .as_array()
+        .expect("browser_act action enum");
+    assert!(read_actions.iter().any(|action| action == "teachDrafts"));
+    assert!(act_actions.iter().any(|action| action == "teachPrepare"));
+    let advertised = serde_json::to_string(&specs).expect("catalog serializes");
+    assert!(!advertised.contains("teachApprove"));
+    assert!(!advertised.contains("teachRevise"));
 }
 
 #[test]
-fn advertised_host_catalog_excludes_verbose_browser_compatibility_aliases() {
+fn developer_inspection_stays_in_the_compact_read_gateway() {
+    let read = browser_entry_tool_specs()
+        .into_iter()
+        .find(|spec| spec.get("name").and_then(Value::as_str) == Some("browser_read"))
+        .expect("browser_read compact entry");
+    let actions = read["inputSchema"]["properties"]["action"]["enum"]
+        .as_array()
+        .expect("browser_read action enum");
+    assert!(actions
+        .iter()
+        .any(|action| action.as_str() == Some("developerInspect")));
+    assert!(super::super::browser_entry::BROWSER_READ_ACTIONS.contains(&"developerInspect"));
+    assert!(!super::super::browser_entry::BROWSER_ACT_ACTIONS.contains(&"developerInspect"));
+    assert_eq!(browser_entry_tool_specs().len(), 2);
+    assert!(
+        !browser_tool_specs()
+            .iter()
+            .any(|spec| spec.get("name").and_then(Value::as_str)
+                == Some("browser_developer_inspect")),
+        "Developer inspection must not add an advertised or compatibility Browser tool"
+    );
+}
+
+#[test]
+fn advertised_host_catalog_excludes_verbose_browser_and_cut_catalogs() {
     let advertised = advertised_tool_specs();
     let searchable = tool_specs();
     let advertised_bytes = serde_json::to_vec(&advertised).unwrap().len();
@@ -60,7 +96,7 @@ fn advertised_host_catalog_excludes_verbose_browser_compatibility_aliases() {
         .iter()
         .filter_map(|spec| spec.get("name").and_then(Value::as_str))
         .collect::<Vec<_>>();
-    assert_eq!(advertised_names.len(), 6);
+    assert_eq!(advertised_names.len(), 8);
     for name in [
         "capabilities_summary",
         "search_tool",
@@ -68,6 +104,8 @@ fn advertised_host_catalog_excludes_verbose_browser_compatibility_aliases() {
         "host_act",
         "browser_read",
         "browser_act",
+        "cut_read",
+        "cut_act",
     ] {
         assert!(
             advertised_names.contains(&name),
@@ -78,10 +116,13 @@ fn advertised_host_catalog_excludes_verbose_browser_compatibility_aliases() {
     assert!(searchable_names.contains(&"browser_observe"));
     assert!(!advertised_names.contains(&"vault_agent_request"));
     assert!(searchable_names.contains(&"vault_agent_request"));
+    assert!(!advertised_names.contains(&"timeline_clip_split"));
     assert!(advertised_bytes + 100_000 < searchable_bytes);
     assert!(advertised_bytes <= 12_000);
     assert!(!is_write_class_tool("browser_read"));
     assert!(is_write_class_tool("browser_act"));
+    assert!(!is_write_class_tool("cut_read"));
+    assert!(is_write_class_tool("cut_act"));
     assert!(!is_write_class_tool("host_read"));
     assert!(is_write_class_tool("host_act"));
 }
@@ -758,13 +799,16 @@ fn vault_agent_actor_identity_is_bound_to_the_host_session() {
 
 #[test]
 fn vault_grant_request_body_preserves_debug_api_contract() {
-    let body = vault_grant_request_body(json!({
-        "secretRef": "accounts/example-password",
-        "operation": "email_code_read",
-        "actorKind": "browserOrigin",
-        "origin": "https://accounts.google.com",
-        "expiresAtMs": 1_790_000_000_000u64
-    }))
+    let body = vault_grant_request_body(
+        json!({
+            "secretRef": "accounts/example-password",
+            "operation": "email_code_read",
+            "actorKind": "browserOrigin",
+            "origin": "https://accounts.google.com",
+            "expiresAtMs": 1_790_000_000_000u64
+        }),
+        Some("caller-a"),
+    )
     .expect("grant body");
     assert_eq!(body["secretRef"], json!("accounts/example-password"));
     assert_eq!(body["operation"], json!("emailCodeRead"));
@@ -776,17 +820,23 @@ fn vault_grant_request_body_preserves_debug_api_contract() {
     assert_eq!(body["origin"], json!("https://accounts.google.com"));
     assert_eq!(body["expiresAtMs"], json!(1_790_000_000_000i64));
 
-    let missing_origin = vault_grant_request_body(json!({
-        "secretRef": "accounts/example-password",
-        "operation": "fill"
-    }))
+    let missing_origin = vault_grant_request_body(
+        json!({
+            "secretRef": "accounts/example-password",
+            "operation": "fill"
+        }),
+        Some("caller-a"),
+    )
     .expect_err("browser grants must be explicitly origin-bound");
     assert!(missing_origin.contains("require origin"));
 
-    let raw = vault_grant_request_body(json!({
-        "secretRef": "token",
-        "operation": "rawReveal"
-    }))
+    let raw = vault_grant_request_body(
+        json!({
+            "secretRef": "token",
+            "operation": "rawReveal"
+        }),
+        Some("caller-a"),
+    )
     .expect_err("raw reveal must not be requestable through MCP");
     assert!(raw.contains("rawReveal"));
 }

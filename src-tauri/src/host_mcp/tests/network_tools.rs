@@ -332,9 +332,77 @@ fn send_prompt_to_provider_tool_is_discoverable() {
     assert!(body.contains("codex-cli"));
     assert!(body.contains("userApproved"));
     assert!(body.contains("same visible tab"));
+    assert!(body.contains("includeShellxTooling"));
+    assert!(body.contains("Defaults true for generic coding-agent handoffs"));
+    assert!(body.contains("existing off mode"));
     assert!(!body.contains("sshHost"));
     assert!(!body.contains("transport"));
     assert!(!body.contains("cwd"));
+}
+
+#[test]
+fn provider_handoff_shellx_tooling_defaults_true_and_forwards_false_to_off() {
+    let default_args = json!({
+        "providerId": "codex-cli",
+        "prompt": "summarize this repository",
+        "userApproved": true,
+    });
+    let disabled_args = json!({
+        "providerId": "antigravity-cli",
+        "prompt": "generate an image",
+        "userApproved": true,
+        "includeShellxTooling": false,
+    });
+    assert!(provider_handoff_include_shellx_tooling(&default_args));
+    assert!(!provider_handoff_include_shellx_tooling(&disabled_args));
+    assert!(!provider_handoff_include_shellx_tooling(&json!({
+        "include_shellx_tooling": false,
+    })));
+
+    assert_eq!(
+        crate::provider_adapters::ProviderShellxToolExposure::from_request(None, Some(false)),
+        crate::provider_adapters::ProviderShellxToolExposure::Off
+    );
+    assert!(
+        crate::provider_adapters::ProviderShellxToolExposure::from_request(None, None)
+            .injects_shellx_host_tools()
+    );
+
+    let target = ProviderCliHandoffTarget {
+        tab_id: "tab-antigravity".to_string(),
+        cwd: "/workspace".to_string(),
+        transport: "local".to_string(),
+        wsl_distro: None,
+        ssh_host: None,
+        ssh_port: None,
+        ssh_key_vault_ref: None,
+        label: "Local".to_string(),
+        source: "test".to_string(),
+    };
+    let disabled_body = provider_cli_handoff_start_body(
+        &target,
+        ProviderCliHandoffStartOptions {
+            provider_id: "antigravity-cli",
+            prompt: "generate an image",
+            timeout_ms: 900_000,
+            persist_session: false,
+            resume: false,
+            permission_mode: "readOnly",
+            include_shellx_tooling: provider_handoff_include_shellx_tooling(&disabled_args),
+        },
+    );
+    assert_eq!(
+        disabled_body
+            .get("includeShellxTooling")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        disabled_body
+            .get("providerId")
+            .and_then(serde_json::Value::as_str),
+        Some("antigravity-cli")
+    );
 }
 
 #[test]

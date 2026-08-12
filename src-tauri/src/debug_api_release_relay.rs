@@ -530,7 +530,7 @@ mod tests {
             .iter()
             .copied()
             .collect::<std::collections::HashSet<_>>();
-        assert_eq!(commands.len(), 153);
+        assert_eq!(commands.len(), 161);
         assert_eq!(unique.len(), commands.len());
         assert!(release_tauri_command_allowed("vault_status"));
         assert!(release_tauri_command_allowed(

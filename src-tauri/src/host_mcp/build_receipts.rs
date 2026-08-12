@@ -533,8 +533,7 @@ pub(super) async fn post_build_receipt_to_debug_api(
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
     let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
-    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
-        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let token = crate::debug_api::current_debug_token()?;
     let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
         .unwrap_or_else(|_| "5757".to_string());
     let url = format!("http://127.0.0.1:{}/build/receipt", port.trim());
@@ -575,8 +574,7 @@ pub(super) async fn post_build_complete_to_debug_api(
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
     let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
-    let token = std::fs::read_to_string(shellx_dir.join("shellxagent.token"))
-        .map_err(|e| format!("read shellxagent.token: {}", e))?;
+    let token = crate::debug_api::current_debug_token()?;
     let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
         .unwrap_or_else(|_| "5757".to_string());
     let url = format!("http://127.0.0.1:{}/build/complete", port.trim());

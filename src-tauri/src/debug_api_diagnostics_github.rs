@@ -295,15 +295,11 @@ pub(super) async fn diagnostics_run(
         );
     }
 
-    // auth — shellxagent token present
+    // auth — the process authority must be initialized. Do not re-read the
+    // mutable token file here: the running Debug API accepts only its startup
+    // authority (which may legitimately be an environment override).
     if want("auth") {
-        let token_path = shellxagent_token_path();
-        let ok = token_path
-            .exists()
-            .then(|| std::fs::read_to_string(&token_path).ok())
-            .flatten()
-            .map(|s| s.trim().len() >= 32)
-            .unwrap_or(false);
+        let ok = current_debug_token().is_ok();
         record(
             &mut checks,
             &mut pass,
@@ -311,8 +307,8 @@ pub(super) async fn diagnostics_run(
             "auth",
             ok,
             format!(
-                "shellxagent token {}",
-                if ok { "ok" } else { "missing or invalid" }
+                "Debug API token authority {}",
+                if ok { "initialized" } else { "unavailable" }
             ),
             None,
         );

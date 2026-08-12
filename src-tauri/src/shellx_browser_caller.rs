@@ -2,6 +2,34 @@ use crate::shellx_browser::BrowserTaskSnapshot;
 
 pub(crate) const SHELLX_MCP_CALLER_ID_HEADER: &str = "x-shellx-mcp-caller-id";
 
+/// Stable, opaque agent identity derived only from the authenticated Host MCP
+/// session. Browser requests must never choose this identity themselves.
+pub(crate) fn shellx_mcp_agent_identity(caller_session_id: Option<&str>) -> Option<String> {
+    caller_session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let digest = blake3::hash(value.as_bytes()).to_hex().to_string();
+            format!("shellx-agent-session:{}", &digest[..16])
+        })
+}
+
+pub(crate) fn browser_vault_agent_identity(
+    authenticated_agent_id: Option<&str>,
+    requested_agent_id: Option<&str>,
+) -> Option<String> {
+    authenticated_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            requested_agent_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(str::to_string)
+        .or_else(|| Some("shellx-browser-operator".to_string()))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BrowserTaskControlAuthority {
     Agent,

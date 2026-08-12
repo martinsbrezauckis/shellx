@@ -2,7 +2,9 @@ use crate::debug_api::{
     browser_registry, ApiState, BrowserEventListQuery, BrowserLogsQuery, BrowserReceiptsQuery,
     BrowserStorageStateQuery,
 };
-use crate::debug_api_browser_caller::browser_mcp_caller_id;
+use crate::debug_api_browser_caller::{
+    browser_mcp_caller_id, optional_browser_mcp_caller_id_or_bad_request,
+};
 use crate::debug_api_browser_events::{emit_browser_latest, emit_browser_receipt};
 use axum::{
     extract::{Query, State},
@@ -68,15 +70,23 @@ pub(crate) fn browser_artifact_routes() -> Router<ApiState> {
         .route("/browser/report", post(browser_report_http))
 }
 
-pub(crate) async fn browser_downloads_get_http(State(s): State<ApiState>) -> Response {
+pub(crate) async fn browser_downloads_get_http(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    Json(serde_json::json!({
-        "downloads": registry.downloads(),
-    }))
-    .into_response()
+    let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return response,
+    };
+    let downloads = caller_session_id
+        .as_deref()
+        .map(|caller| registry.downloads_for_agent_session(caller))
+        .unwrap_or_else(|| registry.downloads());
+    Json(serde_json::json!({ "downloads": downloads })).into_response()
 }
 
 pub(crate) async fn browser_download_request_http(
@@ -121,15 +131,23 @@ pub(crate) async fn browser_download_complete_http(
     }
 }
 
-pub(crate) async fn browser_uploads_get_http(State(s): State<ApiState>) -> Response {
+pub(crate) async fn browser_uploads_get_http(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    Json(serde_json::json!({
-        "uploads": registry.uploads(),
-    }))
-    .into_response()
+    let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return response,
+    };
+    let uploads = caller_session_id
+        .as_deref()
+        .map(|caller| registry.uploads_for_agent_session(caller))
+        .unwrap_or_else(|| registry.uploads());
+    Json(serde_json::json!({ "uploads": uploads })).into_response()
 }
 
 pub(crate) async fn browser_upload_request_http(
@@ -613,30 +631,42 @@ pub(crate) async fn browser_storage_state_export_http(
 
 pub(crate) async fn browser_receipts_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Query(q): Query<BrowserReceiptsQuery>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    Json(serde_json::json!({
-        "receipts": registry.receipts(q.limit),
-    }))
-    .into_response()
+    let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return response,
+    };
+    let receipts = caller_session_id
+        .as_deref()
+        .map(|caller| registry.receipts_for_agent_session(caller, q.limit))
+        .unwrap_or_else(|| registry.receipts(q.limit));
+    Json(serde_json::json!({ "receipts": receipts })).into_response()
 }
 
 pub(crate) async fn browser_logs_get_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Query(q): Query<BrowserLogsQuery>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    Json(serde_json::json!({
-        "logs": registry.console_logs(q.limit),
-    }))
-    .into_response()
+    let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return response,
+    };
+    let logs = caller_session_id
+        .as_deref()
+        .map(|caller| registry.console_logs_for_agent_session(caller, q.limit))
+        .unwrap_or_else(|| registry.console_logs(q.limit));
+    Json(serde_json::json!({ "logs": logs })).into_response()
 }
 
 pub(crate) async fn browser_logs_post_http(
@@ -681,16 +711,22 @@ pub(crate) async fn browser_logs_post_http(
 
 pub(crate) async fn browser_network_get_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Query(q): Query<BrowserEventListQuery>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    Json(serde_json::json!({
-        "entries": registry.network_entries(q.limit),
-    }))
-    .into_response()
+    let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return response,
+    };
+    let entries = caller_session_id
+        .as_deref()
+        .map(|caller| registry.network_entries_for_agent_session(caller, q.limit))
+        .unwrap_or_else(|| registry.network_entries(q.limit));
+    Json(serde_json::json!({ "entries": entries })).into_response()
 }
 
 pub(crate) async fn browser_report_http(

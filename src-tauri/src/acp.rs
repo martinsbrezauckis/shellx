@@ -19,6 +19,119 @@ use tokio::sync::{oneshot, Mutex as TokioMutex, Notify, Semaphore};
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
 
+const RELEASE_PROVIDER_AUTH_MODE_ENV: &str = "SHELLX_RELEASE_PROVIDER_AUTH_MODE";
+const RELEASE_PROVIDER_NATIVE_HOME_ENV: &str = "SHELLX_RELEASE_PROVIDER_NATIVE_HOME";
+const RELEASE_PROVIDER_WSL_HOME_ENV: &str = "SHELLX_RELEASE_PROVIDER_WSL_HOME";
+const RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE: &str = "canonical-reference";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReleaseGrokAuthTransport {
+    Local,
+    Wsl,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReleaseGrokAuthEnvironment {
+    auth_path: String,
+    wslenv: Option<String>,
+}
+
+fn release_grok_auth_environment_for(
+    transport: ReleaseGrokAuthTransport,
+    isolated_test_instance: bool,
+    mode: Option<&str>,
+    native_home: Option<&str>,
+    wsl_home: Option<&str>,
+    windows_host: bool,
+    existing_wslenv: Option<&str>,
+) -> Result<Option<ReleaseGrokAuthEnvironment>, String> {
+    let Some(mode) = mode.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if mode != RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE {
+        return Err("release provider auth mode is unsupported".to_string());
+    }
+    if !isolated_test_instance {
+        return Err(
+            "release provider auth references require an isolated test instance".to_string(),
+        );
+    }
+    let (home, posix) = match transport {
+        ReleaseGrokAuthTransport::Local => (
+            native_home.ok_or_else(|| "release provider native home is required".to_string())?,
+            !windows_host,
+        ),
+        ReleaseGrokAuthTransport::Wsl => (
+            wsl_home.ok_or_else(|| "release provider WSL home is required".to_string())?,
+            true,
+        ),
+    };
+    if home.is_empty() || home.chars().any(char::is_control) {
+        return Err("release provider canonical home is invalid".to_string());
+    }
+    if posix {
+        if !home.starts_with('/') || home == "/" {
+            return Err(
+                "release provider POSIX home must be an absolute non-root path".to_string(),
+            );
+        }
+    } else if !(home.as_bytes().get(1) == Some(&b':')
+        && matches!(home.as_bytes().get(2), Some(b'\\' | b'/')))
+        && !home.starts_with("\\\\")
+    {
+        return Err("release provider Windows home must be drive-absolute or UNC".to_string());
+    }
+
+    let trimmed = home.trim_end_matches(|value| value == '/' || value == '\\');
+    let auth_path = if posix {
+        format!("{trimmed}/.grok/auth.json")
+    } else {
+        format!("{trimmed}\\.grok\\auth.json")
+    };
+    let wslenv = (transport == ReleaseGrokAuthTransport::Wsl).then(|| {
+        let mut entries = existing_wslenv
+            .unwrap_or_default()
+            .split(':')
+            .filter(|entry| !entry.trim().is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if !entries
+            .iter()
+            .any(|entry| entry.split('/').next() == Some("GROK_AUTH_PATH"))
+        {
+            entries.push("GROK_AUTH_PATH".to_string());
+        }
+        entries.join(":")
+    });
+    Ok(Some(ReleaseGrokAuthEnvironment { auth_path, wslenv }))
+}
+
+fn apply_release_grok_auth_environment(
+    command: &mut Command,
+    transport: ReleaseGrokAuthTransport,
+) -> Result<(), String> {
+    let environment = release_grok_auth_environment_for(
+        transport,
+        crate::isolated_test_instance_requested(),
+        std::env::var(RELEASE_PROVIDER_AUTH_MODE_ENV)
+            .ok()
+            .as_deref(),
+        std::env::var(RELEASE_PROVIDER_NATIVE_HOME_ENV)
+            .ok()
+            .as_deref(),
+        std::env::var(RELEASE_PROVIDER_WSL_HOME_ENV).ok().as_deref(),
+        cfg!(target_os = "windows"),
+        std::env::var("WSLENV").ok().as_deref(),
+    )?;
+    if let Some(environment) = environment {
+        command.env("GROK_AUTH_PATH", environment.auth_path);
+        if let Some(wslenv) = environment.wslenv {
+            command.env("WSLENV", wslenv);
+        }
+    }
+    Ok(())
+}
+
 // Tauri trait imports — Emitter for .emit, Manager for managed session,
 // permission, host-MCP, and debug state lookups.
 use tauri::{Emitter, Manager};
@@ -2169,6 +2282,7 @@ impl GrokAcpSession {
                 debug!("WSL linux_home unknown — skipping legacy AGENTS.md and Grok MCP cleanup");
             }
             let mut c = Command::new("wsl.exe");
+            apply_release_grok_auth_environment(&mut c, ReleaseGrokAuthTransport::Wsl)?;
             // Base args before the grok binary
             c.args(["-d", distro, "--cd", &agent_cwd, "-e", grok_wsl]);
             // --always-approve only when the autonomy chip is in the
@@ -2242,6 +2356,7 @@ impl GrokAcpSession {
             }
 
             let mut c = Command::new(grok_exe);
+            apply_release_grok_auth_environment(&mut c, ReleaseGrokAuthTransport::Local)?;
             // The local host bearer is carried only in the ACP
             // session/new.mcpServers HTTP header. Do not export it as a
             // process environment variable, where a project config could
@@ -6827,6 +6942,7 @@ where
                 ));
             }
             let mut c = Command::new(&exe);
+            apply_release_grok_auth_environment(&mut c, ReleaseGrokAuthTransport::Local)?;
             for a in perm_args {
                 c.arg(a);
             }
@@ -6850,6 +6966,7 @@ where
                 return Err("Transport::Wsl is only available on Windows hosts".to_string());
             }
             let mut c = Command::new("wsl.exe");
+            apply_release_grok_auth_environment(&mut c, ReleaseGrokAuthTransport::Wsl)?;
             c.args(["-d", distro, "--cd", cwd, "-e", grok_path]);
             for a in perm_args {
                 c.arg(a);
@@ -7129,6 +7246,90 @@ pub fn validate_ssh_destination_arg(host: &str) -> Result<(), String> {
 #[cfg(test)]
 mod transport_tests {
     use super::*;
+
+    #[test]
+    fn release_grok_auth_references_canonical_homes_without_copying_credentials() {
+        let windows = release_grok_auth_environment_for(
+            ReleaseGrokAuthTransport::Local,
+            true,
+            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
+            Some(r"C:\Users\ReleaseUser"),
+            None,
+            true,
+            Some("HOME:PATH/l"),
+        )
+        .expect("Windows canonical auth reference")
+        .expect("Windows auth environment");
+        assert_eq!(windows.auth_path, r"C:\Users\ReleaseUser\.grok\auth.json");
+        assert_eq!(windows.wslenv, None);
+
+        let wsl = release_grok_auth_environment_for(
+            ReleaseGrokAuthTransport::Wsl,
+            true,
+            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
+            Some(r"C:\Users\ReleaseUser"),
+            Some("/home/release-user"),
+            true,
+            Some("HOME:PATH/l"),
+        )
+        .expect("WSL canonical auth reference")
+        .expect("WSL auth environment");
+        assert_eq!(wsl.auth_path, "/home/release-user/.grok/auth.json");
+        assert_eq!(wsl.wslenv.as_deref(), Some("HOME:PATH/l:GROK_AUTH_PATH"));
+
+        let posix = release_grok_auth_environment_for(
+            ReleaseGrokAuthTransport::Local,
+            true,
+            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
+            Some("/Users/release-user"),
+            None,
+            false,
+            None,
+        )
+        .expect("POSIX canonical auth reference")
+        .expect("POSIX auth environment");
+        assert_eq!(posix.auth_path, "/Users/release-user/.grok/auth.json");
+        assert_eq!(posix.wslenv, None);
+    }
+
+    #[test]
+    fn release_grok_auth_reference_is_explicit_and_test_instance_only() {
+        assert_eq!(
+            release_grok_auth_environment_for(
+                ReleaseGrokAuthTransport::Local,
+                true,
+                None,
+                Some("/home/release-user"),
+                None,
+                false,
+                None,
+            )
+            .expect("inactive release auth mode"),
+            None
+        );
+        assert!(release_grok_auth_environment_for(
+            ReleaseGrokAuthTransport::Local,
+            false,
+            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
+            Some("/home/release-user"),
+            None,
+            false,
+            None,
+        )
+        .expect_err("production process must reject release auth references")
+        .contains("isolated test instance"));
+        assert!(release_grok_auth_environment_for(
+            ReleaseGrokAuthTransport::Wsl,
+            true,
+            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
+            Some(r"C:\Users\ReleaseUser"),
+            None,
+            true,
+            None,
+        )
+        .expect_err("WSL reference requires an explicit canonical WSL home")
+        .contains("WSL home"));
+    }
 
     #[test]
     fn ssh_remote_platform_signatures_are_unambiguous() {
