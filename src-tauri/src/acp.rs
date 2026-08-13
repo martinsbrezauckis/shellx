@@ -75,14 +75,16 @@ fn release_grok_auth_environment_for(
                 "release provider POSIX home must be an absolute non-root path".to_string(),
             );
         }
-    } else if !(home.as_bytes().get(1) == Some(&b':')
-        && matches!(home.as_bytes().get(2), Some(b'\\' | b'/')))
-        && !home.starts_with("\\\\")
-    {
-        return Err("release provider Windows home must be drive-absolute or UNC".to_string());
+    } else {
+        let windows_absolute = home.starts_with("\\\\")
+            || (home.as_bytes().get(1) == Some(&b':')
+                && matches!(home.as_bytes().get(2), Some(b'\\' | b'/')));
+        if !windows_absolute {
+            return Err("release provider Windows home must be drive-absolute or UNC".to_string());
+        }
     }
 
-    let trimmed = home.trim_end_matches(|value| value == '/' || value == '\\');
+    let trimmed = home.trim_end_matches(['/', '\\']);
     let auth_path = if posix {
         format!("{trimmed}/.grok/auth.json")
     } else {
@@ -7262,6 +7264,38 @@ mod transport_tests {
         .expect("Windows auth environment");
         assert_eq!(windows.auth_path, r"C:\Users\ReleaseUser\.grok\auth.json");
         assert_eq!(windows.wslenv, None);
+
+        let windows_with_trailing_separator = release_grok_auth_environment_for(
+            ReleaseGrokAuthTransport::Local,
+            true,
+            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
+            Some(r#"C:\Users\ReleaseUser\"#),
+            None,
+            true,
+            None,
+        )
+        .expect("Windows canonical auth reference with trailing separator")
+        .expect("Windows auth environment with trailing separator");
+        assert_eq!(
+            windows_with_trailing_separator.auth_path,
+            r"C:\Users\ReleaseUser\.grok\auth.json"
+        );
+
+        let windows_unc = release_grok_auth_environment_for(
+            ReleaseGrokAuthTransport::Local,
+            true,
+            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
+            Some(r"\\server\share\release-user"),
+            None,
+            true,
+            None,
+        )
+        .expect("Windows UNC canonical auth reference")
+        .expect("Windows UNC auth environment");
+        assert_eq!(
+            windows_unc.auth_path,
+            r"\\server\share\release-user\.grok\auth.json"
+        );
 
         let wsl = release_grok_auth_environment_for(
             ReleaseGrokAuthTransport::Wsl,

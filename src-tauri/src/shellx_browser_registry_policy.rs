@@ -41,6 +41,7 @@ impl ShellxBrowserRegistry {
         Some(tab.shields.blocked_ad_tracker_count)
     }
 
+    #[cfg(any(windows, test))]
     pub(crate) fn record_bound_strict_request_blocked(
         &self,
         engine_id: &str,

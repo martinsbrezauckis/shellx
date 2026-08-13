@@ -27,13 +27,15 @@ pub(crate) fn optional_browser_mcp_caller_id(
 
 pub(crate) fn optional_browser_mcp_caller_id_or_bad_request(
     headers: &HeaderMap,
-) -> Result<Option<String>, Response> {
+) -> Result<Option<String>, Box<Response>> {
     optional_browser_mcp_caller_id(headers).map_err(|error| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": error })),
+        Box::new(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": error })),
+            )
+                .into_response(),
         )
-            .into_response()
     })
 }
 
@@ -61,6 +63,12 @@ mod tests {
         assert_eq!(
             optional_browser_mcp_caller_id(&headers),
             Err("invalid ShellX MCP caller id")
+        );
+        assert_eq!(
+            optional_browser_mcp_caller_id_or_bad_request(&headers)
+                .expect_err("invalid caller header must return a bounded response")
+                .status(),
+            StatusCode::BAD_REQUEST
         );
 
         headers.remove(SHELLX_MCP_CALLER_ID_HEADER);
