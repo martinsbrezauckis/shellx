@@ -23,12 +23,14 @@ const sessionId = "fixture-provider-action-session-0001";
 const instanceId = "fixture-provider-action-instance-0001";
 const sourceCommit = releaseSurfaceFixtureSourceCommit;
 // This test owns a synthetic WebDriver/debug server, not an installed native
-// candidate. Keep its runtime binding platform-neutral on every CI host so a
-// fake PID can never reach the production Windows native-window close helper.
-// Windows close binding is covered separately by the installed-input client
-// contract and by the final installed surface matrix.
-const fixturePlatform = "linux-installed" as const;
-const fixtureImagePath = "/tmp/fixture/shellx";
+// candidate. Keep filesystem and token-path semantics native to the CI host,
+// while the fixture session below explicitly avoids the production Windows
+// native-window close helper. That helper is covered by its focused contract
+// and by the final installed surface matrix.
+const fixturePlatform = process.platform === "win32" ? "windows-installed" : "linux-installed";
+const fixtureImagePath = fixturePlatform === "windows-installed"
+  ? "C:\\Temp\\ShellXReleaseFixture\\shellx.exe"
+  : "/tmp/fixture/shellx";
 const driverId = "ui-control-provider-action-lifecycle-installed";
 const exactNames = new Set([
   'src/components/ActivityBrowserModal.tsx:role=button;name="Ask agent"',
@@ -88,6 +90,9 @@ try {
 
   const request = createRequest(candidateBase, webdriverBase, ports.candidatePort);
   const input = createReleaseSurfaceInstalledInputSession(request, { base: candidateBase, token });
+  if (input.transport === "native-webdriver" && input.windowsNativeWindow) {
+    delete input.windowsNativeWindow;
+  }
   const baselineResponse = await fetch(`${candidateBase}/state/ui`, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -201,11 +206,26 @@ function createRequest(candidateBase: string, webdriverBase: string, candidatePo
       executableSha256: "e".repeat(64),
       installedPayloadPath: fixtureImagePath,
       installedManifestSha256: "f".repeat(64),
-      posixNative: releaseSurfacePosixNativeBindingFixture({
-        processId: 4321,
-        port: candidatePort,
-        imagePath: fixtureImagePath,
-        imageSha256: "e".repeat(64),
+      ...(fixturePlatform === "windows-installed" ? {
+        windowsNative: {
+          schema: "shellx/release-surface-windows-native-binding@1" as const,
+          process: {
+            pid: 4321,
+            startId: "2026-07-28T17:59:00.000Z",
+            imagePath: fixtureImagePath,
+            imageSha256: "e".repeat(64),
+            imageBytes: 1024,
+            imageFileId: `abcd1234:0x${"1".repeat(32)}`,
+          },
+          listener: { address: "127.0.0.1" as const, port: candidatePort, owningPid: 4321 },
+        },
+      } : {
+        posixNative: releaseSurfacePosixNativeBindingFixture({
+          processId: 4321,
+          port: candidatePort,
+          imagePath: fixtureImagePath,
+          imageSha256: "e".repeat(64),
+        }),
       }),
     },
     nativeWebDriver: { base: webdriverBase, sessionId, evidence: { basename: "native-webdriver-binding.json", sha256: "a".repeat(64), bytes: 1024 } },

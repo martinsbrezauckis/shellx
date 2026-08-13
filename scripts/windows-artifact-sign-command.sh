@@ -41,8 +41,6 @@ build_root="$(cd "$build_root" && pwd -P)"
 artifact_root="$(cd "$artifact_root" && pwd -P)"
 artifact_directory="$(cd "$(dirname "$artifact_path")" && pwd -P)"
 artifact_real="$artifact_directory/$(basename "$artifact_path")"
-artifact_root_lower="${artifact_root,,}"
-artifact_real_lower="${artifact_real,,}"
 if [[ -L "$artifact_path" || ! -f "$artifact_real" ]]; then
   echo "Windows signing artifact must be a regular non-symlink file: $artifact_path" >&2
   exit 1
@@ -140,15 +138,14 @@ case "$artifact_real" in
     fi
     artifact_real="$staged_nsis_uninstaller"
     artifact_directory="$nsis_signing_stage_root"
-    artifact_real_lower="${artifact_real,,}"
     echo "NSIS uninstaller signing callback accepted from pinned makensis"
     approved_nsis_uninstaller=1
     ;;
   *) echo "Windows signing artifact is outside the exact release target root: $artifact_path" >&2; exit 1 ;;
 esac
-case "$artifact_real_lower" in
-  *.exe|*.msi) ;;
-  "$artifact_root_lower"/nsis/*/plugins/*/*.dll) ;;
+case "$artifact_real" in
+  *.[eE][xX][eE]|*.[mM][sS][iI]) ;;
+  "$artifact_root"/[nN][sS][iI][sS]/*/[pP][lL][uU][gG][iI][nN][sS]/*/*.[dD][lL][lL]) ;;
   *)
     if [[ "$approved_nsis_uninstaller" != "1" ]]; then
       echo "Windows signing artifact must be an EXE, MSI, contained NSIS plugin DLL, or controlled NSIS uninstaller: $artifact_path" >&2
