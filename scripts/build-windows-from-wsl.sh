@@ -52,6 +52,7 @@ need_command wslpath
 need_command node
 need_command git
 need_command tar
+need_command makensis
 cargo xwin --version >/dev/null 2>&1 || {
   echo "cargo-xwin is required (cargo install cargo-xwin)" >&2
   exit 1
@@ -104,6 +105,9 @@ verify_build_input() {
   else
     args+=(--allow-manifest-only-development)
   fi
+  if [[ -n "${SHELLX_RELEASE_GENERATED_INPUT_DIGEST:-}" ]]; then
+    args+=(--expected-generated-input-digest "$SHELLX_RELEASE_GENERATED_INPUT_DIGEST")
+  fi
   identity="$(node "${args[@]}")"
   if [[ -z "$identity" ]]; then
     echo "FAIL: release build-input verifier returned no identity" >&2
@@ -111,6 +115,16 @@ verify_build_input() {
   fi
   printf '%s\n' "$identity"
 }
+
+if [[ "$release_identity_required" == "1" ]]; then
+  echo "[build-windows] removing prior generated build inputs and outputs"
+  rm -rf -- \
+    "$repo_root/node_modules" \
+    "$repo_root/dist" \
+    "$repo_root/src-tauri/gen" \
+    "$repo_root/src-tauri/target" \
+    "$repo_root/vendor/shellx-vault/web/dist"
+fi
 
 build_identity="$(verify_build_input)"
 build_commit="$(printf '%s' "$build_identity" | node -e '
@@ -132,6 +146,16 @@ export SHELLX_RELEASE_SOURCE_REPO="$release_source_repo"
 export SHELLX_RELEASE_BUILD_ROOT="$repo_root"
 export SHELLX_RELEASE_BUILD_INPUT_VERIFIER="$verifier"
 target_dir="src-tauri/target/$target/$mode"
+export SHELLX_RELEASE_ARTIFACT_ROOT="$repo_root/$target_dir"
+nsis_executable="$(readlink -f "$(command -v makensis)")"
+if [[ ! -x "$nsis_executable" ]]; then
+  echo "FAIL: makensis must resolve to an executable regular file" >&2
+  exit 1
+fi
+export SHELLX_RELEASE_NSIS_EXECUTABLE="$nsis_executable"
+export SHELLX_RELEASE_NSIS_EXECUTABLE_SHA256="$(sha256sum "$nsis_executable" | cut -d ' ' -f 1)"
+export SHELLX_RELEASE_BUILD_STARTED="$started"
+nsis_signing_stage_root="$SHELLX_RELEASE_ARTIFACT_ROOT/.shellx-nsis-signing-stage"
 bundle_dir="$target_dir/bundle"
 exe="$target_dir/shellx.exe"
 nsis="$bundle_dir/nsis/shellX_${version}_x64-setup.exe"
@@ -164,10 +188,30 @@ fi
 
 echo "[build-windows] installing JavaScript dependencies"
 echo "[build-windows] embedding source commit $build_commit"
-pnpm install --frozen-lockfile
+pnpm install --frozen-lockfile --force --verify-store-integrity --ignore-scripts
+pnpm store status
+pnpm rebuild
+SHELLX_RELEASE_GENERATED_INPUT_DIGEST="$(node "$verifier" \
+  --print-generated-input-digest \
+  --build-root "$repo_root")"
+if [[ ! "$SHELLX_RELEASE_GENERATED_INPUT_DIGEST" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "FAIL: generated dependency input seal is invalid" >&2
+  exit 1
+fi
+export SHELLX_RELEASE_GENERATED_INPUT_DIGEST
+echo "[build-windows] sealed clean generated dependency input"
 
 echo "[build-windows] removing stale Windows bundle output"
 rm -rf "$bundle_dir"
+if [[ -n "$metadata_path" ]]; then
+  if [[ -e "$nsis_signing_stage_root" ]]; then
+    echo "FAIL: NSIS signing stage already exists after clean release setup" >&2
+    exit 1
+  fi
+  mkdir -p -- "$nsis_signing_stage_root"
+  chmod 700 "$nsis_signing_stage_root"
+  export SHELLX_RELEASE_NSIS_SIGNING_STAGE_ROOT="$nsis_signing_stage_root"
+fi
 
 tauri_config='{"bundle":{"createUpdaterArtifacts":false}}'
 if [[ -n "$metadata_path" ]]; then
@@ -192,6 +236,9 @@ cleanup_build_log() {
   if [[ -n "${build_log:-}" && -f "$build_log" ]]; then
     rm -f -- "$build_log"
   fi
+  if [[ -n "${nsis_signing_stage_root:-}" && -d "$nsis_signing_stage_root" ]]; then
+    rmdir -- "$nsis_signing_stage_root" 2>/dev/null || true
+  fi
 }
 trap cleanup_build_log EXIT
 if ! pnpm "${tauri_args[@]}" 2>&1 | tee "$build_log"; then
@@ -209,6 +256,21 @@ fi
 if grep -Fq "Failed to add bundler type" "$build_log"; then
   echo "FAIL: Tauri could not bind the requested bundle type to the desktop executable" >&2
   exit 1
+fi
+if [[ -n "$metadata_path" ]]; then
+  if grep -Fq "Windows signing artifact is outside the exact release target root" "$build_log"; then
+    echo "FAIL: a Windows signing callback escaped its expected release boundary" >&2
+    exit 1
+  fi
+  if ! grep -Fq "NSIS uninstaller signing callback accepted from pinned makensis" "$build_log"; then
+    echo "FAIL: the embedded NSIS uninstaller did not pass the provenance-bound signing callback" >&2
+    exit 1
+  fi
+  if find "$nsis_signing_stage_root" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo "FAIL: the NSIS signing stage retained a callback artifact" >&2
+    exit 1
+  fi
+  rmdir -- "$nsis_signing_stage_root"
 fi
 if ! grep -Eq 'Built application at: .*/shellx\.exe$' "$build_log"; then
   echo "FAIL: Tauri did not report shellx.exe as the built desktop application" >&2

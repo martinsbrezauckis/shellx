@@ -27,6 +27,7 @@ const browserBookmarksSource = readRequiredSource("src-tauri/src/shellx_browser_
 const browserCdpRuntimeSource = readRequiredSource("src-tauri/src/shellx_browser_cdp_runtime.rs");
 const browserEngineSource = readRequiredSource("src-tauri/src/shellx_browser_engine.rs");
 const browserEngineRuntimeSource = ["src-tauri/src/shellx_browser_engine_runtime.rs", "src-tauri/src/shellx_browser_engine_lifecycle.rs", "src-tauri/src/shellx_browser_engine_webview_config.rs", "src-tauri/src/shellx_browser_initialization.rs", "src-tauri/src/shellx_browser_webview_runtime.rs"].map(readRequiredSource).join("\n");
+const permissionHandlerSource = browserEngineRuntimeSource.match(/&PermissionRequestedEventHandler::create\(Box::new\(move \|_sender, args\| \{[\s\S]*?&mut permission_token,/)?.[0] ?? "";
 const browserRenderedCheckSource = readRequiredSource("src-tauri/src/shellx_browser_rendered_check.rs");
 const browserVaultRuntimeSource = readRequiredSource("src-tauri/src/shellx_browser_vault.rs");
 const browserWindowOpenRuntimeSource = readRequiredSource("src-tauri/src/shellx_browser_window_open_runtime.rs");
@@ -349,7 +350,8 @@ assert(
     browserScriptsSource.includes("ensureShellxPermissionReporter"),
   "native WebView and action-drained page permission requests are bridged into Browser permission events",
 );
-assert(browserEngineRuntimeSource.indexOf("args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)") < browserEngineRuntimeSource.indexOf("record_bound_engine_permission_event") && rustBrowserPrompts.includes("engine_event_bindings") && rustBrowserPrompts.includes("Some(event_binding)") && browserTabsSource.includes("state.engine_event_bindings.remove(&closed_engine_id)"), "native permission evidence is generation-bound and logical tab close retires the old callback identity after preserving DENY");
+const permissionDenyCallIndex = permissionHandlerSource.indexOf("args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)"); const permissionRecordIndex = permissionHandlerSource.indexOf("record_bound_engine_permission_event");
+assert(permissionDenyCallIndex >= 0 && permissionRecordIndex >= 0 && permissionDenyCallIndex < permissionRecordIndex && rustBrowserPrompts.includes("engine_event_bindings") && rustBrowserPrompts.includes("Some(event_binding)") && browserTabsSource.includes("state.engine_event_bindings.remove(&closed_engine_id)"), "native permission evidence is generation-bound and logical tab close retires the old callback identity after preserving DENY");
 assert(rustBrowser.includes("BrowserPopupEvent"), "Browser popup events are modeled");
 assert(rustBrowser.includes("BrowserNetworkEntry"), "Browser network metadata entries are modeled");
 assert(rustBrowser.includes("BrowserScreenshotArtifact"), "Browser actions can return structured screenshot artifacts");
@@ -647,7 +649,7 @@ assert(rustBrowserPrompts.includes("browserDialogResolved"), "Browser dialog res
 assert(rustBrowserPrompts.includes("browserPermissionRequested"), "Browser page permission request receipts are modeled");
 assert(rustBrowserPrompts.includes("browserPermissionResolved"), "Browser page permission resolve receipts are modeled");
 assert(
-  browserEngineRuntimeSource.includes("COREWEBVIEW2_PERMISSION_STATE_DENY") &&
+  permissionHandlerSource.includes("args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;") &&
     browserEngineRuntimeSource.includes("requires_approval: true"),
   "native page permissions fail closed until ShellX operator approval is available",
 );

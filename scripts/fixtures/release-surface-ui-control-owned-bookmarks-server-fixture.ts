@@ -102,6 +102,11 @@ const candidate = createServer(async (request, response) => {
     if (request.headers.authorization !== `Bearer ${token}`) return json(response, 401, { error: "unauthorized" });
     if (request.method === "GET" && request.url === "/browser/state") {
       return json(response, 200, {
+        windowOpen: browserWindowOpen,
+        engine: { engineId: "fixture-owned-bookmark-engine", mounted: browserWindowOpen },
+        enginePool: {
+          engines: [{ engineId: "fixture-owned-bookmark-engine", mounted: browserWindowOpen }],
+        },
         activeTaskId: taskStatus === "running" ? taskId : null,
         tabs: [...tabs.values()],
         tasks: taskId ? [{ taskId, status: taskStatus }] : [],

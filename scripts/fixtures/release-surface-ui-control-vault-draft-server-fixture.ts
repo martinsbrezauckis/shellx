@@ -142,7 +142,14 @@ const candidate = createServer(async (request, response) => {
       return json(response, 200, { settingsOpen, settingsTab });
     }
     if (request.method === "GET" && request.url === "/browser/state") {
-      return json(response, 200, { profiles: [], tabs: [], tasks: [], windowOpen: false });
+      return json(response, 200, {
+        profiles: [],
+        tabs: [],
+        tasks: [],
+        windowOpen: false,
+        engine: { mounted: false },
+        enginePool: { engines: [] },
+      });
     }
     if (request.method === "GET" && request.url === "/vault/status") {
       return json(response, 200, vaultStatus());
@@ -295,7 +302,7 @@ const webdriver = createServer(async (request, response) => {
     if (!path.startsWith(prefix)) return webdriverError(response, 404, "invalid session id", "unknown fixture session");
     if (request.method === "GET" && path === `${prefix}/window`) return webdriverValue(response, "main-window");
     if (request.method === "GET" && path === `${prefix}/window/handles`) return webdriverValue(response, ["main-window"]);
-    if (request.method === "GET" && path === `${prefix}/title`) return webdriverValue(response, "ShellX");
+    if (request.method === "GET" && path === `${prefix}/title`) return webdriverValue(response, "shellX");
     if (request.method === "POST" && path === `${prefix}/execute/sync`) {
       const body = await requestJson(request);
       const script = typeof body.script === "string" ? body.script : "";

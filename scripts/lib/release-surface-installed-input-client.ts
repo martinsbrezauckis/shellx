@@ -71,6 +71,8 @@ export type ReleaseSurfaceInstalledInputElement = ReleaseSurfaceWebDriverElement
 export type ReleaseSurfaceInstalledInputSession = {
   transport: "native-webdriver";
   session: NonNullable<ReleaseSurfaceDriverRequest["nativeWebDriver"]>;
+  candidateConnection?: CandidateConnection;
+  browserCloseTimeoutMs?: number;
   windowsNativeWindow?: {
     binding: NonNullable<ReleaseSurfaceDriverRequest["runtime"]["windowsNative"]>;
     close: (
@@ -117,12 +119,15 @@ export function createReleaseSurfaceInstalledInputSession(
   options?: {
     runHelper?: typeof runReleaseSurfaceMacosNativeInputHelper;
     closeWindowsNativeWindow?: typeof closeReleaseSurfaceWindowsNativeWindow;
+    browserCloseTimeoutMs?: number;
   },
 ): ReleaseSurfaceInstalledInputSession {
   if (request.nativeWebDriver && !request.macosNativeInput) {
     return {
       transport: "native-webdriver",
       session: request.nativeWebDriver,
+      candidateConnection: connection,
+      browserCloseTimeoutMs: options?.browserCloseTimeoutMs ?? 4_000,
       ...(request.platform === "windows-installed" && request.runtime.windowsNative ? {
         windowsNativeWindow: {
           binding: request.runtime.windowsNative,
@@ -633,25 +638,39 @@ export async function closeReleaseSurfaceInstalledInputWindow(
     if (closeRequested !== true) {
       throw new Error("ShellX Browser candidate-owned native close route was unavailable");
     }
-    let deadline = Date.now() + 4_000;
+    const browserCloseTimeoutMs = session.browserCloseTimeoutMs ?? 4_000;
+    let deadline = Date.now() + browserCloseTimeoutMs;
     let lastHandles: string[] = [];
+    let chromeHandleClosed = false;
     while (Date.now() < deadline) {
       lastHandles = await releaseSurfaceWebDriverWindowHandles(session.session);
-      if (!lastHandles.includes(browserChromeHandle)) return;
+      if (!lastHandles.includes(browserChromeHandle)) {
+        chromeHandleClosed = true;
+        break;
+      }
       await delay(100);
     }
 
-    await switchReleaseSurfaceWebDriverWindow(session.session, browserChromeHandle);
-    await closeReleaseSurfaceWebDriverWindow(session.session);
-    deadline = Date.now() + 4_000;
-    while (Date.now() < deadline) {
-      lastHandles = await releaseSurfaceWebDriverWindowHandles(session.session);
-      if (!lastHandles.includes(browserChromeHandle)) return;
-      await delay(100);
+    if (!chromeHandleClosed) {
+      await switchReleaseSurfaceWebDriverWindow(session.session, browserChromeHandle);
+      await closeReleaseSurfaceWebDriverWindow(session.session);
+      deadline = Date.now() + browserCloseTimeoutMs;
+      while (Date.now() < deadline) {
+        lastHandles = await releaseSurfaceWebDriverWindowHandles(session.session);
+        if (!lastHandles.includes(browserChromeHandle)) {
+          chromeHandleClosed = true;
+          break;
+        }
+        await delay(100);
+      }
     }
-    throw new Error(
-      `ShellX Browser native window did not close before timeout; chrome handle ${browserChromeHandle} remains among ${lastHandles.join(", ")}`,
-    );
+    if (!chromeHandleClosed) {
+      throw new Error(
+        `ShellX Browser chrome handle ${browserChromeHandle} remains among ${lastHandles.join(", ")}`,
+      );
+    }
+    await waitForNativeBrowserWindowClosed(session);
+    return;
   }
   if (session.activeWindow.surface !== "browser") {
     throw new Error("macOS native-input refuses to close the attested main candidate window");
@@ -1017,6 +1036,58 @@ async function candidateJson(
     throw new Error(`candidate ${method} ${path} response exceeded its JSON cap`);
   }
   return text ? JSON.parse(text) : {};
+}
+
+async function waitForNativeBrowserWindowClosed(
+  session: Extract<ReleaseSurfaceInstalledInputSession, { transport: "native-webdriver" }>,
+): Promise<void> {
+  if (!session.candidateConnection) {
+    throw new Error("Native Browser close requires the exact candidate Debug API binding");
+  }
+  const deadline = Date.now() + (session.browserCloseTimeoutMs ?? 4_000);
+  let lastState = "Browser state was not read";
+  while (Date.now() < deadline) {
+    const state = await candidateConnectionJson(session.candidateConnection, "GET", "/browser/state");
+    const engine = isRecord(state.engine) ? state.engine : {};
+    const enginePool = isRecord(state.enginePool) ? state.enginePool : {};
+    const pooledEngines = Array.isArray(enginePool.engines)
+      ? enginePool.engines.filter(isRecord)
+      : [];
+    if (state.windowOpen === false
+      && engine.mounted === false
+      && pooledEngines.every((pooled) => pooled.mounted === false)) return;
+    lastState = JSON.stringify({
+      windowOpen: state.windowOpen,
+      foregroundMounted: engine.mounted,
+      pooledMounted: pooledEngines.filter((pooled) => pooled.mounted === true).length,
+    });
+    await delay(50);
+  }
+  throw new Error(`Native Browser close did not reconcile Debug API state: ${lastState}`);
+}
+
+async function candidateConnectionJson(
+  connection: CandidateConnection,
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<Record<string, unknown>> {
+  const headers = new Headers({ Authorization: `Bearer ${connection.token}` });
+  if (body !== undefined) headers.set("Content-Type", "application/json");
+  const response = await fetch(`${connection.base.replace(/\/$/, "")}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(3_000),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`candidate ${method} ${path} returned ${response.status}`);
+  if (Buffer.byteLength(text) > MAX_DEBUG_RESPONSE_BYTES) {
+    throw new Error(`candidate ${method} ${path} response exceeded its JSON cap`);
+  }
+  const value = text ? JSON.parse(text) : {};
+  if (!isRecord(value)) throw new Error(`candidate ${method} ${path} returned non-object JSON`);
+  return value;
 }
 
 function requireWebDriverElement(element: ReleaseSurfaceInstalledInputElement): ReleaseSurfaceWebDriverElement {

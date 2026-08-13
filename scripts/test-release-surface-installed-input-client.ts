@@ -401,6 +401,8 @@ try {
   const linuxWebdriverSession = createReleaseSurfaceInstalledInputSession(linuxWebdriverOnly, {
     base: linuxWebdriverOnly.runtime.debugBase,
     token: "fixture-debug-token-that-is-long-enough",
+  }, {
+    browserCloseTimeoutMs: 25,
   });
   await closeReleaseSurfaceInstalledInputWindow(linuxWebdriverSession);
   assert.equal(api.browserCloseRequestCount(), 1);
@@ -409,6 +411,19 @@ try {
     await focusReleaseSurfaceInstalledInputMainWindow(linuxWebdriverSession),
     "main-shell",
     "a stale Browser renderer handle must be purged before the exact shellX main window is restored",
+  );
+
+  api.resetBrowser(false);
+  const stalledLinuxSession = createReleaseSurfaceInstalledInputSession(linuxWebdriverOnly, {
+    base: linuxWebdriverOnly.runtime.debugBase,
+    token: "fixture-debug-token-that-is-long-enough",
+  }, {
+    browserCloseTimeoutMs: 25,
+  });
+  await assert.rejects(
+    closeReleaseSurfaceInstalledInputWindow(stalledLinuxSession),
+    /Native Browser close did not reconcile Debug API state/,
+    "deleting only the stale Browser chrome handle must not certify native multi-WebView cleanup",
   );
 
   console.log("Release surface installed-input client tests passed");
@@ -468,13 +483,16 @@ function fakeCandidateApi(): {
   pointerActions: () => unknown[];
   browserCloseRequestCount: () => number;
   webdriverWindowDeleteCount: () => number;
+  resetBrowser: (closeRequestCompletes: boolean) => void;
 } {
   let active: { id: string; selector: string; observe: string[]; surface: "app" | "browser" } | null = null;
   let clears = 0;
   const highlightRequests = new Map<string, number>();
   const pointerActions: unknown[] = [];
   let currentWindow = "browser-shell";
-  let browserWindowOpen = true;
+  let browserRendererHandleOpen = true;
+  let browserNativeWindowOpen = true;
+  let closeRequestCompletes = true;
   let browserCloseRequests = 0;
   let webdriverWindowDeletes = 0;
   const originalFetch = globalThis.fetch;
@@ -488,11 +506,11 @@ function fakeCandidateApi(): {
         return jsonResponse({ value: currentWindow });
       }
       if ((init?.method ?? "GET") === "GET" && url.endsWith("/window/handles")) {
-        return jsonResponse({ value: browserWindowOpen ? ["main-shell", "browser-shell"] : ["main-shell"] });
+        return jsonResponse({ value: browserRendererHandleOpen ? ["main-shell", "browser-shell"] : ["main-shell"] });
       }
       if (init?.method === "POST" && url.endsWith("/window")) {
         const handle = String(JSON.parse(String(init.body ?? "{}")).handle ?? "");
-        if (handle !== "main-shell" && (handle !== "browser-shell" || !browserWindowOpen)) {
+        if (handle !== "main-shell" && (handle !== "browser-shell" || !browserRendererHandleOpen)) {
           return jsonResponse({ value: { error: "no such window", message: "fixture window is absent" } }, 404);
         }
         currentWindow = handle;
@@ -504,14 +522,15 @@ function fakeCandidateApi(): {
           return jsonResponse({ value: { error: "unknown command", message: "fixture script is not allowlisted" } }, 400);
         }
         browserCloseRequests += 1;
+        if (closeRequestCompletes) browserNativeWindowOpen = false;
         return jsonResponse({ value: true });
       }
       if (init?.method === "DELETE" && url.endsWith("/window")) {
-        if (currentWindow !== "browser-shell" || !browserWindowOpen) {
+        if (currentWindow !== "browser-shell" || !browserRendererHandleOpen) {
           return jsonResponse({ value: { error: "no such window", message: "fixture Browser window is absent" } }, 404);
         }
         webdriverWindowDeletes += 1;
-        browserWindowOpen = false;
+        browserRendererHandleOpen = false;
         currentWindow = "main-shell";
         return jsonResponse({ value: ["main-shell"] });
       }
@@ -525,6 +544,13 @@ function fakeCandidateApi(): {
       }
       if (init?.method === "DELETE" && url.endsWith("/actions")) return jsonResponse({ value: null });
       return jsonResponse({ value: { error: "unknown command", message: "fixture path not handled" } }, 404);
+    }
+    if (url.endsWith("/browser/state") && (init?.method ?? "GET") === "GET") {
+      return jsonResponse({
+        windowOpen: browserNativeWindowOpen,
+        engine: { mounted: browserNativeWindowOpen },
+        enginePool: { engines: [{ mounted: browserNativeWindowOpen }] },
+      });
     }
     if (!url.endsWith("/state/ui")) return new Response("not found", { status: 404 });
     if ((init?.method ?? "GET") === "POST") {
@@ -600,6 +626,12 @@ function fakeCandidateApi(): {
     pointerActions: () => structuredClone(pointerActions),
     browserCloseRequestCount: () => browserCloseRequests,
     webdriverWindowDeleteCount: () => webdriverWindowDeletes,
+    resetBrowser: (completes) => {
+      currentWindow = "browser-shell";
+      browserRendererHandleOpen = true;
+      browserNativeWindowOpen = true;
+      closeRequestCompletes = completes;
+    },
   };
 }
 

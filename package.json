@@ -24,7 +24,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-source-size-budget.mjs && vite build && node scripts/check-bundle-budget.mjs",
+    "build": "node scripts/check-source-size-budget.mjs && vite build --configLoader runner && node scripts/check-bundle-budget.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

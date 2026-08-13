@@ -7,12 +7,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   realpathSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const MANIFEST_SCHEMA = "shellx/public-export-manifest@4";
@@ -38,15 +39,63 @@ function git(repo, args, options = {}) {
   }).trim();
 }
 
-function requireCleanGitCheckout(repo, label, verifyIgnoredBuildPaths = false) {
+function generatedInputDigest(repo) {
+  const root = join(repo, "node_modules");
+  const rootStat = lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    fail("node_modules must be a regular directory before generated-input sealing");
+  }
+  const rows = [];
+  const visit = (absolute, path) => {
+    const stat = lstatSync(absolute);
+    const mode = (stat.mode & 0o777).toString(8).padStart(3, "0");
+    if (stat.isSymbolicLink()) {
+      const target = readlinkSync(absolute);
+      const resolvedTarget = realpathSync(absolute);
+      const targetRelative = relative(root, resolvedTarget);
+      if (isAbsolute(targetRelative)
+        || targetRelative === ".."
+        || targetRelative.startsWith(`..${sep}`)) {
+        fail(`generated input symlink escapes node_modules: ${path}`);
+      }
+      rows.push({ path, type: "symlink", mode, target });
+      return;
+    }
+    if (stat.isDirectory()) {
+      rows.push({ path, type: "directory", mode });
+      for (const entry of readdirSync(absolute).sort()) visit(join(absolute, entry), `${path}/${entry}`);
+      return;
+    }
+    if (!stat.isFile()) fail(`generated input contains a non-regular entry: ${path}`);
+    rows.push({ path, type: "file", mode, bytes: stat.size, sha256: sha256(readFileSync(absolute)) });
+  };
+  visit(root, "node_modules");
+  return sha256(Buffer.from(JSON.stringify(rows), "utf8"));
+}
+
+function requireCleanGitCheckout(
+  repo,
+  label,
+  verifyIgnoredBuildPaths = false,
+  expectedGeneratedInputDigest = null,
+) {
   const inside = git(repo, ["rev-parse", "--is-inside-work-tree"]);
   if (inside !== "true") fail(`${label} is not a Git worktree`);
   const status = git(repo, ["status", "--porcelain=v1", "--untracked-files=all"]);
   if (status) fail(`${label} has tracked or staged changes`);
   if (!verifyIgnoredBuildPaths) return;
-  const allowedIgnoredRoots = new Set([
+  if (expectedGeneratedInputDigest === null) {
+    const ignored = git(repo, [
+      "status", "--ignored=matching", "--porcelain=v1", "--untracked-files=all",
+    ]).split("\n").filter((row) => row.startsWith("!! ")).map((row) => row.slice(3));
+    if (ignored.length > 0) fail(`generated build inputs require a fresh seal: ${ignored[0]}`);
+    return;
+  }
+  if (!/^[a-f0-9]{64}$/.test(expectedGeneratedInputDigest)) {
+    fail("expected generated-input digest must be a SHA-256 value");
+  }
+  const allowedOutputRoots = new Set([
     "dist/",
-    "node_modules/",
     "src-tauri/gen/",
     "src-tauri/target/",
     "vendor/shellx-vault/web/dist/",
@@ -55,12 +104,18 @@ function requireCleanGitCheckout(repo, label, verifyIgnoredBuildPaths = false) {
     "status", "--ignored=matching", "--porcelain=v1", "--untracked-files=all",
   ]).split("\n").filter((row) => row.startsWith("!! ")).map((row) => row.slice(3));
   for (const path of ignored) {
-    if (!allowedIgnoredRoots.has(path)) fail(`ignored build input is not allowed: ${path}`);
+    if (path !== "node_modules/" && !allowedOutputRoots.has(path)) {
+      fail(`ignored build input is not allowed: ${path}`);
+    }
     const absolute = join(repo, path);
     const stat = lstatSync(absolute);
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       fail(`allowed generated build root is not a regular directory: ${path}`);
     }
+  }
+  const actualGeneratedInputDigest = generatedInputDigest(repo);
+  if (actualGeneratedInputDigest !== expectedGeneratedInputDigest) {
+    fail("generated dependency input drifted after its clean install seal");
   }
 }
 
@@ -193,15 +248,33 @@ function regenerateExpectedExport(sourceRepo, expectedCommit) {
   return { temp, payloadRoot };
 }
 
+function verifyCanonicalSourceTree(sourceRepo, expectedCommit) {
+  const temp = mkdtempSync(join(tmpdir(), "shellx-release-source-input-"));
+  const archivePath = join(temp, "source.tar");
+  const payloadRoot = join(temp, "payload");
+  mkdirSync(payloadRoot);
+  try {
+    execFileSync("git", [
+      "-c", "core.autocrlf=false", "-C", sourceRepo, "archive", "--format=tar",
+      `--output=${archivePath}`, expectedCommit,
+    ]);
+    execFileSync("tar", ["-C", payloadRoot, "-xf", archivePath]);
+    assertExactFileTree(payloadRoot, sourceRepo);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
 export function verifyReleaseBuildInput({
   buildRoot: buildRootInput,
   sourceRepo: sourceRepoInput,
   expectedCommit,
+  expectedGeneratedInputDigest = null,
   allowManifestOnly = false,
 }) {
   if (!buildRootInput) fail("--build-root is required");
   const buildRoot = realpathSync(resolve(buildRootInput));
-  requireCleanGitCheckout(buildRoot, "build checkout", true);
+  requireCleanGitCheckout(buildRoot, "build checkout", true, expectedGeneratedInputDigest);
 
   let sourceRepo = null;
   let sourceTree = null;
@@ -224,12 +297,14 @@ export function verifyReleaseBuildInput({
     if (!sourceRepo || sourceRepo !== buildRoot) {
       fail("a build without a public-export manifest must be the canonical source checkout");
     }
+    verifyCanonicalSourceTree(sourceRepo, expectedCommit);
     return {
       schema: "shellx/release-build-input@1",
       mode: "canonical-source",
       sourceCommit: expectedCommit,
       sourceTree,
       payloadDigest: git(sourceRepo, ["rev-parse", `${expectedCommit}^{tree}`]),
+      generatedInputDigest: expectedGeneratedInputDigest,
     };
   }
 
@@ -247,6 +322,7 @@ export function verifyReleaseBuildInput({
       sourceCommit: commit,
       sourceTree: tree,
       payloadDigest: validated.payload.digest,
+      generatedInputDigest: expectedGeneratedInputDigest,
     };
   }
 
@@ -260,6 +336,7 @@ export function verifyReleaseBuildInput({
       sourceCommit: expectedCommit,
       sourceTree,
       payloadDigest: manifest.payload.digest,
+      generatedInputDigest: expectedGeneratedInputDigest,
     };
   } finally {
     rmSync(generated.temp, { recursive: true, force: true });
@@ -268,10 +345,17 @@ export function verifyReleaseBuildInput({
 
 function main() {
   const args = process.argv.slice(2);
+  if (args.includes("--print-generated-input-digest")) {
+    const buildRoot = readArg(args, "--build-root");
+    if (!buildRoot) fail("--build-root is required");
+    process.stdout.write(`${generatedInputDigest(realpathSync(resolve(buildRoot)))}\n`);
+    return;
+  }
   const result = verifyReleaseBuildInput({
     buildRoot: readArg(args, "--build-root"),
     sourceRepo: readArg(args, "--source-repo"),
     expectedCommit: readArg(args, "--expected-commit"),
+    expectedGeneratedInputDigest: readArg(args, "--expected-generated-input-digest") ?? null,
     allowManifestOnly: args.includes("--allow-manifest-only-development"),
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);

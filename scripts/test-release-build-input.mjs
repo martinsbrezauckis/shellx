@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,13 +68,26 @@ function run(command, args, options = {}) {
   });
 }
 
-function verify(buildRoot, sourceRoot, commit) {
-  return spawnSync(process.execPath, [
+function verify(buildRoot, sourceRoot, commit, generatedInputDigest = null) {
+  const args = [
     join(sourceRoot, "scripts", "verify-release-build-input.mjs"),
     "--build-root", buildRoot,
     "--source-repo", sourceRoot,
     "--expected-commit", commit,
+  ];
+  if (generatedInputDigest) args.push("--expected-generated-input-digest", generatedInputDigest);
+  return spawnSync(process.execPath, args, { encoding: "utf8" });
+}
+
+function sealGeneratedInput(buildRoot, sourceRoot) {
+  const result = spawnSync(process.execPath, [
+    join(sourceRoot, "scripts", "verify-release-build-input.mjs"),
+    "--print-generated-input-digest",
+    "--build-root", buildRoot,
   ], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout.trim(), /^[a-f0-9]{64}$/);
+  return result.stdout.trim();
 }
 
 function sha256(bytes) {
@@ -129,23 +143,53 @@ try {
 
   mkdirSync(join(build, "node_modules", "fixture"), { recursive: true });
   writeFileSync(join(build, "node_modules", "fixture", "index.js"), "export {};\n");
-  const allowedGenerated = verify(build, source, commit);
+  const unsealedGenerated = verify(build, source, commit);
+  assert.notEqual(unsealedGenerated.status, 0);
+  assert.match(unsealedGenerated.stderr, /generated build inputs require a fresh seal: node_modules\//);
+  const generatedInputSeal = sealGeneratedInput(build, source);
+  const allowedGenerated = verify(build, source, commit, generatedInputSeal);
   assert.equal(allowedGenerated.status, 0, allowedGenerated.stderr);
-  rmSync(join(build, "node_modules"), { recursive: true, force: true });
+  const externalDependency = join(temp, "external-dependency.js");
+  writeFileSync(externalDependency, "export const escaped = true;\n");
+  const externalDependencyLink = join(build, "node_modules", "fixture", "external.js");
+  symlinkSync(externalDependency, externalDependencyLink);
+  const escapedGenerated = spawnSync(process.execPath, [
+    join(source, "scripts", "verify-release-build-input.mjs"),
+    "--print-generated-input-digest",
+    "--build-root", build,
+  ], { encoding: "utf8" });
+  assert.notEqual(escapedGenerated.status, 0);
+  assert.match(escapedGenerated.stderr, /generated input symlink escapes node_modules/);
+  rmSync(externalDependencyLink);
+  appendFileSync(join(build, "node_modules", "fixture", "index.js"), "// drift\n");
+  const driftedGenerated = verify(build, source, commit, generatedInputSeal);
+  assert.notEqual(driftedGenerated.status, 0);
+  assert.match(driftedGenerated.stderr, /generated dependency input drifted after its clean install seal/);
+  writeFileSync(join(build, "node_modules", "fixture", "index.js"), "export {};\n");
   mkdirSync(join(build, "vendor", "shellx-vault", "web", "dist"), { recursive: true });
   writeFileSync(join(build, "vendor", "shellx-vault", "web", "dist", "index.html"), "generated\n");
-  const allowedVaultWebDist = verify(build, source, commit);
+  const allowedVaultWebDist = verify(build, source, commit, generatedInputSeal);
   assert.equal(allowedVaultWebDist.status, 0, allowedVaultWebDist.stderr);
   rmSync(join(build, "vendor", "shellx-vault", "web", "dist"), { recursive: true, force: true });
   writeFileSync(join(build, ".env"), "FORGED_RELEASE_VALUE=1\n");
-  const ignoredInput = verify(build, source, commit);
+  const ignoredInput = verify(build, source, commit, generatedInputSeal);
   assert.notEqual(ignoredInput.status, 0);
   assert.match(ignoredInput.stderr, /ignored build input is not allowed: \.env/);
   rmSync(join(build, ".env"));
+  rmSync(join(build, "node_modules"), { recursive: true, force: true });
 
   const canonical = verify(source, source, commit);
   assert.equal(canonical.status, 0, canonical.stderr);
   assert.equal(JSON.parse(canonical.stdout).mode, "canonical-source");
+
+  run("git", ["update-index", "--assume-unchanged", "CHANGELOG.md"], { cwd: source });
+  appendFileSync(join(source, "CHANGELOG.md"), "concealed drift\n");
+  assert.equal(run("git", ["status", "--porcelain=v1"], { cwd: source }).trim(), "");
+  const concealedSource = verify(source, source, commit);
+  assert.notEqual(concealedSource.status, 0);
+  assert.match(concealedSource.stderr, /build input bytes differ from exact source export: CHANGELOG\.md/);
+  run("git", ["update-index", "--no-assume-unchanged", "CHANGELOG.md"], { cwd: source });
+  run("git", ["checkout", "--", "CHANGELOG.md"], { cwd: source });
 
   appendFileSync(join(build, "package.json"), "\n");
   const dirtyBuild = verify(build, source, commit);

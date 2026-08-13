@@ -6,6 +6,7 @@ import {
   releaseSurfaceDriverRequiresNativeWebDriver,
   releaseSurfaceDriverSupportsMacosNativeInput,
 } from "./lib/release-surface-webdriver-binding";
+import { createReleaseSurfaceInstalledInputSession } from "./lib/release-surface-installed-input-client";
 import type { ReleaseSurfaceItem } from "./lib/release-surface-inventory";
 import type { ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
 import {
@@ -305,6 +306,11 @@ class VaultRequestPromptRuntimeFixture {
     }
     if (method === "GET" && path === "/browser/state") {
       return json({
+        windowOpen: this.browserWindow,
+        engine: { engineId: "fixture-vault-prompt-engine", mounted: this.browserWindow },
+        enginePool: {
+          engines: [{ engineId: "fixture-vault-prompt-engine", mounted: this.browserWindow }],
+        },
         tasks: this.tasks,
         tabs: this.browserTabs,
         activeTaskId: this.tasks.find((task) => task.status === "running")?.taskId ?? null,
@@ -504,14 +510,12 @@ try {
       cleanupId: assignment.cleanupId,
     };
   }));
-  const input = {
-    transport: "native-webdriver" as const,
-    session: request.nativeWebDriver!,
-  };
+  const connection = { base: request.runtime.debugBase, token: runtime.token };
+  const input = createReleaseSurfaceInstalledInputSession(request, connection);
   const outcomes = [];
   for (const assignment of request.assignments) {
     outcomes.push(await exerciseVaultRequestPromptSurface(
-      { base: request.runtime.debugBase, token: runtime.token },
+      connection,
       input,
       request,
       assignment,

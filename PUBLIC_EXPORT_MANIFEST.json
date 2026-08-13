@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "85d0483d45c047b0a42b493643a51e2542758568",
-    "tree": "0b6abf45536524ccd2545a6359c2947400989a61"
+    "commit": "b059b3807a834f8c46709f62505b8815e799e039",
+    "tree": "19c2a70ce562d4acf578ae6813fb3c140f6a4942"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1151,
-    "totalBytes": 33352384,
-    "digest": "1cb153bd87c581ab3a286462582ff15f3dd484a3576d06db34b5256c2131d53c"
+    "totalBytes": 33382243,
+    "digest": "3655b46fcba7f59e66cfbeab8033ae5681afe8c222492070bdb12481962cbd96"
   },
   "exclusions": {
     "fileCount": 29,
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "b244f72ac965284af5f651b5d30662720d5f4d8ebf19ad3a71e2deeae402e9b6",
+      "sha256": "7892fa9287aa7cd8eb72d03622603a96ea95671424c7cce520642378829a0c5c",
       "bytes": 7975,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -632,7 +632,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "641f4755aa2192e0a063ad96a9d83d8f790af90c38aebe56d576a2da4571597c",
+      "sha256": "187a9beb817fbe884ab2492d1c1a10136030b3acd9c06b3420a722829a983bd1",
       "bytes": 50198,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -720,8 +720,8 @@
     {
       "path": "package.json",
       "mode": "100644",
-      "sha256": "cb23f374d012540073f2543f57de8e6ffc6f053b3935738ea71e7a227d83d1e5",
-      "bytes": 17154,
+      "sha256": "3401f3d413423e9c4665790e6d43889170f61029ad8e5a8cd7f43f13ce18e200",
+      "bytes": 17176,
       "ruleId": "repository-metadata",
       "matchedBy": "exact",
       "matchedPath": "package.json",
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "5ae51473c916ae1fa9ad0634c9293032cdef7725a467c537ae56d81cc741adfb",
+      "sha256": "fe0bcb085ba2f5ce0f9dafba693d38a53b8279504140f4f1de974e9dc77bc831",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -852,8 +852,8 @@
     {
       "path": "scripts/build-windows-from-wsl.sh",
       "mode": "100755",
-      "sha256": "25833513129caa6504642de5c4fabbeb60c8b766414cc0bad81bb5a57aa044c0",
-      "bytes": 11118,
+      "sha256": "28ff770ef47b562a06e97b0cd5d27d90bd5b9955e408542753e1ed724708dfa5",
+      "bytes": 13766,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -1303,8 +1303,8 @@
     {
       "path": "scripts/fixtures/release-surface-ui-control-owned-bookmarks-server-fixture.ts",
       "mode": "100644",
-      "sha256": "105d7c317b550f8451a646cf5f8e085b652e30c51b3ca48b2c7ed39d075273f6",
-      "bytes": 54356,
+      "sha256": "9352a29d1ddf853d268fac0e16f7a2c4bf216cd71846031776abe13a0915b33c",
+      "bytes": 54615,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -1314,8 +1314,8 @@
     {
       "path": "scripts/fixtures/release-surface-ui-control-vault-draft-server-fixture.ts",
       "mode": "100644",
-      "sha256": "9c30e85985b7884d2a1a53b804afa263bb3379cb92d4710fccb6cbecb0408ab3",
-      "bytes": 32751,
+      "sha256": "cfca87e3cc4f5927a4df8f4fe1735c8bf352e3bb7ce3b38412e1028ba150da64",
+      "bytes": 32863,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -1809,8 +1809,8 @@
     {
       "path": "scripts/lib/release-surface-installed-input-client.ts",
       "mode": "100644",
-      "sha256": "e22608acd10363a7e22f7bbdfb235144db2ac62db77c287963f9c496cc21f036",
-      "bytes": 44686,
+      "sha256": "e65b9ad21c494065403ab05d30a8cb926d92953b182153bf31e15d8c9157c2f1",
+      "bytes": 47543,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4504,8 +4504,8 @@
     {
       "path": "scripts/test-release-build-input.mjs",
       "mode": "100644",
-      "sha256": "a9dce571f9803eccf8c85c8d0f4e8b8a8df5980d052545724c8eecd337554ed4",
-      "bytes": 8109,
+      "sha256": "9efe3f8695924457aca892e8b1c8a1e733d67d59c9e05a41b1d054564ea8d3e4",
+      "bytes": 10693,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4636,8 +4636,8 @@
     {
       "path": "scripts/test-release-surface-installed-input-client.ts",
       "mode": "100644",
-      "sha256": "ae5593eacfbd08716a728d106206ecf1f4e50cee51a570c98621d02442b693af",
-      "bytes": 28655,
+      "sha256": "ebbd910a21da58e30aedaf907bf56dc2167aff2a9d8f0a63a12522ca11f4920a",
+      "bytes": 29952,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4658,8 +4658,8 @@
     {
       "path": "scripts/test-release-surface-inventory.ts",
       "mode": "100644",
-      "sha256": "cc956a765106a6f515432789077a70daf2014b5747ca3fbc519ab296ff820e9e",
-      "bytes": 123509,
+      "sha256": "3ece09ecc2fa49e597688c229df234ad64d76d3cfcf48f9faddc7f2813e809cd",
+      "bytes": 123536,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5329,8 +5329,8 @@
     {
       "path": "scripts/test-release-surface-ui-vault-request-prompt-lifecycle.ts",
       "mode": "100644",
-      "sha256": "6fa9e4cdc3386c7592c82988632e812a0bf7b8e5ddf522cb0151796825275061",
-      "bytes": 27020,
+      "sha256": "2fc536e9239afb790ff0cfcdc6b6d2f96eb54a8dcc30e43c24d2c336aaa51f70",
+      "bytes": 27391,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5868,8 +5868,8 @@
     {
       "path": "scripts/test-shellx-browser.ts",
       "mode": "100644",
-      "sha256": "a8a2b749f170ab643bd9e08be771002f02527acdc73d41ec297408bf5e0ec58d",
-      "bytes": 215807,
+      "sha256": "b60dd9acaa68949a066eb716a7e2a518485e6fc2d702189b60f7648bd60df6d0",
+      "bytes": 216175,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6209,8 +6209,8 @@
     {
       "path": "scripts/test-windows-signing-pipeline.mjs",
       "mode": "100644",
-      "sha256": "dac32aaa7c529c8695bbcc36d513d55c8b0ae70650603e81ef78db06899d0236",
-      "bytes": 4521,
+      "sha256": "6a92278f134b8722b265df2603c0f02384d26acd26906c9e87e746d4f3918ecd",
+      "bytes": 14079,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6264,8 +6264,8 @@
     {
       "path": "scripts/verify-release-build-input.mjs",
       "mode": "100644",
-      "sha256": "42dc502244cef80908e55100581d8bf00419ab36641b08de5a7c9d49eba671f3",
-      "bytes": 10929,
+      "sha256": "233b5eb99f23c324df8af8e1c88ba2033fef95e23a7b86849a0366c54c293a41",
+      "bytes": 14417,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6308,8 +6308,8 @@
     {
       "path": "scripts/windows-artifact-sign-command.sh",
       "mode": "100755",
-      "sha256": "8166fc65900f16b0910982f5afad704c298d342427e69c4ee9bfb55f2f3a746c",
-      "bytes": 1549,
+      "sha256": "a6b6ccf79ceefbfb36e271267bde27da49fa32ccd16616c015d581506a045bb8",
+      "bytes": 7817,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
