@@ -4827,8 +4827,17 @@ http.createServer((req, res) => {
         )
         .expect("failing server");
         let manager = Arc::new(WorkPreviewManager::new(Arc::new(ProcessRegistry::new())));
+        let failure_bound = if cfg!(target_os = "windows") {
+            // A clean hosted runner can take longer to unwind the real
+            // cmd -> npm -> node process chain even after Node exits. Keep
+            // this well below WebApp's 90-second readiness ceiling while
+            // retaining a bounded direct-child-exit assertion.
+            Duration::from_secs(20)
+        } else {
+            Duration::from_secs(8)
+        };
         let failed = timeout(
-            Duration::from_secs(8),
+            failure_bound,
             manager.start(WorkPreviewStartRequest {
                 tab_id: Some("cmd-fail-tab".to_string()),
                 cwd: root.to_string_lossy().to_string(),
