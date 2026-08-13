@@ -238,7 +238,9 @@ try {
   const accepted = runAdapter(insideExe);
   assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
   const verifierArgs = JSON.parse(readFileSync(verifierReceipt, "utf8"));
-  assert.deepEqual(verifierArgs, [
+  assert.deepEqual(verifierArgs.map((argument, index) => (
+    index === 1 || index === 3 ? realpathSync(argument) : argument
+  )), [
     "--build-root", realpathSync(buildRoot),
     "--source-repo", realpathSync(sourceRepo),
     "--expected-commit", "a".repeat(40),

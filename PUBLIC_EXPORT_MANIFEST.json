@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "7aaa18304a2154093df9482ab415e90aa0498d49",
-    "tree": "8d9593edebf408c3a90a3acc9912ab5ba81b82ad"
+    "commit": "0890ecad29dd2cdca25532ba7a93bef7ca348d66",
+    "tree": "03634c5a7248e289d31a2e3bd06af78b71f6d62a"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -19,19 +19,19 @@
     "selfExcludedFromEntries": true
   },
   "classification": {
-    "trackedFileCount": 1181,
+    "trackedFileCount": 1182,
     "includedTrackedFileCount": 1150,
-    "excludedTrackedFileCount": 31
+    "excludedTrackedFileCount": 32
   },
   "payload": {
     "fileCount": 1151,
-    "totalBytes": 33388308,
-    "digest": "6249d6a4cc2e428cd4a133ef9b376ed8a6b5a3381646f75a4bad9b9c71c071cf"
+    "totalBytes": 33388844,
+    "digest": "c9675f16c2ba6d88c6d5d1a75495cf27ac004d4dfddc31b54885fabc3d21ff76"
   },
   "exclusions": {
-    "fileCount": 31,
+    "fileCount": 32,
     "byCategory": {
-      "private-working-documentation": 31
+      "private-working-documentation": 32
     }
   },
   "entries": [
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "88cd98bf5ee59aca7fdb490f2e05126cc5af5b2d62359ba605097719dc897814",
+      "sha256": "585e86ee144f40a2f311ff1e33a35620f1e834d73214fd0b3d073946eaff2c96",
       "bytes": 7975,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -632,7 +632,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "35d2347e4ed9002d1c27880952957a9595d4bbd5baacc4aaa4d29db91e45d86d",
+      "sha256": "cdeefb6535ddde98c194db03b3d8139e3f3faf7a7a4cc982aea99052cda28f88",
       "bytes": 50198,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "328d6b09d9f4d292c307e0e9d3f925f91c450504d6b5c1e3f7cd58f2bf5df937",
+      "sha256": "78c838b7cbfc7a260a6e5a8561db0d4ea825e913558f6c258f437bb78f7cc6bd",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -6209,8 +6209,8 @@
     {
       "path": "scripts/test-windows-signing-pipeline.mjs",
       "mode": "100644",
-      "sha256": "b20ad27fed5ab042e3545efcbe6f389cefbd37c92713a79e16f604ac012911cc",
-      "bytes": 15620,
+      "sha256": "d8575d8c8f4413e8f50d91a1eb0298356d6f937e885226b9f11c377c2f0aed3c",
+      "bytes": 15719,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -9377,8 +9377,8 @@
     {
       "path": "src-tauri/src/work_preview.rs",
       "mode": "100644",
-      "sha256": "e9c07fca6e95a1cde7e8c2397e8d80d9334605665e3796b0870f815061c803fc",
-      "bytes": 199321,
+      "sha256": "997e6cf9e957ce44f6b89e3a5dba51ebaa6fed9d7fc4c64c79c88575602476d7",
+      "bytes": 199758,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
