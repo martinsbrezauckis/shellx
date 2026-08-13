@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "3bb64f40c6573a7678d80147a431c9c7483b60a3",
-    "tree": "05d2bb3022baea3fb5402cdfa741c7a96a948cca"
+    "commit": "27823e5fcbcc80a76f3572dfe0023809b86003dc",
+    "tree": "bdd108de7a583dbcabdec23e3e94024a63d1c457"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -19,19 +19,19 @@
     "selfExcludedFromEntries": true
   },
   "classification": {
-    "trackedFileCount": 1180,
+    "trackedFileCount": 1181,
     "includedTrackedFileCount": 1150,
-    "excludedTrackedFileCount": 30
+    "excludedTrackedFileCount": 31
   },
   "payload": {
     "fileCount": 1151,
-    "totalBytes": 33383807,
-    "digest": "62f1dbd2db5d784d1247485d76378d2d90cdbe2c814cc7303adc30655a56fcef"
+    "totalBytes": 33386672,
+    "digest": "cfad688fa163d3f300454134be5f3b006486d17e31388d6958758bd8c146ba94"
   },
   "exclusions": {
-    "fileCount": 30,
+    "fileCount": 31,
     "byCategory": {
-      "private-working-documentation": 30
+      "private-working-documentation": 31
     }
   },
   "entries": [
@@ -60,8 +60,8 @@
     {
       "path": ".github/workflows/ci.yml",
       "mode": "100644",
-      "sha256": "64077a2bf26d1d77d79a0b3b0b276a759517971dec993c5fb7210db745933aa0",
-      "bytes": 7109,
+      "sha256": "d6545a11ae8509c12a1bfad6a18fa6f6a83ba7c753d3237d24a841a0a679e0bb",
+      "bytes": 7566,
       "ruleId": "public-automation",
       "matchedBy": "exact",
       "matchedPath": ".github/workflows/ci.yml",
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "b915c1de693d1714d71e3fc4a4803eb6c707f25b51d917ffa57f6fed0b0323a5",
+      "sha256": "88cd98bf5ee59aca7fdb490f2e05126cc5af5b2d62359ba605097719dc897814",
       "bytes": 7975,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -632,7 +632,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "ef1c99ca629d954df2264bf050b5474feff62ddd9b087bdfa065419d5eccf450",
+      "sha256": "35d2347e4ed9002d1c27880952957a9595d4bbd5baacc4aaa4d29db91e45d86d",
       "bytes": 50198,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -720,7 +720,7 @@
     {
       "path": "package.json",
       "mode": "100644",
-      "sha256": "3401f3d413423e9c4665790e6d43889170f61029ad8e5a8cd7f43f13ce18e200",
+      "sha256": "16079b847d3b5c045352b1496f9d92d7ffac3d0c78e6c8e4f220aa1c842928e1",
       "bytes": 17176,
       "ruleId": "repository-metadata",
       "matchedBy": "exact",
@@ -731,7 +731,7 @@
     {
       "path": "pnpm-lock.yaml",
       "mode": "100644",
-      "sha256": "c74e7881f7e7501f6e9619930ecadc17052da6d1da5feed326c085152e5af69a",
+      "sha256": "651f136d20d1000f8aeadb89e36b004d3cafa99c643ba46f05b8e3d4e3bea838",
       "bytes": 89653,
       "ruleId": "repository-metadata",
       "matchedBy": "exact",
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "76b4c4e935182e334914c68ba71b64d1020cd43605e6f5d01476494d2fa81e07",
+      "sha256": "3d87ebc94d9ee1de3a19e8e3ee7a662028fbe1f0c9446ba6254202fea0f8fa09",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -1578,8 +1578,8 @@
     {
       "path": "scripts/lib/ci-surface-coverage.mjs",
       "mode": "100644",
-      "sha256": "33351e1bf5df421d79005490928281577f6d5100e807d488f49b525a5ab75553",
-      "bytes": 6689,
+      "sha256": "7ce47caffacdeb87e8d2193e8867911ecb175474d1fddf02c0b115bdd449bf53",
+      "bytes": 7180,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4119,8 +4119,8 @@
     {
       "path": "scripts/test-ci-surface-coverage.mjs",
       "mode": "100644",
-      "sha256": "4f90acf7b5461dc802e2b36d710da578ab69036bea9852d5b6b37975856dc31c",
-      "bytes": 4971,
+      "sha256": "56979daa4bddfdb4ce59d3c50d393dbd3b95750f7f9cfa4b6f13724c21644c18",
+      "bytes": 5571,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6209,8 +6209,8 @@
     {
       "path": "scripts/test-windows-signing-pipeline.mjs",
       "mode": "100644",
-      "sha256": "6a92278f134b8722b265df2603c0f02384d26acd26906c9e87e746d4f3918ecd",
-      "bytes": 14079,
+      "sha256": "8bfdf7beefc27766e9ef0e6fb50607fa240d7aa2b4fc134377d3194d62a3e392",
+      "bytes": 15396,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",

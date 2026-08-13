@@ -141,9 +141,27 @@ try {
   const signerReceipt = join(temp, "powershell-args.txt");
   const fixtureAdapterPath = join(sourceRepo, "scripts", "windows-artifact-sign-command.sh");
   const makensisLookup = spawnSync("bash", ["-lc", 'readlink -f "$(command -v makensis)"'], { encoding: "utf8" });
-  assert.equal(makensisLookup.status, 0, "makensis is required for the real uninstaller signing callback fixture");
-  const makensisPath = makensisLookup.stdout.trim();
-  const makensisSha256 = createHash("sha256").update(readFileSync(makensisPath)).digest("hex");
+  const makensisPath = makensisLookup.status === 0 ? makensisLookup.stdout.trim() : "";
+  const canRunRealNsisFixture = process.platform === "linux" && makensisPath.length > 0;
+  const requireRealNsisFixture = process.env.SHELLX_REQUIRE_REAL_NSIS_FIXTURE === "1";
+  if (requireRealNsisFixture) {
+    assert.equal(process.platform, "linux", "the real NSIS callback fixture is supported only on Linux/WSL");
+    assert.ok(makensisPath, "makensis is required when the real NSIS callback fixture is mandatory");
+  }
+  const pinnedExecutableLookup = makensisPath
+    ? makensisLookup
+    : spawnSync("bash", ["-lc", 'readlink -f "$(command -v node)"'], { encoding: "utf8" });
+  assert.equal(pinnedExecutableLookup.status, 0, "a pinned executable is required for adapter boundary tests");
+  const pinnedExecutablePath = pinnedExecutableLookup.stdout.trim();
+  const pinnedExecutableHostPath = process.platform === "win32"
+    ? (makensisPath
+        ? spawnSync("bash", ["-lc", 'cygpath -w "$(readlink -f "$(command -v makensis)")"'], { encoding: "utf8" })
+        : { status: 0, stdout: process.execPath })
+    : pinnedExecutableLookup;
+  assert.equal(pinnedExecutableHostPath.status, 0, "the pinned executable must resolve in the host filesystem");
+  const pinnedExecutableSha256 = createHash("sha256")
+    .update(readFileSync(pinnedExecutableHostPath.stdout.trim()))
+    .digest("hex");
   mkdirSync(join(sourceRepo, "scripts"), { recursive: true });
   mkdirSync(artifactRoot, { recursive: true });
   mkdirSync(nsisSigningStageRoot, { mode: 0o700 });
@@ -187,8 +205,8 @@ try {
     SHELLX_RELEASE_BUILD_INPUT_VERIFIER: join(sourceRepo, "scripts", "verify-release-build-input.mjs"),
     SHELLX_RELEASE_GENERATED_INPUT_DIGEST: "b".repeat(64),
     SHELLX_RELEASE_ARTIFACT_ROOT: artifactRoot,
-    SHELLX_RELEASE_NSIS_EXECUTABLE: makensisPath,
-    SHELLX_RELEASE_NSIS_EXECUTABLE_SHA256: makensisSha256,
+    SHELLX_RELEASE_NSIS_EXECUTABLE: pinnedExecutablePath,
+    SHELLX_RELEASE_NSIS_EXECUTABLE_SHA256: pinnedExecutableSha256,
     SHELLX_RELEASE_BUILD_STARTED: String(Math.floor(Date.now() / 1000) - 10),
     SHELLX_RELEASE_NSIS_SIGNING_STAGE_ROOT: nsisSigningStageRoot,
     SHELLX_TEST_VERIFIER_RECEIPT: verifierReceipt,
@@ -231,29 +249,33 @@ try {
   assert.equal(acceptedNsisPlugin.status, 0, acceptedNsisPlugin.stderr || acceptedNsisPlugin.stdout);
   assert.match(readFileSync(signerReceipt, "utf8"), /NSISdl\.dll/);
 
-  const nsisFixtureRoot = join(artifactRoot, "nsis", "fixture");
-  const nsisScript = join(nsisFixtureRoot, "installer.nsi");
-  const nsisOut = join(nsisFixtureRoot, "fixture-installer.exe");
-  mkdirSync(nsisFixtureRoot, { recursive: true });
-  writeFileSync(nsisScript, [
-    'Name "ShellX signing callback fixture"',
-    `OutFile "${nsisOut}"`,
-    `!uninstfinalize '\"${fixtureAdapterPath}\" \"%1\"'`,
-    "Section",
-    '  WriteUninstaller "$TEMP\\shellx-signing-callback-fixture.exe"',
-    "SectionEnd",
-    'Section "Uninstall"',
-    "SectionEnd",
-    "",
-  ].join("\n"));
-  const realNsisCallback = spawnSync(makensisPath, ["-V2", nsisScript], {
-    encoding: "utf8",
-    env: environment,
-  });
-  assert.equal(realNsisCallback.status, 0, realNsisCallback.stderr || realNsisCallback.stdout);
-  assert.match(realNsisCallback.stdout, /NSIS uninstaller signing callback accepted from pinned makensis/);
-  assert.match(readFileSync(signerReceipt, "utf8"), /\.shellx-nsis-signing-stage\/uninstaller-[0-9]+-makensis[A-Za-z0-9]{6}\.exe/);
-  assert.deepEqual(readdirSync(nsisSigningStageRoot), []);
+  if (canRunRealNsisFixture) {
+    const nsisFixtureRoot = join(artifactRoot, "nsis", "fixture");
+    const nsisScript = join(nsisFixtureRoot, "installer.nsi");
+    const nsisOut = join(nsisFixtureRoot, "fixture-installer.exe");
+    mkdirSync(nsisFixtureRoot, { recursive: true });
+    writeFileSync(nsisScript, [
+      'Name "ShellX signing callback fixture"',
+      `OutFile "${nsisOut}"`,
+      `!uninstfinalize '\"${fixtureAdapterPath}\" \"%1\"'`,
+      "Section",
+      '  WriteUninstaller "$TEMP\\shellx-signing-callback-fixture.exe"',
+      "SectionEnd",
+      'Section "Uninstall"',
+      "SectionEnd",
+      "",
+    ].join("\n"));
+    const realNsisCallback = spawnSync(makensisPath, ["-V2", nsisScript], {
+      encoding: "utf8",
+      env: environment,
+    });
+    assert.equal(realNsisCallback.status, 0, realNsisCallback.stderr || realNsisCallback.stdout);
+    assert.match(realNsisCallback.stdout, /NSIS uninstaller signing callback accepted from pinned makensis/);
+    assert.match(readFileSync(signerReceipt, "utf8"), /\.shellx-nsis-signing-stage\/uninstaller-[0-9]+-makensis[A-Za-z0-9]{6}\.exe/);
+    assert.deepEqual(readdirSync(nsisSigningStageRoot), []);
+  } else {
+    console.log("SKIP real NSIS callback fixture: Linux/WSL with makensis is required");
+  }
 
 } finally {
   rmSync(temp, { recursive: true, force: true });

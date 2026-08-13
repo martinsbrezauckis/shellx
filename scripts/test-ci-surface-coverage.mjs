@@ -46,6 +46,21 @@ const missingWindows = ciSurfaceCoverageErrors({
 });
 assert(missingWindows.some((error) => error.includes("missing windows-latest")));
 
+const missingRealNsisFixture = ciSurfaceCoverageErrors({
+  ...input,
+  ciSource: ciSource.replace("install -y nsis", "install -y zip"),
+});
+assert(missingRealNsisFixture.some((error) => error.includes("real NSIS callback fixture dependency")));
+
+const optionalRealNsisFixture = ciSurfaceCoverageErrors({
+  ...input,
+  ciSource: ciSource.replace(
+    "SHELLX_REQUIRE_REAL_NSIS_FIXTURE: ${{ runner.os == 'Linux' && '1' || '0' }}",
+    "SHELLX_REQUIRE_REAL_NSIS_FIXTURE: '0'",
+  ),
+});
+assert(optionalRealNsisFixture.some((error) => error.includes("does not require the real NSIS callback fixture")));
+
 const incompleteCommand = ciSurfaceCoverageErrors({
   ...input,
   packageScripts: { ...packageData.scripts, "ci:surface-contracts": "pnpm test" },

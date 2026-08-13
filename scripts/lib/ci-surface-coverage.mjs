@@ -67,6 +67,14 @@ export function ciSurfaceCoverageErrors({
     if (!job.includes("run: pnpm run ci:surface-contracts")) {
       errors.push("surface-contracts does not invoke the canonical package gate");
     }
+    if (!job.includes("name: Install real NSIS callback fixture dependency")
+      || !job.includes("if: runner.os == 'Linux'")
+      || !job.includes("install -y nsis")) {
+      errors.push("Linux surface-contracts CI is missing the real NSIS callback fixture dependency");
+    }
+    if (!job.includes("SHELLX_REQUIRE_REAL_NSIS_FIXTURE: ${{ runner.os == 'Linux' && '1' || '0' }}")) {
+      errors.push("surface-contracts CI does not require the real NSIS callback fixture on Linux");
+    }
   }
 
   if (packageScripts?.["ci:surface-contracts"] !== EXPECTED_CI_SCRIPT) {
