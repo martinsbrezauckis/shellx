@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "9755f253f0e404f5504c1faa18ee9d69e0e98f67",
-    "tree": "a39684c5cf7244daadc6153dde20a0134e21b594"
+    "commit": "103296880a0db3c064491747ff49a339941196d6",
+    "tree": "33336fe0a0c2b7b1217ae69df6ccd6a7358431aa"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1151,
-    "totalBytes": 33387248,
-    "digest": "ec977bedd9c557691e91f6707cde71e3cf5438bd0efb68454dd0ae270f26baac"
+    "totalBytes": 33387534,
+    "digest": "98e773b33c40a4760b35f1a010831186847a8983e7cfd6836c3747c1e1e714cd"
   },
   "exclusions": {
     "fileCount": 31,
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "affbf615c913dd1c4e3f569a00004d5321f008ef608235408bb80c2f429eeae7",
+      "sha256": "334cf138519a672b90e631b011fa98502ba094a80c0b5725e69f401fb508851e",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -4878,8 +4878,8 @@
     {
       "path": "scripts/test-release-surface-ui-browser-teach-review-driver.ts",
       "mode": "100644",
-      "sha256": "da712b88658a18cb290f5b40bc414e42dafa808bdfdc925204849c56beb3ae91",
-      "bytes": 4472,
+      "sha256": "4771b54514fab4a6c4e8cb5f419572fa6941869c1d5edb63f26f3aab9eec81a0",
+      "bytes": 4458,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6209,8 +6209,8 @@
     {
       "path": "scripts/test-windows-signing-pipeline.mjs",
       "mode": "100644",
-      "sha256": "57abeb551175224d394350fd435b62ef178357fd6bf902f891485ce0cd39f5de",
-      "bytes": 15576,
+      "sha256": "b20ad27fed5ab042e3545efcbe6f389cefbd37c92713a79e16f604ac012911cc",
+      "bytes": 15620,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6308,8 +6308,8 @@
     {
       "path": "scripts/windows-artifact-sign-command.sh",
       "mode": "100755",
-      "sha256": "f1668bdbbb61b5f9f1a535fc9ce5a2167318373a6da8722d64b871d258f77cae",
-      "bytes": 7738,
+      "sha256": "2fd042f346aa271d6dcd363b6c293f67e2823549a27163b5b367e051c14a4c39",
+      "bytes": 7994,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",

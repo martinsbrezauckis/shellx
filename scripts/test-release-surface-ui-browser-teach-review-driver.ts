@@ -12,7 +12,7 @@ import {
 
 type Plan = { assignments?: Array<{ surfaceId?: string }> };
 
-const root = resolve(new URL("..", import.meta.url).pathname);
+const root = resolve(import.meta.dirname, "..");
 const plan = JSON.parse(readFileSync(resolve(root, "release/surface-driver-plan.json"), "utf8")) as Plan;
 const teachAssignments = (plan.assignments ?? []).filter((assignment) => assignment.surfaceId?.includes("BrowserTeachReview"));
 const controlAssignments = teachAssignments.filter((assignment) => assignment.surfaceId?.startsWith("ui-control:"));

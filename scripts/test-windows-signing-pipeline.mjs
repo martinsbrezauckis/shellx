@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -238,8 +239,8 @@ try {
   assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
   const verifierArgs = JSON.parse(readFileSync(verifierReceipt, "utf8"));
   assert.deepEqual(verifierArgs, [
-    "--build-root", buildRoot,
-    "--source-repo", sourceRepo,
+    "--build-root", realpathSync(buildRoot),
+    "--source-repo", realpathSync(sourceRepo),
     "--expected-commit", "a".repeat(40),
     "--expected-generated-input-digest", "b".repeat(64),
   ]);

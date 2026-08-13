@@ -153,6 +153,12 @@ case "$artifact_real" in
     fi
     ;;
 esac
+if [[ -L "$verifier" || ! -f "$verifier" ]]; then
+  echo "release build-input verifier must be a regular non-symlink file" >&2
+  exit 1
+fi
+verifier_directory="$(cd "$(dirname "$verifier")" && pwd -P)"
+verifier="$verifier_directory/$(basename "$verifier")"
 if [[ "$verifier" != "$source_repo/scripts/verify-release-build-input.mjs" ]]; then
   echo "release build-input verifier must come from the canonical source checkout" >&2
   exit 1
