@@ -7,8 +7,8 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -238,14 +238,23 @@ try {
   const accepted = runAdapter(insideExe);
   assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
   const verifierArgs = JSON.parse(readFileSync(verifierReceipt, "utf8"));
-  assert.deepEqual(verifierArgs.map((argument, index) => (
-    index === 1 || index === 3 ? realpathSync(argument) : argument
-  )), [
-    "--build-root", realpathSync(buildRoot),
-    "--source-repo", realpathSync(sourceRepo),
+  assert.equal(verifierArgs.length, 8, "the verifier receives exactly four ordered flag/value pairs");
+  assert.deepEqual([
+    verifierArgs[0], verifierArgs[2], verifierArgs[4], verifierArgs[5], verifierArgs[6], verifierArgs[7],
+  ], [
+    "--build-root", "--source-repo",
     "--expected-commit", "a".repeat(40),
     "--expected-generated-input-digest", "b".repeat(64),
   ]);
+  for (const [label, actualPath, expectedPath] of [
+    ["build root", verifierArgs[1], buildRoot],
+    ["source repository", verifierArgs[3], sourceRepo],
+  ]) {
+    const actualStat = statSync(actualPath, { bigint: true });
+    const expectedStat = statSync(expectedPath, { bigint: true });
+    assert.equal(actualStat.dev, expectedStat.dev, `${label} must remain on the expected filesystem`);
+    assert.equal(actualStat.ino, expectedStat.ino, `${label} must identify the expected directory`);
+  }
   assert.match(readFileSync(signerReceipt, "utf8"), /windows-artifact-sign\.ps1/);
   assert.match(readFileSync(signerReceipt, "utf8"), /shellx\.exe/);
 

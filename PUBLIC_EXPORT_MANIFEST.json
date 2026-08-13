@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "0890ecad29dd2cdca25532ba7a93bef7ca348d66",
-    "tree": "03634c5a7248e289d31a2e3bd06af78b71f6d62a"
+    "commit": "32a0ad29e654738fb82f52551d01c27bcad44330",
+    "tree": "fc6b7c71cd648ee9f4b2423e58ea47343f71b6b9"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1151,
-    "totalBytes": 33388844,
-    "digest": "c9675f16c2ba6d88c6d5d1a75495cf27ac004d4dfddc31b54885fabc3d21ff76"
+    "totalBytes": 33389389,
+    "digest": "14eab628fb5681f49e0d034fa96e46389d796eb6906c19f71b3eb8730afb122e"
   },
   "exclusions": {
     "fileCount": 32,
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "78c838b7cbfc7a260a6e5a8561db0d4ea825e913558f6c258f437bb78f7cc6bd",
+      "sha256": "24b9a91dd777608f4f58a0844b59ca8464395d18558f6eda08970c728df7ab09",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -6209,8 +6209,8 @@
     {
       "path": "scripts/test-windows-signing-pipeline.mjs",
       "mode": "100644",
-      "sha256": "d8575d8c8f4413e8f50d91a1eb0298356d6f937e885226b9f11c377c2f0aed3c",
-      "bytes": 15719,
+      "sha256": "adc117cf3dd283861cd0dcfeadac2b4552aa09b9c21bcbfef8338bf3a3deafa6",
+      "bytes": 16264,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
