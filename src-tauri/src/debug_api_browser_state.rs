@@ -156,7 +156,7 @@ pub(crate) async fn browser_check_http(
     };
     let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
         Ok(caller_session_id) => caller_session_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let settle = if q.task_id.is_none() && q.browser_tab_id.is_none() {
         match browser_idle_settle_snapshot(&registry, caller_session_id.as_deref()) {
@@ -240,7 +240,7 @@ pub(crate) async fn browser_settle_http(
     };
     let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
         Ok(caller_session_id) => caller_session_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     match browser_settle_snapshot(&registry, &q, caller_session_id.as_deref()).await {
         Ok(snapshot) => Json(snapshot).into_response(),
@@ -568,7 +568,7 @@ pub(crate) async fn browser_profiles_http(
     };
     let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
         Ok(caller_session_id) => caller_session_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let profiles = caller_session_id
         .as_deref()
@@ -652,7 +652,7 @@ pub(crate) async fn browser_requests_http(
     };
     let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
         Ok(caller_session_id) => caller_session_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let (session_grants, vault_deposits, dialogs, permissions) = match caller_session_id.as_deref()
     {

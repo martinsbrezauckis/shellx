@@ -80,7 +80,7 @@ pub(crate) async fn browser_downloads_get_http(
     };
     let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
         Ok(caller_session_id) => caller_session_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let downloads = caller_session_id
         .as_deref()
@@ -141,7 +141,7 @@ pub(crate) async fn browser_uploads_get_http(
     };
     let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
         Ok(caller_session_id) => caller_session_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let uploads = caller_session_id
         .as_deref()
@@ -640,7 +640,7 @@ pub(crate) async fn browser_receipts_http(
     };
     let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
         Ok(caller_session_id) => caller_session_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let receipts = caller_session_id
         .as_deref()
@@ -660,7 +660,7 @@ pub(crate) async fn browser_logs_get_http(
     };
     let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
         Ok(caller_session_id) => caller_session_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let logs = caller_session_id
         .as_deref()
@@ -720,7 +720,7 @@ pub(crate) async fn browser_network_get_http(
     };
     let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
         Ok(caller_session_id) => caller_session_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let entries = caller_session_id
         .as_deref()
