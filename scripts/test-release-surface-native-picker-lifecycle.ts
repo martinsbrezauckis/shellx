@@ -9,6 +9,7 @@ import { releaseSurfacePosixNativeBindingFixture } from "./fixtures/release-surf
 import type { FinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
 import type { ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
 import type { ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
+import { createReleaseSurfaceInstalledInputSession } from "./lib/release-surface-installed-input-client";
 import {
   executeNativePickerLifecycleDriver,
   prepareNativePickerFixture,
@@ -148,7 +149,18 @@ try {
     ports.candidatePort,
     planAssignments,
   );
-  const report = await executeNativePickerLifecycleDriver(request);
+  const installedInput = createReleaseSurfaceInstalledInputSession(request, {
+    base: `http://127.0.0.1:${ports.candidatePort}`,
+    token,
+  });
+  if (fixturePlatform === "windows-installed") {
+    assert(installedInput.transport === "native-webdriver" && installedInput.windowsNativeWindow);
+    // The fixture binds a synthetic process identity, so its Browser window is
+    // closed through the fixture WebDriver route. The real candidate-bound
+    // Windows WM_CLOSE helper has a separate exact binding/receipt test.
+    delete installedInput.windowsNativeWindow;
+  }
+  const report = await executeNativePickerLifecycleDriver(request, { installedInput });
   assert.equal(report.outcomes.length, 9);
   assert(report.outcomes.every((outcome) => outcome.present === "pass"
     && outcome.invoke === "pass"

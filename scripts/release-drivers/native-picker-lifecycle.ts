@@ -124,6 +124,7 @@ type PublicSettings = {
 
 export async function executeNativePickerLifecycleDriver(
   request: ReleaseSurfaceDriverRequest,
+  options?: { installedInput?: Input },
 ): Promise<ReleaseSurfaceDriverReport> {
   const startedAt = new Date().toISOString();
   const macosBound = request.platform === "macos-installed"
@@ -134,7 +135,8 @@ export async function executeNativePickerLifecycleDriver(
     throw new Error("native picker lifecycle requires the exact platform-native macOS helper or Windows/Linux native WebDriver binding");
   }
   const connection = await resolveReleaseSurfaceRuntimeCandidate(request);
-  const installedInput = createReleaseSurfaceInstalledInputSession(request, connection);
+  const installedInput = options?.installedInput
+    ?? createReleaseSurfaceInstalledInputSession(request, connection);
   const input: Input = installedInput;
   const outcomes: ReleaseSurfaceDriverOutcome[] = [];
   for (const assignment of request.assignments) {

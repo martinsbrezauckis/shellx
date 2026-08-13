@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "103296880a0db3c064491747ff49a339941196d6",
-    "tree": "33336fe0a0c2b7b1217ae69df6ccd6a7358431aa"
+    "commit": "7aaa18304a2154093df9482ab415e90aa0498d49",
+    "tree": "8d9593edebf408c3a90a3acc9912ab5ba81b82ad"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1151,
-    "totalBytes": 33387534,
-    "digest": "98e773b33c40a4760b35f1a010831186847a8983e7cfd6836c3747c1e1e714cd"
+    "totalBytes": 33388308,
+    "digest": "6249d6a4cc2e428cd4a133ef9b376ed8a6b5a3381646f75a4bad9b9c71c071cf"
   },
   "exclusions": {
     "fileCount": 31,
@@ -753,7 +753,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "334cf138519a672b90e631b011fa98502ba094a80c0b5725e69f401fb508851e",
+      "sha256": "328d6b09d9f4d292c307e0e9d3f925f91c450504d6b5c1e3f7cd58f2bf5df937",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -2634,8 +2634,8 @@
     {
       "path": "scripts/release-drivers/native-picker-lifecycle.ts",
       "mode": "100644",
-      "sha256": "70cfcffbedb636fc111fbf0f531a4b58e9895f9d71d3aa0bfd3ba6143fd1927b",
-      "bytes": 40118,
+      "sha256": "616ae8c711f9bea8f1be549631be2d85d1100fd33511b140e7c4f3397b9f0a9d",
+      "bytes": 40189,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4735,8 +4735,8 @@
     {
       "path": "scripts/test-release-surface-native-picker-lifecycle.ts",
       "mode": "100644",
-      "sha256": "1d23a55a6e9a9b74651c484bc21aa92b6b2062a7d18bf882d68901cc3431e53e",
-      "bytes": 14197,
+      "sha256": "0ab8ccb23e1b3545d03fc96f2142802d669143e7e0394684332b734c9a9b383b",
+      "bytes": 14900,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
