@@ -22,8 +22,8 @@ assert.deepEqual(inventory.uiDriverFamilyAccounting, {
   choice: 30,
   range: 2,
   "file-picker": 0,
-  activation: 427,
-  "static-marker": 558,
+  activation: 429,
+  "static-marker": 563,
   "dynamic-marker": 48,
 }, "every exact UI occurrence must belong to one deterministic installed-driver family");
 
@@ -37,6 +37,31 @@ for (const surfaceId of [
     inventory.items.find((item) => item.id === surfaceId)?.driverFamily,
     "toggle",
     `${surfaceId} must retain boolean-state proof rather than generic activation proof`,
+  );
+}
+
+for (const [selector, family] of [
+  ['[data-debug-id="task-manager-edit-details"]', "activation"],
+  ['[data-debug-id="task-manager-review-details"]', "activation"],
+] as const) {
+  assert.equal(
+    inventory.items.find((item) => item.kind === "ui-control" && item.selector === selector)?.driverFamily,
+    family,
+    `${selector} must retain its deterministic Task Manager action family`,
+  );
+}
+
+for (const marker of [
+  "task-manager-attention",
+  "task-manager-edit-details",
+  "task-manager-review-agents",
+  "task-manager-review-details",
+  "task-manager-review",
+]) {
+  assert.equal(
+    inventory.items.find((item) => item.kind === "ui-debug-surface" && item.name === marker)?.driverFamily,
+    "static-marker",
+    `${marker} must retain deterministic Task Manager state evidence`,
   );
 }
 

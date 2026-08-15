@@ -36,7 +36,7 @@ the expensive cross-platform matrix.
 
 Current synchronized ledger:
 
-<!-- shellx-final-surface-ledger: {"status":"ready","inventoryItems":1900,"inventoryCells":5690,"assigned":5690,"ready":5690,"missing":0} -->
+<!-- shellx-final-surface-ledger: {"status":"ready","inventoryItems":1909,"inventoryCells":5717,"assigned":5717,"ready":5717,"missing":0} -->
 
 The marker is checked against the JSON ledger. It describes source-level driver
 readiness only; installed candidate receipts, reviewed manual captures, and the

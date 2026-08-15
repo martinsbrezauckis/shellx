@@ -184,11 +184,13 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
 ## Tasks and API
 
 - The header Tasks button opens the first-class Task Manager for one-time or
-  recurring agent work. Create Task below the composer starts a reviewed draft
-  from the current conversation; provider order and schedule stay in Task
-  Manager.
+  recurring agent work. Ask an agent to set up, schedule, or set up and run a
+  Task and ShellX can prepare the complete definition from that conversation.
+  The Tasks panel opens as a compact review and results surface; Edit details
+  reveals the full form only when you want it. Create Task below the composer
+  remains available for attachment- or workflow-backed drafts.
 - Date and time pickers follow the execution computer's local clock by default.
-  Timezone pinning, missed-run behavior, stop-after limits, and notification
+  Timezone pinning, missed-run behavior, per-run safety limits, and notification
   policy remain in Advanced timing and notifications.
 - Each run is bound to one immutable revision and one saved environment, then
   checked against a fresh provider catalogue before work starts. Run history,

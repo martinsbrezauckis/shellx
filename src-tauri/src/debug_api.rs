@@ -473,6 +473,10 @@ pub struct UiOpenTabContext {
     pub cwd: Option<String>,
     #[serde(rename = "agentId", default)]
     pub agent_id: Option<String>,
+    #[serde(default)]
+    pub autonomy: Option<String>,
+    #[serde(rename = "shellxToolExposure", default)]
+    pub shellx_tool_exposure: Option<String>,
     #[serde(rename = "connectionId", default)]
     pub connection_id: Option<String>,
     #[serde(rename = "connectionLabel", default)]

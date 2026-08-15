@@ -178,11 +178,12 @@ assert(
     && apiDocs.includes("### First-class Tasks and provider catalogue")
     && apiDocs.includes("POST /tasks/provider-catalog")
     && normalizedApiDocs.includes("A queued response proves durable acceptance only")
-    && normalizedApiDocs.includes("Tasks are not added to Host MCP")
+    && normalizedApiDocs.includes("`task_manage` Host tool")
     && normalizedApiDocs.includes("exactly one isolated ASCII semantic-version token")
     && architecture.includes("`POST /tasks/provider-catalog` Debug API projection")
     && architecture.includes("exact-revision manual queueing")
-    && architecture.includes("Tasks remain outside Host MCP"),
+    && architecture.includes("Host MCP exposes only the narrow write-class `task_manage`")
+    && architecture.includes("introducing a second provider runtime"),
   "provider catalogue and Task docs must describe the receipt-gated Debug API without claiming direct provider execution",
 );
 assert(

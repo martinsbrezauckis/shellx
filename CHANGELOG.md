@@ -20,8 +20,7 @@ explain a visible behavior change.
 
 ### Fixed
 
-- Browser actions pause for approval when page content tries to redirect the
-  agent away from the requested work.
+- Bugfixes.
 
 ## [0.3.52] - 2026-08-13
 

@@ -56,6 +56,12 @@ for (const required of [
   "Suggested from chat",
   "agentSuggestion === provider.providerId",
   "taskProviderSelectionDisabledReason(draft, data",
+  "task-manager-review",
+  "task-manager-edit-details",
+  "Edit details",
+  "Back to review",
+  "Run time limit",
+  "Safety limit for one run, not the schedule.",
 ]) assert(`${source}\n${historySource}\n${hydration}`.includes(required), `TaskManager source must retain ${required}`);
 
 assert(contracts.includes("Select an environment before choosing an agent."), "agent ordering must remain environment-first");
@@ -96,6 +102,10 @@ assert(!source.includes("invoke("), "Task Manager must not probe or run provider
 assert(source.includes("expectedOpenedAtMs: item.openedAtMs"), "attention acknowledgement must use the exact durable CAS timestamp");
 assert(source.includes("aggregateOmittedCount: item.aggregateOmittedCount"), "attention saturation acknowledgement must retain its exact bounded count");
 assert(source.includes("{onRunNow && <ActionButton"), "Run now must remain absent unless the root injects the durable execution coordinator");
+assert(source.includes('const reviewingSavedTask = mode === "edit" && Boolean(selectedDetail) && !editingDetails;'), "saved Tasks must open in review mode instead of the full editor");
+assert(source.includes("!reviewingSavedTask && <ActionButton"), "the review panel must not present an unchanged Save action");
+assert(source.includes('candidates.map((candidate) => providerLabel(candidate.providerId)).join(" → ")'), "review mode must show agents in their real fallback order");
+assert(source.includes('setEditingDetails(mode === "create")'), "new drafts must open editable while saved Tasks return to review mode");
 assert(!source.includes("candidates: [{ providerId: draft.context?.agentSuggestion"), "a chat suggestion must never auto-activate a provider route");
 assert(!source.includes("attentionReason}"), "Task Manager must not render unstructured attention diagnostics");
 assert(!source.includes("providerRelativePath"), "Task Manager must not receive or render provider attachment paths");

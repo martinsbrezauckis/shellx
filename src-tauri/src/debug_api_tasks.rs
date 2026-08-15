@@ -27,6 +27,9 @@ use axum::{
 use serde::Deserialize;
 use tauri::Manager;
 
+#[path = "debug_api_task_agent.rs"]
+mod task_agent;
+
 use crate::{
     debug_api::ApiState,
     task_model::{TaskDraft, TaskRevisionPrecondition},
@@ -54,6 +57,7 @@ pub(crate) fn task_routes() -> Router<ApiState> {
         .route("/tasks", get(tasks_list_http).post(tasks_create_http))
         .route("/tasks/states", get(tasks_list_states_http))
         .route("/tasks/provider-catalog", post(tasks_provider_catalog_http))
+        .route("/tasks/agent", post(task_agent::tasks_agent_action_http))
         .route(
             "/tasks/:task_id",
             get(tasks_get_http).delete(tasks_delete_http),

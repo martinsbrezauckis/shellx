@@ -1882,6 +1882,8 @@ export default function App(): JSX.Element {
       title: t.title,
       cwd: t.cwd,
       agentId: t.agentId ?? null,
+      autonomy: t.autonomy ?? autonomy,
+      shellxToolExposure: normalizeShellxToolExposure(t.shellxToolExposure),
       connectionId: t.connectionId ?? null,
       connectionLabel: t.connectionLabel ?? "Local",
       connectionTransport: t.connectionTransport ?? "local",
@@ -1894,7 +1896,7 @@ export default function App(): JSX.Element {
     if (openTabsDebugKeyRef.current === key) return;
     openTabsDebugKeyRef.current = key;
     void apiPost("/state/ui", { openTabs, source: "renderer" }).catch(() => { /* debug API may be off */ });
-  }, [tabs]);
+  }, [autonomy, tabs]);
   const [activeConnectionPreset, setActiveConnectionPreset] = useState<ConnectionPreset | null>(null);
   const [activeProviderScanOverride, setActiveProviderScanOverride] = useState<{
     connectionId: string | null;

@@ -171,6 +171,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 # local time, but cannot validate arbitrary named zones or resolve their DST
 # transitions without `chrono-tz`.
 chrono-tz = "0.10"
+# Resolve the computer's IANA timezone when a chat-authorized Task omits an
+# explicit location. The crate already exists in the lockfile through chrono;
+# declaring it directly makes this runtime dependency intentional.
+iana-time-zone = "0.1"
 
 # Host MCP `fs_grep` regex-over-files tool (#171). The
 # `ignore` crate is ripgrep's workhorse — respects .gitignore, hidden-

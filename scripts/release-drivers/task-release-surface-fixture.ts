@@ -15,6 +15,7 @@ export const TASK_DEBUG_API_SURFACES = [
   "GET /tasks/:task_id/state",
   "GET /tasks/states",
   "POST /tasks",
+  "POST /tasks/agent",
   "POST /tasks/:task_id/attention/:attention_id/resolve",
   "POST /tasks/:task_id/attention/overflow/resolve",
   "POST /tasks/:task_id/pause",

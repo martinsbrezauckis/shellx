@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "7938db5d743397e20a851c27d670f9ec56939928",
-    "tree": "cd1748a66747e7f3f4cbf33f3c935ed11448bce4"
+    "commit": "36d12ee6b770803139e697e0f2407b2b0651b56c",
+    "tree": "7d203203e3e20d84dd0141a3440d2d008b176e31"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -19,19 +19,19 @@
     "selfExcludedFromEntries": true
   },
   "classification": {
-    "trackedFileCount": 1442,
-    "includedTrackedFileCount": 1408,
-    "excludedTrackedFileCount": 34
+    "trackedFileCount": 1446,
+    "includedTrackedFileCount": 1411,
+    "excludedTrackedFileCount": 35
   },
   "payload": {
-    "fileCount": 1409,
-    "totalBytes": 38143504,
-    "digest": "0685f691fd1997b69cb52b8c24f375026ba02cee24481dd3a24f6e81187495f3"
+    "fileCount": 1412,
+    "totalBytes": 38356049,
+    "digest": "4735050a6fa2b06735f28cd7a9ebf263c7f7d921bf999b30452a07539b27c2bf"
   },
   "exclusions": {
-    "fileCount": 34,
+    "fileCount": 35,
     "byCategory": {
-      "private-working-documentation": 34
+      "private-working-documentation": 35
     }
   },
   "entries": [
@@ -93,8 +93,8 @@
     {
       "path": "CHANGELOG.md",
       "mode": "100644",
-      "sha256": "10fbd29eb4b2837ac85f7dc82d15e69cbd912f9e37bc8e3636bff27347feafb5",
-      "bytes": 25249,
+      "sha256": "bba4d84a151a1058751d591689ec8c28f94d8e71c075926df8ec8c3c8ecf6795",
+      "bytes": 25146,
       "ruleId": "repository-metadata",
       "matchedBy": "exact",
       "matchedPath": "CHANGELOG.md",
@@ -104,8 +104,8 @@
     {
       "path": "docs/public/API.md",
       "mode": "100644",
-      "sha256": "ffca3f3e467738fd4e4434bb233010462abeeea581dc1c976219e7bc7cd0561a",
-      "bytes": 212626,
+      "sha256": "7584e5276a094bd7415682a08f0b3c48da30e68d008d4ae3f3ee1bc330d29093",
+      "bytes": 213291,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -115,8 +115,8 @@
     {
       "path": "docs/public/ARCHITECTURE.md",
       "mode": "100644",
-      "sha256": "764d330f277470609db346482996b7c7951e4f7005fc2c67c0dba56790cd9a09",
-      "bytes": 29721,
+      "sha256": "9acf02a7cbacafa5ed9ab3db1cbe1b845fab93a7710c86ff0919679be9bd75f7",
+      "bytes": 30441,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "46968a256b0efcf510f48c9a81274f9b0e14fb5ede4bfffe644a0354f65a86ed",
+      "sha256": "6f8ed5b5de7580471b3f8ce4beac8fdb97f14d6cf807f3374e80562b76a5985e",
       "bytes": 7975,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -588,8 +588,8 @@
     {
       "path": "docs/public/manual/shellx/assets/task-manager-evidence.png",
       "mode": "100644",
-      "sha256": "d05ca354ef6969a81da1552dd3108a1a5fd6a676e496c774c1e18b2cfed20a79",
-      "bytes": 212367,
+      "sha256": "f4be4d314a1f21efb6c3e0528ad13beb3c0edfe549318b9d22f3ec87d214c103",
+      "bytes": 230003,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -599,8 +599,8 @@
     {
       "path": "docs/public/manual/shellx/assets/task-manager-overview.png",
       "mode": "100644",
-      "sha256": "25c17f8538923016748dba54e16eebd079aeda49527d6dbd3f4d5226bfdb5cde",
-      "bytes": 173022,
+      "sha256": "5a8478d6306d59e50009a3eeb8146f26d39e4ba653f280c3c5f502ef1313ff3f",
+      "bytes": 227336,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -610,8 +610,8 @@
     {
       "path": "docs/public/manual/shellx/assets/task-manager-providers.png",
       "mode": "100644",
-      "sha256": "0c1657f1c616c89f6fcf2151b927341c096ff08c8baff3c8e8f9b22474bcd915",
-      "bytes": 167784,
+      "sha256": "3d87774efdbe4883b7b94b7b8b4aaa5eb23abd2e4ae852ed421a3ce9ebf7b99c",
+      "bytes": 203708,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -621,8 +621,8 @@
     {
       "path": "docs/public/manual/shellx/assets/task-manager-schedule.png",
       "mode": "100644",
-      "sha256": "fdfe8143b33012df76802510b48ca56b14f958ccc6a51415a53f18153dc882fe",
-      "bytes": 193750,
+      "sha256": "d463e356fdcb46dc4c46174483a2706ac17089f6577141ce4aea68b46b6b4f4b",
+      "bytes": 236760,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -632,8 +632,8 @@
     {
       "path": "docs/public/manual/shellx/content.json",
       "mode": "100644",
-      "sha256": "a4f4cec94ce900b1ed7a5ed2bcf2c2446187a53f72d28821d6ff13d358116bc6",
-      "bytes": 77261,
+      "sha256": "c48889026a96580daa26cd1bca9444c6422df28f8acf12c1d1649f3ed656919a",
+      "bytes": 77793,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -643,8 +643,8 @@
     {
       "path": "docs/public/manual/shellx/index.html",
       "mode": "100644",
-      "sha256": "171fabf9297461386905fdad4ed0b72bb4a8fccda30aa895e8a05b4c818ec72d",
-      "bytes": 276167,
+      "sha256": "29f666b1cda9a6e9e5ba71b832d6689405902d883623c13289d9d28208b06220",
+      "bytes": 277667,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -676,7 +676,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "3ea84eedaab23f006abb352f1794be7c91fc108ec75f6da5f7a245c9a7cfa5c9",
+      "sha256": "03c3ca788cd331eb1cd574d8eb7eed2123e29d14daa6806d9878420a7f586cdf",
       "bytes": 54418,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -709,8 +709,8 @@
     {
       "path": "docs/public/SHELLX_MANUAL.md",
       "mode": "100644",
-      "sha256": "e7dc7f6fcf70bd177d33d34349b0e37455d504e0b016761d44117e3c14d22419",
-      "bytes": 60689,
+      "sha256": "2884973d66512131141cfa1e36b9c65448aadab559b291e00e30d3d82aae68a7",
+      "bytes": 61185,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "ade5027aa6ddf86fba45e37a1b836366cf1157e4229f9837201c225201e736d0",
+      "sha256": "e29f86559c0d4e595ae6f250066f6e6664f2c3f5c334b347793bc783b7002d02",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -819,7 +819,7 @@
     {
       "path": "release/FINAL_SURFACE_GATE.md",
       "mode": "100644",
-      "sha256": "07ebe7d42a2d906ff5bd25d14f81653a4258bd58517ddff4dc78122bf7b20670",
+      "sha256": "044437dcdb6c1bb7c65b786e6e1333981cf9a5e46bc9fcff6d88b137ade4c22b",
       "bytes": 47847,
       "ruleId": "public-release-contracts",
       "matchedBy": "exact",
@@ -852,8 +852,8 @@
     {
       "path": "release/surface-driver-plan.json",
       "mode": "100644",
-      "sha256": "69d34e41108089223477d1f3d86f7c80cf20b8bdb365e28d18557d77fe2c23f7",
-      "bytes": 1067666,
+      "sha256": "f3eae1bbd97e050b2115a06784cbaa87d1a238061fbfccf8ad4455881efa1ce3",
+      "bytes": 1072770,
       "ruleId": "public-release-contracts",
       "matchedBy": "exact",
       "matchedPath": "release/surface-driver-plan.json",
@@ -863,8 +863,8 @@
     {
       "path": "release/surface-inventory.json",
       "mode": "100644",
-      "sha256": "719017efdfcc2f9e1d75c8ee94f57bff12b32e3e43285398c471dfec5126186a",
-      "bytes": 1192725,
+      "sha256": "de7666346c95fd937ac5002d8e44285a09ffc42c96e942bd79f00db65829dd8f",
+      "bytes": 1198279,
       "ruleId": "public-release-contracts",
       "matchedBy": "exact",
       "matchedPath": "release/surface-inventory.json",
@@ -1358,8 +1358,8 @@
     {
       "path": "scripts/fixtures/release-surface-ui-control-task-manager-server-fixture.ts",
       "mode": "100644",
-      "sha256": "c06dccb45650a571066b1ec4ec190d3f5ed73b4b5d3d5129804438a0d67fd6b0",
-      "bytes": 26301,
+      "sha256": "8e134991479d7e8a6baa83c7223d6cd59b2a5de1fea002adf80edf6bb50e3c5b",
+      "bytes": 26997,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -1578,8 +1578,8 @@
     {
       "path": "scripts/generate-release-surface-driver-plan.ts",
       "mode": "100644",
-      "sha256": "b9b8f49d3f5b7a9d878f441b571b6d7fd3b2f4a6ae2806928b6eb8cb151c5aa8",
-      "bytes": 421472,
+      "sha256": "b5b09e6be458b1eef3a8d548c49c159f96b34013f689b86cee69431b4952d25f",
+      "bytes": 421489,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -1655,8 +1655,8 @@
     {
       "path": "scripts/lib/manual-atlas-capture-plan.ts",
       "mode": "100644",
-      "sha256": "b66e85adc0ceb3ce89e9244ba92962529705ffd0bb84a15bef6be447ff1ac632",
-      "bytes": 11001,
+      "sha256": "3035eca5bdb262d9b483fef8818daefc006646a0f9f82d5f08e4d332062bea13",
+      "bytes": 11287,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -2194,8 +2194,8 @@
     {
       "path": "scripts/lib/release-ui-debug-surface-cohorts.ts",
       "mode": "100644",
-      "sha256": "34a82777973adf37dce29d3653e1993b272a1f3e13c96d323cd44f2e510d9f10",
-      "bytes": 70514,
+      "sha256": "a7160f9eb45d95b4b33a9d30b8fd5581c7f6dcc74cb9e34cf12bf8f855841079",
+      "bytes": 71596,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -2612,8 +2612,8 @@
     {
       "path": "scripts/release-drivers/debug-api-task-installed.ts",
       "mode": "100644",
-      "sha256": "a4ab6e1d4ac883cc9b310fd617cba77ff8089b489f273a1e3e9133230b28497b",
-      "bytes": 14188,
+      "sha256": "2a61fd1db5fa9238e02ae71ee37a623f2681e2f961cc33623a84f3e58bb2d87c",
+      "bytes": 17924,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -2678,8 +2678,8 @@
     {
       "path": "scripts/release-drivers/host-mcp-tool-installed.ts",
       "mode": "100644",
-      "sha256": "a7ba19f9466a3499a090d1a7a924d4b0ff75d14d7644a902f877389ad8ebf4ff",
-      "bytes": 113022,
+      "sha256": "06025dd14be275623edede9317d2fbc2d52625727dd39e077dedd766c780aedc",
+      "bytes": 113544,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -2799,8 +2799,8 @@
     {
       "path": "scripts/release-drivers/task-release-surface-fixture.ts",
       "mode": "100644",
-      "sha256": "0b874dfe4e6ba0df5612a05c397bff1f470bd7d4647f84848b0cfe57a3a8d0eb",
-      "bytes": 12721,
+      "sha256": "b7590264f8a1c40ed7ae7869eac83d410f20fb37b412aab009077b4f95a8c3f1",
+      "bytes": 12744,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -3690,8 +3690,8 @@
     {
       "path": "scripts/release-drivers/ui-control-task-manager.ts",
       "mode": "100644",
-      "sha256": "8f972a1bb72fa8db226545c6cbcf6938e15311106b9b4383c18d78dd1c3cb6ae",
-      "bytes": 25551,
+      "sha256": "a52a30edb841ed0e12b4ce3557f80510697d9eecd85ee8c9803377db4bf4dfb6",
+      "bytes": 27135,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -3998,8 +3998,8 @@
     {
       "path": "scripts/release-drivers/ui-task-manager-installed-assignments.ts",
       "mode": "100644",
-      "sha256": "89c64723cc1570292cb5ef86389a4442ee3ec640f384c93331f2c7e39ddae7d4",
-      "bytes": 5024,
+      "sha256": "b916221393922553740a94e6f726d388f22173d61d21df22723a8f638d885a78",
+      "bytes": 5190,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4636,8 +4636,8 @@
     {
       "path": "scripts/test-manual-atlas-capture-plan.ts",
       "mode": "100644",
-      "sha256": "16ebe996b1be1a56bee464a57dbc9408f3df4617783625ad27f665dd207a7b34",
-      "bytes": 2366,
+      "sha256": "df121536852b6d1aaa12704b4511b3c25caa8b634a95064a1809fd57c33a97ec",
+      "bytes": 2810,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4768,8 +4768,8 @@
     {
       "path": "scripts/test-protocol-docs-parity.ts",
       "mode": "100644",
-      "sha256": "7a780eccb8a3a0e528b018e6b06ebe15ff01cdfaebcf1b81db870b7f93b7343b",
-      "bytes": 11200,
+      "sha256": "061a89ec5175889e3bca3bd34d36e2901fc536d333f49b61dc046bbf3a78aa2b",
+      "bytes": 11291,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4988,8 +4988,8 @@
     {
       "path": "scripts/test-release-surface-inventory.ts",
       "mode": "100644",
-      "sha256": "adb141b2cb970cf7f8a45e833e1c58c45b73f5e790948c9f48840d56d3e9a496",
-      "bytes": 130252,
+      "sha256": "0a932573c184c7743083023235b4251ed0f2e020cdc2146ac85b5923cc4e07d5",
+      "bytes": 130285,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5582,8 +5582,8 @@
     {
       "path": "scripts/test-release-surface-ui-control-task-manager.ts",
       "mode": "100644",
-      "sha256": "ff15b042fef838ecfa56dac34a0c35bea34081a0e80de794d8edaf1ef3401e8d",
-      "bytes": 15868,
+      "sha256": "496fa8b60e74d698820c79598004c524ff70d489056f9f877f53a0dea4f53bbc",
+      "bytes": 15971,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5769,8 +5769,8 @@
     {
       "path": "scripts/test-release-ui-driver-families.ts",
       "mode": "100644",
-      "sha256": "760e207f093c89a6724278635d7d6cb41194f16e1d66c961f56a4d4d411dd1ea",
-      "bytes": 4117,
+      "sha256": "e7c5646115d7446ca1c2a4abe72f0da15ea67d94ce272ccfc27bc70d88f5afe0",
+      "bytes": 4919,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6407,8 +6407,19 @@
     {
       "path": "scripts/test-suite-manifest.mjs",
       "mode": "100644",
-      "sha256": "cc5e4a2f1e97b0e4fe9a5c37aef8a8e9da7464151325ee899985abe0b39a41c7",
-      "bytes": 13622,
+      "sha256": "75c7c98d502c2a645b2c4ef0baa6265aab7f469c185dd3a28f3029850fe6348b",
+      "bytes": 13675,
+      "ruleId": "public-build-test-tooling",
+      "matchedBy": "prefix",
+      "matchedPath": "scripts/",
+      "category": "public-build-test-tooling",
+      "reason": "Build, test, documentation, release-contract, and reproducibility tooling for the public source tree."
+    },
+    {
+      "path": "scripts/test-task-agent-management.ts",
+      "mode": "100644",
+      "sha256": "a668dfd6bb24f5faab64e539163a179fae961ebdce51c90f6229d23dbf0eb8a0",
+      "bytes": 3995,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6462,8 +6473,8 @@
     {
       "path": "scripts/test-task-manager-contract.ts",
       "mode": "100644",
-      "sha256": "9c06e549352daeddfba63e3e990a394aaf5682a98515b1dd7e8c1c1c79f20f17",
-      "bytes": 10205,
+      "sha256": "7ba2de826a8b4d99dada765dd8ba97fd9c674a6c8d9ed30ad15b4bfafa684984",
+      "bytes": 10207,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6528,8 +6539,8 @@
     {
       "path": "scripts/test-task-manager-ui-source.ts",
       "mode": "100644",
-      "sha256": "1b5ba55ec194647361819cbab3913ab5c2f8a99383c68ad54aa36e5719373199",
-      "bytes": 9924,
+      "sha256": "d1a7fe5db8574af5890438ab7e29a98fad23425722acabea6cf57f8b85a6c03e",
+      "bytes": 10707,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6583,8 +6594,8 @@
     {
       "path": "scripts/test-tasks-debug-api.ts",
       "mode": "100644",
-      "sha256": "db1ddf8e8c16749f0d116d1c77e0446ef9a14e55ec1c666160c7deb7dbb367ac",
-      "bytes": 5166,
+      "sha256": "096b23d07444fee93cbec7163d1505b69bb3ebe0515377e31a5e664f5711ddbb",
+      "bytes": 5302,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6616,8 +6627,8 @@
     {
       "path": "scripts/test-test-suite-manifest.mjs",
       "mode": "100644",
-      "sha256": "a1336ceaf1f3229ab03bebf3a6f646c7767171c0ac350e78dbe6b4346a6650cf",
-      "bytes": 5533,
+      "sha256": "898e86713e4e5e5ef1e93bf073cac7c04c0ad19105e0a996a57c9aa9e05fb64d",
+      "bytes": 5568,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6924,8 +6935,8 @@
     {
       "path": "skills/shellx-host/SKILL.md",
       "mode": "100644",
-      "sha256": "e8a6306b9a97287dc3524bdf2a673835d9322b55263c9f24142023ff3750a645",
-      "bytes": 49882,
+      "sha256": "f180cd7666a5076ced2772a043c7ef06c0fdf9f4137928eb31c63e19d99a07d8",
+      "bytes": 50753,
       "ruleId": "public-agent-resources",
       "matchedBy": "exact",
       "matchedPath": "skills/shellx-host/SKILL.md",
@@ -6968,8 +6979,8 @@
     {
       "path": "src-tauri/Cargo.lock",
       "mode": "100644",
-      "sha256": "7a1c6315ee17f2dbf83bf427e440b0bd8a9092daa1c2185708a7afc0d63ed4a3",
-      "bytes": 219983,
+      "sha256": "71df51044cc93fce71a1250366e6ed74761d4e7a04f1002efa74f852fc7a5353",
+      "bytes": 220002,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -6979,8 +6990,8 @@
     {
       "path": "src-tauri/Cargo.toml",
       "mode": "100644",
-      "sha256": "a21935753d47e4395e22c6356abf063d83968530da6ed48de14188023f992eba",
-      "bytes": 13146,
+      "sha256": "b168cdc41cce903a7db7c6bae746005a0b484a5f24bf75b8a2acc6f093aabe96",
+      "bytes": 13390,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -7736,10 +7747,21 @@
       "reason": "ShellX public native application, packaging, and platform source."
     },
     {
+      "path": "src-tauri/src/debug_api_task_agent.rs",
+      "mode": "100644",
+      "sha256": "8644f254dd2e70cddbc77eddc8ea1b233463c18caf24fc5270055b1a6e9c7dcc",
+      "bytes": 18555,
+      "ruleId": "public-native-source",
+      "matchedBy": "prefix",
+      "matchedPath": "src-tauri/",
+      "category": "public-native-source",
+      "reason": "ShellX public native application, packaging, and platform source."
+    },
+    {
       "path": "src-tauri/src/debug_api_tasks.rs",
       "mode": "100644",
-      "sha256": "eb7b51b1de43c505fbef2e09e6fadf6005b3453bdc584f9773f6e2610b258284",
-      "bytes": 25915,
+      "sha256": "d905461be411eecb6b87bf750db71cb4e0cc96a7d9951bb70c392634dc68cc7c",
+      "bytes": 26042,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -7804,8 +7826,8 @@
     {
       "path": "src-tauri/src/debug_api.rs",
       "mode": "100644",
-      "sha256": "d7114dd09951a6c1de58aad486b150781c04e0e6c000aac1ca9bfba53d53a1e6",
-      "bytes": 81555,
+      "sha256": "38ee7a01a534b4c00a23cf31c166aba335617854f5b209c8257732c45785e6f0",
+      "bytes": 81710,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -7859,8 +7881,8 @@
     {
       "path": "src-tauri/src/host_mcp.rs",
       "mode": "100644",
-      "sha256": "4ef1b4a2f8b1833fa1c4a927c7e02db7b126145241d7fa3a752b5345aae91bd2",
-      "bytes": 58710,
+      "sha256": "46a8e7e1564a9b9b4f3dc515e2ea28c46ad77d4ae969b7cbc105e8d83087bedd",
+      "bytes": 58990,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -8145,8 +8167,8 @@
     {
       "path": "src-tauri/src/host_mcp/host_state_tools.rs",
       "mode": "100644",
-      "sha256": "e016be1a20c951ea9d20dc24d721359289dc0630da0a42b975be022fe159b224",
-      "bytes": 12173,
+      "sha256": "3f33d14c4bc0b2a0e740f18172acf01f4431a652457f3b7e73aed4514a548dd1",
+      "bytes": 12694,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -8213,6 +8235,17 @@
       "mode": "100644",
       "sha256": "1d428aefd77b1245bdabc11c10e9461d2bd31ec059a182a1dd771d2334b846a1",
       "bytes": 9429,
+      "ruleId": "public-native-source",
+      "matchedBy": "prefix",
+      "matchedPath": "src-tauri/",
+      "category": "public-native-source",
+      "reason": "ShellX public native application, packaging, and platform source."
+    },
+    {
+      "path": "src-tauri/src/host_mcp/task_tools.rs",
+      "mode": "100644",
+      "sha256": "8f056b894791aa8e1877107caddbd4e1ca0cf20e2a283d13aff07a1b73cdb9e7",
+      "bytes": 733,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -8332,8 +8365,8 @@
     {
       "path": "src-tauri/src/host_mcp/tool_specs_core.rs",
       "mode": "100644",
-      "sha256": "fd2ce68aae321c12c77cc4b8b3cfe4ccf23b06320b916868ae34d649db6af6db",
-      "bytes": 50102,
+      "sha256": "12a064ea900cb0e42a62d5801d102e671ad9fff5d3751d5f57b9f448defa5c13",
+      "bytes": 53205,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -10334,8 +10367,8 @@
     {
       "path": "src-tauri/src/task_runtime_authority.rs",
       "mode": "100644",
-      "sha256": "74f8697b7f995747c9d1d0b99ec4298c995cc240839fb9f44592adae8bd33b9d",
-      "bytes": 19248,
+      "sha256": "ccd033ffaf0425a7c13886ec19d31dd2c1d4cb743b0d62c8ea5645919759b6f4",
+      "bytes": 19858,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -10730,8 +10763,8 @@
     {
       "path": "src/App.tsx",
       "mode": "100644",
-      "sha256": "6adc136859db923980f9704ef40397776c29e41229fe1f87c26170d10e7319ae",
-      "bytes": 312961,
+      "sha256": "8f27ae35d9d797165f38d481f5614e760de92b91311d3d0eb92877e236c00597",
+      "bytes": 313088,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -12160,8 +12193,8 @@
     {
       "path": "src/components/TaskManager.css",
       "mode": "100644",
-      "sha256": "4589c5c5f6fe19ca388772466e34d93d49ae860d3606289874a6c828c45e8d74",
-      "bytes": 22357,
+      "sha256": "ff6f1741b47750fef537dbe0692b29d8f8fdeae3a546330f52d42bcbbce98fe5",
+      "bytes": 24244,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -12171,8 +12204,8 @@
     {
       "path": "src/components/TaskManager.tsx",
       "mode": "100644",
-      "sha256": "c2bbed606a520eb6b6a168116cbb4ba4a117ea1b5511f2f6fb741ad1126337aa",
-      "bytes": 63504,
+      "sha256": "0c08c658253efc2918c837d575018b330890fcb8294873bd1dc03178477d7341",
+      "bytes": 68653,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -12391,8 +12424,8 @@
     {
       "path": "src/lib/builtin-docs.ts",
       "mode": "100644",
-      "sha256": "0de5d0a5d32db128387d0c4fcbf1df0b4737aca029a73fd6befc41f48c1e50b1",
-      "bytes": 20223,
+      "sha256": "39a5a413ebdae0f5864ad5794a629a0689a05fb984299819012028a97fc762b2",
+      "bytes": 20438,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -12930,8 +12963,8 @@
     {
       "path": "src/lib/task-manager-fixtures.ts",
       "mode": "100644",
-      "sha256": "948e5dd2c2a703e4c950ade478daffe2ebfd1b330e2d6686f2203cc8297f643f",
-      "bytes": 11512,
+      "sha256": "954aa55aae47d1a69767a4a981228d00a434fe2d182a564a20cc110081ab4799",
+      "bytes": 11520,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",

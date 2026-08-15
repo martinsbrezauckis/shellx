@@ -8,7 +8,7 @@ export const TASK_MANAGER_FIXTURE_CATALOGUE: TaskProviderCatalogue = {
   snapshotId: "sha256:8e1a0af5b127e67dbf23547b7c5d3dc541096ef1c19559e2ce40fd667dc5cc90",
   generatedAtMs: TASK_MANAGER_FIXTURE_NOW_MS - 1_000,
   freshUntilMs: TASK_MANAGER_FIXTURE_NOW_MS + 60_000,
-  target: { key: "local:linux", label: "Local linux", transport: "local", runtime: "posix" },
+  target: { key: "local:linux", label: "This computer", transport: "local", runtime: "posix" },
   providers: [
     {
       providerId: "grok",
@@ -49,7 +49,7 @@ export const TASK_MANAGER_FIXTURE_DRAFT: TaskManagerDraft = {
 export const TASK_MANAGER_FIXTURE_DATA: TaskManagerData = {
   loadState: "ready",
   environments: [
-    { key: "local", label: "Local linux", transport: "local", runtime: "posix", projectLabel: "ShellX", cwdLabel: "/projects/shellx" },
+    { key: "local", label: "This computer", transport: "local", runtime: "posix", projectLabel: "ShellX", cwdLabel: "/projects/shellx" },
     { key: "remote-windows", label: "Remote Windows", transport: "ssh", runtime: "Windows", projectLabel: "ShellX", cwdLabel: "C:\\Projects\\shellx" },
   ],
   providerCatalogue: TASK_MANAGER_FIXTURE_CATALOGUE,
@@ -64,7 +64,7 @@ export const TASK_MANAGER_FIXTURE_DATA: TaskManagerData = {
     state: "needsAttention",
     enabled: true,
     environmentKey: "local",
-    environmentLabel: "Local linux",
+    environmentLabel: "This computer",
     projectLabel: "ShellX",
     providerIds: ["grok"],
     providerRouteSummary: "Grok · Provider default",
@@ -82,7 +82,7 @@ export const TASK_MANAGER_FIXTURE_DATA: TaskManagerData = {
     state: "needsAttention",
     enabled: true,
     environmentKey: "local",
-    environmentLabel: "Local linux",
+    environmentLabel: "This computer",
     projectLabel: "ShellX",
     providerIds: ["grok"],
     providerRouteSummary: "Grok · Provider default",

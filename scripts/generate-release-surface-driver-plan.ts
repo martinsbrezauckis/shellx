@@ -1997,6 +1997,7 @@ const promotedHostMcpWrites = new Set([
   "security_scan",
   "send_prompt_to_provider",
   "send_prompt_to_session",
+  "task_manage",
   "vault_agent_request",
   "vault_generate",
   "vault_request_grant",

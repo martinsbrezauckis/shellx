@@ -557,21 +557,35 @@ const fixtures = [
     ownedVaultGrant: true,
     cleanupAfterRestoreAbsentSelector: "[data-debug-id=\"shellx-vault-grant-row\"]",
   }),
-  taskManagerFixture("ui:task-manager-owned-full-visible", "full"),
+  taskManagerFixture("ui:task-manager-owned-review-visible", "full"),
+  taskManagerFixture("ui:task-manager-owned-full-visible", "full", [
+    clickStep("[data-debug-id='task-manager-edit-details']"),
+  ]),
   taskManagerFixture("ui:task-manager-owned-loading-visible", "loading"),
   taskManagerFixture("ui:task-manager-owned-empty-visible", "empty"),
   taskManagerFixture("ui:task-manager-owned-error-visible", "error"),
-  taskManagerFixture("ui:task-manager-owned-provider-empty-visible", "providerEmpty"),
-  taskManagerFixture("ui:task-manager-owned-provider-guard-visible", "providerGuard"),
-  taskManagerFixture("ui:task-manager-owned-vault-unavailable-visible", "vaultUnavailable"),
-  taskManagerFixture("ui:task-manager-owned-vault-required-visible", "vaultRequired"),
+  taskManagerFixture("ui:task-manager-owned-provider-empty-visible", "providerEmpty", [
+    clickStep("[data-debug-id='task-manager-edit-details']"),
+  ]),
+  taskManagerFixture("ui:task-manager-owned-provider-guard-visible", "providerGuard", [
+    clickStep("[data-debug-id='task-manager-edit-details']"),
+  ]),
+  taskManagerFixture("ui:task-manager-owned-vault-unavailable-visible", "vaultUnavailable", [
+    clickStep("[data-debug-id='task-manager-edit-details']"),
+  ]),
+  taskManagerFixture("ui:task-manager-owned-vault-required-visible", "vaultRequired", [
+    clickStep("[data-debug-id='task-manager-edit-details']"),
+  ]),
   taskManagerFixture("ui:task-manager-owned-trigger-once-visible", "full", [
+    clickStep("[data-debug-id='task-manager-edit-details']"),
     inputStep("[data-debug-id='task-manager-trigger-kind']", "once"),
   ]),
   taskManagerFixture("ui:task-manager-owned-trigger-monthly-visible", "full", [
+    clickStep("[data-debug-id='task-manager-edit-details']"),
     inputStep("[data-debug-id='task-manager-trigger-kind']", "monthly"),
   ]),
   taskManagerFixture("ui:task-manager-owned-trigger-weekly-visible", "full", [
+    clickStep("[data-debug-id='task-manager-edit-details']"),
     inputStep("[data-debug-id='task-manager-trigger-kind']", "weekly"),
   ]),
   browserFixture("ui:browser-chrome-owned-task", "chat"),
@@ -786,7 +800,6 @@ cohort("ui:task-manager-owned-full-visible", "src/components/TaskManager.tsx", [
   "task-manager-attachment-binding",
   "task-manager-attention-callout",
   "task-manager-attention-item",
-  "task-manager-attention",
   "task-manager-backdrop",
   "task-manager-catalogue-freshness",
   "task-manager-close",
@@ -820,6 +833,7 @@ cohort("ui:task-manager-owned-full-visible", "src/components/TaskManager.tsx", [
   "task-manager-provider-filter",
   "task-manager-provider-list",
   "task-manager-recheck",
+  "task-manager-review-details",
   "task-manager-remove-attachment",
   "task-manager-remove-vault-requirement",
   "task-manager-remove-workflow",
@@ -835,6 +849,17 @@ cohort("ui:task-manager-owned-full-visible", "src/components/TaskManager.tsx", [
   "task-manager-vault-grant",
   "task-manager-workflow-binding",
   "task-manager",
+]);
+cohort("ui:task-manager-owned-review-visible", "src/components/TaskManager.tsx", [
+  "task-manager-edit-details",
+  "task-manager-review-agents",
+  "task-manager-review",
+]);
+cohortOccurrences("ui:task-manager-owned-full-visible", "src/components/TaskManager.tsx", [
+  { name: "task-manager-attention", occurrence: 9 },
+]);
+cohortOccurrences("ui:task-manager-owned-review-visible", "src/components/TaskManager.tsx", [
+  { name: "task-manager-attention", occurrence: 33 },
 ]);
 cohort("ui:task-manager-owned-loading-visible", "src/components/TaskManager.tsx", ["task-manager-loading"]);
 cohort("ui:task-manager-owned-empty-visible", "src/components/TaskManager.tsx", ["task-manager-empty"]);

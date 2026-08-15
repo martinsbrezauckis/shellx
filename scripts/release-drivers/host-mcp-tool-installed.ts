@@ -158,6 +158,7 @@ const manifest: ReleaseSurfaceDriverManifest = {
     "host-mcp:security_scan:installed-mutation-effect",
     "host-mcp:send_prompt_to_provider:installed-mutation-effect",
     "host-mcp:send_prompt_to_session:installed-mutation-effect",
+    "host-mcp:task_manage:installed-mutation-effect",
     "host-mcp:vault_agent_request:installed-mutation-effect",
     "host-mcp:vault_generate:installed-mutation-effect",
     "host-mcp:vault_request_grant:installed-mutation-effect",
@@ -276,6 +277,7 @@ const MUTATION_TOOLS = new Set([
   "security_scan",
   "send_prompt_to_provider",
   "send_prompt_to_session",
+  "task_manage",
   "vault_agent_request",
   "vault_generate",
   "vault_request_grant",
@@ -336,6 +338,7 @@ const EXPECTED_TOOL_ERRORS = new Map<string, string>([
   ["secret_set", "secret_set: writing to the pass-store"],
   ["send_prompt_to_provider", "send_prompt_to_provider requires userApproved=true"],
   ["send_prompt_to_session", "send_prompt_to_session requires userApproved=true"],
+  ["task_manage", "task_manage requires userApproved=true"],
   ["vault_request_grant", "vault_request_grant refuses rawReveal"],
   ["vision_describe", "vision_describe: empty path"],
   ["vision_describe_v2", "vision_describe: empty path"],
@@ -835,6 +838,13 @@ function argumentsFor(
     case "send_prompt_to_session": return {
       prompt: "ShellX release safety refusal fixture",
       userApproved: false,
+    };
+    case "task_manage": return {
+      action: "create",
+      userApproved: false,
+      name: "ShellX release refusal",
+      instruction: "Do not persist this Task.",
+      trigger: { kind: "manual" },
     };
     case "vault_agent_request": return { action: "list" };
     case "vault_deposit": return { label: "ShellX release deposit plan" };
@@ -1602,6 +1612,9 @@ function expectedSafetyEffect(name: string): string {
   }
   if (["send_prompt_to_provider", "send_prompt_to_session"].includes(name)) {
     return `Host MCP permission-gated ${name} and enforced explicit user approval before starting or messaging any provider session.`;
+  }
+  if (name === "task_manage") {
+    return "Host MCP permission-gated task_manage and enforced explicit current-conversation approval before persisting or queueing a Task.";
   }
   if (["vision_describe", "vision_describe_v2", "voice_stt_v2", "voice_tts", "x_search"].includes(name)) {
     return `Host MCP permission-gated ${name} and enforced its exact input-validation refusal before credentials, files, outputs, or external services were touched.`;

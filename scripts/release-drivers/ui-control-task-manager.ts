@@ -44,6 +44,7 @@ const NAMES = {
   enabled: `${PREFIX}[data-debug-id="task-manager-enabled"]`,
   environmentFilter: `${PREFIX}[data-debug-id="task-manager-environment-filter"]`,
   environment: `${PREFIX}[data-debug-id="task-manager-environment"]`,
+  editDetails: `${PREFIX}[data-debug-id="task-manager-edit-details"]`,
   instruction: `${PREFIX}[data-debug-id="task-manager-instruction"]`,
   maxRun: `${PREFIX}[data-debug-id="task-manager-max-run-seconds"]`,
   scheduleAdvanced: `${PREFIX}[data-debug-id="task-manager-schedule-advanced"]`,
@@ -54,6 +55,7 @@ const NAMES = {
   projectFilter: `${PREFIX}[data-debug-id="task-manager-project-filter"]`,
   providerFilter: `${PREFIX}[data-debug-id="task-manager-provider-filter"]`,
   recheck: `${PREFIX}[data-debug-id="task-manager-recheck"]`,
+  reviewDetails: `${PREFIX}[data-debug-id="task-manager-review-details"]`,
   removeAttachment: `${PREFIX}[data-debug-id="task-manager-remove-attachment"]`,
   removeVault: `${PREFIX}[data-debug-id="task-manager-remove-vault-requirement"]`,
   removeWorkflow: `${PREFIX}[data-debug-id="task-manager-remove-workflow"]`,
@@ -90,10 +92,15 @@ export async function exerciseTaskManagerControls(
     await resetFixture(connection, input);
     await exerciseListControls(input, pass);
     await resetFixture(connection, input);
+    await exerciseReviewControls(input, pass);
+    await resetFixture(connection, input);
+    await openEditor(input);
     await exerciseDefinitionControls(input, pass);
     await resetFixture(connection, input);
+    await openEditor(input);
     await exerciseScheduleControls(input, assignments, pass);
     await resetFixture(connection, input);
+    await openEditor(input);
     await exerciseProviderControls(connection, input, pass);
     await resetFixture(connection, input);
     await exerciseRunAndFooterControls(connection, input, pass);
@@ -120,6 +127,19 @@ export async function exerciseTaskManagerControls(
   return assignments.map((assignment) => requiredOutcome(outcomes, assignment.surface.name));
 }
 
+async function exerciseReviewControls(
+  input: ReleaseSurfaceInstalledInputSession,
+  pass: (name: string, detail: string) => void,
+): Promise<void> {
+  await waitForReleaseSurfaceInstalledInputElement(input, "[data-debug-id='task-manager-review']");
+  await nativeClick(input, "[data-debug-id='task-manager-edit-details']");
+  await waitForReleaseSurfaceInstalledInputElement(input, "[data-debug-id='task-manager-name']");
+  pass(NAMES.editDetails, "Native Edit details changed the selected saved Task from compact review to its full editor.");
+  await nativeClick(input, "[data-debug-id='task-manager-review-details']");
+  await waitForReleaseSurfaceInstalledInputElement(input, "[data-debug-id='task-manager-review']");
+  pass(NAMES.reviewDetails, "Native Back to review returned from the full editor without saving or changing the Task.");
+}
+
 async function exerciseListControls(
   input: ReleaseSurfaceInstalledInputSession,
   pass: (name: string, detail: string) => void,
@@ -141,7 +161,7 @@ async function exerciseListControls(
   await nativeClick(input, "[data-debug-id='task-manager-filter-all']");
   for (const [name, selector, inputText, expected] of [
     [NAMES.projectFilter, "[data-debug-id='task-manager-project-filter']", "ShellX", "ShellX"],
-    [NAMES.environmentFilter, "[data-debug-id='task-manager-environment-filter']", "Local linux", "local"],
+    [NAMES.environmentFilter, "[data-debug-id='task-manager-environment-filter']", "This computer", "local"],
     [NAMES.providerFilter, "[data-debug-id='task-manager-provider-filter']", "Grok", "grok"],
   ] as const) {
     await selectValue(input, selector, inputText, expected);
@@ -228,6 +248,7 @@ async function exerciseProviderControls(
   await selectValue(input, "[data-debug-id='task-manager-environment']", "Remote Windows · ssh / Windows", "remote-windows");
   pass(NAMES.environment, "Native environment selection changed the exact execution target and cleared the prior route.");
   await resetFixture(connection, input);
+  await openEditor(input);
 
   await nativeClick(input, "[data-debug-id='task-manager-recheck']");
   await waitForReleaseSurfaceInstalledInputElement(input, FEEDBACK_ACTION);
@@ -279,11 +300,13 @@ async function exerciseRunAndFooterControls(
   await waitBoolean(input, "[data-debug-id='task-manager-action-pause']", "disabled", false);
   await nativeClick(input, "[data-debug-id='task-manager-action-run-now']");
   await waitForReleaseSurfaceInstalledInputElement(input, "[data-debug-id='task-manager-run-run-fixture-manual']");
-  await nativeClick(input, "[data-debug-id='task-manager-action-save-revision']");
+  await nativeClick(input, "[data-debug-id='task-manager-edit-details']");
+  await nativeClick(input, "[data-debug-id='task-manager-action-save-changes']");
   await waitForReleaseSurfaceInstalledInputElement(input, FEEDBACK_ACTION);
-  pass(NAMES.actions, "Native footer actions proved duplicate, two-step delete, pause, resume, run-now, and save-revision owned transitions.");
+  pass(NAMES.actions, "Native footer actions proved duplicate, two-step delete, pause, resume, run-now, and save-changes owned transitions.");
 
   await resetFixture(connection, input);
+  await openEditor(input);
   await nativeClick(input, "[data-debug-id='task-manager-open-vault']");
   await waitForReleaseSurfaceInstalledInputElement(input, "[data-debug-id='vault-workspace-modal']");
   pass(NAMES.openVault, "Native Open Vault opened the first-class Vault workspace without reading any secret value.");
@@ -298,7 +321,7 @@ async function exerciseCloseControls(
   await waitForReleaseSurfaceInstalledInputElement(input, MANAGER);
   await waitBoolean(input, "[data-debug-id='task-manager-close']", "focused", true);
   await performReleaseSurfaceInstalledInputKeyChord(input, ["\uE008", "\uE004"]);
-  await waitBoolean(input, "[data-debug-id='task-manager-action-save-revision']", "focused", true);
+  await waitBoolean(input, "[data-debug-id='task-manager-action-run-now']", "focused", true);
   await performReleaseSurfaceInstalledInputKeyChord(input, ["\uE004"]);
   await waitBoolean(input, "[data-debug-id='task-manager-close']", "focused", true);
   await performReleaseSurfaceInstalledInputKeyChord(input, ["\uE004"]);
@@ -324,6 +347,11 @@ async function exerciseCloseControls(
 async function resetFixture(connection: Connection, input: ReleaseSurfaceInstalledInputSession): Promise<void> {
   await patchUi(connection, { debugTaskManagerFixture: "full", source: "final-surface-task-manager-controls" });
   await waitForReleaseSurfaceInstalledInputElement(input, MANAGER, { timeoutMs: TIMEOUT_MS });
+}
+
+async function openEditor(input: ReleaseSurfaceInstalledInputSession): Promise<void> {
+  await nativeClick(input, "[data-debug-id='task-manager-edit-details']");
+  await waitForReleaseSurfaceInstalledInputElement(input, "[data-debug-id='task-manager-name']", { timeoutMs: TIMEOUT_MS });
 }
 
 async function nativeClick(input: ReleaseSurfaceInstalledInputSession, selector: string): Promise<void> {

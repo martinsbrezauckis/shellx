@@ -1,7 +1,7 @@
 {
   "schema": "shellx/final-surface-driver-plan@2",
   "mode": "final-frozen-candidate",
-  "inventoryDigest": "8b27f49df44b84655b357e9e2550fac2ee66bb7ff4bb541fd91a172e052c93ff",
+  "inventoryDigest": "38eb0e726798f509ef01bc1a1957860ea9536b44fc1d3ae04d400c8c3fa8ddaf",
   "releaseReady": true,
   "drivers": [
     {
@@ -3271,6 +3271,14 @@
       "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
     },
     {
+      "surfaceId": "debug-api-route:POST /tasks/agent",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks/agent exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks-agent",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
       "surfaceId": "debug-api-route:POST /tasks/provider-catalog",
       "driverId": "debug-api-task-installed",
       "fixtureId": "debug-api:isolated-task-definition-lifecycle",
@@ -4253,6 +4261,14 @@
       "expectedEffect": "Installed Host MCP sleep_ms returns its exact bounded read-only contract against the attested candidate without retaining returned host data in release evidence.",
       "oracleId": "host-mcp:sleep_ms:installed-read-effect",
       "cleanupId": "host-mcp:delete-owned-read-fixture"
+    },
+    {
+      "surfaceId": "host-mcp-tool:task_manage",
+      "driverId": "host-mcp-tool-installed",
+      "fixtureId": "host-mcp:installed-mutation-fixture",
+      "expectedEffect": "Installed Host MCP task_manage passes the exact write-class permission gate and proves its bounded disposable effect, metadata-only operation, or pre-effect safety refusal without mutating user or external state.",
+      "oracleId": "host-mcp:task_manage:installed-mutation-effect",
+      "cleanupId": "host-mcp:delete-owned-mutation-fixture-and-restore-autonomy"
     },
     {
       "surfaceId": "host-mcp-tool:vault_agent_request",
@@ -10255,7 +10271,7 @@
       "cleanupId": "ui:restore-setup-guide-destinations"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-action-\"]@src/components/TaskManager.tsx#36",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-action-\"]@src/components/TaskManager.tsx#38",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-action-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10263,7 +10279,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-definition-\"]@src/components/TaskManager.tsx#20",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-definition-\"]@src/components/TaskManager.tsx#22",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-definition-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10271,7 +10287,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-model-\"]@src/components/TaskManager.tsx#32",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-model-\"]@src/components/TaskManager.tsx#34",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-model-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10279,7 +10295,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-down\"]@src/components/TaskManager.tsx#34",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-down\"]@src/components/TaskManager.tsx#36",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-down\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10287,7 +10303,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-up\"]@src/components/TaskManager.tsx#33",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-up\"]@src/components/TaskManager.tsx#35",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-up\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10295,7 +10311,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-remove\"]@src/components/TaskManager.tsx#35",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-remove\"]@src/components/TaskManager.tsx#37",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-remove\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10303,7 +10319,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-toggle\"]@src/components/TaskManager.tsx#31",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-toggle\"]@src/components/TaskManager.tsx#33",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-toggle\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10311,7 +10327,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-weekday-\"]@src/components/TaskManager.tsx#25",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-weekday-\"]@src/components/TaskManager.tsx#27",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-weekday-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10319,7 +10335,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-acknowledge-attention\"]@src/components/TaskManager.tsx#19",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-acknowledge-attention\"]@src/components/TaskManager.tsx#21",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-acknowledge-attention\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10343,7 +10359,15 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-enabled\"]@src/components/TaskManager.tsx#18",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-edit-details\"]@src/components/TaskManager.tsx#20",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-edit-details\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-enabled\"]@src/components/TaskManager.tsx#19",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-enabled\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10359,7 +10383,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment\"]@src/components/TaskManager.tsx#17",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment\"]@src/components/TaskManager.tsx#18",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10415,7 +10439,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-instruction\"]@src/components/TaskManager.tsx#9",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-instruction\"]@src/components/TaskManager.tsx#10",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-instruction\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10423,7 +10447,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-max-run-seconds\"]@src/components/TaskManager.tsx#29",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-max-run-seconds\"]@src/components/TaskManager.tsx#31",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-max-run-seconds\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10431,7 +10455,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-missed-run-policy\"]@src/components/TaskManager.tsx#28",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-missed-run-policy\"]@src/components/TaskManager.tsx#30",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-missed-run-policy\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10439,7 +10463,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-name\"]@src/components/TaskManager.tsx#8",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-name\"]@src/components/TaskManager.tsx#9",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-name\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10447,7 +10471,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-notification-policy\"]@src/components/TaskManager.tsx#30",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-notification-policy\"]@src/components/TaskManager.tsx#32",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-notification-policy\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10455,7 +10479,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-open-vault\"]@src/components/TaskManager.tsx#11",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-open-vault\"]@src/components/TaskManager.tsx#12",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-open-vault\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10479,7 +10503,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-recheck\"]@src/components/TaskManager.tsx#16",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-recheck\"]@src/components/TaskManager.tsx#17",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-recheck\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10487,7 +10511,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-attachment\"]@src/components/TaskManager.tsx#12",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-attachment\"]@src/components/TaskManager.tsx#13",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-attachment\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10495,7 +10519,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-vault-requirement\"]@src/components/TaskManager.tsx#15",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-vault-requirement\"]@src/components/TaskManager.tsx#16",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-vault-requirement\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10503,7 +10527,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-workflow\"]@src/components/TaskManager.tsx#13",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-workflow\"]@src/components/TaskManager.tsx#14",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-workflow\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10511,7 +10535,15 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-schedule-advanced\"]@src/components/TaskManager.tsx#26",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-review-details\"]@src/components/TaskManager.tsx#8",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-review-details\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-schedule-advanced\"]@src/components/TaskManager.tsx#28",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-schedule-advanced\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10527,7 +10559,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-success-criteria\"]@src/components/TaskManager.tsx#10",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-success-criteria\"]@src/components/TaskManager.tsx#11",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-success-criteria\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10535,7 +10567,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-timezone\"]@src/components/TaskManager.tsx#27",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-timezone\"]@src/components/TaskManager.tsx#29",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-timezone\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10543,7 +10575,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-kind\"]@src/components/TaskManager.tsx#21",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-kind\"]@src/components/TaskManager.tsx#23",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-kind\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10551,7 +10583,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-month-day\"]@src/components/TaskManager.tsx#24",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-month-day\"]@src/components/TaskManager.tsx#26",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-month-day\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10559,7 +10591,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-once\"]@src/components/TaskManager.tsx#22",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-once\"]@src/components/TaskManager.tsx#24",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-once\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10567,7 +10599,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-time\"]@src/components/TaskManager.tsx#23",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-time\"]@src/components/TaskManager.tsx#25",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-time\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -10575,7 +10607,7 @@
       "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
     },
     {
-      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-vault-grant\"]@src/components/TaskManager.tsx#14",
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-vault-grant\"]@src/components/TaskManager.tsx#15",
       "driverId": "ui-control-task-manager-installed",
       "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
       "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-vault-grant\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
@@ -14887,7 +14919,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-acknowledge-attention@src/components/TaskManager.tsx#33",
+      "surfaceId": "ui-debug-surface:task-manager-acknowledge-attention@src/components/TaskManager.tsx#38",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-acknowledge-attention resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -14895,7 +14927,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-action-*@src/components/TaskManager.tsx#59",
+      "surfaceId": "ui-debug-surface:task-manager-action-*@src/components/TaskManager.tsx#64",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-action-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -14903,7 +14935,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-attachment-binding@src/components/TaskManager.tsx#15",
+      "surfaceId": "ui-debug-surface:task-manager-attachment-binding@src/components/TaskManager.tsx#16",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-attachment-binding resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -14911,7 +14943,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-attention-callout@src/components/TaskManager.tsx#31",
+      "surfaceId": "ui-debug-surface:task-manager-attention-callout@src/components/TaskManager.tsx#36",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-attention-callout resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -14919,10 +14951,18 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-attention-item@src/components/TaskManager.tsx#32",
+      "surfaceId": "ui-debug-surface:task-manager-attention-item@src/components/TaskManager.tsx#37",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-attention-item resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-attention@src/components/TaskManager.tsx#33",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-review-visible",
+      "expectedEffect": "task-manager-attention resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
       "oracleId": "ui:visible-nonempty-rectangle",
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
@@ -14951,7 +14991,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-catalogue-freshness@src/components/TaskManager.tsx#28",
+      "surfaceId": "ui-debug-surface:task-manager-catalogue-freshness@src/components/TaskManager.tsx#29",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-catalogue-freshness resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -14967,7 +15007,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-definition-*@src/components/TaskManager.tsx#37",
+      "surfaceId": "ui-debug-surface:task-manager-definition-*@src/components/TaskManager.tsx#42",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-definition-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -14975,7 +15015,15 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-empty@src/components/TaskManager.tsx#36",
+      "surfaceId": "ui-debug-surface:task-manager-edit-details@src/components/TaskManager.tsx#34",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-review-visible",
+      "expectedEffect": "task-manager-edit-details resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-empty@src/components/TaskManager.tsx#41",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-empty-visible",
       "expectedEffect": "task-manager-empty resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -14983,7 +15031,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-enabled@src/components/TaskManager.tsx#29",
+      "surfaceId": "ui-debug-surface:task-manager-enabled@src/components/TaskManager.tsx#30",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-enabled resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -14991,7 +15039,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-environment-context@src/components/TaskManager.tsx#26",
+      "surfaceId": "ui-debug-surface:task-manager-environment-context@src/components/TaskManager.tsx#27",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-environment-context resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15007,7 +15055,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-environment-working-folder@src/components/TaskManager.tsx#27",
+      "surfaceId": "ui-debug-surface:task-manager-environment-working-folder@src/components/TaskManager.tsx#28",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-environment-working-folder resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15015,7 +15063,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-environment@src/components/TaskManager.tsx#25",
+      "surfaceId": "ui-debug-surface:task-manager-environment@src/components/TaskManager.tsx#26",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-environment resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15023,7 +15071,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-feedback@src/components/TaskManager.tsx#30",
+      "surfaceId": "ui-debug-surface:task-manager-feedback@src/components/TaskManager.tsx#31",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-feedback resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15079,7 +15127,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-instruction@src/components/TaskManager.tsx#11",
+      "surfaceId": "ui-debug-surface:task-manager-instruction@src/components/TaskManager.tsx#12",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-instruction resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15087,7 +15135,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-list-error@src/components/TaskManager.tsx#35",
+      "surfaceId": "ui-debug-surface:task-manager-list-error@src/components/TaskManager.tsx#40",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-error-visible",
       "expectedEffect": "task-manager-list-error resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15095,7 +15143,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-loading@src/components/TaskManager.tsx#34",
+      "surfaceId": "ui-debug-surface:task-manager-loading@src/components/TaskManager.tsx#39",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-loading-visible",
       "expectedEffect": "task-manager-loading resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15103,7 +15151,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-max-run-seconds@src/components/TaskManager.tsx#47",
+      "surfaceId": "ui-debug-surface:task-manager-max-run-seconds@src/components/TaskManager.tsx#52",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-max-run-seconds resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15111,7 +15159,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-missed-run-policy@src/components/TaskManager.tsx#46",
+      "surfaceId": "ui-debug-surface:task-manager-missed-run-policy@src/components/TaskManager.tsx#51",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-missed-run-policy resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15119,7 +15167,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-model-*@src/components/TaskManager.tsx#55",
+      "surfaceId": "ui-debug-surface:task-manager-model-*@src/components/TaskManager.tsx#60",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-model-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15127,7 +15175,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-name@src/components/TaskManager.tsx#10",
+      "surfaceId": "ui-debug-surface:task-manager-name@src/components/TaskManager.tsx#11",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-name resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15135,7 +15183,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-notification-policy@src/components/TaskManager.tsx#48",
+      "surfaceId": "ui-debug-surface:task-manager-notification-policy@src/components/TaskManager.tsx#53",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-notification-policy resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15151,7 +15199,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-open-vault@src/components/TaskManager.tsx#14",
+      "surfaceId": "ui-debug-surface:task-manager-open-vault@src/components/TaskManager.tsx#15",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-open-vault resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15167,7 +15215,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-provider-*-move-down@src/components/TaskManager.tsx#57",
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-move-down@src/components/TaskManager.tsx#62",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-provider-*-move-down resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15175,7 +15223,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-provider-*-move-up@src/components/TaskManager.tsx#56",
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-move-up@src/components/TaskManager.tsx#61",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-provider-*-move-up resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15183,7 +15231,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-provider-*-remove@src/components/TaskManager.tsx#58",
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-remove@src/components/TaskManager.tsx#63",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-provider-*-remove resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15191,7 +15239,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-provider-*-suggested@src/components/TaskManager.tsx#54",
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-suggested@src/components/TaskManager.tsx#59",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-provider-*-suggested resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15199,7 +15247,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-provider-*-toggle@src/components/TaskManager.tsx#53",
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-toggle@src/components/TaskManager.tsx#58",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-provider-*-toggle resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15207,7 +15255,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-provider-*@src/components/TaskManager.tsx#52",
+      "surfaceId": "ui-debug-surface:task-manager-provider-*@src/components/TaskManager.tsx#57",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-provider-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15215,7 +15263,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-provider-empty@src/components/TaskManager.tsx#49",
+      "surfaceId": "ui-debug-surface:task-manager-provider-empty@src/components/TaskManager.tsx#54",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-provider-empty-visible",
       "expectedEffect": "task-manager-provider-empty resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15231,7 +15279,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-provider-guard@src/components/TaskManager.tsx#50",
+      "surfaceId": "ui-debug-surface:task-manager-provider-guard@src/components/TaskManager.tsx#55",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-provider-guard-visible",
       "expectedEffect": "task-manager-provider-guard resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15239,7 +15287,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-provider-list@src/components/TaskManager.tsx#51",
+      "surfaceId": "ui-debug-surface:task-manager-provider-list@src/components/TaskManager.tsx#56",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-provider-list resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15255,7 +15303,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-recheck@src/components/TaskManager.tsx#24",
+      "surfaceId": "ui-debug-surface:task-manager-recheck@src/components/TaskManager.tsx#25",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-recheck resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15263,7 +15311,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-remove-attachment@src/components/TaskManager.tsx#16",
+      "surfaceId": "ui-debug-surface:task-manager-remove-attachment@src/components/TaskManager.tsx#17",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-remove-attachment resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15271,7 +15319,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-remove-vault-requirement@src/components/TaskManager.tsx#21",
+      "surfaceId": "ui-debug-surface:task-manager-remove-vault-requirement@src/components/TaskManager.tsx#22",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-remove-vault-requirement resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15279,7 +15327,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-remove-workflow@src/components/TaskManager.tsx#18",
+      "surfaceId": "ui-debug-surface:task-manager-remove-workflow@src/components/TaskManager.tsx#19",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-remove-workflow resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15287,7 +15335,31 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-reviewed-bindings@src/components/TaskManager.tsx#13",
+      "surfaceId": "ui-debug-surface:task-manager-review-agents@src/components/TaskManager.tsx#35",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-review-visible",
+      "expectedEffect": "task-manager-review-agents resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-review-details@src/components/TaskManager.tsx#10",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-review-details resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-review@src/components/TaskManager.tsx#32",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-review-visible",
+      "expectedEffect": "task-manager-review resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-reviewed-bindings@src/components/TaskManager.tsx#14",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-reviewed-bindings resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15327,7 +15399,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-schedule-advanced@src/components/TaskManager.tsx#44",
+      "surfaceId": "ui-debug-surface:task-manager-schedule-advanced@src/components/TaskManager.tsx#49",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-schedule-advanced resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15335,7 +15407,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-schedule-summary@src/components/TaskManager.tsx#38",
+      "surfaceId": "ui-debug-surface:task-manager-schedule-summary@src/components/TaskManager.tsx#43",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-schedule-summary resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15351,7 +15423,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-success-criteria@src/components/TaskManager.tsx#12",
+      "surfaceId": "ui-debug-surface:task-manager-success-criteria@src/components/TaskManager.tsx#13",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-success-criteria resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15359,7 +15431,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-timezone@src/components/TaskManager.tsx#45",
+      "surfaceId": "ui-debug-surface:task-manager-timezone@src/components/TaskManager.tsx#50",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-timezone resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15367,7 +15439,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-trigger-kind@src/components/TaskManager.tsx#39",
+      "surfaceId": "ui-debug-surface:task-manager-trigger-kind@src/components/TaskManager.tsx#44",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-trigger-kind resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15375,7 +15447,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-trigger-month-day@src/components/TaskManager.tsx#42",
+      "surfaceId": "ui-debug-surface:task-manager-trigger-month-day@src/components/TaskManager.tsx#47",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-trigger-monthly-visible",
       "expectedEffect": "task-manager-trigger-month-day resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15383,7 +15455,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-trigger-once@src/components/TaskManager.tsx#40",
+      "surfaceId": "ui-debug-surface:task-manager-trigger-once@src/components/TaskManager.tsx#45",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-trigger-once-visible",
       "expectedEffect": "task-manager-trigger-once resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15391,7 +15463,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-trigger-time@src/components/TaskManager.tsx#41",
+      "surfaceId": "ui-debug-surface:task-manager-trigger-time@src/components/TaskManager.tsx#46",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-trigger-time resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15399,7 +15471,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-vault-binding@src/components/TaskManager.tsx#19",
+      "surfaceId": "ui-debug-surface:task-manager-vault-binding@src/components/TaskManager.tsx#20",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-vault-binding resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15407,7 +15479,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-vault-grant-required@src/components/TaskManager.tsx#23",
+      "surfaceId": "ui-debug-surface:task-manager-vault-grant-required@src/components/TaskManager.tsx#24",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-vault-required-visible",
       "expectedEffect": "task-manager-vault-grant-required resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15415,7 +15487,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-vault-grant@src/components/TaskManager.tsx#20",
+      "surfaceId": "ui-debug-surface:task-manager-vault-grant@src/components/TaskManager.tsx#21",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-vault-grant resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15423,7 +15495,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-vault-grants-unavailable@src/components/TaskManager.tsx#22",
+      "surfaceId": "ui-debug-surface:task-manager-vault-grants-unavailable@src/components/TaskManager.tsx#23",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-vault-unavailable-visible",
       "expectedEffect": "task-manager-vault-grants-unavailable resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15431,7 +15503,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-weekday-*@src/components/TaskManager.tsx#43",
+      "surfaceId": "ui-debug-surface:task-manager-weekday-*@src/components/TaskManager.tsx#48",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-trigger-weekly-visible",
       "expectedEffect": "task-manager-weekday-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -15439,7 +15511,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:task-manager-workflow-binding@src/components/TaskManager.tsx#17",
+      "surfaceId": "ui-debug-surface:task-manager-workflow-binding@src/components/TaskManager.tsx#18",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:task-manager-owned-full-visible",
       "expectedEffect": "task-manager-workflow-binding resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",

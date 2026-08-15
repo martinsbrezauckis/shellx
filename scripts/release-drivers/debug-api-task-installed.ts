@@ -52,6 +52,7 @@ async function execute(request: ReleaseSurfaceDriverRequest): Promise<ReleaseSur
   assertExactAssignments(request);
   const effects = new Map<TaskDebugApiSurface, string>();
   let task: TaskRecordFixture | null = null;
+  let agentTaskId: string | null = null;
   let lifecycleError: string | null = null;
   let cleanupError: string | null = null;
   try {
@@ -64,6 +65,52 @@ async function execute(request: ReleaseSurfaceDriverRequest): Promise<ReleaseSur
     effects.set(
       "POST /tasks/provider-catalog",
       "The installed Debug API live-scanned the exact local target into four normalized providers with one fresh opaque snapshot and no binary, credential, or model claims.",
+    );
+
+    const uiResponse = await api(connection, "GET", "/state/ui");
+    expectStatus(uiResponse, 200, "GET /state/ui for agent Task");
+    const ui = requireRecord(uiResponse.body, "GET /state/ui for agent Task");
+    const openTabs = requireArray(ui.openTabs, "GET /state/ui openTabs").map((value) => requireRecord(value, "GET /state/ui open tab"));
+    const activeTabId = typeof ui.activeTabId === "string" ? ui.activeTabId : "";
+    const sourceTab = openTabs.find((tab) => tab.tabId === activeTabId && typeof tab.cwd === "string" && tab.cwd)
+      ?? openTabs.find((tab) => typeof tab.tabId === "string" && tab.tabId && typeof tab.cwd === "string" && tab.cwd);
+    if (!sourceTab) throw new Error("POST /tasks/agent requires one exact open ShellX conversation with a working folder");
+    const callerTabId = String(sourceTab.tabId);
+    const agentTaskName = `Agent-created Task ${request.sourceCommit.slice(0, 12)}`;
+    const agentCreated = await api(connection, "POST", "/tasks/agent", {
+      action: "create",
+      userApproved: true,
+      name: agentTaskName,
+      instruction: "Inspect only the isolated release fixture and record no external change.",
+      successCriteria: "Persist one reviewable Task definition without starting a provider.",
+      noChangeCriteria: "No provider starts and no external state changes.",
+      trigger: { kind: "manual" },
+      maxRunMinutes: 10,
+      notificationPolicy: "none",
+    }, { "X-ShellX-MCP-Caller-ID": callerTabId });
+    expectStatus(agentCreated, 201, "POST /tasks/agent");
+    const agentEnvelope = requireRecord(agentCreated.body, "POST /tasks/agent");
+    const agentSummary = requireRecord(agentEnvelope.task, "POST /tasks/agent task");
+    if (agentEnvelope.ok !== true || agentEnvelope.disposition !== "created"
+      || typeof agentSummary.taskId !== "string" || !agentSummary.taskId
+      || agentSummary.name !== agentTaskName || agentSummary.enabled !== true
+      || agentSummary.runTimeLimitMinutes !== 10
+      || !Array.isArray(agentSummary.workers) || agentSummary.workers.length !== 1
+      || agentEnvelope.run !== null) {
+      throw new Error("POST /tasks/agent did not return its exact approved create-without-run receipt");
+    }
+    agentTaskId = String(agentSummary.taskId);
+    const agentListed = await api(connection, "GET", "/tasks");
+    expectStatus(agentListed, 200, "GET /tasks after agent create");
+    const agentRows = requireArray(requireRecord(agentListed.body, "GET /tasks after agent create").tasks, "GET /tasks agent rows");
+    if (agentRows.length !== 1) throw new Error("POST /tasks/agent did not persist exactly one reviewable Task");
+    verifyTaskRecord(agentRows[0], agentTaskName, false, 1);
+    const removeAgentTask = await api(connection, "DELETE", `/tasks/${encodeURIComponent(agentTaskId)}`);
+    expectStatus(removeAgentTask, 204, "DELETE agent-created Task");
+    agentTaskId = null;
+    effects.set(
+      "POST /tasks/agent",
+      "The installed Debug API accepted explicit current-conversation approval, derived the exact open-tab environment and one freshly ready worker, persisted one reviewable Task, started no provider, and removed only that owned fixture Task.",
     );
 
     const initialDraft = taskDraft(request, profileRoot, catalogue, 1);
@@ -186,6 +233,16 @@ async function execute(request: ReleaseSurfaceDriverRequest): Promise<ReleaseSur
   } catch (error) {
     lifecycleError = error instanceof Error ? error.message : String(error);
   } finally {
+    if (agentTaskId) {
+      try {
+        const response = await api(connection, "DELETE", `/tasks/${encodeURIComponent(agentTaskId)}`);
+        if (response.status !== 204 && response.status !== 404) {
+          throw new Error(`agent Task cleanup DELETE returned ${response.status}`);
+        }
+      } catch (error) {
+        cleanupError = error instanceof Error ? error.message : String(error);
+      }
+    }
     if (task) {
       try {
         const response = await api(connection, "DELETE", taskPath(task));
@@ -238,11 +295,13 @@ async function api(
   method: "GET" | "POST" | "DELETE",
   path: string,
   body?: JsonRecord,
+  additionalHeaders: Record<string, string> = {},
 ): Promise<ApiResult> {
   const response = await fetch(`${connection.base}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${connection.token}`,
+      ...additionalHeaders,
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,

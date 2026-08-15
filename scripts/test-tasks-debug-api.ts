@@ -11,6 +11,7 @@ const normalizedApiDocs = apiDocs.replace(/\s+/g, " ");
 
 for (const route of [
   '"/tasks"',
+  '"/tasks/agent"',
   '"/tasks/states"',
   '"/tasks/provider-catalog"',
   '"/tasks/:task_id"',
@@ -47,7 +48,7 @@ assert(source.includes("task_attention_conflict"), "stale Task acknowledgement m
 assert(source.includes("task_store_unavailable"), "Unknown storage failures must retain a redacted public code");
 assert(source.includes("parse_connections_provider_scan_body"), "Task provider catalogues must reuse exact ConnectionPreset parsing");
 assert(!source.includes("start_provider_session"), "Task Debug API must not bypass the foreground runtime with direct provider dispatch");
-assert(!source.includes("host_mcp"), "Task Debug API must not create Host MCP tools");
+assert(source.includes("mod task_agent"), "Task Debug API must keep conversational creation in its caller-bound module");
 assert(!source.includes('"/tasks/attachments"'), "durable attachment import must remain an operator-only Tauri action");
 
 assert(catalogue.includes("safe_semantic_version_token"), "Task catalogue must reduce provider output to a safe semantic version token");
@@ -61,7 +62,9 @@ for (const text of [
   "`POST /tasks/provider-catalog`",
   "`/tasks/:task_id/run`",
   "`/tasks/runs/:occurrence_id/cancel`",
-  "Tasks are not added to Host MCP",
+  "`task_manage` Host tool",
+  "`/tasks/agent`",
+  "ordinary discussion does not authorize persistence or execution",
   "A queued response proves durable acceptance only",
   "exactly one isolated ASCII semantic-version token",
   "binary paths, binary hashes and sizes, raw probe diagnostics",

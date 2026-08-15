@@ -5,17 +5,17 @@
     "macos-installed",
     "linux-installed"
   ],
-  "digest": "8b27f49df44b84655b357e9e2550fac2ee66bb7ff4bb541fd91a172e052c93ff",
+  "digest": "38eb0e726798f509ef01bc1a1957860ea9536b44fc1d3ae04d400c8c3fa8ddaf",
   "counts": {
     "tauri-command": 182,
-    "debug-api-route": 247,
-    "host-mcp-tool": 107,
+    "debug-api-route": 248,
+    "host-mcp-tool": 108,
     "browser-cli-command": 29,
     "palette-action": 16,
     "keyboard-shortcut": 12,
     "shellx-command": 7,
-    "ui-debug-surface": 606,
-    "ui-control": 694
+    "ui-debug-surface": 611,
+    "ui-control": 696
   },
   "unresolvedInteractiveControls": 0,
   "copyDerivedInteractiveControls": 222,
@@ -27,21 +27,21 @@
     "choice": 30,
     "range": 2,
     "file-picker": 0,
-    "activation": 427,
-    "static-marker": 558,
+    "activation": 429,
+    "static-marker": 563,
     "dynamic-marker": 48
   },
   "occurrenceAccounting": {
     "uiControls": {
-      "candidates": 678,
+      "candidates": 680,
       "excludedNonActions": 23,
       "finiteVariantInstances": 50,
-      "inventoried": 694
+      "inventoried": 696
     },
     "uiDebugSurfaces": {
-      "candidates": 558,
+      "candidates": 563,
       "finiteVariantInstances": 57,
-      "inventoried": 606
+      "inventoried": 611
     }
   },
   "items": [
@@ -3034,6 +3034,18 @@
       "delivery": "installed-app"
     },
     {
+      "id": "debug-api-route:POST /tasks/agent",
+      "kind": "debug-api-route",
+      "name": "POST /tasks/agent",
+      "source": "src-tauri/src/debug_api_tasks.rs",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app"
+    },
+    {
       "id": "debug-api-route:POST /tasks/provider-catalog",
       "kind": "debug-api-route",
       "name": "POST /tasks/provider-catalog",
@@ -4598,6 +4610,19 @@
       "kind": "host-mcp-tool",
       "name": "sleep_ms",
       "source": "src-tauri/src/host_mcp/tool_specs_extended.rs",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "advertised": true
+    },
+    {
+      "id": "host-mcp-tool:task_manage",
+      "kind": "host-mcp-tool",
+      "name": "task_manage",
+      "source": "src-tauri/src/host_mcp/tool_specs_core.rs",
       "platforms": [
         "windows-installed",
         "macos-installed",
@@ -7360,7 +7385,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 9,
-      "line": 7270,
+      "line": 7272,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7381,7 +7406,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 1,
-      "line": 6995,
+      "line": 6997,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7402,7 +7427,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 8,
-      "line": 7139,
+      "line": 7141,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7423,7 +7448,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 3,
-      "line": 7027,
+      "line": 7029,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7444,7 +7469,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 2,
-      "line": 7006,
+      "line": 7008,
       "elementTag": "input",
       "inputType": "text",
       "driverFamily": "text-entry",
@@ -7466,7 +7491,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 6,
-      "line": 7079,
+      "line": 7081,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7487,7 +7512,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 7,
-      "line": 7111,
+      "line": 7113,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7508,7 +7533,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 7048,
+      "line": 7050,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7529,7 +7554,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 7035,
+      "line": 7037,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20050,7 +20075,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-action-\"]@src/components/TaskManager.tsx#36",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-action-\"]@src/components/TaskManager.tsx#38",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-action-\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20060,8 +20085,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 36,
-      "line": 852,
+      "occurrence": 38,
+      "line": 935,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20071,7 +20096,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-definition-\"]@src/components/TaskManager.tsx#20",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-definition-\"]@src/components/TaskManager.tsx#22",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-definition-\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20081,8 +20106,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 20,
-      "line": 746,
+      "occurrence": 22,
+      "line": 829,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20092,7 +20117,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-model-\"]@src/components/TaskManager.tsx#32",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-model-\"]@src/components/TaskManager.tsx#34",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-model-\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20102,8 +20127,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 32,
-      "line": 840,
+      "occurrence": 34,
+      "line": 923,
       "elementTag": "select",
       "driverFamily": "choice",
       "eventTrust": "native-required",
@@ -20113,7 +20138,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-down\"]@src/components/TaskManager.tsx#34",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-down\"]@src/components/TaskManager.tsx#36",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-down\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20123,8 +20148,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 34,
-      "line": 841,
+      "occurrence": 36,
+      "line": 924,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20134,7 +20159,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-up\"]@src/components/TaskManager.tsx#33",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-up\"]@src/components/TaskManager.tsx#35",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-up\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20144,8 +20169,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 33,
-      "line": 841,
+      "occurrence": 35,
+      "line": 924,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20155,7 +20180,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-remove\"]@src/components/TaskManager.tsx#35",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-remove\"]@src/components/TaskManager.tsx#37",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-remove\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20165,8 +20190,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 35,
-      "line": 841,
+      "occurrence": 37,
+      "line": 924,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20176,7 +20201,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-toggle\"]@src/components/TaskManager.tsx#31",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-toggle\"]@src/components/TaskManager.tsx#33",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-toggle\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20186,8 +20211,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 31,
-      "line": 833,
+      "occurrence": 33,
+      "line": 916,
       "elementTag": "button",
       "driverFamily": "toggle",
       "eventTrust": "native-required",
@@ -20197,7 +20222,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-weekday-\"]@src/components/TaskManager.tsx#25",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-weekday-\"]@src/components/TaskManager.tsx#27",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-weekday-\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20207,8 +20232,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 25,
-      "line": 799,
+      "occurrence": 27,
+      "line": 882,
       "elementTag": "button",
       "driverFamily": "toggle",
       "eventTrust": "native-required",
@@ -20218,7 +20243,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-acknowledge-attention\"]@src/components/TaskManager.tsx#19",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-acknowledge-attention\"]@src/components/TaskManager.tsx#21",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-acknowledge-attention\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20228,8 +20253,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 19,
-      "line": 713,
+      "occurrence": 21,
+      "line": 796,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20250,7 +20275,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 1,
-      "line": 512,
+      "line": 517,
       "elementTag": "div",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20271,7 +20296,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 2,
-      "line": 520,
+      "line": 525,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20281,7 +20306,28 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-enabled\"]@src/components/TaskManager.tsx#18",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-edit-details\"]@src/components/TaskManager.tsx#20",
+      "kind": "ui-control",
+      "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-edit-details\"]",
+      "source": "src/components/TaskManager.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 20,
+      "line": 759,
+      "elementTag": "button",
+      "driverFamily": "activation",
+      "eventTrust": "native-required",
+      "selector": "[data-debug-id=\"task-manager-edit-details\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable"
+    },
+    {
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-enabled\"]@src/components/TaskManager.tsx#19",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-enabled\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20291,8 +20337,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 18,
-      "line": 671,
+      "occurrence": 19,
+      "line": 692,
       "elementTag": "input",
       "inputType": "checkbox",
       "driverFamily": "toggle",
@@ -20314,7 +20360,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 6,
-      "line": 542,
+      "line": 547,
       "elementTag": "select",
       "driverFamily": "choice",
       "eventTrust": "native-required",
@@ -20324,7 +20370,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment\"]@src/components/TaskManager.tsx#17",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment\"]@src/components/TaskManager.tsx#18",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20334,8 +20380,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 17,
-      "line": 645,
+      "occurrence": 18,
+      "line": 666,
       "elementTag": "select",
       "driverFamily": "choice",
       "eventTrust": "native-required",
@@ -20356,7 +20402,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-all",
       "elementTag": "button",
       "driverFamily": "toggle",
@@ -20378,7 +20424,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-needsAttention",
       "elementTag": "button",
       "driverFamily": "toggle",
@@ -20400,7 +20446,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-paused",
       "elementTag": "button",
       "driverFamily": "toggle",
@@ -20422,7 +20468,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-recent",
       "elementTag": "button",
       "driverFamily": "toggle",
@@ -20444,7 +20490,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-running",
       "elementTag": "button",
       "driverFamily": "toggle",
@@ -20466,7 +20512,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-scheduled",
       "elementTag": "button",
       "driverFamily": "toggle",
@@ -20477,7 +20523,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-instruction\"]@src/components/TaskManager.tsx#9",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-instruction\"]@src/components/TaskManager.tsx#10",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-instruction\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20487,8 +20533,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 9,
-      "line": 578,
+      "occurrence": 10,
+      "line": 599,
       "elementTag": "textarea",
       "driverFamily": "text-entry",
       "eventTrust": "native-required",
@@ -20498,7 +20544,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-max-run-seconds\"]@src/components/TaskManager.tsx#29",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-max-run-seconds\"]@src/components/TaskManager.tsx#31",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-max-run-seconds\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20508,8 +20554,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 29,
-      "line": 805,
+      "occurrence": 31,
+      "line": 888,
       "elementTag": "input",
       "inputType": "number",
       "driverFamily": "text-entry",
@@ -20520,7 +20566,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-missed-run-policy\"]@src/components/TaskManager.tsx#28",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-missed-run-policy\"]@src/components/TaskManager.tsx#30",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-missed-run-policy\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20530,8 +20576,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 28,
-      "line": 804,
+      "occurrence": 30,
+      "line": 887,
       "elementTag": "select",
       "driverFamily": "choice",
       "eventTrust": "native-required",
@@ -20541,7 +20587,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-name\"]@src/components/TaskManager.tsx#8",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-name\"]@src/components/TaskManager.tsx#9",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-name\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20551,8 +20597,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 8,
-      "line": 570,
+      "occurrence": 9,
+      "line": 591,
       "elementTag": "input",
       "inputType": "text",
       "driverFamily": "text-entry",
@@ -20563,7 +20609,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-notification-policy\"]@src/components/TaskManager.tsx#30",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-notification-policy\"]@src/components/TaskManager.tsx#32",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-notification-policy\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20573,8 +20619,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 30,
-      "line": 806,
+      "occurrence": 32,
+      "line": 889,
       "elementTag": "select",
       "driverFamily": "choice",
       "eventTrust": "native-required",
@@ -20584,7 +20630,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-open-vault\"]@src/components/TaskManager.tsx#11",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-open-vault\"]@src/components/TaskManager.tsx#12",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-open-vault\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20594,8 +20640,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 11,
-      "line": 599,
+      "occurrence": 12,
+      "line": 620,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20616,7 +20662,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 541,
+      "line": 546,
       "elementTag": "select",
       "driverFamily": "choice",
       "eventTrust": "native-required",
@@ -20637,7 +20683,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 7,
-      "line": 543,
+      "line": 548,
       "elementTag": "select",
       "driverFamily": "choice",
       "eventTrust": "native-required",
@@ -20647,7 +20693,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-recheck\"]@src/components/TaskManager.tsx#16",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-recheck\"]@src/components/TaskManager.tsx#17",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-recheck\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20657,8 +20703,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 16,
-      "line": 639,
+      "occurrence": 17,
+      "line": 660,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20668,7 +20714,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-attachment\"]@src/components/TaskManager.tsx#12",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-attachment\"]@src/components/TaskManager.tsx#13",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-attachment\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20678,8 +20724,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 12,
-      "line": 604,
+      "occurrence": 13,
+      "line": 625,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20689,7 +20735,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-vault-requirement\"]@src/components/TaskManager.tsx#15",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-vault-requirement\"]@src/components/TaskManager.tsx#16",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-vault-requirement\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20699,8 +20745,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 15,
-      "line": 619,
+      "occurrence": 16,
+      "line": 640,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20710,7 +20756,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-workflow\"]@src/components/TaskManager.tsx#13",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-workflow\"]@src/components/TaskManager.tsx#14",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-workflow\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20720,8 +20766,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 13,
-      "line": 610,
+      "occurrence": 14,
+      "line": 631,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -20731,7 +20777,28 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-schedule-advanced\"]@src/components/TaskManager.tsx#26",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-review-details\"]@src/components/TaskManager.tsx#8",
+      "kind": "ui-control",
+      "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-review-details\"]",
+      "source": "src/components/TaskManager.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 8,
+      "line": 584,
+      "elementTag": "button",
+      "driverFamily": "activation",
+      "eventTrust": "native-required",
+      "selector": "[data-debug-id=\"task-manager-review-details\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable"
+    },
+    {
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-schedule-advanced\"]@src/components/TaskManager.tsx#28",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-schedule-advanced\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20741,8 +20808,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 26,
-      "line": 801,
+      "occurrence": 28,
+      "line": 884,
       "elementTag": "summary",
       "driverFamily": "disclosure",
       "eventTrust": "native-required",
@@ -20763,7 +20830,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 3,
-      "line": 531,
+      "line": 536,
       "elementTag": "input",
       "inputType": "text",
       "driverFamily": "text-entry",
@@ -20774,7 +20841,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-success-criteria\"]@src/components/TaskManager.tsx#10",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-success-criteria\"]@src/components/TaskManager.tsx#11",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-success-criteria\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20784,8 +20851,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 10,
-      "line": 585,
+      "occurrence": 11,
+      "line": 606,
       "elementTag": "input",
       "inputType": "text",
       "driverFamily": "text-entry",
@@ -20796,7 +20863,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-timezone\"]@src/components/TaskManager.tsx#27",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-timezone\"]@src/components/TaskManager.tsx#29",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-timezone\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20806,8 +20873,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 27,
-      "line": 803,
+      "occurrence": 29,
+      "line": 886,
       "elementTag": "input",
       "inputType": "text",
       "driverFamily": "text-entry",
@@ -20818,7 +20885,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-kind\"]@src/components/TaskManager.tsx#21",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-kind\"]@src/components/TaskManager.tsx#23",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-kind\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20828,8 +20895,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 21,
-      "line": 794,
+      "occurrence": 23,
+      "line": 877,
       "elementTag": "select",
       "driverFamily": "choice",
       "eventTrust": "native-required",
@@ -20839,7 +20906,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-month-day\"]@src/components/TaskManager.tsx#24",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-month-day\"]@src/components/TaskManager.tsx#26",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-month-day\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20849,8 +20916,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 24,
-      "line": 797,
+      "occurrence": 26,
+      "line": 880,
       "elementTag": "input",
       "inputType": "number",
       "driverFamily": "text-entry",
@@ -20861,7 +20928,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-once\"]@src/components/TaskManager.tsx#22",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-once\"]@src/components/TaskManager.tsx#24",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-once\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20871,8 +20938,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 22,
-      "line": 795,
+      "occurrence": 24,
+      "line": 878,
       "elementTag": "input",
       "inputType": "datetime-local",
       "driverFamily": "text-entry",
@@ -20883,7 +20950,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-time\"]@src/components/TaskManager.tsx#23",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-time\"]@src/components/TaskManager.tsx#25",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-time\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20893,8 +20960,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 23,
-      "line": 796,
+      "occurrence": 25,
+      "line": 879,
       "elementTag": "input",
       "inputType": "time",
       "driverFamily": "text-entry",
@@ -20905,7 +20972,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-vault-grant\"]@src/components/TaskManager.tsx#14",
+      "id": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-vault-grant\"]@src/components/TaskManager.tsx#15",
       "kind": "ui-control",
       "name": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-vault-grant\"]",
       "source": "src/components/TaskManager.tsx",
@@ -20915,8 +20982,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 14,
-      "line": 618,
+      "occurrence": 15,
+      "line": 639,
       "elementTag": "select",
       "driverFamily": "choice",
       "eventTrust": "native-required",
@@ -23942,7 +24009,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 1,
-      "line": 6998,
+      "line": 7000,
       "selector": "[data-debug-id=\"remote-cwd-close\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -23962,7 +24029,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 8,
-      "line": 7142,
+      "line": 7144,
       "selector": "[data-debug-id=\"remote-cwd-folder\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -23982,7 +24049,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 3,
-      "line": 7030,
+      "line": 7032,
       "selector": "[data-debug-id=\"remote-cwd-go\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24002,7 +24069,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 2,
-      "line": 7007,
+      "line": 7009,
       "selector": "[data-debug-id=\"remote-cwd-input\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24022,7 +24089,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 6,
-      "line": 7081,
+      "line": 7083,
       "selector": "[data-debug-id=\"remote-cwd-parent\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24042,7 +24109,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 7,
-      "line": 7113,
+      "line": 7115,
       "selector": "[data-debug-id=\"remote-cwd-parent\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24062,7 +24129,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 7051,
+      "line": 7053,
       "selector": "[data-debug-id=\"remote-cwd-up\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24082,7 +24149,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 7038,
+      "line": 7040,
       "selector": "[data-debug-id=\"remote-cwd-use\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -31801,7 +31868,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-acknowledge-attention@src/components/TaskManager.tsx#33",
+      "id": "ui-debug-surface:task-manager-acknowledge-attention@src/components/TaskManager.tsx#38",
       "kind": "ui-debug-surface",
       "name": "task-manager-acknowledge-attention",
       "source": "src/components/TaskManager.tsx",
@@ -31811,8 +31878,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 33,
-      "line": 713,
+      "occurrence": 38,
+      "line": 796,
       "selector": "[data-debug-id=\"task-manager-acknowledge-attention\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -31821,7 +31888,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-action-*@src/components/TaskManager.tsx#59",
+      "id": "ui-debug-surface:task-manager-action-*@src/components/TaskManager.tsx#64",
       "kind": "ui-debug-surface",
       "name": "task-manager-action-*",
       "source": "src/components/TaskManager.tsx",
@@ -31831,8 +31898,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 59,
-      "line": 852,
+      "occurrence": 64,
+      "line": 935,
       "selector": "[data-debug-id^=\"task-manager-action-\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -31841,7 +31908,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-attachment-binding@src/components/TaskManager.tsx#15",
+      "id": "ui-debug-surface:task-manager-attachment-binding@src/components/TaskManager.tsx#16",
       "kind": "ui-debug-surface",
       "name": "task-manager-attachment-binding",
       "source": "src/components/TaskManager.tsx",
@@ -31851,8 +31918,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 15,
-      "line": 602,
+      "occurrence": 16,
+      "line": 623,
       "selector": "[data-debug-id=\"task-manager-attachment-binding\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -31861,7 +31928,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-attention-callout@src/components/TaskManager.tsx#31",
+      "id": "ui-debug-surface:task-manager-attention-callout@src/components/TaskManager.tsx#36",
       "kind": "ui-debug-surface",
       "name": "task-manager-attention-callout",
       "source": "src/components/TaskManager.tsx",
@@ -31871,8 +31938,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 31,
-      "line": 706,
+      "occurrence": 36,
+      "line": 789,
       "selector": "[data-debug-id=\"task-manager-attention-callout\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -31881,7 +31948,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-attention-item@src/components/TaskManager.tsx#32",
+      "id": "ui-debug-surface:task-manager-attention-item@src/components/TaskManager.tsx#37",
       "kind": "ui-debug-surface",
       "name": "task-manager-attention-item",
       "source": "src/components/TaskManager.tsx",
@@ -31891,9 +31958,29 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 32,
-      "line": 711,
+      "occurrence": 37,
+      "line": 794,
       "selector": "[data-debug-id=\"task-manager-attention-item\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable",
+      "driverFamily": "static-marker",
+      "eventTrust": "not-applicable"
+    },
+    {
+      "id": "ui-debug-surface:task-manager-attention@src/components/TaskManager.tsx#33",
+      "kind": "ui-debug-surface",
+      "name": "task-manager-attention",
+      "source": "src/components/TaskManager.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 33,
+      "line": 758,
+      "selector": "[data-debug-id=\"task-manager-attention\"]",
       "stableSelector": true,
       "dynamicSelector": false,
       "selectorStability": "durable",
@@ -31912,7 +31999,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 9,
-      "line": 564,
+      "line": 583,
       "selector": "[data-debug-id=\"task-manager-attention\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -31932,7 +32019,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 1,
-      "line": 512,
+      "line": 517,
       "selector": "[data-debug-id=\"task-manager-backdrop\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -31961,7 +32048,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-catalogue-freshness@src/components/TaskManager.tsx#28",
+      "id": "ui-debug-surface:task-manager-catalogue-freshness@src/components/TaskManager.tsx#29",
       "kind": "ui-debug-surface",
       "name": "task-manager-catalogue-freshness",
       "source": "src/components/TaskManager.tsx",
@@ -31971,8 +32058,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 28,
-      "line": 662,
+      "occurrence": 29,
+      "line": 683,
       "selector": "[data-debug-id=\"task-manager-catalogue-freshness\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -31992,7 +32079,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 3,
-      "line": 520,
+      "line": 525,
       "selector": "[data-debug-id=\"task-manager-close\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32001,7 +32088,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-definition-*@src/components/TaskManager.tsx#37",
+      "id": "ui-debug-surface:task-manager-definition-*@src/components/TaskManager.tsx#42",
       "kind": "ui-debug-surface",
       "name": "task-manager-definition-*",
       "source": "src/components/TaskManager.tsx",
@@ -32011,8 +32098,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 37,
-      "line": 746,
+      "occurrence": 42,
+      "line": 829,
       "selector": "[data-debug-id^=\"task-manager-definition-\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -32021,7 +32108,27 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-empty@src/components/TaskManager.tsx#36",
+      "id": "ui-debug-surface:task-manager-edit-details@src/components/TaskManager.tsx#34",
+      "kind": "ui-debug-surface",
+      "name": "task-manager-edit-details",
+      "source": "src/components/TaskManager.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 34,
+      "line": 759,
+      "selector": "[data-debug-id=\"task-manager-edit-details\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable",
+      "driverFamily": "static-marker",
+      "eventTrust": "not-applicable"
+    },
+    {
+      "id": "ui-debug-surface:task-manager-empty@src/components/TaskManager.tsx#41",
       "kind": "ui-debug-surface",
       "name": "task-manager-empty",
       "source": "src/components/TaskManager.tsx",
@@ -32031,8 +32138,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 36,
-      "line": 739,
+      "occurrence": 41,
+      "line": 822,
       "selector": "[data-debug-id=\"task-manager-empty\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32041,7 +32148,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-enabled@src/components/TaskManager.tsx#29",
+      "id": "ui-debug-surface:task-manager-enabled@src/components/TaskManager.tsx#30",
       "kind": "ui-debug-surface",
       "name": "task-manager-enabled",
       "source": "src/components/TaskManager.tsx",
@@ -32051,8 +32158,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 29,
-      "line": 671,
+      "occurrence": 30,
+      "line": 692,
       "selector": "[data-debug-id=\"task-manager-enabled\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32061,7 +32168,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-environment-context@src/components/TaskManager.tsx#26",
+      "id": "ui-debug-surface:task-manager-environment-context@src/components/TaskManager.tsx#27",
       "kind": "ui-debug-surface",
       "name": "task-manager-environment-context",
       "source": "src/components/TaskManager.tsx",
@@ -32071,8 +32178,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 26,
-      "line": 651,
+      "occurrence": 27,
+      "line": 672,
       "selector": "[data-debug-id=\"task-manager-environment-context\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32092,7 +32199,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 7,
-      "line": 542,
+      "line": 547,
       "selector": "[data-debug-id=\"task-manager-environment-filter\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32101,7 +32208,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-environment-working-folder@src/components/TaskManager.tsx#27",
+      "id": "ui-debug-surface:task-manager-environment-working-folder@src/components/TaskManager.tsx#28",
       "kind": "ui-debug-surface",
       "name": "task-manager-environment-working-folder",
       "source": "src/components/TaskManager.tsx",
@@ -32111,8 +32218,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 27,
-      "line": 652,
+      "occurrence": 28,
+      "line": 673,
       "selector": "[data-debug-id=\"task-manager-environment-working-folder\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32121,7 +32228,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-environment@src/components/TaskManager.tsx#25",
+      "id": "ui-debug-surface:task-manager-environment@src/components/TaskManager.tsx#26",
       "kind": "ui-debug-surface",
       "name": "task-manager-environment",
       "source": "src/components/TaskManager.tsx",
@@ -32131,8 +32238,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 25,
-      "line": 645,
+      "occurrence": 26,
+      "line": 666,
       "selector": "[data-debug-id=\"task-manager-environment\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32141,7 +32248,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-feedback@src/components/TaskManager.tsx#30",
+      "id": "ui-debug-surface:task-manager-feedback@src/components/TaskManager.tsx#31",
       "kind": "ui-debug-surface",
       "name": "task-manager-feedback",
       "source": "src/components/TaskManager.tsx",
@@ -32151,8 +32258,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 30,
-      "line": 685,
+      "occurrence": 31,
+      "line": 706,
       "selector": "[data-debug-id=\"task-manager-feedback\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32172,7 +32279,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-all",
       "selector": "[data-debug-id=\"task-manager-filter-all\"]",
       "stableSelector": true,
@@ -32193,7 +32300,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-needsAttention",
       "selector": "[data-debug-id=\"task-manager-filter-needsAttention\"]",
       "stableSelector": true,
@@ -32214,7 +32321,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-paused",
       "selector": "[data-debug-id=\"task-manager-filter-paused\"]",
       "stableSelector": true,
@@ -32235,7 +32342,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-recent",
       "selector": "[data-debug-id=\"task-manager-filter-recent\"]",
       "stableSelector": true,
@@ -32256,7 +32363,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-running",
       "selector": "[data-debug-id=\"task-manager-filter-running\"]",
       "stableSelector": true,
@@ -32277,7 +32384,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 535,
+      "line": 540,
       "finiteVariant": "task-manager-filter-scheduled",
       "selector": "[data-debug-id=\"task-manager-filter-scheduled\"]",
       "stableSelector": true,
@@ -32287,7 +32394,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-instruction@src/components/TaskManager.tsx#11",
+      "id": "ui-debug-surface:task-manager-instruction@src/components/TaskManager.tsx#12",
       "kind": "ui-debug-surface",
       "name": "task-manager-instruction",
       "source": "src/components/TaskManager.tsx",
@@ -32297,8 +32404,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 11,
-      "line": 578,
+      "occurrence": 12,
+      "line": 599,
       "selector": "[data-debug-id=\"task-manager-instruction\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32307,7 +32414,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-list-error@src/components/TaskManager.tsx#35",
+      "id": "ui-debug-surface:task-manager-list-error@src/components/TaskManager.tsx#40",
       "kind": "ui-debug-surface",
       "name": "task-manager-list-error",
       "source": "src/components/TaskManager.tsx",
@@ -32317,8 +32424,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 35,
-      "line": 738,
+      "occurrence": 40,
+      "line": 821,
       "selector": "[data-debug-id=\"task-manager-list-error\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32327,7 +32434,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-loading@src/components/TaskManager.tsx#34",
+      "id": "ui-debug-surface:task-manager-loading@src/components/TaskManager.tsx#39",
       "kind": "ui-debug-surface",
       "name": "task-manager-loading",
       "source": "src/components/TaskManager.tsx",
@@ -32337,8 +32444,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 34,
-      "line": 737,
+      "occurrence": 39,
+      "line": 820,
       "selector": "[data-debug-id=\"task-manager-loading\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32347,7 +32454,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-max-run-seconds@src/components/TaskManager.tsx#47",
+      "id": "ui-debug-surface:task-manager-max-run-seconds@src/components/TaskManager.tsx#52",
       "kind": "ui-debug-surface",
       "name": "task-manager-max-run-seconds",
       "source": "src/components/TaskManager.tsx",
@@ -32357,8 +32464,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 47,
-      "line": 805,
+      "occurrence": 52,
+      "line": 888,
       "selector": "[data-debug-id=\"task-manager-max-run-seconds\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32367,7 +32474,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-missed-run-policy@src/components/TaskManager.tsx#46",
+      "id": "ui-debug-surface:task-manager-missed-run-policy@src/components/TaskManager.tsx#51",
       "kind": "ui-debug-surface",
       "name": "task-manager-missed-run-policy",
       "source": "src/components/TaskManager.tsx",
@@ -32377,8 +32484,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 46,
-      "line": 804,
+      "occurrence": 51,
+      "line": 887,
       "selector": "[data-debug-id=\"task-manager-missed-run-policy\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32387,7 +32494,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-model-*@src/components/TaskManager.tsx#55",
+      "id": "ui-debug-surface:task-manager-model-*@src/components/TaskManager.tsx#60",
       "kind": "ui-debug-surface",
       "name": "task-manager-model-*",
       "source": "src/components/TaskManager.tsx",
@@ -32397,8 +32504,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 55,
-      "line": 840,
+      "occurrence": 60,
+      "line": 923,
       "selector": "[data-debug-id^=\"task-manager-model-\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -32407,7 +32514,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-name@src/components/TaskManager.tsx#10",
+      "id": "ui-debug-surface:task-manager-name@src/components/TaskManager.tsx#11",
       "kind": "ui-debug-surface",
       "name": "task-manager-name",
       "source": "src/components/TaskManager.tsx",
@@ -32417,8 +32524,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 10,
-      "line": 570,
+      "occurrence": 11,
+      "line": 591,
       "selector": "[data-debug-id=\"task-manager-name\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32427,7 +32534,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-notification-policy@src/components/TaskManager.tsx#48",
+      "id": "ui-debug-surface:task-manager-notification-policy@src/components/TaskManager.tsx#53",
       "kind": "ui-debug-surface",
       "name": "task-manager-notification-policy",
       "source": "src/components/TaskManager.tsx",
@@ -32437,8 +32544,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 48,
-      "line": 806,
+      "occurrence": 53,
+      "line": 889,
       "selector": "[data-debug-id=\"task-manager-notification-policy\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32467,7 +32574,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-open-vault@src/components/TaskManager.tsx#14",
+      "id": "ui-debug-surface:task-manager-open-vault@src/components/TaskManager.tsx#15",
       "kind": "ui-debug-surface",
       "name": "task-manager-open-vault",
       "source": "src/components/TaskManager.tsx",
@@ -32477,8 +32584,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 14,
-      "line": 599,
+      "occurrence": 15,
+      "line": 620,
       "selector": "[data-debug-id=\"task-manager-open-vault\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32498,7 +32605,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 6,
-      "line": 541,
+      "line": 546,
       "selector": "[data-debug-id=\"task-manager-project-filter\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32507,7 +32614,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-provider-*-move-down@src/components/TaskManager.tsx#57",
+      "id": "ui-debug-surface:task-manager-provider-*-move-down@src/components/TaskManager.tsx#62",
       "kind": "ui-debug-surface",
       "name": "task-manager-provider-*-move-down",
       "source": "src/components/TaskManager.tsx",
@@ -32517,8 +32624,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 57,
-      "line": 841,
+      "occurrence": 62,
+      "line": 924,
       "selector": "[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-down\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -32527,7 +32634,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-provider-*-move-up@src/components/TaskManager.tsx#56",
+      "id": "ui-debug-surface:task-manager-provider-*-move-up@src/components/TaskManager.tsx#61",
       "kind": "ui-debug-surface",
       "name": "task-manager-provider-*-move-up",
       "source": "src/components/TaskManager.tsx",
@@ -32537,8 +32644,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 56,
-      "line": 841,
+      "occurrence": 61,
+      "line": 924,
       "selector": "[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-up\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -32547,7 +32654,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-provider-*-remove@src/components/TaskManager.tsx#58",
+      "id": "ui-debug-surface:task-manager-provider-*-remove@src/components/TaskManager.tsx#63",
       "kind": "ui-debug-surface",
       "name": "task-manager-provider-*-remove",
       "source": "src/components/TaskManager.tsx",
@@ -32557,8 +32664,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 58,
-      "line": 841,
+      "occurrence": 63,
+      "line": 924,
       "selector": "[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-remove\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -32567,7 +32674,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-provider-*-suggested@src/components/TaskManager.tsx#54",
+      "id": "ui-debug-surface:task-manager-provider-*-suggested@src/components/TaskManager.tsx#59",
       "kind": "ui-debug-surface",
       "name": "task-manager-provider-*-suggested",
       "source": "src/components/TaskManager.tsx",
@@ -32577,8 +32684,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 54,
-      "line": 834,
+      "occurrence": 59,
+      "line": 917,
       "selector": "[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-suggested\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -32587,7 +32694,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-provider-*-toggle@src/components/TaskManager.tsx#53",
+      "id": "ui-debug-surface:task-manager-provider-*-toggle@src/components/TaskManager.tsx#58",
       "kind": "ui-debug-surface",
       "name": "task-manager-provider-*-toggle",
       "source": "src/components/TaskManager.tsx",
@@ -32597,8 +32704,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 53,
-      "line": 833,
+      "occurrence": 58,
+      "line": 916,
       "selector": "[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-toggle\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -32607,7 +32714,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-provider-*@src/components/TaskManager.tsx#52",
+      "id": "ui-debug-surface:task-manager-provider-*@src/components/TaskManager.tsx#57",
       "kind": "ui-debug-surface",
       "name": "task-manager-provider-*",
       "source": "src/components/TaskManager.tsx",
@@ -32617,8 +32724,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 52,
-      "line": 832,
+      "occurrence": 57,
+      "line": 915,
       "selector": "[data-debug-id^=\"task-manager-provider-\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -32627,7 +32734,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-provider-empty@src/components/TaskManager.tsx#49",
+      "id": "ui-debug-surface:task-manager-provider-empty@src/components/TaskManager.tsx#54",
       "kind": "ui-debug-surface",
       "name": "task-manager-provider-empty",
       "source": "src/components/TaskManager.tsx",
@@ -32637,8 +32744,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 49,
-      "line": 821,
+      "occurrence": 54,
+      "line": 904,
       "selector": "[data-debug-id=\"task-manager-provider-empty\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32658,7 +32765,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 8,
-      "line": 543,
+      "line": 548,
       "selector": "[data-debug-id=\"task-manager-provider-filter\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32667,7 +32774,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-provider-guard@src/components/TaskManager.tsx#50",
+      "id": "ui-debug-surface:task-manager-provider-guard@src/components/TaskManager.tsx#55",
       "kind": "ui-debug-surface",
       "name": "task-manager-provider-guard",
       "source": "src/components/TaskManager.tsx",
@@ -32677,8 +32784,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 50,
-      "line": 822,
+      "occurrence": 55,
+      "line": 905,
       "selector": "[data-debug-id=\"task-manager-provider-guard\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32687,7 +32794,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-provider-list@src/components/TaskManager.tsx#51",
+      "id": "ui-debug-surface:task-manager-provider-list@src/components/TaskManager.tsx#56",
       "kind": "ui-debug-surface",
       "name": "task-manager-provider-list",
       "source": "src/components/TaskManager.tsx",
@@ -32697,8 +32804,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 51,
-      "line": 825,
+      "occurrence": 56,
+      "line": 908,
       "selector": "[data-debug-id=\"task-manager-provider-list\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32727,7 +32834,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-recheck@src/components/TaskManager.tsx#24",
+      "id": "ui-debug-surface:task-manager-recheck@src/components/TaskManager.tsx#25",
       "kind": "ui-debug-surface",
       "name": "task-manager-recheck",
       "source": "src/components/TaskManager.tsx",
@@ -32737,8 +32844,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 24,
-      "line": 639,
+      "occurrence": 25,
+      "line": 660,
       "selector": "[data-debug-id=\"task-manager-recheck\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32747,7 +32854,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-remove-attachment@src/components/TaskManager.tsx#16",
+      "id": "ui-debug-surface:task-manager-remove-attachment@src/components/TaskManager.tsx#17",
       "kind": "ui-debug-surface",
       "name": "task-manager-remove-attachment",
       "source": "src/components/TaskManager.tsx",
@@ -32757,8 +32864,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 16,
-      "line": 604,
+      "occurrence": 17,
+      "line": 625,
       "selector": "[data-debug-id=\"task-manager-remove-attachment\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32767,7 +32874,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-remove-vault-requirement@src/components/TaskManager.tsx#21",
+      "id": "ui-debug-surface:task-manager-remove-vault-requirement@src/components/TaskManager.tsx#22",
       "kind": "ui-debug-surface",
       "name": "task-manager-remove-vault-requirement",
       "source": "src/components/TaskManager.tsx",
@@ -32777,8 +32884,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 21,
-      "line": 619,
+      "occurrence": 22,
+      "line": 640,
       "selector": "[data-debug-id=\"task-manager-remove-vault-requirement\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32787,7 +32894,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-remove-workflow@src/components/TaskManager.tsx#18",
+      "id": "ui-debug-surface:task-manager-remove-workflow@src/components/TaskManager.tsx#19",
       "kind": "ui-debug-surface",
       "name": "task-manager-remove-workflow",
       "source": "src/components/TaskManager.tsx",
@@ -32797,8 +32904,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 18,
-      "line": 610,
+      "occurrence": 19,
+      "line": 631,
       "selector": "[data-debug-id=\"task-manager-remove-workflow\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32807,7 +32914,67 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-reviewed-bindings@src/components/TaskManager.tsx#13",
+      "id": "ui-debug-surface:task-manager-review-agents@src/components/TaskManager.tsx#35",
+      "kind": "ui-debug-surface",
+      "name": "task-manager-review-agents",
+      "source": "src/components/TaskManager.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 35,
+      "line": 770,
+      "selector": "[data-debug-id=\"task-manager-review-agents\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable",
+      "driverFamily": "static-marker",
+      "eventTrust": "not-applicable"
+    },
+    {
+      "id": "ui-debug-surface:task-manager-review-details@src/components/TaskManager.tsx#10",
+      "kind": "ui-debug-surface",
+      "name": "task-manager-review-details",
+      "source": "src/components/TaskManager.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 10,
+      "line": 584,
+      "selector": "[data-debug-id=\"task-manager-review-details\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable",
+      "driverFamily": "static-marker",
+      "eventTrust": "not-applicable"
+    },
+    {
+      "id": "ui-debug-surface:task-manager-review@src/components/TaskManager.tsx#32",
+      "kind": "ui-debug-surface",
+      "name": "task-manager-review",
+      "source": "src/components/TaskManager.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 32,
+      "line": 751,
+      "selector": "[data-debug-id=\"task-manager-review\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable",
+      "driverFamily": "static-marker",
+      "eventTrust": "not-applicable"
+    },
+    {
+      "id": "ui-debug-surface:task-manager-reviewed-bindings@src/components/TaskManager.tsx#14",
       "kind": "ui-debug-surface",
       "name": "task-manager-reviewed-bindings",
       "source": "src/components/TaskManager.tsx",
@@ -32817,8 +32984,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 13,
-      "line": 593,
+      "occurrence": 14,
+      "line": 614,
       "selector": "[data-debug-id=\"task-manager-reviewed-bindings\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32907,7 +33074,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-schedule-advanced@src/components/TaskManager.tsx#44",
+      "id": "ui-debug-surface:task-manager-schedule-advanced@src/components/TaskManager.tsx#49",
       "kind": "ui-debug-surface",
       "name": "task-manager-schedule-advanced",
       "source": "src/components/TaskManager.tsx",
@@ -32917,8 +33084,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 44,
-      "line": 801,
+      "occurrence": 49,
+      "line": 884,
       "selector": "[data-debug-id=\"task-manager-schedule-advanced\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32927,7 +33094,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-schedule-summary@src/components/TaskManager.tsx#38",
+      "id": "ui-debug-surface:task-manager-schedule-summary@src/components/TaskManager.tsx#43",
       "kind": "ui-debug-surface",
       "name": "task-manager-schedule-summary",
       "source": "src/components/TaskManager.tsx",
@@ -32937,8 +33104,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 38,
-      "line": 791,
+      "occurrence": 43,
+      "line": 874,
       "selector": "[data-debug-id=\"task-manager-schedule-summary\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32958,7 +33125,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 531,
+      "line": 536,
       "selector": "[data-debug-id=\"task-manager-search\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32967,7 +33134,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-success-criteria@src/components/TaskManager.tsx#12",
+      "id": "ui-debug-surface:task-manager-success-criteria@src/components/TaskManager.tsx#13",
       "kind": "ui-debug-surface",
       "name": "task-manager-success-criteria",
       "source": "src/components/TaskManager.tsx",
@@ -32977,8 +33144,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 12,
-      "line": 585,
+      "occurrence": 13,
+      "line": 606,
       "selector": "[data-debug-id=\"task-manager-success-criteria\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -32987,7 +33154,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-timezone@src/components/TaskManager.tsx#45",
+      "id": "ui-debug-surface:task-manager-timezone@src/components/TaskManager.tsx#50",
       "kind": "ui-debug-surface",
       "name": "task-manager-timezone",
       "source": "src/components/TaskManager.tsx",
@@ -32997,8 +33164,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 45,
-      "line": 803,
+      "occurrence": 50,
+      "line": 886,
       "selector": "[data-debug-id=\"task-manager-timezone\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33007,7 +33174,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-trigger-kind@src/components/TaskManager.tsx#39",
+      "id": "ui-debug-surface:task-manager-trigger-kind@src/components/TaskManager.tsx#44",
       "kind": "ui-debug-surface",
       "name": "task-manager-trigger-kind",
       "source": "src/components/TaskManager.tsx",
@@ -33017,8 +33184,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 39,
-      "line": 794,
+      "occurrence": 44,
+      "line": 877,
       "selector": "[data-debug-id=\"task-manager-trigger-kind\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33027,7 +33194,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-trigger-month-day@src/components/TaskManager.tsx#42",
+      "id": "ui-debug-surface:task-manager-trigger-month-day@src/components/TaskManager.tsx#47",
       "kind": "ui-debug-surface",
       "name": "task-manager-trigger-month-day",
       "source": "src/components/TaskManager.tsx",
@@ -33037,8 +33204,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 42,
-      "line": 797,
+      "occurrence": 47,
+      "line": 880,
       "selector": "[data-debug-id=\"task-manager-trigger-month-day\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33047,7 +33214,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-trigger-once@src/components/TaskManager.tsx#40",
+      "id": "ui-debug-surface:task-manager-trigger-once@src/components/TaskManager.tsx#45",
       "kind": "ui-debug-surface",
       "name": "task-manager-trigger-once",
       "source": "src/components/TaskManager.tsx",
@@ -33057,8 +33224,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 40,
-      "line": 795,
+      "occurrence": 45,
+      "line": 878,
       "selector": "[data-debug-id=\"task-manager-trigger-once\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33067,7 +33234,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-trigger-time@src/components/TaskManager.tsx#41",
+      "id": "ui-debug-surface:task-manager-trigger-time@src/components/TaskManager.tsx#46",
       "kind": "ui-debug-surface",
       "name": "task-manager-trigger-time",
       "source": "src/components/TaskManager.tsx",
@@ -33077,8 +33244,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 41,
-      "line": 796,
+      "occurrence": 46,
+      "line": 879,
       "selector": "[data-debug-id=\"task-manager-trigger-time\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33087,7 +33254,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-vault-binding@src/components/TaskManager.tsx#19",
+      "id": "ui-debug-surface:task-manager-vault-binding@src/components/TaskManager.tsx#20",
       "kind": "ui-debug-surface",
       "name": "task-manager-vault-binding",
       "source": "src/components/TaskManager.tsx",
@@ -33097,8 +33264,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 19,
-      "line": 616,
+      "occurrence": 20,
+      "line": 637,
       "selector": "[data-debug-id=\"task-manager-vault-binding\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33107,7 +33274,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-vault-grant-required@src/components/TaskManager.tsx#23",
+      "id": "ui-debug-surface:task-manager-vault-grant-required@src/components/TaskManager.tsx#24",
       "kind": "ui-debug-surface",
       "name": "task-manager-vault-grant-required",
       "source": "src/components/TaskManager.tsx",
@@ -33117,8 +33284,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 23,
-      "line": 623,
+      "occurrence": 24,
+      "line": 644,
       "selector": "[data-debug-id=\"task-manager-vault-grant-required\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33127,7 +33294,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-vault-grant@src/components/TaskManager.tsx#20",
+      "id": "ui-debug-surface:task-manager-vault-grant@src/components/TaskManager.tsx#21",
       "kind": "ui-debug-surface",
       "name": "task-manager-vault-grant",
       "source": "src/components/TaskManager.tsx",
@@ -33137,8 +33304,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 20,
-      "line": 618,
+      "occurrence": 21,
+      "line": 639,
       "selector": "[data-debug-id=\"task-manager-vault-grant\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33147,7 +33314,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-vault-grants-unavailable@src/components/TaskManager.tsx#22",
+      "id": "ui-debug-surface:task-manager-vault-grants-unavailable@src/components/TaskManager.tsx#23",
       "kind": "ui-debug-surface",
       "name": "task-manager-vault-grants-unavailable",
       "source": "src/components/TaskManager.tsx",
@@ -33157,8 +33324,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 22,
-      "line": 622,
+      "occurrence": 23,
+      "line": 643,
       "selector": "[data-debug-id=\"task-manager-vault-grants-unavailable\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33167,7 +33334,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-weekday-*@src/components/TaskManager.tsx#43",
+      "id": "ui-debug-surface:task-manager-weekday-*@src/components/TaskManager.tsx#48",
       "kind": "ui-debug-surface",
       "name": "task-manager-weekday-*",
       "source": "src/components/TaskManager.tsx",
@@ -33177,8 +33344,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 43,
-      "line": 799,
+      "occurrence": 48,
+      "line": 882,
       "selector": "[data-debug-id^=\"task-manager-weekday-\"]",
       "stableSelector": true,
       "dynamicSelector": true,
@@ -33187,7 +33354,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:task-manager-workflow-binding@src/components/TaskManager.tsx#17",
+      "id": "ui-debug-surface:task-manager-workflow-binding@src/components/TaskManager.tsx#18",
       "kind": "ui-debug-surface",
       "name": "task-manager-workflow-binding",
       "source": "src/components/TaskManager.tsx",
@@ -33197,8 +33364,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 17,
-      "line": 608,
+      "occurrence": 18,
+      "line": 629,
       "selector": "[data-debug-id=\"task-manager-workflow-binding\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -33218,7 +33385,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 2,
-      "line": 513,
+      "line": 518,
       "selector": "[data-debug-id=\"task-manager\"]",
       "stableSelector": true,
       "dynamicSelector": false,

@@ -123,6 +123,7 @@ export function TaskManager({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [deleteArmed, setDeleteArmed] = useState(false);
+  const [editingDetails, setEditingDetails] = useState(mode === "create");
   const saveGuardRef = useRef(createTaskManagerSaveGuard());
   useModalFocus(open, dialogRef, onClose);
 
@@ -150,6 +151,7 @@ export function TaskManager({
     setSelectedId(mode === "create" ? undefined : data.selectedDefinitionId);
     setFeedback(null);
     setDeleteArmed(false);
+    setEditingDetails(mode === "create");
   // The source identity, not object identity, is the draft replacement contract.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, handoffKey]);
@@ -205,12 +207,14 @@ export function TaskManager({
     : taskSaveDisabledReason(draft, data);
   const currentEnvironment = data.environments.find((environment) => environment.key === draft.environmentKey);
   const catalogueMatchesEnvironment = isTaskProviderCatalogueFresh(data.providerCatalogue, draft.environmentKey);
+  const reviewingSavedTask = mode === "edit" && Boolean(selectedDetail) && !editingDetails;
 
   if (!open) return null;
 
   function selectDefinition(definition: TaskDefinitionSummary): void {
     setSelectedId(definition.id);
     setDeleteArmed(false);
+    setEditingDetails(false);
     setFeedback(null);
     const detail = data.selectedDefinition?.id === definition.id ? data.selectedDefinition : undefined;
     if (detail) setDraft(createTaskManagerDraft(taskManagerDraftFromDetail(detail)));
@@ -352,6 +356,7 @@ export function TaskManager({
       if (outcome.kind === "preflightRejected") return;
       const result = outcome.value;
       setFeedback(result.detail ?? (result.accepted ? "Task revision saved." : result.disabledReason ?? "Task revision was not saved."));
+      if (result.accepted && mode === "edit") setEditingDetails(false);
     } catch (error) {
       setFeedback(`Task revision could not be saved: ${messageForError(error)}`);
     } finally {
@@ -515,7 +520,7 @@ export function TaskManager({
           <div>
             <p className="task-manager-eyebrow">Tasks</p>
             <h2 id="task-manager-title">{mode === "create" ? "Create task" : "Task Manager"}</h2>
-            <p className="task-manager-subtitle">Instructions, schedules, agents, and run history.</p>
+            <p className="task-manager-subtitle">Review what your agents prepared, see results, or change the details.</p>
           </div>
           <button type="button" className="task-manager-icon-button" data-dialog-initial-focus="true" data-debug-id="task-manager-close" data-shellx-release-observe="focused title" onClick={onClose} aria-label="Close Task Manager" title="Close Task Manager (Esc)">
             <ShellIcon name="close" size={17} />
@@ -553,15 +558,31 @@ export function TaskManager({
               <EmptyInspector title="Loading task revision" detail="The selected task's immutable revision is being loaded before it can be changed or run." />
             ) : !hasEditableDefinition ? (
               <EmptyInspector title="Select a task" detail="Choose a saved task from the list. To create one, use the Task button below a chat so ShellX can keep its environment and working folder." />
+            ) : reviewingSavedTask && selectedDetail && selectedSummary ? (
+              <TaskReview
+                detail={selectedDetail}
+                summary={selectedSummary}
+                attention={selectedAttention}
+                busyAction={busyAction}
+                onEdit={() => setEditingDetails(true)}
+                onResolveAttention={onResolveAttention ? resolveAttention : undefined}
+                onOpenRun={openRun}
+                openRunConnected={Boolean(onOpenRun)}
+                onCancelRun={cancelRun}
+                cancelRunConnected={Boolean(onCancelRun)}
+              />
             ) : (
               <>
                 <section className="task-manager-section task-manager-definition" aria-labelledby="task-manager-definition-heading">
                   <div className="task-manager-section-heading">
                     <div>
                       <p className="task-manager-section-kicker">{mode === "create" ? "New task" : selectedSummary ? "Saved task" : "No task selected"}</p>
-                      <h3 id="task-manager-definition-heading">Definition</h3>
+                      <h3 id="task-manager-definition-heading">{mode === "create" ? "New task" : "Edit details"}</h3>
                     </div>
-                    {selectedAttention && <span className="task-manager-attention" data-debug-id="task-manager-attention" title={selectedAttention.detail} aria-label={`${selectedAttention.count} task occurrence${selectedAttention.count === 1 ? "" : "s"} need attention`}>Needs attention{selectedAttention.count > 1 ? ` · ${selectedAttention.count}` : ""}</span>}
+                    <div className="task-manager-heading-actions">
+                      {selectedAttention && <span className="task-manager-attention" data-debug-id="task-manager-attention" title={selectedAttention.detail} aria-label={`${selectedAttention.count} task occurrence${selectedAttention.count === 1 ? "" : "s"} need attention`}>Needs attention{selectedAttention.count > 1 ? ` · ${selectedAttention.count}` : ""}</span>}
+                      {mode === "edit" && <button type="button" className="task-manager-text-button" data-debug-id="task-manager-review-details" onClick={() => setEditingDetails(false)}>Back to review</button>}
+                    </div>
                   </div>
                   {selectedAttention && <TaskAttentionCallout attention={selectedAttention} items={selectedDetail?.attentionItems ?? []} busyAction={busyAction} onResolve={onResolveAttention ? resolveAttention : undefined} />}
                   <div className="task-manager-field-grid">
@@ -682,19 +703,81 @@ export function TaskManager({
         </div>
 
         <footer className="task-manager-footer">
-          <div className="task-manager-feedback" data-debug-id="task-manager-feedback" data-task-manager-feedback-state={feedback ? "action" : "hint"} role="status">{feedback ?? (hasEditableDefinition ? actionHint(saveReason, runReason, selectedSummary) : "Select a saved task, or create one from the Task button below a chat.")}</div>
+          <div className="task-manager-feedback" data-debug-id="task-manager-feedback" data-task-manager-feedback-state={feedback ? "action" : "hint"} role="status">{feedback ?? (reviewingSavedTask ? "This is the saved Task. Open Edit details only when you want to change it." : hasEditableDefinition ? actionHint(saveReason, runReason, selectedSummary) : "Select a saved task, or ask an agent to create one from a chat.")}</div>
           {hasEditableDefinition && <div className="task-manager-actions">
             <ActionButton label="Duplicate" icon="copy" onClick={() => void invokeSelectedAction("duplicate", onDuplicate)} disabled={!selectedDetail || !onDuplicate || busyAction !== null} reason={!selectedDetail ? "Select a task and load its exact revision to duplicate." : !onDuplicate ? "Duplicating tasks is not connected." : undefined} />
             <ActionButton label={deleteArmed ? "Confirm delete" : "Delete"} icon="trash" danger onClick={() => void invokeSelectedAction("delete", onDelete)} disabled={!selectedDetail || !onDelete || busyAction !== null} reason={!selectedDetail ? "Select a task and load its exact revision to delete." : !onDelete ? "Deleting tasks is not connected." : undefined} />
             <ActionButton label="Pause" icon="pause" onClick={() => void pauseOrResume("pause")} disabled={Boolean(pauseReason) || busyAction !== null} reason={pauseReason} />
             <ActionButton label="Resume" icon="play" onClick={() => void pauseOrResume("resume")} disabled={Boolean(resumeReason) || busyAction !== null} reason={resumeReason} />
             {onRunNow && <ActionButton label={busyAction === "run" ? "Starting" : "Run now"} icon={busyAction === "run" ? "loader" : "play"} primary onClick={() => void runNow()} disabled={Boolean(runReason) || busyAction !== null} reason={runReason} />}
-            <ActionButton label={busyAction === "save" ? "Saving" : "Save revision"} icon={busyAction === "save" ? "loader" : "check"} primary onClick={() => void saveDraft()} disabled={Boolean(saveReason) || !onSave || busyAction !== null} reason={saveReason ?? (!onSave ? "Saving Task Manager revisions is not connected." : undefined)} />
+            {!reviewingSavedTask && <ActionButton label={busyAction === "save" ? "Saving" : mode === "create" ? "Save task" : "Save changes"} icon={busyAction === "save" ? "loader" : "check"} primary onClick={() => void saveDraft()} disabled={Boolean(saveReason) || !onSave || busyAction !== null} reason={saveReason ?? (!onSave ? "Saving Task Manager revisions is not connected." : undefined)} />}
           </div>}
         </footer>
       </section>
     </div>
   );
+}
+
+function TaskReview({
+  detail,
+  summary,
+  attention,
+  busyAction,
+  onEdit,
+  onResolveAttention,
+  onOpenRun,
+  openRunConnected,
+  onCancelRun,
+  cancelRunConnected,
+}: {
+  detail: TaskDefinitionDetail;
+  summary: TaskDefinitionSummary;
+  attention?: TaskAttentionPresentation;
+  busyAction: string | null;
+  onEdit: () => void;
+  onResolveAttention?: (item: TaskAttentionActionItem) => void;
+  onOpenRun: (conversationSessionId: string) => Promise<void>;
+  openRunConnected: boolean;
+  onCancelRun: (run: TaskDefinitionDetail["runHistory"][number]) => Promise<void>;
+  cancelRunConnected: boolean;
+}): JSX.Element {
+  const candidates = normalizeTaskCandidates(detail.candidates);
+  const agentRoute = candidates.length > 0
+    ? candidates.map((candidate) => providerLabel(candidate.providerId)).join(" → ")
+    : summary.providerRouteSummary;
+  const runLimitMinutes = Math.max(1, Math.round(detail.schedule.maxRunSeconds / 60));
+
+  return <>
+    <section className="task-manager-section task-manager-review" aria-labelledby="task-manager-review-heading" data-debug-id="task-manager-review">
+      <div className="task-manager-section-heading">
+        <div>
+          <p className="task-manager-section-kicker">Saved task</p>
+          <h3 id="task-manager-review-heading">{detail.name}</h3>
+        </div>
+        <div className="task-manager-heading-actions">
+          {attention && <span className="task-manager-attention" data-debug-id="task-manager-attention" title={attention.detail} aria-label={`${attention.count} task occurrence${attention.count === 1 ? "" : "s"} need attention`}>Needs attention{attention.count > 1 ? ` · ${attention.count}` : ""}</span>}
+          <button type="button" className="task-manager-text-button" data-debug-id="task-manager-edit-details" data-shellx-release-observe="focused title" onClick={onEdit} title="Change this Task's saved details"><ShellIcon name="pencil" size={14} /> Edit details</button>
+        </div>
+      </div>
+      {attention && <TaskAttentionCallout attention={attention} items={detail.attentionItems} busyAction={busyAction} onResolve={onResolveAttention} />}
+      <div className="task-manager-review-instruction">
+        <span>What it does</span>
+        <p>{detail.instruction}</p>
+        {detail.successCriteria && <small><strong>Done when:</strong> {detail.successCriteria}</small>}
+      </div>
+      <dl className="task-manager-review-grid">
+        <div><dt>When</dt><dd>{summary.scheduleSummary}</dd></div>
+        <div><dt>Agents</dt><dd data-debug-id="task-manager-review-agents">{agentRoute}</dd><small>ShellX tries them in this order.</small></div>
+        <div><dt>Where</dt><dd>{summary.environmentLabel}</dd>{summary.projectLabel && <small>{summary.projectLabel}</small>}</div>
+        <div><dt>Run time limit</dt><dd>{runLimitMinutes} minute{runLimitMinutes === 1 ? "" : "s"}</dd><small>Safety limit for one run, not the schedule.</small></div>
+        <div><dt>Status</dt><dd>{taskStateLabel(summary.state)}</dd><small>{summary.enabled ? "Enabled" : "Paused"}</small></div>
+        <div><dt>Notifications</dt><dd>{detail.notificationSummary}</dd></div>
+        <div><dt>Permissions</dt><dd>{detail.permissionSummary}</dd></div>
+        {(detail.workflowSummary || detail.vaultSummary) && <div><dt>Connected tools</dt><dd>{[detail.workflowSummary, detail.vaultSummary].filter(Boolean).join(" · ")}</dd></div>}
+      </dl>
+    </section>
+    <TaskRunHistory detail={detail} busyAction={busyAction} onOpenRun={onOpenRun} connected={openRunConnected} onCancelRun={onCancelRun} cancelConnected={cancelRunConnected} />
+  </>;
 }
 
 function TaskAttentionCallout({ attention, items, busyAction, onResolve }: {
@@ -802,7 +885,7 @@ function TaskScheduleEditor({ schedule, preservePastOnce, onChange }: {
       <div className="task-manager-schedule-grid task-manager-schedule-policy">
         {trigger.kind !== "manual" && trigger.kind !== "once" && <label><span>Keep this timezone</span><input data-debug-id="task-manager-timezone" data-shellx-release-observe="value" value={schedule.timezone} onChange={(event) => onChange({ ...schedule, timezone: event.currentTarget.value })} placeholder={taskDeviceTimezone()} /><small>ShellX detected this automatically. Change it only when the task should follow another location.</small></label>}
         {trigger.kind !== "manual" && <label><span>If ShellX missed a run</span><select data-debug-id="task-manager-missed-run-policy" data-shellx-release-observe="value" value={schedule.missedRunPolicy} onChange={(event) => onChange({ ...schedule, missedRunPolicy: event.currentTarget.value as TaskSchedule["missedRunPolicy"] })}><option value="skip">Skip it</option><option value="runOnceWhenAvailable">Run once when ShellX opens</option><option value="needsAttention">Ask me</option></select></label>}
-        <label><span>Stop after</span><input data-debug-id="task-manager-max-run-seconds" data-shellx-release-observe="value" type="number" min="1" step="1" value={Math.max(1, Math.round(schedule.maxRunSeconds / 60))} onChange={(event) => onChange({ ...schedule, maxRunSeconds: (event.currentTarget.valueAsNumber || 0) * 60 })} /><small>Minutes</small></label>
+        <label><span>Run time limit</span><input data-debug-id="task-manager-max-run-seconds" data-shellx-release-observe="value" type="number" min="1" step="1" value={Math.max(1, Math.round(schedule.maxRunSeconds / 60))} onChange={(event) => onChange({ ...schedule, maxRunSeconds: (event.currentTarget.valueAsNumber || 0) * 60 })} /><small>Minutes for one run. If time runs out, ShellX stops the attempt and marks it for review.</small></label>
         <label><span>Notify me</span><select data-debug-id="task-manager-notification-policy" data-shellx-release-observe="value" value={schedule.notificationPolicy} onChange={(event) => onChange({ ...schedule, notificationPolicy: event.currentTarget.value as TaskSchedule["notificationPolicy"] })}><option value="none">Never</option><option value="attentionOnly">Only when I need to act</option><option value="everyTerminalResult">After every result</option></select></label>
       </div>
     </details>

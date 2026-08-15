@@ -147,6 +147,8 @@ const appCaptures: ManualAtlasCapturePlanEntry[] = [
     intendedState: "Installed ShellX Task Manager with its local-time schedule and Advanced timing and notifications disclosure opened for review.",
     steps: [
       appPatch({ ...appBaseline, debugTaskManagerFixture: "full" }),
+      { kind: "click", selector: "[data-debug-id='task-manager-edit-details']" },
+      wait("[data-debug-id='task-manager-review-details']"),
       { kind: "click", selector: "[data-debug-id='task-manager-schedule-advanced']" },
       { kind: "reveal", selector: "[data-debug-id='task-manager-schedule-advanced']", block: "center" },
       wait("[data-debug-id='task-manager-max-run-seconds']"),
@@ -158,6 +160,8 @@ const appCaptures: ManualAtlasCapturePlanEntry[] = [
     intendedState: "Installed ShellX Task Manager showing the selected environment, fresh availability, and explicit ordered agent fallback route.",
     steps: [
       appPatch({ ...appBaseline, debugTaskManagerFixture: "full" }),
+      { kind: "click", selector: "[data-debug-id='task-manager-edit-details']" },
+      wait("[data-debug-id='task-manager-review-details']"),
       { kind: "reveal", selector: "[data-debug-id='task-manager-provider-list']", block: "center" },
       wait("[data-debug-id='task-manager-provider-list']"),
     ],

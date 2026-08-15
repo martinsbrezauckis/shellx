@@ -94,7 +94,7 @@ assert.equal(
   "the removed unreachable Work Preview modal must not remain in the installed inventory",
 );
 assert(generated.counts["tauri-command"] > 100, "inventory captures the complete Tauri command registry");
-assert.equal(generated.counts["debug-api-route"], 247, "inventory captures every balanced Debug API route declaration");
+assert.equal(generated.counts["debug-api-route"], 248, "inventory captures every balanced Debug API route declaration");
 assert.deepEqual(
   generated.items
     .filter((item) => item.kind === "debug-api-route" && item.source === "src-tauri/src/debug_api_release_browser_fixture.rs")
@@ -128,7 +128,7 @@ assert.deepEqual(
   ],
   "isolated native-picker lease routes remain explicit 100% release surfaces",
 );
-assert.equal(generated.counts["host-mcp-tool"], 107, "inventory captures advertised tools and callable compatibility aliases");
+assert.equal(generated.counts["host-mcp-tool"], 108, "inventory captures advertised tools and callable compatibility aliases");
 assert.deepEqual(
   generated.items.filter((item) => item.kind === "host-mcp-tool" && item.advertised === false)
     .map((item) => ({ name: item.name, aliasOf: item.aliasOf })).sort((a, b) => a.name.localeCompare(b.name)),
@@ -138,27 +138,27 @@ assert.deepEqual(
   ],
   "callable hidden Host MCP aliases must remain explicit compatibility surfaces",
 );
-assert.equal(generated.counts["ui-control"], 694, "inventory captures every shipping actionable UI instance, including finite mapped menus");
-assert.equal(generated.counts["ui-debug-surface"], 606, "inventory captures every shipping concrete debug marker instance without deduplication");
+assert.equal(generated.counts["ui-control"], 696, "inventory captures every shipping actionable UI instance, including finite mapped menus");
+assert.equal(generated.counts["ui-debug-surface"], 611, "inventory captures every shipping concrete debug marker instance without deduplication");
 assert.deepEqual(generated.occurrenceAccounting.uiControls, {
-  candidates: 678,
+  candidates: 680,
   excludedNonActions: 23,
   finiteVariantInstances: 50,
-  inventoried: 694,
+  inventoried: 696,
 }, "event shields and statically non-addressable inputs must be excluded while finite mapped menus expand into concrete actions");
 assert.deepEqual(generated.occurrenceAccounting.uiDebugSurfaces, {
-  candidates: 558,
+  candidates: 563,
   finiteVariantInstances: 57,
-  inventoried: 606,
+  inventoried: 611,
 }, "every concrete debug marker instance must remain in the release ledger");
 assert.equal(
   new Set(generated.items.filter((item) => item.kind === "ui-control").map((item) => item.name)).size,
-  680,
+  682,
   "repeated source controls remain separate while finite menu instances use concrete names",
 );
 assert.equal(
   new Set(generated.items.filter((item) => item.kind === "ui-debug-surface").map((item) => item.name)).size,
-  599,
+  603,
   "repeated debug markers remain separate while finite menu instances use concrete names",
 );
 assert.equal(generated.copyDerivedInteractiveControls, 222, "copy-derived UI locators remain explicitly visible as brittle coverage");
@@ -232,7 +232,7 @@ assert(
 );
 assert.equal(
   promotedUiDebugSurfaces.length,
-  523,
+  528,
   "only UI debug surfaces with deterministic owned renderer state may enter the executable lane",
 );
 assert.deepEqual(
@@ -243,7 +243,7 @@ assert.deepEqual(
       return counts;
     }, {}),
   {
-    "src/components/TaskManager.tsx": 64,
+    "src/components/TaskManager.tsx": 69,
     "src/components/TaskRunHistory.tsx": 7,
   },
   "all Task Manager and run-history markers must retain exact owned renderer fixtures",
@@ -337,7 +337,7 @@ assert.deepEqual(
     method,
     routeItems.filter((item) => item.name.startsWith(`${method} `)).length,
   ])),
-  { GET: 91, POST: 148, DELETE: 8 },
+  { GET: 91, POST: 149, DELETE: 8 },
   "Debug API inventory method counts must match the concrete router registry",
 );
 const inventoriedDebugRoutes = new Set(routeItems.map((item) => item.name));
@@ -411,13 +411,13 @@ const liveDriverPlan = verifyFinalSurfaceDriverPlan(
 );
 assert.equal(liveDriverPlan.status, "ready", "every current 0.3.6 surface must have an executable installed-driver assignment");
 assert.equal(liveDriverPlan.counts.inventoryItems, generated.items.length);
-assert.equal(liveDriverPlan.counts.inventoryCells, 5_690);
+assert.equal(liveDriverPlan.counts.inventoryCells, 5_717);
 assert.equal(
   liveDriverPlan.counts.ready,
-  5_690,
+  5_717,
   "every current surface-platform cell must have an executable driver before the frozen release-candidate matrix runs",
 );
-assert.equal(liveDriverPlan.counts.assigned, 5_690, "every exact surface-platform cell must have an explicit ready or building driver lane");
+assert.equal(liveDriverPlan.counts.assigned, 5_717, "every exact surface-platform cell must have an explicit ready or building driver lane");
 assert.equal(liveDriverPlan.counts.missing, 0, "the implementation backlog must be typed rather than hidden as missing coverage");
 const finalSurfaceGateDoc = readFileSync(resolve(root, "release", "FINAL_SURFACE_GATE.md"), "utf8");
 assert.deepEqual(
@@ -786,7 +786,7 @@ assert(
 const executableUiDebugAssignments = loadedLiveDriverPlan.assignments.filter(
   (assignment) => assignment.driverId === "ui-debug-surface-installed",
 );
-assert.equal(executableUiDebugAssignments.length, 522);
+assert.equal(executableUiDebugAssignments.length, 527);
 assert(
   executableUiDebugAssignments.every((assignment) => assignment.expectedEffect.includes("no control activation is claimed")),
   "debug addressability assignments must never claim the corresponding control's semantic action",
@@ -964,7 +964,7 @@ const debugApiDriverSource = readFileSync(
 );
 assert(
   loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "debug-api-route-installed").length === 231
-    && liveDriverPlan.counts.readyByKind["debug-api-route"] === 741
+    && liveDriverPlan.counts.readyByKind["debug-api-route"] === 744
     && debugApiDriverSource.includes("prepareDebugApiSessionFixture(request)")
     && debugApiDriverSource.includes("cleanupDebugApiSessionFixture(sessionFixture)")
     && debugApiDriverSource.includes("prepareDebugApiFilesFixture(request)")
@@ -995,14 +995,14 @@ assert(
   loadedLiveDriverPlan.drivers.find((driver) => driver.id === "debug-api-task-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "debug-api-task-installed")?.platforms["linux-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "debug-api-task-installed")?.platforms["macos-installed"] === "ready"
-    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "debug-api-task-installed").length === 16
+    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "debug-api-task-installed").length === 17
     && taskDebugApiDriverSource.includes("assertIsolatedTaskReleaseProfile(request)")
     && taskDebugApiDriverSource.includes("verifyTaskProviderCatalogue")
     && taskDebugApiDriverSource.includes("task_run_not_available")
     && taskDebugApiDriverSource.includes("soft-deleted exactly the owned Task")
     && !taskDebugApiDriverSource.includes("start_provider_session")
     && !taskDebugApiDriverSource.includes("initiate_and_send_prompt"),
-  "all sixteen Task Debug API routes must exercise one isolated paused definition, exact state and receipt projections, pre-dispatch refusals, and truthful soft-delete cleanup on every shipped platform cell",
+  "all seventeen Task Debug API routes must exercise approved agent creation, one isolated paused definition, exact state and receipt projections, pre-dispatch refusals, and truthful soft-delete cleanup on every shipped platform cell",
 );
 const tauriCommandDriverSource = readFileSync(
   resolve(root, "scripts", "release-drivers", "tauri-command-installed.ts"),
@@ -1117,8 +1117,8 @@ assert(
   loadedLiveDriverPlan.drivers.find((driver) => driver.id === "host-mcp-tool-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "host-mcp-tool-installed")?.platforms["linux-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "host-mcp-tool-installed")?.platforms["macos-installed"] === "ready"
-    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "host-mcp-tool-installed").length === 105
-    && liveDriverPlan.counts.readyByKind["host-mcp-tool"] === 321
+    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "host-mcp-tool-installed").length === 106
+    && liveDriverPlan.counts.readyByKind["host-mcp-tool"] === 324
     && loadedLiveDriverPlan.assignments.filter((assignment) => (
       assignment.fixtureId === "host-mcp:installed-vault-e2e-browser-lifecycle"
       && assignment.cleanupId === "host-mcp:reset-isolated-vault-close-owned-browser-task-and-restore-autonomy"
@@ -1131,7 +1131,7 @@ assert(
     && hostMcpVaultLifecycleSource.includes("/vault/e2e/reset")
     && hostMcpVaultLifecycleSource.includes("secretPresent !== true")
     && !hostMcpDriverSource.includes("fixture-private"),
-  "one hundred five bounded Host MCP reads, writes, Browser, Preview, and isolated Vault effects, metadata operations, exact artifact lifecycles, and pre-effect safety refusals must bind the exact candidate, prove all compact gateways and searchable hidden tools, use authenticated tools/call, avoid user or external mutation, and clean owned fixtures on all platforms",
+  "one hundred six bounded Host MCP reads, writes, Browser, Preview, Tasks, and isolated Vault effects, metadata operations, exact artifact lifecycles, and pre-effect safety refusals must bind the exact candidate, prove all compact gateways and searchable hidden tools, use authenticated tools/call, avoid user or external mutation, and clean owned fixtures on all platforms",
 );
 assert(
   loadedLiveDriverPlan.drivers.find((driver) => driver.id === "palette-action-installed")?.platforms["windows-installed"] === "ready"
@@ -1827,7 +1827,7 @@ assert(
         && assignment.oracleId === "ui:activation:owned-app-screenshot-attached"
         && assignment.cleanupId === "ui:remove-exact-screenshot-attachment-delete-owned-png-restore-view"
     )).length === 2
-    && liveDriverPlan.counts.readyByKind["ui-control"] === 2_078
+    && liveDriverPlan.counts.readyByKind["ui-control"] === 2_084
     && uiControlDriverSource.includes('invocationTransport: "native-installed-input"')
     && uiControlDriverSource.includes("createReleaseSurfaceInstalledInputSession")
     && uiControlDriverSource.includes("clickReleaseSurfaceWebDriverElement")

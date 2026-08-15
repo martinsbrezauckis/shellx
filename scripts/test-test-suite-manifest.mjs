@@ -10,7 +10,7 @@ const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 assert.equal(pkg.scripts.pretest, "node scripts/run-test-suite.mjs pretest");
 assert.equal(pkg.scripts.test, "node scripts/run-test-suite.mjs test");
 assert.equal(TEST_SUITES.pretest.length, 80);
-assert.equal(TEST_SUITES.test.length, 135);
+assert.equal(TEST_SUITES.test.length, 136);
 assert.deepEqual(
   testCommandInvocation(["node", "scripts/example.mjs", "--check"]),
   { executable: process.execPath, args: ["scripts/example.mjs", "--check"] },
@@ -74,6 +74,7 @@ assert(
 for (const taskContract of [
   "test-task-provider-catalog.ts",
   "test-tasks-debug-api.ts",
+  "test-task-agent-management.ts",
   "test-task-manager-contract.ts",
   "test-task-manager-app-adapter.ts",
   "test-task-manager-draft-hydration.ts",

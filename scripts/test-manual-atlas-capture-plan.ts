@@ -28,6 +28,15 @@ for (const panel of ["chat", "requests", "actions", "evidence", "errors"]) {
     `Browser ${panel} atlas state must use a real renderer click instead of a deduplicated persistent patch`,
   );
 }
+for (const id of ["task-manager-schedule", "task-manager-providers"]) {
+  const entry = MANUAL_ATLAS_CAPTURE_PLAN.find((candidate) => candidate.id === id);
+  assert(entry, `${id} atlas state must exist`);
+  assert(
+    entry.steps.some((step) => step.kind === "click"
+      && step.selector === "[data-debug-id='task-manager-edit-details']"),
+    `${id} must deliberately leave the saved-task review before capturing editable controls`,
+  );
+}
 assert(captureSource.includes('requiredArg(args, "--app-demo-cwd")'));
 assert(captureSource.includes('optionalArg(args, "--app-demo-cwd-launch")'));
 assert(captureSource.includes('endsWith("/shellx-manual-demo")'));

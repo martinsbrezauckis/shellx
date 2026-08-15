@@ -529,8 +529,20 @@ Current high-use endpoints:
   exact-active-attempt cancellation, and CAS-bound acknowledgement. Use these
   mutating routes only when the operator explicitly asks for the corresponding
   Task action. A `202 queued` response proves durable acceptance, not provider
-  start or completion. First-class Tasks are deliberately absent from Host MCP,
-  so do not turn an ordinary agent request into a saved or recurring Task.
+  start or completion.
+- `task_manage` — create a complete one-time or recurring Task from the current
+  ShellX conversation. Use it only when the operator's current words explicitly
+  ask to create, schedule, save, or create-and-run the Task. Phrases such as
+  “set this up as a task and run it” are approval; do not add a second approval
+  dialog. Ordinary discussion, brainstorming, or a request to explain how Tasks
+  work is not approval. If the schedule or intended outcome is materially
+  ambiguous, ask one short question first. ShellX derives the exact current
+  environment, working folder, permissions, tool exposure, and fresh worker
+  availability; do not invent those fields. Omit `workers` to use the current
+  agent when ready, or provide an ordered list of verified backup agents. After
+  success, tell the operator that the header Tasks panel is the review and
+  results surface. `createdRunNotQueued` means the definition was saved but its
+  immediate run was not queued; never claim that it started.
 - Durable Task attachment import is also absent from Debug API and Host MCP.
   Only the operator's desktop `Create task` action may copy visible composer
   files, mint target-bound attachment IDs, and record persistence receipts.

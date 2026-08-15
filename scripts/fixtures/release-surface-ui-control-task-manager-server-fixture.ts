@@ -18,6 +18,7 @@ let projectFilter = "all";
 let environmentFilter = "all";
 let providerFilter = "all";
 let selected = true;
+let editing = false;
 let enabled = true;
 let attention = true;
 let attachment = true;
@@ -186,6 +187,7 @@ function resetFixture(): void {
   environmentFilter = "all";
   providerFilter = "all";
   selected = true;
+  editing = false;
   enabled = true;
   attention = true;
   attachment = true;
@@ -234,21 +236,23 @@ function displayed(selector: string): boolean {
   if ([
     "[data-debug-id='task-manager-search']", "[data-debug-id='task-manager-project-filter']",
     "[data-debug-id='task-manager-environment-filter']", "[data-debug-id='task-manager-provider-filter']",
-    "[data-debug-id='task-manager-schedule-advanced']",
     "[data-debug-id='task-manager-close']",
   ].includes(selector)) return true;
   if (!selected || deleted) return false;
-  if (selector === "[data-debug-id='task-manager-attachment-binding']" || selector === "[data-debug-id='task-manager-remove-attachment']") return attachment;
-  if (selector === "[data-debug-id='task-manager-workflow-binding']" || selector === "[data-debug-id='task-manager-remove-workflow']") return workflow;
-  if (["[data-debug-id='task-manager-vault-binding']", "[data-debug-id='task-manager-vault-grant']", "[data-debug-id='task-manager-remove-vault-requirement']"].includes(selector)) return vaultRequirement;
+  if (selector === "[data-debug-id='task-manager-review']" || selector === "[data-debug-id='task-manager-edit-details']") return !editing;
+  if (selector === "[data-debug-id='task-manager-review-details']") return editing;
+  if (selector === "[data-debug-id='task-manager-attachment-binding']" || selector === "[data-debug-id='task-manager-remove-attachment']") return editing && attachment;
+  if (selector === "[data-debug-id='task-manager-workflow-binding']" || selector === "[data-debug-id='task-manager-remove-workflow']") return editing && workflow;
+  if (["[data-debug-id='task-manager-vault-binding']", "[data-debug-id='task-manager-vault-grant']", "[data-debug-id='task-manager-remove-vault-requirement']"].includes(selector)) return editing && vaultRequirement;
   if (selector === "[data-debug-id='task-manager-attention-item']" || selector === "[data-debug-id='task-manager-acknowledge-attention']") return attention;
-  if (selector === "[data-debug-id='task-manager-trigger-once']") return triggerKind === "once";
-  if (selector === "[data-debug-id='task-manager-trigger-time']") return ["daily", "weekdays", "weekly", "monthly"].includes(triggerKind);
-  if (selector === "[data-debug-id='task-manager-trigger-month-day']") return triggerKind === "monthly";
-  if (selector === "[data-debug-id='task-manager-weekday-tuesday']") return triggerKind === "weekly";
-  if (selector === "[data-debug-id='task-manager-model-codex-cli']") return activeProviders.includes("codex-cli");
-  if (selector === "[data-debug-id='task-manager-model-grok']") return activeProviders.includes("grok");
+  if (selector === "[data-debug-id='task-manager-trigger-once']") return editing && triggerKind === "once";
+  if (selector === "[data-debug-id='task-manager-trigger-time']") return editing && ["daily", "weekdays", "weekly", "monthly"].includes(triggerKind);
+  if (selector === "[data-debug-id='task-manager-trigger-month-day']") return editing && triggerKind === "monthly";
+  if (selector === "[data-debug-id='task-manager-weekday-tuesday']") return editing && triggerKind === "weekly";
+  if (selector === "[data-debug-id='task-manager-model-codex-cli']") return editing && activeProviders.includes("codex-cli");
+  if (selector === "[data-debug-id='task-manager-model-grok']") return editing && activeProviders.includes("grok");
   if (/^\[data-debug-id='task-manager-provider-(grok|codex-cli)-(toggle|move-up|move-down|remove)'\]$/.test(selector)) {
+    if (!editing) return false;
     if (selector.endsWith("-toggle']")) return true;
     const provider = selector.includes("codex-cli") ? "codex-cli" : "grok";
     return activeProviders.includes(provider);
@@ -256,13 +260,15 @@ function displayed(selector: string): boolean {
   if (selector === "[data-debug-id='task-manager-cancel-run-run-fixture-running']") return running;
   if (selector === "[data-debug-id='task-manager-open-run-run-fixture-completed']") return true;
   if (selector === "[data-debug-id='task-manager-run-run-fixture-manual']") return manualRun;
+  if (selector === "[data-debug-id='task-manager-action-save-changes']") return editing;
   if (selector === "[data-debug-id='task-manager-action-confirm-delete']") return deleteArmed;
   if (selector === "[data-debug-id='task-manager-action-delete']") return !deleteArmed;
   if (selector.startsWith("[data-debug-id='task-manager-action-")) return true;
+  if (!editing) return false;
   return [
     "[data-debug-id='task-manager-name']", "[data-debug-id='task-manager-instruction']",
     "[data-debug-id='task-manager-success-criteria']", "[data-debug-id='task-manager-enabled']",
-    "[data-debug-id='task-manager-open-vault']", "[data-debug-id='task-manager-trigger-kind']",
+    "[data-debug-id='task-manager-open-vault']", "[data-debug-id='task-manager-trigger-kind']", "[data-debug-id='task-manager-schedule-advanced']",
     "[data-debug-id='task-manager-timezone']", "[data-debug-id='task-manager-missed-run-policy']",
     "[data-debug-id='task-manager-max-run-seconds']", "[data-debug-id='task-manager-notification-policy']",
     "[data-debug-id='task-manager-environment']", "[data-debug-id='task-manager-recheck']",
@@ -278,6 +284,8 @@ function click(selector: string): void {
     focusedSelector = "[data-debug-id='task-manager-close']";
   }
   else if (selector === "[data-debug-id='task-manager-definition-task-fixture-001']") selected = true;
+  else if (selector === "[data-debug-id='task-manager-edit-details']") editing = true;
+  else if (selector === "[data-debug-id='task-manager-review-details']") editing = false;
   else if (selector === "[data-debug-id='task-manager-enabled']") enabled = !enabled;
   else if (selector === "[data-debug-id='task-manager-remove-attachment']") attachment = false;
   else if (selector === "[data-debug-id='task-manager-remove-workflow']") workflow = false;
@@ -297,7 +305,7 @@ function click(selector: string): void {
   else if (selector === "[data-debug-id='task-manager-action-pause']") paused = true;
   else if (selector === "[data-debug-id='task-manager-action-resume']") paused = false;
   else if (selector === "[data-debug-id='task-manager-action-run-now']") manualRun = true;
-  else if (selector === "[data-debug-id='task-manager-action-save-revision']") feedbackAction = true;
+  else if (selector === "[data-debug-id='task-manager-action-save-changes']") { feedbackAction = true; editing = false; }
   else if (selector === "[data-debug-id='task-manager-open-vault']") vaultOpen = true;
   else if (selector === "[data-debug-id='task-manager-close']" || selector === "[data-debug-id='task-manager-backdrop']") {
     managerOpen = false;
@@ -318,11 +326,11 @@ function applyKeyChord(keys: string[]): void {
   const reverse = keys.some((key) => ["\uE008", "Shift", "shift"].includes(key));
   if (reverse) {
     focusedSelector = focusedSelector === "[data-debug-id='task-manager-close']"
-      ? "[data-debug-id='task-manager-action-save-revision']"
+      ? "[data-debug-id='task-manager-action-run-now']"
       : "[data-debug-id='task-manager-close']";
     return;
   }
-  focusedSelector = focusedSelector === "[data-debug-id='task-manager-action-save-revision']"
+  focusedSelector = focusedSelector === "[data-debug-id='task-manager-action-run-now']"
     ? "[data-debug-id='task-manager-close']"
     : focusedSelector === "[data-debug-id='task-manager-close']"
       ? "[data-debug-id='task-manager-search']"
@@ -384,7 +392,7 @@ function selectSelector(selector: string): boolean {
 function setSelectValue(selector: string, input: string): void {
   const mappings: Record<string, Record<string, string>> = {
     "[data-debug-id='task-manager-project-filter']": { ShellX: "ShellX" },
-    "[data-debug-id='task-manager-environment-filter']": { "Local linux": "local" },
+    "[data-debug-id='task-manager-environment-filter']": { "This computer": "local" },
     "[data-debug-id='task-manager-provider-filter']": { Grok: "grok" },
     "[data-debug-id='task-manager-vault-grant']": { "Select active grant…": "", "Browser fill · https://example.invalid · vault-grant-fixture": "vault-grant-fixture" },
     "[data-debug-id='task-manager-trigger-kind']": { Once: "once", Daily: "daily", Weekly: "weekly", Monthly: "monthly" },

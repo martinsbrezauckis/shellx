@@ -161,7 +161,7 @@ gate. This is by design: stdio is a parent-process relationship.
 
 ### 3. Host MCP stdio + tool surface (`host_mcp.rs`)
 
-The callable catalog contains 107 host-MCP surfaces in the current release
+The callable catalog contains 108 host-MCP surfaces in the current release
 inventory. Families include `fs_*`, Browser read/action/workflow tools, Vault
 grants and mediated secret operations, build/goal orchestration, provider
 handoffs, `net_fetch`, vision, voice, X search, `mem_*`, `Agent` fan-out,
@@ -266,6 +266,15 @@ task, and durable workflow bookmark before Task Manager opens against the exact
 originating ShellX tab. It never falls back to the active tab, auto-selects a
 provider, saves a definition, or enables a schedule. Task Manager projects only
 active all-agent mediated Vault grant metadata for the user to bind.
+Separately, an agent launched inside ShellX can create a plain Task from explicit
+natural-language authorization through the write-class `task_manage` Host tool.
+The authenticated caller tab, not agent-supplied target data, selects the saved
+connection, working folder, permissions and tool exposure. A fresh target-bound
+provider scan authorizes the ordered workers before the definition is written.
+The header Tasks panel then becomes the compact review, control and receipt
+surface; the full definition form stays behind Edit details. This bridge never
+imports attachments, binds Vault grants or reuses a Browser Teach workflow by
+guessing their identities.
 For a terminal revision that binds a reviewed Browser workflow, the same
 deterministic provider-tab identity scopes post-run evidence collection. ShellX
 exports bounded Flight Recorder artifacts for only those Browser tasks and
@@ -296,8 +305,9 @@ reviewable. A recovery receipt remains conservative about completeness.
 Its catalogue output deliberately omits binary paths, raw probe diagnostics,
 provider-controlled version text, and authentication material; it retains only
 one strictly isolated semantic-version token when the checked provider output
-contains one. Tasks remain outside Host MCP and reuse the normal provider
-sessions rather than introducing a second provider runtime.
+contains one. Host MCP exposes only the narrow write-class `task_manage`
+creation bridge; execution still reuses the normal provider sessions rather
+than introducing a second provider runtime.
 
 Provider sessions default to ShellX Full Auto, which maps to native provider
 bypass flags (`bypassPermissions`, `--dangerously-bypass-approvals-and-sandbox`,

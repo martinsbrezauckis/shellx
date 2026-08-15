@@ -184,6 +184,7 @@ export const TEST_SUITES = Object.freeze({
     ["tsx","scripts/test-task-provider-catalog.ts"],
     ["tsx","scripts/test-task-runtime-app-wiring.ts"],
     ["tsx","scripts/test-tasks-debug-api.ts"],
+    ["tsx","scripts/test-task-agent-management.ts"],
     ["tsx","scripts/test-task-manager-contract.ts"],
     ["tsx","scripts/test-task-manager-app-adapter.ts"],
     ["tsx","scripts/test-task-manager-draft-hydration.ts"],
