@@ -273,7 +273,15 @@ try {
 async function waitForExit(processHandle: ChildProcess): Promise<void> {
   if (processHandle.exitCode !== null || processHandle.signalCode !== null) return;
   await new Promise<void>((resolveExit, reject) => {
-    const timeout = setTimeout(() => reject(new Error("owned fixture process did not exit")), 3_000);
+    // Windows hosted runners can deliver the ChildProcess exit event several
+    // seconds after the identity-bound Stop-Process call and the native
+    // process-count verification have already completed. Keep waiting for the
+    // real event; never infer exit from the cleanup receipt alone.
+    const timeoutMs = process.platform === "win32" ? 15_000 : 5_000;
+    const timeout = setTimeout(
+      () => reject(new Error(`owned fixture process did not exit within ${timeoutMs}ms`)),
+      timeoutMs,
+    );
     processHandle.once("exit", () => {
       clearTimeout(timeout);
       resolveExit();
