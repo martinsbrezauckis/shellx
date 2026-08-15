@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "2a9682daa7ac3d706a2d0e5a3aa23954deaf01d6",
-    "tree": "d86c0088aac9ee76982ce47f7c598151316c1121"
+    "commit": "1048ee476dcdc69528ea55952c1672bf3b279d2b",
+    "tree": "eafaeb750953486066d17a053d8866eebcc18b46"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -19,19 +19,19 @@
     "selfExcludedFromEntries": true
   },
   "classification": {
-    "trackedFileCount": 1447,
+    "trackedFileCount": 1448,
     "includedTrackedFileCount": 1411,
-    "excludedTrackedFileCount": 36
+    "excludedTrackedFileCount": 37
   },
   "payload": {
     "fileCount": 1412,
-    "totalBytes": 38357050,
-    "digest": "c04615a3bbd2451fdb4ec7eed52e494f2a40a15e1d02a0d5308b66c8e941f1b0"
+    "totalBytes": 38360342,
+    "digest": "dbb814f2f088eaed5cb928372c7565db00f27d8a2fce20827c82b2c05268544a"
   },
   "exclusions": {
-    "fileCount": 36,
+    "fileCount": 37,
     "byCategory": {
-      "private-working-documentation": 36
+      "private-working-documentation": 37
     }
   },
   "entries": [
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "adf665936876b8e54c4dab2ee64f5db128f90ecb97646cfbd7a2b3f20c6b7b01",
+      "sha256": "946d315b29e2cc48e705f64db9be3f93bb3a040c572cd9a14e8e3175d21cad95",
       "bytes": 7975,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -676,7 +676,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "9aa6474d94acb2bcf33aa18c738857293840a501802d476c50eda8409c836224",
+      "sha256": "0c6e3cfb48136345daa4df5c97ad0735703d380973f5bcce8bf8c63dd2cc2712",
       "bytes": 54418,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "35a98f34d9ca10e60d1856be5ff20cc4a6d18552b273df78e244724add989924",
+      "sha256": "262e2cc48560f92b92dc4d50c0861c948679f5727af59faaabedb46f5aa636e4",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -9619,8 +9619,8 @@
     {
       "path": "src-tauri/src/shellx_browser_task_control.rs",
       "mode": "100644",
-      "sha256": "e30aed6f59a068f5051fe46ce33d00797932a8a23a19eb4989e2712f18428860",
-      "bytes": 32294,
+      "sha256": "ef71576dc128ea3aa05984babedbd5d8b8a42ca47630cbc3899855b609925e14",
+      "bytes": 34545,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -10675,8 +10675,8 @@
     {
       "path": "src-tauri/tests/shellx_browser.rs",
       "mode": "100644",
-      "sha256": "3902b81dd45d51095cee2eaced84e40a1df446932dbb05c580592b94bc1d8804",
-      "bytes": 96289,
+      "sha256": "7dd62c01bebb79f7b6fa6be54c315d6ac65d0c375afd4d38f55cfabc21410c91",
+      "bytes": 97330,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",

@@ -8,11 +8,12 @@ use app_lib::shellx_browser::{
     BrowserSessionGrantApplyRequest, BrowserSessionGrantRequest, BrowserSessionGrantResolveRequest,
     BrowserShieldUpdateRequest, BrowserSiteShieldOverrideRequest, BrowserSiteShieldRemoveRequest,
     BrowserTabDelegateRequest, BrowserTabHeartbeatRequest, BrowserTabLockRequest,
-    BrowserTabOpenRequest, BrowserTabUnlockRequest, BrowserTaskAutonomyUpdateRequest,
-    BrowserTaskControlRequest, BrowserTransferApprovalRequest, BrowserTransferCompleteRequest,
-    BrowserUploadRequest, BrowserVaultCredentialRequest, ShellxBrowserRegistry,
-    StartBrowserTaskRequest, BROWSER_ENGINE_WEBVIEW_LABEL,
+    BrowserTabOpenRequest, BrowserTabOwnerKind, BrowserTabUnlockRequest,
+    BrowserTaskAutonomyUpdateRequest, BrowserTaskControlRequest, BrowserTransferApprovalRequest,
+    BrowserTransferCompleteRequest, BrowserUploadRequest, BrowserVaultCredentialRequest,
+    ShellxBrowserRegistry, StartBrowserTaskRequest, BROWSER_ENGINE_WEBVIEW_LABEL,
 };
+use sha2::{Digest, Sha256};
 
 #[test]
 fn browser_registry_starts_with_small_owned_profile_set() {
@@ -1399,10 +1400,16 @@ fn browser_history_scope_fixture() -> ShellxBrowserRegistry {
             ..StartBrowserTaskRequest::default()
         })
         .expect("Agent Work task should add Agent history");
+    let review_fingerprint = browser_handoff_review_fingerprint(
+        &registry,
+        &personal_tab.tab.browser_tab_id,
+        &agent_task.task_id,
+    );
     let delegated = registry
         .delegate_tab_to_agent(BrowserTabDelegateRequest {
             browser_tab_id: personal_tab.tab.browser_tab_id,
             task_id: agent_task.task_id.clone(),
+            review_fingerprint,
             reason: Some("history scope fixture".to_string()),
             operator_approved: true,
             ..BrowserTabDelegateRequest::default()
@@ -1420,6 +1427,69 @@ fn browser_history_scope_fixture() -> ShellxBrowserRegistry {
         .expect("Delegated Personal navigation should add task-owned Agent history");
     assert_eq!(registry.state().history.len(), 3);
     registry
+}
+
+fn browser_handoff_review_fingerprint(
+    registry: &ShellxBrowserRegistry,
+    browser_tab_id: &str,
+    task_id: &str,
+) -> String {
+    let state = registry.state();
+    let tab = state
+        .tabs
+        .iter()
+        .find(|tab| tab.browser_tab_id == browser_tab_id)
+        .expect("History fixture Browser tab should remain live");
+    let profile = state
+        .profiles
+        .iter()
+        .find(|profile| profile.profile_id == tab.profile_id)
+        .expect("History fixture Browser profile should remain live");
+    let task = state
+        .tasks
+        .iter()
+        .find(|task| task.task_id == task_id)
+        .expect("History fixture Browser task should remain live");
+    let owner_kind = match &tab.owner_kind {
+        BrowserTabOwnerKind::User => "user",
+        BrowserTabOwnerKind::Agent => "agent",
+        BrowserTabOwnerKind::DelegatedToAgent => "delegatedToAgent",
+    };
+    let canonical = serde_json::json!([
+        "shellx.browser-tab-handoff-review.v1",
+        tab.browser_tab_id,
+        tab.engine_id,
+        tab.task_id,
+        tab.profile_id,
+        tab.url,
+        tab.storage_root,
+        owner_kind,
+        tab.delegated_task_id,
+        tab.delegated_grant_id,
+        tab.lock.as_ref().map(|lock| lock.lease_id.as_str()),
+        tab.lock.as_ref().map(|lock| lock.owner_agent_id.as_str()),
+        tab.lock.as_ref().map(|lock| lock.owner_run_id.as_str()),
+        tab.lock.as_ref().map(|lock| lock.scope.as_str()),
+        tab.updated_at_ms,
+        profile.profile_id,
+        profile.label,
+        profile.description,
+        profile.agent_default,
+        profile.cookies_enabled,
+        profile.persistent,
+        profile.storage_root,
+        task.task_id,
+        task.profile_id,
+        task.owner_actor_id,
+        task.owner_surface,
+        task.owner_session_id,
+        task.goal,
+        task.status,
+    ]);
+    format!(
+        "sha256:{:x}",
+        Sha256::digest(canonical.to_string().as_bytes())
+    )
 }
 
 #[test]
@@ -2014,58 +2084,30 @@ fn browser_task_takeover_requires_operator_authority_and_uses_surface_actor() {
             ..StartBrowserTaskRequest::default()
         })
         .expect("task should start");
-    assert_eq!(task.owner_actor_id, "shellxDebugApiAgent");
-    assert_eq!(task.owner_surface, "debugApiBearer");
+    assert_eq!(task.owner_actor_id, "shellxBrowserOperator");
+    assert_eq!(task.owner_surface, "tauriOperator");
 
-    let denied_takeover = registry
+    let takeover = registry
         .control_task(BrowserTaskControlRequest {
             task_id: Some(task.task_id.clone()),
             action: "userTakeover".to_string(),
             requested_by: Some("forged-operator".to_string()),
             ..BrowserTaskControlRequest::default()
         })
-        .expect_err("agent surface cannot claim user takeover");
-    assert!(denied_takeover.contains("browser_task_operator_control_required"));
-
-    let takeover = registry
-        .control_task_from_operator(BrowserTaskControlRequest {
-            task_id: Some(task.task_id.clone()),
-            action: "userTakeover".to_string(),
-            requested_by: Some("forged-actor".to_string()),
-            ..BrowserTaskControlRequest::default()
-        })
-        .expect("trusted operator can take over");
+        .expect("direct registry control uses trusted operator authority");
     assert_eq!(takeover.status, "userTakeover");
     assert_eq!(
         takeover.receipt.evidence["requestedBy"].as_str(),
         Some("shellxBrowserOperator")
     );
 
-    let denied_resume = registry
-        .control_task(BrowserTaskControlRequest {
-            task_id: Some(task.task_id.clone()),
-            action: "resume".to_string(),
-            ..BrowserTaskControlRequest::default()
-        })
-        .expect_err("agent surface cannot resume user takeover");
-    assert!(denied_resume.contains("browser_task_operator_control_required"));
-    let denied_finish = registry
-        .finish_task(
-            Some(task.task_id.clone()),
-            Some("completed".to_string()),
-            None,
-            Some("forged-operator".to_string()),
-        )
-        .expect_err("agent surface cannot finish user takeover");
-    assert!(denied_finish.contains("browser_task_operator_control_required"));
-
     let resumed = registry
-        .control_task_from_operator(BrowserTaskControlRequest {
+        .control_task(BrowserTaskControlRequest {
             task_id: Some(task.task_id),
             action: "resume".to_string(),
             ..BrowserTaskControlRequest::default()
         })
-        .expect("trusted operator can return control to the agent");
+        .expect("trusted operator can return control to the task");
     assert_eq!(resumed.status, "running");
     assert_eq!(
         resumed.receipt.evidence["requestedBy"].as_str(),

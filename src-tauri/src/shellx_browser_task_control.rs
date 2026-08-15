@@ -437,6 +437,60 @@ mod tests {
     }
 
     #[test]
+    fn agent_session_cannot_claim_or_resume_user_takeover() {
+        let registry = ShellxBrowserRegistry::default();
+        let task = registry
+            .start_task_for_agent_session(
+                StartBrowserTaskRequest {
+                    goal: "Keep user takeover operator-owned".to_string(),
+                    ..StartBrowserTaskRequest::default()
+                },
+                Some("mcp-tab-a"),
+            )
+            .expect("caller-bound task starts");
+
+        let denied_takeover = registry
+            .control_task_for_agent_session(
+                BrowserTaskControlRequest {
+                    task_id: Some(task.task_id.clone()),
+                    action: "userTakeover".to_string(),
+                    ..BrowserTaskControlRequest::default()
+                },
+                Some("mcp-tab-a"),
+            )
+            .expect_err("owning agent session cannot claim user takeover authority");
+        assert!(denied_takeover.contains(BROWSER_TASK_OPERATOR_CONTROL_REQUIRED));
+
+        registry
+            .control_task_from_operator(BrowserTaskControlRequest {
+                task_id: Some(task.task_id.clone()),
+                action: "userTakeover".to_string(),
+                ..BrowserTaskControlRequest::default()
+            })
+            .expect("trusted operator can take over");
+        let denied_resume = registry
+            .control_task_for_agent_session(
+                BrowserTaskControlRequest {
+                    task_id: Some(task.task_id.clone()),
+                    action: "resume".to_string(),
+                    ..BrowserTaskControlRequest::default()
+                },
+                Some("mcp-tab-a"),
+            )
+            .expect_err("agent session cannot resume user takeover");
+        assert!(denied_resume.contains(BROWSER_TASK_OPERATOR_CONTROL_REQUIRED));
+        let denied_finish = registry
+            .finish_task_for_agent_session(
+                Some(task.task_id),
+                Some("completed".to_string()),
+                None,
+                Some("mcp-tab-a"),
+            )
+            .expect_err("agent session cannot finish user takeover");
+        assert!(denied_finish.contains(BROWSER_TASK_OPERATOR_CONTROL_REQUIRED));
+    }
+
+    #[test]
     fn ownerless_agent_tasks_are_retired_without_weakening_operator_authority() {
         let registry = ShellxBrowserRegistry::default();
         let missing_owner = registry
