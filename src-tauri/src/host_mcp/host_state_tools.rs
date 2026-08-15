@@ -15,6 +15,7 @@ pub(super) async fn tool_capabilities_summary(
             "Native provider/ACP file tools operate in the selected session cwd; ShellX host fs_* tools always operate on the ShellX parent host filesystem, even when the provider tab is WSL/SSH.",
             "Use model_instruction_cards before named provider/media handoffs such as Grok Imagine, Codex CLI, Claude Code, or Antigravity.",
             "Use provider_adapters and provider_sessions for provider CLI preflight and resume state.",
+            "When the user explicitly asks to create, schedule, or create-and-run a Task, search for task_manage and call it through permission-gated host_act. Ordinary Task discussion is not authorization.",
             "Use search_tool with a targeted query for an exact Host action schema, then call host_read or permission-gated host_act with those fields under params.",
             "Avoid full_inventory as routine discovery; it is large and Grok may store it as a session artifact."
         ],
@@ -45,6 +46,7 @@ pub(super) async fn tool_capabilities_summary(
         "hostToolCategories": [
             { "category": "orientation", "tools": ["capabilities_summary", "search_tool", "host_read", "host_act"], "note": "Only the compact gateways are always advertised. Search the exact legacy action schema, then place its fields inside params." },
             { "category": "providers", "tools": ["provider_adapters", "provider_sessions", "send_prompt_to_session", "send_prompt_to_provider"], "note": "Provider CLI health/session state plus explicit user-approved handoff into Grok/ACP or provider CLI sessions on a connected target or the visible tab." },
+            { "category": "tasks", "tools": ["task_manage"], "note": "Explicit natural-language Task creation from the current ShellX conversation. ShellX derives the caller environment and permissions and verifies the ordered ready workers; the header Tasks panel reviews the saved definition and receipts." },
             { "category": "status", "tools": ["shellx_health", "session_tooling", "environment", "grok_environment", "event_log"], "note": "Use these for health, MCP/tool status, trace availability, and UI-visible audit events. Prefer environment; grok_environment is a compatibility alias." },
             { "category": "filesystem", "tools": ["fs_exists", "fs_stat", "fs_read", "fs_read_binary", "fs_write", "fs_append", "fs_copy", "fs_delete", "fs_list_dir", "fs_grep", "fs_watch", "fs_unwatch"], "note": "Discover the exact fs_* schema, then route reads through host_read and mutations through host_act. Host fs_* executes on the ShellX parent host filesystem. fs_read returns a 16 KiB page by default; continue from next_offset_bytes only when needed. Use native provider/ACP file tools for routine files in the active local/WSL/SSH cwd." },
             { "category": "process", "tools": ["process_list", "process_stats", "process_attach_stdout", "process_signal"] },

@@ -159,6 +159,19 @@ pub(crate) async fn resolve_task_attachment_target(
     resolved_target_from_preset(connection_id, &target.key, &preset, &target)
 }
 
+/// Resolve the exact saved/local connection authority used when a
+/// chat-authorized Task definition is first created. This performs no provider
+/// launch and reads no authentication material; the caller must still collect
+/// a fresh provider catalogue before persisting a definition.
+pub(crate) async fn resolve_task_definition_connection_preset(
+    connection_id: &str,
+) -> Result<ConnectionPreset, TaskRuntimeAuthorityError> {
+    let connection_id = normalized_connection_id(connection_id)?;
+    CanonicalTaskRuntimeAuthoritySource
+        .resolve_connection_preset(connection_id)
+        .await
+}
+
 struct CanonicalTaskRuntimeAuthoritySource;
 
 impl TaskRuntimeAuthoritySource for CanonicalTaskRuntimeAuthoritySource {

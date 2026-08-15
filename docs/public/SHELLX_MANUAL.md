@@ -85,27 +85,29 @@ Paste, drop, attach, or send files into a session, then review generated images 
 
 ## Tasks
 
-Turn a reviewed instruction into one-time or recurring agent work with exact environment checks, an ordered agent choice, and receipt-backed outcomes.
+Ask an agent to prepare one-time or recurring work, then review its exact environment, ordered agents, schedule, and receipt-backed outcomes.
 
 ### Create a task from chat
 
 <a id="shellx.tasks.create"></a>
 
-Create task opens Task Manager with the active session, target, project, folder, permissions, visible composer text, and durable attachment identities ready for review.
+Ask the current agent to create, schedule, or create and run a task. ShellX fills the definition from the conversation and uses the exact current environment and available agents.
 
-1. Prepare the exact instruction in the active chat composer, then select Create task from the action row beneath it.
-2. Review the imported session context and attachment identities in Task Manager.
-3. Choose providers and a schedule only in Task Manager, then save the immutable revision or select Run now.
+1. Say what should happen and when, for example: Set this up as a task every weekday at 09:00 and run it now.
+2. That explicit request authorizes the agent to save the Task; ShellX verifies the current environment and ordered agents before it writes anything.
+3. Open Tasks in the header to review the saved definition and results. Use Edit details only when you want to change the prepared values.
+4. Use Create task below the composer when the Task must carry reviewed attachments, a Browser workflow, or Vault requirements.
 
 ### Open Task Manager
 
 <a id="shellx.tasks.manager"></a>
 
-The header Tasks button opens one management workspace for definitions, schedules, provider ordering, run history, and attention.
+The header Tasks button opens a concise review panel for saved definitions, schedules, ordered agents, run history, and attention.
 
 1. Use the Tasks header button from any session.
-2. Filter definitions by attention, scheduled, paused, or recent state and select one row for its exact revision and run history.
-3. Use Save revision, Run now, Pause or Resume, Duplicate, Delete, Open run, and Cancel run only when the selected state enables that exact action.
+2. Filter definitions by attention, scheduled, paused, or recent state and select one row to review What, When, Agents, Where, Run time limit, permissions, notifications, and receipts.
+3. Use Run now, Pause or Resume, Duplicate, Delete, Open run, and Cancel run only when the selected state enables that exact action.
+4. Select Edit details when you need the full schedule, environment, or agent editor; otherwise the saved Task stays read-only.
 
 > Boundary: The Tasks right-rail tab remains the live process monitor. Task Manager is the definition and scheduling surface.
 
@@ -113,11 +115,12 @@ The header Tasks button opens one management workspace for definitions, schedule
 
 <a id="shellx.tasks.providers"></a>
 
-Task Manager checks Grok, Codex, Claude, and Antigravity on the selected computer or saved connection, then lets you choose their order.
+ShellX checks Grok, Codex, Claude, and Antigravity on the Task's computer or saved connection and shows the order it will try them.
 
 1. Select This computer or one of your named saved connections before choosing agents.
 2. Review each agent's current ready, unavailable, authentication-needed, or inconclusive status.
-3. Put ready agents in the order ShellX should try them. ShellX moves to the next only when the earlier agent proves the task never started; an uncertain start becomes attention instead of duplicate work.
+3. When asking an agent to create the Task, name any backup agents you want or let ShellX use the current ready agent.
+4. Use Edit details to change the order. ShellX moves to the next only when the earlier agent proves the task never started; an uncertain start becomes attention instead of duplicate work.
 
 ### Schedule one-time or recurring work
 
@@ -127,7 +130,7 @@ Choose manual, once, daily, weekdays, weekly, or monthly execution with a simple
 
 1. Choose Run now for an immediate manual occurrence or select a named schedule.
 2. Choose the date and time as you normally would on that computer; the summary stays in familiar local time.
-3. Open Advanced timing and notifications only when you need to keep another location's timezone, choose missed-run behavior, set a stop-after limit, or change notifications.
+3. Open Advanced timing and notifications only when you need to keep another location's timezone, choose missed-run behavior, change the per-run safety limit, or change notifications.
 4. Keep ShellX and the execution host available at the scheduled time; the foreground scheduler records missed, deferred, and attention states explicitly.
 
 ### Review runs and attention

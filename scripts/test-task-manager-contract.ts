@@ -55,7 +55,7 @@ assert.equal(providerEditorDisabledReason(
   { environmentKey: "remote-windows" },
   TASK_MANAGER_FIXTURE_DATA,
   TASK_MANAGER_FIXTURE_NOW_MS,
-), "These availability results belong to Local linux; recheck the selected environment.");
+), "These availability results belong to This computer; recheck the selected environment.");
 
 const staleData = {
   ...TASK_MANAGER_FIXTURE_DATA,

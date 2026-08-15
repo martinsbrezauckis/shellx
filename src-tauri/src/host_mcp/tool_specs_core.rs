@@ -76,6 +76,29 @@ pub(super) fn core_tool_specs() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "task_manage",
+            "description": "Create a complete first-class ShellX Task from the current conversation and optionally run it now. Use only when the user's current message explicitly asks to create, schedule, set up, or run a Task; that natural-language request is the approval, so do not demand a second confirmation dialog. ShellX derives the exact caller tab, environment, working folder, permissions, and fresh worker availability. Omit workers to use the current ready agent, or provide an ordered list to add backup workers. Ordinary discussion, brainstorming, or 'draft a task' is not approval to persist or run anything.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "action": { "type": "string", "enum": ["create", "createAndRun"], "description": "create saves/enables the Task for its schedule; createAndRun also queues one immediate run." },
+                    "userApproved": { "type": "boolean", "description": "Must be true only when the user's current conversational intent explicitly authorizes Task creation." },
+                    "name": { "type": "string", "description": "Concise user-facing Task name." },
+                    "instruction": { "type": "string", "description": "Complete self-contained work instruction for every run." },
+                    "successCriteria": { "type": "string", "description": "Optional observable success criteria." },
+                    "noChangeCriteria": { "type": "string", "description": "Optional condition under which a no-change result is correct." },
+                    "trigger": { "type": "object", "description": "Exact Task trigger: {kind:'manual'}, {kind:'once',atMs}, {kind:'daily'|'weekdays',at:{hour,minute}}, {kind:'weekly',weekdays:[...],at:{hour,minute}}, or {kind:'monthly',day,at:{hour,minute}}." },
+                    "timezone": { "type": "string", "description": "Optional IANA timezone such as Europe/Riga. Omit to use the ShellX computer's timezone." },
+                    "workers": { "type": "array", "maxItems": 4, "items": { "type": "string", "enum": ["grok", "codex-cli", "claude-code", "antigravity-cli"] }, "description": "Optional ordered worker list. ShellX uses the first ready worker and only falls back before any provider effect." },
+                    "maxRunMinutes": { "type": "integer", "minimum": 1, "maximum": 10080, "description": "Safety limit for one run, in minutes. Defaults to 10." },
+                    "missedRunPolicy": { "type": "string", "enum": ["skip", "runOnceWhenAvailable", "needsAttention"], "description": "What to do when ShellX was closed at a scheduled time. Defaults to skip." },
+                    "notificationPolicy": { "type": "string", "enum": ["none", "attentionOnly", "everyTerminalResult"], "description": "Notification preference. Defaults to attentionOnly." }
+                },
+                "required": ["action", "userApproved", "name", "instruction", "trigger"]
+            }
+        }),
+        json!({
             "name": "shellx_health",
             "description": "Check shellX debug API liveness. Use before debug API-backed evidence reads when shellX state tools look unavailable.",
             "inputSchema": { "type": "object", "properties": {} }

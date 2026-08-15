@@ -96,6 +96,7 @@ mod provider_handoff_cli;
 mod provider_handoff_grok;
 mod search_tools;
 mod session_tools;
+mod task_tools;
 mod tool_specs_core;
 mod tool_specs_extended;
 mod vault_tools;
@@ -179,6 +180,7 @@ use provider_handoff_cli::*;
 use provider_handoff_grok::*;
 use search_tools::*;
 use session_tools::*;
+use task_tools::*;
 use tool_specs_core::core_tool_specs;
 use tool_specs_extended::extended_tool_specs;
 use vault_tools::*;
@@ -392,6 +394,9 @@ pub(crate) const WRITE_CLASS_TOOLS: &[&str] = &[
     // Provider/session handoff can spawn or drive another agent process.
     "send_prompt_to_session",
     "send_prompt_to_provider",
+    // Natural-language Task creation persists a definition and may queue a
+    // provider run, but only after explicit current-conversation intent.
+    "task_manage",
     // Browser tools that mutate page state or write trace artifacts.
     "browser_act",
     // ShellX Cut does not yet publish read/mutation annotations in tools/list,
@@ -913,6 +918,7 @@ async fn handle_tools_call(
         "provider_sessions" => tool_provider_sessions(arguments, tab_id).await,
         "send_prompt_to_session" => tool_send_prompt_to_session(arguments, tab_id).await,
         "send_prompt_to_provider" => tool_send_prompt_to_provider(arguments, tab_id).await,
+        "task_manage" => tool_task_manage(arguments, browser_caller).await,
         "shellx_health" => tool_shellx_health().await,
         "session_tooling" => tool_session_tooling(arguments, tab_id).await,
         "environment" | "session_environment" => {
