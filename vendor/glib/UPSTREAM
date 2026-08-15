@@ -1,0 +1,18 @@
+Source: crates.io glib 0.18.5
+Repository: https://github.com/gtk-rs/gtk-rs-core
+Package SHA-256: 233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5
+
+ShellX patch: gtk-rs pull request #2009 backports the VariantStrIter::impl_get
+soundness fix from gtk-rs pull request #1343 to the 0.18 branch. The pointer
+passed to g_variant_get_child is mutable and is passed as &mut p, so the C
+out-parameter cannot mutate through an immutable Rust reference.
+
+Backport commit: ea720152f28e293ef4362ee844ee5cc499f32d2a
+Backport patch: https://github.com/gtk-rs/gtk-rs-core/pull/2009.patch
+
+All runtime library files other than src/variant_iter.rs are from the
+checksum-verified crates.io package. The license text has only its trailing
+blank line normalized for the repository whitespace gate. ShellX's release gate
+builds a temporary optimized consumer that executes every advisory-listed
+iterator method against this path dependency. The package keeps name glib and
+version 0.18.5 for GTK3/Tauri dependency compatibility.

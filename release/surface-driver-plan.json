@@ -1,7 +1,7 @@
 {
   "schema": "shellx/final-surface-driver-plan@2",
   "mode": "final-frozen-candidate",
-  "inventoryDigest": "dd12512b65f7e02f13056d85d6235595f46865e966e38da032563237fddcb259",
+  "inventoryDigest": "8b27f49df44b84655b357e9e2550fac2ee66bb7ff4bb541fd91a172e052c93ff",
   "releaseReady": true,
   "drivers": [
     {
@@ -258,6 +258,66 @@
       "id": "ui-control-tasks-panel-lifecycle-installed",
       "kind": "ui-control",
       "entrypoint": "scripts/release-drivers/ui-control-tasks-panel-lifecycle-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "ui-control-task-manager-installed",
+      "kind": "ui-control",
+      "entrypoint": "scripts/release-drivers/ui-control-task-manager-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "ui-control-task-entry-installed",
+      "kind": "ui-control",
+      "entrypoint": "scripts/release-drivers/ui-control-task-entry-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "ui-debug-task-entry-installed",
+      "kind": "ui-debug-surface",
+      "entrypoint": "scripts/release-drivers/ui-debug-task-entry-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "debug-api-task-installed",
+      "kind": "debug-api-route",
+      "entrypoint": "scripts/release-drivers/debug-api-task-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "tauri-command-task-installed",
+      "kind": "tauri-command",
+      "entrypoint": "scripts/release-drivers/tauri-command-task-installed.ts",
+      "platforms": {
+        "windows-installed": "ready",
+        "macos-installed": "ready",
+        "linux-installed": "ready"
+      }
+    },
+    {
+      "id": "ui-control-cut-tooling-installed",
+      "kind": "ui-control",
+      "entrypoint": "scripts/release-drivers/ui-control-cut-tooling-installed.ts",
       "platforms": {
         "windows-installed": "ready",
         "macos-installed": "ready",
@@ -1499,6 +1559,14 @@
       "cleanupId": "ui:restore-browser-ad-mode-default-abort-task-and-window"
     },
     {
+      "surfaceId": "ui-control:src/components/RightRail.tsx:[title=\"Copy environment diagnostic report\"]@src/components/RightRail.tsx#6",
+      "driverId": "ui-control-clipboard-lifecycle-installed",
+      "fixtureId": "ui:owned-native-clipboard-empty-lifecycle",
+      "expectedEffect": "Native installed input invokes the exact owned copy control only after a metadata-only empty preflight; the host verifies the synthetic value by SHA-256 plus UTF-8 length, clears only that same value, and proves the clipboard empty without reporting contents.",
+      "oracleId": "ui:activation:native-clipboard-owned-value-verified-and-cleared",
+      "cleanupId": "ui:clear-owned-clipboard-prove-empty-and-restore-surface"
+    },
+    {
       "surfaceId": "browser-cli-command:clear-site-data",
       "driverId": "browser-cli-command-installed",
       "fixtureId": "browser-cli:disposable-local-page-task",
@@ -1713,6 +1781,14 @@
       "expectedEffect": "DELETE /release-test/tauri-invokes/:id deletes one exact terminal command record and proves it absent; get_debug_port binds the full claim/complete lifecycle to the attested isolated candidate before exact record deletion.",
       "oracleId": "debug-api:DELETE-release-test-tauri-invokes-id:semantic-effect",
       "cleanupId": "debug-api:delete-owned-tauri-invoke"
+    },
+    {
+      "surfaceId": "debug-api-route:DELETE /tasks/:task_id",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "DELETE /tasks/:task_id exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:delete-tasks-task-id",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
     },
     {
       "surfaceId": "debug-api-route:DELETE /tools/fs_watch/:watchId",
@@ -2137,6 +2213,54 @@
       "expectedEffect": "GET /state/subagents returns its exact bounded read-only contract without retaining returned Browser data in release evidence.",
       "oracleId": "debug-api:GET-state-subagents",
       "cleanupId": "debug-api:read-only"
+    },
+    {
+      "surfaceId": "debug-api-route:GET /tasks",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "GET /tasks exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:get-tasks",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:GET /tasks/:task_id",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "GET /tasks/:task_id exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:get-tasks-task-id",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:GET /tasks/:task_id/attention",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "GET /tasks/:task_id/attention exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:get-tasks-task-id-attention",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:GET /tasks/:task_id/receipts",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "GET /tasks/:task_id/receipts exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:get-tasks-task-id-receipts",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:GET /tasks/:task_id/state",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "GET /tasks/:task_id/state exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:get-tasks-task-id-state",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:GET /tasks/states",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "GET /tasks/states exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:get-tasks-states",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
     },
     {
       "surfaceId": "debug-api-route:GET /vault/agent-requests",
@@ -3089,6 +3213,78 @@
       "expectedEffect": "POST /tabs/:id/archive returns its exact bounded read, missing-id result, or pre-effect refusal without contacting a provider, process, secret backend, remote, or external service.",
       "oracleId": "debug-api:POST-tabs-id-archive:safe-refusal",
       "cleanupId": "debug-api:read-only"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /tasks",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /tasks/:task_id/attention/:attention_id/resolve",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks/:task_id/attention/:attention_id/resolve exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks-task-id-attention-attention-id-resolve",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /tasks/:task_id/attention/overflow/resolve",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks/:task_id/attention/overflow/resolve exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks-task-id-attention-overflow-resolve",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /tasks/:task_id/pause",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks/:task_id/pause exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks-task-id-pause",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /tasks/:task_id/resume",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks/:task_id/resume exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks-task-id-resume",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /tasks/:task_id/revise",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks/:task_id/revise exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks-task-id-revise",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /tasks/:task_id/run",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks/:task_id/run exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks-task-id-run",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /tasks/provider-catalog",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks/provider-catalog exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks-provider-catalog",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "debug-api-route:POST /tasks/runs/:occurrence_id/cancel",
+      "driverId": "debug-api-task-installed",
+      "fixtureId": "debug-api:isolated-task-definition-lifecycle",
+      "expectedEffect": "POST /tasks/runs/:occurrence_id/cancel exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.",
+      "oracleId": "debug-api:tasks:post-tasks-runs-occurrence-id-cancel",
+      "cleanupId": "debug-api:soft-delete-owned-task-and-candidate-teardown"
     },
     {
       "surfaceId": "debug-api-route:POST /tools/fs_watch",
@@ -4411,6 +4607,14 @@
       "cleanupId": "tauri:delete-owned-file-fixture"
     },
     {
+      "surfaceId": "tauri-command:cut_tooling_open",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC proves the operator-only Cut Open command fails closed for an exact absent ShellX host context and launches no editor.",
+      "oracleId": "tauri:tasks:cut-tooling-open",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
       "surfaceId": "tauri-command:delete_session_files",
       "driverId": "tauri-command-installed",
       "fixtureId": "tauri:isolated-session-history-mutation",
@@ -5059,6 +5263,14 @@
       "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
     },
     {
+      "surfaceId": "tauri-command:shellx_browser_operator_prepare_teach_task_handoff",
+      "driverId": "tauri-command-installed",
+      "fixtureId": "tauri:isolated-browser-operator-workflow",
+      "expectedEffect": "Installed operator Tauri IPC binds the exact approved zero-skip rehearsal to one path-private workflow bookmark and returns only paused Task draft identities; Debug API has no approval or replay authority, and the exact task, tab, loopback page, and private candidate artifacts end with cleanup and candidate teardown.",
+      "oracleId": "tauri:shellx_browser_operator_prepare_teach_task_handoff:path-private-workflow-bookmark",
+      "cleanupId": "tauri:close-owned-browser-operator-workflow-and-candidate-teardown"
+    },
+    {
       "surfaceId": "tauri-command:shellx_browser_operator_rehearse_teach_recipe",
       "driverId": "tauri-command-installed",
       "fixtureId": "tauri:isolated-browser-operator-workflow",
@@ -5339,12 +5551,164 @@
       "cleanupId": "tauri:delete-invoke-state"
     },
     {
+      "surfaceId": "tauri-command:task_provider_catalog",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC task_provider_catalog exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:task-provider-catalog",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
       "surfaceId": "tauri-command:task_resume",
       "driverId": "tauri-command-installed",
       "fixtureId": "tauri:isolated-fail-closed-validation",
       "expectedEffect": "Installed Tauri IPC task_resume returns its exact fail-closed validation or absent-state rejection before performing the guarded operation.",
       "oracleId": "tauri:task_resume:fail-closed",
       "cleanupId": "tauri:delete-invoke-state"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_cancel_run",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC proves Cancel run refuses an exact inactive attempt without creating cancellation state.",
+      "oracleId": "tauri:tasks:tasks-cancel-run",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_create",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_create exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-create",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_delete",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_delete exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-delete",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_get",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_get exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-get",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_get_state",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_get_state exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-get-state",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_list",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_list exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-list",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_list_open_attention",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_list_open_attention exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-list-open-attention",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_list_receipts",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_list_receipts exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-list-receipts",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_list_states",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_list_states exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-list-states",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_maintain_attachments",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_maintain_attachments exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-maintain-attachments",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_pause",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_pause exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-pause",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_persist_attachments",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_persist_attachments exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-persist-attachments",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_reclaim_attachments",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_reclaim_attachments exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-reclaim-attachments",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_resolve_attention",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_resolve_attention refuses an absent exact attention identity without manufacturing an acknowledgement.",
+      "oracleId": "tauri:tasks:tasks-resolve-attention",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_resolve_attention_overflow",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_resolve_attention_overflow refuses an absent exact attention identity without manufacturing an acknowledgement.",
+      "oracleId": "tauri:tasks:tasks-resolve-attention-overflow",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_resume",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_resume exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-resume",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_revise",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC tasks_revise exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.",
+      "oracleId": "tauri:tasks:tasks-revise",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "tauri-command:tasks_run_now",
+      "driverId": "tauri-command-task-installed",
+      "fixtureId": "tauri:isolated-task-command-lifecycle",
+      "expectedEffect": "Installed Tauri IPC proves Run now refuses an exact paused Task before occurrence creation or provider dispatch.",
+      "oracleId": "tauri:tasks:tasks-run-now",
+      "cleanupId": "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown"
     },
     {
       "surfaceId": "tauri-command:transcribe_audio_blob",
@@ -6307,7 +6671,7 @@
       "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
     {
-      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-approval-receipt\"]@src/browser/components/BrowserTeachReview.tsx#11",
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-approval-receipt\"]@src/browser/components/BrowserTeachReview.tsx#12",
       "driverId": "ui-control-browser-teach-review-installed",
       "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
       "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-approval-receipt\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
@@ -6315,10 +6679,26 @@
       "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
     {
-      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-rehearsal-receipt\"]@src/browser/components/BrowserTeachReview.tsx#12",
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-rehearsal-receipt\"]@src/browser/components/BrowserTeachReview.tsx#13",
       "driverId": "ui-control-browser-teach-review-installed",
       "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
       "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-rehearsal-receipt\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-task-receipt\"]@src/browser/components/BrowserTeachReview.tsx#14",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-copy-task-receipt\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
+      "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-control:src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-create-task\"]@src/browser/components/BrowserTeachReview.tsx#11",
+      "driverId": "ui-control-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "src/browser/components/BrowserTeachReview.tsx:[data-debug-id=\"shellx-browser-teach-create-task\"] is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.",
       "oracleId": "ui:activation:browser-teach-native-review-lifecycle",
       "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
@@ -6819,7 +7199,7 @@
       "cleanupId": "ui:remove-owned-attachment-clear-prompt-delete-files-close-tab-restore-baseline"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[aria-label=\"Keyboard shortcuts\"]@src/components/BottomPanel.tsx#25",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[aria-label=\"Keyboard shortcuts\"]@src/components/BottomPanel.tsx#26",
       "driverId": "ui-control-local-disclosures-installed",
       "fixtureId": "ui:keyboard-hint-closed",
       "expectedEffect": "Native focus opens the Keyboard shortcuts tooltip before native focus cleanup closes it.",
@@ -6827,7 +7207,7 @@
       "cleanupId": "ui:close-keyboard-hint"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[aria-label=\"Turn voice chat off and cancel active listening\"]@src/components/BottomPanel.tsx#17",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[aria-label=\"Turn voice chat off and cancel active listening\"]@src/components/BottomPanel.tsx#18",
       "driverId": "ui-control-bottom-panel-lifecycle-installed",
       "fixtureId": "ui:bottom-panel-owned-tab-voice-capture",
       "expectedEffect": "A native click invokes the real MicButton cancel transition from an isolated active capture, returns the mic to idle, clears the owned tab voice mode, and removes the off control without requesting a microphone or provider.",
@@ -6899,7 +7279,7 @@
       "cleanupId": "ui:restore-bottom-tab-baseline"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-agent\"]@src/components/BottomPanel.tsx#20",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-agent\"]@src/components/BottomPanel.tsx#21",
       "driverId": "ui-control-local-disclosures-installed",
       "fixtureId": "ui:composer-picker-closed",
       "expectedEffect": "A native click opens the Agent picker before a second native click closes it.",
@@ -6915,7 +7295,7 @@
       "cleanupId": "native-picker:remove-exact-attachment-restore-tab-delete-fixture"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-branch\"]@src/components/BottomPanel.tsx#22",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-branch\"]@src/components/BottomPanel.tsx#23",
       "driverId": "ui-control-local-disclosures-installed",
       "fixtureId": "ui:composer-picker-closed",
       "expectedEffect": "A native click opens the Branch picker before a second native click closes it.",
@@ -6923,7 +7303,7 @@
       "cleanupId": "ui:close-composer-picker"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-connection\"]@src/components/BottomPanel.tsx#19",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-connection\"]@src/components/BottomPanel.tsx#20",
       "driverId": "ui-control-local-disclosures-installed",
       "fixtureId": "ui:composer-picker-closed",
       "expectedEffect": "A native click opens the Saved connections picker before a second native click closes it.",
@@ -6931,7 +7311,15 @@
       "cleanupId": "ui:close-composer-picker"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-folder\"]@src/components/BottomPanel.tsx#21",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-create-task\"]@src/components/BottomPanel.tsx#17",
+      "driverId": "ui-control-task-entry-installed",
+      "fixtureId": "ui:task-entry-owned-manager-handoff",
+      "expectedEffect": "src/components/BottomPanel.tsx:[data-debug-id=\"composer-create-task\"] is exercised through native installed input from an owned opposite Task Manager baseline without saving or launching a provider.",
+      "oracleId": "ui:activation:task-entry-native-manager-handoff",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-folder\"]@src/components/BottomPanel.tsx#22",
       "driverId": "ui-control-native-picker-lifecycle-installed",
       "fixtureId": "native-picker:owned-directory-local-tab",
       "expectedEffect": "The macOS candidate-bound native dialog or Windows/Linux isolated one-shot directory result traverses the production handler, selects the exact receipt-owned directory, and changes only the active isolated tab cwd.",
@@ -6955,7 +7343,7 @@
       "cleanupId": "ui:remove-exact-screenshot-attachment-delete-owned-png-restore-view"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-send\"]@src/components/BottomPanel.tsx#18",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-send\"]@src/components/BottomPanel.tsx#19",
       "driverId": "ui-control-provider-action-lifecycle-installed",
       "fixtureId": "ui:provider-action-owned-composer-send",
       "expectedEffect": "A native click dispatches the exact composer-send prompt to one release-owned disposable ShellX provider child through the real provider JSONL registry and proves its matching SHA-256 receipt; the separate provider-route batch retains real-provider stream proof.",
@@ -6963,7 +7351,7 @@
       "cleanupId": "ui:stop-owned-provider-action-delete-project-and-restore-view"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-23\"]@src/components/BottomPanel.tsx#23",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-23\"]@src/components/BottomPanel.tsx#24",
       "driverId": "ui-control-bottom-panel-lifecycle-installed",
       "fixtureId": "ui:bottom-panel-owned-tab-agent-choice",
       "expectedEffect": "A native click selects one exact ready Codex row and persists it only into a disposable owned tab before clearing the scan fixture and deleting the tab.",
@@ -6971,7 +7359,7 @@
       "cleanupId": "ui:clear-owned-agent-scan-close-tab-restore-baseline"
     },
     {
-      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-24\"]@src/components/BottomPanel.tsx#24",
+      "surfaceId": "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-24\"]@src/components/BottomPanel.tsx#25",
       "driverId": "ui-control-bottom-panel-lifecycle-installed",
       "fixtureId": "ui:bottom-panel-owned-tab-slash-command",
       "expectedEffect": "A native click selects the deterministic built-in /commands row and inserts its exact text into the owned tab composer without sending it.",
@@ -7475,6 +7863,22 @@
       "cleanupId": "ui:restore-settings-tab-and-close"
     },
     {
+      "surfaceId": "ui-control:src/components/CutToolingRow.tsx::is([aria-label=\"Open ShellX Cut\"],[aria-label=\"ShellX Cut Open unavailable\"])@src/components/CutToolingRow.tsx#2",
+      "driverId": "ui-control-cut-tooling-installed",
+      "fixtureId": "ui:owned-session-without-cut-host-context",
+      "expectedEffect": "Native installed input verifies the dynamic Cut Open control is disabled for an exact no-host-context session and a bounded activation attempt cannot launch Cut or change UI state.",
+      "oracleId": "ui:activation:cut-status-checked-open-unavailable-fail-closed",
+      "cleanupId": "ui:restore-right-rail-after-cut-status-check"
+    },
+    {
+      "surfaceId": "ui-control:src/components/CutToolingRow.tsx:[aria-label=\"Check ShellX Cut status\"]@src/components/CutToolingRow.tsx#1",
+      "driverId": "ui-control-cut-tooling-installed",
+      "fixtureId": "ui:owned-session-without-cut-host-context",
+      "expectedEffect": "Native installed input refreshes the exact selected-session Cut status and records one visible completion marker without probing or opening Cut when no desktop-host context exists.",
+      "oracleId": "ui:activation:cut-status-checked-open-unavailable-fail-closed",
+      "cleanupId": "ui:restore-right-rail-after-cut-status-check"
+    },
+    {
       "surfaceId": "ui-control:src/components/DebugApiConnectionBanner.tsx:[data-debug-id=\"debug-api-retry\"]@src/components/DebugApiConnectionBanner.tsx#1",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:debug-api-owned-disconnected-retry",
@@ -7771,7 +8175,7 @@
       "cleanupId": "ui:close-header-dialog"
     },
     {
-      "surfaceId": "ui-control:src/components/Header.tsx:[aria-label=\"Open connector inbox\"]@src/components/Header.tsx#3",
+      "surfaceId": "ui-control:src/components/Header.tsx:[aria-label=\"Open connector inbox\"]@src/components/Header.tsx#4",
       "driverId": "ui-control-local-disclosures-installed",
       "fixtureId": "ui:owned-modal-closed",
       "expectedEffect": "A native click opens the exactly labelled Connector Inbox dialog.",
@@ -7779,7 +8183,7 @@
       "cleanupId": "ui:close-owned-modal"
     },
     {
-      "surfaceId": "ui-control:src/components/Header.tsx:[aria-label=\"Open plugins\"]@src/components/Header.tsx#4",
+      "surfaceId": "ui-control:src/components/Header.tsx:[aria-label=\"Open plugins\"]@src/components/Header.tsx#5",
       "driverId": "ui-control-local-disclosures-installed",
       "fixtureId": "ui:header-dialog-closed",
       "expectedEffect": "A native click opens the exactly labelled Plugins dialog.",
@@ -7787,7 +8191,7 @@
       "cleanupId": "ui:close-header-dialog"
     },
     {
-      "surfaceId": "ui-control:src/components/Header.tsx:[aria-label=\"Open settings\"]@src/components/Header.tsx#6",
+      "surfaceId": "ui-control:src/components/Header.tsx:[aria-label=\"Open settings\"]@src/components/Header.tsx#7",
       "driverId": "ui-control-local-disclosures-installed",
       "fixtureId": "ui:header-dialog-closed",
       "expectedEffect": "A native click opens the exactly labelled Settings dialog.",
@@ -7795,7 +8199,15 @@
       "cleanupId": "ui:close-header-dialog"
     },
     {
-      "surfaceId": "ui-control:src/components/Header.tsx:[data-debug-id=\"header-theme-toggle\"]@src/components/Header.tsx#5",
+      "surfaceId": "ui-control:src/components/Header.tsx:[data-debug-id=\"header-tasks\"]@src/components/Header.tsx#3",
+      "driverId": "ui-control-task-entry-installed",
+      "fixtureId": "ui:task-entry-owned-manager-handoff",
+      "expectedEffect": "src/components/Header.tsx:[data-debug-id=\"header-tasks\"] is exercised through native installed input from an owned opposite Task Manager baseline without saving or launching a provider.",
+      "oracleId": "ui:activation:task-entry-native-manager-handoff",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/Header.tsx:[data-debug-id=\"header-theme-toggle\"]@src/components/Header.tsx#6",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:isolated-default-theme",
       "expectedEffect": "A native click changes both the header toggle state and persisted theme, then a second native click restores the exact isolated baseline.",
@@ -8385,14 +8797,6 @@
       "expectedEffect": "A native click dispatches the exact right-rail-environment-ask prompt to one release-owned disposable ShellX provider child through the real provider JSONL registry and proves its matching SHA-256 receipt; the separate provider-route batch retains real-provider stream proof.",
       "oracleId": "ui:activation:provider-action-prompt-dispatched",
       "cleanupId": "ui:stop-owned-provider-action-delete-project-and-restore-view"
-    },
-    {
-      "surfaceId": "ui-control:src/components/RightRail.tsx:[title=\"Copy environment diagnostic report\"]@src/components/RightRail.tsx#6",
-      "driverId": "ui-control-clipboard-lifecycle-installed",
-      "fixtureId": "ui:owned-native-clipboard-empty-lifecycle",
-      "expectedEffect": "Native installed input invokes the exact owned copy control only after a metadata-only empty preflight; the host verifies the synthetic value by SHA-256 plus UTF-8 length, clears only that same value, and proves the clipboard empty without reporting contents.",
-      "oracleId": "ui:activation:native-clipboard-owned-value-verified-and-cleared",
-      "cleanupId": "ui:clear-owned-clipboard-prove-empty-and-restore-surface"
     },
     {
       "surfaceId": "ui-control:src/components/RightRail.tsx:[title=\"Mark build as complete — stops the auto-continuation loop. Use when the agent finished but did not call the completion tool itself.\"]@src/components/RightRail.tsx#14",
@@ -9851,6 +10255,350 @@
       "cleanupId": "ui:restore-setup-guide-destinations"
     },
     {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-action-\"]@src/components/TaskManager.tsx#36",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-action-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-definition-\"]@src/components/TaskManager.tsx#20",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-definition-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-model-\"]@src/components/TaskManager.tsx#32",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-model-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-down\"]@src/components/TaskManager.tsx#34",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-down\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-up\"]@src/components/TaskManager.tsx#33",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-move-up\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-remove\"]@src/components/TaskManager.tsx#35",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-remove\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-toggle\"]@src/components/TaskManager.tsx#31",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-provider-\"][data-debug-id$=\"-toggle\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-weekday-\"]@src/components/TaskManager.tsx#25",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id^=\"task-manager-weekday-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-acknowledge-attention\"]@src/components/TaskManager.tsx#19",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-acknowledge-attention\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-backdrop\"]@src/components/TaskManager.tsx#1",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-backdrop\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-close\"]@src/components/TaskManager.tsx#2",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-close\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-enabled\"]@src/components/TaskManager.tsx#18",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-enabled\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment-filter\"]@src/components/TaskManager.tsx#6",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment-filter\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment\"]@src/components/TaskManager.tsx#17",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-environment\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-all\"]@src/components/TaskManager.tsx#4",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-all\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-needsAttention\"]@src/components/TaskManager.tsx#4",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-needsAttention\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-paused\"]@src/components/TaskManager.tsx#4",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-paused\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-recent\"]@src/components/TaskManager.tsx#4",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-recent\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-running\"]@src/components/TaskManager.tsx#4",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-running\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-scheduled\"]@src/components/TaskManager.tsx#4",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-filter-scheduled\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:boolean-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-instruction\"]@src/components/TaskManager.tsx#9",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-instruction\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-max-run-seconds\"]@src/components/TaskManager.tsx#29",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-max-run-seconds\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-missed-run-policy\"]@src/components/TaskManager.tsx#28",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-missed-run-policy\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-name\"]@src/components/TaskManager.tsx#8",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-name\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-notification-policy\"]@src/components/TaskManager.tsx#30",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-notification-policy\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-open-vault\"]@src/components/TaskManager.tsx#11",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-open-vault\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-project-filter\"]@src/components/TaskManager.tsx#5",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-project-filter\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-provider-filter\"]@src/components/TaskManager.tsx#7",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-provider-filter\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-recheck\"]@src/components/TaskManager.tsx#16",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-recheck\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-attachment\"]@src/components/TaskManager.tsx#12",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-attachment\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-vault-requirement\"]@src/components/TaskManager.tsx#15",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-vault-requirement\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-workflow\"]@src/components/TaskManager.tsx#13",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-remove-workflow\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-schedule-advanced\"]@src/components/TaskManager.tsx#26",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-schedule-advanced\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:disclosure-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-search\"]@src/components/TaskManager.tsx#3",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-search\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-success-criteria\"]@src/components/TaskManager.tsx#10",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-success-criteria\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-timezone\"]@src/components/TaskManager.tsx#27",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-timezone\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-kind\"]@src/components/TaskManager.tsx#21",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-kind\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-month-day\"]@src/components/TaskManager.tsx#24",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-month-day\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-once\"]@src/components/TaskManager.tsx#22",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-once\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-time\"]@src/components/TaskManager.tsx#23",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-trigger-time\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:value-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskManager.tsx:[data-debug-id=\"task-manager-vault-grant\"]@src/components/TaskManager.tsx#14",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskManager.tsx:[data-debug-id=\"task-manager-vault-grant\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskRunHistory.tsx:[data-debug-id^=\"task-manager-cancel-run-\"]@src/components/TaskRunHistory.tsx#1",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskRunHistory.tsx:[data-debug-id^=\"task-manager-cancel-run-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-control:src/components/TaskRunHistory.tsx:[data-debug-id^=\"task-manager-open-run-\"]@src/components/TaskRunHistory.tsx#2",
+      "driverId": "ui-control-task-manager-installed",
+      "fixtureId": "ui:task-manager-owned-native-control-lifecycle",
+      "expectedEffect": "src/components/TaskRunHistory.tsx:[data-debug-id^=\"task-manager-open-run-\"] is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.",
+      "oracleId": "ui:activation:task-manager-native-state-transition",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
       "surfaceId": "ui-control:src/components/TasksPanel.tsx::is([title=\"Kill (SIGTERM then SIGKILL after 3s)\"],[title=\"Kill terminal and remove its task row\"])@src/components/TasksPanel.tsx#13",
       "driverId": "ui-control-tasks-panel-lifecycle-installed",
       "fixtureId": "ui:tasks-panel-owned-process-lifecycles",
@@ -10531,7 +11279,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:composer-agent@src/components/BottomPanel.tsx#18",
+      "surfaceId": "ui-debug-surface:composer-agent@src/components/BottomPanel.tsx#19",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:bottom-chat-visible",
       "expectedEffect": "composer-agent resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -10547,7 +11295,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:composer-branch@src/components/BottomPanel.tsx#20",
+      "surfaceId": "ui-debug-surface:composer-branch@src/components/BottomPanel.tsx#21",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:bottom-chat-visible",
       "expectedEffect": "composer-branch resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -10555,7 +11303,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:composer-connection@src/components/BottomPanel.tsx#17",
+      "surfaceId": "ui-debug-surface:composer-connection@src/components/BottomPanel.tsx#18",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:bottom-chat-visible",
       "expectedEffect": "composer-connection resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -10563,7 +11311,15 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:composer-folder@src/components/BottomPanel.tsx#19",
+      "surfaceId": "ui-debug-surface:composer-create-task@src/components/BottomPanel.tsx#14",
+      "driverId": "ui-debug-task-entry-installed",
+      "fixtureId": "ui:task-entry-owned-manager-handoff",
+      "expectedEffect": "composer-create-task renders as a visible installed-app marker in its exact owned Task entry state without invoking the control.",
+      "oracleId": "ui:visible:task-entry-owned-state",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-debug-surface:composer-folder@src/components/BottomPanel.tsx#20",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:bottom-chat-visible",
       "expectedEffect": "composer-folder resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -10587,7 +11343,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:composer-send@src/components/BottomPanel.tsx#16",
+      "surfaceId": "ui-debug-surface:composer-send@src/components/BottomPanel.tsx#17",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:bottom-chat-visible",
       "expectedEffect": "composer-send resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -10595,7 +11351,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:composer-talk@src/components/BottomPanel.tsx#14",
+      "surfaceId": "ui-debug-surface:composer-talk@src/components/BottomPanel.tsx#15",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:bottom-chat-visible",
       "expectedEffect": "composer-talk resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -10603,7 +11359,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:composer-voice-chat@src/components/BottomPanel.tsx#15",
+      "surfaceId": "ui-debug-surface:composer-voice-chat@src/components/BottomPanel.tsx#16",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:bottom-chat-visible",
       "expectedEffect": "composer-voice-chat resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -10755,6 +11511,62 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
+      "surfaceId": "ui-debug-surface:cut-tooling-state-checking@src/components/CutToolingRow.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:cut-tooling-checking-visible",
+      "expectedEffect": "cut-tooling-state-checking resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:cut-tooling-state-installedEditorClosed@src/components/CutToolingRow.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:cut-tooling-installedEditorClosed-visible",
+      "expectedEffect": "cut-tooling-state-installedEditorClosed resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:cut-tooling-state-notInstalled@src/components/CutToolingRow.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:cut-tooling-notInstalled-visible",
+      "expectedEffect": "cut-tooling-state-notInstalled resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:cut-tooling-state-ready@src/components/CutToolingRow.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:cut-tooling-ready-visible",
+      "expectedEffect": "cut-tooling-state-ready resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:cut-tooling-state-unavailable@src/components/CutToolingRow.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:cut-tooling-unavailable-visible",
+      "expectedEffect": "cut-tooling-state-unavailable resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:cut-tooling-state-unavailableToProvider@src/components/CutToolingRow.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:cut-tooling-unavailableToProvider-visible",
+      "expectedEffect": "cut-tooling-state-unavailableToProvider resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:cut-tooling-state-unsupportedTarget@src/components/CutToolingRow.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:cut-tooling-unsupportedTarget-visible",
+      "expectedEffect": "cut-tooling-state-unsupportedTarget resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
       "surfaceId": "ui-debug-surface:debug-api-disconnected@src/components/DebugApiConnectionBanner.tsx#1",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:debug-api-disconnected-banner-visible",
@@ -10795,7 +11607,23 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:header-theme-toggle@src/components/Header.tsx#2",
+      "surfaceId": "ui-debug-surface:header-tasks-attention@src/components/Header.tsx#3",
+      "driverId": "ui-debug-task-entry-installed",
+      "fixtureId": "ui:task-entry-owned-manager-handoff",
+      "expectedEffect": "header-tasks-attention renders as a visible installed-app marker in its exact owned Task entry state without invoking the control.",
+      "oracleId": "ui:visible:task-entry-owned-state",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-debug-surface:header-tasks@src/components/Header.tsx#2",
+      "driverId": "ui-debug-task-entry-installed",
+      "fixtureId": "ui:task-entry-owned-manager-handoff",
+      "expectedEffect": "header-tasks renders as a visible installed-app marker in its exact owned Task entry state without invoking the control.",
+      "oracleId": "ui:visible:task-entry-owned-state",
+      "cleanupId": "ui:clear-owned-task-manager-fixture-and-restore-app-view"
+    },
+    {
+      "surfaceId": "ui-debug-surface:header-theme-toggle@src/components/Header.tsx#4",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:app-shell-visible",
       "expectedEffect": "header-theme-toggle resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -12563,7 +13391,7 @@
       "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-teach-approval-receipt@src/browser/components/BrowserTeachReview.tsx#24",
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-approval-receipt@src/browser/components/BrowserTeachReview.tsx#25",
       "driverId": "ui-debug-browser-teach-review-installed",
       "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
       "expectedEffect": "shellx-browser-teach-approval-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
@@ -12587,7 +13415,7 @@
       "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-teach-copy-approval-receipt@src/browser/components/BrowserTeachReview.tsx#25",
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-copy-approval-receipt@src/browser/components/BrowserTeachReview.tsx#26",
       "driverId": "ui-debug-browser-teach-review-installed",
       "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
       "expectedEffect": "shellx-browser-teach-copy-approval-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
@@ -12595,10 +13423,26 @@
       "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-teach-copy-rehearsal-receipt@src/browser/components/BrowserTeachReview.tsx#27",
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-copy-rehearsal-receipt@src/browser/components/BrowserTeachReview.tsx#28",
       "driverId": "ui-debug-browser-teach-review-installed",
       "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
       "expectedEffect": "shellx-browser-teach-copy-rehearsal-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-copy-task-receipt@src/browser/components/BrowserTeachReview.tsx#30",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-copy-task-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-create-task@src/browser/components/BrowserTeachReview.tsx#24",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-create-task becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
       "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
       "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
@@ -12643,7 +13487,7 @@
       "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
     {
-      "surfaceId": "ui-debug-surface:shellx-browser-teach-rehearsal-receipt@src/browser/components/BrowserTeachReview.tsx#26",
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-rehearsal-receipt@src/browser/components/BrowserTeachReview.tsx#27",
       "driverId": "ui-debug-browser-teach-review-installed",
       "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
       "expectedEffect": "shellx-browser-teach-rehearsal-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
@@ -12719,6 +13563,14 @@
       "driverId": "ui-debug-browser-teach-review-installed",
       "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
       "expectedEffect": "shellx-browser-teach-steps becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
+      "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
+      "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
+    },
+    {
+      "surfaceId": "ui-debug-surface:shellx-browser-teach-task-handoff-receipt@src/browser/components/BrowserTeachReview.tsx#29",
+      "driverId": "ui-debug-browser-teach-review-installed",
+      "fixtureId": "ui:browser-teach-owned-flight-recorder-review",
+      "expectedEffect": "shellx-browser-teach-task-handoff-receipt becomes visible only through the exact native Browser Teach lifecycle over owned redacted Flight Recorder evidence; approval remains Tauri-only and the disposable Vault profile is removed during candidate teardown.",
       "oracleId": "ui:visible:browser-teach-owned-native-lifecycle-marker",
       "cleanupId": "ui:delete-owned-teach-evidence-key-lock-disposable-vault-and-candidate-teardown"
     },
@@ -13243,7 +14095,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:surface-components-bottompanel-23@src/components/BottomPanel.tsx#21",
+      "surfaceId": "ui-debug-surface:surface-components-bottompanel-23@src/components/BottomPanel.tsx#22",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:owned-agent-picker-row-visible",
       "expectedEffect": "surface-components-bottompanel-23 resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -13251,7 +14103,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:surface-components-bottompanel-24@src/components/BottomPanel.tsx#22",
+      "surfaceId": "ui-debug-surface:surface-components-bottompanel-24@src/components/BottomPanel.tsx#23",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:owned-slash-command-row-visible",
       "expectedEffect": "surface-components-bottompanel-24 resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -14031,6 +14883,574 @@
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:owned-markdown-preview-links-visible",
       "expectedEffect": "surface-lib-markdown-links-2 resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-acknowledge-attention@src/components/TaskManager.tsx#33",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-acknowledge-attention resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-action-*@src/components/TaskManager.tsx#59",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-action-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-attachment-binding@src/components/TaskManager.tsx#15",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-attachment-binding resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-attention-callout@src/components/TaskManager.tsx#31",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-attention-callout resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-attention-item@src/components/TaskManager.tsx#32",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-attention-item resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-attention@src/components/TaskManager.tsx#9",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-attention resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-backdrop@src/components/TaskManager.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-backdrop resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-cancel-run-*@src/components/TaskRunHistory.tsx#2",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-cancel-run-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-catalogue-freshness@src/components/TaskManager.tsx#28",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-catalogue-freshness resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-close@src/components/TaskManager.tsx#3",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-close resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-definition-*@src/components/TaskManager.tsx#37",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-definition-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-empty@src/components/TaskManager.tsx#36",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-empty-visible",
+      "expectedEffect": "task-manager-empty resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-enabled@src/components/TaskManager.tsx#29",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-enabled resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-environment-context@src/components/TaskManager.tsx#26",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-environment-context resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-environment-filter@src/components/TaskManager.tsx#7",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-environment-filter resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-environment-working-folder@src/components/TaskManager.tsx#27",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-environment-working-folder resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-environment@src/components/TaskManager.tsx#25",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-environment resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-feedback@src/components/TaskManager.tsx#30",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-feedback resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-filter-all@src/components/TaskManager.tsx#5",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-filter-all resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-filter-needsAttention@src/components/TaskManager.tsx#5",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-filter-needsAttention resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-filter-paused@src/components/TaskManager.tsx#5",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-filter-paused resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-filter-recent@src/components/TaskManager.tsx#5",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-filter-recent resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-filter-running@src/components/TaskManager.tsx#5",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-filter-running resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-filter-scheduled@src/components/TaskManager.tsx#5",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-filter-scheduled resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-instruction@src/components/TaskManager.tsx#11",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-instruction resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-list-error@src/components/TaskManager.tsx#35",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-error-visible",
+      "expectedEffect": "task-manager-list-error resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-loading@src/components/TaskManager.tsx#34",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-loading-visible",
+      "expectedEffect": "task-manager-loading resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-max-run-seconds@src/components/TaskManager.tsx#47",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-max-run-seconds resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-missed-run-policy@src/components/TaskManager.tsx#46",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-missed-run-policy resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-model-*@src/components/TaskManager.tsx#55",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-model-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-name@src/components/TaskManager.tsx#10",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-name resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-notification-policy@src/components/TaskManager.tsx#48",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-notification-policy resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-open-run-*@src/components/TaskRunHistory.tsx#3",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-open-run-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-open-vault@src/components/TaskManager.tsx#14",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-open-vault resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-project-filter@src/components/TaskManager.tsx#6",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-project-filter resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-move-down@src/components/TaskManager.tsx#57",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-provider-*-move-down resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-move-up@src/components/TaskManager.tsx#56",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-provider-*-move-up resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-remove@src/components/TaskManager.tsx#58",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-provider-*-remove resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-suggested@src/components/TaskManager.tsx#54",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-provider-*-suggested resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-*-toggle@src/components/TaskManager.tsx#53",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-provider-*-toggle resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-*@src/components/TaskManager.tsx#52",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-provider-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-empty@src/components/TaskManager.tsx#49",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-provider-empty-visible",
+      "expectedEffect": "task-manager-provider-empty resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-filter@src/components/TaskManager.tsx#8",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-provider-filter resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-guard@src/components/TaskManager.tsx#50",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-provider-guard-visible",
+      "expectedEffect": "task-manager-provider-guard resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-provider-list@src/components/TaskManager.tsx#51",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-provider-list resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-receipt@src/components/TaskRunHistory.tsx#7",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-receipt resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-recheck@src/components/TaskManager.tsx#24",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-recheck resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-remove-attachment@src/components/TaskManager.tsx#16",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-remove-attachment resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-remove-vault-requirement@src/components/TaskManager.tsx#21",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-remove-vault-requirement resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-remove-workflow@src/components/TaskManager.tsx#18",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-remove-workflow resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-reviewed-bindings@src/components/TaskManager.tsx#13",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-reviewed-bindings resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-run-*@src/components/TaskRunHistory.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-run-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-run-environment-*@src/components/TaskRunHistory.tsx#4",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-run-environment-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-run-result-evidence@src/components/TaskRunHistory.tsx#6",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-run-result-evidence resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-run-trace-evidence@src/components/TaskRunHistory.tsx#5",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-run-trace-evidence resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-schedule-advanced@src/components/TaskManager.tsx#44",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-schedule-advanced resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-schedule-summary@src/components/TaskManager.tsx#38",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-schedule-summary resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-search@src/components/TaskManager.tsx#4",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-search resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-success-criteria@src/components/TaskManager.tsx#12",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-success-criteria resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-timezone@src/components/TaskManager.tsx#45",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-timezone resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-trigger-kind@src/components/TaskManager.tsx#39",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-trigger-kind resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-trigger-month-day@src/components/TaskManager.tsx#42",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-trigger-monthly-visible",
+      "expectedEffect": "task-manager-trigger-month-day resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-trigger-once@src/components/TaskManager.tsx#40",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-trigger-once-visible",
+      "expectedEffect": "task-manager-trigger-once resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-trigger-time@src/components/TaskManager.tsx#41",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-trigger-time resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-vault-binding@src/components/TaskManager.tsx#19",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-vault-binding resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-vault-grant-required@src/components/TaskManager.tsx#23",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-vault-required-visible",
+      "expectedEffect": "task-manager-vault-grant-required resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-vault-grant@src/components/TaskManager.tsx#20",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-vault-grant resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-vault-grants-unavailable@src/components/TaskManager.tsx#22",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-vault-unavailable-visible",
+      "expectedEffect": "task-manager-vault-grants-unavailable resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-weekday-*@src/components/TaskManager.tsx#43",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-trigger-weekly-visible",
+      "expectedEffect": "task-manager-weekday-* resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager-workflow-binding@src/components/TaskManager.tsx#17",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager-workflow-binding resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:task-manager@src/components/TaskManager.tsx#2",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:task-manager-owned-full-visible",
+      "expectedEffect": "task-manager resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
       "oracleId": "ui:visible-nonempty-rectangle",
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },

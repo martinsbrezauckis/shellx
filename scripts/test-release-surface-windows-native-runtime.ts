@@ -20,6 +20,7 @@ import {
   validateReleaseSurfaceWindowsProbeOrder,
   type ReleaseSurfaceWindowsNativeRuntime,
 } from "./lib/release-surface-windows-native-runtime";
+import { releaseSourceOnlyRequested } from "./lib/release-source-test-mode";
 import { syntheticReleaseSurfaceControllerBinding, releaseSurfaceFixtureVersion } from "./fixtures/release-surface-controller-binding-fixture";
 
 const fixture: ReleaseSurfaceWindowsNativeRuntime = {
@@ -124,8 +125,15 @@ const fixtureSource = readFileSync(
 assert(fixtureSource.includes("Get-Process -Id $PID"));
 assert(!fixtureSource.includes("Get-CimInstance"));
 
-const powershell = resolvePowerShell();
-if (powershell) {
+assert.equal(releaseSourceOnlyRequested(""), false);
+assert.equal(releaseSourceOnlyRequested("1"), true);
+assert.throws(() => releaseSourceOnlyRequested("0"), /must be exactly 1/);
+const sourceOnly = releaseSourceOnlyRequested();
+const powershell = sourceOnly ? null : resolvePowerShell();
+if (sourceOnly) {
+  console.log("SKIP Windows native runtime live fixture: source-only pre-push qualification requested");
+}
+else if (powershell) {
   assertPowerShellUtf8RoundTrip(powershell);
   await runLiveWindowsCollectorTest(powershell);
 }

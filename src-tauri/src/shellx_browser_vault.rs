@@ -258,6 +258,14 @@ pub async fn shellx_browser_fill_user_vault_secret(
         return Err("Browser Vault fill target is not the active page engine".to_string());
     }
 
+    match registry.guard_browser_action_against_prompt_injection(&action_request, None)? {
+        crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome::NotRequired
+        | crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome::Proceed(_) => {}
+        crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome::Blocked(response) => {
+            return Ok(*response);
+        }
+    }
+
     let secret_value = vault
         .compat_get(&secret_ref)
         .await?

@@ -11,7 +11,7 @@ use crate::shellx_browser::{
     BrowserPersonalLockSettings, BrowserPersonalLockUpdateRequest, BrowserTabDelegateRequest,
     BrowserTabOwnerKind, BrowserTabResponse, BrowserTabTakebackRequest, ShellxBrowserRegistry,
 };
-use crate::shellx_browser_tasks::{browser_agent_step_summary_for_task, find_task_index};
+use crate::shellx_browser_tasks::browser_agent_step_summary_for_task;
 
 pub(crate) const BROWSER_PERSONAL_LOCK_OPERATOR_ERROR_CODE: &str =
     "browser_personal_lock_requires_operator";
@@ -184,59 +184,6 @@ impl ShellxBrowserRegistry {
         Ok(personal_lock)
     }
 
-    pub fn delegate_tab_to_agent(
-        &self,
-        request: BrowserTabDelegateRequest,
-    ) -> Result<BrowserTabResponse, String> {
-        if !request.operator_approved {
-            return Err(BROWSER_PERSONAL_LOCK_OPERATOR_ERROR_MESSAGE.to_string());
-        }
-        let mut state = lock_or_recover(&self.state);
-        refresh_personal_lock_timeout_locked(&mut state);
-        let tab_idx = find_tab_index(&state, &request.browser_tab_id)?;
-        if personal_lock_active_for_profile_locked(&state, &state.tabs[tab_idx].profile_id) {
-            return Err(
-                "Personal browser is locked; unlock before handing off this tab".to_string(),
-            );
-        }
-        let task_id = clean_string(request.task_id);
-        let task_idx = find_task_index(&state, &task_id)?;
-        let now = now_ms();
-        state.tabs[tab_idx].owner_kind = BrowserTabOwnerKind::DelegatedToAgent;
-        state.tabs[tab_idx].task_id = Some(task_id.clone());
-        state.tabs[tab_idx].delegated_task_id = Some(task_id.clone());
-        state.tabs[tab_idx].delegated_grant_id = request
-            .grant_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty());
-        state.tabs[tab_idx].updated_at_ms = now;
-        state.tasks[task_idx].current_url = state.tabs[tab_idx].url.clone();
-        state.tasks[task_idx].updated_at_ms = now;
-        state.active_task_id = Some(task_id.clone());
-        let tab = state.tabs[tab_idx].clone();
-        let receipt = push_receipt(
-            &mut state,
-            "browserTabDelegatedToAgent",
-            Some(task_id.clone()),
-            Some(tab.profile_id.clone()),
-            "Browser tab handed off to agent".to_string(),
-            json!({
-                "browserTabId": tab.browser_tab_id,
-                "profileId": tab.profile_id,
-                "taskId": task_id,
-                "grantId": tab.delegated_grant_id,
-                "reason": request.reason,
-                "vaultGranted": false,
-            }),
-        );
-        Ok(BrowserTabResponse {
-            ok: true,
-            tab,
-            receipt,
-        })
-    }
-
     pub fn take_back_tab_from_agent(
         &self,
         request: BrowserTabTakebackRequest,
@@ -252,7 +199,8 @@ impl ShellxBrowserRegistry {
         state.tabs[tab_idx].delegated_task_id = None;
         state.tabs[tab_idx].delegated_grant_id = None;
         state.tabs[tab_idx].lock = None;
-        state.tabs[tab_idx].updated_at_ms = now_ms();
+        state.tabs[tab_idx].updated_at_ms =
+            now_ms().max(state.tabs[tab_idx].updated_at_ms.saturating_add(1));
         let tab = state.tabs[tab_idx].clone();
         let receipt = push_receipt(
             &mut state,
@@ -688,12 +636,16 @@ mod tests {
                 ..StartBrowserTaskRequest::default()
             })
             .expect("start task");
+        let review_fingerprint = registry
+            .tab_handoff_review_fingerprint(&tab.browser_tab_id, &task.task_id)
+            .expect("review fingerprint");
 
         let delegated = registry
             .delegate_tab_to_agent(mark_browser_tab_delegate_operator_approved(
                 BrowserTabDelegateRequest {
                     browser_tab_id: tab.browser_tab_id,
                     task_id: task.task_id.clone(),
+                    review_fingerprint,
                     reason: Some("test".to_string()),
                     ..BrowserTabDelegateRequest::default()
                 },
@@ -728,11 +680,15 @@ mod tests {
                 ..StartBrowserTaskRequest::default()
             })
             .expect("start task");
+        let review_fingerprint = registry
+            .tab_handoff_review_fingerprint(&tab.browser_tab_id, &task.task_id)
+            .expect("review fingerprint");
         let delegated = registry
             .delegate_tab_to_agent(mark_browser_tab_delegate_operator_approved(
                 BrowserTabDelegateRequest {
                     browser_tab_id: tab.browser_tab_id,
                     task_id: task.task_id.clone(),
+                    review_fingerprint,
                     reason: Some("test".to_string()),
                     ..BrowserTabDelegateRequest::default()
                 },
@@ -811,11 +767,15 @@ mod tests {
                 ..StartBrowserTaskRequest::default()
             })
             .expect("start other task");
+        let review_fingerprint = registry
+            .tab_handoff_review_fingerprint(&tab.browser_tab_id, &task.task_id)
+            .expect("review fingerprint");
         let delegated = registry
             .delegate_tab_to_agent(mark_browser_tab_delegate_operator_approved(
                 BrowserTabDelegateRequest {
                     browser_tab_id: tab.browser_tab_id,
                     task_id: task.task_id,
+                    review_fingerprint,
                     reason: Some("test".to_string()),
                     ..BrowserTabDelegateRequest::default()
                 },

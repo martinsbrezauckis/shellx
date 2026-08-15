@@ -35,6 +35,7 @@ import {
   releaseUiDebugCohortDeclarationCount,
   releaseUiDebugSurfaceCohort,
 } from "./lib/release-ui-debug-surface-cohorts";
+import { CUT_TOOLING_STATES } from "../src/lib/cut-tooling";
 import {
   BROWSER_TEACH_CONTROL_DRIVER_ID,
   BROWSER_TEACH_CONTROL_SURFACE_IDS,
@@ -93,7 +94,7 @@ assert.equal(
   "the removed unreachable Work Preview modal must not remain in the installed inventory",
 );
 assert(generated.counts["tauri-command"] > 100, "inventory captures the complete Tauri command registry");
-assert.equal(generated.counts["debug-api-route"], 231, "inventory captures every balanced Debug API route declaration");
+assert.equal(generated.counts["debug-api-route"], 247, "inventory captures every balanced Debug API route declaration");
 assert.deepEqual(
   generated.items
     .filter((item) => item.kind === "debug-api-route" && item.source === "src-tauri/src/debug_api_release_browser_fixture.rs")
@@ -137,30 +138,30 @@ assert.deepEqual(
   ],
   "callable hidden Host MCP aliases must remain explicit compatibility surfaces",
 );
-assert.equal(generated.counts["ui-control"], 645, "inventory captures every shipping actionable UI instance, including finite mapped menus");
-assert.equal(generated.counts["ui-debug-surface"], 522, "inventory captures every shipping concrete debug marker instance without deduplication");
+assert.equal(generated.counts["ui-control"], 694, "inventory captures every shipping actionable UI instance, including finite mapped menus");
+assert.equal(generated.counts["ui-debug-surface"], 606, "inventory captures every shipping concrete debug marker instance without deduplication");
 assert.deepEqual(generated.occurrenceAccounting.uiControls, {
-  candidates: 634,
+  candidates: 678,
   excludedNonActions: 23,
-  finiteVariantInstances: 44,
-  inventoried: 645,
+  finiteVariantInstances: 50,
+  inventoried: 694,
 }, "event shields and statically non-addressable inputs must be excluded while finite mapped menus expand into concrete actions");
 assert.deepEqual(generated.occurrenceAccounting.uiDebugSurfaces, {
-  candidates: 485,
-  finiteVariantInstances: 44,
-  inventoried: 522,
+  candidates: 558,
+  finiteVariantInstances: 57,
+  inventoried: 606,
 }, "every concrete debug marker instance must remain in the release ledger");
 assert.equal(
   new Set(generated.items.filter((item) => item.kind === "ui-control").map((item) => item.name)).size,
-  631,
+  680,
   "repeated source controls remain separate while finite menu instances use concrete names",
 );
 assert.equal(
   new Set(generated.items.filter((item) => item.kind === "ui-debug-surface").map((item) => item.name)).size,
-  515,
+  599,
   "repeated debug markers remain separate while finite menu instances use concrete names",
 );
-assert.equal(generated.copyDerivedInteractiveControls, 220, "copy-derived UI locators remain explicitly visible as brittle coverage");
+assert.equal(generated.copyDerivedInteractiveControls, 222, "copy-derived UI locators remain explicitly visible as brittle coverage");
 const headerSource = readFileSync(resolve(root, "src", "components", "Header.tsx"), "utf8");
 assert(
   !generated.items.some((item) => item.source === "src/components/Header.tsx" && item.name.includes("surface-components-header-2"))
@@ -203,12 +204,12 @@ assert(
 );
 assert.equal(
   generated.items.filter((item) => item.kind === "ui-debug-surface" && item.dynamicSelector).length,
-  34,
+  48,
   "wildcard and conditional-variant debug marker families must be classified",
 );
 assert.equal(
   generated.items.filter((item) => item.kind === "ui-debug-surface" && item.name.includes("*")).length,
-  34,
+  48,
   "runtime-owned wildcard debug marker source occurrences must remain visible in the ledger",
 );
 assert(
@@ -231,8 +232,21 @@ assert(
 );
 assert.equal(
   promotedUiDebugSurfaces.length,
-  445,
+  523,
   "only UI debug surfaces with deterministic owned renderer state may enter the executable lane",
+);
+assert.deepEqual(
+  promotedUiDebugSurfaces
+    .filter((item) => item.source === "src/components/TaskManager.tsx" || item.source === "src/components/TaskRunHistory.tsx")
+    .reduce<Record<string, number>>((counts, item) => {
+      counts[item.source] = (counts[item.source] ?? 0) + 1;
+      return counts;
+    }, {}),
+  {
+    "src/components/TaskManager.tsx": 64,
+    "src/components/TaskRunHistory.tsx": 7,
+  },
+  "all Task Manager and run-history markers must retain exact owned renderer fixtures",
 );
 assert.equal(
   releaseUiDebugCohortDeclarationCount(),
@@ -241,8 +255,8 @@ assert.equal(
 );
 assert.equal(
   promotedUiDebugSurfaces.filter((item) => item.driverFamily === "dynamic-marker").length,
-  21,
-  "only owned Activity evidence, Browser task/history, bookmark, toolbar, and Vault request-action rows currently have deterministic dynamic fixtures",
+  35,
+  "only owned Activity evidence, Browser task/history, bookmark, toolbar, Vault request-action, and Task identity rows currently have deterministic dynamic fixtures",
 );
 assert(
   promotedUiDebugSurfaces.every((surface) => releaseUiDebugSurfaceCohort(surface)?.fixtureId),
@@ -282,7 +296,7 @@ assert.deepEqual(
 );
 assert.equal(
   generated.items.filter((item) => item.kind === "ui-control" && item.finiteVariant).length,
-  44,
+  50,
   "all finite mapped UI registries must expand into their concrete runtime instances",
 );
 assert.equal(
@@ -323,7 +337,7 @@ assert.deepEqual(
     method,
     routeItems.filter((item) => item.name.startsWith(`${method} `)).length,
   ])),
-  { GET: 85, POST: 139, DELETE: 7 },
+  { GET: 91, POST: 148, DELETE: 8 },
   "Debug API inventory method counts must match the concrete router registry",
 );
 const inventoriedDebugRoutes = new Set(routeItems.map((item) => item.name));
@@ -395,15 +409,15 @@ const liveDriverPlan = verifyFinalSurfaceDriverPlan(
   generated,
   root,
 );
-assert.equal(liveDriverPlan.status, "ready", "the consolidated source ledger must have no hidden or explicit BUILDING assignments");
+assert.equal(liveDriverPlan.status, "ready", "every current 0.3.6 surface must have an executable installed-driver assignment");
 assert.equal(liveDriverPlan.counts.inventoryItems, generated.items.length);
-assert.equal(liveDriverPlan.counts.inventoryCells, 5_180);
+assert.equal(liveDriverPlan.counts.inventoryCells, 5_690);
 assert.equal(
   liveDriverPlan.counts.ready,
-  5_180,
-  "every exact surface-platform cell must have an executable installed-driver lane",
+  5_690,
+  "every current surface-platform cell must have an executable driver before the frozen release-candidate matrix runs",
 );
-assert.equal(liveDriverPlan.counts.assigned, 5_180, "every exact surface-platform cell must have an explicit driver lane");
+assert.equal(liveDriverPlan.counts.assigned, 5_690, "every exact surface-platform cell must have an explicit ready or building driver lane");
 assert.equal(liveDriverPlan.counts.missing, 0, "the implementation backlog must be typed rather than hidden as missing coverage");
 const finalSurfaceGateDoc = readFileSync(resolve(root, "release", "FINAL_SURFACE_GATE.md"), "utf8");
 assert.deepEqual(
@@ -425,7 +439,18 @@ assert.equal(
 assert.equal(
   loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId.endsWith("-backlog-installed")).length,
   0,
-  "the consolidated 0.3.52 Browser driver slice must leave no explicit BUILDING assignments",
+  "the current driver plan must not retain an executable-coverage backlog",
+);
+assert.deepEqual(
+  loadedLiveDriverPlan.assignments
+    .filter((assignment) => assignment.driverId.endsWith("-backlog-installed"))
+    .reduce<Record<string, number>>((counts, assignment) => {
+      const kind = assignment.surfaceId.slice(0, assignment.surfaceId.indexOf(":"));
+      counts[kind] = (counts[kind] ?? 0) + 1;
+      return counts;
+    }, {}),
+  {},
+  "no surface kind may retain a BUILDING assignment after the Cut installed-input lane is wired",
 );
 const browserHandoffSheetAssignments = loadedLiveDriverPlan.assignments.filter((assignment) => (
   assignment.surfaceId.includes("src/browser/components/BrowserTabHandoffConfirmation.tsx")
@@ -451,7 +476,7 @@ const browserTeachAssignments = loadedLiveDriverPlan.assignments.filter((assignm
   BROWSER_TEACH_CONTROL_SURFACE_IDS.has(assignment.surfaceId)
     || BROWSER_TEACH_DEBUG_ASSIGNMENT_IDS.has(assignment.surfaceId)
 ));
-assert.equal(browserTeachAssignments.length, 39, "Browser Teach must retain exactly 12 controls and 27 durable markers");
+assert.equal(browserTeachAssignments.length, 44, "Browser Teach must retain exactly 14 controls and 30 durable markers");
 assert(browserTeachAssignments.every((assignment) => (
   assignment.fixtureId === BROWSER_TEACH_INSTALLED_FIXTURE
     && assignment.cleanupId === BROWSER_TEACH_INSTALLED_CLEANUP
@@ -761,7 +786,7 @@ assert(
 const executableUiDebugAssignments = loadedLiveDriverPlan.assignments.filter(
   (assignment) => assignment.driverId === "ui-debug-surface-installed",
 );
-assert.equal(executableUiDebugAssignments.length, 444);
+assert.equal(executableUiDebugAssignments.length, 522);
 assert(
   executableUiDebugAssignments.every((assignment) => assignment.expectedEffect.includes("no control activation is claimed")),
   "debug addressability assignments must never claim the corresponding control's semantic action",
@@ -868,7 +893,7 @@ assert(
   "no app-bottom provider, operator-session, or microphone path may remain on the BUILDING ledger",
 );
 const slashHighlightAssignment = loadedLiveDriverPlan.assignments.find((assignment) => (
-  assignment.surfaceId === "ui-debug-surface:surface-components-bottompanel-24@src/components/BottomPanel.tsx#22"
+  assignment.surfaceId === "ui-debug-surface:surface-components-bottompanel-24@src/components/BottomPanel.tsx#23"
 ));
 assert.equal(slashHighlightAssignment?.driverId, "ui-debug-surface-installed");
 assert.equal(slashHighlightAssignment?.fixtureId, "ui:owned-slash-command-row-visible");
@@ -939,7 +964,7 @@ const debugApiDriverSource = readFileSync(
 );
 assert(
   loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "debug-api-route-installed").length === 231
-    && liveDriverPlan.counts.readyByKind["debug-api-route"] === 693
+    && liveDriverPlan.counts.readyByKind["debug-api-route"] === 741
     && debugApiDriverSource.includes("prepareDebugApiSessionFixture(request)")
     && debugApiDriverSource.includes("cleanupDebugApiSessionFixture(sessionFixture)")
     && debugApiDriverSource.includes("prepareDebugApiFilesFixture(request)")
@@ -962,6 +987,23 @@ assert(
     && debugApiDriverSource.includes("cleanupDebugApiGitFixture(gitFixture)"),
   "the installed Debug API cohort must include bounded read fixtures, disposable owned mutations, operator and remote-approval gates, exact denials, and cleanup on all platforms",
 );
+const taskDebugApiDriverSource = readFileSync(
+  resolve(root, "scripts", "release-drivers", "debug-api-task-installed.ts"),
+  "utf8",
+);
+assert(
+  loadedLiveDriverPlan.drivers.find((driver) => driver.id === "debug-api-task-installed")?.platforms["windows-installed"] === "ready"
+    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "debug-api-task-installed")?.platforms["linux-installed"] === "ready"
+    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "debug-api-task-installed")?.platforms["macos-installed"] === "ready"
+    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "debug-api-task-installed").length === 16
+    && taskDebugApiDriverSource.includes("assertIsolatedTaskReleaseProfile(request)")
+    && taskDebugApiDriverSource.includes("verifyTaskProviderCatalogue")
+    && taskDebugApiDriverSource.includes("task_run_not_available")
+    && taskDebugApiDriverSource.includes("soft-deleted exactly the owned Task")
+    && !taskDebugApiDriverSource.includes("start_provider_session")
+    && !taskDebugApiDriverSource.includes("initiate_and_send_prompt"),
+  "all sixteen Task Debug API routes must exercise one isolated paused definition, exact state and receipt projections, pre-dispatch refusals, and truthful soft-delete cleanup on every shipped platform cell",
+);
 const tauriCommandDriverSource = readFileSync(
   resolve(root, "scripts", "release-drivers", "tauri-command-installed.ts"),
   "utf8",
@@ -970,8 +1012,8 @@ assert(
   loadedLiveDriverPlan.drivers.find((driver) => driver.id === "tauri-command-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "tauri-command-installed")?.platforms["linux-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "tauri-command-installed")?.platforms["macos-installed"] === "ready"
-    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "tauri-command-installed").length === 160
-    && liveDriverPlan.counts.readyByKind["tauri-command"] === 477
+    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "tauri-command-installed").length === 161
+    && liveDriverPlan.counts.readyByKind["tauri-command"] === 540
     && tauriCommandDriverSource.includes('invocationTransport: "debug-api-direct"')
     && tauriCommandDriverSource.includes('"/release-test/tauri-invokes"')
     && tauriCommandDriverSource.includes('"DELETE"')
@@ -994,9 +1036,70 @@ assert(
     && tauriCommandDriverSource.includes("cleanupVaultPanel(webdriver, vaultPanelInvokedAtMs)")
     && tauriCommandDriverSource.includes("cleanupMarketplaceMutation(webdriver, marketplaceFixture)")
     && tauriCommandDriverSource.includes("cleanupVaultAgentStateFixture(vaultAgentStateFixture)")
+    && tauriCommandDriverSource.includes("browserTeachWorkflowBookmarkId")
     && !tauriCommandDriverSource.includes("fixture-private"),
-  "one hundred sixty-one bounded Tauri IPC commands must use the authenticated isolated relay with exact fail-closed contracts or owned Windows desktop-integration, Browser engine/profile/session/history/Git/user-data/goal/media/Vault/connection/file/config/token/UI fixtures and delete, close, or restore temporary state on every shipped platform cell",
+  "the one hundred sixty-one generic bounded Tauri IPC commands must use the authenticated isolated relay with exact fail-closed contracts or owned Windows desktop-integration, Browser engine/profile/session/history/Git/user-data/goal/media/Vault/connection/file/config/token/UI fixtures and delete, close, or restore temporary state on every shipped platform cell",
 );
+const taskTauriDriverSource = readFileSync(
+  resolve(root, "scripts", "release-drivers", "tauri-command-task-installed.ts"),
+  "utf8",
+);
+assert(
+  loadedLiveDriverPlan.drivers.find((driver) => driver.id === "tauri-command-task-installed")?.platforms["windows-installed"] === "ready"
+    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "tauri-command-task-installed")?.platforms["linux-installed"] === "ready"
+    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "tauri-command-task-installed")?.platforms["macos-installed"] === "ready"
+    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "tauri-command-task-installed").length === 20
+    && taskTauriDriverSource.includes("ReleaseSurfaceTauriInvokeSession")
+    && taskTauriDriverSource.includes("invokeExpectFailure")
+    && taskTauriDriverSource.includes("tasks_persist_attachments")
+    && taskTauriDriverSource.includes("tasks_reclaim_attachments")
+    && taskTauriDriverSource.includes("ShellX Cut needs an active ShellX desktop-host context")
+    && taskTauriDriverSource.includes("soft-deleted exactly the owned Task")
+    && !taskTauriDriverSource.includes("start_provider_session")
+    && !taskTauriDriverSource.includes("initiate_and_send_prompt")
+    && !taskTauriDriverSource.includes("login")
+    && !taskTauriDriverSource.includes("logout"),
+  "all twenty Task and Cut Tauri commands must use the authenticated isolated relay, live target scan, exact paused definition and attachment lifecycle, pre-dispatch refusal contracts, and truthful cleanup on every shipped platform cell",
+);
+const cutToolingDriverSource = readFileSync(
+  resolve(root, "scripts", "release-drivers", "ui-cut-tooling-installed.ts"),
+  "utf8",
+);
+const cutToolingControlDriverSource = readFileSync(
+  resolve(root, "scripts", "release-drivers", "ui-control-cut-tooling-installed.ts"),
+  "utf8",
+);
+assert(
+  loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-cut-tooling-installed")?.platforms["windows-installed"] === "ready"
+    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-cut-tooling-installed")?.platforms["linux-installed"] === "ready"
+    && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-cut-tooling-installed")?.platforms["macos-installed"] === "ready"
+    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "ui-control-cut-tooling-installed").length === 2
+    && cutToolingControlDriverSource.includes('invocationTransport: "native-installed-input"')
+    && cutToolingDriverSource.includes('relay.invoke("session_tooling_snapshot"')
+    && cutToolingDriverSource.includes("data-shellx-cut-check-sequence='1'")
+    && cutToolingDriverSource.includes("Open unavailable did not expose its exact disabled host-context explanation")
+    && cutToolingDriverSource.includes("selectRightTab(connection, input, originalRightTab)")
+    && !cutToolingDriverSource.includes("cut_tooling_open")
+    && !cutToolingDriverSource.includes("start_provider_session")
+    && !cutToolingDriverSource.includes("initiate_and_send_prompt"),
+  "both Cut Tooling UI controls must use native installed input, a read-only no-host-context preflight, an exact visible refresh receipt, disabled Open verification, and right-rail restoration on every shipped platform cell",
+);
+const cutToolingStateAssignments = loadedLiveDriverPlan.assignments.filter((assignment) => (
+  assignment.surfaceId.startsWith("ui-debug-surface:cut-tooling-state-")
+));
+assert.equal(cutToolingStateAssignments.length, CUT_TOOLING_STATES.length);
+for (const state of CUT_TOOLING_STATES) {
+  const assignment = cutToolingStateAssignments.find((row) => (
+    row.surfaceId === `ui-debug-surface:cut-tooling-state-${state}@src/components/CutToolingRow.tsx#1`
+  ));
+  assert(
+    assignment?.driverId === "ui-debug-surface-installed"
+      && assignment.fixtureId === `ui:cut-tooling-${state}-visible`
+      && assignment.oracleId === "ui:visible-nonempty-rectangle"
+      && assignment.cleanupId === "ui:clear-debug-highlight-and-restore-owned-state",
+    `Cut Tooling state ${state} must have an exact installed-app visible-state fixture`,
+  );
+}
 assert(
   loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "browser-cli-command-installed").length === 28
     && liveDriverPlan.counts.readyByKind["browser-cli-command"] === 87,
@@ -1724,7 +1827,7 @@ assert(
         && assignment.oracleId === "ui:activation:owned-app-screenshot-attached"
         && assignment.cleanupId === "ui:remove-exact-screenshot-attachment-delete-owned-png-restore-view"
     )).length === 2
-    && liveDriverPlan.counts.readyByKind["ui-control"] === 1_931
+    && liveDriverPlan.counts.readyByKind["ui-control"] === 2_078
     && uiControlDriverSource.includes('invocationTransport: "native-installed-input"')
     && uiControlDriverSource.includes("createReleaseSurfaceInstalledInputSession")
     && uiControlDriverSource.includes("clickReleaseSurfaceWebDriverElement")

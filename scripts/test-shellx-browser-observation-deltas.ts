@@ -9,7 +9,8 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 const observations = source("src-tauri/src/shellx_browser_observations.rs");
-const results = source("src-tauri/src/shellx_browser_action_results.rs");
+const results = source("src-tauri/src/shellx_browser_action_results.rs")
+  + source("src-tauri/src/shellx_browser_taskless_action_results.rs");
 const model = source("src-tauri/src/shellx_browser_observation_model.rs");
 const output = source("src-tauri/src/host_mcp/browser_output.rs");
 const metadata = source("src-tauri/src/build_metadata.rs");

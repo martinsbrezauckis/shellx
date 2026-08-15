@@ -60,7 +60,7 @@ try {
   const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
   assert.equal(report.schema, RELEASE_SURFACE_DRIVER_REPORT_SCHEMA);
   assert.deepEqual(validateReleaseSurfaceDriverReport(request, report), []);
-  assert.equal(report.outcomes.length, 155);
+  assert.equal(report.outcomes.length, 162);
   assert(report.outcomes.every((outcome) => (
     outcome.present === "pass"
     && outcome.invoke === "pass"
@@ -93,6 +93,7 @@ try {
   assert.equal(fixtureState.openModal, "close");
   assert.equal(fixtureState.buildPlanFixtureActive, false, "the inert Build plan fixture must be exactly cleared");
   assert.equal(fixtureState.shellxagentFixtureActive, false, "the inert ShellX Agent fixture must be exactly cleared");
+  assert.equal(fixtureState.cutToolingFixture, null, "the inert Cut state fixture must be exactly cleared");
   assert.equal(fixtureState.appBottomTab, "Chat", "the app bottom-tab state must be restored");
   assert.equal(fixtureState.agentCliSetupFixture, "closed", "the synthetic Agent CLI setup dialog must be exactly unmounted");
   assert.equal(fixtureState.goalPlanReviewFixture, "closed", "the synthetic Goal Plan Review dialog must be exactly unmounted");
@@ -423,6 +424,13 @@ function newUiDebugCohortAssignments(
     ["shellx-browser-show-right-sidebar-button", "src/browser/components/BrowserChrome.tsx", 10, 316, "[data-debug-id=\"shellx-browser-show-right-sidebar-button\"]", false, "ui:browser-right-sidebar-hidden-owned-task"],
     ["surface-components-rightrail-2", "src/components/RightRail.tsx", 2, 745, "[data-debug-id=\"surface-components-rightrail-2\"]", false, "ui:right-rail-tooling-visible"],
     ["surface-components-rightrail-9", "src/components/RightRail.tsx", 3, 1091, "[data-debug-id=\"surface-components-rightrail-9\"]", false, "ui:right-rail-tooling-visible"],
+    ["cut-tooling-state-checking", "src/components/CutToolingRow.tsx", 1, 43, "[data-debug-id=\"cut-tooling-state-checking\"]", false, "ui:cut-tooling-checking-visible"],
+    ["cut-tooling-state-ready", "src/components/CutToolingRow.tsx", 1, 43, "[data-debug-id=\"cut-tooling-state-ready\"]", false, "ui:cut-tooling-ready-visible"],
+    ["cut-tooling-state-installedEditorClosed", "src/components/CutToolingRow.tsx", 1, 43, "[data-debug-id=\"cut-tooling-state-installedEditorClosed\"]", false, "ui:cut-tooling-installedEditorClosed-visible"],
+    ["cut-tooling-state-notInstalled", "src/components/CutToolingRow.tsx", 1, 43, "[data-debug-id=\"cut-tooling-state-notInstalled\"]", false, "ui:cut-tooling-notInstalled-visible"],
+    ["cut-tooling-state-unsupportedTarget", "src/components/CutToolingRow.tsx", 1, 43, "[data-debug-id=\"cut-tooling-state-unsupportedTarget\"]", false, "ui:cut-tooling-unsupportedTarget-visible"],
+    ["cut-tooling-state-unavailableToProvider", "src/components/CutToolingRow.tsx", 1, 43, "[data-debug-id=\"cut-tooling-state-unavailableToProvider\"]", false, "ui:cut-tooling-unavailableToProvider-visible"],
+    ["cut-tooling-state-unavailable", "src/components/CutToolingRow.tsx", 1, 43, "[data-debug-id=\"cut-tooling-state-unavailable\"]", false, "ui:cut-tooling-unavailable-visible"],
     ["surface-components-rightrail-11", "src/components/RightRail.tsx", 4, 1767, "[data-debug-id=\"surface-components-rightrail-11\"]", false, "ui:right-rail-owned-connector-action-visible"],
     ["surface-components-taskspanel-8", "src/components/TasksPanel.tsx", 5, 714, "[data-debug-id=\"surface-components-taskspanel-8\"]", false, "ui:owned-tasks-panel-row-visible"],
     ["surface-components-workpreviewpanel-16", "src/components/WorkPreviewPanel.tsx", 2, 627, "[data-debug-id=\"surface-components-workpreviewpanel-16\"]", false, "ui:owned-work-preview-browser-issue-visible"],

@@ -16,15 +16,15 @@ const uiSurfaces = inventory.items.filter((item) => (
 
 assert.deepEqual(inventory.uiDriverFamilyAccounting, {
   selection: 49,
-  disclosure: 25,
-  toggle: 59,
-  "text-entry": 83,
-  choice: 21,
+  disclosure: 26,
+  toggle: 68,
+  "text-entry": 92,
+  choice: 30,
   range: 2,
   "file-picker": 0,
-  activation: 406,
-  "static-marker": 488,
-  "dynamic-marker": 34,
+  activation: 427,
+  "static-marker": 558,
+  "dynamic-marker": 48,
 }, "every exact UI occurrence must belong to one deterministic installed-driver family");
 
 for (const surfaceId of [

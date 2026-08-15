@@ -43,6 +43,7 @@ import {
   type DebugApiBrowserSettleFixture,
 } from "./debug-api-browser-settle-fixture";
 import {
+  browserTeachCallerId,
   teachPrepareRequest,
   teachRevisionRequest,
   verifyBrowserDeveloperModeDenial,
@@ -186,6 +187,7 @@ const COMMANDS = [
   "shellx_browser_operator_export_performance",
   "shellx_browser_operator_list_teach_drafts",
   "shellx_browser_operator_prepare_teach_draft",
+  "shellx_browser_operator_prepare_teach_task_handoff",
   "shellx_browser_operator_rehearse_teach_recipe",
   "shellx_browser_operator_revise_teach_draft",
   "shellx_browser_replay_cowork_prompt_notifications",
@@ -242,7 +244,29 @@ const SHARED_COMMANDS = readFileSync(
   fileURLToPath(new URL("../../src-tauri/src/release_tauri_command_allowlist.txt", import.meta.url)),
   "utf8",
 ).trim().split(/\r?\n/);
-const DEDICATED_RELEASE_COMMANDS = new Set(["shellx_browser_fill_user_vault_secret"]);
+const DEDICATED_RELEASE_COMMANDS = new Set([
+  "shellx_browser_fill_user_vault_secret",
+  "cut_tooling_open",
+  "task_provider_catalog",
+  "tasks_cancel_run",
+  "tasks_create",
+  "tasks_delete",
+  "tasks_get",
+  "tasks_get_state",
+  "tasks_list",
+  "tasks_list_open_attention",
+  "tasks_list_receipts",
+  "tasks_list_states",
+  "tasks_maintain_attachments",
+  "tasks_pause",
+  "tasks_persist_attachments",
+  "tasks_reclaim_attachments",
+  "tasks_resolve_attention",
+  "tasks_resolve_attention_overflow",
+  "tasks_resume",
+  "tasks_revise",
+  "tasks_run_now",
+]);
 const SHARED_GENERIC_COMMANDS = SHARED_COMMANDS.filter((command) => !DEDICATED_RELEASE_COMMANDS.has(command));
 if (SHARED_GENERIC_COMMANDS.length !== COMMANDS.length
   || SHARED_GENERIC_COMMANDS.some((command, index) => command !== COMMANDS[index])) {
@@ -328,7 +352,7 @@ type BrowserSettingMutationFixture = {
 type BrowserTeachOperatorWorkflowFixture = {
   evidence: BrowserTeachEvidenceFixture;
   draft: BrowserTeachDraftIdentity | null;
-  recipe: { recipeId: string; sha256: string; approvalId: string } | null;
+  recipe: { recipeId: string; sha256: string; approvalId: string; rehearsalReceiptId?: string } | null;
 };
 
 const OWNED_CONNECTION_ID = "final-surface-owned-connection";
@@ -394,6 +418,7 @@ const BROWSER_OPERATOR_WORKFLOW_COMMANDS = new Set<SupportedCommand>([
   "shellx_browser_operator_export_performance",
   "shellx_browser_operator_list_teach_drafts",
   "shellx_browser_operator_prepare_teach_draft",
+  "shellx_browser_operator_prepare_teach_task_handoff",
   "shellx_browser_operator_rehearse_teach_recipe",
   "shellx_browser_operator_revise_teach_draft",
 ]);
@@ -527,6 +552,7 @@ async function exerciseCommand(
   let browserEvidenceFixture: DebugApiBrowserSettleFixture | null = null;
   const browserEvidenceArtifactPaths = new Set<string>();
   let browserOperatorWorkflowFixture: BrowserTeachOperatorWorkflowFixture | null = null;
+  let browserTeachWorkflowBookmarkId: string | null = null;
   const browserOperatorWorkflowArtifactPaths = new Set<string>();
   let browserEngineSyncFixture: TauriCommandBrowserEngineSyncFixture | null = null;
   let nativePickerFixture: NativePickerFixture | null = null;
@@ -643,7 +669,8 @@ async function exerciseCommand(
         );
         browserOperatorWorkflowFixture.draft = verifyBrowserTeachPrepared(prepared, evidence);
       }
-      if (command === "shellx_browser_operator_rehearse_teach_recipe") {
+      if (command === "shellx_browser_operator_rehearse_teach_recipe"
+        || command === "shellx_browser_operator_prepare_teach_task_handoff") {
         const draft = browserOperatorWorkflowFixture.draft;
         if (!draft) throw new Error("owned operator Teach draft is unavailable for rehearsal");
         const approved = await invokeTemporaryTauriCommand(
@@ -652,6 +679,21 @@ async function exerciseCommand(
           { request: { draftId: draft.draftId, revisionId: draft.revisionId, revisionSha256: draft.revisionSha256 } },
         );
         browserOperatorWorkflowFixture.recipe = verifyOperatorTeachApproval(approved, browserOperatorWorkflowFixture);
+        if (command === "shellx_browser_operator_prepare_teach_task_handoff") {
+          const recipe = browserOperatorWorkflowFixture.recipe;
+          const rehearsed = await invokeTemporaryTauriCommand(
+            webdriver,
+            "shellx_browser_operator_rehearse_teach_recipe",
+            { request: { recipeId: recipe.recipeId, sha256: recipe.sha256 } },
+          );
+          const rehearsalReceiptId = await verifyOperatorTeachRehearsal(
+            rehearsed,
+            webdriver,
+            evidence,
+            recipe,
+          );
+          browserOperatorWorkflowFixture.recipe = { ...recipe, rehearsalReceiptId };
+        }
       }
     }
     if (command === "shellx_browser_sync_engine") {
@@ -706,6 +748,13 @@ async function exerciseCommand(
       ),
       EXPECTED_REJECTIONS.has(command),
     );
+    if (command === "shellx_browser_operator_prepare_teach_task_handoff") {
+      browserTeachWorkflowBookmarkId = requireStringValue(
+        requireRecord(completed.value, command),
+        "workflowId",
+        command,
+      );
+    }
     outcome.invoke = "pass";
     if (command === "release_test_take_native_picker") {
       const second = await invokeTemporaryTauriCommand(webdriver, command, { kind: "file" });
@@ -886,6 +935,25 @@ async function exerciseCommand(
       if (cleanupError) cleanupErrors.push(cleanupError);
     }
     if (browserOperatorWorkflowFixture) {
+      if (browserTeachWorkflowBookmarkId) {
+        try {
+          await debugApiJson(
+            request,
+            "DELETE",
+            `/browser/bookmarks/${encodeURIComponent(browserTeachWorkflowBookmarkId)}`,
+          );
+          const bookmarks = requireRecord(
+            await debugApiJson(request, "GET", "/browser/bookmarks"),
+            "Teach Task workflow bookmark cleanup",
+          );
+          if (requireArray(bookmarks.bookmarks, "Teach Task workflow bookmarks")
+            .some((row) => requireRecord(row, "Teach Task workflow bookmark").bookmarkId === browserTeachWorkflowBookmarkId)) {
+            throw new Error("owned Teach Task workflow bookmark remained after cleanup");
+          }
+        } catch (error) {
+          cleanupErrors.push(`owned Teach Task workflow bookmark: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       const cleanupError = await cleanupDebugApiBrowserSettleFixture(
         debugApiConnectionForRequest(request),
         browserOperatorWorkflowFixture.evidence.browser,
@@ -1278,6 +1346,7 @@ function invocationArgs(
       request: {
         browserTabId: "final-surface-absent-browser-tab",
         taskId: "final-surface-absent-browser-task",
+        reviewFingerprint: `sha256:${"0".repeat(64)}`,
         grantId: null,
         reason: "release validation",
       },
@@ -1328,6 +1397,20 @@ function invocationArgs(
       return { request: { draftId: draft.draftId, revisionId: draft.revisionId, revisionSha256: draft.revisionSha256 } };
     }
     if (!recipe) throw new Error("owned Browser operator Teach recipe is unavailable");
+    if (command === "shellx_browser_operator_prepare_teach_task_handoff") {
+      if (!recipe.rehearsalReceiptId) throw new Error("owned Browser operator Teach rehearsal receipt is unavailable");
+      return {
+        request: {
+          draftId: draft.draftId,
+          revisionId: draft.revisionId,
+          revisionSha256: draft.revisionSha256,
+          recipeId: recipe.recipeId,
+          recipeSha256: recipe.sha256,
+          approvalId: recipe.approvalId,
+          rehearsalReceiptId: recipe.rehearsalReceiptId,
+        },
+      };
+    }
     return { request: { recipeId: recipe.recipeId, sha256: recipe.sha256 } };
   }
   if (command === "shellx_browser_sync_engine") {
@@ -1675,6 +1758,7 @@ function requiresOperatorTeachDraft(command: SupportedCommand): boolean {
   return new Set<SupportedCommand>([
     "shellx_browser_operator_approve_teach_draft",
     "shellx_browser_operator_list_teach_drafts",
+    "shellx_browser_operator_prepare_teach_task_handoff",
     "shellx_browser_operator_revise_teach_draft",
     "shellx_browser_operator_rehearse_teach_recipe",
   ]).has(command);
@@ -1760,6 +1844,43 @@ async function verifyBrowserOperatorWorkflowCommand(
     return "Installed operator IPC created one Action Recipe V2 draft and matching approval receipt for the exact Teach revision without applying the recipe.";
   }
   if (!recipe) throw new Error("operator Teach rehearsal requires an owned approved recipe");
+  if (command === "shellx_browser_operator_prepare_teach_task_handoff") {
+    const body = requireRecord(value, "operator Teach Task handoff");
+    const receipt = requireRecord(body.receipt, "operator Teach Task handoff receipt");
+    const workflowId = requireStringValue(body, "workflowId", "operator Teach Task handoff");
+    const workflowDigest = requireStringValue(body, "workflowDigest", "operator Teach Task handoff");
+    if (!/^sha256:[a-f0-9]{64}$/.test(workflowDigest)
+      || body.ownerSessionId !== browserTeachCallerId()
+      || body.browserTaskId !== evidence.browser.taskId
+      || body.browserTabId !== evidence.browser.browserTabId
+      || !Array.isArray(body.requiredVaultKeyIds)
+      || !Array.isArray(body.requiredCapabilities)
+      || receipt.kind !== "browserTeachTaskHandoffPrepared"
+      || JSON.stringify(body).includes("recipePath")) {
+      throw new Error("operator Teach Task handoff omitted its path-free exact workflow identity");
+    }
+    const bookmarks = requireRecord(
+      await debugApiJson(webdriver.request, "GET", "/browser/bookmarks"),
+      "operator Teach Task handoff bookmarks",
+    );
+    const matching = requireArray(bookmarks.bookmarks, "operator Teach Task handoff bookmarks")
+      .map((row) => requireRecord(row, "operator Teach Task handoff bookmark"))
+      .filter((row) => row.bookmarkId === workflowId);
+    if (matching.length !== 1) {
+      throw new Error("operator Teach Task handoff did not persist one exact workflow bookmark");
+    }
+    return "Installed operator IPC bound the exact approved zero-skip Teach rehearsal to one path-private workflow bookmark and returned only the paused Task draft identities.";
+  }
+  await verifyOperatorTeachRehearsal(value, webdriver, evidence, recipe);
+  return "Installed operator IPC dry-ran the exact approved Teach recipe with zero applied steps and confirmed one matching rehearsal receipt.";
+}
+
+async function verifyOperatorTeachRehearsal(
+  value: unknown,
+  webdriver: TauriCommandTransport,
+  evidence: BrowserTeachEvidenceFixture,
+  recipe: { recipeId: string; sha256: string },
+): Promise<string> {
   const rehearsed = requireRecord(value, "operator Teach rehearsal");
   const receipt = requireRecord(rehearsed.receipt, "operator Teach rehearsal receipt");
   if (rehearsed.recipeId !== recipe.recipeId || rehearsed.sha256 !== recipe.sha256
@@ -1770,7 +1891,7 @@ async function verifyBrowserOperatorWorkflowCommand(
     throw new Error("operator Teach rehearsal did not preserve its dry-run-only receipt boundary");
   }
   await verifyOperatorTeachReceiptState(webdriver, evidence, recipe.recipeId, String(receipt.receiptId), "browserTeachRecipeRehearsed");
-  return "Installed operator IPC dry-ran the exact approved Teach recipe with zero applied steps and confirmed one matching rehearsal receipt.";
+  return String(receipt.receiptId);
 }
 
 async function verifyOperatorTeachReceiptState(
@@ -3842,6 +3963,7 @@ function commandOracleId(command: SupportedCommand): string {
   if (command === "shellx_browser_operator_list_teach_drafts") return `tauri:${command}:owned-draft-readback`;
   if (command === "shellx_browser_operator_revise_teach_draft") return `tauri:${command}:owned-revision`;
   if (command === "shellx_browser_operator_approve_teach_draft") return `tauri:${command}:owned-approval-receipt`;
+  if (command === "shellx_browser_operator_prepare_teach_task_handoff") return `tauri:${command}:path-private-workflow-bookmark`;
   if (command === "shellx_browser_operator_rehearse_teach_recipe") return `tauri:${command}:dry-run-receipt`;
   if (command === "shellx_browser_sync_engine") {
     return "tauri:shellx_browser_sync_engine:owned-engine-preserved";

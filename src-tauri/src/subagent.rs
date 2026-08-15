@@ -979,7 +979,7 @@ pub async fn spawn_subagent_with_transport_options(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| transport_tab_id.to_string());
-    let mcp_token = crate::mcp_http::tab_bound_mcp_token(transport_tab_id);
+    let mcp_token = crate::mcp_http::tab_bound_mcp_token(transport_tab_id)?;
     let (mut cmd, encoded_args_in_transport, ssh_setup_stdin) = match &transport {
         SubagentTransport::Local { .. } => (Command::new(&grok_path), false, None),
         SubagentTransport::Wsl {

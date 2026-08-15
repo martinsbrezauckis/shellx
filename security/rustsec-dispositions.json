@@ -2,30 +2,18 @@
   "schemaVersion": "shellx.rustsec-dispositions.v1",
   "entries": [
     {
-      "advisoryId": "RUSTSEC-2026-0235",
-      "package": "rkyv",
-      "versions": ["0.7.46"],
-      "expiresOn": "2026-09-05",
-      "reason": "The affected rkyv archive-validation code is not compiled into ShellX because rkyv is an inactive optional dependency of rust_decimal.",
-      "evidence": [
-        "rust_decimal 1.42.0 declares rkyv 0.7.46 as optional and activates it only through its rkyv or rkyv-safe features; ShellX enables neither feature.",
-        "For the current Cargo.lock, cargo tree --target all -i rkyv@0.7.46 returns no active dependency path, while rust_decimal is reached only through byte-unit 5.2.0 and tauri-plugin-log 2.8.0.",
-        "ShellX has no direct rkyv dependency and does not call rkyv archive access or deserialization APIs."
-      ],
-      "upgradeCondition": "Remove when rust_decimal upgrades its optional rkyv integration to 0.8.17 or later, or when the inactive rkyv 0.7 series leaves the resolved lockfile."
-    },
-    {
       "advisoryId": "RUSTSEC-2024-0429",
       "package": "glib",
       "versions": ["0.18.5"],
       "expiresOn": "2026-09-05",
-      "reason": "The affected VariantStrIter iterator API is not called by ShellX or its reviewed Linux UI integration paths.",
+      "reason": "The resolved glib 0.18.5 source carries the exact gtk-rs VariantStrIter soundness backport; RustSec identifies the unchanged compatibility version rather than the patched source bytes.",
       "evidence": [
-        "glib 0.18.5 is a Linux-only transitive dependency of Tauri's GTK3, WebKitGTK, and menu stack; ShellX has no direct glib dependency.",
-        "A tracked-source search finds no VariantStrIter reference in ShellX or its vendored Vault crates.",
-        "The advisory is limited to VariantStrIter next, next_back, nth, nth_back, and last; ShellX does not expose a Variant string iterator surface."
+        "Resolved 2026-08-15: Cargo patches glib to vendor/glib while retaining version 0.18.5 for the Tauri 2.11.5 GTK3/WebKitGTK graph; Cargo.lock no longer resolves the glib package from the registry.",
+        "The vendored tree is derived from crates.io package SHA-256 233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5 and applies only gtk-rs backport commit ea720152f28e293ef4362ee844ee5cc499f32d2a to VariantStrIter::impl_get.",
+        "scripts/lib/verify-glib-backport.mjs seals the complete patched vendor tree and requires the mutable pointer plus &mut p call, the exact upstream/package provenance, the active Cargo patch, and a path-resolved lock entry.",
+        "The release gate builds an optimized temporary consumer that exercises next, next_back, nth, nth_back, and last against the patched source."
       ],
-      "upgradeCondition": "Remove when Tauri's Linux stack reaches glib 0.20 or later, or immediately if a reviewed dependency path begins using VariantStrIter."
+      "upgradeCondition": "Remove this version-only scanner disposition when the Tauri Linux stack reaches glib 0.20 or later, or when RustSec recognizes an official patched 0.18 release; reject any change that disables or alters the sealed backport in the meantime."
     }
   ]
 }

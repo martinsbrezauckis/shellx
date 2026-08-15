@@ -220,6 +220,19 @@ const candidate = createServer(async (request, response) => {
   if (request.url === "/browser/state" && request.method === "GET") {
     return json(response, 200, structuredClone(commandResults.shellx_browser_state));
   }
+  if (request.url === "/browser/bookmarks" && request.method === "GET") {
+    const state = requireRecord(commandResults.shellx_browser_state, "Browser fixture state");
+    return json(response, 200, { bookmarks: structuredClone(state.bookmarks) });
+  }
+  const bookmarkDelete = request.url?.match(/^\/browser\/bookmarks\/([^/?#]+)$/);
+  if (bookmarkDelete && request.method === "DELETE") {
+    const state = requireRecord(commandResults.shellx_browser_state, "Browser fixture state");
+    const bookmarkId = decodeURIComponent(bookmarkDelete[1]!);
+    const bookmarks = state.bookmarks as Array<Record<string, unknown>>;
+    const before = bookmarks.length;
+    state.bookmarks = bookmarks.filter((bookmark) => bookmark.bookmarkId !== bookmarkId);
+    return json(response, 200, { removed: before !== (state.bookmarks as unknown[]).length });
+  }
   if (request.url === "/events/recent?limit=8000" && request.method === "GET") {
     return json(response, 200, structuredClone(rawEvents));
   }
@@ -759,6 +772,9 @@ function commandResult(command: string, invokeArgs: Record<string, unknown>): un
   }
   if (command === "shellx_browser_operator_rehearse_teach_recipe") {
     return rehearseBrowserTeachRecipe(invokeArgs);
+  }
+  if (command === "shellx_browser_operator_prepare_teach_task_handoff") {
+    return prepareBrowserTeachTaskHandoff(invokeArgs);
   }
   if (command === "shellx_browser_operator_developer_inspect") {
     return browserDeveloperModeDenialForOperator(invokeArgs);
@@ -1361,6 +1377,66 @@ function rehearseBrowserTeachRecipe(invokeArgs: Record<string, unknown>): Record
     stepsSkipped: 0,
     stepsApplied: 0,
     receipt: { receiptId, kind: "browserTeachRecipeRehearsed", createdAtMs: Date.now(), sequence: browserTeachSequence },
+  };
+}
+
+function prepareBrowserTeachTaskHandoff(invokeArgs: Record<string, unknown>): Record<string, unknown> {
+  const request = requireRecord(invokeArgs.request, "operator Teach Task handoff request");
+  const draft = browserTeachDrafts.get(String(request.draftId ?? ""));
+  const recipe = browserTeachRecipes.get(String(request.recipeId ?? ""));
+  const state = requireRecord(commandResults.shellx_browser_state, "Browser fixture state");
+  const receipts = state.receipts as Array<Record<string, unknown>>;
+  const rehearsal = receipts.find((receipt) => (
+    receipt.receiptId === request.rehearsalReceiptId
+    && receipt.kind === "browserTeachRecipeRehearsed"
+    && receipt.taskId === draft?.taskId
+  ));
+  if (!draft || !recipe || request.revisionId !== draft.revisionId
+    || request.revisionSha256 !== draft.revisionSha256
+    || request.recipeSha256 !== recipe.sha256
+    || request.approvalId !== recipe.approvalId
+    || !rehearsal) {
+    throw new Error("operator Teach Task handoff requires the exact approved and rehearsed revision");
+  }
+  browserTeachSequence += 1;
+  const workflowId = `browser-workflow:fixture-${browserTeachSequence}`;
+  const workflowDigest = `sha256:${recipe.sha256}`;
+  const receiptId = `fixture-teach-task-handoff-receipt-${browserTeachSequence}`;
+  const receipt = {
+    receiptId,
+    kind: "browserTeachTaskHandoffPrepared",
+    taskId: draft.taskId,
+    profileId: "task-disposable",
+    summary: "Fixture Teach workflow prepared for a Task draft",
+    t: Date.now(),
+    sequence: browserTeachSequence,
+    evidence: { workflowId, workflowDigest, source: "shellx-browser-teach" },
+  };
+  receipts.push(receipt);
+  (state.bookmarks as Array<Record<string, unknown>>).push({
+    bookmarkId: workflowId,
+    label: "Confirm owned Browser Teach release fixture",
+    kind: "link",
+    url: "https://example.com/final-surface",
+    category: "workflow",
+    toolbarPinned: false,
+  });
+  return {
+    requestId: `teach-task-handoff:fixture-${browserTeachSequence}`,
+    workflowId,
+    workflowDigest,
+    goal: "Confirm owned Browser Teach release fixture",
+    ownerSessionId: "release-surface-browser-teach-agent",
+    browserTaskId: draft.taskId,
+    browserTabId: draft.browserTabId,
+    requiredVaultKeyIds: [],
+    requiredCapabilities: [],
+    receipt: {
+      receiptId,
+      kind: receipt.kind,
+      createdAtMs: receipt.t,
+      sequence: receipt.sequence,
+    },
   };
 }
 

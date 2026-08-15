@@ -36,7 +36,7 @@ source commit, version, platform, an
 empty staging directory, and an existing synthetic app workspace whose leaf is
 exactly `shellx-manual-demo`. The runner binds the active tab to that workspace
 so captured Git, Files, and footer surfaces cannot expose an operator or release
-profile path. The runner drives all 37 declared states and writes
+profile path. The runner drives all 41 declared states and writes
 PNG files plus `capture-manifest.json`; its status is deliberately
 `captured-unreviewed`. Visually inspect every staged image before copying it into
 the manual, changing `kind`, or adding review metadata. The runner refuses

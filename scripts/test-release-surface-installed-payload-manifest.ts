@@ -17,6 +17,7 @@ import {
   validateReleaseSurfaceInstallationReceipt,
   type ReleaseSurfaceInstallationReceipt,
 } from "./lib/release-surface-installation-receipt";
+import { releaseSourceOnlyRequested } from "./lib/release-source-test-mode";
 
 const temp = mkdtempSync(join(tmpdir(), "shellx-installed-manifest-"));
 try {
@@ -237,8 +238,10 @@ try {
   rmSync(temp, { recursive: true });
 }
 
-if (process.platform === "win32" || process.env.WSL_INTEROP?.trim()) {
+if (!releaseSourceOnlyRequested() && (process.platform === "win32" || process.env.WSL_INTEROP?.trim())) {
   testWindowsNativeCollector();
+} else if (releaseSourceOnlyRequested()) {
+  console.log("SKIP Windows native installed-payload collector: source-only pre-push qualification requested");
 } else {
   console.log("SKIP Windows native installed-payload collector: native Windows or WSL interop is required");
 }

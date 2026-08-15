@@ -1,4 +1,5 @@
 import type { ReleaseSurfaceItem } from "./release-surface-inventory";
+import { CUT_TOOLING_STATES, type CutToolingState } from "../../src/lib/cut-tooling";
 
 export type ReleaseUiDebugSurface = "app" | "browser";
 
@@ -243,6 +244,7 @@ const fixtures = [
   appFixture("ui:right-rail-files-visible", { rightTab: "Files" }),
   appFixture("ui:right-rail-git-visible", { rightTab: "Git" }),
   appFixture("ui:right-rail-tooling-visible", { rightTab: "Tooling" }),
+  ...CUT_TOOLING_STATES.map((state) => cutToolingFixture(state)),
   appFixture(
     "ui:right-rail-owned-connector-action-visible",
     {
@@ -555,6 +557,23 @@ const fixtures = [
     ownedVaultGrant: true,
     cleanupAfterRestoreAbsentSelector: "[data-debug-id=\"shellx-vault-grant-row\"]",
   }),
+  taskManagerFixture("ui:task-manager-owned-full-visible", "full"),
+  taskManagerFixture("ui:task-manager-owned-loading-visible", "loading"),
+  taskManagerFixture("ui:task-manager-owned-empty-visible", "empty"),
+  taskManagerFixture("ui:task-manager-owned-error-visible", "error"),
+  taskManagerFixture("ui:task-manager-owned-provider-empty-visible", "providerEmpty"),
+  taskManagerFixture("ui:task-manager-owned-provider-guard-visible", "providerGuard"),
+  taskManagerFixture("ui:task-manager-owned-vault-unavailable-visible", "vaultUnavailable"),
+  taskManagerFixture("ui:task-manager-owned-vault-required-visible", "vaultRequired"),
+  taskManagerFixture("ui:task-manager-owned-trigger-once-visible", "full", [
+    inputStep("[data-debug-id='task-manager-trigger-kind']", "once"),
+  ]),
+  taskManagerFixture("ui:task-manager-owned-trigger-monthly-visible", "full", [
+    inputStep("[data-debug-id='task-manager-trigger-kind']", "monthly"),
+  ]),
+  taskManagerFixture("ui:task-manager-owned-trigger-weekly-visible", "full", [
+    inputStep("[data-debug-id='task-manager-trigger-kind']", "weekly"),
+  ]),
   browserFixture("ui:browser-chrome-owned-task", "chat"),
   browserFixture("ui:browser-actions-owned-task", "actions"),
   browserFixture("ui:browser-requests-empty-owned-task", "requests"),
@@ -760,6 +779,81 @@ cohort("ui:app-shell-visible", "src/components/BottomPanel.tsx", [
   "bottom-tab-videos",
   "bottom-tab-logs",
   "bottom-tab-stderr",
+]);
+cohort("ui:task-manager-owned-full-visible", "src/components/TaskManager.tsx", [
+  "task-manager-acknowledge-attention",
+  "task-manager-action-*",
+  "task-manager-attachment-binding",
+  "task-manager-attention-callout",
+  "task-manager-attention-item",
+  "task-manager-attention",
+  "task-manager-backdrop",
+  "task-manager-catalogue-freshness",
+  "task-manager-close",
+  "task-manager-definition-*",
+  "task-manager-enabled",
+  "task-manager-environment-context",
+  "task-manager-environment-working-folder",
+  "task-manager-environment-filter",
+  "task-manager-environment",
+  "task-manager-feedback",
+  "task-manager-filter-all",
+  "task-manager-filter-needsAttention",
+  "task-manager-filter-paused",
+  "task-manager-filter-recent",
+  "task-manager-filter-running",
+  "task-manager-filter-scheduled",
+  "task-manager-instruction",
+  "task-manager-max-run-seconds",
+  "task-manager-missed-run-policy",
+  "task-manager-model-*",
+  "task-manager-name",
+  "task-manager-notification-policy",
+  "task-manager-open-vault",
+  "task-manager-project-filter",
+  "task-manager-provider-*-move-down",
+  "task-manager-provider-*-move-up",
+  "task-manager-provider-*-remove",
+  "task-manager-provider-*-suggested",
+  "task-manager-provider-*-toggle",
+  "task-manager-provider-*",
+  "task-manager-provider-filter",
+  "task-manager-provider-list",
+  "task-manager-recheck",
+  "task-manager-remove-attachment",
+  "task-manager-remove-vault-requirement",
+  "task-manager-remove-workflow",
+  "task-manager-reviewed-bindings",
+  "task-manager-schedule-advanced",
+  "task-manager-schedule-summary",
+  "task-manager-search",
+  "task-manager-success-criteria",
+  "task-manager-timezone",
+  "task-manager-trigger-kind",
+  "task-manager-trigger-time",
+  "task-manager-vault-binding",
+  "task-manager-vault-grant",
+  "task-manager-workflow-binding",
+  "task-manager",
+]);
+cohort("ui:task-manager-owned-loading-visible", "src/components/TaskManager.tsx", ["task-manager-loading"]);
+cohort("ui:task-manager-owned-empty-visible", "src/components/TaskManager.tsx", ["task-manager-empty"]);
+cohort("ui:task-manager-owned-error-visible", "src/components/TaskManager.tsx", ["task-manager-list-error"]);
+cohort("ui:task-manager-owned-provider-empty-visible", "src/components/TaskManager.tsx", ["task-manager-provider-empty"]);
+cohort("ui:task-manager-owned-provider-guard-visible", "src/components/TaskManager.tsx", ["task-manager-provider-guard"]);
+cohort("ui:task-manager-owned-vault-unavailable-visible", "src/components/TaskManager.tsx", ["task-manager-vault-grants-unavailable"]);
+cohort("ui:task-manager-owned-vault-required-visible", "src/components/TaskManager.tsx", ["task-manager-vault-grant-required"]);
+cohort("ui:task-manager-owned-trigger-once-visible", "src/components/TaskManager.tsx", ["task-manager-trigger-once"]);
+cohort("ui:task-manager-owned-trigger-monthly-visible", "src/components/TaskManager.tsx", ["task-manager-trigger-month-day"]);
+cohort("ui:task-manager-owned-trigger-weekly-visible", "src/components/TaskManager.tsx", ["task-manager-weekday-*"]);
+cohort("ui:task-manager-owned-full-visible", "src/components/TaskRunHistory.tsx", [
+  "task-manager-cancel-run-*",
+  "task-manager-open-run-*",
+  "task-manager-receipt",
+  "task-manager-run-*",
+  "task-manager-run-environment-*",
+  "task-manager-run-result-evidence",
+  "task-manager-run-trace-evidence",
 ]);
 cohort("ui:bottom-chat-visible", "src/components/BottomPanel.tsx", [
   "composer",
@@ -1050,6 +1144,11 @@ cohort("ui:right-rail-tooling-visible", "src/components/RightRail.tsx", [
   "surface-components-rightrail-2",
   "surface-components-rightrail-9",
 ]);
+for (const state of CUT_TOOLING_STATES) {
+  cohort(`ui:cut-tooling-${state}-visible`, "src/components/CutToolingRow.tsx", [
+    `cut-tooling-state-${state}`,
+  ]);
+}
 cohort("ui:right-rail-owned-connector-action-visible", "src/components/RightRail.tsx", [
   "surface-components-rightrail-11",
 ]);
@@ -1436,6 +1535,29 @@ function appFixture(
   } = {},
 ): ReleaseUiDebugFixtureSpec {
   return { id, debugSurface: "app", setup: { kind: "app-state", patch, steps, cleanupSteps, ...options } };
+}
+
+function cutToolingFixture(state: CutToolingState): ReleaseUiDebugFixtureSpec {
+  return appFixture(
+    `ui:cut-tooling-${state}-visible`,
+    { rightTab: "Tooling", debugCutToolingFixture: state },
+    undefined,
+    [{ patch: { debugCutToolingFixture: "clear" } }],
+  );
+}
+
+function taskManagerFixture(
+  id: string,
+  mode: string,
+  steps: readonly ReleaseUiDebugPatchStep[] = [],
+): ReleaseUiDebugFixtureSpec {
+  return appFixture(
+    id,
+    { debugTaskManagerFixture: mode },
+    steps,
+    [{ patch: { debugTaskManagerFixture: "clear" } }],
+    { cleanupAbsentSelector: "[data-debug-id='task-manager']" },
+  );
 }
 
 function appOwnedVaultFixture(

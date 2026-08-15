@@ -444,6 +444,8 @@ function shippingUiSourceFiles(root: string): string[] {
 function isInteractiveElement(tag: string, attributes: ts.JsxAttribute[], file: ts.SourceFile): boolean {
   if (/^[A-Z]/.test(tag)) return false;
   if (NATIVE_INTERACTIVE_TAGS.has(tag)) return true;
+  const declaredFamily = stringAttribute(attributes, "data-release-driver-family", file);
+  if (declaredFamily && RELEASE_UI_INTERACTION_FAMILIES.has(declaredFamily as ReleaseUiInteractionFamily)) return true;
   const role = stringAttribute(attributes, "role", file);
   if (role && INTERACTIVE_ROLES.has(role)) return true;
   return attributes.some((attribute) => attribute.name.getText(file) === "onClick");

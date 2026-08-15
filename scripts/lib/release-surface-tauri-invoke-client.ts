@@ -18,17 +18,18 @@ export class ReleaseSurfaceTauriInvokeSession {
   }
 
   async invoke(command: string, args: Record<string, unknown>): Promise<unknown> {
-    const started = await requestJson(this.#connection, "POST", "/release-test/tauri-invokes", {
-      command,
-      args,
-    });
-    const id = typeof started.body.id === "string" ? started.body.id : "";
-    if (started.status !== 202 || started.body.status !== "pending" || !INVOKE_ID.test(id)) {
-      throw new Error(`release Tauri invoke ${command} did not return an exact pending identity`);
-    }
-    this.#activeIds.add(id);
+    const id = await this.#start(command, args);
     try {
       return await this.#waitForCompletion(id, command);
+    } finally {
+      await this.#remove(id);
+    }
+  }
+
+  async invokeExpectFailure(command: string, args: Record<string, unknown>): Promise<string> {
+    const id = await this.#start(command, args);
+    try {
+      return await this.#waitForFailure(id, command);
     } finally {
       await this.#remove(id);
     }
@@ -69,6 +70,47 @@ export class ReleaseSurfaceTauriInvokeSession {
       await delay(50);
     }
     throw new Error(`release Tauri invoke ${command} exceeded its bounded completion deadline`);
+  }
+
+  async #waitForFailure(id: string, command: string): Promise<string> {
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const response = await requestJson(
+        this.#connection,
+        "GET",
+        `/release-test/tauri-invokes/${encodeURIComponent(id)}`,
+      );
+      if (response.status !== 200 || response.body.id !== id) {
+        throw new Error(`release Tauri invoke ${command} returned a mismatched failure receipt`);
+      }
+      if (response.body.status === "failed") {
+        if (typeof response.body.error !== "string" || !response.body.error.trim()) {
+          throw new Error(`release Tauri invoke ${command} failed without a bounded error`);
+        }
+        return response.body.error;
+      }
+      if (response.body.status === "passed") {
+        throw new Error(`release Tauri invoke ${command} unexpectedly passed`);
+      }
+      if (response.body.status !== "pending" && response.body.status !== "claimed") {
+        throw new Error(`release Tauri invoke ${command} returned an unsupported status`);
+      }
+      await delay(50);
+    }
+    throw new Error(`release Tauri invoke ${command} exceeded its bounded failure deadline`);
+  }
+
+  async #start(command: string, args: Record<string, unknown>): Promise<string> {
+    const started = await requestJson(this.#connection, "POST", "/release-test/tauri-invokes", {
+      command,
+      args,
+    });
+    const id = typeof started.body.id === "string" ? started.body.id : "";
+    if (started.status !== 202 || started.body.status !== "pending" || !INVOKE_ID.test(id)) {
+      throw new Error(`release Tauri invoke ${command} did not return an exact pending identity`);
+    }
+    this.#activeIds.add(id);
+    return id;
   }
 
   async #remove(id: string): Promise<void> {

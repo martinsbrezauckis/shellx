@@ -459,6 +459,12 @@ impl ShellxBrowserRegistry {
                 .as_deref()
                 .is_some_and(|task_id| task_ids.contains(task_id))
         });
+        let history = self.history_for_agent_session(caller_session_id, None);
+        summary.revisions =
+            crate::shellx_browser_caller_revisions::summary_revisions_for_agent_session(
+                self,
+                caller_session_id,
+            );
         summary.counts.profiles = tasks
             .iter()
             .map(|task| task.profile_id.as_str())
@@ -468,9 +474,7 @@ impl ShellxBrowserRegistry {
         summary.counts.tasks = tasks.len();
         summary.counts.running_tasks = tasks.iter().filter(|task| task.status == "running").count();
         summary.counts.bookmarks = 0;
-        summary.counts.history = self
-            .history_for_agent_session(caller_session_id, None)
-            .len();
+        summary.counts.history = history.len();
         summary.counts.receipts = 0;
         summary.counts.console_logs = 0;
         summary.counts.downloads = 0;

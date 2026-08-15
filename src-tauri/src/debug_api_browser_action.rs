@@ -57,7 +57,9 @@ pub(crate) async fn browser_action_http(
     let caller_session_id = browser_mcp_caller_id(&headers);
     let authenticated_agent_id =
         crate::shellx_browser_caller::shellx_mcp_agent_identity(caller_session_id.as_deref());
-    if let Err(e) = registry.ensure_agent_session_for_action(&body, caller_session_id.as_deref()) {
+    if let Err(e) =
+        registry.ensure_browser_request_authority_for_action(&body, caller_session_id.as_deref())
+    {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "ok": false, "error": e })),
@@ -80,6 +82,37 @@ pub(crate) async fn browser_action_http(
                 Json(serde_json::json!({ "ok": false, "error": e })),
             )
                 .into_response();
+        }
+    }
+    let (prompt_guard_outcome, emitted_block_receipt_id) =
+        match guard_direct_browser_action_with_observation_recovery(
+            &s,
+            &registry,
+            &body,
+            caller_session_id.as_deref(),
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "ok": false, "error": e })),
+                )
+                    .into_response();
+            }
+        };
+    match prompt_guard_outcome {
+        crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome::NotRequired => {}
+        crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome::Proceed(receipt) => {
+            emit_browser_receipt(&s, &receipt);
+        }
+        crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome::Blocked(response) => {
+            if emitted_block_receipt_id.as_deref() != Some(response.receipt.receipt_id.as_str()) {
+                emit_browser_receipt(&s, &response.receipt);
+            }
+            emit_browser_latest(&s, &registry);
+            return Json(*response).into_response();
         }
     }
     let _engine_action_slot =
@@ -638,6 +671,65 @@ pub(crate) async fn browser_action_http(
         )
             .into_response(),
     }
+}
+
+async fn guard_direct_browser_action_with_observation_recovery(
+    state: &ApiState,
+    registry: &Arc<crate::shellx_browser::ShellxBrowserRegistry>,
+    action: &crate::shellx_browser::BrowserActionRequest,
+    caller_session_id: Option<&str>,
+) -> Result<
+    (
+        crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome,
+        Option<String>,
+    ),
+    String,
+> {
+    let mut outcome =
+        registry.guard_browser_action_against_prompt_injection(action, caller_session_id)?;
+    let mut emitted_block_receipt_id = None;
+    if let crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome::Blocked(response) =
+        &outcome
+    {
+        if response
+            .receipt
+            .evidence
+            .get("verdict")
+            .and_then(serde_json::Value::as_str)
+            == Some("unavailable")
+        {
+            emit_browser_receipt(state, &response.receipt);
+            emitted_block_receipt_id = Some(response.receipt.receipt_id.clone());
+            let observe_request = crate::shellx_browser::BrowserActionRequest {
+                task_id: action.task_id.clone(),
+                browser_tab_id: action.browser_tab_id.clone(),
+                action: "observe".to_string(),
+                lock_lease_id: action.lock_lease_id.clone(),
+                owner_agent_id: action.owner_agent_id.clone(),
+                owner_run_id: action.owner_run_id.clone(),
+                ..crate::shellx_browser::BrowserActionRequest::default()
+            };
+            let refreshed = match crate::shellx_browser::try_apply_engine_action(
+                state.app(),
+                registry,
+                observe_request.clone(),
+            )
+            .await
+            {
+                Ok(Some(response)) => Some(response),
+                Ok(None) => registry.apply_action(observe_request).ok(),
+                Err(_) => None,
+            };
+            if let Some(refreshed) = refreshed {
+                emit_browser_receipt(state, &refreshed.receipt);
+                if refreshed.ok && refreshed.status == "applied" {
+                    outcome = registry
+                        .guard_browser_action_against_prompt_injection(action, caller_session_id)?;
+                }
+            }
+        }
+    }
+    Ok((outcome, emitted_block_receipt_id))
 }
 
 pub(crate) async fn sync_browser_active_tab_to_engine(

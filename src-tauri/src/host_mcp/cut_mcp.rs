@@ -129,7 +129,7 @@ fn standard_cutd_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn resolve_cutd_program() -> Result<PathBuf, String> {
+pub(super) fn resolve_cutd_program() -> Result<PathBuf, String> {
     if let Some(configured) = std::env::var_os("SHELLX_CUT_CUTD") {
         let configured = PathBuf::from(configured);
         if !configured.is_absolute() {
@@ -366,7 +366,7 @@ fn compact_cut_call_result(mut result: Value, verb: &str) -> Value {
     result
 }
 
-async fn call_cut_tool(
+pub(super) async fn call_cut_tool(
     program: &Path,
     verb: &str,
     arguments: Value,
@@ -479,11 +479,13 @@ pub(super) async fn tool_cut_read(args: Value) -> Result<Value, String> {
         .map(str::trim)
         .filter(|action| !action.is_empty())
         .ok_or_else(|| "cut_read requires action".to_string())?;
-    let program = resolve_cutd_program()?;
     let request_timeout_ms = timeout_ms(&args);
     match action {
-        "status" => call_cut_tool(&program, "system_doctor", json!({}), request_timeout_ms).await,
+        "status" => Ok(super::cut_status::snapshot_for_host_mcp()
+            .await
+            .into_host_mcp_result()),
         "search" => {
+            let program = resolve_cutd_program()?;
             let query = args
                 .get("query")
                 .and_then(Value::as_str)
@@ -509,6 +511,7 @@ pub(super) async fn tool_cut_read(args: Value) -> Result<Value, String> {
             }))
         }
         "schema" => {
+            let program = resolve_cutd_program()?;
             let verb = args
                 .get("verb")
                 .and_then(Value::as_str)

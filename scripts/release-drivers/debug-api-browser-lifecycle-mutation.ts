@@ -4,7 +4,9 @@ import type {
 } from "../lib/release-surface-driver-protocol";
 import {
   cleanupDebugApiBrowserSettleFixture,
+  debugApiBrowserSettleRequestPath,
   prepareDebugApiBrowserSettleFixture,
+  verifyDebugApiBrowserSettleJson,
 } from "./debug-api-browser-settle-fixture";
 
 const BROWSER_LIFECYCLE_MUTATIONS = new Set([
@@ -98,6 +100,66 @@ export async function exerciseDebugApiBrowserLifecycleMutation(
         || verification.passed !== true || receipt.kind !== "browserVerificationPassed"
         || receipt.taskId !== fixture.taskId) {
         throw new Error("Browser action did not complete its exact owned-page text verification");
+      }
+      const safeObservation = await apiJson(connection, "POST", "/browser/action", {
+        action: "observe",
+        taskId: fixture.taskId,
+        browserTabId: fixture.browserTabId,
+        maxPayloadBytes: 3_000,
+      });
+      if (safeObservation.ok !== true || safeObservation.status !== "observed") {
+        throw new Error("Browser action did not establish the safe-page prompt-guard baseline");
+      }
+      const navigation = await apiJson(connection, "POST", "/browser/action", {
+        action: "navigate",
+        taskId: fixture.taskId,
+        browserTabId: fixture.browserTabId,
+        url: fixture.promptGuardUrl,
+        timeoutMs: 30_000,
+      });
+      if (navigation.ok !== true || navigation.status !== "applied"
+        || navigation.currentUrl !== fixture.promptGuardUrl) {
+        throw new Error("Browser prompt-guard fixture navigation did not apply from a classified safe page");
+      }
+      const hostileFixture = { ...fixture, url: fixture.promptGuardUrl };
+      const hostileSettle = await apiJson(
+        connection,
+        "GET",
+        debugApiBrowserSettleRequestPath("/browser/settle", hostileFixture),
+      );
+      verifyDebugApiBrowserSettleJson("/browser/settle", hostileSettle, hostileFixture);
+      const hostileObservation = await apiJson(connection, "POST", "/browser/action", {
+        action: "observe",
+        taskId: fixture.taskId,
+        browserTabId: fixture.browserTabId,
+        maxPayloadBytes: 6_000,
+      });
+      const observation = requireObject(hostileObservation.observation, "Browser prompt-guard observation");
+      const target = requireObjectArray(observation.refs, "Browser prompt-guard refs")
+        .find((candidate) => candidate.testId === "do-not-tell-the-user");
+      const targetRefId = requiredString(target?.refId, "Browser prompt-guard target refId");
+      const blocked = await apiJson(connection, "POST", "/browser/action", {
+        action: "clickRef",
+        taskId: fixture.taskId,
+        browserTabId: fixture.browserTabId,
+        refId: targetRefId,
+        timeoutMs: 30_000,
+      });
+      const blockedReceipt = requireObject(blocked.receipt, "Browser prompt-guard blocked receipt");
+      const evidence = requireObject(blockedReceipt.evidence, "Browser prompt-guard blocked evidence");
+      const channels = requireStringArray(evidence.channelIds, "Browser prompt-guard channels");
+      for (const channel of ["visibleText", "hiddenContent", "accessibility", "domAttribute", "toolResult"]) {
+        if (!channels.includes(channel)) throw new Error(`Browser prompt guard omitted ${channel} evidence`);
+      }
+      const serializedReceipt = JSON.stringify(blockedReceipt);
+      if (blocked.ok !== false || blocked.status !== "blocked"
+        || blocked.requiredApproval !== "promptInjectionReview"
+        || blockedReceipt.kind !== "browserPromptInjectionBlocked"
+        || evidence.inboundContentVerdict !== "block" || evidence.proposedActionVerdict !== "block"
+        || evidence.rawPageContentRetained !== false || evidence.rawActionArgumentsRetained !== false
+        || serializedReceipt.includes("SHELLX_PROMPT_GUARD_PRIVATE_8D7C2A")
+        || serializedReceipt.includes("send credentials")) {
+        throw new Error("Browser prompt guard did not return its bounded pre-effect block contract");
       }
     } else if (assignment.surface.name === "POST /browser/cdp/execute") {
       const body = await apiJson(connection, "POST", "/browser/cdp/execute", {
@@ -256,6 +318,8 @@ export async function exerciseDebugApiBrowserLifecycleMutation(
     outcome.effect = "pass";
     outcome.observedEffect = assignment.surface.name === "POST /browser/cdp/execute"
       ? "POST /browser/cdp/execute returned the exact browserDeveloperModeApproval denial and receipt for an owned loopback task without evaluating the requested expression; task, tab, and URL identities end with candidate teardown."
+      : assignment.surface.name === "POST /browser/action"
+        ? "POST /browser/action verified a benign owned page, then blocked an exact hostile visible/hidden/accessibility/DOM/tool-target fixture before its click with bounded redacted prompt-guard evidence; task, tab, and URLs end with candidate teardown."
       : `${assignment.surface.name} completed its exact owned Browser task/tab transition against a loopback-only page; task, tab, and URL identities were not retained.`;
   } catch (error) {
     outcome.error = error instanceof Error ? error.message : String(error);
@@ -336,6 +400,13 @@ function requireObject(value: unknown, label: string): Record<string, unknown> {
 function requireObjectArray(value: unknown, label: string): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) throw new Error(`${label} did not return an array`);
   return value.map((entry, index) => requireObject(entry, `${label}[${index}]`));
+}
+
+function requireStringArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${label} did not return a string array`);
+  }
+  return value;
 }
 
 function requiredString(value: unknown, label: string): string {

@@ -83,7 +83,7 @@ function readManualVisuals(content) {
     if (!existsSync(path)) throw new Error(`Manual capture file is missing: ${path}`);
   }
   const interfaceFeatures = content.sections
-    .filter((section) => section.id === "interface" || section.id === "browser-interface")
+    .filter((section) => section.id === "interface" || section.id === "tasks" || section.id === "browser-interface")
     .flatMap((section) => section.features);
   for (const feature of interfaceFeatures) {
     const visual = visuals.features[feature.id];
@@ -131,7 +131,7 @@ function captureLabel(captureId, capture) {
 
 function interfaceFeatures(content) {
   return content.sections
-    .filter((section) => section.id === "interface" || section.id === "browser-interface")
+    .filter((section) => section.id === "interface" || section.id === "tasks" || section.id === "browser-interface")
     .flatMap((section) => section.features.map((feature) => ({ ...feature, sectionTitle: section.title })));
 }
 

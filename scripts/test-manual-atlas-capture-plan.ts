@@ -15,7 +15,7 @@ assert.deepEqual(
   Object.keys(visuals.captures).sort(),
   "the installed-candidate capture plan must cover every exact atlas image once",
 );
-assert.equal(MANUAL_ATLAS_CAPTURE_PLAN.filter((entry) => entry.surface === "app").length, 23);
+assert.equal(MANUAL_ATLAS_CAPTURE_PLAN.filter((entry) => entry.surface === "app").length, 27);
 assert.equal(MANUAL_ATLAS_CAPTURE_PLAN.filter((entry) => entry.surface === "browser").length, 14);
 assert(MANUAL_ATLAS_CAPTURE_PLAN.every((entry) => entry.intendedState.trim().length >= 24));
 assert(MANUAL_ATLAS_CAPTURE_PLAN.every((entry) => entry.steps.some((step) => step.kind === "wait")));
@@ -37,4 +37,4 @@ assert(captureSource.includes("window.devicePixelRatio || 1"));
 assert(captureSource.includes("Math.round(width / devicePixelRatio)"));
 assert(captureSource.includes("Math.round(height / devicePixelRatio)"));
 
-console.log("Manual atlas installed-candidate capture plan passed: 37 exact UI states");
+console.log("Manual atlas installed-candidate capture plan passed: 41 exact UI states");

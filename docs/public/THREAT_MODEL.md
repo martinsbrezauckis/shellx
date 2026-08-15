@@ -127,6 +127,12 @@ host MCP tools.
 - Both require bearer-token auth (`shellxagent.token` / `mcp.token`),
   16-byte OsRng, and atomic replacement. Token files use mode 0600 on
   macOS/Linux and inherit the user-private profile ACL on Windows.
+- Debug API and Host MCP each establish one process-owned token authority only
+  after persistence succeeds. Host MCP refuses missing/relative private-profile
+  roots, non-regular or linked token files, read failures, and atomic-write
+  failures; it does not fall back to a shared temporary directory or return a
+  memory-only bearer. Middleware, tab-token derivation, provider injection,
+  and write authorization all use the same immutable in-process value.
 - Constant-time compare resists timing attacks.
 - Origin allow-list checked before token (403 vs 401 distinguishable).
 - `tauri-plugin-single-instance` prevents two shellX processes
@@ -158,6 +164,10 @@ running remains in scope for host MCP exposure.**
   the provider process lifetime, so same-user process inspection on the remote
   remains in scope. One-shot Grok subagents use a temporary isolated
   `GROK_HOME` and remove it on exit.
+- When ShellX tooling exposure is enabled, the same bridge can reach parent
+  desktop-host capabilities such as ShellX Cut. This is not an independently
+  exposed Cut listener: its typed status probe remains compact and does not
+  open the editor, while opening Cut is a separate explicit operator action.
 
 **Planned hardening (#330)**:
 - Token binding to originating SSH connection ID.
@@ -281,10 +291,27 @@ or raw browser-state field could otherwise leak into a durable file.
   as declarations rather than presented as recorder-derived facts.
 - FR-1 and FR-2 are not separately advertised as extra Browser MCP tools;
   routed access uses the existing compact gateway instead. Write actions remain permission
-  gated, require a valid ShellX caller-session header, enforce task ownership,
-  and reject invalid caller headers rather than falling back to operator scope.
-  Direct bearer-authenticated CLI calls use operator authority. Recent evidence
+  gated, require a valid ShellX caller-session header, and enforce task
+  ownership. A Browser-router guard rejects any malformed-present or duplicate
+  caller header before handler dispatch rather than falling back to operator
+  scope. Direct bearer-authenticated CLI calls with no caller header use
+  operator authority. Caller-scoped revision cursors are derived only from the
+  same session's task-owned state, so other agents and Personal Browser
+  activity cannot signal through a global opaque revision. Agent task creation
+  requires and records an exact caller session; an owner-session-less legacy
+  Agent task cannot be claimed by any Agent caller. Browser tasks are
+  runtime-memory state rather than a durable migration surface. Recent evidence
   views are allowlisted, bounded, and caller-task scoped.
+- Host MCP Vault grant requests require an explicit actor scope. An omitted
+  scope is rejected before the pending request reaches the Vault backend;
+  `allShellxAgents` is available only when the caller names it deliberately and
+  the operator still approves the resulting exact grant.
+- Browser tab handoff hashes the exact raw page, tab/engine, profile storage
+  policy, user ownership/lock, and nonterminal target-task state reviewed by
+  the operator. The backend recomputes that opaque fingerprint under the same
+  state lock immediately before ownership changes; stale or replayed reviews
+  fail closed, and the raw URL or storage path is not persisted in the handoff
+  receipt.
 
 **Residual risk**: bounded non-secret page text and metadata can still contain
 sensitive business information that does not match a credential pattern.
@@ -351,8 +378,13 @@ could therefore affect the open project outside ShellX's tab gate.
 - The generated Cut catalog stays behind bounded `cut_read` discovery. Every
   exact verb call uses permission-gated `cut_act` until Cut publishes reliable
   read/mutation annotations.
-- ShellX does not expose Cut remotely, copy provider credentials, or create a
-  second project/timeline authority.
+- ShellX does not create a separately exposed Cut listener, copy provider
+  credentials, or create a second project/timeline authority. A
+  tooling-enabled WSL or SSH provider can instead use the existing
+  authenticated tab-bound host bridge to the parent desktop host; this exposure
+  is covered by T7's remote same-user-process boundary.
+- Cut status remains a compact typed projection. Status checks never launch the
+  editor; only the operator-visible Open action may do so.
 
 **Residual risk**: ShellX trusts the installed Cut binary and Cut's documented
 whole-machine local API posture. Same-user malware can call Cut without going

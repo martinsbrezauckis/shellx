@@ -9,7 +9,7 @@
 > publishes its port to `~/.shellx/mcp-http.port` the same way.
 
 **Status:** Implementation guide plus v1.x roadmap (drafted 2026-05-17,
-current route inventory refreshed 2026-08-10).
+current route inventory refreshed 2026-08-14).
 **Audience:** Any future implementer (human or agent) extending shellX's
 debug API beyond what is already wired in `src-tauri/src/debug_api.rs` and the
 `src-tauri/src/debug_api_browser*.rs` route handlers.
@@ -52,9 +52,9 @@ expected Browser contract does not match the installed host.
 
 | Method | Path |
 | --- | --- |
-| GET | `/health`, `/shellxagent.json`, `/.well-known/shellxagent.json`, `/agent-doc`, `/agent-doc/manifest`, `/agent-doc/skills/shellx-host/SKILL.md`, `/agent-doc/shellx-host/SKILL.md`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/files`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/tabs/report`, `/state/agent_runs`, `/state/session_assets`, `/state/marketplace_health`, `/state/session_tooling`, `/state/environment`, `/state/grok_environment`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/state/model_instruction_cards`, `/state/agent_cli_setup`, `/panels`, `/preview`, `/preview/work/state`, `/preview/work/logs`, `/preview/work/diagnose`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/provider-adapters/state`, `/provider-sessions/state`, `/vault/status`, `/vault/grants`, `/vault/agent-requests`, `/vault/keys`, `/vault/resources`, `/vault/e2e/audit`, `/connections`, `/outside-connectors`, `/outside-connectors/capabilities`, `/outside-connectors/events`, `/browser/check`, `/browser/summary`, `/browser/state`, `/browser/settle`, `/browser/tabs`, `/browser/profiles`, `/browser/tasks`, `/browser/history`, `/browser/requests`, `/browser/bookmarks`, `/browser/receipts`, `/browser/evidence`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/developer-mode`, `/browser/teach/drafts`, `/browser/downloads`, `/browser/uploads`, `/browser/logs`, `/browser/storage-state`, `/browser/dialogs`, `/browser/permissions`, `/browser/popups`, `/browser/network`, `/browser/robots`, `/release-test/tauri-invokes/:id` |
-| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/preview/work/start`, `/preview/work/stop`, `/preview/work/restart`, `/preview/work/diagnose`, `/state/environment/trace_export`, `/state/grok_environment/trace_export`, `/state/session_git/checkpoint`, `/state/session_git/worktree`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/recheck_blocker`, `/build/operator_note`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/provider-adapters/run`, `/provider-sessions/start`, `/provider-sessions/abort`, `/agent_cli_setup/install/prepare`, `/agent_cli_setup/install/confirm`, `/agent_cli_setup/install/cancel`, `/agent_cli_setup/recheck`, `/diagnostics`, `/github/pr/create`, `/vault/lock`, `/vault/setup/begin`, `/vault/setup/confirm-recovery`, `/vault/remember-device`, `/vault/grants`, `/vault/grants/:grant_id/revoke`, `/vault/agent-requests`, `/vault/agent-requests/:request_id/cancel`, `/vault/get`, `/vault/set`, `/vault/delete`, `/vault/open-panel`, `/vault/e2e/reset`, `/vault/e2e/seed-secret`, `/vault/e2e/probe-use`, `/vault/e2e/approve-grant`, `/vault/e2e/deny-grant`, `/vault/e2e/revoke-grant`, `/vault/e2e/expire-grant`, `/connections`, `/connections/provider-scan`, `/connections/:id/test`, `/outside-connectors`, `/outside-connectors/:id/test`, `/outside-connectors/:id/simulate`, `/browser/open`, `/browser/tabs/open`, `/browser/tabs/focus`, `/browser/tabs/reorder`, `/browser/tabs/close`, `/browser/tabs/lock`, `/browser/tabs/heartbeat`, `/browser/tabs/unlock`, `/browser/task/start`, `/browser/task/autonomy`, `/browser/task/control`, `/browser/task/finish`, `/browser/action`, `/browser/bookmarks`, `/browser/bookmarks/reorder`, `/browser/rendered-check`, `/browser/logs`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/shields/site`, `/browser/developer-mode`, `/browser/developer-mode/approval`, `/browser/developer/inspect`, `/browser/teach/prepare`, `/browser/teach/revise`, `/browser/downloads/request`, `/browser/downloads/complete`, `/browser/uploads/request`, `/browser/uploads/complete`, `/browser/cdp/execute`, `/browser/trace/export`, `/browser/flight-recorder/export`, `/browser/evaluations`, `/browser/har/export`, `/browser/performance/export`, `/browser/recipes/export`, `/browser/recipes/replay`, `/browser/robots/schedule`, `/browser/robots/run`, `/browser/robots/cancel`, `/browser/storage-state/export`, `/browser/dialogs`, `/browser/dialogs/resolve`, `/browser/permissions`, `/browser/permissions/resolve`, `/browser/popups`, `/browser/session-grants/request`, `/browser/session-grants/resolve`, `/browser/session-grants/apply`, `/browser/vault-deposits`, `/browser/vault/fill-receipt`, `/browser/vault/generate-receipt`, `/browser/report`, `/release-test/clipboard`, `/release-test/browser/trusted-vault-fixture`, `/release-test/tauri-invokes`, `/release-test/tauri-invokes/:id/claim`, `/release-test/tauri-invokes/:id/complete` |
-| DELETE | `/tools/fs_watch/:watchId`, `/connections/:id`, `/outside-connectors/:id`, `/browser/bookmarks/:bookmark_id`, `/browser/shields/site/:host`, `/release-test/tauri-invokes/:id` |
+| GET | `/health`, `/shellxagent.json`, `/.well-known/shellxagent.json`, `/agent-doc`, `/agent-doc/manifest`, `/agent-doc/skills/shellx-host/SKILL.md`, `/agent-doc/shellx-host/SKILL.md`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/files`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/tabs/report`, `/state/agent_runs`, `/state/session_assets`, `/state/marketplace_health`, `/state/session_tooling`, `/state/environment`, `/state/grok_environment`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/state/model_instruction_cards`, `/state/agent_cli_setup`, `/panels`, `/preview`, `/preview/work/state`, `/preview/work/logs`, `/preview/work/diagnose`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/provider-adapters/state`, `/provider-sessions/state`, `/vault/status`, `/vault/grants`, `/vault/agent-requests`, `/vault/keys`, `/vault/resources`, `/vault/e2e/audit`, `/connections`, `/tasks`, `/tasks/states`, `/tasks/:task_id`, `/tasks/:task_id/state`, `/tasks/:task_id/attention`, `/tasks/:task_id/receipts`, `/outside-connectors`, `/outside-connectors/capabilities`, `/outside-connectors/events`, `/browser/check`, `/browser/summary`, `/browser/state`, `/browser/settle`, `/browser/tabs`, `/browser/profiles`, `/browser/tasks`, `/browser/history`, `/browser/requests`, `/browser/bookmarks`, `/browser/receipts`, `/browser/evidence`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/developer-mode`, `/browser/teach/drafts`, `/browser/downloads`, `/browser/uploads`, `/browser/logs`, `/browser/storage-state`, `/browser/dialogs`, `/browser/permissions`, `/browser/popups`, `/browser/network`, `/browser/robots`, `/release-test/tauri-invokes/:id` |
+| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/preview/work/start`, `/preview/work/stop`, `/preview/work/restart`, `/preview/work/diagnose`, `/state/environment/trace_export`, `/state/grok_environment/trace_export`, `/state/session_git/checkpoint`, `/state/session_git/worktree`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/recheck_blocker`, `/build/operator_note`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/provider-adapters/run`, `/provider-sessions/start`, `/provider-sessions/abort`, `/agent_cli_setup/install/prepare`, `/agent_cli_setup/install/confirm`, `/agent_cli_setup/install/cancel`, `/agent_cli_setup/recheck`, `/diagnostics`, `/github/pr/create`, `/vault/lock`, `/vault/setup/begin`, `/vault/setup/confirm-recovery`, `/vault/remember-device`, `/vault/grants`, `/vault/grants/:grant_id/revoke`, `/vault/agent-requests`, `/vault/agent-requests/:request_id/cancel`, `/vault/get`, `/vault/set`, `/vault/delete`, `/vault/open-panel`, `/vault/e2e/reset`, `/vault/e2e/seed-secret`, `/vault/e2e/probe-use`, `/vault/e2e/approve-grant`, `/vault/e2e/deny-grant`, `/vault/e2e/revoke-grant`, `/vault/e2e/expire-grant`, `/connections`, `/connections/provider-scan`, `/connections/:id/test`, `/tasks`, `/tasks/provider-catalog`, `/tasks/:task_id/revise`, `/tasks/:task_id/pause`, `/tasks/:task_id/resume`, `/tasks/:task_id/run`, `/tasks/runs/:occurrence_id/cancel`, `/tasks/:task_id/attention/:attention_id/resolve`, `/tasks/:task_id/attention/overflow/resolve`, `/outside-connectors`, `/outside-connectors/:id/test`, `/outside-connectors/:id/simulate`, `/browser/open`, `/browser/tabs/open`, `/browser/tabs/focus`, `/browser/tabs/reorder`, `/browser/tabs/close`, `/browser/tabs/lock`, `/browser/tabs/heartbeat`, `/browser/tabs/unlock`, `/browser/task/start`, `/browser/task/autonomy`, `/browser/task/control`, `/browser/task/finish`, `/browser/action`, `/browser/bookmarks`, `/browser/bookmarks/reorder`, `/browser/rendered-check`, `/browser/logs`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/shields/site`, `/browser/developer-mode`, `/browser/developer-mode/approval`, `/browser/developer/inspect`, `/browser/teach/prepare`, `/browser/teach/revise`, `/browser/downloads/request`, `/browser/downloads/complete`, `/browser/uploads/request`, `/browser/uploads/complete`, `/browser/cdp/execute`, `/browser/trace/export`, `/browser/flight-recorder/export`, `/browser/evaluations`, `/browser/har/export`, `/browser/performance/export`, `/browser/recipes/export`, `/browser/recipes/replay`, `/browser/robots/schedule`, `/browser/robots/run`, `/browser/robots/cancel`, `/browser/storage-state/export`, `/browser/dialogs`, `/browser/dialogs/resolve`, `/browser/permissions`, `/browser/permissions/resolve`, `/browser/popups`, `/browser/session-grants/request`, `/browser/session-grants/resolve`, `/browser/session-grants/apply`, `/browser/vault-deposits`, `/browser/vault/fill-receipt`, `/browser/vault/generate-receipt`, `/browser/report`, `/release-test/clipboard`, `/release-test/browser/trusted-vault-fixture`, `/release-test/tauri-invokes`, `/release-test/tauri-invokes/:id/claim`, `/release-test/tauri-invokes/:id/complete` |
+| DELETE | `/tools/fs_watch/:watchId`, `/connections/:id`, `/tasks/:task_id`, `/outside-connectors/:id`, `/browser/bookmarks/:bookmark_id`, `/browser/shields/site/:host`, `/release-test/tauri-invokes/:id` |
 | GET | `/release-test/native-picker` |
 | POST | `/release-test/native-picker` |
 | DELETE | `/release-test/native-picker` |
@@ -138,7 +138,7 @@ and Debug API mediation rules below.
 | POST | `/vault/lock` | Local debug/operator route to manually lock Vault without revealing anything. Clears the active session and local plaintext compatibility cache; remembered-device remains configured but manual lock blocks auto-unlock until passphrase unlock. |
 | POST | `/vault/remember-device` | Enables or disables OS-backed remembered unlock. Enabling requires `passphrase`; disabling deletes the device credential. |
 | GET | `/vault/grants` | Lists grant metadata only. |
-| POST | `/vault/grants` | Creates a pending scoped grant for mediated use. In an ordinary profile, approval is in-app/Tauri-only and agents cannot self-approve. Disposable isolated E2E profiles expose separately gated `/vault/e2e/*` approval fixtures. |
+| POST | `/vault/grants` | Creates a pending scoped grant for mediated use. Host MCP requires an explicit `actorScope` or `actorKind` and never expands an omitted scope to all ShellX agents. In an ordinary profile, approval is in-app/Tauri-only and agents cannot self-approve. Disposable isolated E2E profiles expose separately gated `/vault/e2e/*` approval fixtures. |
 | POST | `/vault/grants/{grantId}/revoke` | Revokes a grant. |
 | GET | `/vault/agent-requests` | Lists the bounded executable-request queue, agent-visible resource catalogue, and redacted results. Optional `actorId` filters the queue; Host MCP always binds this filter to its own session. User-only resource metadata is excluded. It never approves a request or returns plaintext values. |
 | POST | `/vault/agent-requests` | Queues a digest-bound absolute executable, arguments, optional absolute cwd, and Vault-resource-to-environment bindings for ShellX operator review. It does not execute immediately. |
@@ -168,7 +168,11 @@ Grant request body:
 {
   "secretRef": "accounts/example-password",
   "operation": "fill",
-  "actorScope": { "kind": "allShellxAgents" },
+  "actorScope": {
+    "kind": "browserOrigin",
+    "origin": "https://accounts.example.com"
+  },
+  "origin": "https://accounts.example.com",
   "expiresAtMs": 1790000000000
 }
 ```
@@ -178,6 +182,10 @@ Supported mediated operations are `fill`, `profileFill`, `emailCodeRead`,
 `rawReveal` is not part of the agent-facing flow. Pending grants return
 `approved: false`; agent use remains denied with `grantPending` until the
 operator approves the request in the Vault Request Center.
+
+Host MCP grant requests must name `actorScope` or the `actorKind` shorthand.
+`allShellxAgents` remains a supported explicit choice for operator-reviewed
+shared access, but it is never selected by omission.
 
 Host MCP `vault_agent_request` provides `request`, `list`, and `cancel`
 actions over this queue. `request` requires an absolute program path and at
@@ -228,7 +236,8 @@ next offset only when another page is necessary. An explicit page is capped at
 provider context.
 
 The ShellX Cut pair keeps Cut's generated catalog out of the default provider
-prompt. `cut_read action=status` verifies the installed/running editor;
+prompt. `cut_read action=status` returns the compact typed
+`shellx.cut.tooling-status.v1` projection for the installed/running editor;
 `action=search` returns a bounded match list and `action=schema` returns one
 exact Cut input schema. The catalog is loaded only for those discovery calls
 and cached by installed `cutd` executable identity. `cut_act` calls one exact
@@ -239,6 +248,14 @@ not publish reliable read-versus-mutation annotations. Direct Cut discovery was
 measured from current Cut source at 262 tools and a 294,151-byte JSON-RPC reply,
 while each installed Cut version reports its own exact total. The ShellX Cut
 gateway itself remains two compact schemas.
+
+The right-rail Tools surface uses that same typed status projection for the
+selected session. Its **Check** control probes status only and never opens
+ShellX Cut. **Open** is a separate `cut_tooling_open` Tauri action that occurs
+only after an explicit operator click. With ShellX tooling exposure enabled,
+Local, WSL, and SSH provider sessions all use the parent desktop host: WSL uses
+the ShellX host bridge and SSH uses its reverse tunnel. This does not turn the
+generated Cut catalogue into an always-advertised or right-rail payload.
 
 The Browser pair replaces a 32-tool, 82,893-byte advertised catalog with a
 two-tool, 2,601-byte catalog. The named `browser_*` tools remain
@@ -312,7 +329,14 @@ requires the exact current revision ID/hash, resolved blocking issues, safe
 query-free navigation values, and any required opaque Vault binding references;
 it writes an ordinary Action Recipe V2 but does not run it. Rehearsal accepts
 the exact approved recipe ID/hash, calls the existing dry-run planner, returns
-no artifact path, and always reports `stepsApplied: 0`.
+no artifact path, and always reports `stepsApplied: 0`. After an exact
+zero-skip rehearsal, the operator can open a paused Task Manager draft. ShellX
+persists one idempotent workflow bookmark with the private recipe path kept in
+Browser state, then hands the main workspace only the workflow ID/digest,
+source-session identity, goal, and required Vault key identities. No Task is
+saved, provider selected, or schedule enabled until the user reviews it. The
+main workspace rebinds that window event to the exact native receipt, owning
+Browser task, and durable workflow bookmark before displaying the draft.
 
 Taskless Host MCP Browser mutations create or reuse a `task-disposable` task
 bound to the calling ShellX MCP tab/session. A different MCP session cannot act
@@ -326,7 +350,13 @@ loopback bearer token remains the general raw HTTP security boundary. The
 evidence read/export/evaluation routes additionally require the bounded
 `x-shellx-mcp-caller-id` injected by a ShellX-owned agent session. The desktop
 Evidence panel uses operator-only Tauri IPC instead of falling back to
-headerless HTTP operator authority.
+headerless HTTP operator authority. An absent caller header continues to mean
+an explicit bearer-authenticated operator request; any present malformed,
+empty, overlong, or duplicate caller header is rejected before every
+`/browser/*` handler and cannot be reinterpreted as headerless operator scope.
+Caller-scoped summary, task, History, request, check, and settle revisions are
+derived only from that caller session's task-owned Browser state; other agent
+or Personal Browser activity cannot advance those polling cursors.
 For coordinate work, prefer
 `browser_screenshot` with `fullPage:true`:
 the response includes `pageWidth`/`pageHeight` and the MCP summary includes
@@ -432,6 +462,22 @@ session grants, permission prompts, unsafe downloads/uploads, Developer Mode,
 privacy/Shields writes, and Personal Browser Lock changes remain mediated by
 the ShellX UI/Tauri operator path.
 
+Before any page mutation, ShellX classifies the current stored observation and
+the proposed action with the local fixed-vocabulary Browser prompt-injection
+guard. The guard covers direct actions, saved workflow/Robot replay, Browser
+Teach rehearsal/apply, scheduled Task Browser work, and the operator Vault-fill
+path before any Vault read or WebView effect. It returns bounded
+`allow`/`warn`/`block` evidence with separate `inboundContentVerdict` and
+`proposedActionVerdict`, confidence, policy version, task/tab/origin scope, and
+a receipt. Receipts contain finite signal/channel IDs; page text, selectors,
+typed values, action URLs, and secrets are never retained. A missing or stale
+observation pauses mutations with `requiredApproval:"promptInjectionReview"`;
+read/observe/recovery actions and first navigation into an empty tab remain
+available. Direct actions and applied recipe replay perform one visible
+fresh-observation recovery before stopping the current and remaining steps. An operator may use the exact
+blocked receipt for one origin/task/action-scoped retry within five minutes;
+the receipt is consumed once and Host MCP callers cannot self-approve it.
+
 ShellX Host MCP attaches an authenticated caller identity to Browser reads.
 Summary, check/settle, tabs, tasks, profiles, history, requests, transfers,
 receipts, logs, and network rows are filtered to that caller's task-owned
@@ -484,10 +530,10 @@ Action routes:
 | POST | `/browser/tabs/lock` | `{ browserTabId, ownerAgentId, ownerRunId, ttlSeconds?, scope? }` |
 | POST | `/browser/tabs/heartbeat` | `{ browserTabId, leaseId, ownerAgentId?, ownerRunId?, ttlSeconds? }` |
 | POST | `/browser/tabs/unlock` | `{ browserTabId, leaseId?, ownerAgentId?, ownerRunId? }` |
-| POST | `/browser/task/start` | `{ goal, startUrl?, profileId?, autonomy?:"assistedAutonomous", expectedDomains?, blockedDomains? }`. Browser task policy is fixed to truthful assisted autonomy; omitted or `assistedAutonomous` is accepted. Legacy labels return HTTP 403 with `browser_task_autonomy_policy_fixed` before task state is created, and persisted legacy task snapshots are normalized when state invariants are repaired. If native engine synchronization fails, ShellX returns HTTP 500 with `browser_task_engine_sync_failed` plus rollback evidence after aborting the provisional task, closing its tabs and unused engine webviews, restoring the previously active tab, and attempting to resync that prior engine. |
+| POST | `/browser/task/start` | `{ goal, startUrl?, profileId?, autonomy?:"assistedAutonomous", expectedDomains?, blockedDomains? }`. A valid Host MCP caller header creates an Agent task bound to that exact session; a headerless bearer-authenticated request creates an operator task. Browser task policy is fixed to truthful assisted autonomy; omitted or `assistedAutonomous` is accepted. Legacy labels return HTTP 403 with `browser_task_autonomy_policy_fixed` before task state is created, and in-memory legacy autonomy labels are normalized when state invariants are repaired. If native engine synchronization fails, ShellX returns HTTP 500 with `browser_task_engine_sync_failed` plus rollback evidence after aborting the provisional task, closing its tabs and unused engine webviews, restoring the previously active tab, and attempting to resync that prior engine. |
 | POST | `/browser/task/autonomy` | Compatibility denial path. Task autonomy cannot change after creation; returns HTTP 403 with `browser_task_autonomy_policy_fixed`. |
-| POST | `/browser/task/control` | Agent lifecycle control: `{ taskId?, action:"pause"|"resume"|"abort", reason? }`. `userTakeover` is operator-only; caller-supplied `requestedBy` is ignored. |
-| POST | `/browser/task/finish` | Agent completion: `{ taskId?, status?:"completed"|"blocked"|"aborted", reason? }`. An agent cannot finish a task while it is under user takeover; caller-supplied `requestedBy` is ignored. |
+| POST | `/browser/task/control` | `{ taskId?, action:"pause"|"resume"|"abort"|"userTakeover", reason? }`. A Host MCP caller may control only its exact bound task and cannot claim `userTakeover`; a headerless bearer-authenticated operator request has the trusted lifecycle authority documented below. Caller-supplied `requestedBy` is ignored. |
+| POST | `/browser/task/finish` | `{ taskId?, status?:"completed"|"blocked"|"aborted", reason? }`. A Host MCP caller may finish only its exact bound task and cannot finish it while the user owns control; a headerless bearer-authenticated operator request may finish it. Caller-supplied `requestedBy` is ignored. |
 | POST | `/browser/action` | `{ browserTabId?, taskId?, action, url?, selector?, refId?, value?, key?, grantId?, secretRef?, sensitiveKind?, approvalId?, lockLeaseId?, ownerAgentId?, ownerRunId?, fullPage? }` |
 | POST | `/browser/bookmarks` | `{ bookmarkId?, label, kind?, parentId?, url?, category?, toolbarPinned?, toolbarOrder?, agentWorkflow? }`; `kind` is `link` or `folder`. `agentWorkflow` is experimental metadata for reusable agent workflow bookmarks. |
 | POST | `/browser/bookmarks/reorder` | `{ items: [{ bookmarkId, parentId?, toolbarPinned?, toolbarOrder? }] }`; rejects folder cycles. |
@@ -503,7 +549,7 @@ Action routes:
 | Tauri | `shellx_browser_replay_cowork_prompt_notifications` | Main-window internal recovery hook. Re-emits only pending request IDs after the listener is registered, closing the main-window load/reload race without exposing prompt text to renderer events. |
 | Tauri | `shellx_browser_update_privacy` | Operator/UI-only `{ request: { globalAdMode?, profileId?, profileAdMode? } }`, where user-facing modes are `off`, `balanced`, and `strict`. Debug API `POST /browser/privacy` is forbidden with `browser_privacy_requires_operator`. |
 | Tauri | `shellx_browser_update_personal_lock` | Operator/UI-only `{ request: { enabled?, timeoutMinutes?, authMode?, blurLockedTabs?, pauseDelegatedTabsWhenLocked?, action?, pin?, newPin?, trustedUserActivity? } }`. Debug API `POST /browser/personal-lock` is forbidden with `browser_personal_lock_requires_operator`. |
-| Tauri | `shellx_browser_delegate_tab_to_agent` | Operator/UI-only `{ request: { browserTabId, taskId, grantId?, reason? } }`; hands a user-owned tab to a Browser task without creating a Vault grant. |
+| Tauri | `shellx_browser_delegate_tab_to_agent` | Operator/UI-only `{ request: { browserTabId, taskId, reviewFingerprint, grantId?, reason? } }`; atomically revalidates the opaque page/profile/ownership/task review fingerprint before handing a user-owned tab to a nonterminal Browser task, without creating a Vault grant. |
 | Tauri | `shellx_browser_take_back_tab_from_agent` | Operator/UI-only `{ request: { browserTabId, reason? } }`; returns a delegated tab to personal user control without revealing Vault secrets. |
 | POST | `/browser/shields` | Debug API denial path for operator-owned global Shields writes; returns `browser_shields_requires_operator`. |
 | POST | `/browser/shields/site` | Debug API denial path for operator-owned per-site Shields writes; returns `browser_shields_requires_operator`. |
@@ -555,6 +601,7 @@ state for a later reopen.
 | Tauri | `shellx_browser_operator_revise_teach_draft` | Operator/UI-only `{ request: { draftId, expectedRevisionId, expectedRevisionSha256, ...edits } }` compare-and-swap revision adapter. |
 | Tauri | `shellx_browser_operator_approve_teach_draft` | Operator/UI-only `{ request: { draftId, revisionId, revisionSha256 } }`; writes a private Action Recipe V2 plus approval receipt and does not execute it. |
 | Tauri | `shellx_browser_operator_rehearse_teach_recipe` | Operator/UI-only `{ request: { recipeId, sha256 } }`; requires matching approval and export receipts, runs the existing planner with `dryRun:true`, returns a compact receipt, and applies zero steps. |
+| Tauri | `shellx_browser_operator_prepare_teach_task_handoff` | Operator/UI-only `{ request: { draftId, revisionId, revisionSha256, recipeId, recipeSha256, approvalId, rehearsalReceiptId } }`; requires the exact current revision, approval/export receipts, and a zero-skip rehearsal. It persists an idempotent Browser workflow bookmark and returns a path-free handoff for a paused Task Manager draft. |
 | POST | `/browser/robots/schedule` | `{ taskId?, browserTabId?, recipePath?, runAtMs?, kind?, reason }`; records a receipt-backed recipe job and due-time metadata. |
 | POST | `/browser/robots/run` | `{ jobId, dryRun? }`; executes the saved recipe dry-run or live replay before setting the job's terminal status. |
 | POST | `/browser/robots/cancel` | `{ jobId, reason? }` |
@@ -633,10 +680,12 @@ metadata assigned by the authenticated creation surface. Task mutation checks
 that principal before applying agent controls; callers cannot replace it with a
 caller-supplied actor label. `POST /browser/task/control` can pause, resume, or
 abort an agent task, and its receipts use the fixed `shellxDebugApiAgent` actor.
-Only the trusted Tauri operator commands can enter `userTakeover`, resume a
-task from that state, or finish it while the user owns control; those receipts
-use `shellxBrowserOperator`. Forbidden Debug API attempts return HTTP 403 with
-`code:"browser_task_operator_control_required"`. While a task is `paused`,
+Trusted operator authority can enter `userTakeover`, resume a task from that
+state, or finish it while the user owns control. It is available through the
+Tauri commands and through an intentionally headerless, bearer-authenticated
+Debug API request; those receipts use `shellxBrowserOperator`. Host MCP calls
+remain exact-session Agent authority. Forbidden Agent attempts return HTTP 403
+with `code:"browser_task_operator_control_required"`. While a task is `paused`,
 `blocked`, `completed`, `aborted`, or `userTakeover`, `/browser/action`
 returns a blocked response such as `status:"taskPaused"` plus a
 `browserTaskActionBlocked` receipt before it reaches the native WebView path.
@@ -669,11 +718,21 @@ and seven days, while active/nonterminal tasks are never pruned. State reads
 repair runtime orphans to `aborted` with `statusReason:"orphanedTask"` and emit
 lifecycle/pruning receipts.
 
-Agent-created tasks may also carry `ownerSessionId`. Legacy/UI-created tasks
-without it retain their existing actor/surface authority behavior. For a bound
-task, agent actions and controls fail closed when the MCP caller identity is
-missing or does not match; trusted Tauri operator actions remain able to pause,
-resume, take over, abort, or finish the task.
+Agent-created tasks always carry an exact `ownerSessionId`. Agent task creation
+without a valid session is refused, and an owner-session-less legacy Agent
+snapshot cannot be claimed by any Agent caller. Operator-created runtime tasks
+carry the fixed operator actor/surface identity without an Agent session.
+Agent actions and controls fail closed when the MCP caller identity does not
+match; trusted operator actions remain able to pause, resume, take over, abort,
+or finish the task. Browser task state is runtime-memory only, so no durable task
+migration path depends on the retired ownerless Agent compatibility behavior.
+
+Prompt-injection blocks are ordinary Browser receipts and therefore remain
+visible in the operator Actions/Evidence surfaces. Browser chrome actions also
+surface the bounded block message instead of treating an HTTP 200 policy result
+as navigation/action success. Direct actions attempt one bounded fresh observe;
+if classification remains unavailable, re-observe the current page and review
+the receipt before any explicit one-request operator override.
 
 Browser Chat uses the same session binding. A direct user send or **Explain
 page** starts a task on the currently selected main-window ShellX agent tab, or
@@ -1207,6 +1266,116 @@ Keys never contain the SSH Vault reference or resolved identity-file path.
 probe. `versionFailed` means the binary was found but its version probe failed;
 the setup UI therefore does not incorrectly recommend reinstalling it.
 
+### First-class Tasks and provider catalogue
+
+The authenticated Task routes are a bounded 0.3.6 control-plane surface. They
+manage durable definitions, project current state and unresolved attention,
+queue one exact immutable revision, cancel one exact active attempt, and append
+explicit attention acknowledgements. A queued response proves durable
+acceptance only; the app-owned foreground runtime still performs every provider
+transition behind its occurrence, lease, and receipt gates. Tasks are not added
+to Host MCP, so an agent cannot silently create or schedule its own work.
+The desktop Task Manager additionally accepts a path-free operator handoff from
+Browser Teach after approval and a zero-skip dry run. The resulting draft shows
+the reviewed workflow digest and each required Vault key, lets the user choose
+only active all-agent mediated grants, starts paused with an empty provider
+route, and still requires an explicit Save.
+
+| Method | Path | Request / response contract |
+| --- | --- | --- |
+| GET | `/tasks` | Returns `{ tasks: TaskDefinitionRecord[] }`, ordered by newest definition update then task identity. |
+| GET | `/tasks/states` | Returns `{ states: TaskStateProjection[] }`, including bounded run history, current saved versus fresh environment evidence, exact active-attempt identity when cancellable, the exact private ShellX Task conversation identity when archived, path-free Browser result-evidence identities when recorded, and unresolved-attention summaries. |
+| GET | `/tasks/:task_id` | Returns `{ task: TaskDefinitionRecord }`. Task identifiers are bounded to 256 non-control characters. |
+| GET | `/tasks/:task_id/state` | Returns `{ state: TaskStateProjection }` for the current immutable revision. |
+| GET | `/tasks/:task_id/attention?limit=1..64` | Returns `{ attention: TaskAttentionItem[] }`; omitted `limit` is 24. Items use finite reason/source values and carry the exact acknowledgement precondition. |
+| POST | `/tasks` | Accepts `{ draft: TaskDraft, paused?: boolean }` and returns `201 { task: TaskDefinitionRecord }`. The durable draft validation applies every per-field bound before writing. |
+| Tauri | `tasks_persist_attachments` | Operator/UI-only `{ request: { connectionId, canonicalCwd, sources } }`. Reads 1–16 explicitly selected regular files inside the host user's home boundary or exact selected Local/WSL working folder, copies them to that exact Local/WSL/SSH target, verifies each SHA-256 after writing, and returns only `{ targetKey, attachments: [{ attachmentId, digest }], receipts }`. Original paths and bytes are absent from the response and Task store. There is no Debug API or Host MCP equivalent. |
+| Tauri | `tasks_reclaim_attachments` | Operator/UI-only `{ request: { attachmentIds } }`. Reclaims only imports absent from every immutable saved Task revision. ShellX first records `reclaimPending`, then deletes only an exact target/cwd/digest match and seals `reclaimed`; unreachable targets, changed bytes, links, or reparse points remain pending and retryable. The path-free response partitions every requested ID into `reclaimedAttachmentIds` or `pendingAttachmentIds`. There is no Debug API or Host MCP equivalent. |
+| Tauri | `tasks_maintain_attachments` | Operator/UI-only startup maintenance with no request body. Serially retries up to 16 durable `reclaimPending` records and imports that remained unreferenced for at least 24 hours after a renderer interruption. It uses the same exact-copy refusal rules and returns only selected/reclaimed/pending IDs. There is no Debug API or Host MCP equivalent. |
+| POST | `/tasks/provider-catalog` | Accepts a direct `ConnectionPreset` or `{ preset: ConnectionPreset }` and returns the exact-target, sanitized provider catalogue described below. |
+| POST | `/tasks/:task_id/revise` | Accepts `{ precondition: { expectedRevisionId, expectedRevisionHash }, draft: TaskDraft }`; returns the next immutable revision or `409 task_revision_conflict`. The path identity is authoritative. |
+| POST | `/tasks/:task_id/pause`, `/tasks/:task_id/resume` | Returns `{ definition: TaskDefinition }`; each transition is receipt-backed. |
+| POST | `/tasks/:task_id/run` | Accepts `{ revisionId, revisionHash }`; atomically persists one pending manual occurrence for that exact current revision and returns `202 { occurrenceId, disposition: "queued" }`. Provider dispatch is asynchronous and remains receipt-gated. |
+| POST | `/tasks/runs/:occurrence_id/cancel` | Accepts `{ attemptId }` and returns `202` only while that exact occurrence/attempt is active; a stale identity returns `409 task_attempt_not_active`. The runtime persists terminal cancellation evidence before aborting the provider. |
+| POST | `/tasks/:task_id/attention/:attention_id/resolve` | Accepts `{ expectedOpenedAtMs }`; appends an explicit hash-linked acknowledgement or returns `409 task_attention_conflict` when the item changed. |
+| POST | `/tasks/:task_id/attention/overflow/resolve` | Accepts `{ expectedAttentionId, expectedOmittedCount, expectedUpdatedAtMs }` for the bounded saturation aggregate and refuses stale counts. |
+| DELETE | `/tasks/:task_id` | Soft-deletes the definition, emits its durable receipt, and returns `204`. |
+| GET | `/tasks/:task_id/receipts?limit=1..256` | Returns `{ receipts: TaskReceipt[] }`; omitted `limit` is 64. The journal is a bounded, verifiable tail and never contains provider output, attachment paths, Browser URLs, option values, or credential material. Every terminal automatic run appends output-free `occurrenceTraceEvidence`; a workflow-backed run may also append `occurrenceResultEvidence`. Both bind the exact terminal Task receipt and provider attempt. |
+
+All Task mutation request bodies have a 4 MiB transport cap in addition to the
+Task contract's much tighter field and collection limits. Error bodies use a
+stable public code and redacted message; unknown storage failures never return
+filesystem, corruption, or serialization detail.
+
+`TaskDraft.executionPolicy` must describe one runnable ShellX policy at save
+time. Supported permission/autonomy pairs are `default` with `plan`,
+`acceptEdits`, or `default`, and `bypassPermissions` with
+`bypassPermissions`. `toolExposureIds` contains exactly one of `nativeFirst`,
+`hostBridge`, `hostFull`, or `off`. Create and revise reject missing,
+contradictory, multiple, or unknown values before writing a revision.
+
+When an immutable Task revision binds a reviewed Browser workflow, the managed
+runtime uses the exact deterministic provider-tab identity to find only Browser
+tasks owned by that run. After the occurrence is terminal, ShellX exports a
+bounded Flight Recorder bundle for each owned Browser task and appends one
+`shellx.task-result-evidence.v1` receipt. Its finite state is `complete`,
+`incomplete`, or `noBrowserActivity`; identities contain only the Browser task,
+Flight Recorder attempt or evaluation report ID, artifact SHA-256, Browser
+receipt ID, completeness, and time. Evaluation identities are attached only
+when that exact owned Browser task already produced an evaluation report; the
+Task collector does not invent a comparison. Private artifact paths, page
+content, URLs, provider output, prompts, and credentials stay outside the Task
+store and renderer projection.
+
+Every claimed Task attempt also receives one deterministic hidden runtime tab
+and one normal private ShellX session archive under that same identity. ShellX
+writes the reviewed instruction before provider dispatch, then records the
+ordinary Grok, Codex, Claude, or Antigravity event stream on a bounded dedicated
+writer. After the terminal receipt, `shellx.task-trace-evidence.v1` records only
+the full-file SHA-256, bounded byte/record/provider-event/drop counts, archive
+format and terminal-marker state, recovery state, and—only for a reviewable
+archive—the exact private session identity. It never stores output, prompts,
+tool arguments, transcript paths, or credentials. `Open run` is enabled only by
+that Trace receipt and loads the archive through the same past-conversation path
+as an operator chat. A restart recovery may retain a reviewable archive while
+truthfully marking completeness `incomplete`, because prior in-memory queue
+drop state cannot be reconstructed. The renderer does not create a second
+archive for hidden Task tabs.
+
+`POST /tasks/provider-catalog` accepts either a direct `ConnectionPreset` or
+`{ preset: ConnectionPreset }`, exactly like `/connections/provider-scan`, and
+returns one fresh `shellx.task-provider-catalog.v1` projection for that exact
+input target. It never performs a saved-connection fallback. The catalogue is
+an availability view only: it does not choose a provider, model, authentication
+context, or fallback. It includes the four supported provider identities,
+typed availability status, safe status-derived detail, capability guidance, an
+empty `models` list, `providerDefault` model mode, and an optional normalized
+semantic version such as `0.136.0`. A version is present only when ShellX can
+reduce provider output to exactly one isolated ASCII semantic-version token;
+raw version lines are never returned. The projection deliberately omits binary
+paths, binary hashes and sizes, raw probe diagnostics, and authentication
+material.
+
+An immutable Task revision may reference one saved Browser workflow by
+bookmark identity plus SHA-256 digest and named Vault requirements by key/grant
+identity. Before provider dispatch, the app-owned runtime rechecks the saved
+workflow's fresh health/drift state and exact recipe-export receipt, then checks
+Vault key/grant metadata without reading the secret value. Providers without
+the required ShellX host tools are rejected before effect. Recipe paths, raw
+Vault values, and provider output never enter the Task prompt or receipt;
+durable attachments are accepted only after the operator/UI Tauri path has
+copied them into the exact target's private content-addressed Task folder and
+recorded a hash-linked receipt. New Task saves reject unknown, target-mismatched,
+digest-mismatched, duplicate, or path-substituted references. Before every
+dispatch, ShellX re-reads the owned copy and gives the provider only its bounded
+relative path, durable ID, and digest. The Debug API can save or revise only
+already-recorded references; it cannot import files or mint attachment IDs.
+Closing an unsaved Task draft, or successfully saving after removing an import,
+invokes the two-phase reclamation path. Any immutable saved revision is a hard
+reclamation root, including historical revisions. Installed startup
+maintenance retries pending work and safely discovers 24-hour-old imports left
+before a draft could close.
+
 ---
 
 ## Agent CLI Setup Surface
@@ -1300,8 +1469,9 @@ ref, so a local Claude session id is not reused for `wsl:Ubuntu-24.04`, native
 Windows, Windows-plus-WSL, `ssh:deploy@203.0.113.10`, or another saved identity
 on the same SSH endpoint.
 
-Provider sessions default to `persistSession: true`. ShellX does not store
-provider transcripts; it records only the provider-native conversation id it
+Provider sessions default to `persistSession: true`. Ordinary interactive
+external-provider tabs do not gain a second ShellX transcript store; ShellX
+records only the provider-native conversation id it
 can observe, keyed by tab, provider, and transport in
 `~/.shellx/provider-sessions.json`.
 Codex ids are read from JSONL `thread_id`/session fields, Claude ids from
@@ -1313,8 +1483,10 @@ has one. For Codex and Claude this means persisting the native conversation id
 per ShellX tab/provider and calling the provider resume surface. For Grok ACP
 tabs this means `session/load` with the prior `sessionId`. ShellX should not
 build a parallel transcript-memory system for normal provider sessions. The
-exception is ShellX-owned `/build`, where the build scratchboard, receipts, and
-run gates are injected because they are ShellX state, not provider memory.
+exceptions are ShellX-owned automatic Task attempts, whose reviewable private
+session archive is the user-facing run record, and `/build`, where the build
+scratchboard, receipts, and run gates are injected because they are ShellX
+state, not provider memory.
 
 Resume fields:
 
@@ -1449,8 +1621,14 @@ main-agent definition with compact ShellX session rules; ShellX passes both
 Antigravity sessions do not discover it. That provider must return control to
 ShellX for host-scoped Vault, evidence, or cross-provider handoff work.
 Write-class MCP tools require the tab-bound token for the claimed tab; the
-global MCP token remains accepted for health/read compatibility. For SSH
-provider sessions, ShellX uses `ssh -R` so remote `localhost:<mcp-port>`
+global MCP token remains accepted for health/read compatibility.
+The Host MCP base token is resolved once at startup from `SHELLX_MCP_SECRET`
+or the private profile. Profile-backed creation and legacy rotation complete
+through atomic private-file replacement before the listener is scheduled;
+provider injection and write authorization use the same process-owned token
+authority for the rest of that run. If persistence or private-profile validation fails, the
+Host MCP listener and ShellX-tool injection fail closed with a bounded error.
+For SSH provider sessions, ShellX uses `ssh -R` so remote `localhost:<mcp-port>`
 reaches the local ShellX MCP server. Claude gets private MCP configuration
 written to the remote host. Codex gets its bearer env staged in a temporary 0600 remote
 file that is sourced and removed before provider exec, so the token is not

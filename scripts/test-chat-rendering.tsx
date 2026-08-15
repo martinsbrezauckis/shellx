@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SafeVideo } from "../src/components/MediaPreview";
 import { SafeMarkdownLink } from "../src/lib/markdown-links";
+import { readAppStyles } from "./lib/app-styles";
 
 let failures = 0;
 function assert(cond: boolean, label: string): void {
@@ -73,7 +74,7 @@ console.log("\n=== chat rendering: assistant labels ===");
 
 console.log("\n=== chat layout overflow guards ===");
 {
-  const css = readFileSync("src/App.css", "utf8");
+  const css = readAppStyles();
   assert(css.includes("overflow-x: hidden;"), "chat stream suppresses page-level horizontal overflow");
   assert(css.includes("overflow-wrap: anywhere;"), "Build cockpit wraps long objectives instead of widening panes");
   assert((css.match(/overflow-wrap:\s*anywhere;/g)?.length ?? 0) >= 2, "Build blocker and status messages wrap long text");

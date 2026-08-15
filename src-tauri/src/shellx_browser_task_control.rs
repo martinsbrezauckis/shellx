@@ -25,7 +25,7 @@ impl ShellxBrowserRegistry {
             task_id,
             status,
             reason,
-            BrowserTaskControlAuthority::Agent,
+            BrowserTaskControlAuthority::Operator,
             None,
         )
     }
@@ -158,7 +158,7 @@ impl ShellxBrowserRegistry {
         &self,
         request: BrowserTaskControlRequest,
     ) -> Result<BrowserTaskControlResponse, String> {
-        self.control_task_with_authority(request, BrowserTaskControlAuthority::Agent, None)
+        self.control_task_with_authority(request, BrowserTaskControlAuthority::Operator, None)
     }
 
     pub(crate) fn control_task_for_agent_session(
@@ -285,7 +285,7 @@ impl ShellxBrowserRegistry {
         })
     }
 
-    pub(crate) fn ensure_agent_session_for_action(
+    pub(crate) fn ensure_browser_request_authority_for_action(
         &self,
         request: &BrowserActionRequest,
         caller_session_id: Option<&str>,
@@ -341,12 +341,12 @@ impl ShellxBrowserRegistry {
         let idx = find_task_index(&state, &task_id)?;
         ensure_browser_task_control_authority(
             &state.tasks[idx],
-            BrowserTaskControlAuthority::Agent,
-            caller_session_id,
+            BrowserTaskControlAuthority::Operator,
+            None,
         )
     }
 
-    pub(crate) fn ensure_agent_session_for_task_id(
+    pub(crate) fn ensure_browser_request_authority_for_task_id(
         &self,
         task_id: &str,
         caller_session_id: Option<&str>,
@@ -355,7 +355,11 @@ impl ShellxBrowserRegistry {
         let idx = find_task_index(&state, task_id)?;
         ensure_browser_task_control_authority(
             &state.tasks[idx],
-            BrowserTaskControlAuthority::Agent,
+            if caller_session_id.is_some() {
+                BrowserTaskControlAuthority::Agent
+            } else {
+                BrowserTaskControlAuthority::Operator
+            },
             caller_session_id,
         )
     }
@@ -392,21 +396,20 @@ mod tests {
             ..BrowserActionRequest::default()
         };
         registry
-            .ensure_agent_session_for_action(&action, Some("mcp-tab-a"))
+            .ensure_browser_request_authority_for_action(&action, Some("mcp-tab-a"))
             .expect("owning caller may act");
         let wrong_caller = registry
-            .ensure_agent_session_for_action(&action, Some("mcp-tab-b"))
+            .ensure_browser_request_authority_for_action(&action, Some("mcp-tab-b"))
             .expect_err("other MCP caller must not act");
         assert!(wrong_caller.contains(BROWSER_TASK_OWNER_CONTROL_REQUIRED));
-        let missing_caller = registry
-            .ensure_agent_session_for_action(&action, None)
-            .expect_err("caller-bound tasks fail closed without identity");
-        assert!(missing_caller.contains(BROWSER_TASK_OWNER_CONTROL_REQUIRED));
         registry
-            .ensure_agent_session_for_task_id(&task.task_id, Some("mcp-tab-a"))
+            .ensure_browser_request_authority_for_action(&action, None)
+            .expect("headerless bearer request has explicit operator authority");
+        registry
+            .ensure_browser_request_authority_for_task_id(&task.task_id, Some("mcp-tab-a"))
             .expect("task-owned indirect routes accept the owning caller");
         let wrong_indirect_caller = registry
-            .ensure_agent_session_for_task_id(&task.task_id, Some("mcp-tab-b"))
+            .ensure_browser_request_authority_for_task_id(&task.task_id, Some("mcp-tab-b"))
             .expect_err("task-owned indirect routes reject another caller");
         assert!(wrong_indirect_caller.contains(BROWSER_TASK_OWNER_CONTROL_REQUIRED));
 
@@ -431,6 +434,82 @@ mod tests {
                 Some("mcp-tab-a"),
             )
             .expect("owning caller can pause task");
+    }
+
+    #[test]
+    fn ownerless_agent_tasks_are_retired_without_weakening_operator_authority() {
+        let registry = ShellxBrowserRegistry::default();
+        let missing_owner = registry
+            .start_task_for_agent_session(
+                StartBrowserTaskRequest {
+                    goal: "Reject ownerless agent creation".to_string(),
+                    ..StartBrowserTaskRequest::default()
+                },
+                None,
+            )
+            .expect_err("agent task creation requires an exact caller session");
+        assert!(missing_owner.contains(BROWSER_TASK_OWNER_CONTROL_REQUIRED));
+
+        let operator_task = registry
+            .start_task(StartBrowserTaskRequest {
+                goal: "Trusted Tauri operator task".to_string(),
+                ..StartBrowserTaskRequest::default()
+            })
+            .expect("operator task starts");
+        assert_eq!(
+            operator_task.owner_actor_id,
+            BrowserTaskControlAuthority::Operator.actor_id()
+        );
+        assert_eq!(
+            operator_task.owner_surface,
+            BrowserTaskControlAuthority::Operator.surface_id()
+        );
+        assert_eq!(operator_task.owner_session_id, None);
+
+        let debug_operator_task = registry
+            .start_task_from_debug_operator(StartBrowserTaskRequest {
+                goal: "Bearer-authenticated operator task".to_string(),
+                ..StartBrowserTaskRequest::default()
+            })
+            .expect("Debug API operator task starts");
+        assert_eq!(
+            debug_operator_task.owner_actor_id,
+            BrowserTaskControlAuthority::Operator.actor_id()
+        );
+        assert_eq!(
+            debug_operator_task.owner_surface,
+            BrowserTaskControlAuthority::Agent.surface_id()
+        );
+        assert_eq!(debug_operator_task.owner_session_id, None);
+
+        let legacy_task = registry
+            .start_task_for_agent_session(
+                StartBrowserTaskRequest {
+                    goal: "Synthetic ownerless legacy Agent task".to_string(),
+                    ..StartBrowserTaskRequest::default()
+                },
+                Some("original-owner"),
+            )
+            .expect("bound task starts before legacy mutation");
+        {
+            let mut state = lock_or_recover(&registry.state);
+            state
+                .tasks
+                .iter_mut()
+                .find(|task| task.task_id == legacy_task.task_id)
+                .expect("legacy task remains present")
+                .owner_session_id = None;
+        }
+        let rejected = registry
+            .ensure_browser_request_authority_for_task_id(
+                &legacy_task.task_id,
+                Some("would-be-claimer"),
+            )
+            .expect_err("an ownerless Agent task cannot be claimed by any agent session");
+        assert!(rejected.contains(BROWSER_TASK_OWNER_CONTROL_REQUIRED));
+        registry
+            .ensure_browser_request_authority_for_task_id(&legacy_task.task_id, None)
+            .expect("trusted operator authority remains available for cleanup");
     }
 
     #[test]
@@ -471,7 +550,7 @@ mod tests {
             "clickRef",
         ] {
             let error = registry
-                .ensure_agent_session_for_action(
+                .ensure_browser_request_authority_for_action(
                     &BrowserActionRequest {
                         browser_tab_id: Some(foreign_tab_id.clone()),
                         task_id: Some(task_b.task_id.clone()),
@@ -503,7 +582,7 @@ mod tests {
             ("clickRef", None),
         ] {
             let error = registry
-                .ensure_agent_session_for_action(
+                .ensure_browser_request_authority_for_action(
                     &BrowserActionRequest {
                         browser_tab_id: Some(personal_tab_id.clone()),
                         task_id,
@@ -672,6 +751,35 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("caller-b")));
+
+        let caller_a_before = serde_json::to_value(summary.revisions).expect("caller A revisions");
+        let caller_b_before =
+            serde_json::to_value(registry.summary_for_agent_session("mcp-tab-b").revisions)
+                .expect("caller B revisions");
+        registry
+            .record_agent_console_log(
+                BrowserConsoleLogRequest {
+                    task_id: Some(task_b.task_id.clone()),
+                    level: "info".to_string(),
+                    message: "caller-b-later-private-log".to_string(),
+                    ..BrowserConsoleLogRequest::default()
+                },
+                "mcp-tab-b",
+            )
+            .expect("later caller B log");
+        lock_or_recover(&registry.state)
+            .console_logs
+            .last_mut()
+            .expect("later caller B log entry")
+            .t = i64::MAX - 1;
+        let caller_a_after =
+            serde_json::to_value(registry.summary_for_agent_session("mcp-tab-a").revisions)
+                .expect("caller A revisions after caller B activity");
+        let caller_b_after =
+            serde_json::to_value(registry.summary_for_agent_session("mcp-tab-b").revisions)
+                .expect("caller B revisions after caller B activity");
+        assert_eq!(caller_a_after, caller_a_before);
+        assert_ne!(caller_b_after, caller_b_before);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type DragEvent, type PointerEvent } from "react";
 
-import { browserApiDeleteJson, browserApiPostJson } from "../api";
+import { browserApiDeleteJson, browserApiPostActionJson, browserApiPostJson } from "../api";
 import type { BrowserBookmark, BrowserBookmarkToolbarItem } from "../types";
 import { bookmarkUrl, compareBookmarksForPanel } from "../browserPresentation";
 import type { BrowserWorkflowPreviewSummary } from "../browserWorkflowPreview";
@@ -72,13 +72,13 @@ export function useBrowserBookmarks(options: BrowserBookmarksOptions) {
 
   const bookmarkCurrent = () => {
     void runBusy(async () => {
-      await browserApiPostJson("/browser/action", {
+      await browserApiPostActionJson("/browser/action", {
         ...actionContext(),
         ...(activeTaskId ? { taskId: activeTaskId } : {}),
         action: "bookmarkCurrent",
         url: currentPageUrl,
         value: currentPageTitle,
-      });
+      }, "Saving this Browser bookmark was blocked.");
     });
   };
 

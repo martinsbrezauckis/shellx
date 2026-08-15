@@ -4,6 +4,7 @@ import { join } from "node:path";
 import ts from "typescript";
 import { SHORTCUTS } from "../src/lib/shortcuts";
 import { normalizedTextContent } from "./lib/text-content";
+import { readAppStyles } from "./lib/app-styles";
 
 const leftRail = readFileSync("src/components/LeftRail.tsx", "utf8");
 const rowActions = readFileSync("src/components/RowActions.tsx", "utf8");
@@ -16,7 +17,7 @@ const connectorInbox = readFileSync("src/components/ConnectorInboxModal.tsx", "u
 const connectorInboxCss = readFileSync("src/components/ConnectorInboxModal.css", "utf8");
 const settings = readFileSync("src/components/Settings.tsx", "utf8");
 const settingsCss = readFileSync("src/components/Settings.css", "utf8");
-const appCss = readFileSync("src/App.css", "utf8");
+const appCss = readAppStyles();
 const agentSidebar = readFileSync("src/browser/components/AgentSidebar.tsx", "utf8");
 const browserHistorySidecar = readFileSync("src/browser/components/BrowserHistorySidecar.tsx", "utf8");
 const browserTabHandoffConfirmation = readFileSync("src/browser/components/BrowserTabHandoffConfirmation.tsx", "utf8");

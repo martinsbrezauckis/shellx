@@ -6,10 +6,12 @@ import {
   policyTextSha256,
   validateWinrtPatch,
 } from "./check-rustsec.mjs";
+import { validateGlibBackport } from "./lib/verify-glib-backport.mjs";
 
 const NOW = new Date("2026-07-10T12:00:00Z");
 
 assert.deepEqual(validateWinrtPatch(), [], "reviewed Windows notification dependency patch stays intact");
+assert.deepEqual(validateGlibBackport(), [], "reviewed glib soundness backport stays active");
 assert.equal(normalizePolicyText("name = \"quick-xml\"\r\nversion = \"0.39.4\"\r\n"), "name = \"quick-xml\"\nversion = \"0.39.4\"\n");
 assert.equal(
   policyTextSha256("reviewed\r\nvendored\r\ntext\r\n"),

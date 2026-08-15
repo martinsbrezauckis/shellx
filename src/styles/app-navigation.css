@@ -1,0 +1,820 @@
+.proj-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px var(--space-5) 7px var(--space-4);
+  color: var(--ink); cursor: pointer; position: relative;
+  font-family: var(--sans); font-size: 14px;
+  background: transparent; border: none;
+  width: 100%;
+  text-align: left;
+  letter-spacing: -0.005em;
+}
+.proj-row:hover { background: var(--surface-2); }
+/* drag-over highlight — dashed orange accent border-inset so the
+ * row doesn't shift its layout while a drag is in flight. Applied via
+ * `.drag-over` class added by React onDragOver handler in LeftRail. */
+.proj-row.drag-over,
+.unfiled-head.drag-over {
+  background: var(--surface-2);
+  outline: 1px dashed var(--orange);
+  outline-offset: -2px;
+}
+.proj-row .pcaret { color: var(--ink-3); font-size: 10px; width: 12px; display: inline-block; }
+.proj-row .pico   { color: var(--ink-3); font-size: 14px; line-height: 1; width: 16px; text-align: center; }
+.proj-row .pcaret,
+.proj-row .pico,
+.unfiled-head .pcaret,
+.chat-row .ttr,
+.unfiled-row .ttr,
+.gh-ic {
+  display: inline-grid;
+  place-items: center;
+}
+.proj-row .pname  { flex: 1; }
+.proj-row .pcount { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+
+/* chat row nested under a project */
+.chat-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px var(--space-5) 5px 52px;
+  color: var(--ink-2); cursor: pointer; position: relative;
+  font-family: var(--sans); font-size: 13px;
+  letter-spacing: -0.005em;
+  background: transparent; border: none;
+  width: 100%;
+  text-align: left;
+}
+.chat-row:hover { color: var(--ink); background: var(--surface-2); }
+.chat-row.active { color: var(--ink); background: var(--surface-2); }
+.chat-row.active::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--ink);
+}
+.chat-row .csd { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; }
+.chat-row .csd.run   { background: var(--warn); }
+.chat-row .csd.done  { background: var(--ok); }
+.chat-row .csd.idle  { background: var(--ink-4); }
+.chat-row .csd.input { background: var(--ink); }
+.chat-row .ctitle    { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-row .ttr       { font-size: 11px; color: var(--ink-3); width: 14px; text-align: center; }
+
+/* unfiled chats section — flat, no folder */
+.unfiled-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: var(--space-4) var(--space-5) var(--space-2);
+  font-family: var(--sans);
+  font-size: 11px; font-weight: 500;
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-4);
+  cursor: pointer; user-select: none;
+  background: transparent; border: none;
+  width: 100%;
+  text-align: left;
+}
+.unfiled-head:hover { color: var(--ink-2); }
+.unfiled-head .pcaret { font-size: 10px; color: var(--ink-3); width: 12px; }
+
+.unfiled-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px var(--space-5) 5px var(--space-5);
+  color: var(--ink-2); cursor: pointer;
+  font-family: var(--sans); font-size: 13px;
+  background: transparent; border: none;
+  width: 100%;
+  text-align: left;
+}
+.unfiled-row:hover     { color: var(--ink); background: var(--surface-2); }
+.unfiled-row.active    { color: var(--ink); background: var(--surface-2); }
+.unfiled-row .csd      { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 6px; }
+.unfiled-row .csd.done { background: var(--ok); }
+.unfiled-row .csd.idle { background: var(--ink-4); }
+.unfiled-row .ttr      { font-size: 11px; color: var(--ink-3); width: 14px; text-align: center; }
+.unfiled-row .ctitle   { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* row-level hover actions. The pencil
+   (rename) and similar future actions sit at the right end of the row,
+   hidden until row:hover so the idle list stays clean. Active rows
+   keep a faint hint always visible to signal "this is editable". */
+/* hover-revealed row actions — edit + delete.
+ * Was 1 action (edit pencil at opacity 0.7) — too subtle to discover.
+ * Now: hover lights both icons to opacity 1.0 with a tinted background
+ * on the icon hitbox so they read as actual buttons, not faint glyphs.
+ * Delete uses the warn color on hover so the destructive intent is
+ * unambiguous before the click. */
+.unfiled-row .row-edit,
+.unfiled-row .row-del,
+.chat-row .row-edit,
+.chat-row .row-del {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  opacity: 0;
+  font-size: 13px;
+  padding: 0;
+  border-radius: 3px;
+  user-select: none;
+  cursor: pointer;
+  color: var(--ink-3);
+  background: transparent;
+  transition: opacity 0.12s ease-out, color 0.12s ease-out, background 0.12s ease-out;
+  flex-shrink: 0;
+}
+.unfiled-row:hover .row-edit,
+.unfiled-row:focus-within .row-edit,
+.unfiled-row.active .row-edit,
+.unfiled-row:hover .row-del,
+.unfiled-row:focus-within .row-del,
+.unfiled-row.active .row-del,
+.chat-row:hover .row-edit,
+.chat-row:focus-within .row-edit,
+.chat-row:hover .row-del,
+.chat-row:focus-within .row-del {
+  opacity: 0.9;
+}
+.unfiled-row .row-edit:hover,
+.chat-row .row-edit:hover {
+  opacity: 1 !important;
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.unfiled-row .row-del:hover,
+.chat-row .row-del:hover {
+  opacity: 1 !important;
+  color: var(--fg-error, #f55);
+  background: var(--surface-2);
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * v9.2 — header Find popover + Plugins modal (Phase 2)
+ * ───────────────────────────────────────────────────────────── */
+
+/* generic header icon button (Plugins, future header actions) */
+.hdr-icon {
+  position: relative;
+  background: transparent;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-2);
+  width: 36px; height: 30px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: grid; place-items: center;
+  font-family: var(--sans);
+  font-weight: 500;
+}
+.hdr-icon:hover {
+  color: var(--ink);
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+.hdr-theme-toggle.active {
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+.hdr-inbox-icon {
+  color: var(--ink-2);
+}
+.hdr-vault-request-wrap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+.hdr-vault-request-icon.attention {
+  color: var(--warn, #d4a64c);
+  border-color: color-mix(in srgb, var(--warn, #d4a64c) 42%, var(--hairline-2));
+  background: color-mix(in srgb, var(--warn, #d4a64c) 10%, transparent);
+}
+.hdr-vault-request-icon.vault-open {
+  color: #8bbf8b;
+  border-color: color-mix(in srgb, #8bbf8b 42%, var(--hairline-2));
+}
+.hdr-vault-request-icon.vault-closed {
+  color: #d68a8a;
+  border-color: color-mix(in srgb, #d68a8a 42%, var(--hairline-2));
+}
+.hdr-vault-request-icon.vault-unknown {
+  color: var(--ink-3);
+}
+.hdr-vault-state-dot {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--bg);
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+.hdr-vault-request-icon.vault-open .hdr-vault-state-dot { background: #8bbf8b; }
+.hdr-vault-request-icon.vault-closed .hdr-vault-state-dot { background: #d68a8a; }
+.hdr-icon-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--bg);
+  border-radius: var(--radius-pill);
+  background: var(--warn, #d4a64c);
+  color: var(--bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.vault-request-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 2400;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 8px;
+  background: var(--surface, #11110f);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.42);
+}
+.vault-request-popover-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 2px 9px;
+  border-bottom: 1px solid var(--hairline-2);
+}
+.vault-request-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.vault-request-quick {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 0 8px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+}
+.vault-request-quick:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+  border-color: var(--border);
+}
+.vault-request-popover-title {
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+.vault-request-popover-subtitle,
+.vault-request-empty,
+.vault-request-overflow {
+  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.vault-request-empty {
+  padding: 14px 4px 6px;
+}
+.vault-request-list {
+  display: grid;
+  gap: 8px;
+  padding-top: 9px;
+}
+.vault-request-card {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.vault-request-card.tone-attention {
+  border-color: color-mix(in srgb, var(--warn, #d4a64c) 38%, var(--hairline-2));
+}
+.vault-request-card.tone-danger {
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 45%, var(--hairline-2));
+}
+.vault-request-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.vault-request-source {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-pill);
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  text-transform: uppercase;
+}
+.vault-request-title {
+  min-width: 0;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault-request-summary {
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault-request-details {
+  display: grid;
+  gap: 3px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.vault-request-details > div {
+  overflow: visible; overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+.vault-request-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.vault-request-action {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+}
+.vault-request-action:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+  border-color: var(--border);
+}
+.vault-request-action.primary {
+  color: var(--bg);
+  border-color: var(--ink);
+  background: var(--ink);
+}
+.vault-request-action.primary:hover {
+  background: var(--ink-2);
+  border-color: var(--ink-2);
+}
+.vault-request-action.secondary:hover {
+  color: var(--warn, #d4a64c);
+}
+.vault-request-action.ghost {
+  color: var(--ink-3);
+}
+.vault-request-overflow {
+  padding: 2px 4px 0;
+  text-align: right;
+}
+
+/* live-sessions badge in header. */
+.hdr-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-2);
+  border-radius: 12px;
+  user-select: none;
+}
+.hdr-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok, #4ade80);
+  display: inline-block;
+}
+/* groks-working pill — slightly different accent
+ * so the two side-by-side badges read as distinct counters at a
+ * glance. Amber dot signals "active work in progress" vs the green
+ * "session alive" semantic of liveTabCount. */
+.hdr-grok-badge { margin-left: 4px; }
+.hdr-live-dot.grok-dot {
+  background: var(--warn, #f59e0b);
+  animation: hdr-grok-pulse 1.6s ease-in-out infinite;
+}
+@keyframes hdr-grok-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+/* Find input chip in header */
+.find-wrap { position: relative; }
+.find-bar {
+  display: flex; align-items: center; gap: 6px;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-2);
+  border-radius: 999px;
+  width: 260px;
+  font-family: var(--sans);
+  cursor: text;
+}
+.find-bar:focus-within { border-color: var(--accent); background: var(--surface-3); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent); }
+.find-bar .find-ic {
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.find-bar input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  outline: none;
+  letter-spacing: -0.005em;
+}
+.find-bar input::placeholder { color: var(--ink-3); }
+.find-bar .find-k {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-4);
+  border: 1px solid var(--hairline-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* popover anchored under .find-bar with chat results */
+.find-popover {
+  position: absolute;
+  top: calc(100% + 6px); left: 0;
+  width: 380px;
+  max-height: min(72vh, 720px);
+  background: #060606;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55), 0 0 0 1px var(--hairline);
+  z-index: 50;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* smooth width transition when expanding to show preview. */
+  transition: width 140ms ease;
+}
+/* with-preview = list + preview-pane two-column layout. */
+.find-popover.with-preview { width: 720px; }
+.find-pop-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.find-list-col {
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.find-preview {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--hairline);
+}
+.find-preview-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.find-row.selected {
+  background: var(--surface-3);
+  outline: 1px solid var(--hairline-2);
+  outline-offset: -1px;
+}
+.find-pop-head {
+  padding: 10px 14px;
+  font-family: var(--sans);
+  font-size: 10px; font-weight: 500;
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: center; gap: 8px;
+}
+.find-pop-head .ct { color: var(--ink); }
+.find-row {
+  display: grid;
+  grid-template-columns: 12px 18px 1fr auto;
+  align-items: center; gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.find-row:hover { background: var(--surface-2); }
+.find-row.active { background: var(--surface-3); }
+.find-row .csd { width: 7px; height: 7px; border-radius: 50%; }
+.find-row .csd.done { background: var(--ok); }
+.find-row .csd.run  { background: var(--warn); }
+.find-row .csd.idle { background: var(--ink-4); }
+.find-row .csd.input { background: var(--ink); }
+.find-row .ttr {
+  display: inline-grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink-2);
+}
+.find-row .ftitle {
+  color: var(--ink); font-size: 13px; letter-spacing: -0.005em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.find-row .ftitle mark {
+  background: rgba(249, 115, 22, 0.18);
+  color: var(--orange);
+  padding: 0; border-radius: 0;
+}
+.find-row .fmeta {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+.find-pop-foot {
+  padding: 8px 14px;
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--ink-4);
+  letter-spacing: 0.14em; text-transform: uppercase;
+  border-top: 1px solid var(--hairline);
+  display: flex; gap: 14px;
+}
+.find-pop-foot kbd {
+  font-family: var(--mono);
+  color: var(--ink-3);
+  border: 1px solid var(--hairline-2);
+  padding: 1px 5px; border-radius: 3px;
+  letter-spacing: 0; text-transform: none; font-size: var(--fs-ui-xs);
+}
+
+/* ─── Plugins modal (Phase 11 reviewer-pass-3 H-NEW3-4 fix) ───
+ * v9.2 Phase 2 originally defined these as `.modal-backdrop` /
+ * `.modal` / `.modal-section` — colliding with HelpModal and Settings
+ * which use the SAME names with different geometry (grid+padding vs
+ * flex-column+hidden-overflow). Cascade made the second-defined ones
+ * win, breaking Help and Settings dialogs. All renamed to `.pmodal-*`
+ * here + in PluginsModal.tsx. Old `.modal-*` rules at L1311 stay
+ * untouched and serve HelpModal/Settings as before.
+ */
+.pmodal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 5, 5, 0.72);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.pmodal {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-modal);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px var(--hairline);
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pmodal-hdr {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--hairline);
+}
+.pmodal-title {
+  font-family: var(--display);
+  font-weight: 550;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.pmodal-sub {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.pmodal-x {
+  display: inline-grid;
+  place-items: center;
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-2);
+  width: 28px; height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.pmodal-x:hover {
+  color: var(--ink);
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+.pmodal-section {
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--hairline);
+  overflow-y: auto;
+}
+.pmodal-section:last-of-type { border-bottom: none; }
+.pmodal-section-hdr {
+  margin: 0 0 var(--space-4) 0;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.pmodal-section-hdr .ct { color: var(--ink); font-weight: 600; }
+.pmodal-empty {
+  color: var(--ink-3);
+  font-size: 13px;
+  font-family: var(--sans);
+  margin: 0;
+}
+.pmodal-foot {
+  padding: var(--space-3) var(--space-6);
+  border-top: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* MCP marketplace tier list inside PluginsModal.
+ * Reuses the .pmodal-section + .plugin-toggle scaffolding. mp-* classes
+ * cover the row primitives + pill set + tier section header. */
+
+/* Modal body wrapper so tier sections scroll when the marketplace is
+ * full. Each pmodal-section above already pads itself; this just
+ * constrains the height to the available modal space and lets long
+ * tier lists scroll vertically rather than blowing past the footer.
+ */
+.pmodal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Kind pill — small text label, neutral background */
+.mp-kind {
+  font-size: 9.5px;
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  border: 1px solid var(--hairline-2);
+}
+.mp-kind-stdio { background: rgba(120, 120, 120, 0.18); }
+.mp-kind-http  { background: rgba(60, 110, 170, 0.22); color: #a3c2e0; }
+.mp-kind-sse   { background: rgba(140, 100, 170, 0.22); color: #c1a3e0; }
+.mp-kind-mcp   { background: rgba(200, 66, 58, 0.18); color: #e0a39d; }
+
+/* Action button — primary for install/Add key, secondary for Remove */
+.mp-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 5px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--hairline-2);
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease, opacity 100ms ease;
+}
+.mp-action-btn:hover:not(:disabled) {
+  background: var(--surface-3, rgba(255,255,255,0.04));
+  border-color: var(--ink-3);
+}
+.mp-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.mp-action-btn-primary {
+  border-color: #c8423a;
+  color: #e0a39d;
+}
+.mp-action-btn-primary:hover:not(:disabled) {
+  background: rgba(200, 66, 58, 0.12);
+}
+.mp-action-btn-secondary {
+  /* default styling sufficient */
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * v9.2 Phase 11 — ConnectionPicker popover (reviewer pass-3 H-NEW3-3 fix)
+ * Was a fullscreen overlay with hardcoded top:56/left:200 anchored
+ * to the (now-removed) header workspace chip. Phase 11 turns it into
+ * an absolutely-positioned popover anchored to its parent .scope-pill
+ * wrapper, like BranchPicker. Token-driven colors replace the inline
+ * `var(--bg-elev, #111)` style fallbacks.
+ * ───────────────────────────────────────────────────────────── */
+.connection-picker-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55), 0 0 0 1px var(--hairline);
+  z-index: 9600;
+  overflow: hidden;
+  font-family: var(--sans);
+}
+.connection-picker-pop .bp-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  font-size: 10px; font-weight: 500;
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--hairline);
+}
+.connection-picker-pop .cp-new {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-2);
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.connection-picker-pop .cp-new:hover { color: var(--orange); border-color: var(--orange); }
+.connection-picker-pop .cp-list {
+  list-style: none; margin: 0; padding: 0;
+  max-height: 50vh; overflow-y: auto;
+}
+.connection-picker-pop .cp-empty {
+  padding: 16px 14px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.connection-picker-pop .cp-error { padding: 10px 14px; font-size: 13px; color: var(--err); background: color-mix(in srgb, var(--err) 7%, var(--surface)); }
+.connection-picker-row { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); background: transparent; }
+.connection-picker-row.active { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.connection-test-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--ink-3); }
+.connection-test-dot.reachable { background: var(--ok); }
+.connection-test-dot.failed { background: var(--err); }

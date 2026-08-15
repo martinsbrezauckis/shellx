@@ -50,11 +50,11 @@ assert(
   adapter.includes('"/browser/developer/inspect"')
     && adapter.includes("caller id is required")
     && adapter.includes("requires taskId")
-    && adapter.includes("ensure_agent_session_for_task_id"),
+    && adapter.includes("ensure_browser_request_authority_for_task_id"),
   "Debug API route requires an authenticated caller-owned task",
 );
 assert(
-  routes.includes("browser_developer_inspection_routes()"),
+  routes.includes("browser_developer_inspection_routes"),
   "Debug API Browser router mounts the focused inspection adapter",
 );
 assert(

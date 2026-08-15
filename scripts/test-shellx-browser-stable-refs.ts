@@ -11,7 +11,8 @@ function assert(condition: unknown, message: string): asserts condition {
 const identity = source("src-tauri/src/shellx_browser_element_identity.rs");
 const identityScript = identity.split("#[cfg(test)]", 1)[0] ?? identity;
 const targets = source("src-tauri/src/shellx_browser_element_targets.rs");
-const actionResults = source("src-tauri/src/shellx_browser_action_results.rs");
+const actionResults = source("src-tauri/src/shellx_browser_action_results.rs")
+  + source("src-tauri/src/shellx_browser_taskless_action_results.rs");
 const actionScript = source("src-tauri/src/shellx_browser_action_script.rs");
 const actionability = source("src-tauri/src/shellx_browser_actionability.rs");
 const actions = source("src-tauri/src/shellx_browser_actions.rs");

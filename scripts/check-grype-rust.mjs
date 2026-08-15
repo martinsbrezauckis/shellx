@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validateGlibBackport } from "./lib/verify-glib-backport.mjs";
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const POLICY_PATH = resolve(ROOT, "security", "grype-dispositions.json");
 
@@ -83,6 +85,8 @@ function runGrype() {
 
 function main() {
   try {
+    const patchErrors = validateGlibBackport();
+    if (patchErrors.length > 0) throw new Error(patchErrors.join("\n"));
     const evaluation = evaluateGrypeRustReport(
       runGrype(),
       JSON.parse(readFileSync(POLICY_PATH, "utf8")),
@@ -107,4 +111,3 @@ function main() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
-

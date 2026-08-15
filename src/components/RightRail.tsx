@@ -52,6 +52,12 @@ import {
   type ProviderShellxToolExposure,
 } from "../lib/provider-sessions";
 import {
+  CUT_TOOLING_FIXTURES,
+  type CutToolingState,
+  type CutToolingStatus,
+} from "../lib/cut-tooling";
+import { CutToolingRow } from "./CutToolingRow";
+import {
   type ModelInstructionCard,
   type ModelInstructionCardsState,
 } from "../lib/model-instruction-cards";
@@ -190,6 +196,7 @@ interface SessionToolingSnapshot {
   };
   desired: McpEntryStatus[];
   health: MarketplaceHealthEntry[];
+  cut: CutToolingStatus;
 }
 
 type GrokEnvironmentStatus = "idle" | "pass" | "warn" | "fail";
@@ -396,6 +403,7 @@ export function RightRail({
   debugBuildRunFixture = null,
   debugRightRailGitFixture = null,
   debugProviderAction = null,
+  debugCutToolingFixture = null,
   debugClipboardFixture = null,
   debugUpdateFixture = "live",
   shellxToolExposure = DEFAULT_SHELLX_TOOL_EXPOSURE,
@@ -440,6 +448,7 @@ export function RightRail({
   debugBuildRunFixture?: DebugBuildRunCockpitFixture | null;
   debugRightRailGitFixture?: DebugRightRailGitLifecycleFixture | null;
   debugProviderAction?: DebugProviderAction | null;
+  debugCutToolingFixture?: CutToolingState | null;
   debugClipboardFixture?: "tasks" | "work-preview" | null;
   debugUpdateFixture?: DebugUpdateFixtureMode;
   shellxToolExposure?: ProviderShellxToolExposure;
@@ -533,6 +542,7 @@ export function RightRail({
           agentCliStatusLive={agentCliStatusLive}
           debugFixture={debugRightRailGitFixture}
           debugProviderAction={debugProviderAction}
+          debugCutToolingFixture={debugCutToolingFixture}
           debugUpdateFixture={debugUpdateFixture}
         />
       )}
@@ -607,6 +617,7 @@ function ToolingPane({
   agentCliStatusLive,
   debugFixture,
   debugProviderAction,
+  debugCutToolingFixture,
   debugUpdateFixture,
 }: {
   activeTabId: string | null;
@@ -625,12 +636,18 @@ function ToolingPane({
   agentCliStatusLive: boolean;
   debugFixture?: DebugRightRailGitLifecycleFixture | null;
   debugProviderAction?: DebugProviderAction | null;
+  debugCutToolingFixture?: CutToolingState | null;
   debugUpdateFixture: DebugUpdateFixtureMode;
 }): JSX.Element {
   const [entries, setEntries] = useState<McpEntryStatus[]>([]);
   const [health, setHealth] = useState<Record<string, MarketplaceHealthEntry>>({});
   const [sessionInfo, setSessionInfo] = useState<SessionToolingSnapshot["session"] | null>(null);
   const [connectionPreset, setConnectionPreset] = useState<ConnectionPreset | null>(null);
+  const [cutStatus, setCutStatus] = useState<CutToolingStatus | null>(null);
+  const [cutChecking, setCutChecking] = useState(false);
+  const [cutOpening, setCutOpening] = useState(false);
+  const [cutCheckSequence, setCutCheckSequence] = useState(0);
+  const [cutActionError, setCutActionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -639,9 +656,14 @@ function ToolingPane({
     setEntries([]);
     setHealth({});
     setSessionInfo(null);
+    setCutStatus(null);
+    setCutChecking(false);
+    setCutOpening(false);
+    setCutCheckSequence(0);
+    setCutActionError(null);
     setHasLoaded(false);
     setError(null);
-    if (debugFixture || debugProviderAction) {
+    if (debugFixture || debugProviderAction || debugCutToolingFixture) {
       setHasLoaded(true);
       return;
     }
@@ -664,6 +686,7 @@ function ToolingPane({
         setEntries(snapshot.desired);
         setHealth(nextHealth);
         setSessionInfo(snapshot.session);
+        setCutStatus(snapshot.cut);
         setHasLoaded(true);
         setError(null);
       } catch (e) {
@@ -679,11 +702,11 @@ function ToolingPane({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [activeTabId, agentCliStatusFixture, agentCliStatusLive, connectionLabel, connectionTransport, connectionId, debugFixture, debugProviderAction]);
+  }, [activeTabId, agentCliStatusFixture, agentCliStatusLive, connectionLabel, connectionTransport, connectionId, debugFixture, debugProviderAction, debugCutToolingFixture]);
 
   useEffect(() => {
     setConnectionPreset(null);
-    if (debugFixture || debugProviderAction) return;
+    if (debugFixture || debugProviderAction || debugCutToolingFixture) return;
     if (agentCliStatusFixture || agentCliStatusLive) return;
     if (!connectionId || !inTauri()) return;
     let cancelled = false;
@@ -698,7 +721,7 @@ function ToolingPane({
     return () => {
       cancelled = true;
     };
-  }, [agentCliStatusFixture, agentCliStatusLive, connectionId, debugFixture, debugProviderAction]);
+  }, [agentCliStatusFixture, agentCliStatusLive, connectionId, debugFixture, debugProviderAction, debugCutToolingFixture]);
 
   const desired = useMemo(
     () => entries.filter((entry) => entry.installed && entry.enabled),
@@ -722,6 +745,37 @@ function ToolingPane({
   const environmentLabel = hasLoaded
     ? (hasConnectedEnvironment ? sessionStatus : "awaiting session")
     : sessionStatus;
+  const checkCutStatus = async (): Promise<void> => {
+    if (debugCutToolingFixture || !activeTabId || cutChecking || cutOpening) return;
+    setCutActionError(null);
+    setCutChecking(true);
+    setCutStatus((current) => current
+      ? { ...current, ...CUT_TOOLING_FIXTURES.checking, target: current.target }
+      : CUT_TOOLING_FIXTURES.checking);
+    try {
+      const snapshot = await invoke<SessionToolingSnapshot>("session_tooling_snapshot", { tabId: activeTabId });
+      setCutStatus(snapshot.cut);
+      setSessionInfo(snapshot.session);
+      setCutCheckSequence((current) => current + 1);
+    } catch (e) {
+      setCutActionError(typeof e === "string" ? e : String(e));
+    } finally {
+      setCutChecking(false);
+    }
+  };
+  const openCut = async (): Promise<void> => {
+    if (debugCutToolingFixture || !activeTabId || cutOpening) return;
+    setCutActionError(null);
+    setCutOpening(true);
+    try {
+      const next = await invoke<CutToolingStatus>("cut_tooling_open", { tabId: activeTabId });
+      setCutStatus(next);
+    } catch (e) {
+      setCutActionError(typeof e === "string" ? e : String(e));
+    } finally {
+      setCutOpening(false);
+    }
+  };
 
   if (debugFixture) {
     return (
@@ -822,6 +876,18 @@ function ToolingPane({
       <ShellXToolExposureCard
         mode={shellxToolExposure}
         onChange={onShellxToolExposureChange}
+      />
+
+      <CutToolingRow
+        status={debugCutToolingFixture
+          ? CUT_TOOLING_FIXTURES[debugCutToolingFixture]
+          : cutStatus ?? CUT_TOOLING_FIXTURES.checking}
+        checking={debugCutToolingFixture === "checking" || (!debugCutToolingFixture && (loading || cutChecking))}
+        opening={cutOpening}
+        checkSequence={cutCheckSequence}
+        actionError={cutActionError}
+        onCheck={checkCutStatus}
+        onOpen={openCut}
       />
 
       {showGrokEnvironment && (

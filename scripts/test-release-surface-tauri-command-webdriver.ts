@@ -139,6 +139,7 @@ const commands = [
   "shellx_browser_operator_export_performance",
   "shellx_browser_operator_list_teach_drafts",
   "shellx_browser_operator_prepare_teach_draft",
+  "shellx_browser_operator_prepare_teach_task_handoff",
   "shellx_browser_operator_rehearse_teach_recipe",
   "shellx_browser_operator_revise_teach_draft",
   "shellx_browser_remove_site_shields",
@@ -194,7 +195,30 @@ const fixtureCommands = commands.filter((command) => (
   && command !== "desktop_integration_remove_windows_context_menu"
 ));
 assert.deepEqual(
-  [...commands, "shellx_browser_fill_user_vault_secret"].sort(),
+  [
+    ...commands,
+    "shellx_browser_fill_user_vault_secret",
+    "cut_tooling_open",
+    "task_provider_catalog",
+    "tasks_cancel_run",
+    "tasks_create",
+    "tasks_delete",
+    "tasks_get",
+    "tasks_get_state",
+    "tasks_list",
+    "tasks_list_open_attention",
+    "tasks_list_receipts",
+    "tasks_list_states",
+    "tasks_maintain_attachments",
+    "tasks_pause",
+    "tasks_persist_attachments",
+    "tasks_reclaim_attachments",
+    "tasks_resolve_attention",
+    "tasks_resolve_attention_overflow",
+    "tasks_resume",
+    "tasks_revise",
+    "tasks_run_now",
+  ].sort(),
   readFileSync(resolve(root, "src-tauri/src/release_tauri_command_allowlist.txt"), "utf8")
     .trim()
     .split(/\r?\n/)
@@ -374,6 +398,7 @@ try {
     [
       "tauri:discard-with-candidate-profile",
       "tauri:discard-with-candidate-profile",
+      "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
       "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
       "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
       "tauri:close-owned-browser-operator-workflow-and-candidate-teardown",
@@ -632,6 +657,7 @@ try {
       request: {
         browserTabId: "final-surface-absent-browser-tab",
         taskId: "final-surface-absent-browser-task",
+        reviewFingerprint: `sha256:${"0".repeat(64)}`,
         grantId: null,
         reason: "release validation",
       },
@@ -1078,6 +1104,16 @@ function expectedInvocationSequence(command: string): string[] {
   if (command === "shellx_browser_operator_rehearse_teach_recipe") {
     return ["shellx_browser_operator_export_flight_recorder", "shellx_browser_operator_prepare_teach_draft", "shellx_browser_operator_approve_teach_draft", command, "shellx_browser_state"];
   }
+  if (command === "shellx_browser_operator_prepare_teach_task_handoff") {
+    return [
+      "shellx_browser_operator_export_flight_recorder",
+      "shellx_browser_operator_prepare_teach_draft",
+      "shellx_browser_operator_approve_teach_draft",
+      "shellx_browser_operator_rehearse_teach_recipe",
+      "shellx_browser_state",
+      command,
+    ];
+  }
   if (command === "shellx_browser_operator_developer_inspect") {
     return ["shellx_browser_operator_export_flight_recorder", command];
   }
@@ -1166,6 +1202,9 @@ function testOracleId(command: string): string {
     return `tauri:${command}:owned-artifact-receipt`;
   }
   if (command === "shellx_browser_operator_prepare_teach_draft") return `tauri:${command}:owned-draft`;
+  if (command === "shellx_browser_operator_prepare_teach_task_handoff") {
+    return `tauri:${command}:path-private-workflow-bookmark`;
+  }
   if (command === "shellx_browser_operator_list_teach_drafts") return `tauri:${command}:owned-draft-readback`;
   if (command === "shellx_browser_operator_revise_teach_draft") return `tauri:${command}:owned-revision`;
   if (command === "shellx_browser_operator_approve_teach_draft") return `tauri:${command}:owned-approval-receipt`;

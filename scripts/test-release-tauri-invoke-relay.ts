@@ -67,19 +67,26 @@ const nonce = "b".repeat(32);
 const rust = readFileSync("src-tauri/src/debug_api_release_relay.rs", "utf8");
 const app = readFileSync("src/App.tsx", "utf8");
 const apiDocs = readFileSync("docs/public/API.md", "utf8");
+const controllerClient = readFileSync("scripts/lib/release-surface-tauri-invoke-client.ts", "utf8");
 const allowlist = readFileSync("src-tauri/src/release_tauri_command_allowlist.txt", "utf8")
   .trim()
   .split(/\r?\n/);
 assert.equal(RELEASE_TAURI_INVOKE_EVENT, "release-test-tauri-invoke");
-assert.equal(allowlist.length, 161);
+assert.equal(allowlist.length, 182);
 assert.equal(new Set(allowlist).size, allowlist.length);
 assert(allowlist.includes("shellx_browser_fill_user_vault_secret"));
+assert(allowlist.includes("cut_tooling_open"));
+assert(allowlist.includes("task_provider_catalog"));
+assert(allowlist.includes("tasks_run_now"));
 assert(allowlist.includes("release_test_take_native_picker"));
 assert.match(rust, /isolated_test_instance_requested\(\)/);
 assert.match(rust, /MAX_ARGS_BYTES: usize = 64 \* 1024/);
 assert.match(rust, /MAX_RESULT_BYTES: usize = 8 \* 1024 \* 1024/);
 assert.match(rust, /another release Tauri invoke is still active/);
 assert.match(rust, /record\.args = Value::Null/);
+assert.match(controllerClient, /async invokeExpectFailure\(/);
+assert.match(controllerClient, /async #waitForFailure\(/);
+assert.match(controllerClient, /unexpectedly passed/);
 assert.match(app, /startReleaseTauriInvokeRelay\(\)/);
 assert.doesNotMatch(app, /TAURI_CHANNELS[\s\S]{0,1000}release-test-tauri-invoke/);
 assert.match(apiDocs, /Isolated release-test Tauri relay/);

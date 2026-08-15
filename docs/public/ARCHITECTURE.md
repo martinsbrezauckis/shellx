@@ -130,6 +130,11 @@ shellXagent).
   profile ACL on Windows.
   Legacy low-entropy tokens (pre-OsRng pid+nanos pattern,
   detected by ≥8 leading zero nibbles) auto-rotated on upgrade.
+- Startup establishes one process-owned token authority only after private
+  persistence succeeds. Missing/relative HOME, unreadable or linked token
+  files, and atomic-write failures leave Host MCP unavailable instead of
+  exposing a memory-only bearer. Running clients and middleware derive from
+  that same immutable authority rather than re-reading mutable disk.
 - `axum::extract::DefaultBodyLimit::max(32 MiB)` so the advertised
   16 MiB `fs_write` cap is real, not silently truncated by a
   smaller framework default.
@@ -175,6 +180,15 @@ permission/audit behavior matters. Host `fs_*` is HOME-scoped, not
 project-scoped, but refuses known credential stores, shell startup files, SSH
 and Git config, and user persistence paths.
 
+Tools also renders a selected-session `shellx.cut.tooling-status.v1`
+projection from this host boundary. Its Check path performs a bounded Cut
+status probe and never starts the editor; the separate `cut_tooling_open` Tauri
+command is available only after an explicit operator action. The status is
+compact by design and never carries Cut's generated verb catalogue. When
+ShellX tooling exposure is enabled, Local, WSL, and SSH provider sessions share
+the parent desktop-host Cut projection: WSL reaches the host through the ShellX
+bridge and SSH through the tab-bound reverse tunnel.
+
 Provider adapters reuse the same HTTP MCP surface instead of creating a
 second host-tool implementation. Codex CLI sessions receive a managed
 `shellx-host-http` streamable HTTP MCP override with bearer auth read from
@@ -214,9 +228,76 @@ remote disconnect cleanup, and ShellX-managed Grok subagent bootstrap. These
 source paths do not by themselves prove a provider is installed, authenticated,
 or able to return host-MCP calls on a particular Windows endpoint.
 Each identity keeps that environment's HOME, PATH, and provider auth files. If the same machine
-has two separate accounts for the same provider, model selection must use
-separate connection presets rather than letting ShellX silently pick between
-auth contexts.
+has two separate accounts for the same provider, separate connection presets
+keep those auth contexts from being silently mixed. A preset is not a ShellX
+model selector: the `task_provider_catalog` Tauri projection and authenticated
+`POST /tasks/provider-catalog` Debug API projection preserve provider-default
+model mode and an empty model list until a provider-native structured model
+enumeration exists. The bounded Task API manages definitions, state, explicit
+attention acknowledgements, exact-revision manual queueing, and exact-attempt
+cancellation. Queue acceptance is durable but asynchronous: the one app-owned
+foreground runtime resolves the current saved target, performs a fresh provider
+scan, and persists each fallback/lifecycle transition before provider effects.
+It also revalidates immutable Browser workflow references against the current
+saved bookmark and recipe-export digest, and resolves only Vault key/grant
+metadata. Host-tool-incompatible providers are skipped before effect; recipe
+paths and raw Vault values are not copied into provider prompts or Task
+receipts. Explicitly selected host files inside the user home boundary or exact
+selected Local/WSL working folder become
+content-addressed copies under the exact execution working folder across
+Local, WSL, and the three SSH runtime modes.
+The private Task ledger binds ID, digest, target, bounded relative path, size,
+and a hash-linked persistence receipt; original source paths and bytes remain
+outside the store and UI. Execution re-reads the copy before provider dispatch
+and stops with typed attention on missing, mismatched, or oversized bindings.
+Never-saved imports use a two-phase ledger lifecycle: durable
+`reclaimPending`, exact copy verification/removal on the recorded target and
+working folder, then durable `reclaimed`. Every immutable saved revision blocks
+reclamation; target loss, changed bytes, links, and reparse points stay pending
+for an honest retry. One serialized attachment-I/O gate prevents import,
+explicit reclamation, and startup maintenance from racing. Each installed boot
+retries a bounded pending/stale batch; an unreferenced import becomes stale
+only after 24 hours.
+Browser Teach reaches that binding through a separate operator-only boundary:
+the exact current revision, approval/export receipts, and zero-skip rehearsal
+create one idempotent workflow bookmark. A path-free acknowledged window event
+is rebound in the main workspace to the exact native receipt, owning Browser
+task, and durable workflow bookmark before Task Manager opens against the exact
+originating ShellX tab. It never falls back to the active tab, auto-selects a
+provider, saves a definition, or enables a schedule. Task Manager projects only
+active all-agent mediated Vault grant metadata for the user to bind.
+For a terminal revision that binds a reviewed Browser workflow, the same
+deterministic provider-tab identity scopes post-run evidence collection. ShellX
+exports bounded Flight Recorder artifacts for only those Browser tasks and
+appends a hash-linked, path-free Task result receipt with attempt/report IDs,
+artifact digests, completeness, and the exact source terminal receipt identity.
+Existing evaluation reports may contribute their identities; the collector does
+not create an evaluation or retain page/provider content. Ordinary Tasks do not
+enter this Browser evidence path. Startup and foreground polls retry a bounded
+set of workflow runs that became terminal before their result receipt was
+persisted, closing the post-terminal crash window without rerunning a provider.
+The exact result receipt also has a per-occurrence durable index, so later
+retention trimming of the general receipt tail neither hides the result from
+Task Manager nor triggers a duplicate export.
+Each claimed Task attempt also owns a deterministic `task-run-*` runtime tab
+and matching private ShellX session JSONL. The app writes the reviewed
+instruction before dispatch and routes only that tab's ordinary provider events
+through a bounded dedicated writer. This preserves a review surface without
+placing provider output in the Task store. After the terminal occurrence, a
+detached `shellx.task-trace-evidence.v1` receipt binds the archive's full-file
+digest, bounded counts, terminal marker, format/drop state, recovery state, and
+source terminal receipt. The exact terminal transition has its own
+per-occurrence durable index, so even a one-entry journal retention policy
+cannot evict the authority needed by later Trace or Browser evidence. The
+renderer recognizes backend-owned Task tabs and
+refuses to create a duplicate archive; the run projection exposes an `Open run`
+session identity only when Trace evidence proves that the private archive is
+reviewable. A recovery receipt remains conservative about completeness.
+Its catalogue output deliberately omits binary paths, raw probe diagnostics,
+provider-controlled version text, and authentication material; it retains only
+one strictly isolated semantic-version token when the checked provider output
+contains one. Tasks remain outside Host MCP and reuse the normal provider
+sessions rather than introducing a second provider runtime.
 
 Provider sessions default to ShellX Full Auto, which maps to native provider
 bypass flags (`bypassPermissions`, `--dangerously-bypass-approvals-and-sandbox`,
@@ -321,6 +402,11 @@ path or import from inside the remote session until remote writes are added.
 ## Module map (Rust, `src-tauri/src/`)
 
 The Browser and Vault surfaces are intentionally split into focused modules.
+Browser tab handoff is an operator-only Tauri path: the review sheet captures
+an opaque SHA-256 fingerprint over the exact page, profile, user ownership, and
+target task. `shellx_browser_tab_handoff.rs` recomputes it while holding the
+Browser state lock and changes ownership only after an exact match, so the UI
+review and backend mutation share one fail-closed state identity.
 `lib.rs` and `App.tsx` are still large legacy coordination points, not preferred
 module sizes. `host_mcp.rs` is now a thin MCP wire and dispatch root whose domain
 behavior lives under `host_mcp/`. `debug_api.rs` keeps the authenticated server,
@@ -334,6 +420,11 @@ The vendored Vault boundary carries `vendor/shellx-vault/PROVENANCE.json`, which
 binds the full standalone upstream Git revision to deterministic SHA-256 source
 digests for each included crate. Public CI recalculates those digests from the
 checkout, so provenance verification does not depend on a sibling Vault clone.
+The Linux GTK3 boundary resolves `glib 0.18.5` through `vendor/glib` because the
+current Tauri/WebKitGTK graph still requires the gtk-rs 0.18 API. `UPSTREAM`
+binds the published crate digest and the reviewed gtk-rs `VariantStrIter`
+soundness backport. Release checks seal the complete patched tree and execute
+every affected iterator operation in an optimized consumer build.
 
 | File | LOC | Role |
 |---|---|---|
@@ -345,11 +436,13 @@ checkout, so provenance verification does not depend on a sibling Vault clone.
 | `shellx_browser_registry_policy.rs` / `shellx_browser_registry_actions.rs` | ~1.3k | Registry construction/persistence and action dispatch policy |
 | `shellx_browser_window_open_runtime.rs` / `shellx_browser_engine_runtime.rs` | ~1.6k | Top-level Browser chrome lifecycle, bounded/late opener reconciliation, and transactional child-WebView engine mounting |
 | `shellx_browser_window_runtime.rs` / `shellx_browser_dialog_runtime.rs` | ~0.5k | Tauri Browser command boundary and task-owned dialog resolution |
+| `shellx_browser_tab_handoff.rs` | ~0.3k | Backend-validated Browser page/profile/ownership/task review binding and atomic handoff |
 | `shellx_browser_flight_recorder.rs` / `shellx_browser_flight_recorder_sanitization.rs` | ~1.2k | Flight Recorder selection/artifact orchestration plus its bounded redaction and loss-accounting boundary |
 | `shellx_browser_state_helpers.rs` / `shellx_browser_network_receipts.rs` | ~0.7k | State synchronization plus bounded network/receipt mutation |
 | `shellx_browser_tests/` | ~3.0k | Browser registry behavior tests split by action, engine, tab/pool, and dialog ownership |
 | `shellx_browser_model.rs` | ~0.9k | Browser data model, receipts, transfers, policies, serialized state shapes |
 | `shellx_browser_actions.rs` / `shellx_browser_action_results.rs` | ~2.5k | Engine action execution, actionability, step summaries, redaction-safe result shaping |
+| `shellx_browser_prompt_guard.rs` | ~0.8k | Fixed-vocabulary pre-action prompt-injection classification, sanitized receipts, unavailable fail-closed policy, and one-shot operator override binding |
 | `shellx_browser_recipes.rs` / `shellx_browser_recipe_analysis.rs` | ~1.2k | Recipe export/replay contracts plus variable, assertion, and decision-point analysis |
 | `debug_api_browser_recipe_replay.rs` / `shellx_browser_robots.rs` | ~0.6k | Live recipe execution, navigation settlement, and truthful robot lifecycle outcomes |
 | `shellx_browser_bookmarks.rs` | ~830 | Bookmark/folder tree, toolbar, workflow bookmark metadata |

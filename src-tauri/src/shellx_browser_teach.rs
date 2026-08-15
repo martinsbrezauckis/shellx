@@ -10,6 +10,7 @@ use crate::shellx_browser::{
     ShellxBrowserRegistry,
 };
 use crate::shellx_browser_caller::BrowserTaskControlAuthority;
+use crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome;
 
 const FLIGHT_ARTIFACT_FOLDER: &str = "shellx-browser-flight-recorder";
 const TEACH_BUNDLE_FOLDER: &str = "shellx-browser-teach-bundles";
@@ -322,8 +323,8 @@ pub struct BrowserTeachApprovalReceipt {
 /// serialized to an agent or UI response.
 #[derive(Clone, Debug)]
 pub(crate) struct BrowserTeachDraftIndex {
-    bundle: BrowserTeachBundle,
-    current_revision: BrowserTeachRevision,
+    pub(crate) bundle: BrowserTeachBundle,
+    pub(crate) current_revision: BrowserTeachRevision,
     _bundle_path: String,
     revision_paths: BTreeMap<String, String>,
 }
@@ -789,7 +790,24 @@ impl ShellxBrowserRegistry {
             reason: Some("Operator Teach rehearsal".to_string()),
         })?;
         let steps_planned = plan.steps_planned;
-        let steps_skipped = plan.skipped_steps.len();
+        let mut prompt_guard_receipt_ids = Vec::new();
+        let mut prompt_guard_blocked_steps = 0usize;
+        for action in &plan.actions {
+            match self.guard_browser_action_against_prompt_injection(&action.request, None)? {
+                BrowserPromptGuardOutcome::NotRequired => {}
+                BrowserPromptGuardOutcome::Proceed(receipt) => {
+                    prompt_guard_receipt_ids.push(receipt.receipt_id);
+                }
+                BrowserPromptGuardOutcome::Blocked(response) => {
+                    prompt_guard_receipt_ids.push(response.receipt.receipt_id);
+                    prompt_guard_blocked_steps = prompt_guard_blocked_steps.saturating_add(1);
+                }
+            }
+        }
+        let steps_skipped = plan
+            .skipped_steps
+            .len()
+            .saturating_add(prompt_guard_blocked_steps);
         let receipt = {
             let mut state = lock_or_recover(&self.state);
             push_receipt(
@@ -806,6 +824,9 @@ impl ShellxBrowserRegistry {
                     "stepsPlanned": steps_planned,
                     "stepsSkipped": steps_skipped,
                     "stepsApplied": 0,
+                    "promptGuardPolicyVersion": crate::shellx_browser_prompt_guard::BROWSER_PROMPT_GUARD_POLICY_VERSION,
+                    "promptGuardReceiptIds": prompt_guard_receipt_ids,
+                    "promptGuardBlockedSteps": prompt_guard_blocked_steps,
                     "source": "shellx-browser-teach",
                 }),
             )

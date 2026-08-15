@@ -18,9 +18,9 @@ const teachAssignments = (plan.assignments ?? []).filter((assignment) => assignm
 const controlAssignments = teachAssignments.filter((assignment) => assignment.surfaceId?.startsWith("ui-control:"));
 const debugAssignments = teachAssignments.filter((assignment) => assignment.surfaceId?.startsWith("ui-debug-surface:"));
 
-assert.equal(teachAssignments.length, 39, "Browser Teach review stays scoped to exactly 39 installed-driver assignments");
-assert.equal(controlAssignments.length, 12, "Browser Teach review has exactly 12 native controls");
-assert.equal(debugAssignments.length, 27, "Browser Teach review has exactly 27 static/dynamic debug markers");
+assert.equal(teachAssignments.length, 44, "Browser Teach review stays scoped to exactly 44 installed-driver assignments");
+assert.equal(controlAssignments.length, 14, "Browser Teach review has exactly 14 native controls");
+assert.equal(debugAssignments.length, 30, "Browser Teach review has exactly 30 static/dynamic debug markers");
 assert.deepEqual(new Set(controlAssignments.map((assignment) => assignment.surfaceId)), BROWSER_TEACH_CONTROL_SURFACE_IDS);
 assert.deepEqual(
   new Set(debugAssignments.map((assignment) => assignment.surfaceId?.replace(/^ui-debug-surface:([^@]+)@.*$/, "$1"))),
@@ -48,10 +48,12 @@ const fixture = readFileSync(resolve(root, "scripts/release-drivers/browser-teac
 assert(lifecycle.includes("createAgentRevisionConflict") && lifecycle.includes('"/browser/teach/revise"'), "driver creates only a controlled revision conflict through the agent route");
 assert(!lifecycle.includes("/browser/teach/approve") && !lifecycle.includes("approve_teach_draft_from_operator"), "driver cannot approve through the Debug API");
 assert(lifecycle.includes("nativeClick(input, APPROVE)") && lifecycle.includes("nativeClick(input, REHEARSE)"), "approval and rehearsal require native installed input");
+assert(lifecycle.includes("nativeClick(input, CREATE_TASK)") && lifecycle.includes("nativeClick(input, COPY_TASK)"), "Task handoff and receipt copy require native installed input");
+assert(lifecycle.includes("proof.controlEffects.has(CREATE_TASK)") && lifecycle.includes("TASK_MANAGER_CLOSE"), "Task handoff cleanup must close the unsaved main-window draft after its receipt is proved");
 assert(lifecycle.includes("verifyIsolatedVaultCandidate") && lifecycle.includes("releaseSurfaceProfileMarkerLaunchPath"), "Vault fixture is bound to the exact attested disposable candidate profile marker");
 assert(lifecycle.includes("prepareIsolatedLockedVault") && lifecycle.includes("shellx_vault_unlock") && lifecycle.includes("shellx-browser-teach-vault-unavailable"), "driver proves the real isolated locked-Vault unavailable state before synthetic unlock");
 assert(lifecycle.includes("seedOwnedVaultBinding") && lifecycle.includes("redacted owned Vault key identity"), "Vault fixture seeds and binds only a redacted key identity");
 assert(lifecycle.includes("cleanupBrowserTeachEvidenceFixture") && lifecycle.includes("cleanupOwnedVaultBinding") && lifecycle.includes("lockOwnedIsolatedVault"), "driver deletes exact owned evidence/key and returns the disposable Vault to locked state for candidate teardown");
 assert(fixture.includes('selector: "#shellx-release-teach-input"') && fixture.includes('"/browser/flight-recorder/export"'), "Flight Recorder evidence includes one redacted owned input action before export");
 
-console.log("Browser Teach installed-driver source checks passed (39 assignments; native approval boundary retained)");
+console.log("Browser Teach installed-driver source checks passed (44 assignments; native approval and Task handoff boundaries retained)");

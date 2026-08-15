@@ -76,7 +76,7 @@ const APP_FILE_SURFACES = new Set([
   'ui-control:src/components/AttachmentMediaBoard.tsx:[title="Attach file"]@src/components/AttachmentMediaBoard.tsx#4',
 ]);
 const APP_FOLDER_SURFACE =
-  'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-folder"]@src/components/BottomPanel.tsx#21';
+  'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-folder"]@src/components/BottomPanel.tsx#22';
 const SETTINGS_FOLDER_SURFACE =
   'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-browser-download-folder-choose"]@src/components/settings/GeneralTab.tsx#8';
 const BROWSER_FOLDER_SURFACE =

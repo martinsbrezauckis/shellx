@@ -1710,6 +1710,14 @@ function expectedSafeRefusalRequestPaths(path: typeof safeRefusalRoutes[number])
 function expectedBrowserLifecycleRequestPaths(
   path: typeof browserLifecycleMutations[number],
 ): string[] {
+  if (path === "/browser/action") {
+    return [
+      "/browser/task/start", "/browser/state", "/browser/settle",
+      path, path, path, "/browser/settle", path, path,
+      "/browser/state", "/browser/state", "/browser/task/finish",
+      "/browser/state", "/browser/tabs/close", "/browser/state",
+    ];
+  }
   if (path === "/browser/tabs/close") {
     return [
       "/browser/task/start", "/browser/state", "/browser/settle", path,

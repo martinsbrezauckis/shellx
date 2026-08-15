@@ -1,6 +1,6 @@
 {
   "name": "shellx",
-  "version": "0.3.52",
+  "version": "0.3.60",
   "description": "Cross-platform desktop shell for agent CLIs and ACP-speaking agents",
   "license": "MIT",
   "private": true,

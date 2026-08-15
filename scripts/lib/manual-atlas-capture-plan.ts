@@ -4,6 +4,7 @@ export type ManualAtlasCaptureStep =
   | { kind: "patch"; surface: ManualAtlasCaptureSurface; body: Record<string, unknown> }
   | { kind: "click"; selector: string }
   | { kind: "wait"; selector: string }
+  | { kind: "reveal"; selector: string; block: "start" | "center" | "end" }
   | { kind: "scroll"; selector: string; edge: "top" | "bottom" };
 
 export interface ManualAtlasCapturePlanEntry {
@@ -134,6 +135,43 @@ const appCaptures: ManualAtlasCapturePlanEntry[] = [
       wait(`[data-debug-id='settings-tab-${tab}'][aria-selected='true']`),
     ],
   })),
+  {
+    id: "task-manager-overview",
+    surface: "app",
+    intendedState: "Installed ShellX Task Manager showing one reviewed task definition, attention state, schedule, environment, agent route, and durable actions.",
+    steps: [appPatch({ ...appBaseline, debugTaskManagerFixture: "full" }), wait("[data-debug-id='task-manager']")],
+  },
+  {
+    id: "task-manager-schedule",
+    surface: "app",
+    intendedState: "Installed ShellX Task Manager with its local-time schedule and Advanced timing and notifications disclosure opened for review.",
+    steps: [
+      appPatch({ ...appBaseline, debugTaskManagerFixture: "full" }),
+      { kind: "click", selector: "[data-debug-id='task-manager-schedule-advanced']" },
+      { kind: "reveal", selector: "[data-debug-id='task-manager-schedule-advanced']", block: "center" },
+      wait("[data-debug-id='task-manager-max-run-seconds']"),
+    ],
+  },
+  {
+    id: "task-manager-providers",
+    surface: "app",
+    intendedState: "Installed ShellX Task Manager showing the selected environment, fresh availability, and explicit ordered agent fallback route.",
+    steps: [
+      appPatch({ ...appBaseline, debugTaskManagerFixture: "full" }),
+      { kind: "reveal", selector: "[data-debug-id='task-manager-provider-list']", block: "center" },
+      wait("[data-debug-id='task-manager-provider-list']"),
+    ],
+  },
+  {
+    id: "task-manager-evidence",
+    surface: "app",
+    intendedState: "Installed ShellX Task Manager showing receipt-backed pending, running, completed, unknown-outcome, and missed-run history states.",
+    steps: [
+      appPatch({ ...appBaseline, debugTaskManagerFixture: "full" }),
+      { kind: "reveal", selector: ".task-manager-history", block: "start" },
+      wait("[data-debug-id='task-manager-run-run-fixture-completed']"),
+    ],
+  },
 ];
 
 const browserCaptures: ManualAtlasCapturePlanEntry[] = [

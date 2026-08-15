@@ -43,3 +43,30 @@ fn agent_scoped_vault_grants_derive_identity_from_authenticated_caller() {
     .expect_err("agent grants require an authenticated caller")
     .contains("authenticated Host MCP caller"));
 }
+
+#[test]
+fn vault_grant_requests_never_infer_an_actor_scope() {
+    let omitted = vault_grant_request_body(
+        json!({
+            "secretRef": "providers/example-token",
+            "operation": "providerUse"
+        }),
+        Some("caller-a"),
+    )
+    .expect_err("omitted scope must fail before creating a pending grant");
+    assert!(omitted.contains("requires an explicit actorScope or actorKind"));
+
+    let explicit_all_agents = vault_grant_request_body(
+        json!({
+            "secretRef": "providers/example-token",
+            "operation": "providerUse",
+            "actorKind": "allShellxAgents"
+        }),
+        Some("caller-a"),
+    )
+    .expect("the deliberate broad scope remains available for operator review");
+    assert_eq!(
+        explicit_all_agents["actorScope"],
+        json!({ "kind": "allShellxAgents" })
+    );
+}

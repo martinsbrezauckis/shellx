@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import type { FinalSurfaceDriverPlan } from "./lib/release-surface-driver-plan";
 import type { ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
 import type { ReleaseSurfaceDriverReport, ReleaseSurfaceDriverRequest } from "./lib/release-surface-driver-protocol";
+import { readAppStyles } from "./lib/app-styles";
 import {
   projectCollapseDefaults,
   reconcileProjectCollapse,
@@ -48,7 +49,7 @@ let fixture: ChildProcess | null = null;
 try {
   const inventory = JSON.parse(readFileSync(join(root, "release/surface-inventory.json"), "utf8")) as ReleaseSurfaceInventory;
   const plan = JSON.parse(readFileSync(join(root, "release/surface-driver-plan.json"), "utf8")) as FinalSurfaceDriverPlan;
-  const css = readFileSync(join(root, "src/App.css"), "utf8");
+  const css = readAppStyles();
   const leftRailSource = readFileSync(join(root, "src/components/LeftRail.tsx"), "utf8");
   const lifecycleSource = readFileSync(join(root, "scripts/release-drivers/ui-control-left-rail-lifecycle.ts"), "utf8");
   assert.match(css, /\.left-hdr \.left-collapse-all\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;/s);

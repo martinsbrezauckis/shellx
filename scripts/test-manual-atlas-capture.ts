@@ -16,6 +16,7 @@ const selectedSurfaces: ManualAtlasCaptureSurface[] = [];
 const patches: Array<{ surface: ManualAtlasCaptureSurface; body: Record<string, unknown> }> = [];
 const clicks: string[] = [];
 const waits: string[] = [];
+const reveals: string[] = [];
 const scrolls: string[] = [];
 const saved = new Map<string, Buffer>();
 let width = 0;
@@ -37,6 +38,9 @@ const adapter: ManualAtlasCaptureAdapter = {
   },
   async waitForSelector(selector) {
     waits.push(selector);
+  },
+  async reveal(selector, block) {
+    reveals.push(`${selector}:${block}`);
   },
   async scroll(selector, edge) {
     scrolls.push(`${selector}:${edge}`);
@@ -65,15 +69,18 @@ const manifest = await captureManualAtlas({
 });
 
 assert.equal(manifest.status, "captured-unreviewed", "capture alone never claims visual review");
-assert.equal(manifest.captureCount, 37);
-assert.equal(Object.keys(manifest.captures).length, 37);
-assert.equal(saved.size, 37);
-assert.equal(selectedSurfaces.filter((surface) => surface === "app").length, 23);
+assert.equal(manifest.captureCount, 41);
+assert.equal(Object.keys(manifest.captures).length, 41);
+assert.equal(saved.size, 41);
+assert.equal(selectedSurfaces.filter((surface) => surface === "app").length, 27);
 assert.equal(selectedSurfaces.filter((surface) => surface === "browser").length, 14);
 assert(patches.some(({ body }) => body.debugSurface === "app"));
 assert(clicks.includes("[data-debug-id='shellx-browser-right-tab-chat']"));
 assert(clicks.includes("[data-debug-id='shellx-browser-downloads-menu']"));
 assert(waits.includes("[role='dialog'][aria-label='Attachment and media board']"));
+assert(reveals.includes("[data-debug-id='task-manager-schedule-advanced']:center"));
+assert(reveals.includes("[data-debug-id='task-manager-provider-list']:center"));
+assert(reveals.includes(".task-manager-history:start"));
 assert.deepEqual(scrolls, ["#shellx-browser-save-menu:top", "#shellx-browser-save-menu:bottom"]);
 assert.equal(manifest.captures["shellx-workspace"]?.width, 1920);
 assert.equal(manifest.captures["browser-overview"]?.height, 1002);
@@ -102,7 +109,7 @@ await assert.rejects(
   "capture dimensions fail closed before promotion",
 );
 
-console.log("Manual atlas installed-candidate capture runner passed: 37 hashed, unreviewed states");
+console.log("Manual atlas installed-candidate capture runner passed: 41 hashed, unreviewed states");
 
 function fixturePng(pngWidth: number, pngHeight: number): Buffer {
   const png = Buffer.alloc(10_024);

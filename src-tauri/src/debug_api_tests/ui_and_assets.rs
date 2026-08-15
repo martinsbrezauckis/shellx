@@ -203,6 +203,59 @@ fn debug_renderer_fixture_is_a_transient_relay() {
 }
 
 #[test]
+fn debug_task_manager_fixture_is_a_transient_relay() {
+    let patch: UiStatePatch = serde_json::from_value(serde_json::json!({
+        "debugTaskManagerFixture": "full",
+    }))
+    .expect("Task Manager fixture patch must deserialize");
+    assert_eq!(patch.debug_task_manager_fixture.as_deref(), Some("full"));
+    assert_eq!(
+        serde_json::to_value(&patch)
+            .expect("Task Manager fixture patch must serialize")
+            .get("debugTaskManagerFixture"),
+        Some(&serde_json::json!("full")),
+    );
+
+    let hub = DebugHub::new();
+    hub.ui_apply(patch);
+    assert!(
+        serde_json::to_value(hub.ui_snapshot())
+            .expect("UI snapshot must serialize")
+            .get("debugTaskManagerFixture")
+            .is_none(),
+        "the Task Manager fixture command must not persist in authoritative UI state",
+    );
+}
+
+#[test]
+fn debug_cut_tooling_fixture_is_a_transient_relay() {
+    let patch: UiStatePatch = serde_json::from_value(serde_json::json!({
+        "debugCutToolingFixture": "installedEditorClosed",
+    }))
+    .expect("Cut tooling fixture patch must deserialize");
+    assert_eq!(
+        patch.debug_cut_tooling_fixture.as_deref(),
+        Some("installedEditorClosed")
+    );
+    assert_eq!(
+        serde_json::to_value(&patch)
+            .expect("Cut tooling fixture patch must serialize")
+            .get("debugCutToolingFixture"),
+        Some(&serde_json::json!("installedEditorClosed")),
+    );
+
+    let hub = DebugHub::new();
+    hub.ui_apply(patch);
+    assert!(
+        serde_json::to_value(hub.ui_snapshot())
+            .expect("UI snapshot must serialize")
+            .get("debugCutToolingFixture")
+            .is_none(),
+        "the Cut tooling fixture command must not persist in authoritative UI state",
+    );
+}
+
+#[test]
 fn debug_plugins_fixture_is_a_transient_relay() {
     let patch: UiStatePatch = serde_json::from_value(serde_json::json!({
         "debugPluginsFixture": "owned-safe",

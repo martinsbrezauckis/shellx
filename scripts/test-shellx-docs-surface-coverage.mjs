@@ -26,10 +26,10 @@ assert(manualJs.includes("/^assets\\/[A-Za-z0-9][A-Za-z0-9._-]*\\.png$/"), "manu
 assert(manualJs.includes("Object.hasOwn(interfaceMapData, featureId)"), "manual feature lookup must reject inherited object keys");
 assert(!/\.href\s*=/.test(manualJs), "manual runtime must not assign unvalidated href properties");
 
-// Each persistent menu/tab/action documented in the two interface-reference
-// sections is bound to a stable marker in the shipping renderer. This makes a
-// deleted or renamed product surface fail docs checks instead of leaving a
-// plausible but stale manual entry behind.
+// Each persistent menu/tab/action documented in the interface and Tasks
+// reference sections is bound to a stable marker in the shipping renderer.
+// This makes a deleted or renamed product surface fail docs checks instead of
+// leaving a plausible but stale manual entry behind.
 const coverage = {
   "shellx.interface.header.about": ["src/components/Header.tsx", "About shellX — version and source"],
   "shellx.interface.header.find": ["src/components/FindPopover.tsx", "find-sessions-input"],
@@ -87,6 +87,12 @@ const coverage = {
   "shellx.interface.composer.voice": ["src/components/BottomPanel.tsx", "composer-talk", "composer-voice-chat"],
   "shellx.interface.composer.help": ["src/components/BottomPanel.tsx", "aria-label=\"Keyboard shortcuts\""],
   "shellx.interface.composer.send": ["src/components/BottomPanel.tsx", "composer-send"],
+  "shellx.tasks.create": ["src/components/BottomPanel.tsx", "composer-create-task"],
+  "shellx.tasks.manager": ["src/components/Header.tsx", "header-tasks"],
+  "shellx.tasks.providers": ["src/components/TaskManager.tsx", "task-manager-provider-list"],
+  "shellx.tasks.schedule": ["src/components/TaskManager.tsx", "task-manager-trigger-kind"],
+  "shellx.tasks.evidence": ["src/components/TaskRunHistory.tsx", "task-manager-history"],
+  "shellx.tasks.browser_teach": ["src/browser/components/BrowserTeachReview.tsx", "shellx-browser-teach-create-task"],
   "shellx.interface.settings.general": ["src/components/Settings.tsx", "case \"general\": return \"General\""],
   "shellx.interface.settings.vault": ["src/components/Settings.tsx", "case \"vault\": return \"Vault\""],
   "shellx.interface.vault.workspace.passwords": ["src/components/settings/VaultTab.tsx", "vault-tab-secrets"],
@@ -165,7 +171,7 @@ const coverage = {
 };
 
 const documentedSurfaces = content.sections
-  .filter((section) => section.id === "interface" || section.id === "browser-interface")
+  .filter((section) => section.id === "interface" || section.id === "tasks" || section.id === "browser-interface")
   .flatMap((section) => section.features);
 const documentedIds = new Set(documentedSurfaces.map((feature) => feature.id));
 const coverageIds = new Set(Object.keys(coverage));

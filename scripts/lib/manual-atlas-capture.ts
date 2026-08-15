@@ -26,6 +26,7 @@ export interface ManualAtlasCaptureAdapter {
   postPatch(surface: ManualAtlasCaptureSurface, body: Record<string, unknown>): Promise<void>;
   click(selector: string): Promise<void>;
   waitForSelector(selector: string): Promise<void>;
+  reveal(selector: string, block: "start" | "center" | "end"): Promise<void>;
   scroll(selector: string, edge: "top" | "bottom"): Promise<void>;
   screenshot(): Promise<Buffer>;
   saveCapture(file: string, bytes: Buffer): Promise<void>;
@@ -80,6 +81,8 @@ export async function captureManualAtlas(input: {
         await input.adapter.click(step.selector);
       } else if (step.kind === "wait") {
         await input.adapter.waitForSelector(step.selector);
+      } else if (step.kind === "reveal") {
+        await input.adapter.reveal(step.selector, step.block);
       } else {
         await input.adapter.scroll(step.selector, step.edge);
       }

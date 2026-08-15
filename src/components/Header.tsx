@@ -33,6 +33,8 @@ export function Header({
   debugClipboardFixture = null,
   onOpenVault,
   onOpenBrowser,
+  onOpenTasks,
+  taskAttentionCount = 0,
   onOpenChat,
   findCorpus,
   liveTabCount,
@@ -58,6 +60,10 @@ export function Header({
   onOpenVault?: (intent?: VaultPanelIntent) => void;
  /** Opens the ShellX-owned browser/runtime window. */
   onOpenBrowser?: () => void;
+ /** Opens Task Manager. The badge is informational and never starts work. */
+  onOpenTasks?: () => void;
+ /** Bounded unresolved Task occurrences shown as 1..9+. */
+  taskAttentionCount?: number;
  /** Click on the shellX brand logo opens the About modal
  * with GitHub link + report-bug shortcut. */
   onOpenAbout?: () => void;
@@ -132,6 +138,28 @@ export function Header({
             data-debug-id="header-shellx-browser"
           >
             <ShellIcon name="browser-orbit" size={16} />
+          </button>
+        )}
+        {onOpenTasks && (
+          <button
+            type="button"
+            className={`hdr-icon ${taskAttentionCount > 0 ? "attention" : ""}`}
+            onClick={onOpenTasks}
+            title={taskAttentionCount > 0
+              ? `${taskAttentionCount} task occurrence${taskAttentionCount === 1 ? "" : "s"} need attention`
+              : "Task Manager"}
+            aria-label={taskAttentionCount > 0
+              ? `Open Task Manager, ${taskAttentionCount} occurrence${taskAttentionCount === 1 ? "" : "s"} need attention`
+              : "Open Task Manager"}
+            data-debug-id="header-tasks"
+            data-shellx-release-observe="focused title"
+          >
+            <ShellIcon name="clock" size={16} />
+            {taskAttentionCount > 0 && (
+              <span className="hdr-icon-badge" data-debug-id="header-tasks-attention">
+                {taskAttentionCount > 9 ? "9+" : taskAttentionCount}
+              </span>
+            )}
           </button>
         )}
         {vaultRequestCenter && (

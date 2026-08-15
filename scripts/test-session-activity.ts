@@ -8,6 +8,7 @@ import {
   summarizeActivity,
 } from "../src/lib/session-activity";
 import { readFileSync } from "node:fs";
+import { readAppStyles } from "./lib/app-styles";
 import { readRustModuleFamily } from "./read-rust-module-family";
 
 let failures = 0;
@@ -321,8 +322,11 @@ assert(filterActivityActions(combined.actions, "not-present-in-trace").length ==
 assert(filterActivityActions(combined.actions, "  ").length === combined.actions.length, "blank activity search keeps the full trace");
 
 const activityModalSource = readFileSync(new URL("../src/components/ActivityBrowserModal.tsx", import.meta.url), "utf8");
-const appCssSource = ["../src/App.css", "../src/components/activityBrowser.css", "../src/components/activityEvidence.css"]
-  .map((path) => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
+const appCssSource = [
+  readAppStyles(),
+  ...["../src/components/activityBrowser.css", "../src/components/activityEvidence.css"]
+    .map((path) => readFileSync(new URL(path, import.meta.url), "utf8")),
+].join("\n");
 const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const debugApiSource = readRustModuleFamily("src-tauri/src/debug_api.rs");
 const debugApiDocs = readFileSync(new URL("../docs/public/API.md", import.meta.url), "utf8");

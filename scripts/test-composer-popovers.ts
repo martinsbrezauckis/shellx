@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
+import { readAppStyles } from "./lib/app-styles";
 
-const css = readFileSync("src/App.css", "utf8");
+const css = readAppStyles();
 const bottomPanel = readFileSync("src/components/BottomPanel.tsx", "utf8");
 const app = readFileSync("src/App.tsx", "utf8");
 

@@ -7,22 +7,26 @@ use axum::{
 use crate::shellx_browser_caller::SHELLX_MCP_CALLER_ID_HEADER;
 
 pub(crate) fn browser_mcp_caller_id(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get(SHELLX_MCP_CALLER_ID_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && value.len() <= 200)
-        .map(str::to_string)
+    optional_browser_mcp_caller_id(headers).ok().flatten()
 }
 
 pub(crate) fn optional_browser_mcp_caller_id(
     headers: &HeaderMap,
 ) -> Result<Option<String>, &'static str> {
-    let caller_id = browser_mcp_caller_id(headers);
-    if headers.contains_key(SHELLX_MCP_CALLER_ID_HEADER) && caller_id.is_none() {
+    let mut values = headers.get_all(SHELLX_MCP_CALLER_ID_HEADER).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
         return Err("invalid ShellX MCP caller id");
     }
-    Ok(caller_id)
+    value
+        .to_str()
+        .ok()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 200)
+        .map(|value| Some(value.to_string()))
+        .ok_or("invalid ShellX MCP caller id")
 }
 
 pub(crate) fn optional_browser_mcp_caller_id_or_bad_request(
@@ -73,5 +77,18 @@ mod tests {
 
         headers.remove(SHELLX_MCP_CALLER_ID_HEADER);
         assert_eq!(optional_browser_mcp_caller_id(&headers), Ok(None));
+
+        headers.append(
+            SHELLX_MCP_CALLER_ID_HEADER,
+            "shellx-tab-a".parse().expect("valid first header"),
+        );
+        headers.append(
+            SHELLX_MCP_CALLER_ID_HEADER,
+            "shellx-tab-b".parse().expect("valid second header"),
+        );
+        assert_eq!(
+            optional_browser_mcp_caller_id(&headers),
+            Err("invalid ShellX MCP caller id")
+        );
     }
 }

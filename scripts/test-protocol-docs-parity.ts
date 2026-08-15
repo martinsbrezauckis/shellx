@@ -86,12 +86,19 @@ function sorted(values: Iterable<string>): string[] {
 const apiDocs = read("docs/public/API.md");
 const architecture = read("docs/public/ARCHITECTURE.md");
 const threatModel = read("docs/public/THREAT_MODEL.md");
+const normalizedApiDocs = apiDocs.replace(/\s+/g, " ");
 const normalizedThreatModel = threatModel.replace(/\s+/g, " ");
 const debugApiClient = read("src/lib/debug-api.ts");
 const netFetch = read("src-tauri/src/host_mcp/net_fetch.rs");
 const sessionArchive = read("src-tauri/src/session_archive.rs");
 const hostSkill = read("skills/shellx-host/SKILL.md");
 const skillInstaller = read("src-tauri/src/skill_install.rs");
+const cutStatus = read("src-tauri/src/host_mcp/cut_status.rs");
+const rightRail = `${read("src/components/RightRail.tsx")}\n${read("src/components/CutToolingRow.tsx")}`;
+const taskProviderCatalog = read("src-tauri/src/task_provider_catalog.rs");
+const backend = read("src-tauri/src/lib.rs");
+const manualContent = read("docs/public/manual/shellx/content.json");
+const generatedManual = read("docs/public/SHELLX_MANUAL.md");
 const inventory = JSON.parse(read("release/surface-inventory.json")) as {
   counts: Record<string, number>;
   items: Array<{ kind: string; name: string; aliasOf?: string }>;
@@ -135,6 +142,48 @@ assert(
   hostSkill.includes("Use this skill only after positive evidence")
     && hostSkill.includes("If this precondition is absent, stop using this skill"),
   "installed host skill must remain opt-in for confirmed ShellX sessions",
+);
+assert(
+  cutStatus.includes("ShellX never opens Cut automatically.")
+    && rightRail.includes('title="Check ShellX Cut status without opening the editor"')
+    && apiDocs.includes("Its **Check** control probes status only and never opens")
+    && architecture.includes("The status is\ncompact by design and never carries Cut's generated verb catalogue")
+    && normalizedThreatModel.includes("Status checks never launch the editor; only the operator-visible Open action may do so.")
+    && hostSkill.includes("It never opens or focuses the Cut editor.")
+    && hostSkill.includes("Opening Cut is not an\nagent action"),
+  "Cut documentation must preserve the typed non-launching status and operator-only Open contract",
+);
+assert(
+  cutStatus.includes("CutTarget::Local | CutTarget::Wsl | CutTarget::Ssh")
+    && backend.includes("remote_transports_inject_session_scoped_http_host_mcp")
+    && apiDocs.includes("WSL uses\nthe ShellX host bridge and SSH uses its reverse tunnel")
+    && architecture.includes("WSL reaches the host through the ShellX\nbridge and SSH through the tab-bound reverse tunnel")
+    && normalizedThreatModel.includes("tooling-enabled WSL or SSH provider can instead use the existing authenticated tab-bound host bridge")
+    && hostSkill.includes("Local, WSL, and SSH\nagents use the parent desktop-host Cut bridge"),
+  "Cut documentation must keep the tooling-enabled WSL/SSH parent-host bridge accurate",
+);
+assert(
+  manualContent.includes("Check never opens the Cut editor.")
+    && manualContent.includes("General does not select a model or reasoning effort.")
+    && generatedManual.includes("Check never opens the Cut editor.")
+    && generatedManual.includes("General does not select a model or reasoning effort."),
+  "generated manual must retain its canonical Cut and model-selection boundaries",
+);
+assert(
+  backend.includes("async fn task_provider_catalog(")
+    && taskProviderCatalog.includes("models: Vec::new()")
+    && taskProviderCatalog.includes("TaskProviderDefaultModelMode::ProviderDefault")
+    && taskProviderCatalog.includes("safe_semantic_version_token")
+    && taskProviderCatalog.includes("public_availability_detail")
+    && apiDocs.includes("### First-class Tasks and provider catalogue")
+    && apiDocs.includes("POST /tasks/provider-catalog")
+    && normalizedApiDocs.includes("A queued response proves durable acceptance only")
+    && normalizedApiDocs.includes("Tasks are not added to Host MCP")
+    && normalizedApiDocs.includes("exactly one isolated ASCII semantic-version token")
+    && architecture.includes("`POST /tasks/provider-catalog` Debug API projection")
+    && architecture.includes("exact-revision manual queueing")
+    && architecture.includes("Tasks remain outside Host MCP"),
+  "provider catalogue and Task docs must describe the receipt-gated Debug API without claiming direct provider execution",
 );
 assert(
   skillInstaller.includes('include_str!("../../skills/shellx-host/SKILL.md")'),

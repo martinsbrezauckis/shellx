@@ -2,6 +2,7 @@ import { lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProper
 
 import { inTauri } from "../lib/tauri-bridge";
 import {
+  browserApiPostActionJson,
   browserApiPostJson,
   openBrowserVaultPanel,
   removeBrowserSiteShields,
@@ -474,7 +475,6 @@ export function ShellxBrowserApp(): JSX.Element {
     event.preventDefault();
     void navigateToUrl(address);
   };
-
   const navigateToUrl = (rawUrl: string) => {
     const url = rawUrl.trim();
     if (!url) return;
@@ -484,18 +484,18 @@ export function ShellxBrowserApp(): JSX.Element {
     setAddress(url);
     void withBusy(async () => {
       if (activeTaskForActiveTab) {
-        await browserApiPostJson(BROWSER_ACTION_ENDPOINT, {
+        await browserApiPostActionJson(BROWSER_ACTION_ENDPOINT, {
           ...browserTabs.actionContext(),
           taskId: activeTaskForActiveTab.taskId,
           action: "navigate",
           url,
-        });
+        }, "Browser navigation was blocked.");
       } else if (activeBrowserTab) {
-        await browserApiPostJson(BROWSER_ACTION_ENDPOINT, {
+        await browserApiPostActionJson(BROWSER_ACTION_ENDPOINT, {
           ...browserTabs.actionContext(),
           action: "navigate",
           url,
-        });
+        }, "Browser navigation was blocked.");
       } else {
         if (personalLock.enabled && personalLock.locked) {
           browserPersonalLock.showBlockedNotice();
@@ -517,7 +517,7 @@ export function ShellxBrowserApp(): JSX.Element {
   const runAction = (action: string) => {
     if (!activeBrowserTab) return;
     void withBusy(async () => {
-      await browserApiPostJson(BROWSER_ACTION_ENDPOINT, {
+      await browserApiPostActionJson(BROWSER_ACTION_ENDPOINT, {
         ...browserTabs.actionContext(),
         ...(activeTaskForActiveTab ? { taskId: activeTaskForActiveTab.taskId } : {}),
         action,

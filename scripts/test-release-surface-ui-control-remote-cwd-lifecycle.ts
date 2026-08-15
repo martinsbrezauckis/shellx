@@ -39,11 +39,11 @@ const promotedSurfaceIds = [
 ].sort();
 const formerlyBlockedSurfaceDrivers = new Map<string, string>([
   ['ui-control:src/App.tsx:[aria-label="Download Grok session artifacts"]@src/App.tsx#9', "ui-control-bounded-installed"],
-  ['ui-control:src/components/BottomPanel.tsx:[aria-label="Turn voice chat off and cancel active listening"]@src/components/BottomPanel.tsx#17', "ui-control-bottom-panel-lifecycle-installed"],
+  ['ui-control:src/components/BottomPanel.tsx:[aria-label="Turn voice chat off and cancel active listening"]@src/components/BottomPanel.tsx#18', "ui-control-bottom-panel-lifecycle-installed"],
 ]);
 const nativePickerSurfaceIds = [
   'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-attach"]@src/components/BottomPanel.tsx#15',
-  'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-folder"]@src/components/BottomPanel.tsx#21',
+  'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-folder"]@src/components/BottomPanel.tsx#22',
 ].sort();
 const tempPrefix = "shellx-release-ui-remote-cwd-";
 const tempRootsBefore = ownedTempRoots();
@@ -79,7 +79,7 @@ try {
     && assignment.cleanupId.startsWith("native-picker:")
   )));
   const slashHighlight = plan.assignments.find((assignment) => (
-    assignment.surfaceId === "ui-debug-surface:surface-components-bottompanel-24@src/components/BottomPanel.tsx#22"
+    assignment.surfaceId === "ui-debug-surface:surface-components-bottompanel-24@src/components/BottomPanel.tsx#23"
   ));
   assert.equal(slashHighlight?.driverId, "ui-debug-surface-installed");
   assert.equal(slashHighlight?.fixtureId, "ui:owned-slash-command-row-visible");

@@ -92,6 +92,8 @@ mod screenshot_http;
 mod session_lifecycle_http;
 #[path = "debug_api_session_state.rs"]
 mod session_state_http;
+#[path = "debug_api_tasks.rs"]
+mod tasks_http;
 #[path = "debug_api_vault.rs"]
 mod vault_http;
 
@@ -1083,6 +1085,26 @@ pub struct UiStatePatch {
         skip_serializing_if = "Option::is_none"
     )]
     pub debug_renderer_fixture: Option<serde_json::Value>,
+    /// Fixed renderer-only Task Manager fixture. The renderer accepts only
+    /// its bounded, in-memory fixture modes plus `clear`; no Task store,
+    /// scheduler, provider, Vault, or filesystem state is mutated. Relayed
+    /// only and never persisted in UiState.
+    #[serde(
+        rename = "debugTaskManagerFixture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub debug_task_manager_fixture: Option<String>,
+    /// Fixed renderer-only ShellX Cut state fixture. The renderer accepts
+    /// only the seven typed Cut status values plus `clear`; it never probes,
+    /// starts, focuses, or otherwise controls the Cut editor. Relayed only
+    /// for isolated final-candidate profiles and never persisted in UiState.
+    #[serde(
+        rename = "debugCutToolingFixture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub debug_cut_tooling_fixture: Option<String>,
     /// Plugins release fixture. `owned-safe` is fixed and inert;
     /// `owned-production` is accepted only for an isolated final-candidate
     /// profile and filters the real catalog while keeping production
@@ -1398,6 +1420,11 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
             "/state/model_instruction_cards",
             get(state_model_instruction_cards),
         )
+        // First-class Task definitions, state, exact-revision queueing,
+        // exact-attempt cancellation, and explicit attention acknowledgement.
+        // Provider effects remain behind the app-owned receipt-gated runtime;
+        // no Host/MCP Task tool is registered here.
+        .merge(tasks_http::task_routes())
         // ShellX Browser routes live in debug_api_browser.rs so route ownership stays scan-friendly.
         .merge(crate::debug_api_browser::browser_routes())
         // Frozen-candidate-only Tauri invoke relay. Every handler repeats the

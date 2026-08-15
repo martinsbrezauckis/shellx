@@ -134,6 +134,9 @@
       "action": "include",
       "category": "public-vendored-source",
       "reason": "Source dependencies intentionally vendored into the public repository.",
+      "exact": [
+        "vendor/glib/Cargo.toml.orig"
+      ],
       "prefixes": [
         "vendor/"
       ]

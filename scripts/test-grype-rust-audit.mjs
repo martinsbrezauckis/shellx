@@ -1,4 +1,7 @@
 import { evaluateGrypeRustReport } from "./check-grype-rust.mjs";
+import { validateGlibBackport } from "./lib/verify-glib-backport.mjs";
+
+if (validateGlibBackport().length !== 0) throw new Error("reviewed glib soundness backport must stay active");
 
 const now = new Date("2026-08-05T00:00:00Z");
 const report = {
@@ -32,4 +35,3 @@ const staleDb = structuredClone(report);
 staleDb.descriptor.db.status.built = "2026-07-01T00:00:00Z";
 if (evaluateGrypeRustReport(staleDb, policy, now).status !== "fail") throw new Error("stale Grype DB must block");
 console.log("PASS Grype Rust/GHSA audit policy tests");
-

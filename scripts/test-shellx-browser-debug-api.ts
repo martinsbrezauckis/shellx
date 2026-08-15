@@ -2163,7 +2163,7 @@ async function main(): Promise<void> {
     autonomy: "assistedAutonomous",
     expectedDomains: ["example.com"],
   });
-  assert(operatorTask.ownerActorId === "shellxDebugApiAgent" && operatorTask.ownerSurface === "debugApiBearer", "Browser task records its authenticated Debug API owner principal");
+  assert(operatorTask.ownerActorId === "shellxBrowserOperator" && operatorTask.ownerSurface === "debugApiBearer", "headerless Debug API task records its bearer-authenticated operator principal");
   const pausedTask = await api<BrowserTaskControlResponse>(ctx, "POST", "/browser/task/control", {
     taskId: operatorTask.taskId,
     action: "pause",
@@ -2172,7 +2172,7 @@ async function main(): Promise<void> {
   });
   assert(pausedTask.ok === true && pausedTask.status === "paused", "browser task control can pause a task");
   assert(pausedTask.receipt.kind === "browserTaskPaused", "browser task pause emits browserTaskPaused receipt");
-  assert(pausedTask.receipt.evidence?.requestedBy === "shellxDebugApiAgent", "browser task pause actor comes from the authenticated API surface");
+  assert(pausedTask.receipt.evidence?.requestedBy === "shellxBrowserOperator", "browser task pause actor comes from headerless operator authority");
   const blockedPausedAction = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
     taskId: operatorTask.taskId,
     action: "observe",
@@ -2186,18 +2186,15 @@ async function main(): Promise<void> {
   });
   assert(resumedTask.status === "running", "browser task control can resume a paused task");
   assert(resumedTask.receipt.kind === "browserTaskResumed", "browser task resume emits browserTaskResumed receipt");
-  assert(resumedTask.receipt.evidence?.requestedBy === "shellxDebugApiAgent", "browser task resume ignores a forged requestedBy actor");
-  const deniedTakeover = await apiMaybe<JsonObject>(ctx, "POST", "/browser/task/control", {
+  assert(resumedTask.receipt.evidence?.requestedBy === "shellxBrowserOperator", "browser task resume ignores a forged requestedBy actor");
+  const takeover = await api<BrowserTaskControlResponse>(ctx, "POST", "/browser/task/control", {
     taskId: operatorTask.taskId,
     action: "userTakeover",
     reason: "debug-api smoke user takeover",
     requestedBy: "debug-api-smoke",
   });
-  if (deniedTakeover.ok || deniedTakeover.status !== 403) {
-    throw new Error("Debug API unexpectedly claimed operator user takeover");
-  }
-  assert(true, "Debug API cannot claim operator user takeover");
-  assert(deniedTakeover.text.includes("browser_task_operator_control_required"), "takeover denial exposes a stable machine-readable code");
+  assert(takeover.status === "userTakeover", "headerless Debug API operator authority can take over a task");
+  assert(takeover.receipt.kind === "browserTaskUserTakeover", "operator takeover emits browserTaskUserTakeover");
   const abortedTask = await api<BrowserTaskControlResponse>(ctx, "POST", "/browser/task/control", {
     taskId: operatorTask.taskId,
     action: "abort",
@@ -2206,7 +2203,7 @@ async function main(): Promise<void> {
   });
   assert(abortedTask.status === "aborted", "browser task control can abort a task");
   assert(abortedTask.receipt.kind === "browserTaskAborted", "browser task abort emits browserTaskAborted receipt");
-  assert(abortedTask.receipt.evidence?.requestedBy === "shellxDebugApiAgent", "browser task abort actor comes from the authenticated API surface");
+  assert(abortedTask.receipt.evidence?.requestedBy === "shellxBrowserOperator", "browser task abort actor comes from headerless operator authority");
   const blockedAbortAction = await api<BrowserActionResponse>(ctx, "POST", "/browser/action", {
     taskId: operatorTask.taskId,
     action: "observe",
@@ -2256,6 +2253,7 @@ async function main(): Promise<void> {
     "browserVaultDepositCreated",
     "browserTaskPaused",
     "browserTaskResumed",
+    "browserTaskUserTakeover",
     "browserTaskAborted",
     "browserTaskActionBlocked",
     "browserReportWritten",
@@ -2264,8 +2262,8 @@ async function main(): Promise<void> {
     assert(receipts.receipts.some((receipt) => receipt.kind === kind), `receipt log includes ${kind}`);
   }
   assert(
-    !receipts.receipts.some((receipt) => receipt.kind === "browserTaskUserTakeover" && receipt.taskId === operatorTask.taskId),
-    "denied Debug API takeover does not emit a successful user-takeover receipt",
+    receipts.receipts.some((receipt) => receipt.kind === "browserTaskUserTakeover" && receipt.taskId === operatorTask.taskId),
+    "headerless operator takeover is visible in the task receipt lineage",
   );
 
   console.log("ShellX Browser live Debug API smoke passed");

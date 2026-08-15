@@ -9,8 +9,8 @@ const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 
 assert.equal(pkg.scripts.pretest, "node scripts/run-test-suite.mjs pretest");
 assert.equal(pkg.scripts.test, "node scripts/run-test-suite.mjs test");
-assert.equal(TEST_SUITES.pretest.length, 79);
-assert.equal(TEST_SUITES.test.length, 112);
+assert.equal(TEST_SUITES.pretest.length, 80);
+assert.equal(TEST_SUITES.test.length, 135);
 assert.deepEqual(
   testCommandInvocation(["node", "scripts/example.mjs", "--check"]),
   { executable: process.execPath, args: ["scripts/example.mjs", "--check"] },
@@ -26,11 +26,11 @@ assert.throws(
   /unsupported test runtime/,
   "unknown suite runtimes must fail closed",
 );
-assert.deepEqual(testSuiteRange(["--from", "41", "--to", "112"], 112), { startIndex: 40, endIndex: 112 });
-assert.deepEqual(testSuiteRange([], 112), { startIndex: 0, endIndex: 112 });
-assert.throws(() => testSuiteRange(["--from", "0"], 112), /1 <= from <= to <= 112/);
-assert.throws(() => testSuiteRange(["--to", "113"], 112), /1 <= from <= to <= 112/);
-assert.throws(() => testSuiteRange(["--unknown", "1"], 112), /accepts only/);
+assert.deepEqual(testSuiteRange(["--from", "41", "--to", "123"], 123), { startIndex: 40, endIndex: 123 });
+assert.deepEqual(testSuiteRange([], 123), { startIndex: 0, endIndex: 123 });
+assert.throws(() => testSuiteRange(["--from", "0"], 123), /1 <= from <= to <= 123/);
+assert.throws(() => testSuiteRange(["--to", "124"], 123), /1 <= from <= to <= 123/);
+assert.throws(() => testSuiteRange(["--unknown", "1"], 123), /accepts only/);
 
 for (const [suiteName, commands] of Object.entries(TEST_SUITES)) {
   assert(Object.isFrozen(commands), `${suiteName} command registry must be immutable`);
@@ -60,12 +60,50 @@ assert(
   "the Browser tab handoff confirmation contract must remain in the canonical test registry",
 );
 assert(
+  TEST_SUITES.test.some((row) => row.join(" ") === "tsx scripts/test-browser-prompt-injection-guard.ts"),
+  "the Browser prompt-injection pre-effect contract must remain in the canonical test registry",
+);
+assert(
+  TEST_SUITES.test.some((row) => row.join(" ") === "tsx scripts/test-shellx-browser-caller-boundary.ts"),
+  "the Browser caller boundary contract must remain in the canonical test registry",
+);
+assert(
+  TEST_SUITES.test.some((row) => row.join(" ") === "tsx scripts/test-mcp-http-token-authority.ts"),
+  "the Host MCP token authority contract must remain in the canonical test registry",
+);
+for (const taskContract of [
+  "test-task-provider-catalog.ts",
+  "test-tasks-debug-api.ts",
+  "test-task-manager-contract.ts",
+  "test-task-manager-app-adapter.ts",
+  "test-task-manager-draft-hydration.ts",
+  "test-task-manager-save-preflight.ts",
+  "test-task-manager-ui-source.ts",
+  "test-task-manager-history-projection.ts",
+  "test-task-manager-debug-fixture.ts",
+  "test-task-result-evidence.ts",
+  "test-task-conversation-archive.ts",
+  "test-task-attachment-handoff.ts",
+  "test-task-manager-theme-contrast.ts",
+  "test-task-entry-controls.ts",
+  "test-task-teach-handoff.ts",
+]) {
+  assert(
+    TEST_SUITES.test.some((row) => row.join(" ") === `tsx scripts/${taskContract}`),
+    `the first-class Tasks contract must remain registered: ${taskContract}`,
+  );
+}
+assert(
   TEST_SUITES.pretest.some((row) => row.join(" ") === "tsx scripts/test-release-surface-ui-browser-developer-evidence.ts"),
   "the Browser Developer and Evidence installed driver must remain in the canonical pretest registry",
 );
 assert(
   TEST_SUITES.pretest.some((row) => row.join(" ") === "tsx scripts/test-release-surface-ui-browser-teach-review-driver.ts"),
   "the Browser Teach installed driver must remain in the canonical pretest registry",
+);
+assert(
+  TEST_SUITES.pretest.some((row) => row.join(" ") === "tsx scripts/test-release-surface-ui-control-task-manager.ts"),
+  "the Task Manager installed control lifecycle must remain in the canonical pretest registry",
 );
 
 console.log(`ShellX test-suite manifest passed: ${TEST_SUITES.pretest.length} pretest + ${TEST_SUITES.test.length} test commands`);

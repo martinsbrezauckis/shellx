@@ -87,6 +87,15 @@ const adapter: ManualAtlasCaptureAdapter = {
   async waitForSelector(selector) {
     await waitForRendererSelector(selector);
   },
+  async reveal(selector, block) {
+    const result = await executeReleaseSurfaceWebDriverScript(
+      webdriver,
+      "const node=document.querySelector(arguments[0]); if(!(node instanceof HTMLElement))return false; node.scrollIntoView({block:arguments[1],inline:'nearest'}); return true;",
+      [selector, block],
+    );
+    if (result !== true) throw new Error(`manual atlas reveal target was not found: ${selector}`);
+    await delay(175);
+  },
   async scroll(selector, edge) {
     const result = await executeReleaseSurfaceWebDriverScript(
       webdriver,

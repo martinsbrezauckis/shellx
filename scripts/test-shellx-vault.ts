@@ -574,6 +574,11 @@ if (!/browser_fill_from_vault[\s\S]*?secret value is injected by ShellX and is n
 if (!/vault_request_grant[\s\S]*?pending[\s\S]*?Vault Request Center[\s\S]*?tool_vault_request_grant/.test(hostMcp)) {
   throw new Error("Host MCP must expose an agent-discoverable pending Vault grant request flow");
 }
+if (!hostMcp.includes("requires an explicit actorScope or actorKind; no grant scope is inferred")
+    || !hostMcp.includes('"anyOf": [')
+    || hostMcp.includes('unwrap_or_else(|| "allShellxAgents".to_string())')) {
+  throw new Error("Host MCP Vault grants must require an explicit actor scope without a broad default");
+}
 if (!/async fn resolve_xai_vision_bearer[\s\S]*crate::shellx_vault::shared_backend\(\)[\s\S]*compat_get\("xai\/api-key"\)/.test(hostMcp)) {
   throw new Error("Vision xAI credential lookup must read xai/api-key from the ShellX Vault backend");
 }

@@ -12,7 +12,7 @@
 
 [package]
 name = "shellx"
-version = "0.3.52"
+version = "0.3.60"
 description = "shellX — cross-platform desktop host for Grok Build, Claude Code, Codex CLI, and ACP-speaking agents"
 authors = ["Martins Brezauckis <martins.brezauckis@gmail.com>"]
 license = "MIT"
@@ -30,7 +30,7 @@ cc = "1"
 
 [dependencies]
 tauri = { version = "2.11.5", features = ["protocol-asset", "unstable"] }
-tauri-plugin-log = "2"
+tauri-plugin-log = "2.9"
 # P-UX-Impl §10.1: file picker dialog for Attach + workspace-folder
 # picker. Loaded unconditionally — same low cost as plugin-log.
 tauri-plugin-dialog = "2"
@@ -167,6 +167,10 @@ toml = "0.8"
 # wasm-only / oldtime baggage out; `serde` is harmless and matches the
 # transitive feature set so the resolver picks the same chrono build.
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+# Task scheduling needs an embedded IANA timezone database. `chrono` can format
+# local time, but cannot validate arbitrary named zones or resolve their DST
+# transitions without `chrono-tz`.
+chrono-tz = "0.10"
 
 # Host MCP `fs_grep` regex-over-files tool (#171). The
 # `ignore` crate is ripgrep's workhorse — respects .gitignore, hidden-
@@ -270,4 +274,5 @@ tempfile = "3"
 # the exact 0.7.2 source/API and patch only that dependency requirement until
 # notify-rust adopts tauri-winrt-notification 0.8 or later upstream.
 [patch.crates-io]
+glib = { path = "../vendor/glib" }
 tauri-winrt-notification = { path = "../vendor/tauri-winrt-notification" }

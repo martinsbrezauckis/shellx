@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::shellx_browser::{BrowserFlightRecorderExportRequest, StartBrowserTaskRequest};
+use crate::shellx_browser_teach_task::BrowserTeachTaskHandoffRequest;
 
 fn complete_attempt(
     with_redacted_input: bool,
@@ -241,9 +242,9 @@ fn teach_prepare_is_deterministic_cas_bound_and_approval_only_creates_recipe() {
         .expect("safe URL replacement and explicit resolution write a CAS revision");
     let approval = registry
         .approve_teach_draft_from_operator(BrowserTeachApprovalRequest {
-            draft_id: prepared.draft.draft_id,
-            revision_id: corrected.revision.revision_id,
-            revision_sha256: corrected.revision.sha256,
+            draft_id: prepared.draft.draft_id.clone(),
+            revision_id: corrected.revision.revision_id.clone(),
+            revision_sha256: corrected.revision.sha256.clone(),
         })
         .expect("operator approval writes a normal recipe after URL replacement");
     assert_eq!(approval.approval.status, "recipeDraftCreated");
@@ -262,7 +263,88 @@ fn teach_prepare_is_deterministic_cas_bound_and_approval_only_creates_recipe() {
     assert!(!serde_json::to_string(&rehearsal)
         .expect("compact rehearsal encodes")
         .contains("browser-artifacts"));
+    let handoff_request = BrowserTeachTaskHandoffRequest {
+        draft_id: prepared.draft.draft_id,
+        revision_id: corrected.revision.revision_id,
+        revision_sha256: corrected.revision.sha256,
+        recipe_id: approval.recipe.recipe_id.clone(),
+        recipe_sha256: approval.recipe.sha256.clone(),
+        approval_id: approval.approval.approval_id.clone(),
+        rehearsal_receipt_id: rehearsal.receipt.receipt_id.clone(),
+    };
+    let handoff = registry
+        .prepare_teach_task_handoff_from_operator(handoff_request.clone())
+        .expect("exact approved zero-skip rehearsal prepares a Task draft handoff");
+    assert_eq!(handoff.owner_session_id, "teach-owner");
+    assert_eq!(handoff.browser_task_id, task_id);
+    assert_eq!(
+        handoff.workflow_digest,
+        format!("sha256:{}", approval.recipe.sha256)
+    );
+    assert_eq!(handoff.receipt.kind, "browserTeachTaskHandoffPrepared");
+    assert!(!serde_json::to_string(&handoff)
+        .expect("Task handoff encodes")
+        .contains("browser-artifacts"));
+    {
+        let state = lock_or_recover(&registry.state);
+        let receipt = state
+            .receipts
+            .iter()
+            .find(|receipt| receipt.receipt_id == handoff.receipt.receipt_id)
+            .expect("Task handoff receipt remains native-state bound");
+        assert_eq!(
+            receipt
+                .evidence
+                .get("ownerSessionId")
+                .and_then(Value::as_str),
+            Some("teach-owner")
+        );
+        assert!(receipt
+            .evidence
+            .get("requiredVaultKeyIds")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty));
+        assert!(receipt.evidence.get("path").is_none());
+    }
+    let repeated_handoff = registry
+        .prepare_teach_task_handoff_from_operator(handoff_request.clone())
+        .expect("same exact Teach handoff is idempotent");
+    assert_eq!(repeated_handoff.workflow_id, handoff.workflow_id);
+    let mut wrong_rehearsal = handoff_request;
+    wrong_rehearsal.rehearsal_receipt_id = "browser-receipt-missing".to_string();
+    assert!(registry
+        .prepare_teach_task_handoff_from_operator(wrong_rehearsal)
+        .expect_err("a different rehearsal receipt must fail closed")
+        .contains("zero-skip rehearsal"));
     let state = lock_or_recover(&registry.state);
+    let workflow = state
+        .bookmarks
+        .iter()
+        .find(|bookmark| bookmark.bookmark_id == handoff.workflow_id)
+        .and_then(|bookmark| bookmark.agent_workflow.as_ref())
+        .expect("Task handoff persists one executable Browser workflow bookmark");
+    assert_eq!(workflow.health.as_deref(), Some("fresh"));
+    assert_eq!(workflow.drift_status.as_deref(), Some("fresh"));
+    assert_eq!(
+        workflow.recipe_id.as_deref(),
+        Some(approval.recipe.recipe_id.as_str())
+    );
+    assert_eq!(
+        state
+            .bookmarks
+            .iter()
+            .filter(|bookmark| bookmark.bookmark_id == handoff.workflow_id)
+            .count(),
+        1
+    );
+    assert_eq!(
+        state
+            .bookmarks
+            .iter()
+            .find(|bookmark| bookmark.bookmark_id == handoff.workflow_id)
+            .and_then(|bookmark| bookmark.url.as_deref()),
+        Some("https://example.com/form")
+    );
     assert!(state.receipts.iter().any(|receipt| {
         receipt.kind == "browserRecipeExported"
             && receipt.evidence.get("recipeId").and_then(Value::as_str)

@@ -342,7 +342,9 @@ pub(crate) async fn browser_cdp_execute_http(
         )
             .into_response();
     }
-    if let Err(error) = registry.ensure_agent_owns_cdp_target(&body, caller_session_id.as_deref()) {
+    if let Err(error) = registry
+        .ensure_browser_request_authority_for_cdp_target(&body, caller_session_id.as_deref())
+    {
         let status =
             if error.contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED) {
                 StatusCode::FORBIDDEN

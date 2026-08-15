@@ -7,6 +7,22 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
+## [0.3.60] - Unreleased
+
+### Added
+
+- Tasks turn a chat request into one-time or recurring work, with simple
+  scheduling, notifications, run history, exact environment selection, and an
+  ordered agent fallback list.
+- Browser Teach can save an approved workflow as a paused Task draft.
+- ShellX Cut is available in Tools and to hosted agents for bounded video
+  editing.
+
+### Fixed
+
+- Browser actions pause for approval when page content tries to redirect the
+  agent away from the requested work.
+
 ## [0.3.52] - 2026-08-13
 
 ### Added

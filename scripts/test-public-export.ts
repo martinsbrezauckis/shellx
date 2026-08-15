@@ -101,6 +101,12 @@ function localMarkdownLinkTargets(markdown: string): string[] {
 
 function resolvePublicLocalTarget(exportRoot: string, sourcePath: string, rawTarget: string): string | null {
   if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(rawTarget)) return null;
+  // Rustdoc disambiguators are symbolic intra-doc links, not filesystem paths.
+  // Keep the finite supported kind set explicit so ordinary broken relative
+  // links containing an at-sign still fail the public-export gate.
+  if (/^(?:struct|enum|trait|union|fn|mod|method|const|static|type|macro|derive|prim)@[A-Za-z_][A-Za-z0-9_:]*[!?]?$/.test(rawTarget)) {
+    return null;
+  }
   const pathOnly = rawTarget.split(/[?#]/, 1)[0];
   if (!pathOnly) return null;
   let decoded: string;
@@ -116,6 +122,11 @@ function resolvePublicLocalTarget(exportRoot: string, sourcePath: string, rawTar
   if (relativeTarget === ".." || relativeTarget.startsWith("../")) return "__outside_export__";
   return relativeTarget || ".";
 }
+
+assert(resolvePublicLocalTarget("/tmp/export", "vendor/glib/README.md", "struct@Variant") === null,
+  "Rustdoc symbolic links are not treated as public payload paths");
+assert(resolvePublicLocalTarget("/tmp/export", "README.md", "docs@guide.md") === "docs@guide.md",
+  "ordinary relative links containing an at-sign remain checked");
 
 function runSyntheticPolicyFixture(input: {
   name: string;
@@ -770,6 +781,20 @@ try {
     expectSuccess: true,
   });
   assert(existsSync(join(exactPersona.payload, "src-tauri/personas/reviewer.md")), "an exact public resource can intentionally override broad-path purpose review");
+
+  const reviewedVendoredOriginal = runSyntheticPolicyFixture({
+    name: "reviewed-vendored-original",
+    files: {
+      "README.md": "fixture\n",
+      "vendor/glib/Cargo.toml.orig": "reviewed upstream package manifest\n",
+      "vendor/demo/Cargo.toml.orig": "unreviewed backup-like file\n",
+    },
+    expectSuccess: true,
+  });
+  assert(existsSync(join(reviewedVendoredOriginal.payload, "vendor/glib/Cargo.toml.orig")),
+    "the exact reviewed GLib upstream manifest survives the unsafe-suffix quarantine");
+  assert(!existsSync(join(reviewedVendoredOriginal.payload, "vendor/demo/Cargo.toml.orig")),
+    "unreviewed vendored .orig files remain excluded");
 
   const tamperedPayload = runSyntheticPolicyFixture({
     name: "source-payload-mismatch",

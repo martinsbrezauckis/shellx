@@ -30,9 +30,14 @@ export interface BrowserTabHandoffConfirmation {
   persistenceLabel: string;
   profileId: string;
   profileLabel: string;
+  reviewFingerprint: string;
   taskId: string;
   taskLabel: string;
 }
+
+type BrowserTabHandoffReviewContext = Omit<BrowserTabHandoffConfirmation, "reviewFingerprint">;
+
+const BROWSER_TAB_HANDOFF_REVIEW_SCHEMA = "shellx.browser-tab-handoff-review.v1";
 
 /** Keeps a handoff review useful without rendering credentials, query values, fragments, or local paths. */
 export function browserTabHandoffUrlContext(url?: string | null): Pick<BrowserTabHandoffConfirmation, "currentOrigin" | "currentUrlContext"> {
@@ -77,11 +82,11 @@ function handoffPersistenceLabel(tab: BrowserTab, profile: BrowserProfile | null
   return tab.profileId === "task-disposable" ? "Disposable task storage" : "Profile persistence is unavailable";
 }
 
-export function browserTabHandoffConfirmation(
+function browserTabHandoffReviewContext(
   tab: BrowserTab,
   task: BrowserTask,
   profile: BrowserProfile | null,
-): BrowserTabHandoffConfirmation {
+): BrowserTabHandoffReviewContext {
   return {
     browserTabId: tab.browserTabId,
     ...browserTabHandoffUrlContext(tab.url),
@@ -91,6 +96,59 @@ export function browserTabHandoffConfirmation(
     profileLabel: profile?.label || tab.profileId,
     taskId: task.taskId,
     taskLabel: task.goal || "Untitled Browser task",
+  };
+}
+
+/** Hashes the exact reviewed state without exposing raw page or storage data to the UI or receipt. */
+export async function browserTabHandoffReviewFingerprint(
+  tab: BrowserTab,
+  task: BrowserTask,
+  profile: BrowserProfile,
+): Promise<string> {
+  if (!globalThis.crypto?.subtle) throw new Error("Secure Browser handoff review is unavailable in this runtime.");
+  const canonical = JSON.stringify([
+    BROWSER_TAB_HANDOFF_REVIEW_SCHEMA,
+    tab.browserTabId,
+    tab.engineId,
+    tab.taskId ?? null,
+    tab.profileId,
+    tab.url ?? null,
+    tab.storageRoot ?? null,
+    tab.ownerKind ?? "user",
+    tab.delegatedTaskId ?? null,
+    tab.delegatedGrantId ?? null,
+    tab.lock?.leaseId ?? null,
+    tab.lock?.ownerAgentId ?? null,
+    tab.lock?.ownerRunId ?? null,
+    tab.lock?.scope ?? null,
+    tab.updatedAtMs,
+    profile.profileId,
+    profile.label,
+    profile.description,
+    profile.agentDefault,
+    profile.cookiesEnabled,
+    profile.persistent,
+    profile.storageRoot ?? null,
+    task.taskId,
+    task.profileId,
+    task.ownerActorId,
+    task.ownerSurface,
+    task.ownerSessionId ?? null,
+    task.goal,
+    task.status,
+  ]);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return `sha256:${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export async function browserTabHandoffConfirmation(
+  tab: BrowserTab,
+  task: BrowserTask,
+  profile: BrowserProfile,
+): Promise<BrowserTabHandoffConfirmation> {
+  return {
+    ...browserTabHandoffReviewContext(tab, task, profile),
+    reviewFingerprint: await browserTabHandoffReviewFingerprint(tab, task, profile),
   };
 }
 
@@ -115,7 +173,7 @@ export function browserTabHandoffRevalidationError(
   if (liveTab.ownerKind === "agent" || liveTab.ownerKind === "delegatedToAgent") {
     return "This tab is no longer user-controlled and cannot be handed off again.";
   }
-  const liveConfirmation = browserTabHandoffConfirmation(
+  const liveConfirmation = browserTabHandoffReviewContext(
     liveTab,
     activeTask,
     profiles.find((profile) => profile.profileId === liveTab.profileId) ?? null,
@@ -321,12 +379,16 @@ export function useBrowserTabs(options: BrowserTabsOptions) {
       setError("Start an agent browser task before handing off a user tab.");
       return;
     }
-    setHandoffConfirmation(browserTabHandoffConfirmation(
-      activeBrowserTab,
-      activeTask,
-      profiles.find((profile) => profile.profileId === activeBrowserTab.profileId) ?? null,
-    ));
-    setHandoffStatus({ tone: "review" });
+    const profile = profiles.find((candidate) => candidate.profileId === activeBrowserTab.profileId);
+    if (!profile) {
+      setError("The active Browser profile is unavailable. Refresh Browser state before handing off this tab.");
+      return;
+    }
+    void runBusy(async () => {
+      const confirmation = await browserTabHandoffConfirmation(activeBrowserTab, activeTask, profile);
+      setHandoffConfirmation(confirmation);
+      setHandoffStatus({ tone: "review" });
+    });
   };
 
   const cancelHandOffActiveTab = () => {
@@ -358,6 +420,7 @@ export function useBrowserTabs(options: BrowserTabsOptions) {
         await delegateBrowserTabToAgent({
           browserTabId: handoffConfirmation.browserTabId,
           taskId: handoffConfirmation.taskId,
+          reviewFingerprint: handoffConfirmation.reviewFingerprint,
           reason: "operator handoff from Browser chrome",
         });
         setHandoffStatus({ tone: "success", message: "Tab handed off to the active Browser agent task." });

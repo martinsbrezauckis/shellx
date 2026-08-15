@@ -13,6 +13,14 @@ const sourceCommit = requiredArg("--source-commit");
 
 type Surface = "app" | "browser";
 type Highlight = { id?: string; selector?: string };
+type CutToolingState =
+  | "checking"
+  | "ready"
+  | "installedEditorClosed"
+  | "notInstalled"
+  | "unsupportedTarget"
+  | "unavailableToProvider"
+  | "unavailable";
 type BrowserOverlay = "none" | "options" | "history" | "bookmarks-list" | "bookmarks-manager";
 type Bookmark = {
   bookmarkId: string;
@@ -36,6 +44,7 @@ let connectorDraftOpen = false;
 let connectorTargetMode: "activeTab" | "fixedTab" = "activeTab";
 let buildPlanFixtureActive = false;
 let shellxagentFixtureActive = false;
+let cutToolingFixture: CutToolingState | null = null;
 let appBottomTab = "Chat";
 let agentCliSetupFixtureMode: "closed" | "cards" | "confirmation" | "status-card" = "closed";
 let goalPlanReviewFixtureMode: "closed" | "review" | "editing" = "closed";
@@ -444,6 +453,11 @@ const server = createServer(async (request, response) => {
     } else if (body.debugShellxagentFixture === "clear") {
       shellxagentFixtureActive = false;
     }
+    if (isCutToolingState(body.debugCutToolingFixture)) {
+      cutToolingFixture = body.debugCutToolingFixture;
+    } else if (body.debugCutToolingFixture === "clear") {
+      cutToolingFixture = null;
+    }
     if (typeof body.openModal === "string") {
       openModal = body.openModal;
       if (openModal === "close") builtinDocOpen = false;
@@ -599,6 +613,7 @@ const server = createServer(async (request, response) => {
       connectorTargetMode,
       buildPlanFixtureActive,
       shellxagentFixtureActive,
+      cutToolingFixture,
       appBottomTab,
       agentCliSetupFixture: agentCliSetupFixtureMode,
       goalPlanReviewFixture: goalPlanReviewFixtureMode,
@@ -720,6 +735,8 @@ function highlightResult(surface: Surface, highlight: Highlight): HighlightResul
         || selector === "[data-debug-id=\"surface-components-rowactions-2\"]"
       ))
       || (selector === "[data-debug-id=\"settings-tab-general\"]" && openModal === "settings")
+      || (appRightTab === "Tooling" && cutToolingFixture !== null
+        && selector === `[data-debug-id="cut-tooling-state-${cutToolingFixture}"]`)
       || (selector === "[data-debug-id=\"shellx-setup-guide\"]" && !setupGuideDismissed)
       || (selector === "[data-debug-id=\"about-full-manual-link\"]" && openModal === "settings" && settingsTab === "about")
       || (selector === "[data-debug-id=\"surface-components-builtindocmodal-4\"]"
@@ -1299,6 +1316,18 @@ function uiState(): Record<string, unknown> {
     debugHighlightResults: results.app,
     debugHighlightResultsBySurface: results,
   };
+}
+
+function isCutToolingState(value: unknown): value is CutToolingState {
+  return typeof value === "string" && new Set<string>([
+    "checking",
+    "ready",
+    "installedEditorClosed",
+    "notInstalled",
+    "unsupportedTarget",
+    "unavailableToProvider",
+    "unavailable",
+  ]).has(value);
 }
 
 function ownedSessionHistoryPresent(): boolean {

@@ -115,6 +115,11 @@ import {
 } from "./lib/folder-path";
 import { groupEvents } from "./lib/grouping";
 import { useBrowserCoworkPromptBridge } from "./lib/use-browser-cowork-bridge";
+import { useBrowserTeachTaskHandoffBridge } from "./lib/task-teach-handoff-bridge";
+import {
+  browserTeachTaskHandoffMatchesNativeState,
+  type BrowserTeachTaskHandoff,
+} from "./lib/task-teach-handoff-events";
 import { extractSessionAttachments, extractSessionMedia } from "./lib/session-media";
 import {
   extractSessionAssetRegistry,
@@ -125,6 +130,7 @@ import {
   buildSessionLogWrites,
   localEventTabId,
 } from "./lib/pending-local-events";
+import { isTaskRuntimeTabId } from "./lib/task-runtime-tab";
 import {
   appendBoundedRendererEvents,
   historyTruncationFrame,
@@ -253,9 +259,44 @@ import {
   providerScanStatus,
   scanConnectionProviderCapabilities,
 } from "./lib/connection-provider-capabilities";
+import {
+  createTaskManagerController,
+  type TaskManagerCurrentContext,
+} from "./lib/task-manager-controller";
+import {
+  createBrowserTeachTaskDraft,
+  createComposerTaskDraft,
+  taskEnvironmentKey,
+} from "./lib/task-manager-tauri-adapter";
+import {
+  parseTaskAttachmentPersistenceResponse,
+  parseTaskAttachmentMaintenanceResponse,
+  parseTaskAttachmentReclamationResponse,
+  type TaskAttachmentReference as DurableTaskAttachmentReference,
+} from "./lib/task-attachment-handoff";
+import {
+  taskDeviceTimezone,
+  type TaskManagerActionResult,
+  type TaskManagerData,
+  type TaskManagerDraft,
+  type TaskManagerMode,
+} from "./lib/task-manager-contract";
+import { taskAttentionCount } from "./lib/task-manager-history-projection";
+import {
+  debugTaskManagerFixtureData,
+  normalizeDebugTaskManagerFixtureMode,
+  updateDebugTaskManagerState,
+  type DebugTaskManagerFixtureMode,
+} from "./lib/task-manager-debug-fixture";
+import {
+  normalizeDebugCutToolingFixture,
+  type CutToolingState,
+} from "./lib/cut-tooling";
 
 const Settings = lazy(() => import("./components/Settings")
   .then((module) => ({ default: module.Settings })));
+const TaskManager = lazy(() => import("./components/TaskManager")
+  .then((module) => ({ default: module.TaskManager })));
 const CommandPalette = lazy(() => import("./components/CommandPalette")
   .then((module) => ({ default: module.CommandPalette })));
 const AgentCliSetupDialog = lazy(() => import("./components/AgentCliSetupDialog.lazy"));
@@ -1024,6 +1065,7 @@ export default function App(): JSX.Element {
   const [debugConnectorsFixture, setDebugConnectorsFixture] = useState<"owned-safe" | null>(null);
   const [debugBuildPlanFixture, setDebugBuildPlanFixture] = useState<"owned-ready" | null>(null);
   const [debugShellxagentFixture, setDebugShellxagentFixture] = useState<"owned-safe" | null>(null);
+  const [debugCutToolingFixture, setDebugCutToolingFixture] = useState<CutToolingState | null>(null);
   const [debugClipboardFixture, setDebugClipboardFixture] = useState<
     "tasks" | "vault-draft" | "vault-password" | "shellxagent-token" | "work-preview" | null
   >(null);
@@ -1253,6 +1295,59 @@ export default function App(): JSX.Element {
   // mirrored to localStorage so the renderer is responsive). ───────
   const [settings, setSettings] = useState<SettingsValues>(() => readSettingsLocal());
   const [hashItems, setHashItems] = useState<HashItem[]>([]);
+  const [taskManagerData, setTaskManagerData] = useState<TaskManagerData>({
+    loadState: "loading",
+    environments: [],
+    providerCatalogueState: { state: "idle" },
+    definitions: [],
+  });
+  const [debugTaskManagerFixtureMode, setDebugTaskManagerFixtureMode] =
+    useState<DebugTaskManagerFixtureMode | null>(null);
+  const debugTaskManagerFixtureModeRef = useRef<DebugTaskManagerFixtureMode | null>(null);
+  const taskManagerControllerRef = useRef<ReturnType<typeof createTaskManagerController> | null>(null);
+  if (!taskManagerControllerRef.current) {
+    taskManagerControllerRef.current = createTaskManagerController({
+      invoke: <T,>(command: string, args?: Record<string, unknown>) => invoke<T>(command, args),
+      onData: (data) => {
+        if (!debugTaskManagerFixtureModeRef.current) setTaskManagerData(data);
+      },
+    });
+  }
+  const taskManagerController = taskManagerControllerRef.current;
+  const [taskManagerOpen, setTaskManagerOpen] = useState(false);
+  const [taskManagerMode, setTaskManagerMode] = useState<TaskManagerMode>("edit");
+  const taskManagerOpenRef = useRef(taskManagerOpen);
+  const taskManagerModeRef = useRef<TaskManagerMode>(taskManagerMode);
+  taskManagerOpenRef.current = taskManagerOpen;
+  taskManagerModeRef.current = taskManagerMode;
+  const [taskManagerInitialDraft, setTaskManagerInitialDraft] = useState<TaskManagerDraft | undefined>();
+  const [taskAttachmentPersistenceBusy, setTaskAttachmentPersistenceBusy] = useState(false);
+  const taskAttachmentPersistenceInFlightRef = useRef(false);
+  const pendingImportedTaskAttachmentsRef = useRef<DurableTaskAttachmentReference[]>([]);
+  const taskAttachmentMaintenanceStartedRef = useRef(false);
+
+  useEffect(() => {
+    if (!inTauri() || taskAttachmentMaintenanceStartedRef.current) return;
+    taskAttachmentMaintenanceStartedRef.current = true;
+    let cancelled = false;
+    void invoke<unknown>("tasks_maintain_attachments")
+      .then((raw) => {
+        if (cancelled) return;
+        const result = parseTaskAttachmentMaintenanceResponse(raw);
+        if (result.reclaimedAttachmentIds.length > 0) {
+          pushUiEvent(`✓ reclaimed ${result.reclaimedAttachmentIds.length} stale Task attachment${result.reclaimedAttachmentIds.length === 1 ? "" : "s"}`);
+        }
+        if (result.pendingAttachmentIds.length > 0) {
+          pushUiEvent(`◎ ${result.pendingAttachmentIds.length} stale Task attachment cleanup${result.pendingAttachmentIds.length === 1 ? " is" : "s are"} pending until the target is available`);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) pushUiEvent(`◎ Task attachment maintenance deferred: ${error}`);
+      });
+    return () => { cancelled = true; };
+    // Startup maintenance is intentionally once per installed renderer boot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* Apply theme/density/font-size whenever settings change. chatFontPx
    * is listed so a persisted font size from localStorage is applied at
@@ -1951,6 +2046,216 @@ export default function App(): JSX.Element {
   const activePendingAttachmentKey = pendingAttachmentKey(activeTabId);
   const pendingAttachments = pendingAttachmentsByTab[activePendingAttachmentKey]?.text ?? [];
   const pendingAttachmentChips = pendingAttachmentsByTab[activePendingAttachmentKey]?.chips ?? [];
+  const taskManagerContextForTab = useCallback((tab: TabEntry | null | undefined): TaskManagerCurrentContext => {
+    const projectId = tab?.projectId;
+    const projectLabel = projectId ? projects.find((project) => project.id === projectId)?.name : undefined;
+    return {
+      localPreset: currentLocalConnectionPreset(),
+      activeConnectionId: tab?.connectionId ?? null,
+      canonicalCwd: tab?.cwd ?? cwd,
+      projectId,
+      projectLabel,
+    };
+  }, [cwd, projects]);
+  const taskManagerCurrentContext = useCallback(
+    (): TaskManagerCurrentContext => taskManagerContextForTab(activeTab),
+    [activeTab?.connectionId, activeTab?.cwd, activeTab?.projectId, taskManagerContextForTab],
+  );
+  const taskComposerDisabledReason = useMemo(() => {
+    if (!inTauri()) return "Create task requires the ShellX desktop app.";
+    if (!activeTab) return "Create task needs an active chat tab.";
+    if (taskManagerOpen) return "Finish or close the current Task draft before creating another one.";
+    if (!(activeTab.cwd ?? cwd).trim()) return "Create task needs a resolved working folder for this tab.";
+    if (activeTab.connectionId && !activeConnectionPreset) {
+      return "The selected saved connection is unresolved. Choose it again before creating a task.";
+    }
+    if (taskAttachmentPersistenceBusy) return "Preparing durable Task attachments.";
+    return undefined;
+  }, [activeConnectionPreset, activeTab, cwd, taskAttachmentPersistenceBusy, taskManagerOpen]);
+  const openTaskManager = useCallback((
+    mode: TaskManagerMode,
+    initialDraft?: TaskManagerDraft,
+    context = taskManagerCurrentContext(),
+  ): void => {
+    setTaskManagerMode(mode);
+    setTaskManagerInitialDraft(initialDraft);
+    setTaskManagerOpen(true);
+    if (!inTauri()) {
+      setTaskManagerData((current) => ({
+        ...current,
+        loadState: "error",
+        loadDetail: "Task definitions are available only in the ShellX desktop app.",
+      }));
+      return;
+    }
+    void taskManagerController.load(context);
+  }, [taskManagerController, taskManagerCurrentContext]);
+  async function reclaimImportedTaskAttachments(
+    attachments: DurableTaskAttachmentReference[],
+  ): Promise<void> {
+    if (attachments.length === 0) return;
+    const attachmentIds = attachments.map((attachment) => attachment.attachmentId);
+    try {
+      const raw = await invoke<unknown>("tasks_reclaim_attachments", {
+        request: { attachmentIds },
+      });
+      const result = parseTaskAttachmentReclamationResponse(raw, attachmentIds);
+      if (result.reclaimedAttachmentIds.length > 0) {
+        pushUiEvent(`✓ reclaimed ${result.reclaimedAttachmentIds.length} unused Task attachment${result.reclaimedAttachmentIds.length === 1 ? "" : "s"}`);
+      }
+      if (result.pendingAttachmentIds.length > 0) {
+        pushUiEvent(`◎ ${result.pendingAttachmentIds.length} Task attachment cleanup${result.pendingAttachmentIds.length === 1 ? " is" : "s are"} pending until the target is available`);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      pushUiEvent(`◎ unused Task attachment cleanup remains pending: ${detail}`);
+    }
+  }
+  function closeTaskManager(): void {
+    const pending = pendingImportedTaskAttachmentsRef.current;
+    pendingImportedTaskAttachmentsRef.current = [];
+    setTaskManagerOpen(false);
+    if (pending.length > 0) void reclaimImportedTaskAttachments(pending);
+  }
+  async function saveTaskManagerDraft(draft: TaskManagerDraft): Promise<TaskManagerActionResult> {
+    const result = await taskManagerController.save(draft);
+    if (result.accepted) {
+      // A successfully created draft is now a durable selected definition.
+      // Leave create mode so Run now, lifecycle actions, and exact revision
+      // hydration operate on the record the controller just published.
+      setTaskManagerMode("edit");
+      setTaskManagerInitialDraft(undefined);
+    }
+    if (!result.accepted || pendingImportedTaskAttachmentsRef.current.length === 0) return result;
+    const saved = new Set((draft.context?.attachmentRefs ?? []).map((attachment) => attachment.attachmentId));
+    const unused = pendingImportedTaskAttachmentsRef.current
+      .filter((attachment) => !saved.has(attachment.attachmentId));
+    pendingImportedTaskAttachmentsRef.current = [];
+    if (unused.length > 0) void reclaimImportedTaskAttachments(unused);
+    return result;
+  }
+  function applyDebugTaskManagerAction(
+    action: Parameters<typeof updateDebugTaskManagerState>[1],
+    detail: string,
+  ): TaskManagerActionResult {
+    setTaskManagerData((current) => updateDebugTaskManagerState(current, action));
+    return { accepted: true, detail };
+  }
+  const createTaskFromComposer = useCallback(async (): Promise<void> => {
+    if (taskComposerDisabledReason || !activeTab || taskAttachmentPersistenceInFlightRef.current) return;
+    const sourceTabId = activeTab.tabId;
+    const sourceAttachmentPaths = pendingAttachmentChips.map((attachment) => attachment.path);
+    const taskContext = taskManagerCurrentContext();
+    let attachmentRefs: Array<{ attachmentId: string; digest?: string }> = [];
+    if (sourceAttachmentPaths.length > 0) {
+      taskAttachmentPersistenceInFlightRef.current = true;
+      setTaskAttachmentPersistenceBusy(true);
+      try {
+        const raw = await invoke<unknown>("tasks_persist_attachments", {
+          request: {
+            connectionId: taskEnvironmentKey(activeTab.connectionId),
+            canonicalCwd: taskContext.canonicalCwd,
+            sources: sourceAttachmentPaths,
+          },
+        });
+        const persisted = parseTaskAttachmentPersistenceResponse(raw, sourceAttachmentPaths.length);
+        attachmentRefs = persisted.attachments;
+        pendingImportedTaskAttachmentsRef.current = persisted.attachments.map((attachment) => ({ ...attachment }));
+        pushUiEvent(`✓ prepared ${persisted.attachments.length} durable Task attachment${persisted.attachments.length === 1 ? "" : "s"}`);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        pushUiEvent(`✗ Task attachments were not prepared: ${detail}`);
+        return;
+      } finally {
+        taskAttachmentPersistenceInFlightRef.current = false;
+        setTaskAttachmentPersistenceBusy(false);
+      }
+    }
+    if (tabsRef.current.every((tab) => tab.tabId !== sourceTabId)) {
+      const unused = pendingImportedTaskAttachmentsRef.current;
+      pendingImportedTaskAttachmentsRef.current = [];
+      if (unused.length > 0) void reclaimImportedTaskAttachments(unused);
+      pushUiEvent("✗ The source conversation closed before its Task draft was prepared.");
+      return;
+    }
+    const timezone = taskDeviceTimezone();
+    const initialDraft = createComposerTaskDraft({
+      requestId: `composer-task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      tabId: activeTab.tabId,
+      sessionId: activeTab.sessionId ?? undefined,
+      connectionKey: taskEnvironmentKey(activeTab.connectionId),
+      canonicalCwd: taskContext.canonicalCwd,
+      projectId: activeTab.projectId,
+      agentSuggestion: activeTab.agentId ?? undefined,
+      permissionMode: providerPermissionModeForAutonomy(activeTab.autonomy ?? autonomy),
+      autonomyMode: activeTab.autonomy ?? autonomy,
+      toolExposureIds: [normalizeShellxToolExposure(activeTab.shellxToolExposure)],
+      attachmentRefs,
+      visiblePrompt: prompt,
+      suggestedName: activeTab.title === "new session" ? undefined : activeTab.title,
+      timezone,
+    });
+    openTaskManager("create", initialDraft);
+  }, [activeTab, autonomy, openTaskManager, pendingAttachmentChips, prompt, taskAttachmentPersistenceBusy, taskComposerDisabledReason, taskManagerCurrentContext]);
+  const openBrowserTeachTaskDraft = useCallback(async (handoff: BrowserTeachTaskHandoff): Promise<void> => {
+    const browserState = await invoke<unknown>("shellx_browser_state");
+    if (!browserTeachTaskHandoffMatchesNativeState(handoff, browserState)) {
+      throw new Error("The reviewed Browser workflow receipt is no longer current.");
+    }
+    const sourceTab = tabsRef.current.find((tab) => tab.tabId === handoff.ownerSessionId);
+    if (!sourceTab) throw new Error("The ShellX session that recorded this workflow is no longer open.");
+    const context = taskManagerContextForTab(sourceTab);
+    if (!context.canonicalCwd.trim()) throw new Error("The source ShellX session has no resolved working folder.");
+    const initialDraft = createBrowserTeachTaskDraft({
+      requestId: handoff.requestId,
+      tabId: sourceTab.tabId,
+      sessionId: sourceTab.sessionId ?? undefined,
+      connectionKey: taskEnvironmentKey(sourceTab.connectionId),
+      canonicalCwd: context.canonicalCwd,
+      projectId: sourceTab.projectId,
+      agentSuggestion: sourceTab.agentId ?? undefined,
+      permissionMode: providerPermissionModeForAutonomy(sourceTab.autonomy ?? autonomy),
+      autonomyMode: sourceTab.autonomy ?? autonomy,
+      toolExposureIds: [normalizeShellxToolExposure(sourceTab.shellxToolExposure)],
+      attachmentRefs: [],
+      visiblePrompt: handoff.goal,
+      suggestedName: handoff.goal,
+      timezone: taskDeviceTimezone(),
+      workflow: { workflowId: handoff.workflowId, digest: handoff.workflowDigest },
+      vaultKeyIds: handoff.requiredVaultKeyIds,
+    });
+    setActiveTabId(sourceTab.tabId);
+    openTaskManager("create", initialDraft, context);
+  }, [autonomy, openTaskManager, taskManagerContextForTab]);
+  useBrowserTeachTaskHandoffBridge(openBrowserTeachTaskDraft);
+  useEffect(() => {
+    if (!inTauri()) return;
+    void taskManagerController.load(taskManagerCurrentContext());
+  }, [taskManagerController, taskManagerCurrentContext]);
+  useEffect(() => {
+    if (!inTauri()) return;
+    let disposed = false;
+    let unlistenTasks: UnlistenFn | undefined;
+    void listen("tasks-updated", () => {
+      if (disposed) return;
+      if (taskManagerOpenRef.current && taskManagerModeRef.current === "create") return;
+      const selectedDefinitionId = taskManagerController.snapshot().selectedDefinitionId;
+      void taskManagerController.load(taskManagerCurrentContext()).then(() => {
+        if (!disposed && selectedDefinitionId) {
+          void taskManagerController.selectDefinition(selectedDefinitionId);
+        }
+      });
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenTasks = unlisten;
+    }).catch(() => {
+      /* The Task Manager can still refresh explicitly after each action. */
+    });
+    return () => {
+      disposed = true;
+      unlistenTasks?.();
+    };
+  }, [taskManagerController, taskManagerCurrentContext]);
   const updatePendingAttachmentsForTab = useCallback((
     tabId: string | null | undefined,
     updater: (current: PendingComposerAttachments) => PendingComposerAttachments,
@@ -2711,6 +3016,21 @@ export default function App(): JSX.Element {
       if (goalPlanReviewFixturePatch) {
         setGoalPlanReviewFixtureMode(goalPlanReviewFixturePatch);
       }
+      const taskManagerFixturePatch = normalizeDebugTaskManagerFixtureMode(
+        p.debugTaskManagerFixture,
+      );
+      if (taskManagerFixturePatch === "clear") {
+        debugTaskManagerFixtureModeRef.current = null;
+        setDebugTaskManagerFixtureMode(null);
+        setTaskManagerOpen(false);
+      } else if (taskManagerFixturePatch) {
+        debugTaskManagerFixtureModeRef.current = taskManagerFixturePatch;
+        setDebugTaskManagerFixtureMode(taskManagerFixturePatch);
+        setTaskManagerData(debugTaskManagerFixtureData(taskManagerFixturePatch));
+        setTaskManagerMode("edit");
+        setTaskManagerInitialDraft(undefined);
+        setTaskManagerOpen(true);
+      }
       if (p.debugBuildPlanFixture === "owned-ready") {
         setDebugBuildPlanFixture("owned-ready");
       } else if (p.debugBuildPlanFixture === "clear") {
@@ -2720,6 +3040,12 @@ export default function App(): JSX.Element {
         setDebugShellxagentFixture("owned-safe");
       } else if (p.debugShellxagentFixture === "clear") {
         setDebugShellxagentFixture(null);
+      }
+      const cutToolingFixturePatch = normalizeDebugCutToolingFixture(p.debugCutToolingFixture);
+      if (cutToolingFixturePatch === "clear") {
+        setDebugCutToolingFixture(null);
+      } else if (cutToolingFixturePatch) {
+        setDebugCutToolingFixture(cutToolingFixturePatch);
       }
       if (p.debugClipboardFixture === "tasks"
         || p.debugClipboardFixture === "vault-draft"
@@ -2833,8 +3159,10 @@ export default function App(): JSX.Element {
         "debugPluginsFixture",
         "debugConnectorsFixture",
         "goalPlanReviewFixture",
+        "debugTaskManagerFixture",
         "debugBuildPlanFixture",
         "debugShellxagentFixture",
+        "debugCutToolingFixture",
         "debugClipboardFixture",
       ]) {
         if (Object.prototype.hasOwnProperty.call(p, key)) transient[key] = p[key];
@@ -3145,6 +3473,7 @@ export default function App(): JSX.Element {
       ?? null;
     const tabKey: string | null = tag ?? activeTabIdRef.current ?? null;
     if (!tabKey) return null;
+    if (isTaskRuntimeTabId(tabKey)) return null;
     return tabSessionByTab.current.get(tabKey)
       ?? tabsRef.current.find((t) => t.tabId === tabKey)?.sessionId
       ?? (tabKey === activeTabIdRef.current ? activeSessionIdRef.current : null)
@@ -3302,7 +3631,7 @@ export default function App(): JSX.Element {
             ?? (ev as any)?.payload?.params?._meta?.tabId
             ?? currentActiveTab
             ?? null;
-          if (tag) {
+          if (tag && !isTaskRuntimeTabId(tag)) {
             tabSessionByTab.current.set(tag, sid);
             flushPendingLocalEvents(tag);
             if (!sessionConnectionMetaWritten.current.has(sid)) {
@@ -5559,6 +5888,8 @@ export default function App(): JSX.Element {
         debugClipboardFixture={debugClipboardFixture === "vault-password" ? "vault-password" : null}
         onOpenVault={openVaultPanel}
         onOpenBrowser={handleOpenShellxBrowser}
+        onOpenTasks={() => openTaskManager("edit")}
+        taskAttentionCount={taskAttentionCount(taskManagerData.definitions)}
         onOpenAbout={openAboutInSettings}
         /* Live-sessions badge: count of tabs with a live grok
          * subprocess attached. sessionId is durable history; status is
@@ -6030,6 +6361,8 @@ export default function App(): JSX.Element {
                     onTabChange={setBottomTab}
                     onAttach={() => void handleAttach()}
                     onAttachScreenshot={() => void handleAttachScreenshot()}
+                    onCreateTask={createTaskFromComposer}
+                    createTaskDisabledReason={taskComposerDisabledReason}
                     attachments={pendingAttachmentChips}
                     onRemoveAttachment={removePendingAttachment}
                     /* Drag-and-drop attach from the right-rail Files
@@ -6166,6 +6499,7 @@ export default function App(): JSX.Element {
                       debugBuildRunFixture={debugBuildRunFixture}
                       debugRightRailGitFixture={debugRightRailGitFixture}
                       debugProviderAction={debugProviderAction?.action ?? null}
+                      debugCutToolingFixture={debugCutToolingFixture}
                       debugClipboardFixture={debugClipboardFixture === "tasks"
                         ? "tasks"
                         : debugClipboardFixture === "work-preview" ? "work-preview" : null}
@@ -6213,6 +6547,66 @@ export default function App(): JSX.Element {
 
       {/* Status pills + event count live in the header / mid-head.
        * No global footer strip. */}
+
+      {taskManagerOpen && (
+        <LazySurface label="Task Manager" onDismiss={closeTaskManager}>
+          <TaskManager
+            open
+            mode={taskManagerMode}
+            data={taskManagerData}
+            initialDraft={taskManagerInitialDraft}
+            onClose={closeTaskManager}
+            onSelectDefinition={(definitionId) => {
+              if (debugTaskManagerFixtureMode) {
+                setTaskManagerData((current) => {
+                  const selected = current.selectedDefinition?.id === definitionId
+                    ? current.selectedDefinition
+                    : undefined;
+                  return { ...current, selectedDefinitionId: definitionId, selectedDefinition: selected };
+                });
+              } else {
+                void taskManagerController.selectDefinition(definitionId);
+              }
+            }}
+            onSave={debugTaskManagerFixtureMode
+              ? () => ({ accepted: true, detail: "Owned Task fixture revision saved." })
+              : saveTaskManagerDraft}
+            onRunNow={debugTaskManagerFixtureMode
+              ? () => applyDebugTaskManagerAction("runNow", "Owned Task fixture run queued.")
+              : (request) => taskManagerController.runNow(request)}
+            onResolveAttention={debugTaskManagerFixtureMode
+              ? () => applyDebugTaskManagerAction("resolveAttention", "Owned Task fixture attention acknowledged.")
+              : (request) => taskManagerController.resolveAttention(request)}
+            onCancelRun={debugTaskManagerFixtureMode
+              ? () => applyDebugTaskManagerAction("cancel", "Owned Task fixture cancellation requested.")
+              : (request) => taskManagerController.cancelRun(request)}
+            onOpenVault={() => openVaultPanel("overview")}
+            onPause={debugTaskManagerFixtureMode
+              ? () => applyDebugTaskManagerAction("pause", "Owned Task fixture paused.")
+              : (request) => taskManagerController.pause(request)}
+            onResume={debugTaskManagerFixtureMode
+              ? () => applyDebugTaskManagerAction("resume", "Owned Task fixture resumed.")
+              : (request) => taskManagerController.resume(request)}
+            onDuplicate={debugTaskManagerFixtureMode
+              ? () => applyDebugTaskManagerAction("duplicate", "Owned Task fixture duplicated.")
+              : (request) => taskManagerController.duplicate(request)}
+            onDelete={debugTaskManagerFixtureMode
+              ? () => applyDebugTaskManagerAction("delete", "Owned Task fixture deleted.")
+              : (request) => taskManagerController.delete(request)}
+            onOpenRun={({ conversationSessionId }) => {
+              if (debugTaskManagerFixtureMode) {
+                return { accepted: true, detail: `Owned Task fixture conversation ${conversationSessionId} opened.` };
+              }
+              handleOpenChat(conversationSessionId);
+              closeTaskManager();
+              return { accepted: true, detail: "Run opened in its provider conversation." };
+            }}
+            onRequestProviderCatalogue={debugTaskManagerFixtureMode
+              ? () => ({ accepted: true, detail: "Owned provider catalogue refreshed." })
+              : (request) => taskManagerController.requestProviderCatalogue(request)}
+          />
+        </LazySurface>
+      )}
 
       {helpOpen && (
         <LazySurface label="Help" onDismiss={() => setHelpOpen(false)}>

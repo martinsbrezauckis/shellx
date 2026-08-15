@@ -7,10 +7,11 @@ import {
   parentFolderPath,
   parentRemoteFolderPath,
 } from "../src/lib/folder-path";
+import { readAppStyles } from "./lib/app-styles";
 
 const rightRail = readFileSync("src/components/RightRail.tsx", "utf8");
 const filesPane = readFileSync("src/components/FilesPane.tsx", "utf8");
-const css = readFileSync("src/App.css", "utf8");
+const css = readAppStyles();
 const app = readFileSync("src/App.tsx", "utf8");
 
 let failures = 0;

@@ -325,11 +325,15 @@ fn delegated_personal_tab_allows_task_owned_personal_popup() {
             ..StartBrowserTaskRequest::default()
         })
         .expect("task starts");
+    let review_fingerprint = registry
+        .tab_handoff_review_fingerprint(&user_tab.browser_tab_id, &task.task_id)
+        .expect("review fingerprint");
 
     let delegated = registry
         .delegate_tab_to_agent(BrowserTabDelegateRequest {
             browser_tab_id: user_tab.browser_tab_id,
             task_id: task.task_id.clone(),
+            review_fingerprint,
             reason: Some("user handed off mail tab".to_string()),
             operator_approved: true,
             ..BrowserTabDelegateRequest::default()

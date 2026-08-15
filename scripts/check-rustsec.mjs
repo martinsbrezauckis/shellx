@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validateGlibBackport } from "./lib/verify-glib-backport.mjs";
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const POLICY_PATH = resolve(ROOT, "security", "rustsec-dispositions.json");
 const LOCK_PATH = resolve(ROOT, "src-tauri", "Cargo.lock");
@@ -177,7 +179,7 @@ function renderEvaluation(evaluation) {
 
 function main() {
   try {
-    const patchErrors = validateWinrtPatch();
+    const patchErrors = [...validateWinrtPatch(), ...validateGlibBackport()];
     if (patchErrors.length > 0) throw new Error(patchErrors.join("\n"));
     const report = runCargoAudit();
     const policy = readJson(POLICY_PATH);

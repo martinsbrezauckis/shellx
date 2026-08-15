@@ -1,10 +1,11 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { readRustModuleFamily } from "./read-rust-module-family";
+import { readAppStyles } from "./lib/app-styles";
 
 const app = readFileSync("src/App.tsx", "utf8");
 const guide = readFileSync("src/components/ShellxSetupGuide.tsx", "utf8");
-const css = readFileSync("src/App.css", "utf8");
+const css = readAppStyles();
 const vaultUi = readFileSync("src/lib/vault-ui.ts", "utf8");
 const vaultTab = readFileSync("src/components/settings/VaultTab.tsx", "utf8");
 const debugApi = readRustModuleFamily("src-tauri/src/debug_api.rs");

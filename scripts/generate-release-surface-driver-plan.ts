@@ -33,15 +33,51 @@ import {
   BROWSER_TEACH_INSTALLED_DEBUG_ORACLE,
   BROWSER_TEACH_INSTALLED_FIXTURE,
 } from "./release-drivers/ui-browser-teach-review-installed-assignments";
+import {
+  TASK_MANAGER_CONTROL_CLEANUP,
+  TASK_MANAGER_CONTROL_DRIVER_ID,
+  TASK_MANAGER_CONTROL_FIXTURE,
+  TASK_MANAGER_CONTROL_SURFACE_NAMES,
+  taskManagerControlOracle,
+} from "./release-drivers/ui-task-manager-installed-assignments";
+import {
+  TASK_ENTRY_CLEANUP,
+  TASK_ENTRY_CONTROL_DRIVER_ID,
+  TASK_ENTRY_CONTROL_ORACLE,
+  TASK_ENTRY_CONTROL_SURFACE_IDS,
+  TASK_ENTRY_DEBUG_DRIVER_ID,
+  TASK_ENTRY_DEBUG_ORACLE,
+  TASK_ENTRY_DEBUG_SURFACE_IDS,
+  TASK_ENTRY_FIXTURE,
+} from "./release-drivers/ui-task-entry-installed-assignments";
+import {
+  TASK_DEBUG_API_SURFACES,
+  TASK_TAURI_COMMANDS,
+  taskDebugOracle,
+  taskTauriOracle,
+  type TaskDebugApiSurface,
+  type TaskTauriCommand,
+} from "./release-drivers/task-release-surface-fixture";
+import {
+  CUT_TOOLING_CLEANUP,
+  CUT_TOOLING_CONTROL_DRIVER_ID,
+  CUT_TOOLING_CONTROL_SURFACE_IDS,
+  CUT_TOOLING_FIXTURE,
+  CUT_TOOLING_ORACLE,
+} from "./release-drivers/ui-cut-tooling-installed-assignments";
 
 const BACKLOG_SUFFIX = "-backlog-installed";
+const TASK_DEBUG_API_DRIVER_ID = "debug-api-task-installed";
+const TASK_TAURI_DRIVER_ID = "tauri-command-task-installed";
+const TASK_DEBUG_API_SURFACE_SET = new Set<string>(TASK_DEBUG_API_SURFACES);
+const TASK_TAURI_COMMAND_SET = new Set<string>(TASK_TAURI_COMMANDS);
 const BROWSER_SHIELDS_UI_DRIVER_ID = "ui-control-browser-shields-installed";
 const KEYBOARD_NATIVE_PICKER_DRIVER_ID = "keyboard-shortcut-native-picker-installed";
 const PALETTE_NATIVE_PICKER_DRIVER_ID = "palette-action-native-picker-installed";
 const PALETTE_PROVIDER_ACTION_DRIVER_ID = "palette-action-provider-action-installed";
 const UI_NATIVE_PICKER_DRIVER_ID = "ui-control-native-picker-lifecycle-installed";
 const APP_FOLDER_SURFACE_ID =
-  'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-folder"]@src/components/BottomPanel.tsx#21';
+  'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-folder"]@src/components/BottomPanel.tsx#22';
 const SETTINGS_NATIVE_PICKER_SURFACE_ID =
   'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-browser-download-folder-choose"]@src/components/settings/GeneralTab.tsx#8';
 const BROWSER_NATIVE_PICKER_SURFACE_ID =
@@ -91,7 +127,7 @@ const CLIPBOARD_LIFECYCLE_UI_SURFACE_IDS = new Set([
   'ui-control:src/components/ChatOutput.tsx::is([aria-label="Copied"],[aria-label="Copy to clipboard"])@src/components/ChatOutput.tsx#2',
   'ui-control:src/components/FilePreviewModal.tsx:[title="Copy absolute path to clipboard"]@src/components/FilePreviewModal.tsx#5',
   'ui-control:src/components/FilePreviewModal.tsx:[title="Copies `@<path>` to clipboard. Paste into the composer to mention the file in your next prompt."]@src/components/FilePreviewModal.tsx#6',
-  'ui-control:src/components/RightRail.tsx:[title="Copy environment diagnostic report"]@src/components/RightRail.tsx#6',
+  'ui-control:src/components/RightRail.tsx:[title="Copy environment diagnostic report"]@src/components/RightRail.tsx#8',
   'ui-control:src/components/TasksPanel.tsx:[aria-label="Copy a compact report for visible tasks"]@src/components/TasksPanel.tsx#1',
   'ui-control:src/components/TasksPanel.tsx:[title="Copy this task\'s latest output"]@src/components/TasksPanel.tsx#10',
   'ui-control:src/components/settings/VaultTab.tsx:[aria-label="Copy without revealing"]@src/components/settings/VaultTab.tsx#27',
@@ -990,6 +1026,66 @@ const tasksPanelLifecycleUiDriver: FinalSurfaceDriverDefinition = {
     "linux-installed": "ready",
   },
 };
+const taskManagerControlUiDriver: FinalSurfaceDriverDefinition = {
+  id: TASK_MANAGER_CONTROL_DRIVER_ID,
+  kind: "ui-control",
+  entrypoint: "scripts/release-drivers/ui-control-task-manager-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
+const taskEntryControlUiDriver: FinalSurfaceDriverDefinition = {
+  id: TASK_ENTRY_CONTROL_DRIVER_ID,
+  kind: "ui-control",
+  entrypoint: "scripts/release-drivers/ui-control-task-entry-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
+const taskEntryDebugDriver: FinalSurfaceDriverDefinition = {
+  id: TASK_ENTRY_DEBUG_DRIVER_ID,
+  kind: "ui-debug-surface",
+  entrypoint: "scripts/release-drivers/ui-debug-task-entry-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
+const taskDebugApiDriver: FinalSurfaceDriverDefinition = {
+  id: TASK_DEBUG_API_DRIVER_ID,
+  kind: "debug-api-route",
+  entrypoint: "scripts/release-drivers/debug-api-task-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
+const taskTauriDriver: FinalSurfaceDriverDefinition = {
+  id: TASK_TAURI_DRIVER_ID,
+  kind: "tauri-command",
+  entrypoint: "scripts/release-drivers/tauri-command-task-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
+const cutToolingControlUiDriver: FinalSurfaceDriverDefinition = {
+  id: CUT_TOOLING_CONTROL_DRIVER_ID,
+  kind: "ui-control",
+  entrypoint: "scripts/release-drivers/ui-control-cut-tooling-installed.ts",
+  platforms: {
+    "windows-installed": "ready",
+    "macos-installed": "ready",
+    "linux-installed": "ready",
+  },
+};
 const chatOutputLifecycleUiDriver: FinalSurfaceDriverDefinition = {
   id: CHAT_OUTPUT_LIFECYCLE_UI_DRIVER_ID,
   kind: "ui-control",
@@ -1370,6 +1466,7 @@ const promotedTauriCommands = new Set([
   "shellx_browser_operator_export_performance",
   "shellx_browser_operator_list_teach_drafts",
   "shellx_browser_operator_prepare_teach_draft",
+  "shellx_browser_operator_prepare_teach_task_handoff",
   "shellx_browser_operator_rehearse_teach_recipe",
   "shellx_browser_operator_revise_teach_draft",
   "shellx_browser_sync_engine",
@@ -1417,6 +1514,7 @@ const promotedTauriCommands = new Set([
   "voice_credential_source",
   "write_user_data",
 ]);
+for (const command of TASK_TAURI_COMMANDS) promotedTauriCommands.add(command);
 const promotedTauriFailClosedCommands = new Set([
   "add_build_operator_note",
   "agent_cli_setup_confirm_install",
@@ -4465,6 +4563,12 @@ export function buildExpectedPlan(
       && driver.id !== NAVIGATION_TABS_UI_DRIVER_ID
       && driver.id !== SESSION_TABS_LIFECYCLE_UI_DRIVER_ID
       && driver.id !== TASKS_PANEL_LIFECYCLE_UI_DRIVER_ID
+      && driver.id !== TASK_MANAGER_CONTROL_DRIVER_ID
+      && driver.id !== TASK_ENTRY_CONTROL_DRIVER_ID
+      && driver.id !== TASK_ENTRY_DEBUG_DRIVER_ID
+      && driver.id !== TASK_DEBUG_API_DRIVER_ID
+      && driver.id !== TASK_TAURI_DRIVER_ID
+      && driver.id !== CUT_TOOLING_CONTROL_DRIVER_ID
       && driver.id !== CHAT_OUTPUT_LIFECYCLE_UI_DRIVER_ID
       && driver.id !== CHAT_OUTPUT_JUMP_DEBUG_DRIVER_ID
       && driver.id !== BROWSER_PERSONAL_LOCK_DEBUG_DRIVER_ID
@@ -4512,6 +4616,12 @@ export function buildExpectedPlan(
     navigationTabsUiDriver,
     sessionTabsLifecycleUiDriver,
     tasksPanelLifecycleUiDriver,
+    taskManagerControlUiDriver,
+    taskEntryControlUiDriver,
+    taskEntryDebugDriver,
+    taskDebugApiDriver,
+    taskTauriDriver,
+    cutToolingControlUiDriver,
     chatOutputLifecycleUiDriver,
     chatOutputJumpDebugDriver,
     browserPersonalLockDebugDriver,
@@ -4547,7 +4657,8 @@ export function buildExpectedPlan(
       ) || (
         surface.kind === "debug-api-route"
           && (
-            promotedDebugApiReads.has(surface.name)
+            TASK_DEBUG_API_SURFACE_SET.has(surface.name)
+            || promotedDebugApiReads.has(surface.name)
             || promotedDebugApiMutations.has(surface.name)
             || promotedDebugApiGitMutations.has(surface.name)
             || promotedDebugApiBrowserVaultDepositMutations.has(surface.name)
@@ -4615,6 +4726,9 @@ export function buildExpectedPlan(
             || BROWSER_SAVE_LIFECYCLE_UI_SURFACE_IDS.has(surface.id)
             || BROWSER_DEVELOPER_EVIDENCE_UI_SURFACE_IDS.has(surface.id)
             || BROWSER_TEACH_CONTROL_SURFACE_IDS.has(surface.id)
+            || CUT_TOOLING_CONTROL_SURFACE_IDS.has(surface.id)
+            || TASK_MANAGER_CONTROL_SURFACE_NAMES.has(surface.name)
+            || TASK_ENTRY_CONTROL_SURFACE_IDS.has(surface.id)
             || agentCliSetupLifecycleUiControls.has(surface.id)
             || goalPlanReviewLifecycleUiControls.has(surface.id)
             || CLIPBOARD_LIFECYCLE_UI_SURFACE_IDS.has(surface.id)
@@ -4629,6 +4743,7 @@ export function buildExpectedPlan(
             || BROWSER_DELEGATION_DEBUG_SURFACE_IDS.has(surface.id)
             || BROWSER_DEVELOPER_EVIDENCE_DEBUG_SURFACE_IDS.has(surface.id)
             || BROWSER_TEACH_DEBUG_ASSIGNMENT_IDS.has(surface.id)
+            || TASK_ENTRY_DEBUG_SURFACE_IDS.has(surface.id)
             || releaseUiDebugSurfaceCohort(surface) !== null
             || surface.name === CHAT_OUTPUT_JUMP_DEBUG_SURFACE_NAME
           )
@@ -4646,6 +4761,7 @@ export function buildExpectedPlan(
   const inventoryById = new Map(exactInventory.items.map((surface) => [surface.id, surface]));
   const curatedAssignments = plan.assignments.filter((assignment) => (
     !isBacklogDriverId(assignment.driverId)
+      && assignment.driverId !== CUT_TOOLING_CONTROL_DRIVER_ID
       && !isRetiredSurfaceAssignment(assignment.surfaceId)
       && !promotedSurfaceIds.has(assignment.surfaceId)
       && (
@@ -4653,12 +4769,23 @@ export function buildExpectedPlan(
         || !promotedOccurrenceIndependentIds.has(occurrenceIndependentSurfaceId(assignment.surfaceId))
       )
   )).map((assignment) => {
-    const surface = inventoryById.get(assignment.surfaceId);
-    return assignment.driverId === "ui-control-installed"
+    let next = assignment;
+    let surface = inventoryById.get(next.surfaceId);
+    if (!surface) {
+      const occurrenceId = occurrenceIndependentSurfaceId(next.surfaceId);
+      const candidates = exactInventory.items.filter((item) => (
+        occurrenceIndependentSurfaceId(item.id) === occurrenceId
+      ));
+      if (candidates.length === 1) {
+        surface = candidates[0]!;
+        next = { ...next, surfaceId: surface.id };
+      }
+    }
+    return next.driverId === "ui-control-installed"
       && surface
       && UI_CONTROL_BOUNDED_INSTALLED_SURFACE_NAMES.has(surface.name)
-      ? { ...assignment, driverId: UI_CONTROL_BOUNDED_INSTALLED_DRIVER_ID }
-      : assignment;
+      ? { ...next, driverId: UI_CONTROL_BOUNDED_INSTALLED_DRIVER_ID }
+      : next;
   });
   const promotedAssignments = exactInventory.items
     .filter((surface) => promotedSurfaceIds.has(surface.id))
@@ -4675,8 +4802,13 @@ export function buildExpectedPlan(
         };
       }
       if (NATIVE_PICKER_SURFACE_IDS.has(surface.id)) return promotedNativePickerAssignment(surface);
-      if (surface.kind === "tauri-command") return promotedTauriAssignment(surface);
+      if (surface.kind === "tauri-command") {
+        return TASK_TAURI_COMMAND_SET.has(surface.name)
+          ? promotedTaskTauriAssignment(surface)
+          : promotedTauriAssignment(surface);
+      }
       if (surface.kind === "debug-api-route") {
+        if (TASK_DEBUG_API_SURFACE_SET.has(surface.name)) return promotedTaskDebugApiAssignment(surface);
         if (promotedDebugApiBrowserVaultDepositMutations.has(surface.name)) return promotedDebugApiBrowserVaultDepositMutationAssignment(surface);
         if (promotedDebugApiBrowserWindowMutations.has(surface.name)) return promotedDebugApiBrowserWindowMutationAssignment(surface);
         if (promotedDebugApiGitMutations.has(surface.name)) return promotedDebugApiGitMutationAssignment(surface);
@@ -4723,7 +4855,9 @@ export function buildExpectedPlan(
           : promotedHostMcpReadAssignment(surface);
       }
       if (surface.kind === "ui-debug-surface") {
-        return surface.id === VAULT_ROW_REVEAL_DEBUG_SURFACE_ID
+        return TASK_ENTRY_DEBUG_SURFACE_IDS.has(surface.id)
+          ? promotedTaskEntryDebugAssignment(surface)
+          : surface.id === VAULT_ROW_REVEAL_DEBUG_SURFACE_ID
           ? promotedVaultRowRevealDebugAssignment(surface)
           : promotedVaultRequestPromptDebugSurfaces.has(surface.id)
           ? promotedVaultRequestPromptDebugAssignment(surface)
@@ -4733,6 +4867,15 @@ export function buildExpectedPlan(
       if (surface.kind === "keyboard-shortcut") return promotedKeyboardShortcutAssignment(surface);
       if (surface.kind === "shellx-command") return promotedShellxCommandAssignment(surface);
       if (surface.kind === "ui-control") {
+        if (CUT_TOOLING_CONTROL_SURFACE_IDS.has(surface.id)) {
+          return promotedCutToolingControlAssignment(surface);
+        }
+        if (TASK_ENTRY_CONTROL_SURFACE_IDS.has(surface.id)) {
+          return promotedTaskEntryControlAssignment(surface);
+        }
+        if (TASK_MANAGER_CONTROL_SURFACE_NAMES.has(surface.name)) {
+          return promotedTaskManagerControlAssignment(surface);
+        }
         if (BROWSER_TEACH_CONTROL_SURFACE_IDS.has(surface.id)) {
           return promotedBrowserTeachUiAssignment(surface);
         }
@@ -4966,6 +5109,65 @@ function promotedBrowserTeachUiAssignment(surface: ReleaseSurfaceItem): FinalSur
     expectedEffect: `${surface.name} is exercised through native installed input across the owned Browser Teach review, save/conflict, approval, rehearsal, receipt, and redacted disposable-Vault lifecycle.`,
     oracleId,
     cleanupId: BROWSER_TEACH_INSTALLED_CLEANUP,
+  };
+}
+
+function promotedCutToolingControlAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  if (!CUT_TOOLING_CONTROL_SURFACE_IDS.has(surface.id)) {
+    throw new Error(`missing Cut Tooling control config for ${surface.id}`);
+  }
+  const isCheck = surface.name.includes("Check ShellX Cut status");
+  return {
+    surfaceId: surface.id,
+    driverId: CUT_TOOLING_CONTROL_DRIVER_ID,
+    fixtureId: CUT_TOOLING_FIXTURE,
+    expectedEffect: isCheck
+      ? "Native installed input refreshes the exact selected-session Cut status and records one visible completion marker without probing or opening Cut when no desktop-host context exists."
+      : "Native installed input verifies the dynamic Cut Open control is disabled for an exact no-host-context session and a bounded activation attempt cannot launch Cut or change UI state.",
+    oracleId: CUT_TOOLING_ORACLE,
+    cleanupId: CUT_TOOLING_CLEANUP,
+  };
+}
+
+function promotedTaskManagerControlAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  if (!TASK_MANAGER_CONTROL_SURFACE_NAMES.has(surface.name)) {
+    throw new Error(`missing Task Manager control config for ${surface.id}`);
+  }
+  return {
+    surfaceId: surface.id,
+    driverId: TASK_MANAGER_CONTROL_DRIVER_ID,
+    fixtureId: TASK_MANAGER_CONTROL_FIXTURE,
+    expectedEffect: `${surface.name} is exercised through native installed input against a bounded owned Task definition, structured schedule, ordered provider route, append-only run history, and explicit cleanup without launching a provider.`,
+    oracleId: taskManagerControlOracle(surface),
+    cleanupId: TASK_MANAGER_CONTROL_CLEANUP,
+  };
+}
+
+function promotedTaskEntryControlAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  if (!TASK_ENTRY_CONTROL_SURFACE_IDS.has(surface.id)) {
+    throw new Error(`missing Task entry control config for ${surface.id}`);
+  }
+  return {
+    surfaceId: surface.id,
+    driverId: TASK_ENTRY_CONTROL_DRIVER_ID,
+    fixtureId: TASK_ENTRY_FIXTURE,
+    expectedEffect: `${surface.name} is exercised through native installed input from an owned opposite Task Manager baseline without saving or launching a provider.`,
+    oracleId: TASK_ENTRY_CONTROL_ORACLE,
+    cleanupId: TASK_ENTRY_CLEANUP,
+  };
+}
+
+function promotedTaskEntryDebugAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  if (!TASK_ENTRY_DEBUG_SURFACE_IDS.has(surface.id)) {
+    throw new Error(`missing Task entry marker config for ${surface.id}`);
+  }
+  return {
+    surfaceId: surface.id,
+    driverId: TASK_ENTRY_DEBUG_DRIVER_ID,
+    fixtureId: TASK_ENTRY_FIXTURE,
+    expectedEffect: `${surface.name} renders as a visible installed-app marker in its exact owned Task entry state without invoking the control.`,
+    oracleId: TASK_ENTRY_DEBUG_ORACLE,
+    cleanupId: TASK_ENTRY_CLEANUP,
   };
 }
 
@@ -5327,6 +5529,45 @@ function vaultOwnedExternalConfig(
     `ui-control:${source}:${selector}@${source}#${occurrence}`,
     { fixtureId, expectedEffect, oracleId, cleanupId: NEW_VAULT_RESOURCE_CLEANUP },
   ];
+}
+
+function promotedTaskDebugApiAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  const name = surface.name as TaskDebugApiSurface;
+  if (!TASK_DEBUG_API_SURFACE_SET.has(name)) {
+    throw new Error(`missing Task Debug API config for ${surface.id}`);
+  }
+  return {
+    surfaceId: surface.id,
+    driverId: TASK_DEBUG_API_DRIVER_ID,
+    fixtureId: "debug-api:isolated-task-definition-lifecycle",
+    expectedEffect: `${name} exercises its exact isolated Task definition, state, receipt, catalogue, safe-refusal, or delete contract without launching a provider.`,
+    oracleId: taskDebugOracle(name),
+    cleanupId: "debug-api:soft-delete-owned-task-and-candidate-teardown",
+  };
+}
+
+function promotedTaskTauriAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
+  const name = surface.name as TaskTauriCommand;
+  if (!TASK_TAURI_COMMAND_SET.has(name)) {
+    throw new Error(`missing Task Tauri command config for ${surface.id}`);
+  }
+  const expectedEffect = name === "cut_tooling_open"
+    ? "Installed Tauri IPC proves the operator-only Cut Open command fails closed for an exact absent ShellX host context and launches no editor."
+    : name === "tasks_run_now"
+      ? "Installed Tauri IPC proves Run now refuses an exact paused Task before occurrence creation or provider dispatch."
+      : name === "tasks_cancel_run"
+        ? "Installed Tauri IPC proves Cancel run refuses an exact inactive attempt without creating cancellation state."
+        : name.startsWith("tasks_resolve_attention")
+          ? `Installed Tauri IPC ${name} refuses an absent exact attention identity without manufacturing an acknowledgement.`
+          : `Installed Tauri IPC ${name} exercises its exact isolated Task catalogue, definition, state, receipt, attachment, or cleanup contract without launching a provider.`;
+  return {
+    surfaceId: surface.id,
+    driverId: TASK_TAURI_DRIVER_ID,
+    fixtureId: "tauri:isolated-task-command-lifecycle",
+    expectedEffect,
+    oracleId: taskTauriOracle(name),
+    cleanupId: "tauri:soft-delete-owned-task-reclaim-attachment-and-candidate-teardown",
+  };
 }
 
 function promotedDebugApiReadAssignment(surface: ReleaseSurfaceItem): FinalSurfaceDriverAssignment {
@@ -6170,6 +6411,7 @@ function promotedTauriSpecialAssignment(surface: ReleaseSurfaceItem): FinalSurfa
   }
   if (new Set([
     "shellx_browser_operator_prepare_teach_draft",
+    "shellx_browser_operator_prepare_teach_task_handoff",
     "shellx_browser_operator_list_teach_drafts",
     "shellx_browser_operator_revise_teach_draft",
     "shellx_browser_operator_approve_teach_draft",
@@ -6177,22 +6419,26 @@ function promotedTauriSpecialAssignment(surface: ReleaseSurfaceItem): FinalSurfa
   ]).has(surface.name)) {
     const effect = surface.name === "shellx_browser_operator_prepare_teach_draft"
       ? "derives one immutable operator Teach draft from exact owned Flight Recorder evidence"
-      : surface.name === "shellx_browser_operator_list_teach_drafts"
-        ? "reads back one exact owned operator Teach draft"
-        : surface.name === "shellx_browser_operator_revise_teach_draft"
-          ? "creates one compare-and-swap operator Teach revision and reads it back"
-          : surface.name === "shellx_browser_operator_approve_teach_draft"
-            ? "creates one operator-approved Action Recipe V2 draft and matching approval receipt without applying it"
-            : "dry-runs one approved Teach recipe with zero applied steps and records one rehearsal receipt";
+      : surface.name === "shellx_browser_operator_prepare_teach_task_handoff"
+        ? "binds the exact approved zero-skip rehearsal to one path-private workflow bookmark and returns only paused Task draft identities"
+        : surface.name === "shellx_browser_operator_list_teach_drafts"
+          ? "reads back one exact owned operator Teach draft"
+          : surface.name === "shellx_browser_operator_revise_teach_draft"
+            ? "creates one compare-and-swap operator Teach revision and reads it back"
+            : surface.name === "shellx_browser_operator_approve_teach_draft"
+              ? "creates one operator-approved Action Recipe V2 draft and matching approval receipt without applying it"
+              : "dry-runs one approved Teach recipe with zero applied steps and records one rehearsal receipt";
     const oracle = surface.name === "shellx_browser_operator_prepare_teach_draft"
       ? "owned-draft"
-      : surface.name === "shellx_browser_operator_list_teach_drafts"
-        ? "owned-draft-readback"
-        : surface.name === "shellx_browser_operator_revise_teach_draft"
-          ? "owned-revision"
-          : surface.name === "shellx_browser_operator_approve_teach_draft"
-            ? "owned-approval-receipt"
-            : "dry-run-receipt";
+      : surface.name === "shellx_browser_operator_prepare_teach_task_handoff"
+        ? "path-private-workflow-bookmark"
+        : surface.name === "shellx_browser_operator_list_teach_drafts"
+          ? "owned-draft-readback"
+          : surface.name === "shellx_browser_operator_revise_teach_draft"
+            ? "owned-revision"
+            : surface.name === "shellx_browser_operator_approve_teach_draft"
+              ? "owned-approval-receipt"
+              : "dry-run-receipt";
     return {
       surfaceId: surface.id,
       driverId: "tauri-command-installed",

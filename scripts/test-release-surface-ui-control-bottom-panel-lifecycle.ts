@@ -33,18 +33,18 @@ const controllerFiles = [
 ];
 const expectedSurfaceIds = [
   "ui-control:src/components/BottomPanel.tsx:[aria-label^=\"Remove \"]@src/components/BottomPanel.tsx#10",
-  "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-24\"]@src/components/BottomPanel.tsx#24",
+  "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-24\"]@src/components/BottomPanel.tsx#25",
   "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-9\"]@src/components/BottomPanel.tsx#9",
   "ui-control:src/components/BottomPanel.tsx:role=button;name=\"Inspect\"@src/components/BottomPanel.tsx#11",
   "ui-control:src/components/BottomPanel.tsx:role=button;name=\"Summarize\"@src/components/BottomPanel.tsx#12",
-  "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-23\"]@src/components/BottomPanel.tsx#23",
-  "ui-control:src/components/BottomPanel.tsx:[aria-label=\"Turn voice chat off and cancel active listening\"]@src/components/BottomPanel.tsx#17",
+  "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"surface-components-bottompanel-23\"]@src/components/BottomPanel.tsx#24",
+  "ui-control:src/components/BottomPanel.tsx:[aria-label=\"Turn voice chat off and cancel active listening\"]@src/components/BottomPanel.tsx#18",
   "ui-control:src/components/MicButton.tsx:[data-release-control=\"composer-mic-button\"]@src/components/MicButton.tsx#1",
 ].sort();
 const expectedRemainingBacklogIds: string[] = [];
 const expectedNativePickerIds = [
   "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-attach\"]@src/components/BottomPanel.tsx#15",
-  "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-folder\"]@src/components/BottomPanel.tsx#21",
+  "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-folder\"]@src/components/BottomPanel.tsx#22",
 ].sort();
 const backlogBlockerNeedles = new Map<string, string>();
 
@@ -183,7 +183,7 @@ function createRequest(candidateBase: string, webdriverBase: string, candidatePo
     && assignment.cleanupId.startsWith("native-picker:")
   )));
   const slashHighlight = plan.assignments.find((assignment) => (
-    assignment.surfaceId === "ui-debug-surface:surface-components-bottompanel-24@src/components/BottomPanel.tsx#22"
+    assignment.surfaceId === "ui-debug-surface:surface-components-bottompanel-24@src/components/BottomPanel.tsx#23"
   ));
   assert(slashHighlight, "the slash command highlight marker must exist in the driver plan");
   assert.equal(slashHighlight.driverId, "ui-debug-surface-installed");

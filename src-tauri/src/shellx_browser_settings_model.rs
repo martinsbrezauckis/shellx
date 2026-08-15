@@ -608,6 +608,8 @@ pub struct BrowserTabDelegateRequest {
     pub browser_tab_id: String,
     #[serde(rename = "taskId", alias = "task_id")]
     pub task_id: String,
+    #[serde(rename = "reviewFingerprint", alias = "review_fingerprint")]
+    pub review_fingerprint: String,
     #[serde(rename = "grantId", alias = "grant_id", default)]
     pub grant_id: Option<String>,
     #[serde(default)]

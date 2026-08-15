@@ -152,7 +152,9 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
 - **Teach workflow** keeps the most recent complete recorded attempt available
   after its task completes and turns it into an editable, evidence-bound recipe
   draft. Saving creates an immutable revision, approval creates but does not
-  run the recipe, and rehearsal is a dry run with zero applied steps.
+  run the recipe, and rehearsal is a dry run with zero applied steps. A
+  zero-skip rehearsal can open a paused Task draft in the main workspace with
+  the exact workflow digest and required Vault key identities for review.
 - **Developer inspection** stays attached to the live task and summarizes the
   current page's document checks, console, network, performance, and
   deterministic issues. Separate HAR and performance exports return compact
@@ -181,10 +183,37 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
 
 ## Tasks and API
 
-- Background tasks show CPU, memory, latest output, health counters,
-  report copy, agent diagnostics, and stop controls.
+- The header Tasks button opens the first-class Task Manager for one-time or
+  recurring agent work. Create Task below the composer starts a reviewed draft
+  from the current conversation; provider order and schedule stay in Task
+  Manager.
+- Date and time pickers follow the execution computer's local clock by default.
+  Timezone pinning, missed-run behavior, stop-after limits, and notification
+  policy remain in Advanced timing and notifications.
+- Each run is bound to one immutable revision and one saved environment, then
+  checked against a fresh provider catalogue before work starts. Run history,
+  fallback decisions, unresolved attention, exact-session Open run, and
+  exact-attempt Cancel run use bounded receipts rather than provider output.
+- Saved Browser workflow and Vault references are revalidated before dispatch.
+  ShellX passes only reviewed identities and digests to eligible agents; recipe
+  paths and raw Vault values stay out of prompts and Task receipts.
+- Visible composer attachments are copied only when you choose Create Task.
+  ShellX verifies private, content-addressed copies on the exact execution
+  target and shows their durable IDs and digests for review in Task Manager;
+  original paths and file contents stay out of Task records and receipts.
+  Closing an unsaved draft, or saving after removing an import, reclaims only
+  never-saved exact copies through a retryable two-phase receipt; startup
+  maintenance resumes a bounded pending/stale batch after interruption.
+- Teach-created Task drafts start paused with no provider route selected. Task
+  Manager shows the workflow binding and lets you select only active mediated
+  Vault grants before enabling and saving the schedule.
+- Optional desktop notifications appear only after a durable terminal result;
+  each Task can choose attention-only or every-result notifications.
+- The right-rail live process monitor remains available for CPU, memory, latest
+  output, health counters, report copy, agent diagnostics, and stop controls.
 - The shellXagent API exposes app state, prompts, screenshots, previews,
-  settings, vault actions, build state, and diagnostics over loopback.
+  settings, Vault actions, first-class Task state/actions, build state, and
+  diagnostics over loopback.
 - API access uses a private per-user bearer resolved internally by ShellX-owned clients.
 - The updater checks signed release manifests and offers in-app updates
   when a published release is available.

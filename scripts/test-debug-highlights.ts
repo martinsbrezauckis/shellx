@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readRustModuleFamily } from "./read-rust-module-family";
 import { normalizeDebugHighlightRequests } from "../src/lib/debug-highlight-normalization";
+import { readAppStyles } from "./lib/app-styles";
 
 let failures = 0;
 function assert(cond: boolean, label: string): void {
@@ -28,7 +29,7 @@ const permissionPillSource = readFileSync("src/components/PermissionPill.tsx", "
 const sessionTabsSource = readFileSync("src/components/SessionTabs.tsx", "utf8");
 const tasksPanelSource = readFileSync("src/components/TasksPanel.tsx", "utf8");
 const installedInputSource = readFileSync("scripts/lib/release-surface-installed-input-client.ts", "utf8");
-const cssSource = readFileSync("src/App.css", "utf8");
+const cssSource = readAppStyles();
 const bottomPanelSource = readFileSync("src/components/BottomPanel.tsx", "utf8");
 const settingsSource = readFileSync("src/components/Settings.tsx", "utf8");
 const generalSettingsSource = readFileSync("src/components/settings/GeneralTab.tsx", "utf8");

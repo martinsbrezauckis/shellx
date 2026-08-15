@@ -65,12 +65,16 @@ const APPROVE = "[data-debug-id='shellx-browser-teach-approve-recipe']";
 const REHEARSE = "[data-debug-id='shellx-browser-teach-rehearse']";
 const COPY_APPROVAL = "[data-debug-id='shellx-browser-teach-copy-approval-receipt']";
 const COPY_REHEARSAL = "[data-debug-id='shellx-browser-teach-copy-rehearsal-receipt']";
+const CREATE_TASK = "[data-debug-id='shellx-browser-teach-create-task']";
+const COPY_TASK = "[data-debug-id='shellx-browser-teach-copy-task-receipt']";
 const ISSUE_ACTION = "[data-debug-id^='shellx-browser-teach-issue-action-']";
 const VALUE_LABEL = "[data-debug-id^='shellx-browser-teach-value-label-']";
 const VALUE_LITERAL = "[data-debug-id^='shellx-browser-teach-value-literal-']";
 const VAULT_BINDING = "[data-debug-id^='shellx-browser-teach-vault-binding-']";
 const APPROVAL_RECEIPT = "[data-debug-id='shellx-browser-teach-approval-receipt']";
 const REHEARSAL_RECEIPT = "[data-debug-id='shellx-browser-teach-rehearsal-receipt']";
+const TASK_HANDOFF_RECEIPT = "[data-debug-id='shellx-browser-teach-task-handoff-receipt']";
+const TASK_MANAGER_CLOSE = "[data-debug-id='task-manager-close']";
 
 const CONTROL_BY_SUFFIX = new Map<string, string>([
   ["issue-action-", ISSUE_ACTION],
@@ -80,6 +84,8 @@ const CONTROL_BY_SUFFIX = new Map<string, string>([
   ["approve-recipe\"]", APPROVE],
   ["copy-approval-receipt\"]", COPY_APPROVAL],
   ["copy-rehearsal-receipt\"]", COPY_REHEARSAL],
+  ["copy-task-receipt\"]", COPY_TASK],
+  ["create-task\"]", CREATE_TASK],
   ["goal\"]", GOAL],
   ["rehearse\"]", REHEARSE],
   ["reload-stale\"]", RELOAD_STALE],
@@ -135,6 +141,7 @@ export async function runBrowserTeachInstalledLifecycle(
       "shellx-browser-teach-values", "shellx-browser-teach-value-*", "shellx-browser-teach-value-label-*",
       "shellx-browser-teach-value-literal-*", "shellx-browser-teach-vault-binding-*",
       "shellx-browser-teach-save-draft", "shellx-browser-teach-rehearse", "shellx-browser-teach-approve-recipe",
+      "shellx-browser-teach-create-task",
     ]);
     await recordMarkers(input, proof, ["shellx-browser-teach-vault-unavailable"]);
     await unlockOwnedIsolatedVault(connection, vaultRelay);
@@ -190,9 +197,26 @@ export async function runBrowserTeachInstalledLifecycle(
     proof.controlEffects.set(REHEARSE, "Native Rehearse produced a zero-apply dry-run receipt for the exact approved recipe.");
     await nativeClick(input, COPY_REHEARSAL);
     proof.controlEffects.set(COPY_REHEARSAL, "Native input copied the rehearsal correlation receipt after the dry-run receipt was visibly present.");
+
+    await nativeClick(input, CREATE_TASK);
+    await waitForReleaseSurfaceInstalledInputElement(input, TASK_HANDOFF_RECEIPT, { timeoutMs: TIMEOUT_MS });
+    await recordMarkers(input, proof, [
+      "shellx-browser-teach-task-handoff-receipt",
+      "shellx-browser-teach-copy-task-receipt",
+      "shellx-browser-teach-state-*",
+    ]);
+    proof.controlEffects.set(CREATE_TASK, "Native Create task draft handed the exact approved and rehearsed workflow receipt to the main ShellX Task Manager without selecting or launching a provider.");
+    await nativeClick(input, COPY_TASK);
+    proof.controlEffects.set(COPY_TASK, "Native input copied the path-free workflow, handoff receipt, and immutable revision correlation after the Task draft acknowledgement was visible.");
   } finally {
     if (originalWindow) {
-      try { await switchReleaseSurfaceInstalledInputWindow(input, originalWindow); } catch (error) { cleanupErrors.push(`window restore: ${errorText(error)}`); }
+      try {
+        await switchReleaseSurfaceInstalledInputWindow(input, originalWindow);
+        if (proof.controlEffects.has(CREATE_TASK)) {
+          await nativeClick(input, TASK_MANAGER_CLOSE);
+          await waitForReleaseSurfaceInstalledInputElementAbsent(input, TASK_MANAGER_CLOSE, { timeoutMs: TIMEOUT_MS });
+        }
+      } catch (error) { cleanupErrors.push(`window restore and Task draft close: ${errorText(error)}`); }
     }
     if (fixture) {
       try {
@@ -226,7 +250,7 @@ export function browserTeachDebugOutcomes(assignments: readonly Assignment[], pr
   const ids = new Set(assignments.map((assignment) => debugMarkerFromSurfaceId(assignment.surface.id)));
   if (assignments.length !== BROWSER_TEACH_DEBUG_SURFACE_IDS.size || ids.size !== BROWSER_TEACH_DEBUG_SURFACE_IDS.size
     || [...BROWSER_TEACH_DEBUG_SURFACE_IDS].some((id) => !ids.has(id))) {
-    throw new Error("Browser Teach debug driver requires exactly its 27 static/dynamic marker assignments");
+    throw new Error(`Browser Teach debug driver requires exactly its ${BROWSER_TEACH_DEBUG_SURFACE_IDS.size} static/dynamic marker assignments`);
   }
   return assignments.map((assignment) => {
     const marker = debugMarkerFromSurfaceId(assignment.surface.id);

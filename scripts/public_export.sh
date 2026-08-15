@@ -102,7 +102,10 @@ tar -C "$tmp_dir" -cf - . | tar -C "$out_dir" -xf -
 
 if [ "$init_git" -eq 1 ]; then
   git -C "$out_dir" init -b main >/dev/null
-  git -C "$out_dir" add -A
+  # The staged payload is already positive-selected and byte-verified. Force-add
+  # it so an upstream vendored filename such as Cargo.toml.orig is not silently
+  # omitted by the repository's developer-workspace ignore rules.
+  git -C "$out_dir" add -A -f
   git -C "$out_dir" \
     -c user.name='ShellX Public Export' \
     -c user.email='shellx-public-export@example.invalid' \

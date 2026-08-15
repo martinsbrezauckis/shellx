@@ -80,7 +80,7 @@ pub(crate) fn mark_browser_developer_mode_approval_operator_approved(
 }
 
 impl ShellxBrowserRegistry {
-    pub(crate) fn ensure_agent_owns_cdp_target(
+    pub(crate) fn ensure_browser_request_authority_for_cdp_target(
         &self,
         request: &BrowserCdpExecuteRequest,
         caller_session_id: Option<&str>,
@@ -90,7 +90,11 @@ impl ShellxBrowserRegistry {
         let task_idx = find_task_index(&state, &task_id)?;
         ensure_browser_task_control_authority(
             &state.tasks[task_idx],
-            BrowserTaskControlAuthority::Agent,
+            if caller_session_id.is_some() {
+                BrowserTaskControlAuthority::Agent
+            } else {
+                BrowserTaskControlAuthority::Operator
+            },
             caller_session_id,
         )
     }
@@ -601,15 +605,14 @@ mod tests {
         };
 
         registry
-            .ensure_agent_owns_cdp_target(&request, Some("session-a"))
+            .ensure_browser_request_authority_for_cdp_target(&request, Some("session-a"))
             .expect("owner session may target its task");
-        for caller in [None, Some("session-b")] {
-            let error = registry
-                .ensure_agent_owns_cdp_target(&request, caller)
-                .expect_err("missing or mismatched caller must be rejected");
-            assert!(
-                error.contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED)
-            );
-        }
+        registry
+            .ensure_browser_request_authority_for_cdp_target(&request, None)
+            .expect("headerless bearer request has explicit operator authority");
+        let error = registry
+            .ensure_browser_request_authority_for_cdp_target(&request, Some("session-b"))
+            .expect_err("mismatched agent caller must be rejected");
+        assert!(error.contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED));
     }
 }

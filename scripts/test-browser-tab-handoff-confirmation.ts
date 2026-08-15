@@ -76,13 +76,34 @@ assert.deepEqual(browserTabHandoffUrlContext("file:///Users/operator/private.txt
   currentUrlContext: "Local or non-web URL context is withheld",
 });
 
-const confirmation = browserTabHandoffConfirmation(tab, task, profile);
+const confirmation = await browserTabHandoffConfirmation(tab, task, profile);
 assert.equal(confirmation.browserTabId, tab.browserTabId);
 assert.equal(confirmation.profileLabel, "Personal");
 assert.equal(confirmation.persistenceLabel, "Persistent profile storage");
 assert.equal(confirmation.ownerLabel, "User-controlled");
 assert.equal(confirmation.taskId, task.taskId);
 assert.equal(confirmation.taskLabel, task.goal);
+assert.match(confirmation.reviewFingerprint, /^sha256:[a-f0-9]{64}$/);
+assert.equal(
+  confirmation.reviewFingerprint,
+  "sha256:3929a94c0f96c5c49026bcdec477eb50af4e1b735086201cf821b010f780825c",
+  "the renderer and Rust backend share one stable handoff review fingerprint contract",
+);
+assert(!confirmation.reviewFingerprint.includes("secret-value"), "the opaque review fingerprint must not expose URL secrets");
+assert.notEqual(
+  (await browserTabHandoffConfirmation(
+    { ...tab, url: "https://operator:private@example.test/orders/418?token=changed#fragment" },
+    task,
+    profile,
+  )).reviewFingerprint,
+  confirmation.reviewFingerprint,
+  "a query-only page change must invalidate the exact backend review fingerprint",
+);
+assert.notEqual(
+  (await browserTabHandoffConfirmation({ ...tab, updatedAtMs: 2 }, task, profile)).reviewFingerprint,
+  confirmation.reviewFingerprint,
+  "a later tab state must not be able to replay the prior review fingerprint",
+);
 assert.equal(browserTabHandoffRevalidationError(confirmation, tab, task, [tab], [profile]), null);
 assert.match(
   browserTabHandoffRevalidationError(confirmation, { ...tab, browserTabId: "tab-other" }, task, [tab], [profile]) ?? "",
@@ -108,6 +129,8 @@ assert.match(
 );
 
 const hookSource = readFileSync("src/browser/hooks/useBrowserTabs.ts", "utf8");
+const backendSource = readFileSync("src-tauri/src/shellx_browser_tab_handoff.rs", "utf8");
+const apiDocs = readFileSync("docs/public/API.md", "utf8");
 const componentSource = readFileSync("src/browser/components/BrowserTabHandoffConfirmation.tsx", "utf8");
 const appSource = readFileSync("src/components/ShellxBrowserApp.tsx", "utf8");
 const cssSource = readFileSync("src/browser/components/BrowserTabHandoffConfirmation.css", "utf8");
@@ -122,6 +145,24 @@ assert(
     hookSource.includes("activeTask,") &&
     hookSource.includes("tabs,"),
   "the exact active tab and task must be revalidated before delegation",
+);
+assert(
+  hookSource.includes("reviewFingerprint: handoffConfirmation.reviewFingerprint"),
+  "the backend handoff must receive the fingerprint captured by the owned review sheet",
+);
+assert(
+  backendSource.includes("browser_tab_handoff_review_fingerprint") &&
+    backendSource.indexOf("expected_fingerprint") < backendSource.indexOf("owner_kind = BrowserTabOwnerKind::DelegatedToAgent"),
+  "the backend must verify the exact review fingerprint before changing tab ownership",
+);
+assert(
+  backendSource.includes("Only a user-controlled Browser tab can be handed off") &&
+    backendSource.includes("A terminal Browser task cannot receive a tab handoff"),
+  "the backend must reject stale ownership and terminal target tasks",
+);
+assert(
+  apiDocs.includes("reviewFingerprint") && apiDocs.includes("atomically revalidates"),
+  "the public API docs must describe the backend-bound Browser handoff review",
 );
 assert(hookSource.includes('tone: "pending"') && hookSource.includes('tone: "error"') && hookSource.includes('tone: "success"'));
 assert(componentSource.includes('role="alertdialog"') && componentSource.includes('aria-modal="true"'));

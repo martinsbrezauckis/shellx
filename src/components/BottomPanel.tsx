@@ -267,6 +267,8 @@ export function BottomPanel({
  // parent (file picker via tauri-plugin-dialog).
   onAttach,
   onAttachScreenshot,
+  onCreateTask,
+  createTaskDisabledReason,
   attachments = [],
   onRemoveAttachment,
  // drag-and-drop from the right-rail Files
@@ -320,6 +322,10 @@ export function BottomPanel({
   onTabChange?: (t: BottomTab) => void;
   onAttach?: () => void;
   onAttachScreenshot?: () => void;
+ /** Opens Task Manager with a reviewed draft from this visible composer. */
+  onCreateTask?: () => void;
+ /** Exact reason context capture is unavailable for the active session. */
+  createTaskDisabledReason?: string;
   attachments?: ComposerAttachmentChip[];
   onRemoveAttachment?: (id: string) => void;
  /** same as onAttach but with explicit paths
@@ -541,6 +547,8 @@ export function BottomPanel({
             connected={connected}
             onAttach={onAttach}
             onAttachScreenshot={onAttachScreenshot}
+            onCreateTask={onCreateTask}
+            createTaskDisabledReason={createTaskDisabledReason}
             attachments={attachments}
             onRemoveAttachment={onRemoveAttachment}
             onAttachPaths={onAttachPaths}
@@ -735,6 +743,8 @@ function PromptComposer({
   connected,
   onAttach,
   onAttachScreenshot,
+  onCreateTask,
+  createTaskDisabledReason,
   attachments = [],
   onRemoveAttachment,
   onAttachPaths,
@@ -769,6 +779,8 @@ function PromptComposer({
   connected: boolean;
   onAttach?: () => void;
   onAttachScreenshot?: () => void;
+  onCreateTask?: () => void;
+  createTaskDisabledReason?: string;
   attachments?: ComposerAttachmentChip[];
   onRemoveAttachment?: (id: string) => void;
  /** drag-and-drop attach from Files tab. */
@@ -1538,6 +1550,18 @@ function PromptComposer({
             <span className="plus"><ShellIcon name="camera" size={14} /></span>
             <span className="attach-label">Screen</span>
           </button>
+          <button
+            type="button"
+            className="attach-btn"
+            data-debug-id="composer-create-task"
+            title={createTaskDisabledReason ?? "Create a task from this conversation"}
+            aria-label="Create task from this conversation"
+            onClick={onCreateTask}
+            disabled={!onCreateTask || Boolean(createTaskDisabledReason)}
+          >
+            <span className="plus"><ShellIcon name="clock" size={14} /></span>
+            <span className="attach-label">Task</span>
+          </button>
 
  {/* IDLE/CONNECTED status pill. */}
           <span
@@ -1563,8 +1587,9 @@ function PromptComposer({
             </span>
           )}
 
- {/* No inline model picker yet — model selection is via the
- * Settings modal until the inline picker ships. */}
+ {/* Provider selection stays in the Agent picker below. Provider-native
+ * model inventory is not guessed here; Tasks use the same target-scoped
+ * provider scan and provider defaults. */}
 
           <span className="a-spacer" />
 

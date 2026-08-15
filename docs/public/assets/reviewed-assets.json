@@ -1,12 +1,12 @@
 {
   "schemaVersion": "shellx.public-marketing-assets.v2",
-  "reviewedAt": "2026-08-12T01:44:41Z",
+  "reviewedAt": "2026-08-15T14:50:22Z",
   "revalidation": {
     "status": "reviewed",
-    "sourceCommit": "60464fe3db3ef18c4277cf139e95176b0b9ce5bf",
-    "productSourceSha256": "535abefa2bb6c810e311d174e83322a88fb1bf4d90b55fa079ae78772b3e1d4c",
-    "reviewedAt": "2026-08-13T20:52:38Z",
-    "evidenceSha256": "d0b5acfc66b582b050b7be4e2d9243facdb18278553e9bf454a2503adcf2830c"
+    "sourceCommit": "27a5cd3f5bdfa740e65e9de771b731eb50f318b3",
+    "productSourceSha256": "8e3b59ddb6506957381c77e03ac7d9ec795ebdec225d078aa927e11273da5109",
+    "reviewedAt": "2026-08-15T14:50:22Z",
+    "evidenceSha256": "dc207ff8e4683c4274f8d73a18f9c655bd6cc4f32cfa1ac1121422053bf7aa1e"
   },
   "generation": {
     "mode": "gpt-image-background-plus-reviewed-product-composite",
@@ -22,40 +22,40 @@
   },
   "assets": [
     {
-      "file": "shellx-desktop-0.3.52.png",
+      "file": "shellx-desktop-0.3.60.png",
       "status": "reviewed",
-      "review": "Accepted populated ShellX 0.3.52 work session with the real Preview Center open on a high-contrast generated snow-leopard image, the installed workspace visible behind it, and no private profile data.",
+      "review": "Accepted populated ShellX 0.3.60 work session with the real Preview Center open on a high-contrast generated snow-leopard image, the installed workspace visible behind it, and no private profile data.",
       "sha256": "1bae1cb4f2b1979a8e48af120ef1ca4737af6e1d81514a7f10ba00f74a2cee11",
-      "source": "../marketing-sources/shellx-workspace-preview-0.3.52.png",
+      "source": "../marketing-sources/shellx-workspace-preview-0.3.60.png",
       "sourceSha256": "cb8deb149c27eb79804174e202ee8647e06499246c9666e60686e3f4b9b932fb",
       "sourceReview": {
         "status": "reviewed",
         "kind": "installed-candidate",
         "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
-        "productSourceSha256": "535abefa2bb6c810e311d174e83322a88fb1bf4d90b55fa079ae78772b3e1d4c",
-        "appVersion": "0.3.52",
+        "productSourceSha256": "8e3b59ddb6506957381c77e03ac7d9ec795ebdec225d078aa927e11273da5109",
+        "appVersion": "0.3.60",
         "platform": "windows-installed",
         "sha256": "cb8deb149c27eb79804174e202ee8647e06499246c9666e60686e3f4b9b932fb",
-        "reviewedAt": "2026-08-12T01:44:41Z",
-        "evidenceSha256": "64dfbedcaf04d660086e9d3d81ae6d67faa67d318b93681c24735331672c0c41"
+        "reviewedAt": "2026-08-15T06:34:00Z",
+        "evidenceSha256": "a85c88c085d048a6f9578f1248d16c8597b2c47b30be9adcf85259d2436774ae"
       }
     },
     {
-      "file": "shellx-browser-0.3.52.png",
+      "file": "shellx-browser-0.3.60.png",
       "status": "reviewed",
-      "review": "Accepted ShellX Browser 0.3.52 with exact installed Windows chrome, secure Personal profile state, https://theshellx.com in the address bar, a live public feature view rendered in the measured native engine bounds, and the Chat sidecar visible.",
+      "review": "Accepted ShellX Browser 0.3.60 with exact installed Windows chrome, secure Personal profile state, https://theshellx.com in the address bar, a live public feature view rendered in the measured native engine bounds, and the Chat sidecar visible.",
       "sha256": "66a3134e68c4eea44593ebefb78d5ab22dad3c1b37b5c3ebb9e2524a7d2da6c4",
-      "source": "../marketing-sources/shellx-browser-theshellx-0.3.52.png",
+      "source": "../marketing-sources/shellx-browser-theshellx-0.3.60.png",
       "sourceSha256": "3d471d289193c991799012905c72b6cf3447c7966cb1c01be481453cafd4f9c6",
       "sourceReview": {
         "status": "reviewed",
         "kind": "installed-browser-live-site-composite",
         "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
-        "productSourceSha256": "535abefa2bb6c810e311d174e83322a88fb1bf4d90b55fa079ae78772b3e1d4c",
-        "appVersion": "0.3.52",
+        "productSourceSha256": "8e3b59ddb6506957381c77e03ac7d9ec795ebdec225d078aa927e11273da5109",
+        "appVersion": "0.3.60",
         "platform": "windows-installed",
         "sha256": "3d471d289193c991799012905c72b6cf3447c7966cb1c01be481453cafd4f9c6",
-        "reviewedAt": "2026-08-12T01:44:41Z",
+        "reviewedAt": "2026-08-15T06:34:00Z",
         "liveUrl": "https://theshellx.com/",
         "liveTitle": "shellX — Grok, Claude Code, Codex & Antigravity in one app",
         "composition": "The live native page viewport was cropped at +10+213 to 1060x833 from the installed Windows capture and placed at +0+168 inside the 1601x1001 WebDriver chrome capture. Those physical bounds are the 1.5-DPR projection of the candidate-reported logical engine bounds x=0, y=112, width=706.3333740234375, height=555.3333740234375.",
@@ -73,16 +73,16 @@
             "sha256": "a3a3eedea1182e93c7a38a0479f79de50e44d90a2f7fa804c4019bcc2faebb32"
           }
         ],
-        "evidenceSha256": "64dfbedcaf04d660086e9d3d81ae6d67faa67d318b93681c24735331672c0c41"
+        "evidenceSha256": "a85c88c085d048a6f9578f1248d16c8597b2c47b30be9adcf85259d2436774ae"
       }
     },
     {
-      "file": "shellx-vault-0.3.52.png",
+      "file": "shellx-vault-0.3.60.png",
       "status": "reviewed",
-      "review": "Accepted current ShellX 0.3.52 Vault settings with an empty disposable profile and the password, profile-card, and agent-wallet tabs visible.",
-      "sha256": "e32b3d8bcfbe33628babcaf16b30bde41ab3b1bdeac15729cb1241053649a25d",
+      "review": "Accepted current ShellX 0.3.60 Vault settings with an empty disposable profile and the password, profile-card, and agent-wallet tabs visible.",
+      "sha256": "0abc1ad26b6b9acef1751db9b596defe97bafc90656896f76055414c1aeeb4d6",
       "source": "../manual/shellx/assets/settings-vault.png",
-      "sourceSha256": "166241395163934877af90482c3bfef424ce0b409a68ea61311abae7d6307b7b"
+      "sourceSha256": "e690d5c3703f0e524074d3dc5882365bb657f3a99355502b62aa4028f39163bc"
     }
   ]
 }

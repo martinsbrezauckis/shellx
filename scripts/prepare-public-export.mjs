@@ -64,6 +64,9 @@ const FORBIDDEN_SUFFIXES = [
   ".swp",
   ".tmp",
 ];
+const REVIEWED_UNSAFE_PATH_OVERRIDES = new Set([
+  "vendor/glib/Cargo.toml.orig",
+]);
 const FORBIDDEN_TEXT = [
   { id: "private-lan-address", pattern: /\b192\.168\.\d{1,3}\.\d{1,3}\b/ },
   { id: "private-key-material", pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
@@ -161,7 +164,9 @@ export function classifyPublicExportPath(policy, path) {
   }
 
   const unsafeReason = unsafePathReason(path);
-  if (unsafeReason) {
+  const reviewedUnsafeOverride = exactMatch?.action === "include"
+    && REVIEWED_UNSAFE_PATH_OVERRIDES.has(path);
+  if (unsafeReason && !reviewedUnsafeOverride) {
     return {
       id: "built-in-unsafe-path",
       action: "exclude",

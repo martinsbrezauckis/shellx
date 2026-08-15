@@ -247,14 +247,14 @@ pub(super) fn core_tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "vault_request_grant",
-            "description": "Create a pending ShellX Vault grant request for operator approval. This tool cannot approve or reveal a secret. Browser fill/profile/email-code/wallet requests must include the exact current http/https origin and remain bound to it after approval. After it returns, the request appears in the ShellX Vault Request Center; poll vault_list_grants and use the mediated tool only after approved=true. RawReveal requests are refused from MCP.",
+            "description": "Create a pending ShellX Vault grant request for operator approval. The request must name an explicit actorScope or actorKind; ShellX never infers a broad scope. This tool cannot approve or reveal a secret. Browser fill/profile/email-code/wallet requests must include the exact current http/https origin and remain bound to it after approval. After it returns, the request appears in the ShellX Vault Request Center; poll vault_list_grants and use the mediated tool only after approved=true. RawReveal requests are refused from MCP.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "secretRef": { "type": "string", "description": "Vault secret/resource reference discovered through vault_list." },
                     "operation": { "type": "string", "enum": ["fill", "profileFill", "emailCodeRead", "agentWalletUse", "injectEnv", "providerUse", "connectorUse", "deposit"], "description": "Mediated operation the grant will authorize after approval." },
-                    "actorScope": { "type": "object", "description": "Optional explicit GrantScope object, e.g. {kind:'browserOrigin', origin:'https://example.com'} or {kind:'allShellxAgents'}. For kind=agent, ShellX replaces any supplied agentId with the authenticated Host MCP session identity." },
-                    "actorKind": { "type": "string", "enum": ["allShellxAgents", "agent", "provider", "workspace", "browserOrigin", "connector"], "description": "Optional shorthand actor scope kind when actorScope is omitted. Defaults to allShellxAgents." },
+                    "actorScope": { "type": "object", "description": "Explicit GrantScope object, e.g. {kind:'browserOrigin', origin:'https://example.com'} or {kind:'allShellxAgents'}. For kind=agent, ShellX replaces any supplied agentId with the authenticated Host MCP session identity." },
+                    "actorKind": { "type": "string", "enum": ["allShellxAgents", "agent", "provider", "workspace", "browserOrigin", "connector"], "description": "Explicit shorthand actor scope kind when actorScope is omitted. ShellX never infers a grant scope." },
                     "agentId": { "type": "string", "description": "Ignored for actorKind=agent; ShellX derives the agent identity from the authenticated Host MCP session." },
                     "providerId": { "type": "string" },
                     "workspace": { "type": "string" },
@@ -262,7 +262,11 @@ pub(super) fn core_tool_specs() -> Vec<Value> {
                     "connectorId": { "type": "string" },
                     "expiresAtMs": { "type": "integer", "description": "Optional absolute expiry timestamp in epoch milliseconds." }
                 },
-                "required": ["secretRef", "operation"]
+                "required": ["secretRef", "operation"],
+                "anyOf": [
+                    { "required": ["actorScope"] },
+                    { "required": ["actorKind"] }
+                ]
             }
         }),
         json!({
