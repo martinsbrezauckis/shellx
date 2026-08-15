@@ -2096,6 +2096,7 @@ mod tests {
             "mem_delete",
             "fs_watch",
             "goal_complete",
+            "task_manage",
             "build_receipt",
             "build_checkpoint",
             "preview_start",

@@ -21,16 +21,11 @@ fn local_target() -> TaskProviderResolvedTarget {
     .unwrap()
 }
 
-fn project_tempdir() -> tempfile::TempDir {
-    let scratch = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join(".scratch")
-        .join("task-attachment-tests");
-    std::fs::create_dir_all(&scratch).unwrap();
+fn operator_home_tempdir() -> tempfile::TempDir {
+    let home = operator_home().expect("the attachment test requires the current user home");
     tempfile::Builder::new()
-        .prefix("case-")
-        .tempdir_in(scratch)
+        .prefix("shellx-task-attachment-case-")
+        .tempdir_in(home)
         .unwrap()
 }
 
@@ -123,7 +118,7 @@ fn request_and_extension_bounds_are_closed() {
 
 #[tokio::test]
 async fn local_copy_is_content_addressed_and_reverified_before_dispatch() {
-    let directory = project_tempdir();
+    let directory = operator_home_tempdir();
     let source_root = directory.path().join("operator-source");
     let target_cwd = directory.path().join("target-cwd");
     std::fs::create_dir_all(&source_root).unwrap();
@@ -174,7 +169,7 @@ async fn local_copy_is_content_addressed_and_reverified_before_dispatch() {
 
 #[tokio::test]
 async fn local_reclamation_removes_only_the_exact_verified_copy_and_is_idempotent() {
-    let directory = project_tempdir();
+    let directory = operator_home_tempdir();
     let source_root = directory.path().join("operator-source");
     let target_cwd = directory.path().join("target-cwd");
     std::fs::create_dir_all(&source_root).unwrap();
@@ -226,7 +221,7 @@ async fn local_reclamation_removes_only_the_exact_verified_copy_and_is_idempoten
 #[tokio::test]
 async fn local_copy_refuses_symlink_sources() {
     use std::os::unix::fs::symlink;
-    let directory = project_tempdir();
+    let directory = operator_home_tempdir();
     let real = directory.path().join("real.txt");
     let link = directory.path().join("link.txt");
     std::fs::write(&real, b"hello").unwrap();
