@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "36d12ee6b770803139e697e0f2407b2b0651b56c",
-    "tree": "7d203203e3e20d84dd0141a3440d2d008b176e31"
+    "commit": "2a9682daa7ac3d706a2d0e5a3aa23954deaf01d6",
+    "tree": "d86c0088aac9ee76982ce47f7c598151316c1121"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -19,19 +19,19 @@
     "selfExcludedFromEntries": true
   },
   "classification": {
-    "trackedFileCount": 1446,
+    "trackedFileCount": 1447,
     "includedTrackedFileCount": 1411,
-    "excludedTrackedFileCount": 35
+    "excludedTrackedFileCount": 36
   },
   "payload": {
     "fileCount": 1412,
-    "totalBytes": 38356049,
-    "digest": "4735050a6fa2b06735f28cd7a9ebf263c7f7d921bf999b30452a07539b27c2bf"
+    "totalBytes": 38357050,
+    "digest": "c04615a3bbd2451fdb4ec7eed52e494f2a40a15e1d02a0d5308b66c8e941f1b0"
   },
   "exclusions": {
-    "fileCount": 35,
+    "fileCount": 36,
     "byCategory": {
-      "private-working-documentation": 35
+      "private-working-documentation": 36
     }
   },
   "entries": [
@@ -60,8 +60,8 @@
     {
       "path": ".github/workflows/ci.yml",
       "mode": "100644",
-      "sha256": "d6545a11ae8509c12a1bfad6a18fa6f6a83ba7c753d3237d24a841a0a679e0bb",
-      "bytes": 7566,
+      "sha256": "45084fffd986e9d87276d715682dcdfcf96adf5344290d592b9e0d2cda191c67",
+      "bytes": 7606,
       "ruleId": "public-automation",
       "matchedBy": "exact",
       "matchedPath": ".github/workflows/ci.yml",
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "6f8ed5b5de7580471b3f8ce4beac8fdb97f14d6cf807f3374e80562b76a5985e",
+      "sha256": "adf665936876b8e54c4dab2ee64f5db128f90ecb97646cfbd7a2b3f20c6b7b01",
       "bytes": 7975,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -676,7 +676,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "03c3ca788cd331eb1cd574d8eb7eed2123e29d14daa6806d9878420a7f586cdf",
+      "sha256": "9aa6474d94acb2bcf33aa18c738857293840a501802d476c50eda8409c836224",
       "bytes": 54418,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "e29f86559c0d4e595ae6f250066f6e6664f2c3f5c334b347793bc783b7002d02",
+      "sha256": "35a98f34d9ca10e60d1856be5ff20cc4a6d18552b273df78e244724add989924",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -1644,8 +1644,8 @@
     {
       "path": "scripts/lib/ci-surface-coverage.mjs",
       "mode": "100644",
-      "sha256": "7ce47caffacdeb87e8d2193e8867911ecb175474d1fddf02c0b115bdd449bf53",
-      "bytes": 7180,
+      "sha256": "c731056778b122d295fe13e1788c5212fa204176fefdd009c5834a1ea5cf0335",
+      "bytes": 7432,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4416,8 +4416,8 @@
     {
       "path": "scripts/test-ci-surface-coverage.mjs",
       "mode": "100644",
-      "sha256": "56979daa4bddfdb4ce59d3c50d393dbd3b95750f7f9cfa4b6f13724c21644c18",
-      "bytes": 5571,
+      "sha256": "7a2b8748481d7e997ff7797bf3ce71885cb52ddc80567ed6b45eb1462bd48893",
+      "bytes": 6195,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4559,8 +4559,8 @@
     {
       "path": "scripts/test-glib-backport.mjs",
       "mode": "100644",
-      "sha256": "ce33b062195ef7e8c6a13d6828aae75f992f350673a1d7c0e7ce28846223d11d",
-      "bytes": 2244,
+      "sha256": "d5a5a360af9ab31a50980cb04ad69abb8f6fa19d7b008cc9961820636f1eb730",
+      "bytes": 2403,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -7694,7 +7694,7 @@
     {
       "path": "src-tauri/src/debug_api_release_relay.rs",
       "mode": "100644",
-      "sha256": "f64e4de7dd62ffbb7aafab2fbfa1d0ea31e57af49df6d81c9feb62e44a39cba4",
+      "sha256": "4f71c8f6f3805322404633834bdfc3a8f46668ea83e1163efbe0bade74ace6a3",
       "bytes": 18719,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
@@ -8068,8 +8068,8 @@
     {
       "path": "src-tauri/src/host_mcp/cut_status.rs",
       "mode": "100644",
-      "sha256": "768e037f43b71f111910e868ebd59fa1b2d369e5b389ac6646da1673c28a35bf",
-      "bytes": 13494,
+      "sha256": "b72a090d6fb18d9b3028ad580435a031a58b115155abbd64ad4331e5c0964a0b",
+      "bytes": 13462,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -8497,8 +8497,8 @@
     {
       "path": "src-tauri/src/mcp_http.rs",
       "mode": "100644",
-      "sha256": "057b2d4102e7ad87a7cd9c65c71c1e9200340dd281a89e1e5f8435d5936daf8b",
-      "bytes": 86589,
+      "sha256": "46a024bc7e873cf5785c8901fd94f23ad65f4f6f227f728f3504ca6c41124c00",
+      "bytes": 86616,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",
@@ -10015,8 +10015,8 @@
     {
       "path": "src-tauri/src/task_attachment_transport_tests.rs",
       "mode": "100644",
-      "sha256": "6ea824f88317e5d146c750a7422d2bbfc91a76252ac67513752766aebff58d92",
-      "bytes": 8787,
+      "sha256": "15ef96866bef7cdd2b1c4b0af733100061271baa8db4c5645539349a89f18b2f",
+      "bytes": 8718,
       "ruleId": "public-native-source",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/",

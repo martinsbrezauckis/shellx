@@ -8,6 +8,7 @@ const root = resolve(import.meta.dirname, "..");
 const attributesSource = readFileSync(resolve(root, ".gitattributes"), "utf8");
 const ciSource = readFileSync(resolve(root, ".github/workflows/ci.yml"), "utf8");
 const releaseSource = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
+const glibBackportTestSource = readFileSync(resolve(root, "scripts/test-glib-backport.mjs"), "utf8");
 const buildScript = readFileSync(resolve(root, "src-tauri/build.rs"), "utf8");
 const packageData = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 const inventory = JSON.parse(readFileSync(resolve(root, "release/surface-inventory.json"), "utf8"));
@@ -24,6 +25,11 @@ const input = {
   testSuites: TEST_SUITES,
 };
 assert.deepEqual(ciSurfaceCoverageErrors(input), []);
+assert(
+  glibBackportTestSource.includes('if (process.platform === "win32")')
+    && glibBackportTestSource.includes("optimized runtime proof runs on Linux and macOS CI"),
+  "Windows surface CI must use the static glib proof while POSIX CI runs the optimized executable proof",
+);
 assert(
   attributesSource.split(/\r?\n/).includes("* text=auto eol=lf"),
   "Git must preserve canonical LF text on every CI host",
@@ -48,9 +54,15 @@ assert(missingWindows.some((error) => error.includes("missing windows-latest")))
 
 const missingRealNsisFixture = ciSurfaceCoverageErrors({
   ...input,
-  ciSource: ciSource.replace("install -y nsis", "install -y zip"),
+  ciSource: ciSource.replace("            nsis", "            zip"),
 });
-assert(missingRealNsisFixture.some((error) => error.includes("real NSIS callback fixture dependency")));
+assert(missingRealNsisFixture.some((error) => error.includes("fixture package nsis")));
+
+const missingGlibBackportDependency = ciSurfaceCoverageErrors({
+  ...input,
+  ciSource: ciSource.replace("            libglib2.0-dev \\\n", ""),
+});
+assert(missingGlibBackportDependency.some((error) => error.includes("fixture package libglib2.0-dev")));
 
 const optionalRealNsisFixture = ciSurfaceCoverageErrors({
   ...input,

@@ -31,6 +31,11 @@ const REQUIRED_LINUX_NATIVE_PACKAGES = Object.freeze([
   "patchelf",
 ]);
 
+const REQUIRED_LINUX_SURFACE_PACKAGES = Object.freeze([
+  "libglib2.0-dev",
+  "nsis",
+]);
+
 export function ciSurfaceCoverageErrors({
   ciSource,
   buildScript,
@@ -67,10 +72,14 @@ export function ciSurfaceCoverageErrors({
     if (!job.includes("run: pnpm run ci:surface-contracts")) {
       errors.push("surface-contracts does not invoke the canonical package gate");
     }
-    if (!job.includes("name: Install real NSIS callback fixture dependency")
-      || !job.includes("if: runner.os == 'Linux'")
-      || !job.includes("install -y nsis")) {
-      errors.push("Linux surface-contracts CI is missing the real NSIS callback fixture dependency");
+    if (!job.includes("name: Install Linux surface fixture dependencies")
+      || !job.includes("if: runner.os == 'Linux'")) {
+      errors.push("Linux surface-contracts CI is missing its fixture dependency install step");
+    }
+    for (const packageName of REQUIRED_LINUX_SURFACE_PACKAGES) {
+      if (!job.includes(packageName)) {
+        errors.push(`Linux surface-contracts CI is missing fixture package ${packageName}`);
+      }
     }
     if (!job.includes("SHELLX_REQUIRE_REAL_NSIS_FIXTURE: ${{ runner.os == 'Linux' && '1' || '0' }}")) {
       errors.push("surface-contracts CI does not require the real NSIS callback fixture on Linux");

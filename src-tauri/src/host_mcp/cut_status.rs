@@ -284,9 +284,9 @@ fn cut_open_target(program: &Path) -> Option<CutOpenTarget> {
     #[cfg(target_os = "windows")]
     {
         let application = windows_cut_application(program)?;
-        return application
+        application
             .is_file()
-            .then_some(CutOpenTarget::WindowsExecutable(application));
+            .then_some(CutOpenTarget::WindowsExecutable(application))
     }
     #[cfg(target_os = "macos")]
     {
@@ -294,9 +294,9 @@ fn cut_open_target(program: &Path) -> Option<CutOpenTarget> {
             .ancestors()
             .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("ShellX Cut.app"))?
             .to_path_buf();
-        return application
+        application
             .is_dir()
-            .then_some(CutOpenTarget::MacApplication(application));
+            .then_some(CutOpenTarget::MacApplication(application))
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -317,7 +317,7 @@ fn launch_cut_for_operator(target: CutOpenTarget) -> Result<(), String> {
         std::process::Command::new(&application)
             .spawn()
             .map_err(|error| format!("could not open ShellX Cut: {error}"))?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(target_os = "macos")]
     {
@@ -326,7 +326,7 @@ fn launch_cut_for_operator(target: CutOpenTarget) -> Result<(), String> {
             .arg(&application)
             .spawn()
             .map_err(|error| format!("could not open ShellX Cut: {error}"))?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {

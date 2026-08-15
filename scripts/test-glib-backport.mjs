@@ -10,8 +10,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const errors = validateGlibBackport();
 if (errors.length > 0) throw new Error(errors.join("\n"));
 
-const scratch = mkdtempSync(resolve(tmpdir(), "shellx-glib-backport-"));
-try {
+if (process.platform === "win32") {
+  console.log("PASS static glib backport proof; optimized runtime proof runs on Linux and macOS CI");
+} else {
+  const scratch = mkdtempSync(resolve(tmpdir(), "shellx-glib-backport-"));
+  try {
   mkdirSync(resolve(scratch, "src"));
   writeFileSync(resolve(scratch, "Cargo.toml"), `[package]
 name = "shellx-glib-backport-proof"
@@ -55,6 +58,7 @@ fn main() {
     throw new Error(`optimized glib backport proof failed (${cargo.status ?? cargo.signal ?? "unknown"}):\n${cargo.stderr}${cargo.stdout}`);
   }
   console.log("PASS glib VariantStrIter optimized backport proof");
-} finally {
-  rmSync(scratch, { recursive: true, force: true });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
