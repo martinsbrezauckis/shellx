@@ -299,8 +299,8 @@ pub(super) async fn tool_browser_save_page(
         Some(value) => Some(value),
         None => browser_state_download_folder(timeout_secs, caller_session_id).await,
     };
-    let artifact = crate::shellx_browser_transfers::shellx_browser_write_text_artifact(
-        crate::shellx_browser_transfers::BrowserLocalTextArtifactRequest {
+    let artifact = crate::shellx_browser_transfer_artifacts::shellx_browser_write_text_artifact(
+        crate::shellx_browser_transfer_artifacts::BrowserLocalTextArtifactRequest {
             destination_dir,
             file_name: Some(file_name),
             content,

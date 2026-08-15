@@ -17,6 +17,14 @@ impl ShellxBrowserRegistry {
         request: BrowserBookmarkUpsertRequest,
     ) -> Result<BrowserBookmarkResponse, String> {
         let mut state = lock_or_recover(&self.state);
+        self.upsert_bookmark_with_locked_state(&mut state, request)
+    }
+
+    pub(crate) fn upsert_bookmark_with_locked_state(
+        &self,
+        state: &mut BrowserState,
+        request: BrowserBookmarkUpsertRequest,
+    ) -> Result<BrowserBookmarkResponse, String> {
         let mut bookmarks = state.bookmarks.clone();
         let bookmark = upsert_browser_bookmark_collection(&mut bookmarks, request)?;
         let bookmarks = self.persist_browser_bookmarks(bookmarks)?;
@@ -26,7 +34,7 @@ impl ShellxBrowserRegistry {
             .cloned()
             .ok_or_else(|| "persisted bookmark is missing after save".to_string())?;
         state.bookmarks = bookmarks;
-        Ok(bookmark_response_after_commit(&mut state, bookmark))
+        Ok(bookmark_response_after_commit(state, bookmark))
     }
 
     pub fn reorder_bookmarks(

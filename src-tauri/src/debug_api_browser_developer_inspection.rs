@@ -56,7 +56,8 @@ async fn browser_developer_inspect_http(
         )
             .into_response();
     };
-    if let Err(error) = registry.ensure_agent_session_for_task_id(task_id, Some(&caller_session_id))
+    if let Err(error) =
+        registry.ensure_browser_request_authority_for_task_id(task_id, Some(&caller_session_id))
     {
         let status =
             if error.contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED) {

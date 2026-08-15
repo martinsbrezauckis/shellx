@@ -1,0 +1,1605 @@
+/* ─────────────── Scrollbars ─────────────── *
+ *
+ * The earlier :-webkit-scrollbar rules were REMOVED.
+ * Captured via the shellX↔grok debug-api loop those rules
+ * actually SUPPRESSED the native WebKitGTK web-content scrollbar instead
+ * of styling it, leaving .output with no visible bar at all. Comparison
+ * proof: .plan (overflow-y:auto, no custom scrollbar rules) showed a
+ * working scrollbar simultaneously; the difference was the custom rules
+ * applied via the global * selector.
+ *
+ * What works on WebKitGTK + WebView2 (Windows) + WKWebView (macOS):
+ *   - `overflow-y: auto` on each scroll container (per-container in
+ *     section-specific CSS below — .output, .plan, .preview, etc).
+ *   - NO ::-webkit-scrollbar overrides anywhere.
+ *   - Firefox-only `scrollbar-width: thin` is harmless cross-WebView.
+ *
+ * Trade-off: native bar style instead of token-matched chrome. Worth it
+ * to actually have a visible scrollbar.
+ */
+* {
+  scrollbar-width: thin;
+}
+
+.sx-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: -0.125em;
+  stroke: currentColor;
+}
+
+button .sx-icon {
+  pointer-events: none;
+}
+
+.sx-transport-local { color: var(--ink-2); }
+.sx-transport-wsl { color: var(--green); }
+.sx-transport-ssh { color: var(--orange); }
+.sx-transport-tailscale { color: var(--accent); }
+.sx-transport-cloud { color: #a3c2e0; }
+.sx-transport-remote { color: var(--ink-3); }
+
+/* ─────────────── React-resizable-panels chrome ─────────────── */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-grad);
+}
+
+.shell-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.shellx-setup-guide {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 42px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: var(--fg);
+}
+
+.shellx-setup-guide-title,
+.shellx-setup-step,
+.shellx-setup-guide-close {
+  display: inline-flex;
+  align-items: center;
+}
+
+.shellx-setup-guide-title {
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-ui-sm);
+  white-space: nowrap;
+}
+
+.shellx-setup-guide-title span {
+  color: var(--fg-muted);
+  font-size: var(--fs-ui-xs);
+}
+
+.shellx-setup-guide-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  overflow: visible;
+}
+
+.shellx-setup-step {
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font-size: var(--fs-ui-xs);
+  cursor: pointer;
+}
+
+.shellx-setup-step:hover {
+  border-color: var(--ink-3);
+  background: var(--panel-3);
+}
+
+.shellx-setup-step.ready {
+  border-color: color-mix(in srgb, var(--green) 38%, var(--hairline));
+}
+
+.shellx-setup-step.todo {
+  border-color: color-mix(in srgb, var(--orange) 38%, var(--hairline));
+}
+
+.shellx-setup-step span {
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.shellx-setup-step small {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: var(--fs-ui-xs);
+  white-space: nowrap;
+}
+
+.shellx-setup-guide-close {
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.shellx-setup-guide-close:hover {
+  color: var(--fg);
+  border-color: var(--ink-3);
+  background: var(--panel-3);
+}
+
+@media (max-width: 1199px) {
+  .shellx-setup-guide {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .shellx-setup-guide-title {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .shellx-setup-guide-steps {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .shellx-setup-guide-close {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .shellx-setup-guide-steps {
+    grid-template-columns: repeat(5, minmax(160px, 1fr));
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+}
+/* tabs row sits ABOVE mid+right, NOT over the left rail.
+ * Wrapper div .mid-right-wrap is a vertical flex inside the right
+ * Panel of the horizontal PanelGroup. */
+.mid-right-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.mid-right-wrap > .session-tabs {
+  flex-shrink: 0;
+}
+.mid-right-wrap > .mid-right-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* react-resizable-panels handle — a 1px line that broadens on hover.
+   The library applies these classes; we style them. */
+[data-panel-resize-handle-id] {
+  background: var(--hairline);
+  position: relative;
+}
+[data-panel-resize-handle-id]:hover,
+[data-panel-resize-handle-id][data-resize-handle-active] {
+  background: var(--ink-3);
+}
+[data-panel-resize-handle-id][data-panel-group-direction="horizontal"] {
+  width: 1px;
+  cursor: col-resize;
+}
+[data-panel-resize-handle-id][data-panel-group-direction="vertical"] {
+  height: 1px;
+  cursor: row-resize;
+}
+
+/* ─────────────── Top header bar ─────────────── */
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: 0 var(--space-5);
+  height: 64px;
+  border-bottom: 1px solid var(--hairline);
+  background: linear-gradient(180deg, #060606 0%, #000 100%);
+  flex-shrink: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.brand-x {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  margin-right: 2px;
+}
+.brand-sep {
+  color: var(--ink-3);
+  font-weight: 400;
+  margin: 0 4px;
+}
+.brand-product {
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+.workspace {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink-2);
+  letter-spacing: -0.01em;
+  cursor: pointer;
+}
+.workspace:hover { color: var(--ink); border-color: var(--border); }
+.workspace .dim { color: var(--ink-3); }
+
+.top-spacer { flex: 1; }
+
+.header-actions { display: flex; align-items: center; gap: var(--space-3); }
+
+.tok {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.tok strong { color: var(--ink); font-weight: 600; }
+.tok-provider-label { color: var(--ink-3); font-size: 12px; }
+.tok-bar {
+  display: inline-block;
+  width: 110px;
+  height: 3px;
+  background: var(--hairline-2);
+  position: relative;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.tok-bar-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: var(--ink);
+  transition: width 200ms ease;
+}
+
+/* ─────────────── Left sidebar ─────────────── */
+
+.left {
+  border-right: 1px solid var(--hairline);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+.tab {
+  flex: 1;
+  padding: 16px 0;
+  text-align: center;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  cursor: pointer;
+  position: relative;
+  background: transparent;
+  border: none;
+}
+.tab.active { color: var(--ink); }
+.tab-ct {
+  font-family: var(--sans);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-4);
+  margin-left: 4px;
+}
+.tab.active .tab-ct { color: var(--ink-3); }
+.tab.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: -1px;
+  width: 28px;
+  height: 1px;
+  background: var(--ink);
+}
+.tab:hover:not(.active) { color: var(--ink-2); }
+
+.left-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5) 0;
+}
+
+.tree {
+  font-family: var(--sans);
+  font-size: 14px;
+}
+.tree-section {
+  padding: 0 var(--space-5) var(--space-2);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin-top: var(--space-5);
+}
+.tree-section:first-child { margin-top: 0; }
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px var(--space-5);
+  color: var(--ink-2);
+  cursor: pointer;
+  letter-spacing: -0.005em;
+  position: relative;
+  background: transparent;
+  border: none;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+.tree-row:hover { color: var(--ink); background: var(--surface-2); }
+.tree-row.active {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.tree-row.active::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--ink);
+}
+.tree-row .ic {
+  font-size: 12px;
+  color: var(--ink-3);
+  width: 16px;
+  display: inline-block;
+  text-align: center;
+}
+.tree-row.active .ic { color: var(--ink); }
+.tree-row .ic-status {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.ic-status.run { background: var(--warn); }
+.ic-status.done { background: var(--ok); }
+.ic-status.idle { background: var(--ink-4); }
+
+/* indent-1/2 (chat rows under projects) bumped 12→13
+ * for 4K readability. Project rows themselves use 13px from .tree-row,
+ * so chats sit one rung below visually rather than shrinking further. */
+.tree-row.indent-1 { padding-left: 40px; font-size: 13px; }
+.tree-row.indent-2 { padding-left: 56px; font-size: 13px; color: var(--ink-3); }
+.tree-row.indent-1.active, .tree-row.indent-2.active { color: var(--ink); }
+
+/* GitHub strip */
+.gh-strip {
+  border-top: 1px solid var(--hairline);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.git-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px var(--space-5) 6px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink);
+}
+.git-line .gh-ic { color: var(--ink-3); font-size: 14px; }
+.git-line .branch {
+  color: var(--ink);
+  letter-spacing: -0.005em;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--mono);
+}
+.git-line .remote {
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  margin-left: auto;
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
+
+.gh-meta {
+  padding: 0 var(--space-5) 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.gh-meta .ahead { color: var(--orange); }
+.gh-meta .behind { color: var(--ink-3); }
+.gh-meta .changes { color: var(--orange); }
+.gh-meta .clean { color: var(--green); }
+.gh-meta .ahead,
+.gh-meta .behind {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.gh-section {
+  border-top: 1px solid var(--hairline);
+  padding: 12px var(--space-5);
+}
+.gh-section-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin-bottom: 8px;
+}
+.gh-section-hdr .ct { color: var(--ink-2); }
+.gh-section-action {
+  background: transparent;
+  border: none;
+  color: var(--orange);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+}
+.gh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  text-align: left;
+  width: 100%;
+}
+.gh-row:hover { color: var(--orange); }
+.gh-row .num { color: var(--ink-3); font-family: var(--mono); font-size: 12px; }
+.gh-row .arr { color: var(--ink-4); }
+.gh-row .title {
+  flex: 1;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gh-row .sd { width: 5px; height: 5px; border-radius: 50%; }
+.gh-row .sd.pass { background: var(--green); }
+.gh-row .sd.draft { background: var(--ink-3); }
+.gh-row .sd.fail { background: var(--err); }
+
+.left-foot {
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--hairline);
+  font-family: var(--sans);
+  /* 4K bump: 12 → 14 (--fs-ui-sm boosted by 1). The footer
+   * shows version + GPU + last-deploy info — readable text matters more
+   * than chrome compactness here. */
+  font-size: 14px;
+  color: var(--ink-3);
+  flex-shrink: 0;
+}
+.left-foot-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+.left-foot-row .v { color: var(--ink-2); }
+
+/* ─────────────── Middle pane ─────────────── */
+
+.mid {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  min-width: 0;
+  height: 100%;
+}
+
+.session-tabs {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  /* don't clip the children at the outer level — the
+   * scroll happens inside .session-tabs-rail. The nav arrows (« »)
+   * and the ▾ dropdown trigger sit OUTSIDE the rail so they remain
+   * visible when the rail is fully scrolled. */
+  overflow: visible;
+  flex-shrink: 0;
+  align-items: stretch;
+  min-width: 0;
+}
+.session-tabs-rail {
+  flex: 1 1 0%;
+  min-width: 0;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.session-tabs-rail::-webkit-scrollbar { display: none; }
+
+.stab-nav {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--hairline);
+  color: var(--ink-3);
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+.stab-nav:hover { color: var(--ink); background: var(--surface-2); }
+.stab-nav-right { border-right: 1px solid var(--hairline); border-left: 1px solid var(--hairline); }
+.stab-dropdown-wrap { position: relative; flex-shrink: 0; display: flex; }
+.stab-dropdown-btn { width: 28px; border-left: 1px solid var(--hairline); border-right: none; }
+.stab-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 2px;
+  min-width: 280px;
+  max-width: 420px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 100;
+}
+.stab-dropdown-head {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--hairline);
+}
+.stab-dropdown-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.stab-dropdown-row:hover { background: var(--surface-2); color: var(--ink); }
+.stab-dropdown-row.active { background: var(--bg); color: var(--ink); }
+.stab-dropdown-row .stab-dropdown-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stab-dropdown-row .sx {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: var(--ink-4);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.stab-dropdown-row .sx:hover { color: var(--ink); background: var(--hairline-2); }
+.stab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 13px 18px 12px 16px;
+  border-right: 1px solid var(--hairline);
+  font-family: var(--sans);
+  font-size: 13.5px;
+  letter-spacing: -0.005em;
+  color: var(--ink-3);
+  cursor: pointer;
+  position: relative;
+  white-space: nowrap;
+  min-width: 0;
+  /* hard cap so a single long auto-generated title can't
+   * eat the entire tab strip. truncTitle() in SessionTabs already
+   * mid-ellipses the visible string; this cap is defense-in-depth. */
+  max-width: 240px;
+  background: transparent;
+  border-top: none;
+  border-bottom: none;
+  border-left: none;
+  flex-shrink: 0;
+}
+.stab .stab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.stab .stab-preview,
+.stab-dropdown-preview {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(80, 180, 120, 0.5);
+  border-radius: 4px;
+  background: rgba(80, 180, 120, 0.12);
+  color: var(--green);
+  cursor: pointer;
+}
+.stab .stab-preview:hover,
+.stab-dropdown-preview:hover {
+  border-color: rgba(80, 180, 120, 0.8);
+  background: rgba(80, 180, 120, 0.2);
+  color: var(--ink);
+}
+.stab-dropdown-preview {
+  flex: 0 0 18px;
+}
+/* inline rename input inside a tab. Visually matches the
+   plain title span: same font/color, transparent bg, no border or
+   focus ring — the input simply replaces the truncated label until
+   Enter/Esc/blur commits or cancels. */
+.stab .stab-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: 1px solid var(--accent, #4a8cff);
+  outline-offset: 1px;
+  color: inherit;
+  font: inherit;
+  padding: 0 2px;
+  height: 18px;
+}
+/* rename + close are
+   hover-only. The idle row shows just the title; on hover the ✎ + ✕
+   buttons fade in. Active tab can keep buttons visible since the user
+   already focused that tab on purpose. */
+.stab .stab-edit,
+.stab .sx {
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+  cursor: pointer;
+}
+.stab:hover .stab-edit,
+.stab:hover .sx,
+.stab:focus-within .stab-edit,
+.stab:focus-within .sx,
+.stab.active .stab-edit,
+.stab.active .sx {
+  opacity: 0.75;
+}
+.stab .stab-edit:hover,
+.stab .sx:hover {
+  opacity: 1 !important;
+}
+.stab .stab-edit {
+  font-size: 13px;
+  padding: 0 3px;
+  user-select: none;
+}
+.stab:hover { color: var(--ink-2); background: var(--surface-2); }
+.stab.active {
+  color: var(--ink);
+  background: var(--bg);
+}
+.stab.active::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: -1px;
+  height: 1px; background: var(--bg);
+}
+.stab.active::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0;
+  height: 1px; background: var(--ink);
+}
+.stab .sd {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.stab .sd.run  { background: var(--warn); animation: pulse 2.2s ease-in-out infinite; }
+.stab .sd.done { background: var(--ok); }
+.stab .sd.input { background: var(--ink); }
+.stab .sd.idle { background: var(--ink-4); }
+.stab .ttr,
+.stab-dropdown-row .ttr {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  line-height: 1;
+}
+.stab-num {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  padding: 0;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 650;
+  line-height: 1;
+}
+.stab-num.run {
+  color: var(--warn);
+  border-color: color-mix(in oklab, var(--warn) 62%, var(--hairline));
+  background: color-mix(in oklab, var(--warn) 10%, transparent);
+  animation: tabBadgePulse 2.2s ease-in-out infinite;
+}
+.stab-num.done {
+  color: var(--ok);
+  border-color: color-mix(in oklab, var(--ok) 58%, var(--hairline));
+  background: color-mix(in oklab, var(--ok) 10%, transparent);
+}
+.stab-num.input {
+  color: var(--bg);
+  border-color: var(--ink);
+  background: var(--ink);
+}
+.stab-num.idle {
+  color: var(--ink-3);
+  border-color: var(--hairline-2);
+  background: transparent;
+}
+.stab.active .stab-num.idle { color: var(--ink); background: var(--surface); }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+@keyframes tabBadgePulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--warn) 0%, transparent); }
+  50% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--warn) 18%, transparent); }
+}
+.stab .sx {
+  margin-left: 6px;
+  color: var(--ink-4);
+  font-size: 10px;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  border-radius: 2px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.stab:hover .sx { color: var(--ink-2); }
+.stab .sx:hover { color: var(--ink); background: var(--hairline-2); }
+.stab-new {
+  padding: 0 14px;
+  display: grid;
+  place-items: center;
+  border-right: 1px solid var(--hairline);
+  color: var(--ink-3);
+  cursor: pointer;
+  font-size: 14px;
+  background: transparent;
+  border-top: none;
+  border-bottom: none;
+  border-left: none;
+}
+.stab-new:hover { color: var(--ink); }
+.session-tabs-spacer {
+  flex: 1;
+  border-right: 1px solid var(--hairline);
+}
+
+.mid-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-7) var(--space-4);
+  flex-shrink: 0;
+}
+.mid-head h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 550;
+  /* was 36px — that's the right size for a 4-word
+   * title like "Project alpha rebuild" but turned a 100-char auto-
+   * generated session summary into wall-of-large-text. Drop to a
+   * reasonable display weight and clamp to one line; full title is
+   * available via the title attribute on the <h2>. */
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--ink);
+  /* one-line clamp with ellipsis */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
+}
+.mid-head h2 .trail {
+  color: var(--ink-2);
+  font-weight: 400;
+  margin-left: 10px;
+}
+.mid-head .meta {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-left: auto;
+}
+
+/* per-session token gauge in chat heading.
+ * margin-left:auto pushes the gauge to the right edge of .mid-head,
+ * which is `display:flex align-items:baseline`. The legacy `.meta`
+ * surface had the same auto-margin trick — keep parity so the
+ * gauge sits in the same visual slot the dropped "X tokens · N
+ * events" line used. flex-shrink:0 prevents the bar from being
+ * squeezed when the session title is long (title already truncates
+ * via the white-space:nowrap + ellipsis on .mid-head h2). */
+.mid-head .mid-head-tok {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* per-session download icon, sits flush after
+ * the token gauge in the chat mid-head. Inherits the same .hdr-icon
+ * base style used by the (now removed) header download / plugins /
+ * settings icons so visual weight matches. */
+.mid-head .mid-head-dl {
+  flex-shrink: 0;
+  margin-left: var(--space-2);
+}
+.mid-head .mid-head-dl:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.mid-pane-body {
+  /* ROOT CAUSE of the scroll-never-works saga.
+   * react-resizable-panels' <Panel> renders as `display: block`, NOT
+   * flex. So `flex: 1` on a direct child does nothing and the body
+   * grows to fit content — meaning .output below also grows, and
+   * never overflows itself, and the scrollbar never has a thumb.
+   * Switching to `height: 100%` of the block Panel + flex-column
+   * for the .mid-head + .output stack inside. */
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.output {
+  /* match what works in .left-body. All earlier scrollbar
+   * polish was overengineering against the wrong target — .left-body
+   * uses just `flex:1; overflow-y:auto` and the native bar shows up
+   * correctly in both WebKitGTK and Edge WebView2. Doing the same here. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-6) var(--space-7) var(--space-6);
+  font-size: 17px;
+  line-height: 1.7;
+  letter-spacing: -0.005em;
+}
+.session-tabs::-webkit-scrollbar { display: none; }
+.session-tabs { scrollbar-width: none; }
+.output-empty {
+  color: var(--ink-3);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+.output-empty-tips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 18px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+.output-empty-tips .oe-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.78;
+}
+.output-empty-tips kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 2px 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: rgba(255,255,255,0.03);
+  color: var(--ink-2);
+  letter-spacing: 0;
+}
+
+.turn {
+  margin-bottom: var(--space-5);
+  padding: 28px 32px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.turn-user {
+  background: transparent;
+  border-color: var(--hairline);
+}
+
+.role {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.role .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.role.user .dot { background: var(--ink-2); }
+.role.assistant .dot { background: var(--green); }
+.role .time {
+  /* contrast fix: --ink-4 (#3a3a38) is invisible on --bg
+   * (#0a0a0a). Bump to --ink-2 so the timestamp is readable. Also
+   * normalize size — without an explicit value it inherits .role's 12px
+   * with 0.22em letter-spacing, which spreads narrow digits into a blur. */
+  color: var(--ink-2);
+  letter-spacing: 0.04em;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 400;
+}
+.role .ran { color: var(--ink-3); margin-left: auto; }
+.role .toggle {
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.role .toggle:hover { color: var(--ink-2); }
+
+.msg {
+  /* Width bumped for wide monitors. Bumping upper to 1800px (clamp
+   * 78vw) gives 4K-maximized window ~1800px of text width, ~135 chars
+   * at 19px Onest. Past typographic ideal (66–96), but better for
+   * code-context reading than a narrow prose column.
+   * On a 1280px window: still ~998px width. */
+  color: var(--ink);
+  max-width: clamp(860px, 95%, 2400px);
+  font-size: var(--fs-body); /* 19px */
+  line-height: 1.65;
+}
+.msg.user { color: var(--ink); font-size: var(--fs-body); line-height: 1.55; }
+.msg.assistant p { margin: 0 0 var(--space-4); }
+.msg.assistant p:last-child { margin-bottom: 0; }
+.msg.assistant pre {
+  background: var(--surface-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.msg.assistant code {
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  padding: 1px 7px;
+  border-radius: 3px;
+}
+.msg.assistant pre code {
+  padding: 0;
+  background: transparent;
+}
+.msg.assistant a {
+  color: var(--orange);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--hairline-2);
+}
+.msg.assistant a:hover { border-bottom-color: var(--orange); }
+.msg.assistant img.md-img {
+  max-width: 100%;
+  border-radius: 4px;
+  margin: var(--space-3) 0;
+}
+.msg.assistant .img-broken {
+  display: inline-block;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border: 1px dashed var(--hairline-2);
+  color: var(--ink-3);
+  font-size: 14px;
+}
+
+.flink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px 4px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  vertical-align: baseline;
+  transition: border-color 120ms ease, background 120ms ease;
+  white-space: nowrap;
+}
+.flink:hover { border-color: var(--ink-2); background: var(--surface); }
+.flink.active { border-color: var(--ink); background: var(--surface-3); }
+.flink .ic { color: var(--ink-3); font-size: 10px; line-height: 1; }
+.flink .name { letter-spacing: -0.005em; }
+.flink .ext { color: var(--ink-3); }
+.flink .arr { color: var(--ink-3); margin-left: 2px; font-size: 11px; }
+.flink .ic,
+.flink .arr {
+  display: inline-grid;
+  place-items: center;
+}
+
+.icode {
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  padding: 1px 7px;
+  border-radius: 3px;
+}
+
+.tool {
+  margin: var(--space-4) 0 var(--space-3);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+  /* tool block was 760px hard cap — way tighter than .msg
+   * and the actual source of "tool calls pushed to several short lines"
+   *. Aligning with .msg so tool blocks scale with
+   * the viewport on wide screens. */
+  max-width: clamp(860px, 95%, 2400px);
+  overflow: hidden;
+}
+.tool-hdr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 16px 20px;
+  font-family: var(--sans);
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  border-bottom: 1px solid var(--hairline);
+}
+.tool-hdr .tdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.tool.done .tdot { background: var(--green); }
+.tool.run  .tdot { background: var(--orange); }
+.tool.fail .tdot { background: var(--err); }
+.tool.idle .tdot { background: var(--ink-4); }
+.tool-hdr .tname {
+  font-family: var(--sans);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.tool-hdr .targ {
+  font-family: var(--mono);
+  color: var(--ink-2);
+  margin-left: 4px;
+  font-weight: 400;
+  font-size: 13px;
+  letter-spacing: -0.005em;
+  text-transform: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 320px cap made long file paths in tool args (e.g.
+   * src/components/RightRail.tsx with a long workspace prefix) ellipsis-
+   * truncate aggressively. clamp lets the header arg use whatever the
+   * tool block has, capped at 1200px (still under the .tool 1800 max
+   * so it can share row with .tstat). */
+  max-width: clamp(320px, 60vw, 1200px);
+}
+.tool-hdr .tstat {
+  margin-left: auto;
+  font-family: var(--sans);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tool.done .tstat { color: var(--green); }
+.tool.run  .tstat { color: var(--orange); }
+.tool.fail .tstat { color: var(--err); }
+.tool-body {
+  padding: 16px 20px;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.7;
+}
+.tool-body pre {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  font-family: var(--mono);
+}
+.dup-media-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/*  code-fence wrapper with copy button. The pre stays as the
+ * scrollable code body; the button floats at the top-right of the
+ * wrapping div, fades to fully visible on hover, and stays visible
+ * for 1.2s after a successful copy via the `✓` state in the JSX. */
+.code-block-wrap {
+  position: relative;
+  margin: 8px 0;
+}
+.code-block-wrap pre {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--card-bg, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.06));
+  border-radius: 8px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-code, 13px);
+  line-height: 1.55;
+  color: var(--ink);
+}
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card-bg, rgba(0, 0, 0, 0.5));
+  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 120ms ease, color 120ms ease, transform 80ms ease;
+}
+.code-block-wrap:hover .code-copy-btn,
+.code-copy-btn:focus-visible {
+  opacity: 1;
+}
+.code-copy-btn:hover {
+  color: var(--ink);
+  transform: scale(1.06);
+}
+.code-copy-btn:active {
+  transform: scale(0.94);
+}
+/* image_gen tool result rendered inline. Cap height +
+ * preserve aspect so a 16:9 generated image doesn't take half the
+ * chat pane. */
+.tool-image {
+  margin-top: var(--space-3);
+}
+.tool-image img {
+  max-width: 100%;
+  max-height: 480px;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  display: block;
+}
+/* video_gen inline render, same shape as .tool-image. */
+.tool-video {
+  margin-top: var(--space-3);
+}
+.tool-video video {
+  max-width: 100%;
+  max-height: 480px;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  display: block;
+  background: #000;
+}
+/* inline xterm.js view for ACP-origin
+   terminals. Full-width, ~24-row default height. The TerminalView
+   component's `.terminal-tab` wrapper already paints the dark bg; we
+   only need to provide vertical room + a hairline. */
+.tool-terminal {
+  margin-top: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  overflow: hidden;
+  /* xterm.js default fontSize=13 + lineHeight=1.2 ≈ 16px/row.
+     24 rows → ~384px + a few px for padding. */
+  height: 400px;
+}
+.tool-terminal .terminal-tab,
+.tool-terminal .terminal-host {
+  height: 100%;
+}
+.tool-args {
+  margin-bottom: var(--space-3);
+  color: var(--ink-3);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.tool-args code {
+  font-family: var(--mono);
+  letter-spacing: -0.005em;
+  text-transform: none;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.tool-diff {
+  margin-top: var(--space-3);
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--bg);
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 12px 16px;
+  white-space: pre-wrap;
+}
+.tool-diff .diff-path {
+  color: var(--ink);
+  font-weight: 500;
+  margin-bottom: 8px;
+  display: block;
+}
+.tool-diff .diff-old { color: var(--err); }
+.tool-diff .diff-new { color: var(--green); }
+
+.activity {
+  display: inline-flex;
+  align-items: end;
+  gap: 1px;
+  height: 14px;
+  margin-left: auto;
+}
+.activity span {
+  display: inline-block;
+  width: 2px;
+  background: var(--green);
+}
+.tool.run .activity span { background: var(--orange); }
+
+/* System / thought pill rows */
+.row-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 6px 0;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.row-pill .pi {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-4);
+}
+.row-pill.thought .pi { background: var(--ink-2); }
+.row-pill.system .pi { background: var(--green); }
+.row-pill .label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+}
+.row-pill .detail {
+  color: var(--ink-3);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50%;
+}
+.row-pill .toggle {
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+  cursor: pointer;
+  text-transform: uppercase;
+}
+.row-pill .toggle:hover { color: var(--ink); }
+.row-pill .time {
+  font-family: var(--mono);
+  color: var(--ink-4);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.thought-body {
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  line-height: 1.6;
+  /* responsive width — see .msg / .tool comments. Same
+   * clamp keeps all chat-content blocks visually aligned at every
+   * resolution. */
+  max-width: clamp(860px, 95%, 2400px);
+}
+
+/* ─── Permission pill (issue #374) ───────────────────────────────────
+ *
+ * Compatibility-only permission gate for defensive provider requests. Two layouts:
+ *   .perm-pill-pending   — two-line (header + button row).
+ *   .perm-pill-allowed
+ *   .perm-pill-denied    — one-line audit chip with terminal-state colour.
+ *
+ * Uses surface-2 background + hairline border to match the existing
+ * chat-bubble aesthetic; accent colours are the same --ok / --err tokens
+ * used by .pact-edit / modal action buttons for visual consistency.
+ *
+ * RTL: every block uses flex with default LTR row direction; mirroring
+ * is handled by the document's `dir` attribute. No absolute positioning.
+ */
+.perm-pill {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-2, var(--hairline));
+  border-radius: 6px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+  max-width: clamp(860px, 95%, 2400px);
+}
+.perm-pill-pending {
+  border-color: color-mix(in oklab, var(--warn, #f59e0b) 45%, var(--hairline));
+  background: color-mix(in oklab, var(--warn, #f59e0b) 6%, var(--surface-2));
+}
+.perm-pill-allowed {
+  flex-direction: row;
+  align-items: center;
+  padding: 6px 10px;
+  color: var(--ok);
+  border-color: color-mix(in oklab, var(--ok) 35%, var(--hairline));
+}
+.perm-pill-denied {
+  flex-direction: row;
+  align-items: center;
+  padding: 6px 10px;
+  color: var(--err);
+  border-color: color-mix(in oklab, var(--err) 35%, var(--hairline));
+}
+.perm-pill-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.perm-pill-icon {
+  flex: 0 0 auto;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-grid;
+  place-items: center;
+}
+.perm-pill-tool {
+  font-weight: 600;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.perm-pill-args {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: 60ch;
+}
+.perm-pill-cwd {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perm-pill-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.perm-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: var(--sans);
+  letter-spacing: 0.02em;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.3;
+  transition: background 80ms ease, color 80ms ease, border-color 80ms ease;
+}
+.perm-pill-btn:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+.perm-pill-allow {
+  color: var(--ok);
+  border-color: color-mix(in oklab, var(--ok) 50%, var(--hairline));
+}
+.perm-pill-allow:hover {
+  background: color-mix(in oklab, var(--ok) 12%, transparent);
+}
+.perm-pill-allow-always {
+  color: var(--ok);
+  border-color: color-mix(in oklab, var(--ok) 70%, var(--hairline));
+  font-weight: 500;
+}
+.perm-pill-allow-always:hover {
+  background: color-mix(in oklab, var(--ok) 18%, transparent);
+}
+.perm-pill-deny {
+  color: var(--err);
+  border-color: color-mix(in oklab, var(--err) 50%, var(--hairline));
+}
+.perm-pill-deny:hover {
+  background: color-mix(in oklab, var(--err) 12%, transparent);
+}
+.perm-pill-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.perm-pill-resolved-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.perm-pill-resolved-label strong {
+  color: inherit;
+  font-weight: 600;
+}

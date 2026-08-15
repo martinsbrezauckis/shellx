@@ -2012,7 +2012,7 @@ async fn run_grok(
     cwd: Option<&str>,
 ) -> Result<CommandOutput, String> {
     use crate::winproc::NoWindowExt as _;
-    let mcp_token = crate::mcp_http::resolve_or_create_mcp_token();
+    let mcp_token = crate::mcp_http::current_mcp_token()?;
     let target_is_ssh = matches!(target, GrokCommandTarget::Ssh { .. });
     let mut cmd = match target {
         GrokCommandTarget::Local => {

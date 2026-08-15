@@ -5,7 +5,7 @@
  * persists under `shellX.settingsTab.v2`.
  *
  * Tabs:
- * - General — model, effort, font, density, theme, caps, gh
+ * - General — chat font size, density, theme, and permission UX
  * (./settings/GeneralTab.tsx)
  * - Vault — encrypted-secret CRUD (./settings/VaultTab.tsx).
  * Values lazy-load per key via POST /vault/get and

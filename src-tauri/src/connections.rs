@@ -704,7 +704,7 @@ fn connection_provider_scan_status(
     }
 }
 
-fn connection_provider_capability_target(
+pub(crate) fn connection_provider_capability_target(
     preset: &ConnectionPreset,
 ) -> ConnectionProviderCapabilityTarget {
     match &preset.transport {

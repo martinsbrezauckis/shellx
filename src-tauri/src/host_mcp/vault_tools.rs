@@ -549,7 +549,10 @@ pub(super) fn vault_grant_actor_scope_body(
         args,
         &["actorKind", "actor_kind", "scopeKind", "scope_kind", "kind"],
     )
-    .unwrap_or_else(|| "allShellxAgents".to_string());
+    .ok_or_else(|| {
+        "vault_request_grant requires an explicit actorScope or actorKind; no grant scope is inferred"
+            .to_string()
+    })?;
     let compact = kind
         .trim()
         .chars()

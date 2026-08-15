@@ -9,6 +9,7 @@ use crate::shellx_browser::{
     BrowserActionResponse, BrowserRecipeReplayRequest, BrowserRecipeReplayResponse,
     ShellxBrowserRegistry,
 };
+use crate::shellx_browser_prompt_guard::BrowserPromptGuardOutcome;
 
 const BROWSER_RECIPE_NAVIGATION_SETTLE_TIMEOUT_MS: u64 = 10_000;
 
@@ -27,18 +28,91 @@ pub(crate) async fn execute_browser_recipe_replay(
     let mut steps_applied = 0usize;
     let mut step_results =
         crate::shellx_browser_recipes::browser_recipe_replay_planned_step_results(&plan);
-    if !dry_run {
+    if dry_run {
+        for replay_action in plan.actions.clone() {
+            registry
+                .ensure_browser_request_authority_for_action(
+                    &replay_action.request,
+                    caller_session_id,
+                )
+                .map_err(|error| replay_error(StatusCode::FORBIDDEN, error, None))?;
+            if let Some(response) = guard_recipe_replay_action(
+                state,
+                registry,
+                caller_session_id,
+                &replay_action.request,
+                false,
+            )
+            .await?
+            {
+                plan.skipped_steps
+                    .push(crate::shellx_browser::BrowserRecipeReplaySkippedStep {
+                        index: replay_action.index,
+                        action: Some(replay_action.request.action.clone()),
+                        reason: prompt_guard_skip_reason(&response).to_string(),
+                    });
+                if let Some(result) = step_results
+                    .iter_mut()
+                    .find(|result| result.index == replay_action.index)
+                {
+                    *result =
+                        crate::shellx_browser_recipes::browser_recipe_replay_response_step_result(
+                            replay_action.index,
+                            replay_action.request.action,
+                            &response,
+                        );
+                }
+            }
+        }
+        step_results.sort_by_key(|result| result.index);
+    } else {
         step_results = plan
             .skipped_steps
             .iter()
             .map(crate::shellx_browser_recipes::browser_recipe_replay_skipped_step_result)
             .collect();
-        for replay_action in plan.actions.clone() {
+        let replay_actions = plan.actions.clone();
+        for (position, replay_action) in replay_actions.iter().cloned().enumerate() {
             let action = replay_action.request;
             registry
-                .ensure_agent_session_for_action(&action, caller_session_id)
+                .ensure_browser_request_authority_for_action(&action, caller_session_id)
                 .map_err(|error| replay_error(StatusCode::FORBIDDEN, error, None))?;
             let requested_action = action.action.clone();
+            if let Some(response) =
+                guard_recipe_replay_action(state, registry, caller_session_id, &action, true)
+                    .await?
+            {
+                plan.skipped_steps
+                    .push(crate::shellx_browser::BrowserRecipeReplaySkippedStep {
+                        index: replay_action.index,
+                        action: Some(requested_action.clone()),
+                        reason: prompt_guard_skip_reason(&response).to_string(),
+                    });
+                step_results.push(
+                    crate::shellx_browser_recipes::browser_recipe_replay_response_step_result(
+                        replay_action.index,
+                        requested_action,
+                        &response,
+                    ),
+                );
+                for remaining in replay_actions.iter().skip(position + 1) {
+                    plan.skipped_steps.push(
+                        crate::shellx_browser::BrowserRecipeReplaySkippedStep {
+                            index: remaining.index,
+                            action: Some(remaining.request.action.clone()),
+                            reason: "blockedByPromptInjectionGuard".to_string(),
+                        },
+                    );
+                    step_results.push(
+                        crate::shellx_browser_recipes::browser_recipe_replay_failed_step_result(
+                            remaining.index,
+                            remaining.request.action.clone(),
+                            "blockedByPromptInjectionGuard",
+                        ),
+                    );
+                }
+                break;
+            }
             let response = match crate::shellx_browser::try_apply_engine_action(
                 state.app(),
                 registry,
@@ -141,6 +215,87 @@ pub(crate) async fn execute_browser_recipe_replay(
             plan.decision_points,
         )
         .map_err(|error| replay_error(StatusCode::BAD_REQUEST, error, None))
+}
+
+async fn guard_recipe_replay_action(
+    state: &ApiState,
+    registry: &Arc<ShellxBrowserRegistry>,
+    caller_session_id: Option<&str>,
+    action: &crate::shellx_browser::BrowserActionRequest,
+    allow_observe_recovery: bool,
+) -> Result<Option<BrowserActionResponse>, BrowserRecipeReplayExecutionError> {
+    let mut outcome = registry
+        .guard_browser_action_against_prompt_injection(action, caller_session_id)
+        .map_err(|error| replay_error(StatusCode::BAD_REQUEST, error, None))?;
+    let mut emitted_block_receipt_id = None;
+    if let BrowserPromptGuardOutcome::Blocked(response) = &outcome {
+        emit_browser_receipt(state, &response.receipt);
+        emitted_block_receipt_id = Some(response.receipt.receipt_id.clone());
+        if allow_observe_recovery
+            && response
+                .receipt
+                .evidence
+                .get("verdict")
+                .and_then(Value::as_str)
+                == Some("unavailable")
+        {
+            let observe_request = crate::shellx_browser::BrowserActionRequest {
+                task_id: action.task_id.clone(),
+                browser_tab_id: action.browser_tab_id.clone(),
+                action: "observe".to_string(),
+                lock_lease_id: action.lock_lease_id.clone(),
+                owner_agent_id: action.owner_agent_id.clone(),
+                owner_run_id: action.owner_run_id.clone(),
+                ..crate::shellx_browser::BrowserActionRequest::default()
+            };
+            let refreshed = match crate::shellx_browser::try_apply_engine_action(
+                state.app(),
+                registry,
+                observe_request.clone(),
+            )
+            .await
+            {
+                Ok(Some(response)) => Some(response),
+                Ok(None) => registry.apply_action(observe_request).ok(),
+                Err(_) => None,
+            };
+            if let Some(refreshed) = refreshed {
+                emit_browser_receipt(state, &refreshed.receipt);
+                if refreshed.ok && refreshed.status == "applied" {
+                    outcome = registry
+                        .guard_browser_action_against_prompt_injection(action, caller_session_id)
+                        .map_err(|error| replay_error(StatusCode::BAD_REQUEST, error, None))?;
+                }
+            }
+        }
+    }
+    match outcome {
+        BrowserPromptGuardOutcome::NotRequired => Ok(None),
+        BrowserPromptGuardOutcome::Proceed(receipt) => {
+            emit_browser_receipt(state, &receipt);
+            Ok(None)
+        }
+        BrowserPromptGuardOutcome::Blocked(response) => {
+            if emitted_block_receipt_id.as_deref() != Some(response.receipt.receipt_id.as_str()) {
+                emit_browser_receipt(state, &response.receipt);
+            }
+            Ok(Some(*response))
+        }
+    }
+}
+
+fn prompt_guard_skip_reason(response: &BrowserActionResponse) -> &'static str {
+    if response
+        .receipt
+        .evidence
+        .get("verdict")
+        .and_then(Value::as_str)
+        == Some("unavailable")
+    {
+        "promptInjectionClassificationUnavailable"
+    } else {
+        "promptInjectionGuardBlocked"
+    }
 }
 
 fn replay_error(

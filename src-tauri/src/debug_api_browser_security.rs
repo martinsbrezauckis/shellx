@@ -107,8 +107,8 @@ pub(crate) async fn browser_dialog_resolve_http(
     };
     let caller_session_id = browser_mcp_caller_id(&headers);
     if let Some(task_id) = body.task_id.as_deref() {
-        if let Err(e) =
-            registry.ensure_agent_session_for_task_id(task_id, caller_session_id.as_deref())
+        if let Err(e) = registry
+            .ensure_browser_request_authority_for_task_id(task_id, caller_session_id.as_deref())
         {
             return (
                 StatusCode::FORBIDDEN,

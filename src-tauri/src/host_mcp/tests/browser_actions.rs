@@ -823,12 +823,13 @@ fn vault_grant_request_body_preserves_debug_api_contract() {
     let missing_origin = vault_grant_request_body(
         json!({
             "secretRef": "accounts/example-password",
-            "operation": "fill"
+            "operation": "fill",
+            "actorKind": "browserOrigin"
         }),
         Some("caller-a"),
     )
     .expect_err("browser grants must be explicitly origin-bound");
-    assert!(missing_origin.contains("require origin"));
+    assert!(missing_origin.contains("actorKind=browserOrigin requires origin"));
 
     let raw = vault_grant_request_body(
         json!({
@@ -839,6 +840,27 @@ fn vault_grant_request_body_preserves_debug_api_contract() {
     )
     .expect_err("raw reveal must not be requestable through MCP");
     assert!(raw.contains("rawReveal"));
+}
+
+#[test]
+fn vault_grant_tool_schema_requires_an_explicit_actor_scope() {
+    let request = tool_specs()
+        .into_iter()
+        .find(|spec| spec.get("name").and_then(Value::as_str) == Some("vault_request_grant"))
+        .expect("vault_request_grant spec");
+    assert_eq!(
+        request["inputSchema"]["anyOf"],
+        json!([
+            { "required": ["actorScope"] },
+            { "required": ["actorKind"] }
+        ])
+    );
+    assert!(
+        !request["inputSchema"]["properties"]["actorKind"]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Defaults")
+    );
 }
 
 #[test]

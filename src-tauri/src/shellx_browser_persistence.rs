@@ -338,7 +338,7 @@ mod tests {
     };
     use crate::shellx_browser_personal_lock::mark_browser_personal_lock_operator_approved;
     use crate::shellx_browser_privacy::mark_browser_privacy_operator_approved;
-    use crate::shellx_browser_shields::mark_browser_shields_operator_approved;
+    use crate::shellx_browser_shield_settings::mark_browser_shields_operator_approved;
     use crate::shellx_browser_transfers::BrowserDownloadFolderUpdateRequest;
 
     fn temp_settings_path(label: &str) -> (tempfile::TempDir, PathBuf) {

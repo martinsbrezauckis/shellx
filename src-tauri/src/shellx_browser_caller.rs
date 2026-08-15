@@ -60,10 +60,11 @@ pub(crate) fn ensure_browser_task_control_authority(
     if authority == BrowserTaskControlAuthority::Operator {
         return Ok(());
     }
-    let caller_matches = match task.owner_session_id.as_deref() {
-        Some(owner_session_id) => caller_session_id == Some(owner_session_id),
-        None => true,
-    };
+    let caller_matches = task
+        .owner_session_id
+        .as_deref()
+        .zip(caller_session_id)
+        .is_some_and(|(owner_session_id, caller_session_id)| owner_session_id == caller_session_id);
     if task.owner_actor_id == authority.actor_id()
         && task.owner_surface == authority.surface_id()
         && caller_matches
@@ -76,7 +77,7 @@ pub(crate) fn ensure_browser_task_control_authority(
         task.task_id,
         task.owner_actor_id,
         task.owner_surface,
-        task.owner_session_id.as_deref().unwrap_or("legacy")
+        task.owner_session_id.as_deref().unwrap_or("unbound")
     ))
 }
 

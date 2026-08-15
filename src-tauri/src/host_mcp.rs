@@ -80,6 +80,7 @@ mod build_completion;
 mod build_receipts;
 mod build_tools;
 mod cut_mcp;
+pub(crate) mod cut_status;
 mod debug_client;
 mod filesystem_core;
 mod filesystem_grep;

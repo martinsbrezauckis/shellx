@@ -349,11 +349,20 @@ pub(super) async fn connect(
     // path. WSL uses its loopback bridge and SSH uses the required reverse
     // tunnel, so the provider host needs no persistent Grok registration.
     let transport_kind = guard.transport_kind().to_string();
-    let servers = crate::inject_host_mcp_server_for_transport(
+    let servers = match crate::inject_host_mcp_server_for_transport(
         body.mcp_servers,
         Some(tab_key.as_str()),
         &transport_kind,
-    );
+    ) {
+        Ok(servers) => servers,
+        Err(error) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("Host MCP token authority is unavailable: {error}"),
+            )
+                .into_response();
+        }
+    };
     if !servers.is_empty() {
         guard.set_mcp_servers(servers);
     }

@@ -2120,7 +2120,7 @@ pub fn prepare_provider_shellx_tooling(
 ) -> Result<Option<ProviderShellxTooling>, String> {
     let host_port = crate::mcp_http::effective_mcp_port();
     let tab_id = provider_tooling_tab_value(tab_id);
-    let token = crate::mcp_http::tab_bound_mcp_token(&tab_id);
+    let token = crate::mcp_http::tab_bound_mcp_token(&tab_id)?;
     let port = if matches!(target.execution, ProviderExecutionTransport::Ssh) {
         provider_remote_mcp_port(&tab_id, host_port)
     } else {

@@ -74,10 +74,13 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::host_mcp::{is_write_class_tool, HostMcpContext, JsonRpcReq};
 use crate::loopback_security::{loopback_host_allowed, origin_allowed, subtle_eq};
+pub(crate) use crate::mcp_http_auth::{
+    current_mcp_token, current_mcp_token_source, initialize_mcp_token_authority,
+};
 
 /// Default port for the HTTP MCP server. Override via `SHELLX_MCP_PORT`
 /// env var when running side-by-side with another shellX-like app that
@@ -126,132 +129,6 @@ pub fn effective_mcp_port() -> u16 {
     mcp_port()
 }
 
-/// Cross-platform home directory: tries HOME (Unix) then USERPROFILE
-/// (Windows). Returns Err if neither set. Matches the debug-api helper —
-/// kept duplicated rather than `pub`-importing to keep the two surfaces
-/// from accidentally sharing state.
-fn shellx_home() -> Result<std::path::PathBuf, String> {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map(std::path::PathBuf::from)
-        .map_err(|_| "HOME/USERPROFILE unset".to_string())
-}
-
-fn ensure_private_dir_best_effort(dir: &std::path::Path) {
-    let _ = std::fs::create_dir_all(dir);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-    }
-}
-
-/// Resolve or auto-create the bearer token for the HTTP MCP endpoint.
-/// Resolution order (first non-empty wins):
-/// 1. `SHELLX_MCP_SECRET` env var
-/// 2. `~/.shellx/mcp.token` (32 hex chars, mode 0600, auto-
-/// created if missing — external drivers read this file directly,
-/// same pattern as debug.token)
-///
-/// The token is the only access control for the /mcp endpoint short of
-/// the loopback bind. An attacker with read access to ~/.shellx/
-/// already has every other shellX secret anyway, so the file mode 0600
-/// is enough — we don't try to encrypt it at rest.
-/// Detect tokens written by the pre-OsRng legacy shellX builds.
-/// The legacy format was
-/// `format!("{:016x}{:024x}", pid, nanos_low_96bits)` = exactly 40 chars,
-/// where the first 16 chars are the pid as left-padded hex. Since
-/// Windows/Linux pids fit in u32, the high 8 nibbles are always zero —
-/// any token with 40 chars and ≥8 leading `0` characters is virtually
-/// certainly legacy (collision probability for a random 128-bit OsRng
-/// token is ~2.3e-10). We rotate these on upgrade so existing installs
-/// gain the entropy hardening without manual intervention.
-fn is_legacy_low_entropy_token(t: &str) -> bool {
-    if t.len() != 40 {
-        return false;
-    }
-    let leading_zeros = t.chars().take_while(|c| *c == '0').count();
-    leading_zeros >= 8
-}
-
-pub fn resolve_or_create_mcp_token() -> String {
-    if let Ok(t) = std::env::var("SHELLX_MCP_SECRET") {
-        let token = t.trim();
-        if token.len() >= 32 {
-            return token.to_string();
-        }
-        if !token.is_empty() {
-            warn!(
-                token_length = token.len(),
-                "mcp_http: ignoring configured bearer token shorter than 32 characters"
-            );
-        }
-    }
-    let home = shellx_home().unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
-    let dir = home.join(".shellx");
-    let path = dir.join("mcp.token");
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        let t = existing.trim().to_string();
-        if t.len() >= 32 && !is_legacy_low_entropy_token(&t) {
-            return t;
-        }
-        // Legacy token detected. Old format was 40 chars derived from
-        // `format!("{:016x}{:024x}", pid, nanos)` → first 16 chars are
-        // pid hex left-padded with zeros, and pid values <2^32 always
-        // produce 8+ leading zero nibbles. New OsRng 32-char tokens have
-        // ~1 in 16^8 chance of that pattern (=2.3e-10), so a 40-char file
-        // with 8+ leading zero nibbles is virtually certainly the pre-OsRng
-        // insecure derivation. Drop it on the floor and regenerate
-        // atomically below.
-        warn!(
-            "mcp_http: detected legacy low-entropy token at {} (len={}, leading-zeros={}) — rotating to OsRng 128-bit",
-            path.display(),
-            t.len(),
-            t.chars().take_while(|c| *c == '0').count(),
-        );
-    }
-    ensure_private_dir_best_effort(&dir);
-    // OsRng 128-bit token. Replaces a prior nanos+pid-derived ~30-bit
-    // derivation that was grindable by another local process that knew
-    // shellX's launch second + pid (visible via /proc/PID/stat).
-    // 16 bytes → 32 hex chars, indistinguishable from random.
-    use rand::RngCore;
-    let mut bytes = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    let token: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-    // Open atomically with O_CREAT | O_TRUNC + mode 0o600 on unix so
-    // there's no world-readable window between create and chmod.
-    // Mirrors the debug-api token write pattern.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-        {
-            Ok(mut f) => {
-                use std::io::Write;
-                if let Err(e) = f.write_all(token.as_bytes()) {
-                    warn!("mcp_http: write {} failed: {}", path.display(), e);
-                }
-            }
-            Err(e) => warn!("mcp_http: open {} failed: {}", path.display(), e),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        // Windows: %USERPROFILE% inherits user-private ACL from NTFS.
-        // Plain write is sufficient on this platform.
-        if let Err(e) = std::fs::write(&path, &token) {
-            warn!("mcp_http: write {} failed: {}", path.display(), e);
-        }
-    }
-    token
-}
-
 #[derive(Clone)]
 struct AuthConfig {
     token: String,
@@ -275,8 +152,8 @@ fn tab_bound_mcp_token_from_base(base_token: &str, tab_id: &str) -> String {
     format!("sx_tab_{:x}", hasher.finalize())
 }
 
-pub fn tab_bound_mcp_token(tab_id: &str) -> String {
-    tab_bound_mcp_token_from_base(&resolve_or_create_mcp_token(), tab_id)
+pub fn tab_bound_mcp_token(tab_id: &str) -> Result<String, String> {
+    Ok(tab_bound_mcp_token_from_base(&current_mcp_token()?, tab_id))
 }
 
 fn token_matches_tab(token: &str, base_token: &str, tab_id: &str) -> bool {
@@ -1321,7 +1198,16 @@ async fn mcp_post(
                 }
             };
             let auth_token = bearer_token_from_headers(&headers);
-            let base_token = resolve_or_create_mcp_token();
+            let base_token = match current_mcp_token() {
+                Ok(token) => token,
+                Err(error) => {
+                    return json_rpc_error_response(
+                        req.id,
+                        -32603,
+                        format!("host-MCP token authority is unavailable: {error}"),
+                    );
+                }
+            };
             if !auth_token
                 .as_deref()
                 .is_some_and(|token| token_matches_tab(token, &base_token, &tab_id))
@@ -1761,6 +1647,7 @@ pub fn migrate_http_snippet_file(path: &std::path::Path) -> Result<bool, String>
 }
 
 pub async fn start_mcp_server(app: AppHandle) -> Result<(), String> {
+    initialize_mcp_token_authority()?;
     // Embedded constructor — carries the AppHandle so per-tab tools
     // (goal_complete) can reach Tauri-managed state (GoalOrchestrator,
     // SessionRegistry) via try_state.
@@ -1782,12 +1669,8 @@ pub async fn start_mcp_server(app: AppHandle) -> Result<(), String> {
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(state);
 
-    let token = resolve_or_create_mcp_token();
-    let token_source = if std::env::var("SHELLX_MCP_SECRET").is_ok() {
-        "env SHELLX_MCP_SECRET"
-    } else {
-        "~/.shellx/mcp.token"
-    };
+    let token = current_mcp_token()?;
+    let token_source = current_mcp_token_source()?.label();
     let auth_cfg = AuthConfig { token };
     let router = router.layer(middleware::from_fn_with_state(auth_cfg, require_auth));
 

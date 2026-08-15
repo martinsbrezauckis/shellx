@@ -39,15 +39,15 @@ the exact installed page bounds.
 
 ### ShellX workspace
 
-![ShellX 0.3.52 work session with Preview Center displaying a high-contrast snow-leopard image](docs/public/assets/shellx-desktop-0.3.52.png)
+![ShellX 0.3.60 work session with Preview Center displaying a high-contrast snow-leopard image](docs/public/assets/shellx-desktop-0.3.60.png)
 
 ### ShellX Browser
 
-![ShellX Browser 0.3.52 with theshellx.com open, secure native navigation chrome, and the agent sidebar visible](docs/public/assets/shellx-browser-0.3.52.png)
+![ShellX Browser 0.3.60 with theshellx.com open, secure native navigation chrome, and the agent sidebar visible](docs/public/assets/shellx-browser-0.3.60.png)
 
 ### ShellX Vault
 
-![ShellX 0.3.52 Vault settings with password, profile-card, and agent-wallet surfaces visible](docs/public/assets/shellx-vault-0.3.52.png)
+![ShellX 0.3.60 Vault settings with password, profile-card, and agent-wallet surfaces visible](docs/public/assets/shellx-vault-0.3.60.png)
 
 ## What it does
 

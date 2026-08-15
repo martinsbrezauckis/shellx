@@ -199,6 +199,7 @@ fn emit_and_debug(
     tab_id: Option<&str>,
 ) {
     let tagged = prepare_event_payload(payload, tab_id);
+    crate::task_conversation::record_tauri_event(app, kind, &tagged, tab_id);
     let _ = app.emit(kind, tagged.clone());
     if let Some(hub) = app.try_state::<Arc<crate::debug_api::DebugHub>>() {
         hub.record_raw_event(kind, tagged);
@@ -214,7 +215,9 @@ fn emit_and_debug(
     payload: serde_json::Value,
     tab_id: Option<&str>,
 ) {
-    let _ = app.emit(kind, prepare_event_payload(payload, tab_id));
+    let tagged = prepare_event_payload(payload, tab_id);
+    crate::task_conversation::record_tauri_event(app, kind, &tagged, tab_id);
+    let _ = app.emit(kind, tagged);
 }
 
 /// Per-tab session registry. Each tab gets its own
@@ -856,6 +859,17 @@ pub struct GrokAcpSession {
     /// the session that fired it.
     tab_id: Option<String>,
 
+    /// Optional, per-session lifecycle sink for trusted host-side consumers.
+    ///
+    /// The reader copies this handle when the ACP child starts, so a task
+    /// runner can observe only its own explicitly tagged session without a
+    /// process-global event registry or renderer round-trip. The observer is
+    /// deliberately given a bounded, redacted lifecycle projection rather
+    /// than the provider's raw notification/request payload: ACP text,
+    /// prompt bodies, tool arguments, and permission options remain on the
+    /// normal provider/UI stream only.
+    lifecycle_observer: Option<Arc<dyn GrokAcpLifecycleObserver>>,
+
     /// Consecutive prompt timeouts without an intervening successful
     /// response. When the user
     /// experiences `session/prompt timed out after 10 minutes — agent
@@ -876,6 +890,18 @@ pub struct GrokAcpSession {
     /// session so grok sees the cwd immediately. The flag flips on
     /// successful send and stays true for the rest of the session.
     first_prompt_sent: bool,
+}
+
+/// Trusted, host-side observation point for one running Grok ACP session.
+///
+/// The callback is synchronous and object-safe so the ACP reader never needs
+/// to own a task runtime. Implementations should hand the small envelope to a
+/// bounded channel or local state machine and return promptly. `envelope` is
+/// an ACP-owned redacted `{ method, params, _meta: { tabId } }` projection;
+/// it never contains provider output, prompt text, tool arguments, or
+/// permission option text.
+pub(crate) trait GrokAcpLifecycleObserver: Send + Sync + 'static {
+    fn observe(&self, tab_id: &str, envelope: &serde_json::Value);
 }
 
 impl GrokAcpSession {
@@ -1382,6 +1408,7 @@ impl GrokAcpSession {
             mcp_servers: vec![],
             permission_mode: None,
             tab_id: None,
+            lifecycle_observer: None,
             consecutive_timeouts: 0,
             first_prompt_sent: false,
         }
@@ -1436,6 +1463,18 @@ impl GrokAcpSession {
     /// event emitted from here on will be tagged with `_meta.tabId`.
     pub fn set_tab_id(&mut self, tab_id: Option<String>) {
         self.tab_id = tab_id;
+    }
+
+    /// Attach or clear the trusted host-side lifecycle observer for this
+    /// session slot. The value is captured when `start` spawns its reader, so
+    /// callers must set it before starting/restarting the ACP child. It never
+    /// grants renderer or provider authority and receives only ACP-owned
+    /// redacted lifecycle projections.
+    pub(crate) fn set_lifecycle_observer(
+        &mut self,
+        observer: Option<Arc<dyn GrokAcpLifecycleObserver>>,
+    ) {
+        self.lifecycle_observer = observer;
     }
 
     /// Read-only accessor for the registry / event emitter.
@@ -2471,6 +2510,9 @@ impl GrokAcpSession {
         // session's tab_id was set by the Tauri command before
         // start_grok_session ran.
         let tab_id_for_loop = self.tab_id.clone();
+        // Capture the per-session observer alongside the exact tab id. This
+        // reader must never consult a global task/event registry.
+        let lifecycle_observer_for_loop = self.lifecycle_observer.clone();
         // Thread WSL config + linux_home into the reader loop so
         // terminal/* handlers can run commands inside WSL and translate
         // paths consistently with the fs/* handlers.
@@ -2493,6 +2535,7 @@ impl GrokAcpSession {
                 writer,
                 session_cwd_for_handlers,
                 tab_id_for_loop,
+                lifecycle_observer_for_loop,
                 wsl_distro_for_loop,
                 linux_home_for_loop,
                 ssh_config_for_loop,
@@ -3200,6 +3243,175 @@ async fn fail_pending_acp_responses(
     count
 }
 
+// A tab id is an application-owned routing key, but the observer boundary
+// still refuses empty, oversized, whitespace-padded, or control-containing
+// values. This keeps the callback's tag exact and avoids turning a malformed
+// provider/session setup into a new unbounded data path.
+const GROK_LIFECYCLE_TAB_ID_MAX_BYTES: usize = 256;
+
+fn lifecycle_observer_tab_id(tab_id: Option<&str>) -> Option<&str> {
+    let tab_id = tab_id?;
+    if tab_id.is_empty()
+        || tab_id.len() > GROK_LIFECYCLE_TAB_ID_MAX_BYTES
+        || tab_id.trim() != tab_id
+        || tab_id.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(tab_id)
+}
+
+fn normalized_grok_lifecycle_stop_reason(stop_reason: Option<&str>) -> &'static str {
+    match stop_reason {
+        Some("end_turn") => "end_turn",
+        Some("completed") => "completed",
+        Some("complete") => "complete",
+        Some("success") => "success",
+        Some("cancelled") => "cancelled",
+        Some("error") => "error",
+        Some("failed") => "failed",
+        _ => "unknown",
+    }
+}
+
+fn normalized_grok_lifecycle_permission_mode(mode: Option<&str>) -> &'static str {
+    match mode {
+        Some("plan") => "plan",
+        Some("default") => "default",
+        Some("acceptEdits") => "acceptEdits",
+        Some("bypassPermissions") => "bypassPermissions",
+        Some("auto") => "auto",
+        Some("alwaysApprove") => "alwaysApprove",
+        _ => "unknown",
+    }
+}
+
+/// Build the only notification shapes trusted observers may receive.
+///
+/// ACP's normal `session/update` event contains agent-message chunks, raw
+/// tool metadata, and sometimes provider-specific fields. The UI still owns
+/// that normal event stream. This separate projection keeps only the finite
+/// lifecycle facts needed by a host-side task runner; message text is reduced
+/// to a boolean and all provider identifiers/arguments are omitted.
+fn grok_lifecycle_notification_envelope(
+    method: &str,
+    params: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    match method {
+        "session/update" => {
+            let update = params.get("update")?;
+            let session_update = update.get("sessionUpdate")?.as_str()?;
+            let redacted_update = match session_update {
+                "tool_call_update" => serde_json::json!({
+                    "sessionUpdate": "tool_call_update",
+                }),
+                "agent_message_chunk" => {
+                    let has_content = update
+                        .get("content")
+                        .and_then(|content| content.get("text"))
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|text| !text.trim().is_empty());
+                    if !has_content {
+                        return None;
+                    }
+                    serde_json::json!({
+                        "sessionUpdate": "agent_message_chunk",
+                        "contentPresent": true,
+                    })
+                }
+                "agent_thought_chunk" => serde_json::json!({
+                    "sessionUpdate": "agent_thought_chunk",
+                }),
+                _ => return None,
+            };
+            Some(serde_json::json!({
+                "method": "session/update",
+                "params": { "update": redacted_update },
+            }))
+        }
+        "_x.ai/session/prompt_complete" => Some(grok_lifecycle_prompt_complete_envelope(
+            params.get("stopReason").and_then(serde_json::Value::as_str),
+            None,
+            false,
+            None,
+        )),
+        _ => None,
+    }
+}
+
+fn grok_lifecycle_prompt_complete_envelope(
+    stop_reason: Option<&str>,
+    elapsed_ms: Option<u64>,
+    synthetic: bool,
+    reason_detail: Option<&str>,
+) -> serde_json::Value {
+    let mut params = serde_json::Map::new();
+    params.insert(
+        "stopReason".to_string(),
+        serde_json::Value::String(normalized_grok_lifecycle_stop_reason(stop_reason).to_string()),
+    );
+    if let Some(elapsed_ms) = elapsed_ms {
+        params.insert("elapsedMs".to_string(), serde_json::Value::from(elapsed_ms));
+    }
+    if synthetic {
+        params.insert("synthetic".to_string(), serde_json::Value::Bool(true));
+    }
+    if let Some(reason_detail @ ("user_aborted" | "agent_chose")) = reason_detail {
+        params.insert(
+            "reasonDetail".to_string(),
+            serde_json::Value::String(reason_detail.to_string()),
+        );
+    }
+    serde_json::json!({
+        "method": "_x.ai/session/prompt_complete",
+        "params": params,
+    })
+}
+
+fn grok_lifecycle_permission_request_envelope(
+    request_id: u64,
+    permission_mode: Option<&str>,
+    lifecycle: &'static str,
+) -> serde_json::Value {
+    debug_assert!(matches!(
+        lifecycle,
+        "auto_approved" | "auto_denied" | "awaiting_decision"
+    ));
+    serde_json::json!({
+        "method": "session/request_permission",
+        "params": {
+            "requestId": request_id,
+            "permissionMode": normalized_grok_lifecycle_permission_mode(permission_mode),
+            "lifecycle": lifecycle,
+        },
+    })
+}
+
+/// Deliver one redacted lifecycle fact to this session's trusted observer.
+///
+/// There is intentionally no global registry, event fanout, renderer call, or
+/// deferred raw payload here. A missing/untagged observer is a no-op. A faulty
+/// observer cannot terminate the ACP reader; its event is simply dropped.
+#[must_use]
+fn notify_grok_lifecycle_observer(
+    observer: Option<&Arc<dyn GrokAcpLifecycleObserver>>,
+    tab_id: Option<&str>,
+    envelope: serde_json::Value,
+) -> bool {
+    let (Some(observer), Some(tab_id)) = (observer, lifecycle_observer_tab_id(tab_id)) else {
+        return false;
+    };
+    let envelope = tag_with_tab_id(envelope, Some(tab_id));
+    let delivered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        observer.observe(tab_id, &envelope);
+    }));
+    if delivered.is_err() {
+        warn!("Grok ACP lifecycle observer panicked; dropping lifecycle event");
+        return false;
+    }
+    true
+}
+
 /// Background task: read lines from stdout (protocol) + stderr, correlate responses, dispatch notifications and handle capability requests from the agent.
 ///
 /// Args are kept positional rather than bundled into a struct because each
@@ -3218,6 +3430,10 @@ async fn read_loop(
     // events emitted from here (stdout protocol + stderr lines) get
     // `_meta.tabId = tab_id` tagged so the React side can route them.
     tab_id: Option<String>,
+    // Optional trusted host-side observer copied from the exact owning
+    // session at reader spawn. It receives redacted lifecycle projections
+    // only; there is no process-global registry or renderer authority.
+    lifecycle_observer: Option<Arc<dyn GrokAcpLifecycleObserver>>,
     // WSL distro identity for ACP file-routing and provider handoff paths.
     // None means we're talking to a native host provider.
     wsl_distro: Option<String>,
@@ -3384,6 +3600,7 @@ async fn read_loop(
                         let request_linux_home = linux_home.clone();
                         let request_ssh = ssh_config.clone();
                         let request_tab_id = tab_id.clone();
+                        let request_lifecycle_observer = lifecycle_observer.clone();
                         request_tasks.push(tokio::spawn(async move {
                             let _permit = permit;
                             handle_agent_request(
@@ -3397,6 +3614,7 @@ async fn read_loop(
                                 &request_linux_home,
                                 &request_ssh,
                                 request_tab_id.as_deref(),
+                                request_lifecycle_observer.as_ref(),
                             )
                             .await;
                         }));
@@ -3493,6 +3711,20 @@ async fn read_loop(
                                 "synthetic": true,
                                 "reasonDetail": reason_detail,
                             });
+                            // The synthetic completion is a lifecycle fact
+                            // just like the provider's real extension event.
+                            // Deliver its redacted `{method, params}`
+                            // projection before the normal UI/debug emit.
+                            let _ = notify_grok_lifecycle_observer(
+                                lifecycle_observer.as_ref(),
+                                tab_id.as_deref(),
+                                grok_lifecycle_prompt_complete_envelope(
+                                    Some(&stop_reason),
+                                    Some(elapsed_ms),
+                                    true,
+                                    reason_detail,
+                                ),
+                            );
                             if let Some(ref h) = app_handle {
                                 emit_and_debug(h, "prompt-complete", synth, tab_id.as_deref());
                             }
@@ -3530,7 +3762,14 @@ async fn read_loop(
             // NOTIFICATION (no id) - e.g. session/update or x.ai/* Grok extensions
             let params = msg.params.unwrap_or(serde_json::json!({}));
             debug!("ACP notification: {}", method);
-            handle_notification(method, params, &app_handle, tab_id.as_deref()).await;
+            handle_notification(
+                method,
+                params,
+                &app_handle,
+                tab_id.as_deref(),
+                lifecycle_observer.as_ref(),
+            )
+            .await;
         }
     }
 
@@ -4246,7 +4485,14 @@ async fn handle_notification(
     app_handle: &Option<tauri::AppHandle>,
     // Forwarded from the parent read_loop for event tagging.
     tab_id: Option<&str>,
+    // Trusted, per-session observer captured by read_loop at ACP spawn.
+    // This must run before the raw provider notification is emitted to the
+    // normal UI/debug event stream.
+    lifecycle_observer: Option<&Arc<dyn GrokAcpLifecycleObserver>>,
 ) {
+    if let Some(lifecycle) = grok_lifecycle_notification_envelope(&method, &params) {
+        let _ = notify_grok_lifecycle_observer(lifecycle_observer, tab_id, lifecycle);
+    }
     if let Some(handle) = app_handle {
         let payload = serde_json::json!({
             "type": "notification",
@@ -4749,6 +4995,9 @@ async fn handle_agent_request(
     ssh_config: &Option<SshSpawnConfig>,
     // Forwarded from read_loop for emit tagging.
     tab_id: Option<&str>,
+    // Per-session observer captured by the ACP reader. It receives a
+    // redacted permission lifecycle fact before the ordinary UI event.
+    lifecycle_observer: Option<&Arc<dyn GrokAcpLifecycleObserver>>,
 ) {
     let result = match method.as_str() {
         "fs/read_text_file" => {
@@ -5062,6 +5311,19 @@ async fn handle_agent_request(
             // 65s on permission-request events under bypassPermissions
             // because nothing told it the request was already resolved.
             if auto_approve || auto_deny {
+                let _ = notify_grok_lifecycle_observer(
+                    lifecycle_observer,
+                    tab_id,
+                    grok_lifecycle_permission_request_envelope(
+                        id,
+                        mode.as_deref(),
+                        if auto_approve {
+                            "auto_approved"
+                        } else {
+                            "auto_denied"
+                        },
+                    ),
+                );
                 if let Some(h) = app_handle {
                     let mut payload = params.clone();
                     if let serde_json::Value::Object(map) = &mut payload {
@@ -5123,6 +5385,15 @@ async fn handle_agent_request(
             };
 
             let rx = reg.insert(req_id_str.clone()).await;
+            let _ = notify_grok_lifecycle_observer(
+                lifecycle_observer,
+                tab_id,
+                grok_lifecycle_permission_request_envelope(
+                    id,
+                    mode.as_deref(),
+                    "awaiting_decision",
+                ),
+            );
             if let Some(h) = app_handle {
                 let payload = serde_json::json!({
                     "reqId": req_id_str,
@@ -6491,6 +6762,196 @@ mod tests {
         // by value but the cloned input here proves no in-place mutation
         // leak across callsites).
         assert!(p.pointer("/_meta/tabId").is_none());
+    }
+
+    #[derive(Default)]
+    struct CapturingGrokLifecycleObserver {
+        seen: std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+    }
+
+    impl GrokAcpLifecycleObserver for CapturingGrokLifecycleObserver {
+        fn observe(&self, tab_id: &str, envelope: &serde_json::Value) {
+            self.seen
+                .lock()
+                .expect("observer capture lock")
+                .push((tab_id.to_string(), envelope.clone()));
+        }
+    }
+
+    #[test]
+    fn lifecycle_observer_receives_only_its_exact_tagged_tab() {
+        let capture = std::sync::Arc::new(CapturingGrokLifecycleObserver::default());
+        let observer: Arc<dyn GrokAcpLifecycleObserver> = capture.clone();
+
+        let lifecycle = grok_lifecycle_notification_envelope(
+            "session/update",
+            &serde_json::json!({
+                "sessionId": "provider-session-that-must-not-be-forwarded",
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "rawOutput": { "command": "never forward this" },
+                },
+            }),
+        )
+        .expect("tool update has a lifecycle projection");
+
+        assert!(notify_grok_lifecycle_observer(
+            Some(&observer),
+            Some("task-tab-a"),
+            lifecycle,
+        ));
+        assert!(notify_grok_lifecycle_observer(
+            Some(&observer),
+            Some("task-tab-b"),
+            grok_lifecycle_prompt_complete_envelope(Some("completed"), None, false, None),
+        ));
+
+        let seen = capture.seen.lock().expect("observer capture lock").clone();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].0, "task-tab-a");
+        assert_eq!(
+            seen[0].1.pointer("/_meta/tabId").and_then(|v| v.as_str()),
+            Some("task-tab-a")
+        );
+        assert_eq!(seen[1].0, "task-tab-b");
+        assert_eq!(
+            seen[1].1.pointer("/_meta/tabId").and_then(|v| v.as_str()),
+            Some("task-tab-b")
+        );
+    }
+
+    #[test]
+    fn lifecycle_observer_absence_or_missing_tag_is_a_noop() {
+        let envelope =
+            grok_lifecycle_prompt_complete_envelope(Some("completed"), None, false, None);
+        assert!(!notify_grok_lifecycle_observer(
+            None,
+            Some("task-tab"),
+            envelope.clone(),
+        ));
+
+        let capture = std::sync::Arc::new(CapturingGrokLifecycleObserver::default());
+        let observer: Arc<dyn GrokAcpLifecycleObserver> = capture.clone();
+        assert!(!notify_grok_lifecycle_observer(
+            Some(&observer),
+            None,
+            envelope,
+        ));
+        assert!(capture
+            .seen
+            .lock()
+            .expect("observer capture lock")
+            .is_empty());
+    }
+
+    #[test]
+    fn lifecycle_observer_receives_synthetic_prompt_complete_before_ui_projection() {
+        let capture = std::sync::Arc::new(CapturingGrokLifecycleObserver::default());
+        let observer: Arc<dyn GrokAcpLifecycleObserver> = capture.clone();
+        let lifecycle = grok_lifecycle_prompt_complete_envelope(
+            Some("cancelled"),
+            Some(42),
+            true,
+            Some("user_aborted"),
+        );
+
+        assert!(notify_grok_lifecycle_observer(
+            Some(&observer),
+            Some("task-run-42"),
+            lifecycle,
+        ));
+
+        let seen = capture.seen.lock().expect("observer capture lock").clone();
+        assert_eq!(seen.len(), 1);
+        let envelope = &seen[0].1;
+        assert_eq!(
+            envelope.get("method").and_then(|value| value.as_str()),
+            Some("_x.ai/session/prompt_complete")
+        );
+        assert_eq!(
+            envelope
+                .pointer("/params/stopReason")
+                .and_then(|v| v.as_str()),
+            Some("cancelled")
+        );
+        assert_eq!(
+            envelope
+                .pointer("/params/elapsedMs")
+                .and_then(|v| v.as_u64()),
+            Some(42)
+        );
+        assert_eq!(
+            envelope
+                .pointer("/params/synthetic")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            envelope
+                .pointer("/params/reasonDetail")
+                .and_then(|v| v.as_str()),
+            Some("user_aborted")
+        );
+    }
+
+    #[test]
+    fn lifecycle_projection_never_forwards_provider_text_prompt_or_permission_arguments() {
+        let provider_text = "provider output that must not enter the task lifecycle stream";
+        let prompt_body = "user prompt that must not enter the task lifecycle stream";
+        let update = grok_lifecycle_notification_envelope(
+            "session/update",
+            &serde_json::json!({
+                "sessionId": "provider-session",
+                "prompt": prompt_body,
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": { "text": provider_text },
+                    "rawOutput": { "text": provider_text, "command": "secret command" },
+                },
+            }),
+        )
+        .expect("non-empty message content is represented by a presence bit");
+        assert_eq!(
+            update,
+            serde_json::json!({
+                "method": "session/update",
+                "params": {
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "contentPresent": true,
+                    },
+                },
+            })
+        );
+
+        let permission =
+            grok_lifecycle_permission_request_envelope(7, Some("acceptEdits"), "awaiting_decision");
+        assert_eq!(
+            permission,
+            serde_json::json!({
+                "method": "session/request_permission",
+                "params": {
+                    "requestId": 7,
+                    "permissionMode": "acceptEdits",
+                    "lifecycle": "awaiting_decision",
+                },
+            }),
+            "Task observers consume this finite permission lifecycle shape, never raw ACP options"
+        );
+        let rendered = format!("{update}{permission}");
+        for forbidden in [
+            provider_text,
+            prompt_body,
+            "secret command",
+            "provider-session",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "redacted lifecycle projection leaked provider field {forbidden:?}"
+            );
+        }
+        assert!(permission.pointer("/params/options").is_none());
+        assert!(permission.pointer("/params/prompt").is_none());
     }
 
     /// AUDIT_OPUS_2026-05-26 H3: every payload headed for app.emit and

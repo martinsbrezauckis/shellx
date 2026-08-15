@@ -1,12 +1,12 @@
 {
   "schema": "shellx.manual-content.v1",
-  "version": "0.3.52",
-  "revision": 36,
-  "updated": "2026-08-12",
+  "version": "0.3.60",
+  "revision": 40,
+  "updated": "2026-08-14",
   "title": "ShellX Manual",
   "eyebrow": "Agent workspace · Browser · Vault",
   "intro": "ShellX is a desktop workspace for local and remote coding agents. It keeps conversations, project files, Browser tasks, Vault approvals, previews, Git state, and test evidence visible in one operator-controlled shell.",
-  "releaseNote": "This manual covers ShellX v0.3.52. Verify the installed version from Settings → About when comparing behavior with these instructions.",
+  "releaseNote": "This manual covers the current ShellX source candidate. Verify the installed version from Settings → About when comparing behavior with these instructions.",
   "sections": [
     {
       "id": "start",
@@ -85,6 +85,75 @@
       ]
     },
     {
+      "id": "tasks",
+      "title": "Tasks",
+      "summary": "Turn a reviewed instruction into one-time or recurring agent work with exact environment checks, an ordered agent choice, and receipt-backed outcomes.",
+      "features": [
+        {
+          "id": "shellx.tasks.create",
+          "label": "Create a task from chat",
+          "summary": "Create task opens Task Manager with the active session, target, project, folder, permissions, visible composer text, and durable attachment identities ready for review.",
+          "steps": [
+            "Prepare the exact instruction in the active chat composer, then select Create task from the action row beneath it.",
+            "Review the imported session context and attachment identities in Task Manager.",
+            "Choose providers and a schedule only in Task Manager, then save the immutable revision or select Run now."
+          ]
+        },
+        {
+          "id": "shellx.tasks.manager",
+          "label": "Open Task Manager",
+          "summary": "The header Tasks button opens one management workspace for definitions, schedules, provider ordering, run history, and attention.",
+          "steps": [
+            "Use the Tasks header button from any session.",
+            "Filter definitions by attention, scheduled, paused, or recent state and select one row for its exact revision and run history.",
+            "Use Save revision, Run now, Pause or Resume, Duplicate, Delete, Open run, and Cancel run only when the selected state enables that exact action."
+          ],
+          "note": "The Tasks right-rail tab remains the live process monitor. Task Manager is the definition and scheduling surface."
+        },
+        {
+          "id": "shellx.tasks.providers",
+          "label": "Choose agents for an environment",
+          "summary": "Task Manager checks Grok, Codex, Claude, and Antigravity on the selected computer or saved connection, then lets you choose their order.",
+          "steps": [
+            "Select This computer or one of your named saved connections before choosing agents.",
+            "Review each agent's current ready, unavailable, authentication-needed, or inconclusive status.",
+            "Put ready agents in the order ShellX should try them. ShellX moves to the next only when the earlier agent proves the task never started; an uncertain start becomes attention instead of duplicate work."
+          ]
+        },
+        {
+          "id": "shellx.tasks.schedule",
+          "label": "Schedule one-time or recurring work",
+          "summary": "Choose manual, once, daily, weekdays, weekly, or monthly execution with a simple date or local time picker. ShellX uses the execution computer's clock by default.",
+          "steps": [
+            "Choose Run now for an immediate manual occurrence or select a named schedule.",
+            "Choose the date and time as you normally would on that computer; the summary stays in familiar local time.",
+            "Open Advanced timing and notifications only when you need to keep another location's timezone, choose missed-run behavior, set a stop-after limit, or change notifications.",
+            "Keep ShellX and the execution host available at the scheduled time; the foreground scheduler records missed, deferred, and attention states explicitly."
+          ]
+        },
+        {
+          "id": "shellx.tasks.evidence",
+          "label": "Review runs and attention",
+          "summary": "Every occurrence keeps a compact timeline for provider preflight, selected route, start, progress, terminal result, evidence, and any attention that needs an operator decision.",
+          "steps": [
+            "Open a run to return to its normal private ShellX conversation when the Trace receipt says the archive is reviewable.",
+            "Compare the saved definition snapshot with the fresh execution scan before trusting a provider or target claim.",
+            "Acknowledge an attention item only after reviewing its exact occurrence and receipt-backed reason."
+          ]
+        },
+        {
+          "id": "shellx.tasks.browser_teach",
+          "label": "Create a task from Browser Teach",
+          "summary": "An approved, exported, and zero-skip rehearsed Browser workflow can open a paused Task draft with its workflow digest and reviewed Vault grant identities.",
+          "steps": [
+            "Complete Teach review, approval, export, and rehearsal for the exact workflow revision.",
+            "Open the Task draft from the Browser handoff and review the workflow and Vault identities in the originating ShellX session.",
+            "Choose the provider route and schedule, then save explicitly."
+          ]
+        }
+      ]
+    },
+    {
       "id": "connections",
       "title": "Connections",
       "summary": "Run agents locally, inside WSL, or through SSH to POSIX and native Windows targets without losing the active filesystem frame.",
@@ -102,7 +171,7 @@
         {
           "id": "shellx.connections.wsl",
           "label": "WSL",
-          "summary": "WSL sessions use wsl.exe, Linux paths, and the selected distribution's agent installations.",
+          "summary": "WSL sessions use wsl.exe, Linux paths, and the selected distribution's agent installations. When ShellX tooling exposure is enabled, host-tool calls use the ShellX bridge to reach the parent desktop host.",
           "steps": [
             "Add a WSL preset with the exact distribution name.",
             "Install and authenticate the agent CLI inside that distribution.",
@@ -112,7 +181,7 @@
         {
           "id": "shellx.connections.ssh_posix",
           "label": "SSH to Linux, macOS, or WSL",
-          "summary": "Use the direct POSIX runtime for Linux, macOS, or an sshd running inside WSL. ShellX keeps POSIX paths and commands in that remote environment.",
+          "summary": "Use the direct POSIX runtime for Linux, macOS, or an sshd running inside WSL. ShellX keeps POSIX paths and commands in that remote environment; with ShellX tooling exposure enabled, host-tool calls use its reverse bridge to reach the parent desktop host.",
           "steps": [
             "Complete host-key and key-agent setup in a normal terminal first; ShellX uses BatchMode.",
             "Save the SSH host, optional port, and optional Vault reference to a private-key path.",
@@ -218,7 +287,11 @@
         {
           "id": "shellx.interface.right.tools",
           "label": "Right rail: Tools",
-          "summary": "Tools reports the selected connection, provider CLI, ShellX host exposure, MCP configuration, environment checks, and capability health."
+          "summary": "Tools reports the selected connection, provider CLI, ShellX host exposure, MCP configuration, environment checks, capability health, and a typed ShellX Cut status for the selected session without showing Cut's full generated catalogue.",
+          "steps": [
+            "Select Check to query the parent desktop-host Cut bridge. Check never opens the Cut editor.",
+            "Select Open only as an explicit operator action when the current Cut status says an installed desktop editor can be opened."
+          ]
         },
         {
           "id": "shellx.interface.right.git",
@@ -439,7 +512,7 @@
         {
           "id": "shellx.interface.settings.general",
           "label": "Settings: General",
-          "summary": "General controls model defaults, reasoning effort, typography, density, appearance, and other workspace-wide preferences."
+          "summary": "General controls chat typography, density, appearance, permission-prompt presentation, and other workspace preferences. Provider and model choice stay with the selected provider and its own defaults; General does not select a model or reasoning effort."
         },
         {
           "id": "shellx.interface.settings.vault",
@@ -932,7 +1005,8 @@
           "steps": [
             "Start with the compact capability summary when it is advertised.",
             "Browser automation is advertised through two routed tools: browser_read for bounded observations and browser_act for permission-gated changes; verbose compatibility schemas remain on-demand instead of entering every prompt.",
-            "ShellX Cut is advertised through cut_read for bounded status/search/schema discovery and cut_act for permission-gated use of one exact video-editing verb; Cut's generated catalog stays out of the default prompt.",
+            "ShellX Cut is advertised through cut_read for bounded typed status/search/schema discovery and cut_act for permission-gated use of one exact video-editing verb; Cut's generated catalog stays out of the default prompt, and status checks never open the editor.",
+            "When ShellX tooling exposure is enabled, WSL and SSH agents use the WSL relay or SSH reverse tunnel to reach the parent desktop host for ShellX tools, including Cut.",
             "Browser observations default to a 3,000-byte structured-response budget and expose their serialized byte and approximate token counts; use extraction or an explicit larger/full request only when necessary.",
             "Prefer provider-native file tools for the selected remote cwd; ShellX host file tools address the parent host filesystem.",
             "Use mutating host tools only when the ShellX UI and active tab make the authority visible."

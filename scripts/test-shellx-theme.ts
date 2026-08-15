@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { cwd } from "node:process";
+import { readAppStyles } from "./lib/app-styles";
 
 function read(path: string): string {
   return readFileSync(join(cwd(), path), "utf8");
@@ -42,7 +43,7 @@ assertIncludes(app, "function handleThemeToggle()", "theme toggle handler");
 assertIncludes(app, 'theme: settings.theme === "bright" ? "black" : "bright"', "theme toggle persistence target");
 assertIncludes(app, "onThemeToggle={handleThemeToggle}", "header theme handler wiring");
 
-const css = read("src/App.css");
+const css = readAppStyles();
 const browserLayoutCss = read("src/browser/browserLayout.css");
 const browserCss = read("src/browser/browserShell.css");
 const tokensCss = read("src/styles/tokens.css");

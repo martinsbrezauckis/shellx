@@ -265,7 +265,8 @@ async fn browser_settle_snapshot(
             target.browser_tab_id = summary.active_tab.map(|tab| tab.browser_tab_id);
         }
         if let Some(task_id) = target.task_id.as_deref() {
-            registry.ensure_agent_session_for_task_id(task_id, Some(caller_session_id))?;
+            registry
+                .ensure_browser_request_authority_for_task_id(task_id, Some(caller_session_id))?;
         } else if let Some(browser_tab_id) = target.browser_tab_id.as_deref() {
             let tab = registry
                 .tabs_for_agent_session(caller_session_id)
@@ -277,7 +278,8 @@ async fn browser_settle_snapshot(
             let task_id = tab.task_id.ok_or_else(|| {
                 crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED.to_string()
             })?;
-            registry.ensure_agent_session_for_task_id(&task_id, Some(caller_session_id))?;
+            registry
+                .ensure_browser_request_authority_for_task_id(&task_id, Some(caller_session_id))?;
             target.task_id = Some(task_id);
         } else {
             return Ok(
@@ -588,8 +590,11 @@ pub(crate) async fn browser_tasks_http(
     };
     let limit = q.limit.unwrap_or(200).min(500);
     let detail = q.detail.as_deref().unwrap_or("summary");
-    let revision = registry.summary().revisions.tasks;
     let caller_session_id = browser_mcp_caller_id(&headers);
+    let revision = caller_session_id
+        .as_deref()
+        .map(|caller| registry.summary_for_agent_session(caller).revisions.tasks)
+        .unwrap_or_else(|| registry.summary().revisions.tasks);
     if detail.eq_ignore_ascii_case("full") {
         let mut tasks = caller_session_id
             .as_deref()
@@ -631,11 +636,22 @@ pub(crate) async fn browser_history_http(
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    let history = browser_mcp_caller_id(&headers)
-        .map(|caller_session_id| registry.history_for_agent_session(&caller_session_id, q.limit))
+    let caller_session_id = browser_mcp_caller_id(&headers);
+    let history = caller_session_id
+        .as_deref()
+        .map(|caller| registry.history_for_agent_session(caller, q.limit))
         .unwrap_or_else(|| registry.history(q.limit));
+    let revision = caller_session_id
+        .as_deref()
+        .map(|caller| {
+            registry
+                .summary_for_agent_session(caller)
+                .revisions
+                .activity
+        })
+        .unwrap_or_else(|| registry.summary().revisions.activity);
     Json(serde_json::json!({
-        "revision": registry.summary().revisions.activity,
+        "revision": revision,
         "history": history,
     }))
     .into_response()
@@ -669,8 +685,17 @@ pub(crate) async fn browser_requests_http(
             registry.permissions(q.limit),
         ),
     };
+    let revision = caller_session_id
+        .as_deref()
+        .map(|caller| {
+            registry
+                .summary_for_agent_session(caller)
+                .revisions
+                .requests
+        })
+        .unwrap_or_else(|| registry.summary().revisions.requests);
     Json(serde_json::json!({
-        "revision": registry.summary().revisions.requests,
+        "revision": revision,
         "sessionGrants": session_grants,
         "vaultDeposits": vault_deposits,
         "dialogs": dialogs,
@@ -730,7 +755,12 @@ pub(crate) async fn browser_task_start_http(
     };
     let caller_session_id = browser_mcp_caller_id(&headers);
     let previous_active_browser_tab_id = registry.state().active_browser_tab_id;
-    match registry.start_task_for_agent_session(body, caller_session_id.as_deref()) {
+    let started = if let Some(caller_session_id) = caller_session_id.as_deref() {
+        registry.start_task_for_agent_session(body, Some(caller_session_id))
+    } else {
+        registry.start_task_from_debug_operator(body)
+    };
+    match started {
         Ok(task) => {
             if let Err(e) =
                 crate::shellx_browser::sync_engine_to_task(s.app(), &registry, &task).await
@@ -782,12 +812,17 @@ pub(crate) async fn browser_task_finish_http(
         Err(response) => return *response,
     };
     let caller_session_id = browser_mcp_caller_id(&headers);
-    match registry.finish_task_for_agent_session(
-        body.task_id,
-        body.status,
-        body.reason,
-        caller_session_id.as_deref(),
-    ) {
+    let finished = if let Some(caller_session_id) = caller_session_id.as_deref() {
+        registry.finish_task_for_agent_session(
+            body.task_id,
+            body.status,
+            body.reason,
+            Some(caller_session_id),
+        )
+    } else {
+        registry.finish_task_from_operator(body.task_id, body.status, body.reason)
+    };
+    match finished {
         Ok(task) => {
             if task.profile_id == "task-disposable" {
                 if let Err(error) = crate::shellx_browser_ephemeral_roots::close_disposable_task_webviews_and_cleanup(
@@ -845,7 +880,12 @@ pub(crate) async fn browser_task_control_http(
         Err(response) => return *response,
     };
     let caller_session_id = browser_mcp_caller_id(&headers);
-    match registry.control_task_for_agent_session(body, caller_session_id.as_deref()) {
+    let controlled = if let Some(caller_session_id) = caller_session_id.as_deref() {
+        registry.control_task_for_agent_session(body, Some(caller_session_id))
+    } else {
+        registry.control_task_from_operator(body)
+    };
+    match controlled {
         Ok(response) => {
             if response.task.profile_id == "task-disposable"
                 && crate::shellx_browser_tasks::browser_task_is_terminal(&response.task.status)

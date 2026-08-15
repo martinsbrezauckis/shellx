@@ -648,6 +648,38 @@ pub(super) async fn set_ui_state(
                 .into_response();
         }
     }
+    if let Some(command) = body.debug_cut_tooling_fixture.as_deref() {
+        if !matches!(
+            command,
+            "checking"
+                | "ready"
+                | "installedEditorClosed"
+                | "notInstalled"
+                | "unsupportedTarget"
+                | "unavailableToProvider"
+                | "unavailable"
+                | "clear"
+        ) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_debug_cut_tooling_fixture",
+                    "message": "debugCutToolingFixture accepts only typed Cut states or clear",
+                })),
+            )
+                .into_response();
+        }
+        if !crate::isolated_test_instance_requested() {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "release_test_route_unavailable",
+                    "message": "release-test Cut tooling fixture is unavailable outside an isolated test instance",
+                })),
+            )
+                .into_response();
+        }
+    }
     if let Some(command) = body.release_test_voice_capture.as_deref() {
         if !matches!(command, "recording" | "clear") {
             return (

@@ -50,6 +50,30 @@ mod host_subagents;
 mod process_registry;
 mod session_log;
 mod tab_tasks;
+mod task_attachment_transport;
+mod task_attachments;
+mod task_conversation;
+pub(crate) mod task_due_runner;
+mod task_execution_bindings;
+pub(crate) mod task_execution_runtime;
+mod task_execution_runtime_events;
+mod task_execution_runtime_evidence;
+mod task_execution_store_adapter;
+pub(crate) mod task_foreground_service;
+pub(crate) mod task_model;
+mod task_provider_catalog;
+mod task_provider_dispatch;
+mod task_provider_fallback;
+pub(crate) mod task_receipts;
+mod task_result_evidence;
+mod task_runtime_app;
+mod task_runtime_authority;
+pub(crate) mod task_schedule;
+pub(crate) mod task_state_projection;
+pub(crate) mod task_store;
+pub(crate) mod task_time;
+mod task_trace_evidence;
+pub(crate) mod tasks;
 // `Agent` MCP tool — spawns a fresh `grok -p` subprocess with a
 // persona-prepended prompt. Lives
 // next to host_mcp so the MCP server can call into it directly. Public
@@ -113,6 +137,7 @@ mod work_preview;
 // grok presets that point at the HTTP transport always have a listener
 // even when debug-api is disabled. See `mcp_http.rs` head doc-comment.
 mod mcp_http;
+mod mcp_http_auth;
 mod mcp_marketplace;
 // per-tab MCP launcher-health probe (#322). Spawned post-session/new
 // in background. State exposed via `/state/marketplace_health?tabId=X`.
@@ -136,6 +161,7 @@ pub(crate) mod shellx_browser_artifact_model;
 pub(crate) mod shellx_browser_artifacts;
 pub(crate) mod shellx_browser_bookmarks;
 pub(crate) mod shellx_browser_caller;
+pub(crate) mod shellx_browser_caller_revisions;
 pub(crate) mod shellx_browser_cdp_runtime;
 pub(crate) mod shellx_browser_control;
 pub(crate) mod shellx_browser_coordinate_input;
@@ -173,6 +199,7 @@ pub(crate) mod shellx_browser_personal_lock;
 pub(crate) mod shellx_browser_policy;
 pub(crate) mod shellx_browser_privacy;
 pub(crate) mod shellx_browser_profiles;
+pub(crate) mod shellx_browser_prompt_guard;
 pub(crate) mod shellx_browser_prompts;
 pub(crate) mod shellx_browser_protected_values;
 pub(crate) mod shellx_browser_recipe_analysis;
@@ -181,19 +208,25 @@ pub(crate) mod shellx_browser_rendered_check;
 pub(crate) mod shellx_browser_rendered_check_evidence;
 pub(crate) mod shellx_browser_reports;
 pub(crate) mod shellx_browser_robots;
+pub(crate) mod shellx_browser_screenshot_capture;
 pub(crate) mod shellx_browser_scripts;
 pub(crate) mod shellx_browser_security;
 pub(crate) mod shellx_browser_session_grants;
 pub(crate) mod shellx_browser_settings_model;
+pub(crate) mod shellx_browser_shield_settings;
 pub(crate) mod shellx_browser_shields;
 pub(crate) mod shellx_browser_site_data;
 pub(crate) mod shellx_browser_state;
 pub(crate) mod shellx_browser_storage_state;
+pub(crate) mod shellx_browser_tab_handoff;
 pub(crate) mod shellx_browser_tabs;
 pub(crate) mod shellx_browser_task_control;
 pub(crate) mod shellx_browser_task_model;
+pub(crate) mod shellx_browser_taskless_action_results;
 pub(crate) mod shellx_browser_tasks;
 pub(crate) mod shellx_browser_teach;
+pub(crate) mod shellx_browser_teach_task;
+pub(crate) mod shellx_browser_transfer_artifacts;
 pub(crate) mod shellx_browser_transfer_privacy;
 pub(crate) mod shellx_browser_transfers;
 pub(crate) mod shellx_browser_vault;
@@ -215,6 +248,12 @@ use crate::outside_connectors::{
     OutsideConnectorStore,
 };
 use crate::process_registry::{ProcessRegistry, ProcessSource, ProcessStatus};
+use crate::tasks::{
+    tasks_cancel_run, tasks_create, tasks_delete, tasks_get, tasks_get_state, tasks_list,
+    tasks_list_open_attention, tasks_list_receipts, tasks_list_states, tasks_maintain_attachments,
+    tasks_pause, tasks_persist_attachments, tasks_reclaim_attachments, tasks_resolve_attention,
+    tasks_resolve_attention_overflow, tasks_resume, tasks_revise, tasks_run_now,
+};
 use crate::terminal::TerminalRegistry;
 
 #[cfg(feature = "debug-api")]
@@ -444,7 +483,7 @@ async fn run_tab_cwd_command_inner(
 pub fn inject_host_mcp_server(
     existing: Option<Vec<serde_json::Value>>,
     tab_id: Option<&str>,
-) -> Vec<serde_json::Value> {
+) -> Result<Vec<serde_json::Value>, String> {
     let mut servers = existing.unwrap_or_default();
     servers.retain(|server| {
         let name = server.get("name").and_then(|value| value.as_str());
@@ -453,7 +492,7 @@ pub fn inject_host_mcp_server(
     let tab_id = tab_id
         .filter(|value| !value.is_empty())
         .unwrap_or("default");
-    let token = crate::mcp_http::tab_bound_mcp_token(tab_id);
+    let token = crate::mcp_http::tab_bound_mcp_token(tab_id)?;
     servers.push(serde_json::json!({
         "type": "http",
         "name": "shellx-host-http",
@@ -463,7 +502,7 @@ pub fn inject_host_mcp_server(
             { "name": "MCP-Tab-Id", "value": tab_id },
         ],
     }));
-    servers
+    Ok(servers)
 }
 
 /// Inject the tab-bound HTTP host MCP directly into every Grok ACP session.
@@ -474,7 +513,7 @@ pub fn inject_host_mcp_server_for_transport(
     existing: Option<Vec<serde_json::Value>>,
     tab_id: Option<&str>,
     _transport_kind: &str,
-) -> Vec<serde_json::Value> {
+) -> Result<Vec<serde_json::Value>, String> {
     inject_host_mcp_server(existing, tab_id)
 }
 
@@ -484,7 +523,8 @@ mod host_mcp_injection_tests {
 
     #[test]
     fn local_transport_injects_tab_bound_http_host_mcp() {
-        let servers = inject_host_mcp_server_for_transport(None, Some("tab-local"), "local");
+        let servers = inject_host_mcp_server_for_transport(None, Some("tab-local"), "local")
+            .expect("Host MCP token authority");
         let server = servers
             .iter()
             .find(|server| {
@@ -530,7 +570,8 @@ mod host_mcp_injection_tests {
             ]),
             Some("tab-local"),
             "local",
-        );
+        )
+        .expect("Host MCP token authority");
 
         assert_eq!(servers.len(), 2);
         assert!(servers
@@ -554,7 +595,8 @@ mod host_mcp_injection_tests {
                 Some(existing.clone()),
                 Some("tab-remote"),
                 transport,
-            );
+            )
+            .expect("Host MCP token authority");
 
             assert_eq!(servers.len(), existing.len() + 1);
             assert!(servers.iter().any(|server| {
@@ -565,6 +607,427 @@ mod host_mcp_injection_tests {
     }
 }
 
+/// Connection source accepted by the Task-owned Grok initializer. A Task may
+/// use the explicit ambient local context, or the exact saved preset captured
+/// by its immutable revision. It deliberately does not accept renderer WSL
+/// fields, SSH fields, MCP configuration, executable paths, or a session ID.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TaskGrokConnectionContext {
+    Local,
+    SavedConnectionId(String),
+}
+
+/// Closed application-layer input to one fresh Task-owned Grok session. The
+/// execution coordinator creates this from an immutable revision plus the
+/// fresh provider/connection resolver; no renderer values reach this type.
+#[derive(Clone, Debug)]
+pub(crate) struct TaskGrokSessionStartContext {
+    pub(crate) connection: TaskGrokConnectionContext,
+    pub(crate) task_tab_id: String,
+    pub(crate) cwd: String,
+    pub(crate) permission_mode: crate::provider_adapters::ProviderPermissionMode,
+    pub(crate) shellx_tool_exposure: crate::provider_adapters::ProviderShellxToolExposure,
+}
+
+#[derive(Clone, Debug)]
+enum GrokSessionConnectionContext {
+    Local,
+    InlineWsl {
+        distro: Option<String>,
+        grok_path: Option<String>,
+    },
+    SavedConnectionId(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum GrokSessionResume {
+    Fresh,
+    Load(String),
+}
+
+#[derive(Clone, Debug)]
+enum GrokSessionPermission {
+    PreserveInteractiveTabPreference,
+    ExactTaskMode(String),
+}
+
+#[derive(Clone, Debug)]
+struct GrokSessionStartRequest {
+    cwd: String,
+    tab_key: String,
+    connection: GrokSessionConnectionContext,
+    renderer_mcp_servers: Option<Vec<serde_json::Value>>,
+    inject_host_mcp: bool,
+    permission: GrokSessionPermission,
+    resume: GrokSessionResume,
+    reject_active_tab: bool,
+}
+
+impl GrokSessionStartRequest {
+    fn normal(
+        cwd: String,
+        tab_key: String,
+        wsl_distro: Option<String>,
+        wsl_grok_path: Option<String>,
+        connection_id: Option<String>,
+        renderer_mcp_servers: Option<Vec<serde_json::Value>>,
+        load_session_id: Option<String>,
+    ) -> Self {
+        let connection = match connection_id {
+            Some(id) => GrokSessionConnectionContext::SavedConnectionId(id),
+            None if wsl_distro.is_some() || wsl_grok_path.is_some() => {
+                GrokSessionConnectionContext::InlineWsl {
+                    distro: wsl_distro,
+                    grok_path: wsl_grok_path,
+                }
+            }
+            None => GrokSessionConnectionContext::Local,
+        };
+        Self {
+            cwd,
+            tab_key,
+            connection,
+            renderer_mcp_servers,
+            inject_host_mcp: true,
+            permission: GrokSessionPermission::PreserveInteractiveTabPreference,
+            resume: load_session_id
+                .map(GrokSessionResume::Load)
+                .unwrap_or(GrokSessionResume::Fresh),
+            reject_active_tab: false,
+        }
+    }
+}
+
+fn task_grok_permission_mode(
+    mode: &crate::provider_adapters::ProviderPermissionMode,
+) -> &'static str {
+    // This is intentionally an exhaustive enum mapping, not a second parser
+    // for renderer labels. An unsupported string cannot acquire a Task Grok
+    // autonomy grant because this helper accepts no strings at all.
+    match mode {
+        crate::provider_adapters::ProviderPermissionMode::Default => "default",
+        crate::provider_adapters::ProviderPermissionMode::AcceptEdits => "acceptEdits",
+        crate::provider_adapters::ProviderPermissionMode::BypassPermissions => "bypassPermissions",
+        crate::provider_adapters::ProviderPermissionMode::ReadOnly => "plan",
+    }
+}
+
+fn build_task_grok_start_request(
+    context: TaskGrokSessionStartContext,
+    resume: GrokSessionResume,
+) -> Result<GrokSessionStartRequest, String> {
+    if !matches!(resume, GrokSessionResume::Fresh) {
+        return Err("Task Grok runs are fresh-only and do not support resume".to_string());
+    }
+    if context.task_tab_id.trim().is_empty() || context.task_tab_id == "default" {
+        return Err("Task Grok tab id must be a non-default deterministic id".to_string());
+    }
+    if context.cwd.trim().is_empty() {
+        return Err("Task Grok cwd must not be empty".to_string());
+    }
+    let connection = match context.connection {
+        TaskGrokConnectionContext::Local => GrokSessionConnectionContext::Local,
+        TaskGrokConnectionContext::SavedConnectionId(id) if !id.trim().is_empty() => {
+            GrokSessionConnectionContext::SavedConnectionId(id)
+        }
+        TaskGrokConnectionContext::SavedConnectionId(_) => {
+            return Err("Task Grok saved connection id must not be empty".to_string());
+        }
+    };
+    Ok(GrokSessionStartRequest {
+        cwd: context.cwd,
+        tab_key: context.task_tab_id,
+        connection,
+        // Task wiring owns no renderer-provided MCP configuration. The common
+        // initializer below injects only the authenticated tab-bound host MCP.
+        renderer_mcp_servers: None,
+        inject_host_mcp: context.shellx_tool_exposure.injects_shellx_host_tools(),
+        permission: GrokSessionPermission::ExactTaskMode(
+            task_grok_permission_mode(&context.permission_mode).to_string(),
+        ),
+        resume,
+        reject_active_tab: true,
+    })
+}
+
+/// Start one fresh Task-owned Grok ACP session through the normal session
+/// initializer. This wrapper owns no transport, auth, executable discovery,
+/// credential, or MCP override path; `GrokAcpSession::start` remains the only
+/// launch and authentication path. A caller supplies the policy authority's
+/// closed Rust enum, so unsupported strings cannot be interpreted as grants.
+///
+/// The execution coordinator owns Task-tab lifetime: persist the failed or
+/// terminal receipt first, then call `SessionRegistry::drop_tab(task_tab_id)`.
+/// This helper deliberately does not remove a tab behind a coordinator that is
+/// still making that receipt durable.
+pub(crate) async fn start_fresh_task_grok_session(
+    app: AppHandle,
+    registry: Arc<SessionRegistry>,
+    context: TaskGrokSessionStartContext,
+) -> Result<(), String> {
+    let request = build_task_grok_start_request(context, GrokSessionResume::Fresh)?;
+    start_normal_grok_session(app, registry, request).await?;
+    Ok(())
+}
+
+async fn configure_normal_grok_connection(
+    session: &mut crate::acp::GrokAcpSession,
+    connection: &GrokSessionConnectionContext,
+) -> Result<Option<String>, String> {
+    match connection {
+        GrokSessionConnectionContext::Local => {
+            // No preset or inline remote fields means an explicit ambient
+            // local launch. Clear any transport state left by a prior tab
+            // session before delegating to the normal ACP path.
+            session.set_local_config(None);
+            Ok(None)
+        }
+        GrokSessionConnectionContext::InlineWsl { distro, grok_path } => {
+            session.set_wsl_config(distro.clone(), grok_path.clone());
+            Ok(None)
+        }
+        GrokSessionConnectionContext::SavedConnectionId(id) => {
+            let store = get_or_open_connections()?;
+            // Tasks are long-lived app work. Reload the persisted preset so a
+            // stale boot cache cannot route a fresh occurrence to an old
+            // Local/WSL/SSH destination. The interactive path uses this same
+            // shared helper, so it receives the same correction.
+            store.reload_from_disk().await?;
+            let preset = store
+                .get(id)
+                .await
+                .ok_or_else(|| format!("unknown connection_id: {}", id))?;
+            match &preset.transport {
+                crate::acp::Transport::Local { grok_path } => {
+                    // Preserve the exact scanned preset executable and clear
+                    // stale WSL/SSH routing retained by a reused tab.
+                    session.set_local_config(grok_path.clone());
+                }
+                crate::acp::Transport::Wsl { distro, grok_path } => {
+                    // Pre-flight test that Grok is reachable inside the WSL
+                    // distro. A blank/`grok` value means PATH discovery,
+                    // matching the normal provider scan UX.
+                    let configured_grok = grok_path.trim();
+                    let mut resolved_wsl_grok_path: Option<String> = None;
+                    #[cfg(target_os = "windows")]
+                    {
+                        use crate::winproc::NoWindowExt as _;
+                        let grok_command = if configured_grok.is_empty() {
+                            "grok"
+                        } else {
+                            configured_grok
+                        };
+                        let quoted = crate::acp::shell_quote_for_remote(grok_command);
+                        let script = if grok_command.contains('/') {
+                            format!("test -x {quoted} && printf '%s\\n' {quoted}")
+                        } else {
+                            format!(
+                                "{} command -v {quoted} 2>/dev/null",
+                                crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
+                            )
+                        };
+                        let probe = std::process::Command::new("wsl.exe")
+                            .args(["-d", distro, "-e", "bash", "-lc", &script])
+                            .no_window()
+                            .output();
+                        match probe {
+                            Ok(output) if output.status.success() => {
+                                let found =
+                                    String::from_utf8_lossy(&output.stdout).trim().to_string();
+                                if !found.is_empty()
+                                    && !configured_grok.is_empty()
+                                    && configured_grok != "grok"
+                                {
+                                    resolved_wsl_grok_path = Some(found);
+                                }
+                            }
+                            Ok(output) => {
+                                let stderr =
+                                    String::from_utf8_lossy(&output.stderr).trim().to_string();
+                                return Err(format!(
+                                    "WSL Grok command/path '{}' was not found in distro '{}'.{}",
+                                    grok_command,
+                                    distro,
+                                    if stderr.is_empty() {
+                                        " Rescan agents or leave the override blank to use PATH discovery.".to_string()
+                                    } else {
+                                        format!(" {stderr}")
+                                    }
+                                ));
+                            }
+                            Err(error) => {
+                                return Err(format!(
+                                    "Couldn't probe WSL distro '{}' for Grok command/path '{}': {}",
+                                    distro, grok_command, error
+                                ));
+                            }
+                        }
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    if !configured_grok.is_empty() && configured_grok != "grok" {
+                        resolved_wsl_grok_path = Some(configured_grok.to_string());
+                    }
+                    session.set_wsl_config(Some(distro.clone()), resolved_wsl_grok_path);
+                }
+                crate::acp::Transport::Ssh {
+                    host,
+                    port,
+                    key_vault_ref,
+                    remote_grok_path,
+                    remote_runtime,
+                    wsl_distro,
+                } => {
+                    // `GrokAcpSession::start` keeps normal SSH command
+                    // construction and lazy Vault reference resolution. This
+                    // initializer stores only the reference, never secret
+                    // material or a copied provider credential.
+                    session.set_ssh_config(Some(crate::acp::SshSpawnConfig {
+                        host: host.clone(),
+                        port: *port,
+                        key_vault_ref: key_vault_ref.clone(),
+                        remote_grok_path: remote_grok_path.clone(),
+                        remote_runtime: *remote_runtime,
+                        wsl_distro: wsl_distro.clone(),
+                    }));
+                }
+                transport if transport.is_p_transport_2() => {
+                    return Err(format!(
+                        "Transport::{} is reserved and not implemented yet",
+                        transport.kind_label()
+                    ));
+                }
+                // Required because match-against-trait-method is non-exhaustive.
+                _ => unreachable!("kind_label covers all Transport variants"),
+            }
+            Ok(Some(preset.id))
+        }
+    }
+}
+
+async fn configure_normal_grok_permission(
+    registry: &SessionRegistry,
+    session: &mut crate::acp::GrokAcpSession,
+    tab_key: &str,
+    permission: &GrokSessionPermission,
+) {
+    match permission {
+        GrokSessionPermission::ExactTaskMode(mode) => {
+            // The Task wrapper validated this finite mode before acquiring a
+            // session. Direct assignment deliberately overrides any stale
+            // setting if a previous failed fresh task left a registry slot.
+            session.set_permission_mode(Some(mode.clone()));
+        }
+        GrokSessionPermission::PreserveInteractiveTabPreference
+            if session.get_permission_mode().is_none() =>
+        {
+            if let Some(mode) = registry.get_tab_autonomy(tab_key).await {
+                tracing::info!(
+                    "start_grok_session: re-applying tab_autonomy mode='{}' for tab '{}' (session was rebuilt)",
+                    mode,
+                    tab_key
+                );
+                session.set_permission_mode(Some(mode));
+            } else {
+                // Preserve the normal fresh-tab Full Auto fallback and its
+                // registry mirror exactly for the interactive Tauri command.
+                tracing::info!(
+                    "start_grok_session: tab '{}' has no autonomy preference set anywhere — defaulting to '{}' (Full Auto)",
+                    tab_key,
+                    acp::SHELLX_DEFAULT_PERMISSION_MODE
+                );
+                session.set_permission_mode(Some(acp::SHELLX_DEFAULT_PERMISSION_MODE.to_string()));
+                registry
+                    .set_tab_autonomy(tab_key, acp::SHELLX_DEFAULT_PERMISSION_MODE.to_string())
+                    .await;
+            }
+        }
+        GrokSessionPermission::PreserveInteractiveTabPreference => {}
+    }
+}
+
+async fn start_normal_grok_session(
+    app: AppHandle,
+    registry: Arc<SessionRegistry>,
+    request: GrokSessionStartRequest,
+) -> Result<(), String> {
+    let session_arc = registry.get_or_create(&request.tab_key).await;
+    let mut session = session_arc.lock().await;
+    if request.reject_active_tab && session.has_active_child() {
+        return Err(
+            "Task Grok launch refused: deterministic task tab is already active".to_string(),
+        );
+    }
+    session.set_tab_id(Some(request.tab_key.clone()));
+    let connection_id_used =
+        configure_normal_grok_connection(&mut session, &request.connection).await?;
+
+    // Interactive starts retain renderer-provided MCP entries, with ShellX
+    // entries replaced by the tab-bound server. Task starts use no renderer
+    // MCP input. A persisted Task tool-exposure value of Off clears all
+    // session MCP entries so a reused failed task slot cannot retain a bridge.
+    if request.inject_host_mcp {
+        let transport_kind = session.transport_kind().to_string();
+        let servers = inject_host_mcp_server_for_transport(
+            request.renderer_mcp_servers,
+            Some(request.tab_key.as_str()),
+            &transport_kind,
+        )?;
+        session.set_mcp_servers(servers);
+    } else {
+        session.set_mcp_servers(Vec::new());
+    }
+    configure_normal_grok_permission(
+        registry.as_ref(),
+        &mut session,
+        &request.tab_key,
+        &request.permission,
+    )
+    .await;
+
+    let load_session_id = match &request.resume {
+        GrokSessionResume::Fresh => None,
+        GrokSessionResume::Load(id) => Some(id.clone()),
+    };
+    session.start(&request.cwd, app, load_session_id).await?;
+
+    // Touch only after a clean spawn, preserving the normal recency behavior.
+    if let Some(id) = connection_id_used {
+        let store = get_or_open_connections()?;
+        if let Err(error) = store.touch(&id).await {
+            warn!(
+                "connections.touch({}) failed: {} — recency order may stale",
+                id, error
+            );
+        }
+    }
+
+    // Preserve the normal non-blocking marketplace probe behavior for every
+    // shared initializer caller. Drop the session lock before scheduling so a
+    // probe cannot deadlock a parallel permission change or task abort.
+    let is_wsl = session.wsl_distro().is_some();
+    let is_ssh = session.ssh_config().is_some();
+    let probe_transport = crate::mcp_health::ProbeTransport {
+        wsl_distro: session.wsl_distro().map(str::to_string),
+        ssh_target: session.ssh_config().map(|ssh| ssh.host.clone()),
+        ssh_remote_runtime: session
+            .ssh_config()
+            .map(|ssh| ssh.remote_runtime)
+            .unwrap_or_default(),
+        ssh_wsl_distro: session.ssh_config().and_then(|ssh| ssh.wsl_distro.clone()),
+    };
+    drop(session);
+    let health = crate::mcp_health::global();
+    health.clear_tab(&request.tab_key).await;
+    crate::mcp_health::schedule_probes_for_tab_with_hint(
+        health,
+        request.tab_key,
+        is_wsl,
+        is_ssh,
+        probe_transport,
+    );
+    Ok(())
+}
+
 /// Start a new Grok session via ACP.
 ///
 /// `cwd`: working directory the grok agent will operate in.
@@ -572,17 +1035,11 @@ mod host_mcp_injection_tests {
 /// set, grok is spawned via `wsl.exe -d <distro> -e <grok_path> agent stdio`.
 /// `mcp_servers`: optional list of MCP server configs to inject into
 /// session/new.
-/// `connection_id`: optional saved
-/// ConnectionPreset id. When set, the preset overrides the
-/// `wsl_distro`/`wsl_grok_path` params and supplies the transport
-/// config. Local presets preserve the scanned executable path, WSL presets
-/// use the selected distro, and SSH presets route through the session's
-/// transport-aware command builder.
+/// `connection_id`: optional saved ConnectionPreset id. When set, the preset
+/// overrides the inline WSL fields and supplies the transport configuration.
 ///
-/// Args stay positional because this is a #[tauri::command] — the args
-/// bind to `invoke('start_grok_session', { cwd, wsl_distro, ... })` on
-/// the frontend side. Bundling them into a struct would require parallel
-/// changes in the TS invoke calls, which is out of scope for a lint pass.
+/// Args stay positional because this is a #[tauri::command] — the args bind to
+/// `invoke('start_grok_session', { cwd, wsl_distro, ... })` on the frontend.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn start_grok_session(
@@ -591,244 +1048,139 @@ async fn start_grok_session(
     wsl_grok_path: Option<String>,
     mcp_servers: Option<Vec<serde_json::Value>>,
     #[allow(non_snake_case)] connection_id: Option<String>,
-    // Identity of the React tab that initiated this session. Also
-    // keys the SessionRegistry slot, so each tab gets its own grok
-    // subprocess.
     #[allow(non_snake_case)] tab_id: Option<String>,
     #[allow(non_snake_case)] load_session_id: Option<String>,
     app: AppHandle,
     registry: State<'_, Arc<SessionRegistry>>,
 ) -> Result<String, String> {
-    let tab_key = tab_id_or_default(tab_id.clone());
-    let arc = registry.get_or_create(&tab_key).await;
-    let mut s = arc.lock().await;
-    s.set_tab_id(Some(tab_key.clone()));
-
-    // Connection preset takes priority over the inline wsl_distro /
-    // wsl_grok_path args. Once a preset id is set on the UI side, the
-    // form fields are sourced from the preset.
-    let mut conn_id_used: Option<String> = None;
-    if let Some(id) = &connection_id {
-        let store = get_or_open_connections()?;
-        let preset = store
-            .get(id)
-            .await
-            .ok_or_else(|| format!("unknown connection_id: {}", id))?;
-        match &preset.transport {
-            crate::acp::Transport::Local { grok_path } => {
-                // Preserve the exact scanned preset executable and clear any
-                // stale WSL/SSH routing retained by this reused tab.
-                s.set_local_config(grok_path.clone());
-            }
-            crate::acp::Transport::Wsl { distro, grok_path } => {
-                // Pre-flight test that Grok is reachable inside the
-                // WSL distro. A blank/`grok` value means "discover from
-                // the distro PATH", matching the provider scan UX.
-                // Absolute paths remain exact overrides.
-                let configured_grok = grok_path.trim();
-                let mut resolved_wsl_grok_path: Option<String> = None;
-                #[cfg(target_os = "windows")]
-                {
-                    use crate::winproc::NoWindowExt as _;
-                    let grok_command = if configured_grok.is_empty() {
-                        "grok"
-                    } else {
-                        configured_grok
-                    };
-                    let quoted = crate::acp::shell_quote_for_remote(grok_command);
-                    let script = if grok_command.contains('/') {
-                        format!("test -x {quoted} && printf '%s\\n' {quoted}")
-                    } else {
-                        format!(
-                            "{} command -v {quoted} 2>/dev/null",
-                            crate::provider_runtime::POSIX_PROVIDER_SHELL_PRELUDE,
-                        )
-                    };
-                    let probe = std::process::Command::new("wsl.exe")
-                        .args(["-d", distro, "-e", "bash", "-lc", &script])
-                        .no_window()
-                        .output();
-                    match probe {
-                        Ok(o) if o.status.success() => {
-                            let found = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                            if !found.is_empty()
-                                && !configured_grok.is_empty()
-                                && configured_grok != "grok"
-                            {
-                                resolved_wsl_grok_path = Some(found);
-                            }
-                        }
-                        Ok(o) => {
-                            let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
-                            return Err(format!(
-                                "WSL Grok command/path '{}' was not found in distro '{}'.{}",
-                                grok_command,
-                                distro,
-                                if stderr.is_empty() {
-                                    " Rescan agents or leave the override blank to use PATH discovery.".to_string()
-                                } else {
-                                    format!(" {stderr}")
-                                }
-                            ));
-                        }
-                        Err(e) => {
-                            return Err(format!(
-                                "Couldn't probe WSL distro '{}' for Grok command/path '{}': {}",
-                                distro, grok_command, e
-                            ));
-                        }
-                    }
-                }
-                #[cfg(not(target_os = "windows"))]
-                if !configured_grok.is_empty() && configured_grok != "grok" {
-                    resolved_wsl_grok_path = Some(configured_grok.to_string());
-                }
-                s.set_wsl_config(Some(distro.clone()), resolved_wsl_grok_path);
-            }
-            crate::acp::Transport::Ssh {
-                host,
-                port,
-                key_vault_ref,
-                remote_grok_path,
-                remote_runtime,
-                wsl_distro,
-            } => {
-                // SSH transport — stash the config on the session;
-                // `s.start` will route through
-                // `build_command_for_transport(Transport::Ssh)` and resolve
-                // any vault key reference at spawn time. Local/WSL state
-                // is cleared inside set_ssh_config so the spawn branch is
-                // unambiguous.
-                s.set_ssh_config(Some(crate::acp::SshSpawnConfig {
-                    host: host.clone(),
-                    port: *port,
-                    key_vault_ref: key_vault_ref.clone(),
-                    remote_grok_path: remote_grok_path.clone(),
-                    remote_runtime: *remote_runtime,
-                    wsl_distro: wsl_distro.clone(),
-                }));
-            }
-            t if t.is_p_transport_2() => {
-                return Err(format!(
-                    "Transport::{} is reserved and not implemented yet",
-                    t.kind_label()
-                ));
-            }
-            // Required because match-against-trait-method is non-exhaustive.
-            _ => unreachable!("kind_label covers all Transport variants"),
-        }
-        conn_id_used = Some(preset.id.clone());
-    } else if wsl_distro.is_some() || wsl_grok_path.is_some() {
-        s.set_wsl_config(wsl_distro.clone(), wsl_grok_path.clone());
-    } else {
-        // No preset or inline remote fields means an explicit ambient local
-        // launch. Clear any transport state left by the tab's prior session.
-        s.set_local_config(None);
-    }
-
-    // Register the tab-bound HTTP host MCP in the ACP session for every
-    // transport. SSH exposes the desktop port through its reverse tunnel and
-    // WSL uses the already-verified loopback bridge, so no remote executable or
-    // persistent Grok config is required.
-    let transport_kind = s.transport_kind().to_string();
-    let servers =
-        inject_host_mcp_server_for_transport(mcp_servers, Some(tab_key.as_str()), &transport_kind);
-    if !servers.is_empty() {
-        s.set_mcp_servers(servers);
-    }
-
-    // If the session was just rebuilt after `/abort` or by `/goal`'s
-    // inner-session flow, the registry's
-    // `tab_autonomy` entry survived even though the GrokAcpSession was
-    // dropped. Re-apply it BEFORE start so the cmdline flags
-    // (--always-approve / --allow) reflect the user's actual choice.
-    // Without this, the next host-MCP tool call freezes 60s waiting
-    // for a permission decision that no UI is going to send.
-    if s.get_permission_mode().is_none() {
-        if let Some(mode) = registry.get_tab_autonomy(&tab_key).await {
-            tracing::info!(
-                "start_grok_session: re-applying tab_autonomy mode='{}' for tab '{}' (session was rebuilt)",
-                mode,
-                tab_key
-            );
-            s.set_permission_mode(Some(mode));
-        } else {
-            // A fresh tab has no persisted autonomy yet. Resolve it to the
-            // same provider-native Full Auto default used by every other
-            // ShellX provider surface; leaving it null makes the first host
-            // tool wait for a decision that the normal UI no longer offers.
-            tracing::info!(
-                "start_grok_session: tab '{}' has no autonomy preference set anywhere — defaulting to '{}' (Full Auto)",
-                tab_key,
-                acp::SHELLX_DEFAULT_PERMISSION_MODE
-            );
-            s.set_permission_mode(Some(acp::SHELLX_DEFAULT_PERMISSION_MODE.to_string()));
-            // Also mirror this into the registry so subsequent restarts
-            // don't fall back here (and so set_permission_mode calls
-            // from the UI see a consistent baseline).
-            registry
-                .set_tab_autonomy(&tab_key, acp::SHELLX_DEFAULT_PERMISSION_MODE.to_string())
-                .await;
-        }
-    }
-    s.start(&cwd, app, load_session_id.clone()).await?;
-
-    // touch last_used_ms only on a clean spawn — failed presets stay
-    // at the previous timestamp so the UI's recency list isn't biased
-    // by attempts that didn't reach a session.
-    // // A touch failure means recency ordering decays silently.
-    // Non-fatal, so just log instead of
-    // bubbling — the session itself is fine and we don't want to fail
-    // a successful spawn over a preference-store IO blip.
-    if let Some(id) = conn_id_used {
-        let store = get_or_open_connections()?;
-        if let Err(e) = store.touch(&id).await {
-            warn!(
-                "connections.touch({}) failed: {} — recency order may stale",
-                id, e
-            );
-        }
-    }
-
-    info!(
-        "start_grok_session ok cwd={} load_session_id={:?}",
-        cwd, load_session_id
+    let tab_key = tab_id_or_default(tab_id);
+    let request = GrokSessionStartRequest::normal(
+        cwd.clone(),
+        tab_key,
+        wsl_distro,
+        wsl_grok_path,
+        connection_id,
+        mcp_servers,
+        load_session_id.clone(),
     );
-
-    // #322: kick off per-tab launcher-health probes for every
-    // installed+enabled marketplace entry. Non-blocking — the prompt path returns
-    // immediately, probes resolve in the background and the UI polls
-    // `/state/marketplace_health?tabId=X` for the live snapshot.
-    {
-        let is_wsl = s.wsl_distro().is_some();
-        let is_ssh = s.ssh_config().is_some();
-        let probe_transport = crate::mcp_health::ProbeTransport {
-            wsl_distro: s.wsl_distro().map(str::to_string),
-            ssh_target: s.ssh_config().map(|ssh| ssh.host.clone()),
-            ssh_remote_runtime: s
-                .ssh_config()
-                .map(|ssh| ssh.remote_runtime)
-                .unwrap_or_default(),
-            ssh_wsl_distro: s.ssh_config().and_then(|ssh| ssh.wsl_distro.clone()),
-        };
-        // Drop the session lock before scheduling so the probe task
-        // doesn't deadlock against a parallel set_permission_mode etc.
-        drop(s);
-        let health = crate::mcp_health::global();
-        health.clear_tab(&tab_key).await;
-        crate::mcp_health::schedule_probes_for_tab_with_hint(
-            health,
-            tab_key.clone(),
-            is_wsl,
-            is_ssh,
-            probe_transport,
-        );
-    }
-
+    start_normal_grok_session(app, registry.inner().clone(), request).await?;
+    info!(
+        "start_grok_session ok resume_requested={}",
+        load_session_id.is_some()
+    );
     Ok(match load_session_id {
         Some(id) => format!("Grok session loaded ({}) in {}", id, cwd),
         None => format!("Grok session started in {}", cwd),
     })
+}
+
+#[cfg(test)]
+mod grok_session_initializer_tests {
+    use super::*;
+
+    #[test]
+    fn task_wrapper_preserves_normal_saved_connection_shape_without_renderer_mcp() {
+        let normal = GrokSessionStartRequest::normal(
+            "C:\\workspace".to_string(),
+            "tab-normal".to_string(),
+            None,
+            None,
+            Some("connection-remote".to_string()),
+            Some(vec![serde_json::json!({ "name": "user-server" })]),
+            None,
+        );
+        let task = build_task_grok_start_request(
+            TaskGrokSessionStartContext {
+                connection: TaskGrokConnectionContext::SavedConnectionId(
+                    "connection-remote".to_string(),
+                ),
+                task_tab_id: "task-run-immutable-attempt".to_string(),
+                cwd: "C:\\workspace".to_string(),
+                permission_mode:
+                    crate::provider_adapters::ProviderPermissionMode::BypassPermissions,
+                shellx_tool_exposure:
+                    crate::provider_adapters::ProviderShellxToolExposure::NativeFirst,
+            },
+            GrokSessionResume::Fresh,
+        )
+        .expect("closed Task request");
+
+        assert!(matches!(
+            normal.connection,
+            GrokSessionConnectionContext::SavedConnectionId(ref id) if id == "connection-remote"
+        ));
+        assert!(matches!(
+            task.connection,
+            GrokSessionConnectionContext::SavedConnectionId(ref id) if id == "connection-remote"
+        ));
+        assert!(normal.renderer_mcp_servers.is_some());
+        assert!(task.renderer_mcp_servers.is_none());
+        assert!(task.inject_host_mcp);
+        assert_eq!(task.resume, GrokSessionResume::Fresh);
+        assert!(task.reject_active_tab);
+        assert!(matches!(
+            task.permission,
+            GrokSessionPermission::ExactTaskMode(ref mode) if mode == "bypassPermissions"
+        ));
+    }
+
+    #[test]
+    fn task_wrapper_maps_every_closed_provider_permission_mode() {
+        assert_eq!(
+            task_grok_permission_mode(&crate::provider_adapters::ProviderPermissionMode::ReadOnly),
+            "plan"
+        );
+        assert_eq!(
+            task_grok_permission_mode(&crate::provider_adapters::ProviderPermissionMode::Default),
+            "default"
+        );
+        assert_eq!(
+            task_grok_permission_mode(
+                &crate::provider_adapters::ProviderPermissionMode::AcceptEdits
+            ),
+            "acceptEdits"
+        );
+        assert_eq!(
+            task_grok_permission_mode(
+                &crate::provider_adapters::ProviderPermissionMode::BypassPermissions
+            ),
+            "bypassPermissions"
+        );
+    }
+
+    #[test]
+    fn task_wrapper_honors_persisted_tool_exposure_off() {
+        let task = build_task_grok_start_request(
+            TaskGrokSessionStartContext {
+                connection: TaskGrokConnectionContext::Local,
+                task_tab_id: "task-run-off".to_string(),
+                cwd: "C:\\workspace".to_string(),
+                permission_mode: crate::provider_adapters::ProviderPermissionMode::ReadOnly,
+                shellx_tool_exposure: crate::provider_adapters::ProviderShellxToolExposure::Off,
+            },
+            GrokSessionResume::Fresh,
+        )
+        .expect("closed Task request");
+        assert!(task.renderer_mcp_servers.is_none());
+        assert!(!task.inject_host_mcp);
+    }
+
+    #[test]
+    fn task_wrapper_refuses_resume_before_any_session_start() {
+        let error = build_task_grok_start_request(
+            TaskGrokSessionStartContext {
+                connection: TaskGrokConnectionContext::Local,
+                task_tab_id: "task-run-immutable-attempt".to_string(),
+                cwd: "C:\\workspace".to_string(),
+                permission_mode: crate::provider_adapters::ProviderPermissionMode::Default,
+                shellx_tool_exposure:
+                    crate::provider_adapters::ProviderShellxToolExposure::NativeFirst,
+            },
+            GrokSessionResume::Load("prior-grok-session".to_string()),
+        )
+        .expect_err("Tasks must not resume a prior Grok session");
+        assert!(error.contains("fresh-only"));
+    }
 }
 
 /// One embedded text context part sent alongside a user prompt.
@@ -909,8 +1261,8 @@ async fn send_prompt(
             )
         };
         info!(
-            "send_prompt: session wedged for tab '{}'; auto-restarting with cwd='{}' session_id={:?}",
-            tab_key, restart_cwd, restart_session_id
+            "send_prompt: session wedged for tab '{}'; auto-restarting existing context",
+            tab_key
         );
         // Emit a typed event so the UI can show "session restored".
         let _ = tauri::Emitter::emit(
@@ -1020,8 +1372,8 @@ async fn send_prompt(
         }
     }
     match outcome {
-        Ok(Ok(value)) => {
-            info!("session/prompt response received: {:?}", value);
+        Ok(Ok(_)) => {
+            info!("session/prompt response received");
             Ok("Prompt sent. Watch for streaming events.".to_string())
         }
         Ok(Err(_)) => {
@@ -1241,7 +1593,30 @@ async fn drop_tab_session(
     process_registry: State<'_, Arc<ProcessRegistry>>,
     provider_registry: State<'_, Arc<provider_sessions::ProviderSessionRegistry>>,
 ) -> Result<bool, String> {
-    let aborted_tab_tasks = crate::tab_tasks::abort_tab(&tab_id);
+    cleanup_normal_tab_session(
+        &tab_id,
+        registry.inner().clone(),
+        orch.inner().clone(),
+        build_orch.inner().clone(),
+        process_registry.inner().clone(),
+        provider_registry.inner().clone(),
+    )
+    .await
+}
+
+/// Canonical full tab cleanup shared by the interactive close command and
+/// deterministic Task-owned Grok tabs. Callers must persist their own terminal
+/// receipt before invoking this lifecycle; this function never claims a Task
+/// result or edits Task storage.
+async fn cleanup_normal_tab_session(
+    tab_id: &str,
+    registry: Arc<SessionRegistry>,
+    orch: Arc<goal_orchestrator::GoalOrchestrator>,
+    build_orch: Arc<build_orchestrator::BuildOrchestrator>,
+    process_registry: Arc<ProcessRegistry>,
+    provider_registry: Arc<provider_sessions::ProviderSessionRegistry>,
+) -> Result<bool, String> {
+    let aborted_tab_tasks = crate::tab_tasks::abort_tab(tab_id);
     if aborted_tab_tasks > 0 {
         info!(
             "drop_tab_session: aborted {} owned background task(s) for tab_id={}",
@@ -1249,7 +1624,7 @@ async fn drop_tab_session(
         );
     }
     let provider_aborted = provider_registry
-        .abort_active_child(&tab_id, None)
+        .abort_active_child(tab_id, None)
         .await
         .unwrap_or(false);
     if provider_aborted {
@@ -1258,8 +1633,8 @@ async fn drop_tab_session(
             tab_id
         );
     }
-    let removed = registry.drop_tab(&tab_id).await;
-    registry.clear_tab_autonomy(&tab_id).await;
+    let removed = registry.drop_tab(tab_id).await;
+    registry.clear_tab_autonomy(tab_id).await;
     if removed {
         info!(
             "drop_tab_session: released registry slot for tab_id={}",
@@ -1267,12 +1642,12 @@ async fn drop_tab_session(
         );
         // #322: clear per-tab marketplace health rows so a new tab with
         // the same id gets a fresh probe set on next /connect.
-        crate::mcp_health::global().clear_tab(&tab_id).await;
-        orch.clear_state(&tab_id, "tab_closed").await;
-        build_orch.clear_tab(&tab_id).await;
-        crate::acp::clear_host_mcp_transport_failure_for_tab(&tab_id);
+        crate::mcp_health::global().clear_tab(tab_id).await;
+        orch.clear_state(tab_id, "tab_closed").await;
+        build_orch.clear_tab(tab_id).await;
+        crate::acp::clear_host_mcp_transport_failure_for_tab(tab_id);
     }
-    let cleaned = cleanup_host_mcp_children_for_tab(&process_registry, &tab_id).await;
+    let cleaned = cleanup_host_mcp_children_for_tab(&process_registry, tab_id).await;
     if cleaned > 0 {
         info!(
             "drop_tab_session: cleaned {} host_mcp child process(es) for tab_id={}",
@@ -2530,10 +2905,7 @@ async fn rename_past_session(
         existing.as_bytes(),
         "rename past session",
     )?;
-    info!(
-        "rename_past_session: id={} new_title=\"{}\"",
-        session_id, trimmed
-    );
+    info!("rename_past_session: title updated");
     Ok(())
 }
 
@@ -3217,7 +3589,7 @@ async fn append_session_log(session_id: String, line: String) -> Result<(), Stri
         .map_err(|e| format!("session log writer task failed: {e}"))?
 }
 
-fn append_session_log_blocking(session_id: &str, line: &str) -> Result<(), String> {
+pub(crate) fn append_session_log_blocking(session_id: &str, line: &str) -> Result<(), String> {
     // Windows has USERPROFILE, not HOME. Match the pattern already
     // used in vault.rs / connections.rs so append_session_log actually
     // persists on Windows.
@@ -3227,7 +3599,7 @@ fn append_session_log_blocking(session_id: &str, line: &str) -> Result<(), Strin
     append_session_log_blocking_at(std::path::Path::new(&home), session_id, line)
 }
 
-fn append_session_log_blocking_at(
+pub(crate) fn append_session_log_blocking_at(
     home: &std::path::Path,
     session_id: &str,
     line: &str,
@@ -4822,6 +5194,7 @@ pub(crate) struct SessionToolingSnapshot {
     session: serde_json::Value,
     desired: Vec<mcp_marketplace::McpEntryStatus>,
     health: Vec<mcp_health::MarketplaceHealthEntry>,
+    cut: host_mcp::cut_status::CutToolingStatus,
 }
 
 /// List the full marketplace catalog merged with the user's installed/
@@ -4843,6 +5216,22 @@ async fn session_tooling_snapshot(
     provider_registry: State<'_, Arc<provider_sessions::ProviderSessionRegistry>>,
 ) -> Result<SessionToolingSnapshot, String> {
     session_tooling_snapshot_for_tab(tab_id, &registry, Some(&provider_registry), true, false).await
+}
+
+/// Open the installed ShellX Cut editor only after an explicit operator click
+/// in the selected session's Tools row. The status projection is resolved
+/// first; sessions without a parent desktop host and provider sessions with
+/// ShellX tooling off fail closed without launching anything.
+#[tauri::command]
+async fn cut_tooling_open(
+    #[allow(non_snake_case)] tab_id: String,
+    registry: State<'_, Arc<acp::SessionRegistry>>,
+    provider_registry: State<'_, Arc<provider_sessions::ProviderSessionRegistry>>,
+) -> Result<host_mcp::cut_status::CutToolingStatus, String> {
+    let snapshot =
+        session_tooling_snapshot_for_tab(tab_id, &registry, Some(&provider_registry), false, false)
+            .await?;
+    host_mcp::cut_status::open_from_status(snapshot.cut)
 }
 
 /// Run Grok's own local diagnostics for the active tab environment.
@@ -4896,11 +5285,13 @@ pub(crate) async fn session_tooling_snapshot_for_tab(
                         "debug": serde_json::Value::Null,
                     })
                 });
+            let cut = host_mcp::cut_status::snapshot_for_session(&session).await;
             return Ok(SessionToolingSnapshot {
                 tab_id,
                 session,
                 desired,
                 health,
+                cut,
             });
         }
     };
@@ -4963,12 +5354,14 @@ pub(crate) async fn session_tooling_snapshot_for_tab(
         h.clear_tab(&tab_id).await;
     }
     let health = h.get_for_tab(&tab_id).await;
+    let cut = host_mcp::cut_status::snapshot_for_session(&session).await;
 
     Ok(SessionToolingSnapshot {
         tab_id,
         session,
         desired,
         health,
+        cut,
     })
 }
 
@@ -5002,6 +5395,7 @@ fn provider_tooling_session_snapshot(
             "providerPhase": run.phase.clone(),
             "providerTransportKey": run.transport_key.clone(),
             "providerConversationId": run.provider_conversation_id.clone(),
+            "shellxToolExposure": run.shellx_tool_exposure,
             "debug": {
                 "hasSession": has_active_provider_child,
                 "sessionKind": "provider",
@@ -5022,6 +5416,7 @@ fn provider_tooling_session_snapshot(
                 "providerPhase": run.phase.clone(),
                 "providerTransportKey": run.transport_key.clone(),
                 "providerConversationId": run.provider_conversation_id.clone(),
+                "shellxToolExposure": run.shellx_tool_exposure,
             },
         }));
     }
@@ -6434,6 +6829,13 @@ async fn connection_provider_scan(
 }
 
 #[tauri::command]
+async fn task_provider_catalog(
+    preset: ConnectionPreset,
+) -> Result<crate::task_provider_catalog::TaskProviderCatalog, String> {
+    crate::task_provider_catalog::scan_task_provider_catalog(&preset).await
+}
+
+#[tauri::command]
 async fn agent_cli_setup_state(
     preset: ConnectionPreset,
 ) -> Result<crate::agent_cli_setup::AgentCliSetupState, String> {
@@ -6897,6 +7299,10 @@ pub fn run() {
     let shellx_browser_registry: Arc<shellx_browser::ShellxBrowserRegistry> =
         Arc::new(shellx_browser::ShellxBrowserRegistry::new_persistent_default());
     let shellx_vault_backend: ShellxVaultState = shellx_vault::shared_backend();
+    // Durable task definitions are intentionally available before the scheduler
+    // slice. If a corrupt store is preserved, its command surface refuses work
+    // without preventing the desktop application from starting.
+    let task_store = Arc::new(task_store::TaskStoreService::open_default());
 
     let context = tauri::generate_context!();
     #[cfg(target_os = "windows")]
@@ -6977,6 +7383,7 @@ pub fn run() {
         .manage(terminal_registry.clone())
         .manage(shellx_browser_registry.clone())
         .manage(shellx_vault_backend.clone())
+        .manage(task_store)
         // Pending provider/tool permission requests. Created at boot and
         // resolved by the matching provider-owned UI control. Normal ShellX
         // sessions use provider-native Full Auto.
@@ -7067,6 +7474,26 @@ pub fn run() {
             task_pause,
             task_resume,
             task_kill,
+            // First-class Task definition store. Scheduling/provider execution
+            // remain intentionally unwired until their later bounded slices.
+            tasks_list,
+            tasks_list_states,
+            tasks_get,
+            tasks_get_state,
+            tasks_create,
+            tasks_persist_attachments,
+            tasks_reclaim_attachments,
+            tasks_maintain_attachments,
+            tasks_revise,
+            tasks_run_now,
+            tasks_cancel_run,
+            tasks_pause,
+            tasks_resume,
+            tasks_delete,
+            tasks_list_receipts,
+            tasks_list_open_attention,
+            tasks_resolve_attention,
+            tasks_resolve_attention_overflow,
             copy_to_scope,
             copy_asset_to_scope,
             save_dropped_attachment_to_scope,
@@ -7106,6 +7533,7 @@ pub fn run() {
             connections_delete,
             connections_test,
             connection_provider_scan,
+            task_provider_catalog,
             agent_cli_setup_state,
             agent_cli_setup_prepare_install,
             agent_cli_setup_confirm_install,
@@ -7149,6 +7577,7 @@ pub fn run() {
             // install/uninstall, vault-aware availability.
             mcp_marketplace_list,
             session_tooling_snapshot,
+            cut_tooling_open,
             grok_environment_snapshot,
             grok_trace_export,
             mcp_marketplace_install,
@@ -7202,6 +7631,7 @@ pub fn run() {
             crate::shellx_browser_teach::shellx_browser_operator_revise_teach_draft,
             crate::shellx_browser_teach::shellx_browser_operator_rehearse_teach_recipe,
             crate::shellx_browser_teach::shellx_browser_operator_approve_teach_draft,
+            crate::shellx_browser_teach_task::shellx_browser_operator_prepare_teach_task_handoff,
             crate::shellx_browser_operator_diagnostics::shellx_browser_operator_developer_inspect,
             crate::shellx_browser_operator_diagnostics::shellx_browser_operator_export_har,
             crate::shellx_browser_operator_diagnostics::shellx_browser_operator_export_performance,
@@ -7217,13 +7647,13 @@ pub fn run() {
             crate::shellx_browser_personal_lock::shellx_browser_delegate_tab_to_agent,
             crate::shellx_browser_personal_lock::shellx_browser_take_back_tab_from_agent,
             crate::shellx_browser_privacy::shellx_browser_update_privacy,
-            crate::shellx_browser_shields::shellx_browser_update_shields,
-            crate::shellx_browser_shields::shellx_browser_update_site_shields,
-            crate::shellx_browser_shields::shellx_browser_remove_site_shields,
+            crate::shellx_browser_shield_settings::shellx_browser_update_shields,
+            crate::shellx_browser_shield_settings::shellx_browser_update_site_shields,
+            crate::shellx_browser_shield_settings::shellx_browser_remove_site_shields,
             crate::shellx_browser_transfers::shellx_browser_grant_transfer,
             crate::shellx_browser_transfers::shellx_browser_update_download_folder,
-            crate::shellx_browser_transfers::shellx_browser_write_text_artifact,
-            crate::shellx_browser_transfers::shellx_browser_copy_local_artifact,
+            crate::shellx_browser_transfer_artifacts::shellx_browser_write_text_artifact,
+            crate::shellx_browser_transfer_artifacts::shellx_browser_copy_local_artifact,
             crate::shellx_browser_prompts::shellx_browser_resolve_dialog,
             crate::shellx_browser_prompts::shellx_browser_resolve_permission,
         ])
@@ -7336,21 +7766,11 @@ pub fn run() {
                     .join(".grok")
                     .join("config.toml");
                 match crate::mcp_http::migrate_http_snippet_file(&global_config) {
-                    Ok(true) => info!(
-                        "H2 migrator: rewrote legacy Bearer line in {} to env-var form",
-                        global_config.display()
-                    ),
+                    Ok(true) => info!("H2 migrator: rewrote legacy Bearer line to env-var form"),
                     Ok(false) => {
-                        info!(
-                            "H2 migrator: {} already in env-var form (or absent)",
-                            global_config.display()
-                        )
+                        info!("H2 migrator: config already in env-var form (or absent)")
                     }
-                    Err(e) => warn!(
-                        "H2 migrator: {} migration failed (non-fatal): {}",
-                        global_config.display(),
-                        e
-                    ),
+                    Err(e) => warn!("H2 migrator: migration failed (non-fatal): {}", e),
                 }
             }
 
@@ -7410,6 +7830,14 @@ pub fn run() {
             // `apply_pdeathsig_preexec` on each Command builder.
             crate::winproc::init_kill_on_close_group();
             log_to_file("winproc::init_kill_on_close_group called");
+
+            match crate::task_runtime_app::install_task_runtime(_app) {
+                Ok(_) => info!("task foreground runtime scheduled"),
+                Err(error) => warn!(
+                    "task foreground runtime unavailable; definitions remain recoverable: {}",
+                    error
+                ),
+            }
 
             #[cfg(feature = "debug-api")]
             {
@@ -7482,17 +7910,26 @@ pub fn run() {
             // first boot — external grok clients (WSL/SSH presets) read the
             // token from there. Compiled in unconditionally so non-debug
             // builds still expose the public MCP surface.
-            {
-                let handle = _app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::mcp_http::start_mcp_server(handle).await {
-                        warn!("mcp-http server stopped: {}", e);
-                    }
-                });
-                info!(
-                    "mcp-http server scheduled on port {}",
-                    crate::mcp_http::mcp_port()
-                );
+            match crate::mcp_http::initialize_mcp_token_authority() {
+                Ok(_) => {
+                    let handle = _app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = crate::mcp_http::start_mcp_server(handle).await {
+                            warn!("mcp-http server stopped: {}", e);
+                        }
+                    });
+                    info!(
+                        "mcp-http server scheduled on port {}",
+                        crate::mcp_http::mcp_port()
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        "mcp-http token authority unavailable; server not started: {}",
+                        error
+                    );
+                    log_to_file("mcp-http token authority initialization failed");
+                }
             }
 
             // Tail ~/.shellx/mcp-events.jsonl for events written by the
@@ -7522,6 +7959,17 @@ pub fn run() {
                 && matches!(event, tauri::WindowEvent::Destroyed)
             {
                 shellx_browser_registry.record_window_destroyed();
+            }
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Some(task_runtime) = window
+                    .app_handle()
+                    .try_state::<Arc<crate::task_runtime_app::TaskRuntimeAppState>>()
+                {
+                    let task_runtime = task_runtime.inner().clone();
+                    tauri::async_runtime::spawn(async move {
+                        task_runtime.shutdown().await;
+                    });
+                }
             }
         })
         .run(context)

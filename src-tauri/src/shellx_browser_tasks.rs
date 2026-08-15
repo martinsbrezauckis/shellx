@@ -257,7 +257,24 @@ impl ShellxBrowserRegistry {
         &self,
         request: StartBrowserTaskRequest,
     ) -> Result<BrowserTaskSnapshot, String> {
-        self.start_task_for_agent_session(request, None)
+        self.start_task_with_authority(
+            request,
+            BrowserTaskControlAuthority::Operator,
+            BrowserTaskControlAuthority::Operator.surface_id(),
+            None,
+        )
+    }
+
+    pub(crate) fn start_task_from_debug_operator(
+        &self,
+        request: StartBrowserTaskRequest,
+    ) -> Result<BrowserTaskSnapshot, String> {
+        self.start_task_with_authority(
+            request,
+            BrowserTaskControlAuthority::Operator,
+            BrowserTaskControlAuthority::Agent.surface_id(),
+            None,
+        )
     }
 
     pub(crate) fn start_task_for_agent_session(
@@ -265,13 +282,34 @@ impl ShellxBrowserRegistry {
         request: StartBrowserTaskRequest,
         owner_session_id: Option<&str>,
     ) -> Result<BrowserTaskSnapshot, String> {
+        let owner_session_id = normalize_browser_task_owner_session_id(owner_session_id)?
+            .ok_or_else(|| {
+                format!(
+                    "{}: authenticated Browser task creation requires an exact caller session",
+                    BROWSER_TASK_OWNER_CONTROL_REQUIRED
+                )
+            })?;
+        self.start_task_with_authority(
+            request,
+            BrowserTaskControlAuthority::Agent,
+            BrowserTaskControlAuthority::Agent.surface_id(),
+            Some(owner_session_id),
+        )
+    }
+
+    fn start_task_with_authority(
+        &self,
+        request: StartBrowserTaskRequest,
+        authority: BrowserTaskControlAuthority,
+        owner_surface: &str,
+        owner_session_id: Option<String>,
+    ) -> Result<BrowserTaskSnapshot, String> {
         let goal = clean_string(request.goal);
         if goal.is_empty() {
             return Err("browser task goal is required".to_string());
         }
         let autonomy =
             crate::shellx_browser_policy::effective_browser_task_autonomy(request.autonomy)?;
-        let owner_session_id = normalize_browser_task_owner_session_id(owner_session_id)?;
         let mut state = lock_or_recover(&self.state);
         repair_browser_task_invariants_locked(&mut state);
         let profile_id = request
@@ -326,8 +364,8 @@ impl ShellxBrowserRegistry {
         let task = BrowserTaskSnapshot {
             task_id: browser_id("browser-task"),
             profile_id: profile_id.clone(),
-            owner_actor_id: BrowserTaskControlAuthority::Agent.actor_id().to_string(),
-            owner_surface: BrowserTaskControlAuthority::Agent.surface_id().to_string(),
+            owner_actor_id: authority.actor_id().to_string(),
+            owner_surface: owner_surface.to_string(),
             owner_session_id,
             goal,
             status: "running".to_string(),

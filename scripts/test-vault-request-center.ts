@@ -11,6 +11,7 @@ import {
   mergeVaultRequestCenterAgentRequests,
   mergeVaultRequestCenterGrants,
 } from "../src/lib/useVaultRequestCenterState";
+import { readAppStyles } from "./lib/app-styles";
 
 const tabs = [
   { tabId: "tab-oauth", title: "OAuth setup" },
@@ -243,7 +244,7 @@ const app = readFileSync("src/App.tsx", "utf8");
 const requestStateHook = readFileSync("src/lib/useVaultRequestCenterState.ts", "utf8");
 const eventPollingHook = readFileSync("src/lib/useEventAwarePolling.ts", "utf8");
 const debugVaultApi = readFileSync("src-tauri/src/debug_api_vault.rs", "utf8");
-const css = readFileSync("src/App.css", "utf8");
+const css = readAppStyles();
 const generatorCss = readFileSync("src/components/VaultPasswordGenerator.css", "utf8");
 const vaultCss = readFileSync("src/components/settings/VaultTab.css", "utf8");
 const popoverBlock = css.match(/^\.vault-request-popover\s*\{[^}]+\}/m)?.[0] ?? "";

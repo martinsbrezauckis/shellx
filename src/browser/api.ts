@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { apiDeleteJson, apiGet, apiPostJson, debugApiBase, getDebugToken } from "../lib/debug-api";
 import { inTauri } from "../lib/tauri-bridge";
+import type { BrowserTeachTaskHandoffRequest } from "../lib/task-teach-handoff-events";
 import type {
   BrowserTeachApprovalRequest,
   BrowserTeachPrepareRequest,
@@ -95,6 +96,42 @@ export function normalizeBrowserVaultFillActionResponse(
     message,
     observation: Reflect.get(value, "observation"),
   };
+}
+
+export interface BrowserActionOutcome {
+  ok?: boolean;
+  status?: string;
+  message?: string | null;
+  requiredApproval?: string | null;
+  receipt?: { receiptId?: string | null } | null;
+}
+
+export function requireBrowserActionOutcome(
+  value: unknown,
+  fallbackMessage = "ShellX Browser action was blocked.",
+): BrowserActionOutcome {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("ShellX Browser returned an invalid action response.");
+  }
+  const outcome = value as BrowserActionOutcome;
+  if (outcome.ok === false || outcome.status === "blocked") {
+    const suffix = outcome.requiredApproval === "promptInjectionReview"
+      ? " Re-observe the page or review the bounded prompt-injection receipt before retrying."
+      : "";
+    throw new Error(`${outcome.message?.trim() || fallbackMessage}${suffix}`);
+  }
+  return outcome;
+}
+
+export async function browserApiPostActionJson(
+  path: string,
+  body: unknown,
+  fallbackMessage?: string,
+): Promise<BrowserActionOutcome> {
+  return requireBrowserActionOutcome(
+    await browserApiPostJson(path, body),
+    fallbackMessage,
+  );
 }
 
 export interface BrowserPersonalLockUpdateRequest {
@@ -284,6 +321,15 @@ export async function rehearseBrowserTeachRecipeForOperator(request: BrowserTeac
   return await invoke<unknown>("shellx_browser_operator_rehearse_teach_recipe", { request });
 }
 
+export async function prepareBrowserTeachTaskHandoffForOperator(
+  request: BrowserTeachTaskHandoffRequest,
+): Promise<unknown> {
+  if (!inTauri()) {
+    throw new Error("Browser Teach Task handoff is available only inside the ShellX desktop app.");
+  }
+  return await invoke<unknown>("shellx_browser_operator_prepare_teach_task_handoff", { request });
+}
+
 export async function syncBrowserEngine(request: BrowserEngineSyncRequest): Promise<void> {
   await invoke("shellx_browser_sync_engine", { request });
 }
@@ -398,6 +444,7 @@ export async function updateBrowserPersonalLock(request: BrowserPersonalLockUpda
 export async function delegateBrowserTabToAgent(request: {
   browserTabId: string;
   taskId: string;
+  reviewFingerprint: string;
   grantId?: string | null;
   reason?: string | null;
 }): Promise<void> {

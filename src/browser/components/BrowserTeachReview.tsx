@@ -47,6 +47,12 @@ function phasePresentation(phase: BrowserTeachPhase, error: string | null): Teac
       return { id: "rehearsal-blocked", label: "Rehearsal blocked", detail: boundedMessage(error, "The matching approval or export receipt is unavailable; no recipe was applied."), tone: "warning" };
     case "rehearsalFailed":
       return { id: "rehearsal-failed", label: "Rehearsal failed", detail: boundedMessage(error, "The recipe was not applied. Retry after checking the approved recipe receipt."), tone: "error" };
+    case "preparingTaskDraft":
+      return { id: "task-draft-preparing", label: "Preparing Task draft", detail: "Binding the exact approved recipe and opening a reviewed, paused Task draft in the main workspace.", tone: "running" };
+    case "taskDraftOpened":
+      return { id: "task-draft-opened", label: "Task draft opened", detail: "Review its environment, Vault grants, provider order, and schedule before saving.", tone: "success" };
+    case "taskDraftFailed":
+      return { id: "task-draft-failed", label: "Task draft needs attention", detail: boundedMessage(error, "The workflow remains approved, but the main workspace did not accept its Task draft."), tone: "error" };
     case "unavailable":
       return { id: "unavailable", label: "Native runtime unavailable", detail: boundedMessage(error, "Browser Teach requires the active ShellX desktop runtime."), tone: "warning" };
     case "error":
@@ -94,7 +100,7 @@ function currentPresentation(source: BrowserTeachSourceSelection, teach: Browser
 }
 
 function isBusy(phase: BrowserTeachPhase): boolean {
-  return phase === "preparing" || phase === "saving" || phase === "approving" || phase === "rehearsing";
+  return phase === "preparing" || phase === "saving" || phase === "approving" || phase === "rehearsing" || phase === "preparingTaskDraft";
 }
 
 function saveDisabledReason(teach: BrowserTeachController): string {
@@ -122,12 +128,24 @@ function rehearseDisabledReason(teach: BrowserTeachController): string {
   return "Plan this exact approved recipe as a dry run without applying Browser actions";
 }
 
+function createTaskDisabledReason(teach: BrowserTeachController): string {
+  if (!teach.approval || !teach.rehearsal) return "Approve and rehearse this exact recipe before creating a Task draft";
+  if (isBusy(teach.phase)) return "Wait for the current Teach action to finish";
+  if (teach.isDirty) return "Save, approve, and rehearse the edited revision before creating a Task";
+  if (teach.rehearsal.stepsSkipped > 0) return "Resolve every skipped rehearsal step before creating a recurring Task";
+  return "Open a paused Task draft with this reviewed workflow binding";
+}
+
 function approvalCorrelation(recipeId: string, approvalId: string, revisionId: string): string {
   return `ShellX Browser Teach approval\nRecipe: ${recipeId}\nApproval: ${approvalId}\nRevision: ${revisionId}`;
 }
 
 function rehearsalCorrelation(recipeId: string, receiptId: string, revisionId: string): string {
   return `ShellX Browser Teach rehearsal\nRecipe: ${recipeId}\nReceipt: ${receiptId}\nRevision: ${revisionId}`;
+}
+
+function taskHandoffCorrelation(workflowId: string, receiptId: string, revisionId: string): string {
+  return `ShellX Browser Teach Task handoff\nWorkflow: ${workflowId}\nReceipt: ${receiptId}\nRevision: ${revisionId}`;
 }
 
 export function BrowserTeachReview({
@@ -137,7 +155,7 @@ export function BrowserTeachReview({
   source: BrowserTeachSourceSelection;
   teach: BrowserTeachController;
 }): JSX.Element {
-  const [copiedReceipt, setCopiedReceipt] = useState<"approval" | "rehearsal" | null>(null);
+  const [copiedReceipt, setCopiedReceipt] = useState<"approval" | "rehearsal" | "task" | null>(null);
   const state = currentPresentation(source, teach);
   const draft = teach.draft;
   const busy = isBusy(teach.phase);
@@ -145,15 +163,16 @@ export function BrowserTeachReview({
   const canSave = Boolean(draft && teach.isDirty && !busy && teach.phase !== "stale");
   const canApprove = Boolean(draft && !teach.approval && !teach.isDirty && draft.isCurrent && !teach.hasBlockingIssues && !busy);
   const canRehearse = Boolean(teach.approval && !teach.isDirty && !busy);
+  const canCreateTask = Boolean(teach.approval && teach.rehearsal && teach.rehearsal.stepsSkipped === 0 && !teach.isDirty && !busy);
   const sourceDetails = draft?.bundle.source;
   const issues = draft ? [...draft.bundle.ambiguities, ...draft.bundle.loss] : [];
   const resolvableIssueIds = new Set(draft?.bundle.ambiguities.map((issue) => issue.issueId) ?? []);
   const unresolvedBlockingIssues = issues.filter((issue) => issue.blocking && (!resolvableIssueIds.has(issue.issueId) || !teach.ambiguityResolutions.includes(issue.issueId)));
   const missingBindings = draft?.revision.values.filter((value) => value.requiredVaultBinding && !(teach.vaultBindings[value.valueId] ?? "").trim()).length ?? 0;
   const incompleteNavigationReplacement = draft && browserTeachHasIncompleteNavigationReplacement(draft) ? 1 : 0;
-  const canRetry = teach.phase === "error" || teach.phase === "unavailable" || teach.phase === "rehearsalBlocked" || teach.phase === "rehearsalFailed";
+  const canRetry = teach.phase === "error" || teach.phase === "unavailable" || teach.phase === "rehearsalBlocked" || teach.phase === "rehearsalFailed" || teach.phase === "taskDraftFailed";
   const canReloadStale = teach.phase === "stale" && source.kind === "ready";
-  const copyReceiptCorrelation = (kind: "approval" | "rehearsal", correlation: string): void => {
+  const copyReceiptCorrelation = (kind: "approval" | "rehearsal" | "task", correlation: string): void => {
     if (!navigator.clipboard) return;
     void navigator.clipboard.writeText(correlation).then(() => setCopiedReceipt(kind)).catch(() => undefined);
   };
@@ -298,6 +317,7 @@ export function BrowserTeachReview({
             <button type="button" className="shellx-browser-secondary" onClick={() => void teach.save()} disabled={!canSave} data-debug-id="shellx-browser-teach-save-draft" data-shellx-release-observe="disabled title" title={saveDisabledReason(teach)}><ShellIcon name="file" size={13} />{teach.phase === "saving" ? "Saving…" : "Save draft"}</button>
             <button type="button" className="shellx-browser-secondary" onClick={() => void teach.rehearse()} disabled={!canRehearse} data-debug-id="shellx-browser-teach-rehearse" data-shellx-release-observe="disabled title" title={rehearseDisabledReason(teach)}><ShellIcon name="play" size={13} />{teach.phase === "rehearsing" ? "Rehearsing…" : "Rehearse"}</button>
             <button type="button" className="shellx-browser-primary" onClick={() => void teach.approve()} disabled={!canApprove} data-debug-id="shellx-browser-teach-approve-recipe" data-shellx-release-observe="disabled title" title={approveDisabledReason(teach)}><ShellIcon name="check" size={13} />{teach.phase === "approving" ? "Approving…" : "Approve recipe"}</button>
+            <button type="button" className="shellx-browser-primary" onClick={() => void teach.createTaskDraft()} disabled={!canCreateTask} data-debug-id="shellx-browser-teach-create-task" data-shellx-release-observe="disabled title" title={createTaskDisabledReason(teach)}><ShellIcon name="clock" size={13} />{teach.phase === "preparingTaskDraft" ? "Opening…" : "Create task draft"}</button>
           </div>
 
           {teach.approval && (() => {
@@ -317,6 +337,16 @@ export function BrowserTeachReview({
                 <ShellIcon name="check" size={13} />
                 <span title={correlation}><strong>Dry run ready</strong><small>r{draft.revision.revision} · {teach.rehearsal.stepsPlanned} planned · {teach.rehearsal.stepsSkipped} skipped · 0 applied · receipt {shortId(teach.rehearsal.receipt.receiptId)}</small></span>
                 <button type="button" className="shellx-browser-secondary shellx-browser-teach-receipt-copy" onClick={() => copyReceiptCorrelation("rehearsal", correlation)} data-debug-id="shellx-browser-teach-copy-rehearsal-receipt" title="Copy recipe, rehearsal receipt, and revision correlation"><ShellIcon name={copiedReceipt === "rehearsal" ? "check" : "copy"} size={12} />{copiedReceipt === "rehearsal" ? "Copied" : "Copy"}</button>
+              </div>
+            );
+          })()}
+          {teach.taskHandoff && (() => {
+            const correlation = taskHandoffCorrelation(teach.taskHandoff.workflowId, teach.taskHandoff.receipt.receiptId, draft.revision.revisionId);
+            return (
+              <div className="shellx-browser-teach-receipt" role="status" data-debug-id="shellx-browser-teach-task-handoff-receipt">
+                <ShellIcon name="clock" size={13} />
+                <span title={correlation}><strong>Task draft opened</strong><small>Workflow {shortId(teach.taskHandoff.workflowId)} · receipt {shortId(teach.taskHandoff.receipt.receiptId)}</small></span>
+                <button type="button" className="shellx-browser-secondary shellx-browser-teach-receipt-copy" onClick={() => copyReceiptCorrelation("task", correlation)} data-debug-id="shellx-browser-teach-copy-task-receipt" title="Copy workflow, handoff receipt, and revision correlation"><ShellIcon name={copiedReceipt === "task" ? "check" : "copy"} size={12} />{copiedReceipt === "task" ? "Copied" : "Copy"}</button>
               </div>
             );
           })()}

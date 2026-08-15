@@ -1,0 +1,1381 @@
+/* unified section gap = 16px (--space-4) so every tab
+ * breathes the same between rows. Was --space-2 (8px). */
+.settings-tab-body { display: flex; flex-direction: column; gap: var(--space-4); }
+.settings-tab-hint {
+  margin: 0 0 var(--space-3);
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.settings-field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.settings-inline-hint {
+  margin: 0;
+  max-width: 560px;
+  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+/* unified bullet-list inside settings tabs
+ * (replaces ad-hoc shellxagent-help). 12px text, --ink-3 color so it
+ * reads as secondary information. */
+.settings-help-list {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+.settings-help-list li { margin: 4px 0; }
+
+/* ─────────────── Settings → Connections tab ─────────────── */
+.connections-header {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--hairline);
+}
+.connections-header .settings-tab-hint { flex: 1; margin: 0; }
+.connections-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.connection-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hairline);
+  font-family: var(--sans);
+}
+.connection-row:last-child { border-bottom: 0; }
+.connection-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.connection-label {
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.connection-target {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connection-row-meta {
+  /* was column-stacked which made the row
+   * tall + ugly once Edit/Delete buttons landed. Lay out as one
+   * tight row instead: kind pill · last-used · Edit · Delete. */
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+.connection-row-meta .settings-pill {
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.connection-row-meta .settings-pill-danger {
+  color: var(--warn, #d4a64c);
+}
+.connection-kind {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.connection-last-used { font-size: 11px; color: var(--ink-3); }
+
+.connectors-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.connectors-header .settings-tab-hint { flex: 1; margin: 0; }
+.connector-toast {
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.connector-toast-ok { border-color: rgba(110, 209, 138, 0.4); color: var(--ok, #6ed18a); }
+.connector-toast-err { border-color: rgba(212, 166, 76, 0.5); color: var(--warn, #d4a64c); }
+.connector-editor {
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  padding: 12px;
+  background: var(--surface);
+}
+.connector-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: 8px;
+}
+.connector-target-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr;
+  gap: var(--space-2);
+}
+.connector-session-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.connector-session-id {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault-key-combo { min-width: 0; }
+.connector-provider-tabs {
+  display: inline-flex;
+  min-width: 0;
+  width: 100%;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+.connector-provider-tab {
+  display: inline-flex;
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-right: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 12px;
+}
+.connector-provider-tab:last-child { border-right: 0; }
+.connector-provider-tab:hover {
+  color: var(--ink);
+  background: rgba(255,255,255,0.025);
+}
+.connector-provider-tab.active {
+  background: var(--surface);
+  color: var(--ink);
+}
+.connector-provider-mode {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.connector-help {
+  margin: 8px 0 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.connector-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.connectors-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hairline-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.connector-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hairline);
+  font-family: var(--sans);
+}
+.connector-row:last-child { border-bottom: 0; }
+.connector-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.connector-row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.connector-state {
+  font-size: 10px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-pill);
+  padding: 1px 6px;
+  color: var(--ink-3);
+}
+.connector-state.on { color: var(--ok, #6ed18a); border-color: rgba(110, 209, 138, 0.35); }
+.connector-state.failing { color: var(--warn, #d4a64c); border-color: rgba(212, 166, 76, 0.45); }
+.connector-state.off { color: var(--ink-3); }
+.connector-route {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.connector-error {
+  font-size: 11px;
+  color: var(--warn, #d4a64c);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.connector-test-panel { margin-top: 12px; }
+.connector-sim-grid {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 92px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.connector-sim-message { grid-column: span 3; }
+.connector-sim-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+/* ─────────────── Per-hunk diff focus ─────────────── */
+
+.tool-diff .hunk {
+  outline: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 4px;
+  margin: 4px 0;
+}
+.tool-diff .hunk:focus {
+  border-color: var(--ink-3);
+  background: rgba(255, 255, 255, 0.015);
+}
+.tool-diff .hunk.accepted {
+  border-color: rgba(76, 175, 80, 0.5);
+  background: rgba(76, 175, 80, 0.06);
+}
+.tool-diff .hunk.rejected {
+  border-color: rgba(244, 67, 54, 0.45);
+  background: rgba(244, 67, 54, 0.05);
+}
+.tool-diff .diff-hint kbd {
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  padding: 0 4px;
+  border-radius: 2px;
+  margin: 0 2px;
+}
+
+/* ─────────────── Density variants ─────────────── */
+
+[data-density="compact"] .top { height: 56px; }
+[data-density="compact"] .turn { padding: var(--space-3) var(--space-4); }
+[data-density="comfortable"] .top { height: 72px; }
+[data-density="comfortable"] .turn { padding: var(--space-6) var(--space-7); }
+
+/* Black + warm theme variant — single token shift on --bg. */
+[data-theme="black_warm"] {
+  --bg: #0a0807;
+  --bg-grad: linear-gradient(180deg, #0a0807 0%, #050403 100%);
+}
+
+/* Bright theme variant - additive token flip, dark remains the default. */
+[data-theme="bright"] {
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --bg-grad: linear-gradient(180deg, #ffffff 0%, #ecefeb 100%);
+  --surface: #ffffff;
+  --surface-2: #eeefec;
+  --surface-3: #e1e2de;
+  --hairline: #e2e2dc;
+  --hairline-2: #d1d2ca;
+  --border: #a9aaa1;
+
+  --ink: #1b1b19;
+  --ink-2: #3e3e38;
+  --ink-3: #5e5e56;
+  --ink-4: #77776d;
+
+  --orange: #c2410c;
+  --orange-soft: #ea580c;
+  --green: #15803d;
+  --green-soft: #16a34a;
+  --warm: #b45309;
+  --accent: #1b1b19;
+  --ok: var(--green);
+  --warn: var(--orange);
+  --err: #dc2626;
+
+  --fg-muted: var(--ink-3);
+  --fg-error: var(--err);
+  --bg-elev: var(--surface-2);
+  --fg: var(--ink);
+}
+
+[data-theme="bright"] .top {
+  background: var(--bg-grad);
+}
+
+[data-theme="bright"] .brand img {
+  filter: invert(1) hue-rotate(180deg) saturate(0.6);
+}
+
+[data-theme="bright"] .modal,
+[data-theme="bright"] .find-popover,
+[data-theme="bright"] .vault-request-popover {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.16);
+}
+
+/* ─────────────── Shiki preview ─────────────── */
+
+.shiki-preview {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: var(--space-3);
+}
+.shiki-preview pre.shiki {
+  background: transparent !important;
+  padding: 0;
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+.shiki-preview pre.shiki code {
+  font-family: var(--mono);
+}
+
+/* PR creation modal */
+.pr-modal {
+  width: min(640px, 92vw);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.pr-modal h3 { margin: 0 0 var(--space-5); }
+
+/* ─────────────── #N autocomplete ─────────────── */
+
+.hash-pop {
+  position: absolute;
+  bottom: 48px; /* sits above the prompt frame */
+  left: 64px;
+  z-index: 5;
+  width: min(440px, 70vw);
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-card);
+  box-shadow: 0 6px 32px rgba(0, 0, 0, 0.5);
+}
+.hash-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  width: 100%;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  padding: 6px var(--space-4);
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  cursor: pointer;
+}
+.hash-row.active {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.hash-row .hash-kind {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+  min-width: 42px;
+}
+.hash-row .hash-num {
+  font-family: var(--mono);
+  color: var(--ink);
+}
+.hash-row .hash-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hash-empty {
+  padding: var(--space-4);
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.slash-pop {
+  position: fixed;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 9600;
+}
+.slash-pop[data-placement="above"] {
+  transform: translateY(-100%);
+}
+.slash-pop[data-placement="below"] {
+  transform: none;
+}
+.slash-pop-head {
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-3);
+  padding: 6px 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--hairline);
+}
+.slash-pop-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: transparent;
+}
+.slash-pop-row.active {
+  background: var(--hairline);
+}
+.slash-pop-command {
+  font-family: var(--mono);
+  font-size: var(--fs-ui-sm);
+  color: var(--ink);
+}
+.slash-pop-desc {
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slash-pop-hint {
+  font-family: var(--mono);
+  font-size: var(--fs-ui-xs);
+  color: var(--ink-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * v9.2 — Branch picker popover — Phase 7
+ * ───────────────────────────────────────────────────────────── */
+
+.branch-picker {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 320px;
+  background: #060606;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-modal);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55), 0 0 0 1px var(--hairline);
+  z-index: 50;
+  overflow: hidden;
+  font-family: var(--sans);
+}
+.bp-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  font-size: 10px; font-weight: 500;
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--hairline);
+}
+.bp-head .ct { color: var(--ink); }
+.bp-section {
+  padding: 8px 14px 4px;
+  font-size: var(--fs-ui-xs); font-weight: 500;
+  letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-4);
+}
+.bp-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--sans);
+  color: var(--ink-2);
+}
+.bp-row:hover { background: var(--surface-2); }
+.bp-row.active { background: var(--surface-3); color: var(--ink); }
+.bp-row.current .bp-name { color: var(--ink); font-weight: 600; }
+.bp-row .bp-mark { width: 14px; color: var(--green); font-size: 11px; text-align: center; }
+.bp-row .bp-name {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bp-row .bp-ahead  { color: var(--orange); font-family: var(--mono); font-size: 11px; }
+.bp-row .bp-behind { color: var(--ink-3);  font-family: var(--mono); font-size: 11px; }
+
+.bp-divider { height: 1px; background: var(--hairline); margin: 6px 0; }
+
+.bp-action {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+.bp-action:hover { background: var(--surface-2); }
+.bp-action.active { background: var(--surface-3); }
+
+.bp-foot {
+  padding: 8px 14px;
+  font-size: 10px;
+  color: var(--ink-4);
+  letter-spacing: 0.14em; text-transform: uppercase;
+  border-top: 1px solid var(--hairline);
+  display: flex; gap: 14px;
+}
+.bp-foot kbd {
+  font-family: var(--mono);
+  color: var(--ink-3);
+  border: 1px solid var(--hairline-2);
+  padding: 1px 5px; border-radius: 3px;
+  letter-spacing: 0; text-transform: none; font-size: var(--fs-ui-xs);
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * v9.2 — 2-row composer (Action row + Scope row) — Phase 5
+ * Replaces the v8 .prompt-frame. Autonomy chip moves here from Header.
+ * ───────────────────────────────────────────────────────────── */
+
+.composer {
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-hero);
+  transition: border-color 120ms ease;
+  /* Overflow fix: was overflow:hidden which clipped Branch/Connection
+   * pickers that anchor `position:absolute; bottom: calc(100% + 6px)`
+   * UP from the scope-pill wrapper. The textarea + buttons inside have
+   * their own rounded corners so the visual chrome doesn't need
+   * composer-level overflow-clip; switching to visible lets pickers
+   * escape upward into the chat output area. */
+  overflow: visible;
+  position: relative;
+}
+.composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent); }
+/* faint blue outline when a draggable file
+ * (from the right-rail Files tab) is being hovered over the composer.
+ * Visual cue that the drop will be accepted as an attach. */
+.composer.drag-over {
+  border-color: #4a8fd1;
+  box-shadow: 0 0 0 2px rgba(74, 143, 209, 0.18);
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: var(--space-3) var(--space-4) 0;
+}
+.composer-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(280px, 58vw);
+  height: 28px;
+  padding: 0 5px 0 9px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 12px;
+}
+.composer-attachment-chip .sx-icon {
+  flex: 0 0 auto;
+  color: var(--ink-3);
+}
+.composer-attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.composer-attachment-meta {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--green);
+  border-left: 1px solid var(--hairline);
+  padding-left: 6px;
+}
+.composer-attachment-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.composer-attachment-remove:hover {
+  color: var(--ink);
+  border-color: var(--hairline-2);
+  background: var(--surface-2);
+}
+.composer-attachment-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.composer-attachment-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  cursor: pointer;
+}
+.composer-attachment-action:hover {
+  color: var(--ink);
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.settings-pill:disabled,
+.settings-pill[aria-disabled="true"] {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.composer-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  font-family: var(--sans);
+  /* 4K bump: matches .msg body so typing text feels same
+   * visual weight as rendered output. */
+  font-size: var(--fs-body); /* 19px */
+  line-height: 1.5;
+  resize: none;
+  min-height: 64px;
+  /*  capped tighter than the previous 240px. Past ~120px the
+   * input feels like a wall and the bottom-panel was sizing for it.
+   * Long inputs still scroll internally; the bar itself is hidden. */
+  max-height: 120px;
+  outline: none;
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  letter-spacing: -0.005em;
+  /*  composer input never shows its own scrollbar.
+   * The textarea still scrolls (wheel + arrow keys + caret reveal) but
+   * the chrome doesn't render. Chat-stream's bar is unaffected. */
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.composer-input::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.composer-input::placeholder { color: var(--ink-3); }
+
+/* textarea + mirror overlay for slash-command syntax
+ * highlighting. The wrapper is the positioning anchor; mirror is
+ * absolutely positioned and shares EVERY geometry-affecting property
+ * with the textarea so the highlighted spans align character-perfect
+ * with the user's typing. */
+.composer-input-wrap {
+  position: relative;
+}
+.composer-mirror {
+  /* Inherits .composer-input's full type/spacing geometry (it has
+   * BOTH classes on the element). The overrides below tweak the
+   * read-only mirroring concerns: layered behind, no selection, no
+   * pointer events, wrap-anywhere identical to textarea behavior. */
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+  color: var(--ink);
+  background: transparent;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  overflow: hidden; /* matches textarea's overflow-auto via scroll sync */
+  z-index: 0;
+}
+/* When the textarea is in transparent mode, its CARET stays the ink
+ * colour but its text glyphs are invisible — only the mirror's spans
+ * are seen. caret-color is preserved (browsers default to currentColor
+ * for caret-color regardless of color, except Firefox which respects
+ * color: transparent — we set it explicitly to the ink token). */
+.composer-input-transparent {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--ink);
+}
+.composer-input-transparent::placeholder {
+  /* Placeholder must still be visible when prompt is empty, since the
+   * mirror renders nothing in that case. */
+  color: var(--ink-3);
+}
+.composer-input-transparent::selection {
+  /* Native selection highlight — text under the selection is invisible
+   * but the highlight rectangle is fine. */
+  background: rgba(249, 115, 22, 0.25); /* matches .icode mark hue */
+  color: transparent;
+}
+.slash-token {
+  color: var(--orange);
+  font-weight: 600;
+}
+
+.composer-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--hairline);
+}
+.composer-action .a-spacer { flex: 1 1 auto; min-width: 8px; }
+
+/* action-row buttons
+ * (.attach-btn, .mic-btn, .autonomy-chip, .status-pill, .model-drop)
+ * now share the .scope-pill dimensions — height 26px, normal-case
+ * 12px text. Pre-fix they were 30px + uppercase + 0.14-0.16em tracking
+ * which clashed with the scope-row sitting just below. Visual rhythm
+ * is now: ALL composer pills = 26px / 12px regular. */
+.attach-btn {
+  background: transparent;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-2);
+  height: 26px;
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink);
+  letter-spacing: 0;
+}
+.attach-btn .plus {
+  display: inline-grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink);
+  letter-spacing: 0;
+}
+.attach-btn:hover { color: var(--ink); border-color: var(--border); background: var(--surface-2); }
+.attach-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* mic push-to-talk button in composer.
+ * Inherits the .attach-btn pill shape; state classes drive color +
+ * micro-animation. Recording = pulsing red dot; transcribing = dim
+ * "…" ellipsis; error = inline ✗ glyph. Timer beside the mic icon
+ * during recording reads "3.7s". */
+.mic-btn {
+  background: transparent;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-2);
+  height: 26px;
+  min-width: 26px;
+  padding: 0 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: -0.005em;
+}
+.mic-btn:hover { color: var(--ink); border-color: var(--border); background: var(--surface-3); }
+.mic-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.mic-btn .mic-ic {
+  display: inline-grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+}
+.mic-btn .mic-timer { font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+.mic-btn .mic-err { color: var(--err); font-weight: 700; }
+
+/* #388:  clipboard-copied toast. Bottom-center ephemeral pill
+ * that fades in/out via the React unmount; CSS animation runs once on
+ * mount thanks to the keyframes definition. */
+.copy-toast {
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--hairline-2);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.36);
+  font-family: var(--sans);
+  font-size: 13px;
+  letter-spacing: -0.005em;
+  pointer-events: none;
+  animation: copy-toast-fade 1.2s ease-out forwards;
+}
+.copy-toast-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--green, #6ed18a);
+  font-weight: 700;
+}
+
+/* Debug API tutorial callouts. These are screenshot/video overlays:
+ * they never intercept clicks, and borders are sized from the target
+ * element's real getBoundingClientRect() in DebugHighlightOverlay.tsx. */
+.debug-highlight-overlay-root {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  pointer-events: none;
+}
+
+.debug-highlight-box {
+  position: fixed;
+  box-sizing: border-box;
+  border: 3px solid #1e88e5;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.debug-highlight-label {
+  position: fixed;
+  box-sizing: border-box;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 4px 8px;
+  border: 1px solid #1e88e5;
+  border-radius: 5px;
+  color: #050607;
+  font: 700 12px/1.25 var(--sans);
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.debug-highlight-label-above,
+.debug-highlight-label-below {
+  transform: translateY(0);
+}
+
+/*  About modal opened from the brand logo. Compact panel
+ * over a backdrop; Esc + outside-click both close. */
+.about-backdrop {
+  position: fixed; inset: 0; z-index: 9500;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.about-modal {
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-hero, 12px);
+  width: min(480px, 92vw);
+  padding: 22px 26px 20px;
+  font-family: var(--sans);
+  color: var(--ink);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+.about-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.about-head h2 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.about-close {
+  background: transparent; border: none; color: var(--ink-3);
+  font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 4px;
+}
+.about-close:hover { color: var(--ink); background: var(--surface-3); }
+.about-tagline { color: var(--ink-2); font-size: 13px; line-height: 1.55; margin: 4px 0 18px; }
+.about-meta {
+  display: grid; grid-template-columns: 100px 1fr; gap: 6px 12px;
+  margin: 0 0 18px; font-size: 13px;
+}
+.about-meta dt { color: var(--ink-3); letter-spacing: 0.04em; text-transform: uppercase; font-size: 11px; align-self: center; }
+.about-meta dd { margin: 0; color: var(--ink); }
+.about-meta a { color: var(--accent, #6ed18a); text-decoration: none; }
+.about-meta a:hover { text-decoration: underline; }
+.about-actions { display: flex; gap: 10px; margin: 6px 0 12px; flex-wrap: wrap; }
+.about-action {
+  flex: 1; min-width: 140px;
+  padding: 10px 16px; border-radius: 8px;
+  background: var(--surface-3);
+  border: 1px solid var(--hairline-2);
+  color: var(--ink);
+  font-family: var(--sans); font-size: 13px;
+  cursor: pointer; transition: background 120ms ease, border-color 120ms ease;
+}
+.about-action:hover { background: var(--surface-4, var(--surface-2)); border-color: var(--border); }
+.about-action-primary { background: var(--accent, #6ed18a); color: #0a0d10; border-color: transparent; font-weight: 600; }
+.about-action-primary:hover { background: var(--accent, #6ed18a); filter: brightness(1.08); }
+.about-foot { color: var(--ink-3); font-size: 11px; line-height: 1.5; margin: 0; letter-spacing: 0.005em; }
+
+/*  ACP `plan` sessionUpdate checklist. shellX Build Mode
+ * emits structured entries with status + priority; PlanPane renders
+ * them instead of (or alongside) the plan.md file. */
+.plan-entries {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+}
+.plan-entry {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 8px;
+  align-items: start;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+.plan-entry:hover { background: var(--surface-2); border-color: var(--hairline); }
+.plan-entry-glyph {
+  display: inline-grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  user-select: none;
+}
+.plan-entry-glyph-completed { color: var(--green, #6ed18a); }
+.plan-entry-glyph-in_progress { color: var(--orange, #f9a043); }
+.plan-entry-glyph-pending { color: var(--ink-3); }
+.plan-entry-completed .plan-entry-content { color: var(--ink-2); text-decoration: line-through; text-decoration-color: var(--ink-3); }
+.plan-entry-in_progress .plan-entry-content { color: var(--ink); font-weight: 500; }
+.plan-entry-pending .plan-entry-content { color: var(--ink); }
+.plan-entry-prio {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  align-self: center;
+}
+.plan-entry-prio-high { color: var(--err, #e04848); background: rgba(224, 72, 72, 0.12); }
+.plan-entry-prio-low { color: var(--ink-3); background: var(--surface-2); }
+@keyframes copy-toast-fade {
+  0%   { opacity: 0; transform: translate(-50%, 8px); }
+  12%  { opacity: 1; transform: translate(-50%, 0); }
+  85%  { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -4px); }
+}
+/* #385:  dual MicButton labeled variant. Without these the
+ * later .mic-btn { width:34px; height:34px } override at line 4230
+ * forces every mic into a square icon-only, hiding "Talk" / "Voice
+ * chat" labels. The .mic-with-label
+ * class is set by MicButton.tsx when `label` prop is truthy. */
+/* mic-with-label must re-assert display:inline-flex because the
+ * LATER .mic-btn override at line ~3169 forces display:grid
+ * place-items:center, which stacks <span.mic-ic> and <span.mic-label>
+ * into one cell — label gets hidden behind icon. Higher specificity
+ * (0,2,0 vs 0,1,0) wins regardless of source order. */
+.mic-btn.mic-with-label {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  height: 34px;
+}
+.mic-btn .mic-label { white-space: nowrap; font-family: var(--sans); font-size: 12px; letter-spacing: 0; }
+.composer-action .mic-recording,
+.composer-action .mic-transcribing,
+.composer-action .mic-error,
+.composer-action .mic-no-key {
+  width: auto;
+  min-width: 30px;
+  padding: 0 8px;
+  gap: 5px;
+}
+.mic-recording {
+  border-color: var(--err);
+  color: var(--err);
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+.mic-transcribing { color: var(--orange); border-color: var(--orange); }
+.mic-error { border-color: var(--err); color: var(--err); }
+
+.voice-warning-chip {
+  max-width: min(420px, 34vw);
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(212, 166, 76, 0.45);
+  border-radius: 8px;
+  color: var(--warn);
+  background: rgba(212, 166, 76, 0.08);
+  font-size: var(--fs-ui-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* #415 voice-off chip. Tiny sibling button rendered next to the
+ * voice-chat MicButton when round-trip mode is ON. Without this the
+ * user had no way to stop TTS-back from speaking grok replies; the
+ * mic itself only starts a new recording. Visually a small square
+ * ✕ — same height as mic, low-contrast border so it doesn't shout. */
+.voice-off-chip {
+  height: 34px;
+  width: 28px;
+  margin-left: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--ink-3);
+  border: 1px solid var(--ink-4);
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.voice-off-chip:hover { color: var(--err); border-color: var(--err); }
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 80, 80, 0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(220, 80, 80, 0.18); }
+}
+
+.autonomy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+.autonomy-chip .adot {
+  width: 7px; height: 7px; border-radius: 50%;
+  display: inline-block;
+  background: var(--green);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18);
+}
+.autonomy-chip.danger { border-color: rgba(239, 68, 68, 0.35); }
+.autonomy-chip.danger .adot {
+  background: var(--err);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
+}
+.autonomy-chip .acaret { color: var(--ink-3); font-size: var(--fs-ui-xs); margin-left: 2px; }
+.autonomy-chip:hover { border-color: var(--border); background: var(--surface-2); }
+.autonomy-chip:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Status pill — sits right after .autonomy-chip in the composer
+ * action row. Matches the same dimensions/font as scope-pill. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 28px;
+  min-width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--hairline-2);
+  border-radius: 999px;
+  background: transparent;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--ink-2);
+}
+.status-pill .pd {
+  width: 7px; height: 7px; border-radius: 50%;
+  display: inline-block;
+}
+.status-pill .pd.ok { background: var(--green); box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18); }
+.status-pill .pd.err { background: var(--err); box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18); }
+.status-pill .pd.idle { background: var(--ink-4); }
+.status-pill .pill-label { font-size: 11px; color: var(--ink-2); letter-spacing: 0.04em; }
+
+.model-drop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  letter-spacing: 0.04em;
+}
+.model-drop .mname { color: var(--ink); }
+.model-drop .meffort { color: var(--orange); font-family: var(--mono); font-size: 11px; letter-spacing: 0; }
+.model-drop .acaret { color: var(--ink-3); font-size: var(--fs-ui-xs); margin-left: 2px; }
+.model-drop:hover { border-color: var(--border); color: var(--ink); }
+
+.mic-btn {
+  background: transparent;
+  border: 1px solid var(--hairline-2);
+  color: var(--ink-2);
+  width: 30px; height: 30px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  display: grid; place-items: center;
+}
+.mic-btn:hover { color: var(--ink); border-color: var(--border); }
+
+.send-btn {
+  background: var(--ink);
+  color: var(--bg);
+  border: none;
+  border-radius: 999px;
+  height: 30px;
+  padding: 0 16px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.send-btn:hover { background: var(--warm); }
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composer-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--hairline);
+  background: var(--surface);
+  /* the scope row's background was
+   * painting flat past .composer's rounded bottom corners — looked
+   * like the bottom of the chatbox was "not connected" to the top.
+   * Inherit the parent's bottom-radius so the curve stays continuous. */
+  border-bottom-left-radius: var(--radius-hero);
+  border-bottom-right-radius: var(--radius-hero);
+}
+.composer-scope > div {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.scope-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(240px, 42vw);
+  min-width: 0;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 999px;
+  background: transparent;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+  letter-spacing: 0;
+}
+.scope-pill .scope-label,
+.composer-scope .autonomy-chip .scope-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-scope .autonomy-chip {
+  max-width: min(190px, 32vw);
+  min-width: 0;
+}
+.scope-pill:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border); }
+/* locked state for connection pill after first message.
+ * Dim text, hide hover affordance, swap caret for lock glyph in JSX. */
+.scope-pill.locked, .scope-pill:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+  background: var(--surface);
+}
+.scope-pill.locked:hover, .scope-pill:disabled:hover {
+  background: var(--surface);
+  border-color: var(--hairline-2);
+}
+.scope-pill .sico,
+.scope-pill .scaret {
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink-3);
+  line-height: 1;
+}
+.scope-pill .sico { font-size: 12px; }
+.scope-pill .scaret { font-size: var(--fs-ui-xs); margin-left: 2px; }
+.scope-pill .ssub {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-family: var(--mono);
+  letter-spacing: 0;
+}
+
+.agent-pill {
+  max-width: min(230px, 34vw);
+}
+
+.agent-picker-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 9600;
+  width: min(360px, 86vw);
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.38);
+}
+
+.agent-picker-row {
+  width: 100%;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: 22px 1fr 18px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-picker-row:hover,
+.agent-picker-row.active {
+  background: var(--surface-3);
+}
+
+.agent-picker-icon {
+  color: var(--ink-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-picker-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-picker-name {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.agent-picker-detail {
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.25;
+}
+
+.agent-picker-empty {
+  padding: 10px 9px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ink-3);
+}

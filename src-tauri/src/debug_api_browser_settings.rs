@@ -268,8 +268,8 @@ pub(crate) async fn browser_shields_post_http(
         Json(serde_json::json!({
             "ok": false,
             "error": {
-                "code": crate::shellx_browser_shields::BROWSER_SHIELDS_OPERATOR_ERROR_CODE,
-                "message": crate::shellx_browser_shields::BROWSER_SHIELDS_OPERATOR_ERROR_MESSAGE
+                "code": crate::shellx_browser_shield_settings::BROWSER_SHIELDS_OPERATOR_ERROR_CODE,
+                "message": crate::shellx_browser_shield_settings::BROWSER_SHIELDS_OPERATOR_ERROR_MESSAGE
             }
         })),
     )
@@ -286,8 +286,8 @@ pub(crate) async fn browser_shields_site_post_http(
         Json(serde_json::json!({
             "ok": false,
             "error": {
-                "code": crate::shellx_browser_shields::BROWSER_SHIELDS_OPERATOR_ERROR_CODE,
-                "message": crate::shellx_browser_shields::BROWSER_SHIELDS_OPERATOR_ERROR_MESSAGE
+                "code": crate::shellx_browser_shield_settings::BROWSER_SHIELDS_OPERATOR_ERROR_CODE,
+                "message": crate::shellx_browser_shield_settings::BROWSER_SHIELDS_OPERATOR_ERROR_MESSAGE
             }
         })),
     )
@@ -304,8 +304,8 @@ pub(crate) async fn browser_shields_site_delete_http(
         Json(serde_json::json!({
             "ok": false,
             "error": {
-                "code": crate::shellx_browser_shields::BROWSER_SHIELDS_OPERATOR_ERROR_CODE,
-                "message": crate::shellx_browser_shields::BROWSER_SHIELDS_OPERATOR_ERROR_MESSAGE
+                "code": crate::shellx_browser_shield_settings::BROWSER_SHIELDS_OPERATOR_ERROR_CODE,
+                "message": crate::shellx_browser_shield_settings::BROWSER_SHIELDS_OPERATOR_ERROR_MESSAGE
             }
         })),
     )

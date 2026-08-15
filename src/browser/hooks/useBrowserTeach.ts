@@ -4,6 +4,7 @@ import {
   approveBrowserTeachDraftForOperator,
   listBrowserVaultKeys,
   prepareBrowserTeachDraftForOperator,
+  prepareBrowserTeachTaskHandoffForOperator,
   rehearseBrowserTeachRecipeForOperator,
   reviseBrowserTeachDraftForOperator,
 } from "../api";
@@ -22,6 +23,11 @@ import {
   type BrowserTeachSourceCandidate,
   type BrowserTeachValueEdit,
 } from "../browserTeach";
+import { openTaskDraftFromBrowserTeach } from "../../lib/task-teach-handoff-bridge";
+import {
+  normalizeBrowserTeachTaskHandoff,
+  type BrowserTeachTaskHandoff,
+} from "../../lib/task-teach-handoff-events";
 
 export type BrowserTeachPhase =
   | "idle"
@@ -35,6 +41,9 @@ export type BrowserTeachPhase =
   | "rehearsalReady"
   | "rehearsalBlocked"
   | "rehearsalFailed"
+  | "preparingTaskDraft"
+  | "taskDraftOpened"
+  | "taskDraftFailed"
   | "unavailable"
   | "error";
 
@@ -51,7 +60,7 @@ interface BrowserTeachEditState {
 }
 
 interface BrowserTeachRetryRequest {
-  kind: "prepare" | "save" | "approve" | "rehearse";
+  kind: "prepare" | "save" | "approve" | "rehearse" | "taskDraft";
   source?: BrowserTeachSourceCandidate;
 }
 
@@ -119,6 +128,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
   hasBlockingIssues: boolean;
   approval: BrowserTeachApproval | null;
   rehearsal: BrowserTeachRehearsal | null;
+  taskHandoff: BrowserTeachTaskHandoff | null;
   error: string | null;
   vaultKeys: string[];
   vaultKeysLoading: boolean;
@@ -131,6 +141,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
   save: () => Promise<void>;
   approve: () => Promise<void>;
   rehearse: () => Promise<void>;
+  createTaskDraft: () => Promise<void>;
   retry: () => Promise<void>;
 } {
   const normalizedActiveTaskId = activeTaskId?.trim() ?? "";
@@ -139,6 +150,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
   const [edits, setEdits] = useState<BrowserTeachEditState>({ goal: "", values: {}, vaultBindings: {}, ambiguityResolutions: [] });
   const [approval, setApproval] = useState<BrowserTeachApproval | null>(null);
   const [rehearsal, setRehearsal] = useState<BrowserTeachRehearsal | null>(null);
+  const [taskHandoff, setTaskHandoff] = useState<BrowserTeachTaskHandoff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [vaultKeys, setVaultKeys] = useState<string[]>([]);
   const [vaultKeysLoading, setVaultKeysLoading] = useState(false);
@@ -157,6 +169,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
     setEdits({ goal: "", values: {}, vaultBindings: {}, ambiguityResolutions: [] });
     setApproval(null);
     setRehearsal(null);
+    setTaskHandoff(null);
     setError(null);
     setVaultKeys([]);
     setVaultKeysLoading(false);
@@ -204,6 +217,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
     setError(null);
     setApproval(null);
     setRehearsal(null);
+    setTaskHandoff(null);
     try {
       const response = await prepareBrowserTeachDraftForOperator({ attemptId: source.attemptId });
       const next = normalizeBrowserTeachPreparedDraft(response);
@@ -228,6 +242,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
   const markEdited = useCallback((): void => {
     setApproval(null);
     setRehearsal(null);
+    setTaskHandoff(null);
     if (phase !== "saving") setPhase("reviewReady");
   }, [phase]);
 
@@ -306,6 +321,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
       setEdits(editStateFor(next));
       setApproval(null);
       setRehearsal(null);
+      setTaskHandoff(null);
       if (!next.isCurrent) {
         setError("The saved revision lost its current position. Reload it before approval.");
         setPhase("stale");
@@ -334,6 +350,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
       if (requestRef.current !== request) return;
       setApproval(next);
       setRehearsal(null);
+      setTaskHandoff(null);
       setPhase("approved");
     } catch (cause) {
       if (requestRef.current === request) setFailure(cause, "Browser Teach recipe approval could not be completed.");
@@ -358,6 +375,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
         throw new Error("Browser Teach rehearsal returned a different recipe identity.");
       }
       setRehearsal(next);
+      setTaskHandoff(null);
       setPhase("rehearsalReady");
     } catch (cause) {
       if (requestRef.current !== request) return;
@@ -366,6 +384,38 @@ export function useBrowserTeach(activeTaskId?: string | null): {
       setPhase(isRehearsalBlockedError(message) ? "rehearsalBlocked" : "rehearsalFailed");
     }
   }, [approval, draft, isDirty]);
+
+  const createTaskDraft = useCallback(async (): Promise<void> => {
+    if (!approval || !rehearsal || !draft || isDirty || rehearsal.stepsSkipped !== 0) return;
+    const request = requestRef.current + 1;
+    requestRef.current = request;
+    retryRequestRef.current = { kind: "taskDraft" };
+    setPhase("preparingTaskDraft");
+    setError(null);
+    setTaskHandoff(null);
+    try {
+      const response = await prepareBrowserTeachTaskHandoffForOperator({
+        draftId: draft.draft.draftId,
+        revisionId: draft.revision.revisionId,
+        revisionSha256: draft.revision.sha256,
+        recipeId: approval.recipeId,
+        recipeSha256: approval.recipeSha256,
+        approvalId: approval.approvalId,
+        rehearsalReceiptId: rehearsal.receipt.receiptId,
+      });
+      const handoff = normalizeBrowserTeachTaskHandoff(response);
+      if (!handoff) throw new Error("Browser Teach returned an invalid Task handoff receipt.");
+      if (requestRef.current !== request) return;
+      await openTaskDraftFromBrowserTeach(handoff);
+      if (requestRef.current !== request) return;
+      setTaskHandoff(handoff);
+      setPhase("taskDraftOpened");
+    } catch (cause) {
+      if (requestRef.current !== request) return;
+      setError(browserTeachErrorMessage(cause, "The reviewed Task draft could not be opened."));
+      setPhase("taskDraftFailed");
+    }
+  }, [approval, draft, isDirty, rehearsal]);
 
   const retry = useCallback(async (): Promise<void> => {
     const retryRequest = retryRequestRef.current;
@@ -378,8 +428,10 @@ export function useBrowserTeach(activeTaskId?: string | null): {
       await approve();
     } else if (retryRequest.kind === "rehearse") {
       await rehearse();
+    } else if (retryRequest.kind === "taskDraft") {
+      await createTaskDraft();
     }
-  }, [approve, prepare, rehearse, save]);
+  }, [approve, createTaskDraft, prepare, rehearse, save]);
 
   return {
     phase,
@@ -392,6 +444,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
     hasBlockingIssues,
     approval,
     rehearsal,
+    taskHandoff,
     error,
     vaultKeys,
     vaultKeysLoading,
@@ -404,6 +457,7 @@ export function useBrowserTeach(activeTaskId?: string | null): {
     save,
     approve,
     rehearse,
+    createTaskDraft,
     retry,
   };
 }
