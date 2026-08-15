@@ -18,6 +18,7 @@ nsis_executable="${SHELLX_RELEASE_NSIS_EXECUTABLE:-}"
 nsis_executable_sha256="${SHELLX_RELEASE_NSIS_EXECUTABLE_SHA256:-}"
 release_build_started="${SHELLX_RELEASE_BUILD_STARTED:-}"
 nsis_signing_stage_root="${SHELLX_RELEASE_NSIS_SIGNING_STAGE_ROOT:-}"
+nsis_signing_stage_identity="${SHELLX_RELEASE_NSIS_SIGNING_STAGE_IDENTITY:-}"
 
 if [[ -z "$metadata_path" ]]; then
   echo "SHELLX_WINDOWS_SIGNING_METADATA_PATH is required" >&2
@@ -116,14 +117,19 @@ case "$artifact_real" in
       echo "NSIS uninstaller callback is not building the contained installer script" >&2
       exit 1
     fi
-    expected_nsis_signing_stage_root="$artifact_root/.shellx-nsis-signing-stage"
-    if [[ "$nsis_signing_stage_root" != "$expected_nsis_signing_stage_root" \
+    if [[ ! "$nsis_signing_stage_root" =~ ^/tmp/shellx-nsis-signing-stage\.[A-Za-z0-9]{6}$ \
+      || ! "$nsis_signing_stage_identity" =~ ^[0-9]+:[0-9]+$ \
       || -L "$nsis_signing_stage_root" || ! -d "$nsis_signing_stage_root" \
-      || "$(stat -c '%u:%a' "$nsis_signing_stage_root")" != "$(id -u):700" ]]; then
-      echo "NSIS signing stage must be the exact private directory inside the release target" >&2
+      || "$(stat -c '%u:%a:%d:%i' "$nsis_signing_stage_root")" \
+        != "$(id -u):700:$nsis_signing_stage_identity" ]]; then
+      echo "NSIS signing stage must be the exact private build-owned tmp directory" >&2
       exit 1
     fi
     nsis_signing_stage_root="$(cd "$nsis_signing_stage_root" && pwd -P)"
+    if [[ "$nsis_signing_stage_root" != /tmp/shellx-nsis-signing-stage.* ]]; then
+      echo "NSIS signing stage canonical path escaped the exact tmp boundary" >&2
+      exit 1
+    fi
     staged_nsis_uninstaller="$nsis_signing_stage_root/uninstaller-$makensis_pid-$(basename "$artifact_real").exe"
     if [[ -e "$staged_nsis_uninstaller" ]]; then
       echo "NSIS signing stage path is not fresh" >&2

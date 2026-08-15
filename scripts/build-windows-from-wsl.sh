@@ -155,7 +155,7 @@ fi
 export SHELLX_RELEASE_NSIS_EXECUTABLE="$nsis_executable"
 export SHELLX_RELEASE_NSIS_EXECUTABLE_SHA256="$(sha256sum "$nsis_executable" | cut -d ' ' -f 1)"
 export SHELLX_RELEASE_BUILD_STARTED="$started"
-nsis_signing_stage_root="$SHELLX_RELEASE_ARTIFACT_ROOT/.shellx-nsis-signing-stage"
+nsis_signing_stage_root=""
 bundle_dir="$target_dir/bundle"
 exe="$target_dir/shellx.exe"
 nsis="$bundle_dir/nsis/shellX_${version}_x64-setup.exe"
@@ -204,13 +204,11 @@ echo "[build-windows] sealed clean generated dependency input"
 echo "[build-windows] removing stale Windows bundle output"
 rm -rf "$bundle_dir"
 if [[ -n "$metadata_path" ]]; then
-  if [[ -e "$nsis_signing_stage_root" ]]; then
-    echo "FAIL: NSIS signing stage already exists after clean release setup" >&2
-    exit 1
-  fi
-  mkdir -p -- "$nsis_signing_stage_root"
+  nsis_signing_stage_root="$(mktemp -d /tmp/shellx-nsis-signing-stage.XXXXXX)"
   chmod 700 "$nsis_signing_stage_root"
   export SHELLX_RELEASE_NSIS_SIGNING_STAGE_ROOT="$nsis_signing_stage_root"
+  SHELLX_RELEASE_NSIS_SIGNING_STAGE_IDENTITY="$(stat -c '%d:%i' "$nsis_signing_stage_root")"
+  export SHELLX_RELEASE_NSIS_SIGNING_STAGE_IDENTITY
 fi
 
 tauri_config='{"bundle":{"createUpdaterArtifacts":false}}'

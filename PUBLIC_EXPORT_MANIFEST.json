@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "9dd2c9edba7d6a2161591b37caa660d8679ce915",
-    "tree": "96d5dd85afd08b62ae56496c230ca48eaecfed16"
+    "commit": "8739c618c6790e0e4941e53c8b7c8753a39a6a0e",
+    "tree": "fb63819fdad8eb85903c051627dfe9f0c12f73d0"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1412,
-    "totalBytes": 38361002,
-    "digest": "7dbab6bb8e3c6f3c73ffe6839908e90e82474277c47f1dfcf9c88273a4740646"
+    "totalBytes": 38361870,
+    "digest": "20cb8f56c420e05b93f4d31c6789639ece3a978e52e8e2d71222380162fa0538"
   },
   "exclusions": {
     "fileCount": 39,
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "4b5a2788ee3de41b56eb63c3f0812209148a0b829859b8cf26a620e40087644c",
+      "sha256": "0ccbaabde3473d96b2f9756280534d6fe7b8f312ebdb31695ab44be0824d1c8b",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -896,8 +896,8 @@
     {
       "path": "scripts/build-windows-from-wsl.sh",
       "mode": "100755",
-      "sha256": "28ff770ef47b562a06e97b0cd5d27d90bd5b9955e408542753e1ed724708dfa5",
-      "bytes": 13766,
+      "sha256": "180960b0d31dcf292abdda6c816aa22283727cb88d30451f3f19247d035f4823",
+      "bytes": 13749,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6759,8 +6759,8 @@
     {
       "path": "scripts/test-windows-signing-pipeline.mjs",
       "mode": "100644",
-      "sha256": "adc117cf3dd283861cd0dcfeadac2b4552aa09b9c21bcbfef8338bf3a3deafa6",
-      "bytes": 16264,
+      "sha256": "d3cff2358c7f9ef757f68f9fe868dfafa8da94384d3129cacb6873a46a3a226c",
+      "bytes": 16855,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -6858,8 +6858,8 @@
     {
       "path": "scripts/windows-artifact-sign-command.sh",
       "mode": "100755",
-      "sha256": "2fd042f346aa271d6dcd363b6c293f67e2823549a27163b5b367e051c14a4c39",
-      "bytes": 7994,
+      "sha256": "e95b970659923e6d2ad6dd49ce88710e6029a51e521cf489c1206ec037355b3a",
+      "bytes": 8288,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",

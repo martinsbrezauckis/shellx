@@ -46,6 +46,8 @@ assert.match(buildScript, /SHELLX_RELEASE_NSIS_EXECUTABLE/);
 assert.match(buildScript, /SHELLX_RELEASE_NSIS_EXECUTABLE_SHA256/);
 assert.match(buildScript, /SHELLX_RELEASE_BUILD_STARTED/);
 assert.match(buildScript, /SHELLX_RELEASE_NSIS_SIGNING_STAGE_ROOT/);
+assert.match(buildScript, /SHELLX_RELEASE_NSIS_SIGNING_STAGE_IDENTITY/);
+assert.match(buildScript, /mktemp -d \/tmp\/shellx-nsis-signing-stage\.XXXXXX/);
 assert.match(buildScript, /embedded NSIS uninstaller did not pass the provenance-bound signing callback/);
 assert.match(
   packageJson.scripts?.build ?? "",
@@ -111,6 +113,8 @@ assert.match(adapter, /"\$artifact_directory" != "\/tmp"/);
 assert.match(adapter, /\^makensis\[A-Za-z0-9\]\{6\}\$/);
 assert.match(adapter, /"\$\(LC_ALL=C head -c 2 "\$artifact_real"\)" != "MZ"/);
 assert.match(adapter, /uninstaller-\$makensis_pid-\$\(basename "\$artifact_real"\)\.exe/);
+assert.match(adapter, /NSIS signing stage must be the exact private build-owned tmp directory/);
+assert.match(adapter, /"\$\(stat -c '%u:%a:%d:%i' "\$nsis_signing_stage_root"\)"/);
 assert.match(adapter, /"\$artifact_root"\/nsis\/\*\/installer\.nsi/);
 assert.match(adapter, /NSIS uninstaller signing callback accepted from pinned makensis/);
 assert.match(adapter, /NSIS uninstaller signing did not preserve the callback inode/);
@@ -132,11 +136,11 @@ assert.match(signer, /if \(\$Artifact -match "\\\\nsis\\\\\.\*\\\\Plugins\\\\"\)
 assert.match(signer, /Skipping NSIS plugin helper/);
 
 const temp = mkdtempSync(join(tmpdir(), "shellx-windows-signing-adapter-"));
+const nsisSigningStageRoot = mkdtempSync(join(tmpdir(), "shellx-nsis-signing-stage."));
 try {
   const sourceRepo = join(temp, "source");
   const buildRoot = join(temp, "build");
   const artifactRoot = join(buildRoot, "src-tauri", "target", "release");
-  const nsisSigningStageRoot = join(artifactRoot, ".shellx-nsis-signing-stage");
   const fakeBin = join(temp, "bin");
   const metadataPath = join(temp, "signing-profile.json");
   const verifierReceipt = join(temp, "verifier-args.json");
@@ -166,7 +170,7 @@ try {
     .digest("hex");
   mkdirSync(join(sourceRepo, "scripts"), { recursive: true });
   mkdirSync(artifactRoot, { recursive: true });
-  mkdirSync(nsisSigningStageRoot, { mode: 0o700 });
+  chmodSync(nsisSigningStageRoot, 0o700);
   mkdirSync(fakeBin);
   writeFileSync(metadataPath, "{}\n");
   writeFileSync(fixtureAdapterPath, adapter);
@@ -211,6 +215,10 @@ try {
     SHELLX_RELEASE_NSIS_EXECUTABLE_SHA256: pinnedExecutableSha256,
     SHELLX_RELEASE_BUILD_STARTED: String(Math.floor(Date.now() / 1000) - 10),
     SHELLX_RELEASE_NSIS_SIGNING_STAGE_ROOT: nsisSigningStageRoot,
+    SHELLX_RELEASE_NSIS_SIGNING_STAGE_IDENTITY: (() => {
+      const stage = statSync(nsisSigningStageRoot, { bigint: true });
+      return `${stage.dev}:${stage.ino}`;
+    })(),
     SHELLX_TEST_VERIFIER_RECEIPT: verifierReceipt,
     SHELLX_TEST_SIGNER_RECEIPT: signerReceipt,
   };
@@ -284,7 +292,7 @@ try {
     });
     assert.equal(realNsisCallback.status, 0, realNsisCallback.stderr || realNsisCallback.stdout);
     assert.match(realNsisCallback.stdout, /NSIS uninstaller signing callback accepted from pinned makensis/);
-    assert.match(readFileSync(signerReceipt, "utf8"), /\.shellx-nsis-signing-stage\/uninstaller-[0-9]+-makensis[A-Za-z0-9]{6}\.exe/);
+    assert.match(readFileSync(signerReceipt, "utf8"), /shellx-nsis-signing-stage\.[A-Za-z0-9]{6}\/uninstaller-[0-9]+-makensis[A-Za-z0-9]{6}\.exe/);
     assert.deepEqual(readdirSync(nsisSigningStageRoot), []);
   } else {
     console.log("SKIP real NSIS callback fixture: Linux/WSL with makensis is required");
@@ -292,6 +300,7 @@ try {
 
 } finally {
   rmSync(temp, { recursive: true, force: true });
+  rmSync(nsisSigningStageRoot, { recursive: true, force: true });
 }
 
 console.log("PASS Windows signing pipeline tests");
