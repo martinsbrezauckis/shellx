@@ -4832,7 +4832,7 @@ http.createServer((req, res) => {
             // cmd -> npm -> node process chain even after Node exits. Keep
             // this well below WebApp's 90-second readiness ceiling while
             // retaining a bounded direct-child-exit assertion.
-            Duration::from_secs(20)
+            Duration::from_secs(60)
         } else {
             Duration::from_secs(8)
         };
