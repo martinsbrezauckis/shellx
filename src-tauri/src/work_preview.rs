@@ -4828,11 +4828,13 @@ http.createServer((req, res) => {
         .expect("failing server");
         let manager = Arc::new(WorkPreviewManager::new(Arc::new(ProcessRegistry::new())));
         let failure_bound = if cfg!(target_os = "windows") {
-            // A clean hosted runner can take longer to unwind the real
-            // cmd -> npm -> node process chain even after Node exits. Keep
-            // this well below WebApp's 90-second readiness ceiling while
-            // retaining a bounded direct-child-exit assertion.
-            Duration::from_secs(60)
+            // The fully concurrent hosted Windows suite can spend longer than
+            // 60 seconds starting and unwinding the real cmd -> npm -> node
+            // process chain. Keep the harness bound just beyond WebApp's own
+            // readiness deadline so the product contract resolves first. The
+            // state/log/retry assertions below still reject a readiness timeout
+            // or a process that never reports its failed exit.
+            Duration::from_millis(WEB_PREVIEW_READY_TIMEOUT_MS + 30_000)
         } else {
             Duration::from_secs(8)
         };
