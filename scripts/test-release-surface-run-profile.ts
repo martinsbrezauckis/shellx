@@ -117,7 +117,7 @@ try {
       executableNodePath: process.execPath,
       executableLaunchPath: process.execPath,
     },
-    shutdownTimeoutMs: 2_000,
+    shutdownTimeoutMs: process.platform === "win32" ? 10_000 : 2_000,
   });
   await childExit;
   child = null;
