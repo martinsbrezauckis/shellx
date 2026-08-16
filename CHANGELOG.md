@@ -14,6 +14,8 @@ explain a visible behavior change.
 - Tasks turn a chat request into one-time or recurring work, with simple
   scheduling, notifications, run history, exact environment selection, and an
   ordered agent fallback list.
+- Optional new-session defaults can preselect an Agent and starting folder, so
+  a fresh chat is ready to use immediately.
 - Browser Teach can save an approved workflow as a paused Task draft.
 - ShellX Cut is available in Tools and to hosted agents for bounded video
   editing.

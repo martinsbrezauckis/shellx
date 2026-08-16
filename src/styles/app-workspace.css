@@ -1571,6 +1571,15 @@ a.settings-pill:hover {
   gap: var(--space-3);
   flex: 1;
 }
+.settings-font-row > .settings-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.settings-font-row > .settings-pill {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .settings-range {
   flex: 1;
   height: 4px;

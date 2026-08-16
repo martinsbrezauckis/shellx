@@ -22,6 +22,7 @@
 import { useEffect, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ShellIcon } from "../icons";
+import { adoptRotatedDebugToken } from "../../lib/debug-api";
 import { inTauri } from "../../lib/tauri-bridge";
 
 /** Default port the debug-api server prefers — used as a display fallback
@@ -125,6 +126,7 @@ export function ShellxagentTab({
     setError(null);
     try {
       const t = await invokeCmd<string>("shellxagent_token_regenerate");
+      adoptRotatedDebugToken(t);
       setToken(t);
       setRevealed(true);
       setJustRotated(true);

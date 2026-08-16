@@ -404,12 +404,14 @@ const PROVIDER_ACTION_RELEASE_FIXTURE_ACTIONS: &[&str] = &[
     "activity-ask-agent",
     "browser-explain-page",
     "browser-send",
+    "composer-send",
     "right-rail-connector-action",
     "right-rail-environment-ask",
     "tasks-row-ask",
     "tasks-visible-ask",
     "work-preview-ask-fix",
     "work-preview-browser-issue-fix",
+    "work-preview-palette-ask-fix",
     "work-preview-stage-ask-fix",
 ];
 

@@ -42,12 +42,14 @@ fn run_release_provider_action_fixture(args: &[String]) -> i32 {
         "build-resume",
         "goal-approve",
         "goal-replan",
+        "composer-send",
         "right-rail-connector-action",
         "right-rail-environment-ask",
         "tasks-row-ask",
         "tasks-visible-ask",
         "work-preview-ask-fix",
         "work-preview-browser-issue-fix",
+        "work-preview-palette-ask-fix",
         "work-preview-stage-ask-fix",
     ];
     let Some(action) = args.first().map(String::as_str) else {

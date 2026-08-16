@@ -24,6 +24,8 @@ pub(super) fn default_settings_json() -> serde_json::Value {
         "theme": "black",
         "chatFontPx": 19,
         "browserDownloadFolder": "",
+        "defaultAgentId": null,
+        "defaultWorkingFolder": "",
         "githubGhBinary": "gh",
     })
 }
@@ -93,6 +95,30 @@ pub(super) fn normalize_settings_json(v: serde_json::Value) -> serde_json::Value
             serde_json::Value::String(folder.to_string()),
         );
     }
+    if matches!(
+        src.get("defaultAgentId").and_then(|v| v.as_str()),
+        Some("grok" | "codex-cli" | "claude-code" | "antigravity-cli")
+    ) {
+        dst.insert("defaultAgentId".into(), src["defaultAgentId"].clone());
+    } else if src
+        .get("defaultAgentId")
+        .is_some_and(serde_json::Value::is_null)
+    {
+        dst.insert("defaultAgentId".into(), serde_json::Value::Null);
+    }
+    if let Some(folder) = src
+        .get("defaultWorkingFolder")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|folder| {
+            folder.len() <= 4096 && !folder.bytes().any(|byte| byte <= 0x1f || byte == 0x7f)
+        })
+    {
+        dst.insert(
+            "defaultWorkingFolder".into(),
+            serde_json::Value::String(folder.to_string()),
+        );
+    }
     if let Some(bin) = src
         .get("githubGhBinary")
         .and_then(|v| v.as_str())
@@ -132,7 +158,13 @@ pub(super) async fn set_settings(
         for (k, v) in patch_obj {
             if matches!(
                 k.as_str(),
-                "density" | "theme" | "chatFontPx" | "browserDownloadFolder" | "githubGhBinary"
+                "density"
+                    | "theme"
+                    | "chatFontPx"
+                    | "browserDownloadFolder"
+                    | "defaultAgentId"
+                    | "defaultWorkingFolder"
+                    | "githubGhBinary"
             ) {
                 curr_obj.insert(k.clone(), v.clone());
             }

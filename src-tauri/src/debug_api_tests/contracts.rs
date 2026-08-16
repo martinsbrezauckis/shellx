@@ -126,6 +126,41 @@ fn settings_normalization_accepts_bright_theme() {
 }
 
 #[test]
+fn settings_normalization_bounds_new_session_defaults() {
+    let normalized = normalize_settings_json(serde_json::json!({
+        "defaultAgentId": "codex-cli",
+        "defaultWorkingFolder": "  C:\\work\\shellx  ",
+    }));
+
+    assert_eq!(
+        normalized
+            .get("defaultAgentId")
+            .and_then(|value| value.as_str()),
+        Some("codex-cli")
+    );
+    assert_eq!(
+        normalized
+            .get("defaultWorkingFolder")
+            .and_then(|value| value.as_str()),
+        Some("C:\\work\\shellx")
+    );
+
+    let refused = normalize_settings_json(serde_json::json!({
+        "defaultAgentId": "unknown-provider",
+        "defaultWorkingFolder": "C:\\work\u{0000}bad",
+    }));
+    assert!(refused
+        .get("defaultAgentId")
+        .is_some_and(|value| value.is_null()));
+    assert_eq!(
+        refused
+            .get("defaultWorkingFolder")
+            .and_then(|value| value.as_str()),
+        Some("")
+    );
+}
+
+#[test]
 fn diagnostics_settings_missing_uses_defaults() {
     let dir = std::env::temp_dir().join(format!(
         "shellx-diagnostics-settings-missing-{}-{}",

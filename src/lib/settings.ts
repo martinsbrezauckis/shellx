@@ -1,4 +1,5 @@
 import { apiPost } from "./debug-api";
+import { normalizeAgentSelection, type AgentSelection } from "./agent-selection";
 
 export type DensityMode = "compact" | "default" | "comfortable";
 export type ThemeMode = "black" | "black_warm" | "bright";
@@ -9,6 +10,9 @@ export interface SettingsValues {
   theme: ThemeMode;
   chatFontPx: number;
   browserDownloadFolder: string;
+  /** Optional defaults applied only when a new, untouched session tab is created. */
+  defaultAgentId: AgentSelection;
+  defaultWorkingFolder: string;
 }
 
 export const FONT_PX_MIN = 12;
@@ -31,6 +35,8 @@ export const DEFAULT_SETTINGS: SettingsValues = {
   theme: "black",
   chatFontPx: FONT_PX_DEFAULT,
   browserDownloadFolder: "",
+  defaultAgentId: null,
+  defaultWorkingFolder: "",
 };
 
 const STORAGE_KEY = "shellX.settings.v2";
@@ -75,6 +81,8 @@ export function normalizeSettings(raw: unknown): SettingsValues {
   const themeValue = readObjectProperty(raw, "theme");
   const chatFontPxValue = readObjectProperty(raw, "chatFontPx");
   const browserDownloadFolderValue = readObjectProperty(raw, "browserDownloadFolder");
+  const defaultAgentIdValue = readObjectProperty(raw, "defaultAgentId");
+  const defaultWorkingFolderValue = readObjectProperty(raw, "defaultWorkingFolder");
   const density: DensityMode =
     densityValue === "compact" || densityValue === "comfortable" || densityValue === "default"
       ? densityValue
@@ -89,7 +97,23 @@ export function normalizeSettings(raw: unknown): SettingsValues {
       : DEFAULT_SETTINGS.chatFontPx;
   const browserDownloadFolder =
     typeof browserDownloadFolderValue === "string" ? browserDownloadFolderValue.trim() : "";
-  return { density, theme, chatFontPx, browserDownloadFolder };
+  const defaultAgentId = normalizeAgentSelection(defaultAgentIdValue);
+  const defaultWorkingFolder = normalizeWorkingFolder(defaultWorkingFolderValue);
+  return {
+    density,
+    theme,
+    chatFontPx,
+    browserDownloadFolder,
+    defaultAgentId,
+    defaultWorkingFolder,
+  };
+}
+
+function normalizeWorkingFolder(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (trimmed.length > 4096 || /[\u0000-\u001f\u007f]/.test(trimmed)) return "";
+  return trimmed;
 }
 
 export function readSettingsLocal(): SettingsValues {
