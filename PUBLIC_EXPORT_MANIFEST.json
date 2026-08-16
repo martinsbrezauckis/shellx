@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "24aa462b63ebd52b73c5fa1b3fd14b4e1a0180c3",
-    "tree": "45b50ff37aef5b30b61cd359b4df1b703ae57236"
+    "commit": "f05a990ac3aa380d4ce49c93d63717520c04d024",
+    "tree": "441e83d7e6e2c988c7607bb11469961087432443"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -26,7 +26,7 @@
   "payload": {
     "fileCount": 1421,
     "totalBytes": 38522917,
-    "digest": "660ba6a228213cca32dfcc873bbcb6e742cdf3564cb22a4e1651edc83b98822c"
+    "digest": "cab774adc2ad72480033a73b7494b1d8b51cc8b725e238c8068106e8694a719c"
   },
   "exclusions": {
     "fileCount": 40,
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "d55589754871d58270e29fa0e71609c93da11f3018535507b7b7ee3a7aff1faa",
+      "sha256": "e3f5b9d82774f10b6827df90e5d88f004eb5652e8b58ea15690d6615b8fa2d18",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -5857,7 +5857,7 @@
     {
       "path": "scripts/test-release-ui-driver-families.ts",
       "mode": "100644",
-      "sha256": "e7c5646115d7446ca1c2a4abe72f0da15ea67d94ce272ccfc27bc70d88f5afe0",
+      "sha256": "b7c0830da07981d6c01e6e835cfe31358dd34f6db488e85df9936a61c5a33c32",
       "bytes": 4919,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",

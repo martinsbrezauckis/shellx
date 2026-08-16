@@ -19,11 +19,11 @@ assert.deepEqual(inventory.uiDriverFamilyAccounting, {
   disclosure: 26,
   toggle: 68,
   "text-entry": 92,
-  choice: 30,
+  choice: 31,
   range: 2,
   "file-picker": 0,
-  activation: 429,
-  "static-marker": 563,
+  activation: 431,
+  "static-marker": 567,
   "dynamic-marker": 48,
 }, "every exact UI occurrence must belong to one deterministic installed-driver family");
 
