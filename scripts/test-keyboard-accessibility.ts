@@ -135,12 +135,15 @@ assert(css.includes(".ctxmenu-action:focus-visible") && css.includes(".fv-row-ma
 assert(shortcuts.includes('id: "palette"') && shortcuts.includes('desc: "Open command palette"'));
 const toggleTerminal = SHORTCUTS.find((shortcut) => shortcut.id === "toggle-terminal");
 assert(toggleTerminal, "toggle-terminal shortcut must remain registered");
+const platformCommandModifier = typeof navigator !== "undefined"
+  && /Mac|iPhone|iPad/.test(navigator.platform)
+  ? { ctrlKey: false, metaKey: true }
+  : { ctrlKey: true, metaKey: false };
 assert(
   toggleTerminal.match({
     key: "§",
     code: "Backquote",
-    ctrlKey: true,
-    metaKey: false,
+    ...platformCommandModifier,
   } as KeyboardEvent),
   "the terminal shortcut must recognize the physical Backquote key on non-US keyboard layouts",
 );
@@ -148,8 +151,7 @@ assert(
   !toggleTerminal.match({
     key: "§",
     code: "Digit1",
-    ctrlKey: true,
-    metaKey: false,
+    ...platformCommandModifier,
   } as KeyboardEvent),
   "the terminal shortcut must not broaden to unrelated physical keys",
 );
