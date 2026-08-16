@@ -874,7 +874,7 @@
       "surfaceId": "keyboard-shortcut:toggle-terminal",
       "driverId": "keyboard-shortcut-installed",
       "fixtureId": "keyboard:chat-bottom-tab",
-      "expectedEffect": "The platform-native command-backtick chord changes renderer state and the active bottom tab from Chat to Terminal.",
+      "expectedEffect": "The platform-native control-backtick chord changes renderer state and the active bottom tab from Chat to Terminal.",
       "oracleId": "keyboard:toggle-terminal:state-transition",
       "cleanupId": "keyboard:restore-chat-bottom-tab"
     },

@@ -135,15 +135,13 @@ assert(css.includes(".ctxmenu-action:focus-visible") && css.includes(".fv-row-ma
 assert(shortcuts.includes('id: "palette"') && shortcuts.includes('desc: "Open command palette"'));
 const toggleTerminal = SHORTCUTS.find((shortcut) => shortcut.id === "toggle-terminal");
 assert(toggleTerminal, "toggle-terminal shortcut must remain registered");
-const platformCommandModifier = typeof navigator !== "undefined"
-  && /Mac|iPhone|iPad/.test(navigator.platform)
-  ? { ctrlKey: false, metaKey: true }
-  : { ctrlKey: true, metaKey: false };
+assert.equal(toggleTerminal.keys, "Ctrl+`", "the terminal shortcut label must describe the cross-platform chord");
 assert(
   toggleTerminal.match({
     key: "§",
     code: "Backquote",
-    ...platformCommandModifier,
+    ctrlKey: true,
+    metaKey: false,
   } as KeyboardEvent),
   "the terminal shortcut must recognize the physical Backquote key on non-US keyboard layouts",
 );
@@ -151,9 +149,19 @@ assert(
   !toggleTerminal.match({
     key: "§",
     code: "Digit1",
-    ...platformCommandModifier,
+    ctrlKey: true,
+    metaKey: false,
   } as KeyboardEvent),
   "the terminal shortcut must not broaden to unrelated physical keys",
+);
+assert(
+  !toggleTerminal.match({
+    key: "`",
+    code: "Backquote",
+    ctrlKey: false,
+    metaKey: true,
+  } as KeyboardEvent),
+  "the terminal shortcut must not advertise macOS Command+Backquote, which the OS reserves for window cycling",
 );
 assert(
   !SHORTCUTS.some((shortcut) => shortcut.id === "cycle-autonomy")

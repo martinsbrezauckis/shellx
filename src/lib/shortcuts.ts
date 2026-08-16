@@ -96,10 +96,12 @@ export const SHORTCUTS: ShortcutDef[] = [
   {
     id: "toggle-terminal",
     group: "Navigation",
-    keys: "⌘`",
+    keys: "Ctrl+`",
     desc: "Toggle Chat / Terminal in bottom panel",
  // `event.key` is layout-dependent; `code` keeps the physical key stable.
-    match: (e) => isCmd(e) && (e.key === "`" || e.code === "Backquote"),
+ // Ctrl is deliberate on every platform: macOS reserves Command+Backquote
+ // for cycling application windows before the renderer can receive it.
+    match: (e) => e.ctrlKey && !e.metaKey && (e.key === "`" || e.code === "Backquote"),
     skipInInput: false,
   },
 

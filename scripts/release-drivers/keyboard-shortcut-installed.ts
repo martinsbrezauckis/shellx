@@ -220,11 +220,11 @@ function shortcutSpec(id: string): ShortcutSpec | null {
       await waitForUiState(connection, (state) => state.bottomTab === "Chat", "Chat bottom tab setup");
       await waitForReleaseSurfaceWebDriverElement(webdriver, CHAT_SELECTOR);
     },
-    invoke: async (_connection, request, webdriver) => performReleaseSurfaceWebDriverKeyChord(webdriver, [commandKey(request), "`"]),
+    invoke: async (_connection, _request, webdriver) => performReleaseSurfaceWebDriverKeyChord(webdriver, ["\uE009", "`"]),
     assertEffect: async (connection, webdriver) => {
       await waitForUiState(connection, (state) => state.bottomTab === "Terminal", "Terminal bottom tab effect");
       await waitForReleaseSurfaceWebDriverElement(webdriver, TERMINAL_SELECTOR);
-      return "The native command-backtick chord changed both renderer state and the active tab to Terminal.";
+      return "The native control-backtick chord changed both renderer state and the active tab to Terminal.";
     },
     cleanup: async (connection, webdriver) => {
       await postUi(connection, { bottomTab: "Chat" });

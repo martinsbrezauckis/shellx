@@ -85,6 +85,14 @@ try {
   ], { cwd: root, encoding: "utf8" });
   assert.equal(described.status, 0, described.stderr || described.stdout);
   assert.equal(JSON.parse(described.stdout).invocationTransport, "native-installed-input");
+  const driverSource = readFileSync(
+    resolve(root, "scripts/release-drivers/keyboard-shortcut-installed.ts"),
+    "utf8",
+  );
+  assert(
+    driverSource.includes('performReleaseSurfaceWebDriverKeyChord(webdriver, ["\\uE009", "`"])'),
+    "Terminal toggle must use Control+Backquote on every installed platform, including macOS native input",
+  );
 
   const linuxRequest = request("linux-installed", shortcuts, candidateBase, webdriverBase);
   const linuxReport = runDriver("linux", linuxRequest);

@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "57bc03f70dd3e109a2ccbfb0cd9bfcdd0e6cf243",
-    "tree": "92bbad806d9437c854f7b2730c6f33ac9631a352"
+    "commit": "d24feada3ce9eac8bc54e8c6aadea24e8cdbb52f",
+    "tree": "19b6da6b5450381c41b9cb6e7cc127dda1a3c5ea"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -19,19 +19,19 @@
     "selfExcludedFromEntries": true
   },
   "classification": {
-    "trackedFileCount": 1461,
+    "trackedFileCount": 1462,
     "includedTrackedFileCount": 1420,
-    "excludedTrackedFileCount": 41
+    "excludedTrackedFileCount": 42
   },
   "payload": {
     "fileCount": 1421,
-    "totalBytes": 38524145,
-    "digest": "bf250945d7a1194205c117115fabdaed1733a97ca824ab6e1f0c26d0a74c3328"
+    "totalBytes": 38553555,
+    "digest": "713b30ed89613c99b0bef406eafe62b028fb158c4eae6c58f5c78024d823775c"
   },
   "exclusions": {
-    "fileCount": 41,
+    "fileCount": 42,
     "byCategory": {
-      "private-working-documentation": 41
+      "private-working-documentation": 42
     }
   },
   "entries": [
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "17389705a2817b3213bb2c9d468041fe311369e15878b5ebe0afdf7b20c86757",
+      "sha256": "248239b7d03aed2bff5325a01339d707abf8189ccc9ac66ef676fe92ff74f849",
       "bytes": 7975,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -390,8 +390,8 @@
     {
       "path": "docs/public/manual/shellx/assets/command-palette.png",
       "mode": "100644",
-      "sha256": "13c655f08910ea8e6d20a8385851c1323080ead2a6e857210950d8e249a37ca7",
-      "bytes": 229713,
+      "sha256": "d6956b6caf2bb61a2c92011ca6fc8be629ca6c8136d173882628a4433e338f7c",
+      "bytes": 258426,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
       "matchedPath": "docs/public/",
@@ -676,7 +676,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "de5da728140d874588f16d166dd0016b7fb4649a038e4cb3d3f8f196e92b7580",
+      "sha256": "738eedefa1498f1fbd35efb17fdfa29e00d9afeeb98b3b1b429b4e2e221735b9",
       "bytes": 54418,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "1a4e4cca035512fe07baf65b0acd68b8986518b0efdf2eb1b0e3460918924db5",
+      "sha256": "da615b1dce588ff8121c7f0860f02362597ead408002830e7ce5a3884731aedc",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -852,7 +852,7 @@
     {
       "path": "release/surface-driver-plan.json",
       "mode": "100644",
-      "sha256": "8ef54f03fba955d45fff464f4e4699647f60c3eee4909f1ab2cd3404f8514eac",
+      "sha256": "14d9bb32517611e828b2c788f1fc0feebf39b08a28757a41126ef7db117925e2",
       "bytes": 1076803,
       "ruleId": "public-release-contracts",
       "matchedBy": "exact",
@@ -2777,8 +2777,8 @@
     {
       "path": "scripts/release-drivers/keyboard-shortcut-installed.ts",
       "mode": "100644",
-      "sha256": "1f41b32d056f2414ca84810d3c6da2aa6b6e7b1f7effcdc4867f2979119efffb",
-      "bytes": 26054,
+      "sha256": "79a7f5898f8823ed28e6e02db01c08a27a3b5fbfb1c0316c29808b94834fd829",
+      "bytes": 26044,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -4691,8 +4691,8 @@
     {
       "path": "scripts/test-keyboard-accessibility.ts",
       "mode": "100644",
-      "sha256": "300b42a40610e1f8dba1318083bcac1ca23cdad800da7e1d9b941546a6c1b339",
-      "bytes": 12974,
+      "sha256": "4f51d051484b96f888f0dbeff898f79347cf241e900c7241db0bc34663f3bbe0",
+      "bytes": 13161,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5076,8 +5076,8 @@
     {
       "path": "scripts/test-release-surface-keyboard-webdriver.ts",
       "mode": "100644",
-      "sha256": "40a902f851acfbd183cdf3999b19c26e670b707a71f9f619276108707af1d9ce",
-      "bytes": 11001,
+      "sha256": "c38716489bb3c3195b651dbfb88e621b27b4ae79282de4e67e708ef8961f6696",
+      "bytes": 11353,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -10851,7 +10851,7 @@
     {
       "path": "src/App.tsx",
       "mode": "100644",
-      "sha256": "49335de629e09cd22d06bf6dea996fb442e0635f49a08eb1aa036b06089768a9",
+      "sha256": "b5b701deb95d455633b4eb79abb0f4dbe7f194ec4dafedb6441e71bdad7990c5",
       "bytes": 313879,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
@@ -11610,8 +11610,8 @@
     {
       "path": "src/components/BottomPanel.tsx",
       "mode": "100644",
-      "sha256": "34f4a6f80cc134624a13f66153aa74f79e8a2723be7ce39a8d05f9aae9bace11",
-      "bytes": 85473,
+      "sha256": "6ab95612d313c6dbc2240ab4af910287c9eca545f8b57f8ee5336600c18d52cf",
+      "bytes": 85477,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
@@ -12985,8 +12985,8 @@
     {
       "path": "src/lib/shortcuts.ts",
       "mode": "100644",
-      "sha256": "ca5c043e6e36b6f6b462e60a88c360adc5af42c7556f69df7b3861509166a769",
-      "bytes": 7348,
+      "sha256": "4d67f380ed2bdf6f0d1615ac9c823bc0b9e16561f4aff043d4e9b21f61464de5",
+      "bytes": 7512,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
