@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "134748b3ecde2e1b26e047ec4b6a7e6d57032858",
-    "tree": "48aea132e6e1d5dc23f8d8d781fb413424ac852b"
+    "commit": "57bc03f70dd3e109a2ccbfb0cd9bfcdd0e6cf243",
+    "tree": "92bbad806d9437c854f7b2730c6f33ac9631a352"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1421,
-    "totalBytes": 38523969,
-    "digest": "7e9b8a57aca2f20a2afc7f318883b95d51144e5b13c5d03db83b349f82156e6e"
+    "totalBytes": 38524145,
+    "digest": "bf250945d7a1194205c117115fabdaed1733a97ca824ab6e1f0c26d0a74c3328"
   },
   "exclusions": {
     "fileCount": 41,
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "65478630652c30e991bf910b5eab7a15368a87be6f046030827aacab953ab78a",
+      "sha256": "1a4e4cca035512fe07baf65b0acd68b8986518b0efdf2eb1b0e3460918924db5",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -4691,8 +4691,8 @@
     {
       "path": "scripts/test-keyboard-accessibility.ts",
       "mode": "100644",
-      "sha256": "5e167e273e769a1edb27238013ba5b52a4b782b85447dfc7a8d6428c3380e232",
-      "bytes": 12798,
+      "sha256": "300b42a40610e1f8dba1318083bcac1ca23cdad800da7e1d9b941546a6c1b339",
+      "bytes": 12974,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
