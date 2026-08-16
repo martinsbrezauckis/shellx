@@ -133,6 +133,26 @@ assert(chatOutput.includes('<button\n      type="button"\n      className="row-p
 assert(main.includes('import "./styles/interactionAccessibility.css"'));
 assert(css.includes(".ctxmenu-action:focus-visible") && css.includes(".fv-row-main:focus-visible"));
 assert(shortcuts.includes('id: "palette"') && shortcuts.includes('desc: "Open command palette"'));
+const toggleTerminal = SHORTCUTS.find((shortcut) => shortcut.id === "toggle-terminal");
+assert(toggleTerminal, "toggle-terminal shortcut must remain registered");
+assert(
+  toggleTerminal.match({
+    key: "§",
+    code: "Backquote",
+    ctrlKey: true,
+    metaKey: false,
+  } as KeyboardEvent),
+  "the terminal shortcut must recognize the physical Backquote key on non-US keyboard layouts",
+);
+assert(
+  !toggleTerminal.match({
+    key: "§",
+    code: "Digit1",
+    ctrlKey: true,
+    metaKey: false,
+  } as KeyboardEvent),
+  "the terminal shortcut must not broaden to unrelated physical keys",
+);
 assert(
   !SHORTCUTS.some((shortcut) => shortcut.id === "cycle-autonomy")
     && !SHORTCUTS.some((shortcut) => shortcut.match({ key: "Tab", shiftKey: true } as KeyboardEvent)),
