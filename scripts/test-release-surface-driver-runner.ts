@@ -152,6 +152,15 @@ for (const script of [
       entrypoint: "scripts/controller.ts",
       requireClean: true,
     });
+    assert.throws(
+      () => createReleaseSurfaceControllerBinding({
+        rootDir: join(provenanceRoot, "scripts"),
+        sourceCommit: candidateCommit,
+        entrypoint: "controller.ts",
+      }),
+      /exact Git worktree root/,
+      "a child directory must not be accepted as the frozen controller root",
+    );
     writeFileSync(join(provenanceRoot, "scripts", "controller.ts"), "export const fixture = 2;\n", "utf8");
     runGitFixture(provenanceRoot, ["add", "scripts/controller.ts"]);
     runGitFixture(provenanceRoot, ["-c", "commit.gpgsign=false", "commit", "-m", "controller fix"]);

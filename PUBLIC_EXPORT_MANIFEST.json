@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "a6dea87a21d7ac913dccb9388d57284e3043a619",
-    "tree": "4669894f89e2559d4a078865dbb02dcdccdad890"
+    "commit": "bc15cfe51ab58fe8a25ac1844e820ef36852a68f",
+    "tree": "37f731c785c1163fc054ebc90d33875202a16534"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1421,
-    "totalBytes": 38523545,
-    "digest": "03101b30165d6aa0922e8d8912fccb233717062db12d130c138776581b9cac9c"
+    "totalBytes": 38523319,
+    "digest": "2749f46b7d1f72798a82cccc2a255b07d2641a99e9fd0c29da22133dd3212f4e"
   },
   "exclusions": {
     "fileCount": 40,
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "86e76b3ddc8f8e39acf963c33c4423c5a29ab3049c11f39d7c5bbdc34585e8b5",
+      "sha256": "d9940f39e3d86eaf6dd8b2b8816f48153e8ccb52740c065d557c09339b08bcc0",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -1776,8 +1776,8 @@
     {
       "path": "scripts/lib/release-surface-controller-binding.ts",
       "mode": "100644",
-      "sha256": "b1b60ec66d7529a239f07d512e20b338ad905219d3a129181760b6f8aad30019",
-      "bytes": 13769,
+      "sha256": "b939fe99dfc36046d92f9a882315ceb4f605786147d95c3ef8bb6c5a9d2d7f61",
+      "bytes": 13218,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -5010,8 +5010,8 @@
     {
       "path": "scripts/test-release-surface-driver-runner.ts",
       "mode": "100644",
-      "sha256": "684dbab0f8273f4b73fe1f05497c774af8edb5836d4378ea51ce6606fba38480",
-      "bytes": 77956,
+      "sha256": "8df656a49205a984738a4174dd216f1e8dad1b23b10ad1a1cf50836da5cd30bb",
+      "bytes": 78281,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
