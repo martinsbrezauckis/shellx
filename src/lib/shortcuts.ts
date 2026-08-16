@@ -98,8 +98,8 @@ export const SHORTCUTS: ShortcutDef[] = [
     group: "Navigation",
     keys: "⌘`",
     desc: "Toggle Chat / Terminal in bottom panel",
- // `event.key` for backtick is "`" on most layouts.
-    match: (e) => isCmd(e) && e.key === "`",
+ // `event.key` is layout-dependent; `code` keeps the physical key stable.
+    match: (e) => isCmd(e) && (e.key === "`" || e.code === "Backquote"),
     skipInInput: false,
   },
 

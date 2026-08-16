@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "bc15cfe51ab58fe8a25ac1844e820ef36852a68f",
-    "tree": "37f731c785c1163fc054ebc90d33875202a16534"
+    "commit": "134748b3ecde2e1b26e047ec4b6a7e6d57032858",
+    "tree": "48aea132e6e1d5dc23f8d8d781fb413424ac852b"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -19,19 +19,19 @@
     "selfExcludedFromEntries": true
   },
   "classification": {
-    "trackedFileCount": 1460,
+    "trackedFileCount": 1461,
     "includedTrackedFileCount": 1420,
-    "excludedTrackedFileCount": 40
+    "excludedTrackedFileCount": 41
   },
   "payload": {
     "fileCount": 1421,
-    "totalBytes": 38523319,
-    "digest": "2749f46b7d1f72798a82cccc2a255b07d2641a99e9fd0c29da22133dd3212f4e"
+    "totalBytes": 38523969,
+    "digest": "7e9b8a57aca2f20a2afc7f318883b95d51144e5b13c5d03db83b349f82156e6e"
   },
   "exclusions": {
-    "fileCount": 40,
+    "fileCount": 41,
     "byCategory": {
-      "private-working-documentation": 40
+      "private-working-documentation": 41
     }
   },
   "entries": [
@@ -126,7 +126,7 @@
     {
       "path": "docs/public/assets/reviewed-assets.json",
       "mode": "100644",
-      "sha256": "1c45550f9fd5c1893a5ba329fa239a31ed290d1b7375832d0bb34771e9f58287",
+      "sha256": "17389705a2817b3213bb2c9d468041fe311369e15878b5ebe0afdf7b20c86757",
       "bytes": 7975,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -676,7 +676,7 @@
     {
       "path": "docs/public/manual/shellx/visuals.json",
       "mode": "100644",
-      "sha256": "4783891c24dd64d9a0bfc25f07cbacf5f097b6bd20900df530211ebac27cf810",
+      "sha256": "de5da728140d874588f16d166dd0016b7fb4649a038e4cb3d3f8f196e92b7580",
       "bytes": 54418,
       "ruleId": "public-product-documentation",
       "matchedBy": "prefix",
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "d9940f39e3d86eaf6dd8b2b8816f48153e8ccb52740c065d557c09339b08bcc0",
+      "sha256": "65478630652c30e991bf910b5eab7a15368a87be6f046030827aacab953ab78a",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -4691,8 +4691,8 @@
     {
       "path": "scripts/test-keyboard-accessibility.ts",
       "mode": "100644",
-      "sha256": "aecf1b270426dc40fec8bc2be3111cc6528f8161c72fffa56d95f25f5db785ac",
-      "bytes": 12198,
+      "sha256": "5e167e273e769a1edb27238013ba5b52a4b782b85447dfc7a8d6428c3380e232",
+      "bytes": 12798,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",
@@ -12985,8 +12985,8 @@
     {
       "path": "src/lib/shortcuts.ts",
       "mode": "100644",
-      "sha256": "29421e922daefd0cbf2259aec01ef919fcd59f95d3cf390c515916e0462b75f5",
-      "bytes": 7298,
+      "sha256": "ca5c043e6e36b6f6b462e60a88c360adc5af42c7556f69df7b3861509166a769",
+      "bytes": 7348,
       "ruleId": "public-frontend-source",
       "matchedBy": "prefix",
       "matchedPath": "src/",
