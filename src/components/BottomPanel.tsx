@@ -211,7 +211,7 @@ export function highlightSlashTokens(text: string): React.ReactNode[] {
 /**
  * Read the persisted bottom-tab on init. Exported so the parent
  * (App.tsx) can initialize its controlled state to match localStorage —
- * keeps the ⌘` toggle correct on first paint.
+ * keeps the Ctrl+` toggle correct on first paint.
  */
 export function readPersistedBottomTab(): BottomTab {
   try {
@@ -258,7 +258,7 @@ export function BottomPanel({
   connected,
   events,
   groups = [],
- // controlled tab — parent owns the state so ⌘`
+ // controlled tab — parent owns the state so Ctrl+`
  // can flip Chat ↔ Terminal globally. When `tab` is undefined the
  // component falls back to its own state (preserves old callers).
   tab: controlledTab,

@@ -24,7 +24,7 @@
  * ⌘K / Ctrl+K  command palette
  * ⌘T / ⌘W      new / close session tab
  * ⌘U           attach file picker
- * ⌘`           toggle Chat ↔ Terminal in bottom panel
+ * Ctrl+`       toggle Chat ↔ Terminal in bottom panel
  * ⌘,           open settings
  * j/k/y/n/e    per-hunk diff nav (handled inside ChatOutput)
  * * File attach: picker, OS drag/drop, pasted clipboard images/files, and
@@ -5749,7 +5749,7 @@ export default function App(): JSX.Element {
             run: () => void handleAskGrokToFixPreview(activeWorkPreviewState),
           }]
         : []),
-      { id: "act-toggle-term", label: "Toggle Chat / Terminal (⌘`)", group: "Action", run: toggleTerminalTab },
+      { id: "act-toggle-term", label: "Toggle Chat / Terminal (Ctrl+`)", group: "Action", run: toggleTerminalTab },
       { id: "act-pr", label: "Create pull request (/pr)", group: "Action", run: () => setPrModalOpen(true) },
       { id: "act-vault", label: "Open vault (secrets)", group: "Action", run: () => openVaultPanel("overview") },
       { id: "act-help",     label: "Show keyboard shortcuts (?)", group: "Action", run: () => setHelpOpen(true) },
