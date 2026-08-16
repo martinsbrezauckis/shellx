@@ -1066,17 +1066,17 @@ function commandResult(command: string, invokeArgs: Record<string, unknown>): un
       goalStates.set(tabId, {
         active: true,
         objective,
-        scratchboard_path: scratchboardPath,
-        transport_kind: "local",
-        last_continuation_at_ms: 0,
-        continuations_total: 0,
-        started_at_ms: 1,
-        paused_by_user: false,
+        scratchboardPath,
+        transportKind: "local",
+        lastContinuationAtMs: 0,
+        continuationsTotal: 0,
+        startedAtMs: 1,
+        pausedByUser: false,
         halted: false,
-        halted_reason: null,
-        awaiting_approval: true,
-        plan_turn_completed: false,
-        approved_at_ms: 0,
+        haltedReason: null,
+        awaitingApproval: true,
+        planTurnCompleted: false,
+        approvedAtMs: 0,
       });
     } else {
       goalStates.delete(tabId);
@@ -1087,8 +1087,8 @@ function commandResult(command: string, invokeArgs: Record<string, unknown>): un
   if (command === "pause_goal" || command === "resume_goal" || command === "mark_goal_complete") {
     const state = goalStates.get(String(invokeArgs.tabId ?? ""));
     if (state) {
-      if (command === "pause_goal") state.paused_by_user = true;
-      if (command === "resume_goal") state.paused_by_user = false;
+      if (command === "pause_goal") state.pausedByUser = true;
+      if (command === "resume_goal") state.pausedByUser = false;
       if (command === "mark_goal_complete") state.active = false;
     }
     return null;
@@ -1174,6 +1174,9 @@ function commandResult(command: string, invokeArgs: Record<string, unknown>): un
       output: "Preparing worktree",
       lastError: null,
     };
+  }
+  if (command === "read_text_file_for_path") {
+    return readFileSync(String(invokeArgs.path ?? ""), "utf8");
   }
 
   if (!Object.prototype.hasOwnProperty.call(commandResults, command)) {
@@ -1635,6 +1638,7 @@ function expectedRejection(command: string, invokeArgs: Record<string, unknown>)
     shellx_vault_unlock: "vault passphrase must not be empty",
     start_build_mode: "/build requires an objective",
     grok_trace_export: "no registered tab session",
+    get_build_receipts: "no build run for this tab",
     interject_prompt: "Empty interjection",
     mcp_marketplace_install: "unknown marketplace id: final-surface-absent-marketplace",
     mcp_marketplace_set_enabled: "unknown marketplace id: final-surface-absent-marketplace",

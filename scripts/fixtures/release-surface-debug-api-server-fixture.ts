@@ -75,6 +75,8 @@ let previewTarget: Record<string, unknown> | null = null;
 let settings = {
   browserDownloadFolder: "",
   chatFontPx: 15,
+  defaultAgentId: null as "grok" | "codex-cli" | "claude-code" | "antigravity-cli" | null,
+  defaultWorkingFolder: "",
   density: "default",
   githubGhBinary: "gh",
   theme: "black",
@@ -630,7 +632,7 @@ const server = createServer(async (request, response) => {
       browserMonotonicIndex += 1;
       return json(response, 200, {
         ok: true,
-        status: "observed",
+        status: "applied",
         taskId,
         currentUrl: browserTaskUrls.get(taskId),
         observation: hostile ? {
@@ -646,7 +648,7 @@ const server = createServer(async (request, response) => {
             editable: false,
           }],
         } : { snapshotId: "release-safe-snapshot", refs: [] },
-        receipt: monotonicReceipt("browserObservationCaptured", taskId, { browserTabId }),
+        receipt: monotonicReceipt("browserEngineObserved", taskId, { browserTabId }),
       });
     }
     if (browserTasks.get(taskId) === "running" && browserTabs.get(browserTabId) === taskId
@@ -2345,6 +2347,8 @@ const server = createServer(async (request, response) => {
     const body = await requestJson(request);
     if (typeof body.browserDownloadFolder !== "string"
       || !Number.isSafeInteger(body.chatFontPx) || Number(body.chatFontPx) < 12 || Number(body.chatFontPx) > 26
+      || !(body.defaultAgentId === null || ["grok", "codex-cli", "claude-code", "antigravity-cli"].includes(String(body.defaultAgentId)))
+      || typeof body.defaultWorkingFolder !== "string"
       || !["compact", "default", "comfortable"].includes(String(body.density))
       || !["gh", "gh.exe"].includes(String(body.githubGhBinary))
       || !["black", "black_warm", "bright"].includes(String(body.theme))) {
@@ -2353,6 +2357,8 @@ const server = createServer(async (request, response) => {
     settings = {
       browserDownloadFolder: body.browserDownloadFolder,
       chatFontPx: Number(body.chatFontPx),
+      defaultAgentId: body.defaultAgentId as typeof settings.defaultAgentId,
+      defaultWorkingFolder: body.defaultWorkingFolder,
       density: String(body.density),
       githubGhBinary: String(body.githubGhBinary),
       theme: String(body.theme),
@@ -3335,7 +3341,20 @@ const server = createServer(async (request, response) => {
   if (path === "/state/session_assets") return json(response, 200, { count: 0, assets: [], images: [], videos: [] });
   if (path === "/state/marketplace_health") return json(response, 200, { tabId: "default", entries: [] });
   if (path === "/state/session_tooling") {
-    return json(response, 200, { tabId: "default", session: {}, desired: [], health: [] });
+    return json(response, 200, {
+      tabId: "default",
+      session: {},
+      desired: [],
+      health: [],
+      cut: {
+        schemaVersion: "shellx.cut.tooling-status.v1",
+        status: "unsupportedTarget",
+        detail: "No active ShellX desktop-host context is selected.",
+        target: "no active ShellX host context",
+        canOpen: false,
+        actionHint: "Start or select a ShellX session with a parent desktop host.",
+      },
+    });
   }
   return json(response, 404, { error: "not found" });
 });

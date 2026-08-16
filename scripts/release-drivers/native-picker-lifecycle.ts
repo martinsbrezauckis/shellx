@@ -49,6 +49,7 @@ export const NATIVE_PICKER_FIXTURES = [
   "native-picker:owned-file-empty-composer",
   "native-picker:owned-directory-local-tab",
   "native-picker:owned-settings-download-directory",
+  "native-picker:owned-settings-default-directory",
   "native-picker:owned-browser-download-directory",
   "native-picker:owned-vault-keyfile-setup",
 ] as const;
@@ -56,6 +57,7 @@ export const NATIVE_PICKER_CLEANUPS = [
   "native-picker:remove-exact-attachment-restore-tab-delete-fixture",
   "native-picker:restore-exact-tab-delete-fixture",
   "native-picker:restore-exact-settings-delete-fixture",
+  "native-picker:restore-empty-default-settings-delete-fixture",
   "native-picker:restore-exact-browser-settings-task-window-delete-fixture",
   "native-picker:clear-owned-vault-keyfile-close-settings-delete-fixture",
 ] as const;
@@ -64,6 +66,8 @@ export const NATIVE_PICKER_ORACLES = [
   "ui:activation:native-picker-exact-owned-file-attached",
   "ui:activation:native-picker-exact-owned-directory-selected",
   "ui:activation:native-picker-exact-settings-directory-selected",
+  "ui:activation:native-picker-exact-default-settings-directory-selected",
+  "ui:activation:native-picker-default-settings-directory-cleared",
   "ui:activation:native-picker-exact-browser-directory-selected",
   "ui:activation:native-picker-exact-owned-vault-keyfile-selected",
   "ui:activation:native-picker-owned-vault-keyfile-cleared",
@@ -78,7 +82,11 @@ const APP_FILE_SURFACES = new Set([
 const APP_FOLDER_SURFACE =
   'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-folder"]@src/components/BottomPanel.tsx#22';
 const SETTINGS_FOLDER_SURFACE =
-  'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-browser-download-folder-choose"]@src/components/settings/GeneralTab.tsx#8';
+  'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-browser-download-folder-choose"]@src/components/settings/GeneralTab.tsx#12';
+const SETTINGS_DEFAULT_FOLDER_SURFACES = new Set([
+  'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-default-working-folder-choose"]@src/components/settings/GeneralTab.tsx#3',
+  'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-default-working-folder-clear"]@src/components/settings/GeneralTab.tsx#4',
+]);
 const BROWSER_FOLDER_SURFACE =
   'ui-control:src/browser/components/DownloadSidecar.tsx:[data-debug-id="shellx-browser-download-folder-choose"]@src/browser/components/DownloadSidecar.tsx#3';
 const VAULT_KEYFILE_SELECT_SURFACE =
@@ -92,6 +100,9 @@ const ASSET_BOARD = "[role='dialog'][aria-label='Attachment and media board']";
 const ASSET_BOARD_ROW = "[data-debug-id='surface-components-attachmentmediaboard-9']";
 const SETTINGS_DIALOG = ".settings-modal[role='dialog']";
 const SETTINGS_INPUT = "[data-debug-id='settings-browser-download-folder']";
+const SETTINGS_DEFAULT_INPUT = "[data-debug-id='settings-default-working-folder']";
+const SETTINGS_DEFAULT_CHOOSE = "[data-debug-id='settings-default-working-folder-choose']";
+const SETTINGS_DEFAULT_CLEAR = "[data-debug-id='settings-default-working-folder-clear']";
 const VAULT_KEYFILE_CHOOSE = "[data-debug-id='surface-components-settings-vaultsetuppanel-17']";
 const VAULT_KEYFILE_CLEAR = ".vault-keyfile-picker > button:last-child";
 const BROWSER_DOWNLOAD_OWNER = "[data-debug-id='shellx-browser-downloads-menu']";
@@ -117,6 +128,8 @@ type AppTabFixture = {
 type PublicSettings = {
   browserDownloadFolder: string;
   chatFontPx: number;
+  defaultAgentId: string | null;
+  defaultWorkingFolder: string;
   density: string;
   githubGhBinary: string;
   theme: string;
@@ -166,6 +179,7 @@ export function supportsNativePickerAssignment(assignment: Assignment): boolean 
   return APP_FILE_SURFACES.has(assignment.surface.id)
     || assignment.surface.id === APP_FOLDER_SURFACE
     || assignment.surface.id === SETTINGS_FOLDER_SURFACE
+    || SETTINGS_DEFAULT_FOLDER_SURFACES.has(assignment.surface.id)
     || assignment.surface.id === BROWSER_FOLDER_SURFACE
     || assignment.surface.id === VAULT_KEYFILE_SELECT_SURFACE
     || assignment.surface.id === VAULT_KEYFILE_CLEAR_SURFACE;
@@ -191,6 +205,15 @@ async function exerciseNativePicker(
       pickerMayBeOpen = await exerciseAppFolderPicker(request, connection, input, fixture, outcome);
     } else if (assignment.surface.id === SETTINGS_FOLDER_SURFACE) {
       pickerMayBeOpen = await exerciseSettingsFolderPicker(request, connection, input, fixture, outcome);
+    } else if (SETTINGS_DEFAULT_FOLDER_SURFACES.has(assignment.surface.id)) {
+      pickerMayBeOpen = await exerciseSettingsDefaultFolderPicker(
+        request,
+        connection,
+        input,
+        assignment,
+        fixture,
+        outcome,
+      );
     } else if (assignment.surface.id === VAULT_KEYFILE_SELECT_SURFACE
       || assignment.surface.id === VAULT_KEYFILE_CLEAR_SURFACE) {
       pickerMayBeOpen = await exerciseVaultKeyfilePicker(request, connection, input, assignment, fixture, outcome);
@@ -562,6 +585,102 @@ async function exerciseSettingsFolderPicker(
   return pickerMayBeOpen;
 }
 
+async function exerciseSettingsDefaultFolderPicker(
+  request: ReleaseSurfaceDriverRequest,
+  connection: Connection,
+  input: Input,
+  assignment: Assignment,
+  fixture: NativePickerFixture,
+  outcome: ReleaseSurfaceDriverOutcome,
+): Promise<boolean> {
+  const baseline = await readPublicSettings(connection);
+  if (baseline.defaultWorkingFolder !== "") {
+    throw new Error("isolated native-picker profile must start with no default working folder");
+  }
+  const clearRequested = assignment.surface.id.includes("settings-default-working-folder-clear");
+  let originalTab: string | null = null;
+  let pickerMayBeOpen = false;
+  try {
+    await postUi(connection, { openModal: "settings" });
+    await waitForReleaseSurfaceInstalledInputElement(input, SETTINGS_DIALOG);
+    originalTab = await selectedSettingsTab(input);
+    if (originalTab !== "general") {
+      await clickReleaseSurfaceInstalledInputElement(
+        input,
+        await waitForReleaseSurfaceInstalledInputElement(input, "[data-debug-id='settings-tab-general']"),
+      );
+      await waitForObservedBoolean(input, "[data-debug-id='settings-tab-general']", "selected", true);
+    }
+    const choose = await waitForReleaseSurfaceInstalledInputElement(input, SETTINGS_DEFAULT_CHOOSE);
+    if (!clearRequested) outcome.present = "pass";
+    await armReleaseNativePicker(connection, input, fixture.directory, "directory");
+    pickerMayBeOpen = input.transport === "macos-native-input";
+    await clickReleaseSurfaceInstalledInputElement(input, choose);
+    await completeReleaseNativePicker(connection, input, {
+      ownedRootPath: profileRoot(request),
+      pickerPath: fixture.directory,
+      pickerKind: "directory",
+    });
+    pickerMayBeOpen = false;
+    await waitForExactObservedValue(input, SETTINGS_DEFAULT_INPUT, "value", fixture.directory);
+    await waitForPublicSettings(connection, { ...baseline, defaultWorkingFolder: fixture.directory });
+    if (clearRequested) {
+      const clear = await waitForReleaseSurfaceInstalledInputElement(input, SETTINGS_DEFAULT_CLEAR);
+      outcome.present = "pass";
+      await clickReleaseSurfaceInstalledInputElement(input, clear);
+      outcome.invoke = "pass";
+      await waitForExactObservedValue(input, SETTINGS_DEFAULT_INPUT, "value", "");
+      await waitForPublicSettings(connection, baseline);
+      outcome.observedEffect = "A native click cleared the exact owned new-session folder and restored last-folder behavior.";
+    } else {
+      outcome.invoke = "pass";
+      outcome.observedEffect = pickerObservedEffect(
+        input,
+        "The candidate-owned native directory dialog selected the exact starting folder for new sessions without starting a provider.",
+        "The isolated one-shot directory result updated the exact starting folder for new sessions without starting a provider.",
+      );
+    }
+    outcome.effect = "pass";
+  } finally {
+    const cleanupErrors: string[] = [];
+    if (pickerMayBeOpen) {
+      try {
+        await performReleaseSurfaceInstalledInputKeyChord(input, ["escape"]);
+        pickerMayBeOpen = false;
+      } catch (error) {
+        cleanupErrors.push(errorMessage(error));
+      }
+    }
+    try {
+      if ((await readPublicSettings(connection)).defaultWorkingFolder !== "") {
+        const clear = await waitForReleaseSurfaceInstalledInputElement(input, SETTINGS_DEFAULT_CLEAR);
+        await clickReleaseSurfaceInstalledInputElement(input, clear);
+      }
+      await waitForPublicSettings(connection, baseline);
+    } catch (error) {
+      cleanupErrors.push(errorMessage(error));
+    }
+    if (originalTab && originalTab !== "general") {
+      try {
+        const selector = `[data-debug-id='settings-tab-${originalTab}']`;
+        await clickReleaseSurfaceInstalledInputElement(input, await waitForReleaseSurfaceInstalledInputElement(input, selector));
+        await waitForObservedBoolean(input, selector, "selected", true);
+      } catch (error) {
+        cleanupErrors.push(errorMessage(error));
+      }
+    }
+    try {
+      await postUi(connection, { openModal: "close", debugHighlights: [] });
+      await waitForReleaseSurfaceInstalledInputElementAbsent(input, SETTINGS_DIALOG);
+    } catch (error) {
+      cleanupErrors.push(errorMessage(error));
+    }
+    if (cleanupErrors.length) throw new Error(cleanupErrors.join("; "));
+    if (!pickerMayBeOpen) outcome.cleanup = "pass";
+  }
+  return pickerMayBeOpen;
+}
+
 async function exerciseBrowserFolderPicker(
   request: ReleaseSurfaceDriverRequest,
   connection: Connection,
@@ -835,10 +954,12 @@ async function waitForObservedBoolean(
 async function readPublicSettings(connection: Connection): Promise<PublicSettings> {
   const body = await apiJson<Json>(connection, "GET", "/settings");
   const keys = Object.keys(body).sort();
-  const expectedKeys = ["browserDownloadFolder", "chatFontPx", "density", "githubGhBinary", "theme"];
+  const expectedKeys = ["browserDownloadFolder", "chatFontPx", "defaultAgentId", "defaultWorkingFolder", "density", "githubGhBinary", "theme"];
   if (JSON.stringify(keys) !== JSON.stringify(expectedKeys)
     || typeof body.browserDownloadFolder !== "string"
     || !Number.isSafeInteger(body.chatFontPx)
+    || !(body.defaultAgentId === null || ["grok", "codex-cli", "claude-code", "antigravity-cli"].includes(String(body.defaultAgentId)))
+    || typeof body.defaultWorkingFolder !== "string"
     || !["compact", "default", "comfortable"].includes(String(body.density))
     || !["gh", "gh.exe"].includes(String(body.githubGhBinary))
     || !["black", "black_warm", "bright"].includes(String(body.theme))) {

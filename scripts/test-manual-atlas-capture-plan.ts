@@ -45,5 +45,8 @@ assert(captureSource.includes("cwd: appDemoCwdLaunch"));
 assert(captureSource.includes("window.devicePixelRatio || 1"));
 assert(captureSource.includes("Math.round(width / devicePixelRatio)"));
 assert(captureSource.includes("Math.round(height / devicePixelRatio)"));
+assert(captureSource.includes('repeatedArgs(args, "--capture-id")'));
+assert(captureSource.includes("plan: capturePlan"));
+assert(captureSource.includes("targets: captureTargets"));
 
 console.log("Manual atlas installed-candidate capture plan passed: 41 exact UI states");

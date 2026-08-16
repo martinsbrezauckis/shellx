@@ -201,7 +201,7 @@ export async function exerciseAgentCliSetupLifecycleControl(
     outcome.effect = "pass";
     outcome.observedEffect = "Bounded native input closed the synthetic Agent CLI setup dialog without invoking its disabled external or provider actions.";
   } catch (error) {
-    outcome.error = error instanceof Error ? error.message : String(error);
+    outcome.error = `${error instanceof Error ? error.message : String(error)}; ${await agentCliSetupDiagnostic(connection, installedInput)}`;
   } finally {
     try {
       if (await findReleaseSurfaceInstalledInputElement(installedInput, DIALOG)) {
@@ -273,7 +273,7 @@ async function exerciseAgentCliExternalDocs(
     outcome.effect = "pass";
     outcome.observedEffect = `Native installed input dispatched ${OWNED_DOCS_URL} from the synthetic ${stage} fixture through the isolated external-browser handoff without launching an operator browser.`;
   } catch (error) {
-    outcome.error = error instanceof Error ? error.message : String(error);
+    outcome.error = `${error instanceof Error ? error.message : String(error)}; ${await agentCliSetupDiagnostic(connection, installedInput)}`;
   } finally {
     try {
       await postUi(connection, {
@@ -376,7 +376,7 @@ async function exerciseAgentCliFreshness(
     outcome.effect = "pass";
     outcome.observedEffect = `Native ${surface === "status" ? "Refresh" : "Recheck"} observed the replaced owned CLI version through the real local target resolution, --version, SHA-256, and size scan before any provider launch.`;
   } catch (error) {
-    outcome.error = error instanceof Error ? error.message : String(error);
+    outcome.error = `${error instanceof Error ? error.message : String(error)}; ${await agentCliSetupDiagnostic(connection, installedInput)}`;
   } finally {
     const cleanupErrors: string[] = [];
     try {
@@ -505,7 +505,7 @@ async function exerciseAgentCliInstallLifecycle(
       outcome.observedEffect = "Native Run installer consumed the exact production confirmation and executed only the fixed candidate-owned npm shim, which recorded argv install -g @openai/codex without an operator install or network access.";
     }
   } catch (error) {
-    outcome.error = error instanceof Error ? error.message : String(error);
+    outcome.error = `${error instanceof Error ? error.message : String(error)}; ${await agentCliSetupDiagnostic(connection, installedInput)}`;
   } finally {
     const cleanupErrors: string[] = [];
     if (confirmationId) {
@@ -762,6 +762,28 @@ async function getUi(connection: Connection): Promise<Record<string, unknown>> {
   const value = await response.json() as unknown;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("GET /state/ui returned a non-object");
   return value as Record<string, unknown>;
+}
+
+async function agentCliSetupDiagnostic(
+  connection: Connection,
+  installedInput: ReleaseSurfaceInstalledInputSession,
+): Promise<string> {
+  try {
+    const ui = await getUi(connection);
+    const loading = await findReleaseSurfaceInstalledInputElement(installedInput, "[role='status']");
+    const alert = await findReleaseSurfaceInstalledInputElement(installedInput, "[role='alert']");
+    const dialog = await findReleaseSurfaceInstalledInputElement(installedInput, DIALOG);
+    const assistant = await findReleaseSurfaceInstalledInputElement(installedInput, ASSISTANT);
+    const fixture = [
+      "closed", "cards", "confirmation", "status-card", "live-status", "live-setup",
+      "install-lifecycle", "clipboard-cards", "clipboard-confirmation",
+    ].includes(String(ui.agentCliSetupFixture)) ? String(ui.agentCliSetupFixture) : "other";
+    const rightTab = ["Info", "Files", "Tools", "Tooling", "Build", "Activity", "Git"]
+      .includes(String(ui.rightTab)) ? String(ui.rightTab) : "other";
+    return `bounded Agent CLI state fixture=${fixture} rightTab=${rightTab} loading=${Boolean(loading)} alert=${Boolean(alert)} dialog=${Boolean(dialog)} assistant=${Boolean(assistant)}`;
+  } catch {
+    return "bounded Agent CLI state unavailable";
+  }
 }
 
 async function postUi(connection: Connection, body: Record<string, unknown>): Promise<void> {

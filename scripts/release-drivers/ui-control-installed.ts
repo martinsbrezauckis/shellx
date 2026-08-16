@@ -3496,6 +3496,8 @@ async function replaceOwnedInputValue(
 type PublicSettings = {
   browserDownloadFolder: string;
   chatFontPx: number;
+  defaultAgentId: string | null;
+  defaultWorkingFolder: string;
   density: string;
   githubGhBinary: string;
   theme: string;
@@ -3505,10 +3507,12 @@ async function readPublicSettings(connection: Connection): Promise<PublicSetting
   const body = await apiJson<Record<string, unknown>>(connection, "GET", "/settings");
   const keys = Object.keys(body).sort();
   if (JSON.stringify(keys) !== JSON.stringify([
-    "browserDownloadFolder", "chatFontPx", "density", "githubGhBinary", "theme",
+    "browserDownloadFolder", "chatFontPx", "defaultAgentId", "defaultWorkingFolder", "density", "githubGhBinary", "theme",
   ])) throw new Error("public Settings payload returned unexpected fields");
   if (typeof body.browserDownloadFolder !== "string"
     || !Number.isSafeInteger(body.chatFontPx)
+    || !(body.defaultAgentId === null || ["grok", "codex-cli", "claude-code", "antigravity-cli"].includes(String(body.defaultAgentId)))
+    || typeof body.defaultWorkingFolder !== "string"
     || !["compact", "default", "comfortable"].includes(String(body.density))
     || !["gh", "gh.exe"].includes(String(body.githubGhBinary))
     || !["black", "black_warm", "bright"].includes(String(body.theme))) {

@@ -96,7 +96,7 @@ try {
     });
   }
   const planAssignments = plan.assignments.filter((assignment) => expectedDriverIds.includes(assignment.driverId));
-  assert.equal(planAssignments.length, 9);
+  assert.equal(planAssignments.length, 11);
   assert(planAssignments.every((assignment) => !assignment.expectedEffect.startsWith("BUILDING:")));
 
   const driverSource = readFileSync(join(repo, "scripts", "release-drivers", "native-picker-lifecycle.ts"), "utf8");
@@ -161,14 +161,15 @@ try {
     delete installedInput.windowsNativeWindow;
   }
   const report = await executeNativePickerLifecycleDriver(request, { installedInput });
-  assert.equal(report.outcomes.length, 9);
+  assert.equal(report.outcomes.length, 11);
   assert(report.outcomes.every((outcome) => outcome.present === "pass"
     && outcome.invoke === "pass"
     && outcome.effect === "pass"
     && outcome.cleanup === "pass"
     && !outcome.error), JSON.stringify(report.outcomes, null, 2));
   assert(report.outcomes.every((outcome) => outcome.observedEffect.includes("isolated one-shot")
-    || outcome.id.endsWith('#18') && outcome.observedEffect.includes("native click")));
+    || (outcome.id.endsWith('#18') || outcome.id.includes("settings-default-working-folder-clear"))
+      && outcome.observedEffect.includes("native click")));
 
   const audit = await getJson<{
     settingsOpen?: boolean;
@@ -188,7 +189,7 @@ try {
   assert.equal(audit.browserWindowOpen, false);
   assert.deepEqual(readdirSync(profile).filter((name) => name.startsWith("release-native-picker-")), []);
 
-  console.log(`Release surface native picker lifecycle tests passed (9 ${fixturePlatform} native-WebDriver contracts; all-platform bindings ready; macOS retains real OS-dialog selection)`);
+  console.log(`Release surface native picker lifecycle tests passed (11 ${fixturePlatform} native-WebDriver contracts; all-platform bindings ready; macOS retains real OS-dialog selection)`);
 } finally {
   if (server && server.exitCode === null && server.signalCode === null) server.kill("SIGTERM");
   if (server) await waitForExit(server);

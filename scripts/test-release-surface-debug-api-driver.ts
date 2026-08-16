@@ -28,6 +28,25 @@ const fixturePlatform = process.platform === "win32" ? "windows-installed" : "li
 const fixtureImagePath = fixturePlatform === "windows-installed"
   ? "C:\\Temp\\ShellXReleaseFixture\\shellx.exe"
   : "/tmp/fixture/shellx";
+const debugApiDriverSource = readFileSync(
+  resolve(root, "scripts/release-drivers/debug-api-route-installed.ts"),
+  "utf8",
+);
+assert.match(
+  debugApiDriverSource,
+  /debugSurface !== undefined && debugSurface !== null && debugSurface !== "app"/,
+  "installed POST /state/ui must accept the app-scoped WebDriver binding residue while rejecting other active surfaces",
+);
+assert.doesNotMatch(
+  debugApiDriverSource,
+  /"debugInput", "debugDrag", "debugSurface", "clickSelector"/,
+  "app-scoped WebDriver routing must not be treated as an active UI command",
+);
+assert.match(
+  debugApiDriverSource,
+  /delete copy\.debugSurface;/,
+  "logical POST /state/ui cleanup must ignore the transient app-scoped WebDriver routing marker",
+);
 
 assert.throws(
   () => validateDebugApiVaultResetResponse({
@@ -261,7 +280,7 @@ const operatorGates = [
   { method: "POST", path: "/browser/dialogs/resolve", requestPath: "/browser/dialogs/resolve", statePath: "/browser/dialogs" },
   { method: "POST", path: "/browser/permissions/resolve", requestPath: "/browser/permissions/resolve", statePath: "/browser/permissions" },
   { method: "POST", path: "/browser/session-grants/resolve", requestPath: "/browser/session-grants/resolve", statePath: "/browser/requests" },
-  { method: "POST", path: "/browser/task/autonomy", requestPath: "/browser/task/autonomy", statePath: "/browser/state" },
+  { method: "POST", path: "/browser/task/autonomy", requestPath: "/browser/task/autonomy", statePath: "/browser/tasks" },
 ] as const;
 const vaultE2eMutations = [
   "/vault/e2e/reset",
@@ -1463,6 +1482,8 @@ try {
   assert.deepEqual(auditBody.settings, {
     browserDownloadFolder: "",
     chatFontPx: 15,
+    defaultAgentId: null,
+    defaultWorkingFolder: "",
     density: "default",
     githubGhBinary: "gh",
     theme: "black",

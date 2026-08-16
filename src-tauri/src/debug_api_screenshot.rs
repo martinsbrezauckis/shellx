@@ -494,11 +494,18 @@ pub(super) async fn screenshot(
     #[cfg(not(windows))]
     {
         use tauri::Manager as _;
-        let mut labels = s
+        let mut labels = Vec::new();
+        if s.app.get_webview_window("main").is_some() {
+            labels.push("main".to_string());
+        }
+        let mut titled_labels = s
             .app
             .webview_windows()
             .into_iter()
             .filter_map(|(label, window)| {
+                if label == "main" {
+                    return None;
+                }
                 window
                     .title()
                     .ok()
@@ -506,10 +513,8 @@ pub(super) async fn screenshot(
                     .map(|_| label)
             })
             .collect::<Vec<_>>();
-        labels.sort();
-        if let Some(main_index) = labels.iter().position(|label| label == "main") {
-            labels.swap(0, main_index);
-        }
+        titled_labels.sort();
+        labels.extend(titled_labels);
         for label in labels {
             match capture_window_label_png(&s.app, &label).await {
                 Ok(bytes) => {

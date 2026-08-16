@@ -443,6 +443,8 @@ const connectionDraftValues: Record<string, string> = {
 const publicSettings = {
   browserDownloadFolder: "",
   chatFontPx: 19,
+  defaultAgentId: null as "grok" | "codex-cli" | "claude-code" | "antigravity-cli" | null,
+  defaultWorkingFolder: "",
   density: "default",
   githubGhBinary: "gh",
   theme: "black",
@@ -2067,6 +2069,12 @@ function selectorDisplayed(selector: string): boolean {
   if (selector === "[role='dialog'][aria-label='Settings'] [aria-label='Close settings']") return settingsOpen;
   if (selector === "[data-debug-id='settings-browser-download-folder']") return settingsOpen && settingsTab === "general";
   if (selector === "[data-debug-id='settings-browser-download-folder-choose']") {
+    return settingsOpen && settingsTab === "general";
+  }
+  if (selector === "[data-debug-id='settings-default-agent']"
+    || selector === "[data-debug-id='settings-default-working-folder']"
+    || selector === "[data-debug-id='settings-default-working-folder-choose']"
+    || selector === "[data-debug-id='settings-default-working-folder-clear']") {
     return settingsOpen && settingsTab === "general";
   }
   if (selector === "[data-debug-id='surface-components-settings-vaultsetuppanel-17']") {
@@ -4231,6 +4239,9 @@ const webdriver = createServer(async (request, response) => {
         if (selector === "[aria-label='Chat font size in pixels']" && requested.includes("value")) {
           observation.value = String(publicSettings.chatFontPx);
         }
+        if (selector === "[data-debug-id='settings-default-agent']" && requested.includes("value")) {
+          observation.value = publicSettings.defaultAgentId ?? "";
+        }
         if (Object.hasOwn(connectionDraftValues, selector) && requested.includes("value")) {
           observation.value = connectionDraftValues[selector];
         }
@@ -4471,6 +4482,8 @@ const webdriver = createServer(async (request, response) => {
           } else if (selector === "[data-debug-id='settings-browser-download-folder']"
             || selector === "[data-debug-id='shellx-browser-download-folder']") {
             observation.value = publicSettings.browserDownloadFolder;
+          } else if (selector === "[data-debug-id='settings-default-working-folder']") {
+            observation.value = publicSettings.defaultWorkingFolder;
           } else if (selector === "[data-debug-id='shellx-browser-homepage']") {
             observation.value = browserHomepageValue;
           } else if (selector === "[data-debug-id='shellx-browser-history-search']") {
@@ -4821,6 +4834,12 @@ const webdriver = createServer(async (request, response) => {
         if (args[0] === "[data-debug-id='settings-browser-download-folder']") {
           return webdriverValue(response, { value: publicSettings.browserDownloadFolder });
         }
+        if (args[0] === "[data-debug-id='settings-default-agent']") {
+          return webdriverValue(response, { value: publicSettings.defaultAgentId ?? "" });
+        }
+        if (args[0] === "[data-debug-id='settings-default-working-folder']") {
+          return webdriverValue(response, { value: publicSettings.defaultWorkingFolder });
+        }
         if (args[0] === "[data-debug-id='shellx-browser-download-folder']") {
           return webdriverValue(response, { value: publicSettings.browserDownloadFolder });
         }
@@ -5109,7 +5128,9 @@ const webdriver = createServer(async (request, response) => {
       const renameInput = sessionTabSelectorParts(selector);
       const isSessionRenameInput = renameInput?.descendant === "[data-debug-id='session-rename-input']"
         && renameInput.tabId === sessionRenamingTabId;
-      if ((!Object.hasOwn(inputClearCounts, selector) && !leftRailInput && !isSessionRenameInput) || typeof body.text !== "string") {
+      const defaultAgentSelect = selector === "[data-debug-id='settings-default-agent']";
+      if ((!Object.hasOwn(inputClearCounts, selector) && !leftRailInput && !isSessionRenameInput && !defaultAgentSelect)
+        || typeof body.text !== "string") {
         return webdriverError(response, 400, "invalid argument", "fixture value request is invalid");
       }
       if (leftRailInput) leftRailRenameValue += body.text;
@@ -5121,6 +5142,19 @@ const webdriver = createServer(async (request, response) => {
       else if (selector === "[data-debug-id='connector-inbox-date-input']") connectorDateValue += body.text;
       else if (Object.hasOwn(prTextValues, selector)) prTextValues[selector] += body.text;
       else if (selector === "[data-debug-id='command-palette-input']") commandPaletteInputValue += body.text;
+      else if (selector === "[data-debug-id='settings-default-agent']") {
+        const options = {
+          "Choose each time": null,
+          Grok: "grok",
+          "Codex CLI": "codex-cli",
+          "Claude Code": "claude-code",
+          Antigravity: "antigravity-cli",
+        } as const;
+        if (!Object.hasOwn(options, body.text)) {
+          return webdriverError(response, 400, "invalid argument", "fixture default Agent option is invalid");
+        }
+        publicSettings.defaultAgentId = options[body.text as keyof typeof options];
+      }
       else if (
         selector === "[data-debug-id='settings-browser-download-folder']"
         || selector === "[data-debug-id='shellx-browser-download-folder']"
@@ -5284,6 +5318,14 @@ const webdriver = createServer(async (request, response) => {
       }
       else if (selector === "[data-debug-id='settings-browser-download-folder-choose']") {
         publicSettings.browserDownloadFolder = consumeReleaseNativePicker("directory");
+        clickedSelectors.push(selector);
+      }
+      else if (selector === "[data-debug-id='settings-default-working-folder-choose']") {
+        publicSettings.defaultWorkingFolder = consumeReleaseNativePicker("directory");
+        clickedSelectors.push(selector);
+      }
+      else if (selector === "[data-debug-id='settings-default-working-folder-clear']") {
+        publicSettings.defaultWorkingFolder = "";
         clickedSelectors.push(selector);
       }
       else if (selector === "[data-debug-id='shellx-browser-download-folder-choose']") {

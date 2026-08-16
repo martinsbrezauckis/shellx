@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { ReleaseSurfaceInventory } from "./lib/release-surface-inventory";
 import { composeFinalSurfaceReceipt } from "./lib/release-surface-receipt-composer";
+import { composeFinalSurfaceReceiptFromUnionManifest } from "./lib/release-surface-union-manifest";
 import { discoverFinalSurfaceReceiptPaths } from "./lib/release-surface-receipt-discovery";
 import { verifyReleaseSurfaceEvidenceFiles } from "./lib/release-surface-evidence-files";
 import {
@@ -64,34 +65,47 @@ for (const path of receiptPaths) {
     continue;
   }
   const evidenceById = new Map(receipt.evidenceArtifacts?.map((artifact) => [artifact.id, artifact.relativePath]));
+  const unionManifest = evidenceById.get("matrix-outcome-union");
   const runManifest = evidenceById.get("driver-run-manifest");
   const scenarioReport = evidenceById.get("scenario-report");
   const signatureReceipt = evidenceById.get("signature-receipt");
   const candidateAttestation = evidenceById.get("candidate-attestation");
   const candidateTeardown = evidenceById.get("candidate-teardown");
   const installationReceipt = evidenceById.get("installation-receipt");
-  if (!runManifest || !scenarioReport || !signatureReceipt || !candidateAttestation
-    || !candidateTeardown || !installationReceipt) {
+  if (!unionManifest && (!runManifest || !scenarioReport || !signatureReceipt || !candidateAttestation
+    || !candidateTeardown || !installationReceipt)) {
     recomposeErrors.push(`${path}: receipt must declare driver-run-manifest, scenario-report, signature-receipt, candidate-attestation, candidate-teardown, and installation-receipt evidence`);
     continue;
   }
   try {
-    const recomposed = composeFinalSurfaceReceipt({
-      receiptsDir: resolvedReceiptsDir,
-      driverRunDir: dirname(resolve(resolvedReceiptsDir, runManifest)),
-      scenarioReportPath: resolve(resolvedReceiptsDir, scenarioReport),
-      signatureReceiptPath: resolve(resolvedReceiptsDir, signatureReceipt),
-      candidateAttestationPath: resolve(resolvedReceiptsDir, candidateAttestation),
-      candidateTeardownPath: resolve(resolvedReceiptsDir, candidateTeardown),
-      installationReceiptPath: resolve(resolvedReceiptsDir, installationReceipt),
-      contract,
-      inventory,
-      driverPlan: loadedDriverPlan,
-      platform: receipt.platform,
-      sourceCommit,
-      version,
-      rootDir: root,
-    });
+    const recomposed = unionManifest
+      ? composeFinalSurfaceReceiptFromUnionManifest({
+          receiptsDir: resolvedReceiptsDir,
+          manifestPath: resolve(resolvedReceiptsDir, unionManifest),
+          contract,
+          inventory,
+          driverPlan: loadedDriverPlan,
+          platform: receipt.platform,
+          sourceCommit,
+          version,
+          rootDir: root,
+        })
+      : composeFinalSurfaceReceipt({
+          receiptsDir: resolvedReceiptsDir,
+          driverRunDir: dirname(resolve(resolvedReceiptsDir, runManifest!)),
+          scenarioReportPath: resolve(resolvedReceiptsDir, scenarioReport!),
+          signatureReceiptPath: resolve(resolvedReceiptsDir, signatureReceipt!),
+          candidateAttestationPath: resolve(resolvedReceiptsDir, candidateAttestation!),
+          candidateTeardownPath: resolve(resolvedReceiptsDir, candidateTeardown!),
+          installationReceiptPath: resolve(resolvedReceiptsDir, installationReceipt!),
+          contract,
+          inventory,
+          driverPlan: loadedDriverPlan,
+          platform: receipt.platform,
+          sourceCommit,
+          version,
+          rootDir: root,
+        });
     if (JSON.stringify(recomposed) !== JSON.stringify(receipt)) {
       recomposeErrors.push(`${path}: supplied receipt does not exactly match independent recomposition from raw evidence`);
       continue;

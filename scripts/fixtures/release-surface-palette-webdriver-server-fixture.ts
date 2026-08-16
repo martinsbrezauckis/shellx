@@ -58,6 +58,8 @@ let releaseCount = 0;
 let attachmentActive = false;
 let attachmentRemoveClicks = 0;
 let assetBoardOpen = false;
+let agentPickerOpen = false;
+const baselineActiveTabState = structuredClone(activeTabState);
 
 const candidate = createServer(async (request, response) => {
   try {
@@ -79,9 +81,9 @@ const candidate = createServer(async (request, response) => {
       return json(response, 200, {
         bottomTab,
         autonomy,
-        activeTab: { ...activeTabState, tabId: activeTabId, autonomy },
+        activeTab: { ...activeTabState, tabId: activeTabId },
         activeTabId,
-        openTabs,
+        openTabs: openTabRows(),
       });
     }
     if (request.url === "/state/ui" && request.method === "POST") {
@@ -197,6 +199,12 @@ const webdriver = createServer(async (request, response) => {
       if (selector === "[data-debug-id='composer-screenshot']" && !paletteOpen && !assetBoardOpen) {
         return webdriverValue(response, { "element-6066-11e4-a52e-4f735466cecf": "ui-screenshot:composer" });
       }
+      if (selector === "[data-debug-id='composer-agent']" && !paletteOpen && !assetBoardOpen) {
+        return webdriverValue(response, { "element-6066-11e4-a52e-4f735466cecf": "agent:picker" });
+      }
+      if (selector === "[data-agent-id='grok']" && agentPickerOpen) {
+        return webdriverValue(response, { "element-6066-11e4-a52e-4f735466cecf": "agent:grok" });
+      }
       return webdriverError(response, 404, "no such element", `fixture does not expose ${selector}`);
     }
     const displayed = path.match(new RegExp(`^${escapeRegex(prefix)}/element/([^/]+)/displayed$`));
@@ -210,7 +218,9 @@ const webdriver = createServer(async (request, response) => {
         || ((elementId === "attachment:chip" || elementId === "attachment:remove") && attachmentActive)
         || (elementId === "ui-screenshot:board" && assetBoardOpen)
         || (elementId === "ui-screenshot:asset" && assetBoardOpen)
-        || (elementId === "ui-screenshot:composer" && !paletteOpen && !assetBoardOpen),
+        || (elementId === "ui-screenshot:composer" && !paletteOpen && !assetBoardOpen)
+        || (elementId === "agent:picker" && !paletteOpen && !assetBoardOpen)
+        || (elementId === "agent:grok" && agentPickerOpen),
       ));
     }
     const clicked = path.match(new RegExp(`^${escapeRegex(prefix)}/element/([^/]+)/click$`));
@@ -228,6 +238,15 @@ const webdriver = createServer(async (request, response) => {
         }
         nativeClicks.push(elementId);
         createScreenshotAttachment();
+        return webdriverValue(response, null);
+      }
+      if (elementId === "agent:picker") {
+        agentPickerOpen = true;
+        return webdriverValue(response, null);
+      }
+      if (elementId === "agent:grok" && agentPickerOpen) {
+        activeTabState = { ...activeTabState, agentId: "grok" };
+        agentPickerOpen = false;
         return webdriverValue(response, null);
       }
       if (!elementId.startsWith("action:")) {
@@ -310,7 +329,16 @@ function applyChord(keys: string[]): void {
   const command = keys[0] === "\uE009" || keys[0] === "\uE03D";
   if (command && keys[1] === "t") {
     activeTabId = `fixture-tab-${nextTabNumber}`;
-    activeTabState = { ...activeTabState, tabId: activeTabId, status: "Idle" };
+    activeTabState = {
+      tabId: activeTabId,
+      cwd: "",
+      agentId: null,
+      status: "Idle",
+      isSending: false,
+      connectionId: null,
+      connectionLabel: "Local",
+      connectionTransport: "local",
+    };
     nextTabNumber += 1;
     openTabs = [...openTabs, { tabId: activeTabId }];
   } else if (command && keys[1] === "w") {
@@ -327,7 +355,17 @@ function closeActiveTab(): void {
   const fallback = next[index] ?? next[index - 1];
   openTabs = next;
   activeTabId = fallback?.tabId ?? "";
-  activeTabState = { ...activeTabState, tabId: activeTabId, status: "Idle" };
+  activeTabState = activeTabId === "fixture-tab-1"
+    ? structuredClone(baselineActiveTabState)
+    : { ...activeTabState, tabId: activeTabId, status: "Idle" };
+}
+
+function openTabRows(): Array<Record<string, unknown>> {
+  return openTabs.map((tab) => tab.tabId === activeTabId
+    ? { ...activeTabState, tabId: activeTabId, autonomy }
+    : tab.tabId === "fixture-tab-1"
+      ? { ...baselineActiveTabState, autonomy }
+      : { ...tab });
 }
 
 function keyDownValues(body: Record<string, unknown>): string[] {

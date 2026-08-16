@@ -138,27 +138,27 @@ assert.deepEqual(
   ],
   "callable hidden Host MCP aliases must remain explicit compatibility surfaces",
 );
-assert.equal(generated.counts["ui-control"], 696, "inventory captures every shipping actionable UI instance, including finite mapped menus");
-assert.equal(generated.counts["ui-debug-surface"], 611, "inventory captures every shipping concrete debug marker instance without deduplication");
+assert.equal(generated.counts["ui-control"], 699, "inventory captures every shipping actionable UI instance, including finite mapped menus");
+assert.equal(generated.counts["ui-debug-surface"], 615, "inventory captures every shipping concrete debug marker instance without deduplication");
 assert.deepEqual(generated.occurrenceAccounting.uiControls, {
-  candidates: 680,
-  excludedNonActions: 23,
+  candidates: 684,
+  excludedNonActions: 24,
   finiteVariantInstances: 50,
-  inventoried: 696,
+  inventoried: 699,
 }, "event shields and statically non-addressable inputs must be excluded while finite mapped menus expand into concrete actions");
 assert.deepEqual(generated.occurrenceAccounting.uiDebugSurfaces, {
-  candidates: 563,
+  candidates: 567,
   finiteVariantInstances: 57,
-  inventoried: 611,
+  inventoried: 615,
 }, "every concrete debug marker instance must remain in the release ledger");
 assert.equal(
   new Set(generated.items.filter((item) => item.kind === "ui-control").map((item) => item.name)).size,
-  682,
+  685,
   "repeated source controls remain separate while finite menu instances use concrete names",
 );
 assert.equal(
   new Set(generated.items.filter((item) => item.kind === "ui-debug-surface").map((item) => item.name)).size,
-  603,
+  607,
   "repeated debug markers remain separate while finite menu instances use concrete names",
 );
 assert.equal(generated.copyDerivedInteractiveControls, 222, "copy-derived UI locators remain explicitly visible as brittle coverage");
@@ -232,7 +232,7 @@ assert(
 );
 assert.equal(
   promotedUiDebugSurfaces.length,
-  528,
+  532,
   "only UI debug surfaces with deterministic owned renderer state may enter the executable lane",
 );
 assert.deepEqual(
@@ -411,13 +411,13 @@ const liveDriverPlan = verifyFinalSurfaceDriverPlan(
 );
 assert.equal(liveDriverPlan.status, "ready", "every current 0.3.6 surface must have an executable installed-driver assignment");
 assert.equal(liveDriverPlan.counts.inventoryItems, generated.items.length);
-assert.equal(liveDriverPlan.counts.inventoryCells, 5_717);
+assert.equal(liveDriverPlan.counts.inventoryCells, 5_738);
 assert.equal(
   liveDriverPlan.counts.ready,
-  5_717,
+  5_738,
   "every current surface-platform cell must have an executable driver before the frozen release-candidate matrix runs",
 );
-assert.equal(liveDriverPlan.counts.assigned, 5_717, "every exact surface-platform cell must have an explicit ready or building driver lane");
+assert.equal(liveDriverPlan.counts.assigned, 5_738, "every exact surface-platform cell must have an explicit ready or building driver lane");
 assert.equal(liveDriverPlan.counts.missing, 0, "the implementation backlog must be typed rather than hidden as missing coverage");
 const finalSurfaceGateDoc = readFileSync(resolve(root, "release", "FINAL_SURFACE_GATE.md"), "utf8");
 assert.deepEqual(
@@ -772,7 +772,7 @@ const settingsCoreDebugAssignments = loadedLiveDriverPlan.assignments.filter((as
   assignment.surfaceId.startsWith("ui-debug-surface:")
     && [...settingsCoreDebugFixtures.keys()].some((source) => assignment.surfaceId.includes(`@${source}#`))
 ));
-assert.equal(settingsCoreDebugAssignments.length, 13);
+assert.equal(settingsCoreDebugAssignments.length, 17);
 assert(
   settingsCoreDebugAssignments.every((assignment) => {
     const source = [...settingsCoreDebugFixtures.keys()].find((candidate) => assignment.surfaceId.includes(`@${candidate}#`));
@@ -786,7 +786,7 @@ assert(
 const executableUiDebugAssignments = loadedLiveDriverPlan.assignments.filter(
   (assignment) => assignment.driverId === "ui-debug-surface-installed",
 );
-assert.equal(executableUiDebugAssignments.length, 527);
+assert.equal(executableUiDebugAssignments.length, 531);
 assert(
   executableUiDebugAssignments.every((assignment) => assignment.expectedEffect.includes("no control activation is claimed")),
   "debug addressability assignments must never claim the corresponding control's semantic action",
@@ -1459,7 +1459,7 @@ assert(
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bounded-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bounded-installed")?.platforms["macos-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bounded-installed")?.platforms["linux-installed"] === "ready"
-    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "ui-control-bounded-installed").length === 369
+    && loadedLiveDriverPlan.assignments.filter((assignment) => assignment.driverId === "ui-control-bounded-installed").length === 370
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bottom-tabs-installed")?.platforms["windows-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bottom-tabs-installed")?.platforms["macos-installed"] === "ready"
     && loadedLiveDriverPlan.drivers.find((driver) => driver.id === "ui-control-bottom-tabs-installed")?.platforms["linux-installed"] === "ready"
@@ -1820,14 +1820,14 @@ assert(
     )).length === 20
     && loadedLiveDriverPlan.assignments.filter((assignment) => (
       assignment.driverId === "ui-control-native-picker-lifecycle-installed"
-    )).length === 7
+    )).length === 9
     && loadedLiveDriverPlan.assignments.filter((assignment) => (
       assignment.driverId === "ui-control-screenshot-attachment-installed"
         && assignment.fixtureId === "ui:isolated-profile-empty-composer-screenshot"
         && assignment.oracleId === "ui:activation:owned-app-screenshot-attached"
         && assignment.cleanupId === "ui:remove-exact-screenshot-attachment-delete-owned-png-restore-view"
     )).length === 2
-    && liveDriverPlan.counts.readyByKind["ui-control"] === 2_084
+    && liveDriverPlan.counts.readyByKind["ui-control"] === 2_093
     && uiControlDriverSource.includes('invocationTransport: "native-installed-input"')
     && uiControlDriverSource.includes("createReleaseSurfaceInstalledInputSession")
     && uiControlDriverSource.includes("clickReleaseSurfaceWebDriverElement")

@@ -832,7 +832,18 @@ function verifyAppliedFillResult(result: Json, taskId: string | null, label: str
     || (taskId !== null && result.taskId !== taskId)
     || (result.extractedText !== undefined && result.extractedText !== null)
     || (result.screenshot !== undefined && result.screenshot !== null)) {
-    throw new Error(`${label} omitted its exact redacted applied result`);
+    const safeShape = {
+      ok: result.ok === true,
+      status: typeof result.status === "string" ? result.status.slice(0, 80) : null,
+      taskIdMatches: taskId === null || result.taskId === taskId,
+      extractedTextState: result.extractedText === undefined
+        ? "omitted"
+        : result.extractedText === null ? "null" : "present",
+      screenshotState: result.screenshot === undefined
+        ? "omitted"
+        : result.screenshot === null ? "null" : "present",
+    };
+    throw new Error(`${label} omitted its exact redacted applied result: ${JSON.stringify(safeShape)}`);
   }
 }
 

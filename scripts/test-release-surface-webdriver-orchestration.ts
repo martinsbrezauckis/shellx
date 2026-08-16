@@ -91,6 +91,47 @@ try {
   assert.equal(targeted.receipt.scenarioReport, undefined);
   assert.equal(targeted.receipt.candidateTeardown?.status, "pass");
 
+  const targetedScenarioInput = await orchestrationInput("targeted-scenario");
+  targetedScenarioInput.targetedClosure = true;
+  targetedScenarioInput.requireProviderRouteBatch = true;
+  targetedScenarioInput.requireHealthEvidence = true;
+  const targetedScenario = await withReleaseSurfaceWebDriverOrchestration(
+    targetedScenarioInput,
+    async (_session, context) => {
+      const app = await launchFixtureApplication();
+      context.bindApplication({
+        processId: app.pid!,
+        executableNodePath: process.execPath,
+        executableLaunchPath: process.execPath,
+      });
+      const boundEvidence = writeBoundCandidateEvidence("targeted-scenario", app.pid!, context);
+      const targetedManifest = JSON.parse(readFileSync(boundEvidence.manifestPath, "utf8"));
+      targetedManifest.targetedClosure = { driverIds: ["ui-control-bottom-tabs-installed"] };
+      writeFileSync(boundEvidence.manifestPath, `${JSON.stringify(targetedManifest, null, 2)}\n`);
+      context.bindCandidateAttestation(boundEvidence.candidatePath);
+      context.bindDriverRunManifest(boundEvidence.manifestPath);
+      context.bindProviderRouteBatch(writeEvidence(
+        "targeted-scenario-provider-routes.json",
+        { schema: "fixture-provider-routes", routes: 20 },
+      ));
+      context.bindHealthEvidence(writeEvidence(
+        "targeted-scenario-health.json",
+        { schema: "fixture-health", status: "pass" },
+      ));
+      context.bindScenarioReport(writeEvidence(
+        "targeted-scenario-report.json",
+        { schema: "fixture-scenario", status: "pass" },
+      ));
+      return "targeted-scenario-completed";
+    },
+  );
+  assert.equal(targetedScenario.value, "targeted-scenario-completed");
+  assert.equal(targetedScenario.receipt.executionWindow, "targeted-post-matrix");
+  assert.equal(targetedScenario.receipt.providerRouteBatch?.basename, "targeted-scenario-provider-routes.json");
+  assert.equal(targetedScenario.receipt.healthEvidence?.basename, "targeted-scenario-health.json");
+  assert.equal(targetedScenario.receipt.scenarioReport?.basename, "targeted-scenario-report.json");
+  assert.equal(targetedScenario.receipt.candidateTeardown?.status, "pass");
+
   const callbackInput = await orchestrationInput("callback-failure");
   const callbackError = await expectFailure(callbackInput, async (_session, context) => {
     const app = await launchFixtureApplication();
@@ -190,6 +231,10 @@ try {
   assert.match(cliSource, /context\.registerSessionDeleteObserver/);
   assert.match(cliSource, /context\.bindHealthEvidence/);
   assert.match(cliSource, /context\.bindScenarioReport/);
+  assert.match(cliSource, /const collectScenario = args\.includes\("--collect-scenario"\)/);
+  assert.match(cliSource, /targetedClosure && !collectScenario/);
+  assert.match(cliSource, /requireProviderRouteBatch: !targetedClosure \|\| collectScenario/);
+  assert.match(cliSource, /requireHealthEvidence: !targetedClosure \|\| collectScenario/);
   assert.match(cliSource, /frozen-candidate orchestration requires a clean source checkout/);
   assert.doesNotMatch(cliSource, /--webdriver-session/, "the orchestrator owns one live session instead of accepting a stale session file");
 

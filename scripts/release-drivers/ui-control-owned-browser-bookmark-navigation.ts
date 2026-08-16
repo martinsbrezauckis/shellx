@@ -77,12 +77,14 @@ export async function exerciseOwnedBrowserBookmarkNavigation(
   let originalWindow: string | null = null;
   let browserWindowOpen = false;
   let ownedEmptyHistoryBaseline = false;
+  let baselineBookmarks: Bookmark[] = [];
   let baselineManageMode: boolean | null = null;
   try {
     if (!kind) throw new Error(`owned bookmark navigation driver does not support ${assignment.surface.name}`);
     trace(kind, "start");
-    if ((await listBookmarks(connection)).length !== 0) {
-      throw new Error("owned bookmark navigation fixture requires an isolated empty bookmark baseline");
+    baselineBookmarks = await listBookmarks(connection);
+    if (baselineBookmarks.some((bookmark) => [ROOT_ID, FOLDER_ID, CHILD_ID].includes(bookmark.bookmarkId))) {
+      throw new Error("owned bookmark navigation fixture namespace is not isolated");
     }
     if (await historyCount(connection) !== 0) {
       throw new Error("owned bookmark navigation fixture requires an isolated empty history baseline");
@@ -206,7 +208,9 @@ export async function exerciseOwnedBrowserBookmarkNavigation(
       await cleanupAttempt(cleanupErrors, async () => deleteBookmark(connection, bookmarkId));
     }
     await cleanupAttempt(cleanupErrors, async () => {
-      if ((await listBookmarks(connection)).length !== 0) throw new Error("owned bookmark navigation cleanup left bookmark state");
+      if (bookmarkSnapshot(await listBookmarks(connection)) !== bookmarkSnapshot(baselineBookmarks)) {
+        throw new Error("owned bookmark navigation cleanup did not restore the exact baseline");
+      }
     });
     if (taskId) {
       await cleanupAttempt(cleanupErrors, async () => {
@@ -318,6 +322,10 @@ async function listBookmarks(connection: Connection): Promise<Bookmark[]> {
   return Array.isArray(value.bookmarks)
     ? value.bookmarks.map((bookmark) => record(bookmark, "Browser bookmark") as Bookmark)
     : [];
+}
+
+function bookmarkSnapshot(bookmarks: Bookmark[]): string {
+  return JSON.stringify([...bookmarks].sort((left, right) => left.bookmarkId.localeCompare(right.bookmarkId)));
 }
 
 async function waitForBookmark(connection: Connection, predicate: (bookmark: Bookmark) => boolean): Promise<Bookmark> {

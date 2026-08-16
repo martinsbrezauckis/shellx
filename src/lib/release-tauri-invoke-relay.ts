@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { apiPostJson } from "./debug-api";
+import { adoptRotatedDebugToken, apiPostJson } from "./debug-api";
 
 export const RELEASE_TAURI_INVOKE_EVENT = "release-test-tauri-invoke";
 
@@ -18,11 +18,13 @@ type ClaimedInvoke = {
 type RelayDependencies = {
   invokeCommand: (command: string, args: Record<string, unknown>) => Promise<unknown>;
   postJson: <T = unknown>(path: string, body: unknown) => Promise<T>;
+  adoptRotatedToken: (token: string) => void;
 };
 
 const DEFAULT_DEPENDENCIES: RelayDependencies = {
   invokeCommand: (command, args) => invoke(command, args),
   postJson: apiPostJson,
+  adoptRotatedToken: adoptRotatedDebugToken,
 };
 
 /**
@@ -55,6 +57,10 @@ export async function handleReleaseTauriInvokeEvent(
 
   try {
     const value = await dependencies.invokeCommand(claimed.command, claimed.args);
+    if (claimed.command === "shellxagent_token_regenerate") {
+      if (typeof value !== "string") throw new Error("token rotation returned an invalid value");
+      dependencies.adoptRotatedToken(value);
+    }
     try {
       await dependencies.postJson(`/release-test/tauri-invokes/${id}/complete`, {
         nonce,

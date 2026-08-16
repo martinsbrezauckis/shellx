@@ -1573,6 +1573,8 @@ try {
   assert.deepEqual(audit.publicSettings, {
     browserDownloadFolder: "",
     chatFontPx: 19,
+    defaultAgentId: null,
+    defaultWorkingFolder: "",
     density: "default",
     githubGhBinary: "gh",
     theme: "black",

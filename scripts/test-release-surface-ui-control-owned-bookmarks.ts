@@ -47,6 +47,15 @@ process.once("SIGTERM", onTerminationSignal);
 try {
   const bookmarkNavigationSource = readFileSync(join(root, "scripts/release-drivers/ui-control-owned-browser-bookmark-navigation.ts"), "utf8");
   assert(bookmarkNavigationSource.includes('expectedDomains: ["127.0.0.1"]'), "owned bookmark navigation must scope its private loopback target");
+  assert(
+    bookmarkNavigationSource.includes("bookmarkSnapshot(await listBookmarks(connection)) !== bookmarkSnapshot(baselineBookmarks)"),
+    "owned bookmark navigation must preserve the installed candidate's exact default bookmark baseline",
+  );
+  const tabLifecycleSource = readFileSync(join(root, "scripts/release-drivers/ui-control-owned-browser-bookmarks.ts"), "utf8");
+  assert(
+    tabLifecycleSource.includes('const expectedDomains = /^https?:\\/\\//i.test(url) ? [new URL(url).hostname] : [];'),
+    "owned Browser tab lifecycle must scope every HTTP(S) target to its exact hostname",
+  );
   const inventory = JSON.parse(readFileSync(join(root, "release/surface-inventory.json"), "utf8")) as ReleaseSurfaceInventory;
   const plan = JSON.parse(readFileSync(join(root, "release/surface-driver-plan.json"), "utf8")) as FinalSurfaceDriverPlan;
   const inventoryById = new Map(inventory.items.map((surface) => [surface.id, surface]));

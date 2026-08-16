@@ -520,7 +520,7 @@ try {
     includeHidden: false,
   });
   assert.deepEqual(auditBody.invoked.find((entry) => entry.command === "read_text_file_for_path")?.args, {
-    path: join(temp, "shellx-final-profile.json"),
+    path: join(temp, "final-surface-files", "read_text_file_for_path", "source.txt"),
     tabId: "final-surface-profile-fixture",
     sessionCwd: temp,
   });
@@ -851,8 +851,8 @@ try {
   });
   assert.deepEqual(auditBody.invoked.find((entry) => entry.command === "shellx_browser_copy_local_artifact")?.args, {
     request: {
-      sourcePath: join(temp, ".shellx", "browser-artifacts", "shellx-browser-traces", "final-surface-owned-copy", "source.txt"),
-      destinationDir: join(temp, ".shellx", "browser-artifacts", "shellx-browser-traces", "final-surface-owned-copy", "destination"),
+      sourcePath: join(temp, ".grok", "browser-artifacts", "shellx-browser-traces", "final-surface-owned-copy", "source.txt"),
+      destinationDir: join(temp, ".grok", "browser-artifacts", "shellx-browser-traces", "final-surface-owned-copy", "destination"),
       fileName: "final-surface-browser-copy.txt",
     },
   });
@@ -874,7 +874,7 @@ try {
   assert.match(String(engineSyncArgs?.request?.url ?? ""), /^http:\/\/127\.0\.0\.1:\d+\/settle$/);
   assert.equal(existsSync(join(temp, "final-surface-files")), false, "owned Tauri file fixtures must be removed");
   assert.equal(
-    existsSync(join(temp, ".shellx", "browser-artifacts", "shellx-browser-traces", "final-surface-owned-copy")),
+    existsSync(join(temp, ".grok", "browser-artifacts", "shellx-browser-traces", "final-surface-owned-copy")),
     false,
     "owned Browser copy fixture must be removed",
   );
@@ -1227,6 +1227,7 @@ function testOracleId(command: string): string {
     "approve_build_plan",
     "approve_goal_plan",
     "archive_session_artifacts",
+    "get_build_receipts",
     "grok_trace_export",
     "interject_prompt",
     "mcp_marketplace_install",

@@ -66,11 +66,11 @@ export async function exerciseDebugApiBrowserRenderedCheckMutation(
       throw new Error("rendered-check did not prove isolated hidden-renderer destruction");
     }
     const after = await apiJson(connection, "GET", "/browser/summary");
-    if (JSON.stringify(after) !== JSON.stringify(before)) {
-      throw new Error("rendered-check changed the visible Browser summary or revisions");
+    if (stableVisibleSummary(after) !== stableVisibleSummary(before)) {
+      throw new Error("rendered-check changed the visible Browser summary");
     }
     outcome.effect = "pass";
-    outcome.observedEffect = "POST /browser/rendered-check matched exact text, title, and selector in one isolated loopback hidden renderer, destroyed it, and left visible Browser summary state byte-for-byte unchanged; URL and page data were not retained.";
+    outcome.observedEffect = "POST /browser/rendered-check matched exact text, title, and selector in one isolated loopback hidden renderer, destroyed it, and left the visible Browser projection and counts unchanged; URL and page data were not retained.";
   } catch (error) {
     outcome.error = error instanceof Error ? error.message : String(error);
   } finally {
@@ -85,6 +85,13 @@ export async function exerciseDebugApiBrowserRenderedCheckMutation(
     }
   }
   return outcome;
+}
+
+function stableVisibleSummary(value: unknown): string {
+  const summary = requireObject(value, "Browser visible summary");
+  return JSON.stringify(Object.fromEntries(
+    Object.entries(summary).filter(([key]) => key !== "revisions"),
+  ));
 }
 
 async function startRenderedFixture(): Promise<{

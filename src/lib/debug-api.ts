@@ -117,6 +117,18 @@ function invalidateDebugApiBase(): void {
 let cachedToken: string | null = null;
 let pendingTokenFetch: Promise<string> | null = null;
 
+/** Replace only the renderer's in-memory Debug API bearer after the native
+ * authority has atomically rotated it. This keeps the current ShellX renderer
+ * connected without weakening external clients, which must still reload the
+ * token from their own approved source. */
+export function adoptRotatedDebugToken(token: string): void {
+  if (!/^[a-f0-9]{32}$/.test(token)) {
+    throw new Error("rotated Debug API token has an invalid shape");
+  }
+  cachedToken = token;
+  pendingTokenFetch = Promise.resolve(token);
+}
+
 /**
  * Resolve the debug-api bearer token. Cached for the page lifetime.
  *

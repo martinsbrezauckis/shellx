@@ -5,7 +5,7 @@
     "macos-installed",
     "linux-installed"
   ],
-  "digest": "38eb0e726798f509ef01bc1a1957860ea9536b44fc1d3ae04d400c8c3fa8ddaf",
+  "digest": "047f20129ccaa30f2b68eb71285145af4de0ca8f8ea98328e7d2f35287ef1e11",
   "counts": {
     "tauri-command": 182,
     "debug-api-route": 248,
@@ -14,8 +14,8 @@
     "palette-action": 16,
     "keyboard-shortcut": 12,
     "shellx-command": 7,
-    "ui-debug-surface": 611,
-    "ui-control": 696
+    "ui-debug-surface": 615,
+    "ui-control": 699
   },
   "unresolvedInteractiveControls": 0,
   "copyDerivedInteractiveControls": 222,
@@ -24,24 +24,24 @@
     "disclosure": 26,
     "toggle": 68,
     "text-entry": 92,
-    "choice": 30,
+    "choice": 31,
     "range": 2,
     "file-picker": 0,
-    "activation": 429,
-    "static-marker": 563,
+    "activation": 431,
+    "static-marker": 567,
     "dynamic-marker": 48
   },
   "occurrenceAccounting": {
     "uiControls": {
-      "candidates": 680,
-      "excludedNonActions": 23,
+      "candidates": 684,
+      "excludedNonActions": 24,
       "finiteVariantInstances": 50,
-      "inventoried": 696
+      "inventoried": 699
     },
     "uiDebugSurfaces": {
-      "candidates": 563,
+      "candidates": 567,
       "finiteVariantInstances": 57,
-      "inventoried": 611
+      "inventoried": 615
     }
   },
   "items": [
@@ -7385,7 +7385,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 9,
-      "line": 7272,
+      "line": 7289,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7406,7 +7406,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 1,
-      "line": 6997,
+      "line": 7014,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7427,7 +7427,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 8,
-      "line": 7141,
+      "line": 7158,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7448,7 +7448,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 3,
-      "line": 7029,
+      "line": 7046,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7469,7 +7469,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 2,
-      "line": 7008,
+      "line": 7025,
       "elementTag": "input",
       "inputType": "text",
       "driverFamily": "text-entry",
@@ -7491,7 +7491,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 6,
-      "line": 7081,
+      "line": 7098,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7512,7 +7512,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 7,
-      "line": 7113,
+      "line": 7130,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7533,7 +7533,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 7050,
+      "line": 7067,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -7554,7 +7554,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 7037,
+      "line": 7054,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -17701,7 +17701,7 @@
       "selectorStability": "copy-derived"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Chat font size in pixels\"]@src/components/settings/GeneralTab.tsx#1",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Chat font size in pixels\"]@src/components/settings/GeneralTab.tsx#5",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[aria-label=\"Chat font size in pixels\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17711,8 +17711,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 1,
-      "line": 49,
+      "occurrence": 5,
+      "line": 129,
       "elementTag": "input",
       "inputType": "range",
       "driverFamily": "range",
@@ -17723,7 +17723,7 @@
       "selectorStability": "copy-derived"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black and warm theme\"]@src/components/settings/GeneralTab.tsx#5",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black and warm theme\"]@src/components/settings/GeneralTab.tsx#9",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black and warm theme\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17733,8 +17733,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 5,
-      "line": 103,
+      "occurrence": 9,
+      "line": 183,
       "elementTag": "button",
       "driverFamily": "toggle",
       "eventTrust": "native-required",
@@ -17744,7 +17744,7 @@
       "selectorStability": "copy-derived"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black theme\"]@src/components/settings/GeneralTab.tsx#4",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black theme\"]@src/components/settings/GeneralTab.tsx#8",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black theme\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17754,8 +17754,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 4,
-      "line": 93,
+      "occurrence": 8,
+      "line": 173,
       "elementTag": "button",
       "driverFamily": "toggle",
       "eventTrust": "native-required",
@@ -17765,7 +17765,7 @@
       "selectorStability": "copy-derived"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Bright theme\"]@src/components/settings/GeneralTab.tsx#6",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Bright theme\"]@src/components/settings/GeneralTab.tsx#10",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[aria-label=\"Use Bright theme\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17775,8 +17775,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 6,
-      "line": 113,
+      "occurrence": 10,
+      "line": 193,
       "elementTag": "button",
       "driverFamily": "toggle",
       "eventTrust": "native-required",
@@ -17786,7 +17786,7 @@
       "selectorStability": "copy-derived"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder-choose\"]@src/components/settings/GeneralTab.tsx#8",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder-choose\"]@src/components/settings/GeneralTab.tsx#12",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder-choose\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17796,8 +17796,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 8,
-      "line": 140,
+      "occurrence": 12,
+      "line": 220,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -17807,7 +17807,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder\"]@src/components/settings/GeneralTab.tsx#7",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder\"]@src/components/settings/GeneralTab.tsx#11",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17817,8 +17817,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 7,
-      "line": 130,
+      "occurrence": 11,
+      "line": 210,
       "elementTag": "input",
       "inputType": "text",
       "driverFamily": "text-entry",
@@ -17829,7 +17829,70 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-comfortable\"]@src/components/settings/GeneralTab.tsx#3",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-default-agent\"]@src/components/settings/GeneralTab.tsx#1",
+      "kind": "ui-control",
+      "name": "src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-default-agent\"]",
+      "source": "src/components/settings/GeneralTab.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 1,
+      "line": 61,
+      "elementTag": "select",
+      "driverFamily": "choice",
+      "eventTrust": "native-required",
+      "selector": "[data-debug-id=\"settings-default-agent\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable"
+    },
+    {
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-default-working-folder-choose\"]@src/components/settings/GeneralTab.tsx#3",
+      "kind": "ui-control",
+      "name": "src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-default-working-folder-choose\"]",
+      "source": "src/components/settings/GeneralTab.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 3,
+      "line": 95,
+      "elementTag": "button",
+      "driverFamily": "activation",
+      "eventTrust": "native-required",
+      "selector": "[data-debug-id=\"settings-default-working-folder-choose\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable"
+    },
+    {
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-default-working-folder-clear\"]@src/components/settings/GeneralTab.tsx#4",
+      "kind": "ui-control",
+      "name": "src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-default-working-folder-clear\"]",
+      "source": "src/components/settings/GeneralTab.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 4,
+      "line": 106,
+      "elementTag": "button",
+      "driverFamily": "activation",
+      "eventTrust": "native-required",
+      "selector": "[data-debug-id=\"settings-default-working-folder-clear\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable"
+    },
+    {
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-comfortable\"]@src/components/settings/GeneralTab.tsx#7",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-comfortable\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17839,8 +17902,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 3,
-      "line": 76,
+      "occurrence": 7,
+      "line": 156,
       "finiteVariant": "settings-density-comfortable",
       "elementTag": "button",
       "driverFamily": "toggle",
@@ -17851,7 +17914,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-compact\"]@src/components/settings/GeneralTab.tsx#3",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-compact\"]@src/components/settings/GeneralTab.tsx#7",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-compact\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17861,8 +17924,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 3,
-      "line": 76,
+      "occurrence": 7,
+      "line": 156,
       "finiteVariant": "settings-density-compact",
       "elementTag": "button",
       "driverFamily": "toggle",
@@ -17873,7 +17936,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-default\"]@src/components/settings/GeneralTab.tsx#3",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-default\"]@src/components/settings/GeneralTab.tsx#7",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-default\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17883,8 +17946,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 3,
-      "line": 76,
+      "occurrence": 7,
+      "line": 156,
       "finiteVariant": "settings-density-default",
       "elementTag": "button",
       "driverFamily": "toggle",
@@ -17895,7 +17958,7 @@
       "selectorStability": "durable"
     },
     {
-      "id": "ui-control:src/components/settings/GeneralTab.tsx:[title=\"Reset to default\"]@src/components/settings/GeneralTab.tsx#2",
+      "id": "ui-control:src/components/settings/GeneralTab.tsx:[title=\"Reset to default\"]@src/components/settings/GeneralTab.tsx#6",
       "kind": "ui-control",
       "name": "src/components/settings/GeneralTab.tsx:[title=\"Reset to default\"]",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -17905,8 +17968,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 2,
-      "line": 61,
+      "occurrence": 6,
+      "line": 141,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -17927,7 +17990,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 1,
-      "line": 220,
+      "line": 222,
       "elementTag": "button",
       "driverFamily": "toggle",
       "eventTrust": "native-required",
@@ -17948,7 +18011,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 2,
-      "line": 230,
+      "line": 232,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -17969,7 +18032,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 3,
-      "line": 254,
+      "line": 256,
       "elementTag": "button",
       "driverFamily": "activation",
       "eventTrust": "native-required",
@@ -24009,7 +24072,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 1,
-      "line": 7000,
+      "line": 7017,
       "selector": "[data-debug-id=\"remote-cwd-close\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24029,7 +24092,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 8,
-      "line": 7144,
+      "line": 7161,
       "selector": "[data-debug-id=\"remote-cwd-folder\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24049,7 +24112,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 3,
-      "line": 7032,
+      "line": 7049,
       "selector": "[data-debug-id=\"remote-cwd-go\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24069,7 +24132,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 2,
-      "line": 7009,
+      "line": 7026,
       "selector": "[data-debug-id=\"remote-cwd-input\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24089,7 +24152,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 6,
-      "line": 7083,
+      "line": 7100,
       "selector": "[data-debug-id=\"remote-cwd-parent\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24109,7 +24172,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 7,
-      "line": 7115,
+      "line": 7132,
       "selector": "[data-debug-id=\"remote-cwd-parent\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24129,7 +24192,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 5,
-      "line": 7053,
+      "line": 7070,
       "selector": "[data-debug-id=\"remote-cwd-up\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24149,7 +24212,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 4,
-      "line": 7040,
+      "line": 7057,
       "selector": "[data-debug-id=\"remote-cwd-use\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24324,7 +24387,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:settings-browser-download-folder-choose@src/components/settings/GeneralTab.tsx#3",
+      "id": "ui-debug-surface:settings-browser-download-folder-choose@src/components/settings/GeneralTab.tsx#7",
       "kind": "ui-debug-surface",
       "name": "settings-browser-download-folder-choose",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -24334,8 +24397,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 3,
-      "line": 145,
+      "occurrence": 7,
+      "line": 225,
       "selector": "[data-debug-id=\"settings-browser-download-folder-choose\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24344,7 +24407,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:settings-browser-download-folder@src/components/settings/GeneralTab.tsx#2",
+      "id": "ui-debug-surface:settings-browser-download-folder@src/components/settings/GeneralTab.tsx#6",
       "kind": "ui-debug-surface",
       "name": "settings-browser-download-folder",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -24354,8 +24417,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 2,
-      "line": 136,
+      "occurrence": 6,
+      "line": 216,
       "selector": "[data-debug-id=\"settings-browser-download-folder\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -24364,7 +24427,87 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:settings-density-comfortable@src/components/settings/GeneralTab.tsx#1",
+      "id": "ui-debug-surface:settings-default-agent@src/components/settings/GeneralTab.tsx#1",
+      "kind": "ui-debug-surface",
+      "name": "settings-default-agent",
+      "source": "src/components/settings/GeneralTab.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 1,
+      "line": 68,
+      "selector": "[data-debug-id=\"settings-default-agent\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable",
+      "driverFamily": "static-marker",
+      "eventTrust": "not-applicable"
+    },
+    {
+      "id": "ui-debug-surface:settings-default-working-folder-choose@src/components/settings/GeneralTab.tsx#3",
+      "kind": "ui-debug-surface",
+      "name": "settings-default-working-folder-choose",
+      "source": "src/components/settings/GeneralTab.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 3,
+      "line": 100,
+      "selector": "[data-debug-id=\"settings-default-working-folder-choose\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable",
+      "driverFamily": "static-marker",
+      "eventTrust": "not-applicable"
+    },
+    {
+      "id": "ui-debug-surface:settings-default-working-folder-clear@src/components/settings/GeneralTab.tsx#4",
+      "kind": "ui-debug-surface",
+      "name": "settings-default-working-folder-clear",
+      "source": "src/components/settings/GeneralTab.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 4,
+      "line": 111,
+      "selector": "[data-debug-id=\"settings-default-working-folder-clear\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable",
+      "driverFamily": "static-marker",
+      "eventTrust": "not-applicable"
+    },
+    {
+      "id": "ui-debug-surface:settings-default-working-folder@src/components/settings/GeneralTab.tsx#2",
+      "kind": "ui-debug-surface",
+      "name": "settings-default-working-folder",
+      "source": "src/components/settings/GeneralTab.tsx",
+      "platforms": [
+        "windows-installed",
+        "macos-installed",
+        "linux-installed"
+      ],
+      "delivery": "installed-app",
+      "occurrence": 2,
+      "line": 91,
+      "selector": "[data-debug-id=\"settings-default-working-folder\"]",
+      "stableSelector": true,
+      "dynamicSelector": false,
+      "selectorStability": "durable",
+      "driverFamily": "static-marker",
+      "eventTrust": "not-applicable"
+    },
+    {
+      "id": "ui-debug-surface:settings-density-comfortable@src/components/settings/GeneralTab.tsx#5",
       "kind": "ui-debug-surface",
       "name": "settings-density-comfortable",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -24374,8 +24517,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 1,
-      "line": 76,
+      "occurrence": 5,
+      "line": 156,
       "finiteVariant": "settings-density-comfortable",
       "selector": "[data-debug-id=\"settings-density-comfortable\"]",
       "stableSelector": true,
@@ -24385,7 +24528,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:settings-density-compact@src/components/settings/GeneralTab.tsx#1",
+      "id": "ui-debug-surface:settings-density-compact@src/components/settings/GeneralTab.tsx#5",
       "kind": "ui-debug-surface",
       "name": "settings-density-compact",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -24395,8 +24538,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 1,
-      "line": 76,
+      "occurrence": 5,
+      "line": 156,
       "finiteVariant": "settings-density-compact",
       "selector": "[data-debug-id=\"settings-density-compact\"]",
       "stableSelector": true,
@@ -24406,7 +24549,7 @@
       "eventTrust": "not-applicable"
     },
     {
-      "id": "ui-debug-surface:settings-density-default@src/components/settings/GeneralTab.tsx#1",
+      "id": "ui-debug-surface:settings-density-default@src/components/settings/GeneralTab.tsx#5",
       "kind": "ui-debug-surface",
       "name": "settings-density-default",
       "source": "src/components/settings/GeneralTab.tsx",
@@ -24416,8 +24559,8 @@
         "linux-installed"
       ],
       "delivery": "installed-app",
-      "occurrence": 1,
-      "line": 76,
+      "occurrence": 5,
+      "line": 156,
       "finiteVariant": "settings-density-default",
       "selector": "[data-debug-id=\"settings-density-default\"]",
       "stableSelector": true,
@@ -31459,7 +31602,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 1,
-      "line": 220,
+      "line": 222,
       "selector": "[data-debug-id=\"surface-components-settings-shellxagenttab-1\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -31479,7 +31622,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 2,
-      "line": 230,
+      "line": 232,
       "selector": "[data-debug-id=\"surface-components-settings-shellxagenttab-2\"]",
       "stableSelector": true,
       "dynamicSelector": false,
@@ -31499,7 +31642,7 @@
       ],
       "delivery": "installed-app",
       "occurrence": 3,
-      "line": 254,
+      "line": 256,
       "selector": "[data-debug-id=\"surface-components-settings-shellxagenttab-3\"]",
       "stableSelector": true,
       "dynamicSelector": false,

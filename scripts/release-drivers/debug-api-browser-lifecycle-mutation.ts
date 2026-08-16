@@ -107,8 +107,20 @@ export async function exerciseDebugApiBrowserLifecycleMutation(
         browserTabId: fixture.browserTabId,
         maxPayloadBytes: 3_000,
       });
-      if (safeObservation.ok !== true || safeObservation.status !== "observed") {
-        throw new Error("Browser action did not establish the safe-page prompt-guard baseline");
+      const safeReceipt = requireObject(safeObservation.receipt, "Browser safe-page observation receipt");
+      if (safeObservation.ok !== true || safeObservation.status !== "applied"
+        || safeReceipt.kind !== "browserEngineObserved" || !safeObservation.observation) {
+        const receipt = safeObservation.receipt && typeof safeObservation.receipt === "object"
+          && !Array.isArray(safeObservation.receipt)
+          ? safeObservation.receipt as Record<string, unknown>
+          : null;
+        throw new Error(`Browser action did not establish the safe-page prompt-guard baseline: ${JSON.stringify({
+          ok: safeObservation.ok,
+          status: safeObservation.status,
+          requiredApproval: safeObservation.requiredApproval,
+          receiptKind: receipt?.kind,
+          hasObservation: Boolean(safeObservation.observation),
+        })}`);
       }
       const navigation = await apiJson(connection, "POST", "/browser/action", {
         action: "navigate",

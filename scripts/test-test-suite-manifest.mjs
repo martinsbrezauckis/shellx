@@ -10,7 +10,7 @@ const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 assert.equal(pkg.scripts.pretest, "node scripts/run-test-suite.mjs pretest");
 assert.equal(pkg.scripts.test, "node scripts/run-test-suite.mjs test");
 assert.equal(TEST_SUITES.pretest.length, 80);
-assert.equal(TEST_SUITES.test.length, 136);
+assert.equal(TEST_SUITES.test.length, 138);
 assert.deepEqual(
   testCommandInvocation(["node", "scripts/example.mjs", "--check"]),
   { executable: process.execPath, args: ["scripts/example.mjs", "--check"] },
@@ -68,6 +68,10 @@ assert(
   "the Browser caller boundary contract must remain in the canonical test registry",
 );
 assert(
+  TEST_SUITES.test.some((row) => row.join(" ") === "tsx scripts/test-new-session-defaults.ts"),
+  "optional new-session defaults must remain in the canonical test registry",
+);
+assert(
   TEST_SUITES.test.some((row) => row.join(" ") === "tsx scripts/test-mcp-http-token-authority.ts"),
   "the Host MCP token authority contract must remain in the canonical test registry",
 );
@@ -105,6 +109,10 @@ assert(
 assert(
   TEST_SUITES.pretest.some((row) => row.join(" ") === "tsx scripts/test-release-surface-ui-control-task-manager.ts"),
   "the Task Manager installed control lifecycle must remain in the canonical pretest registry",
+);
+assert(
+  TEST_SUITES.test.some((row) => row.join(" ") === "tsx scripts/test-release-surface-outcome-union.ts"),
+  "the interrupted final-matrix outcome union must remain in the canonical test registry",
 );
 
 console.log(`ShellX test-suite manifest passed: ${TEST_SUITES.pretest.length} pretest + ${TEST_SUITES.test.length} test commands`);

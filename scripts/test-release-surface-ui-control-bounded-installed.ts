@@ -90,7 +90,7 @@ const boundedTextObservationSources = new Map([
   ["src/components/FindPopover.tsx", 1],
   ["src/components/PRCreateModal.tsx", 3],
   ["src/components/TasksPanel.tsx", 1],
-  ["src/components/settings/GeneralTab.tsx", 2],
+  ["src/components/settings/GeneralTab.tsx", 4],
 ]);
 const surfaceById = new Map(inventory.items.map((surface) => [surface.id, surface]));
 const assignmentWithSurface = (row: typeof plan.assignments[number]): Assignment => ({
@@ -110,7 +110,7 @@ assert.deepEqual(driver?.platforms, {
 const bounded = plan.assignments
   .filter((row) => row.driverId === UI_CONTROL_BOUNDED_INSTALLED_DRIVER_ID)
   .map(assignmentWithSurface);
-assert.equal(bounded.length, 369);
+assert.equal(bounded.length, 370);
 assert(bounded.every(supportsBoundedInstalledUiControl));
 assert.doesNotThrow(() => assertBoundedInstalledUiControlAssignments(bounded));
 
@@ -282,7 +282,7 @@ for (const [relativePath, expectedCount] of boundedTextObservationSources) {
   );
 }
 
-console.log("Release surface bounded installed UI routing tests passed (369 cross-platform bounded assignments, 0 generic assignments)");
+console.log("Release surface bounded installed UI routing tests passed (370 cross-platform bounded assignments, 0 generic assignments)");
 
 function requiredSurface(id: string): ReleaseSurfaceItem {
   const surface = surfaceById.get(id);

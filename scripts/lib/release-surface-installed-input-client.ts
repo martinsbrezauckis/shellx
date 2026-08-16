@@ -594,9 +594,10 @@ export async function switchReleaseSurfaceInstalledInputWindowByTitle(
         await delay(100);
       }
     }
-    throw lastError instanceof Error
-      ? lastError
-      : new Error("ShellX Browser window did not become available before timeout");
+    const diagnostic = await releaseSurfaceBrowserWindowDiagnostic(session.candidateConnection);
+    throw new Error(`${lastError instanceof Error
+      ? lastError.message
+      : "ShellX Browser window did not become available before timeout"}; ${diagnostic}`);
   }
   const original = { ...session.activeWindow };
   const target = macosWindowForTitle(session, exactTitle);
@@ -605,6 +606,30 @@ export async function switchReleaseSurfaceInstalledInputWindowByTitle(
     throw error;
   });
   return { originalHandle: original.handle, targetHandle: target.handle };
+}
+
+async function releaseSurfaceBrowserWindowDiagnostic(
+  connection: CandidateConnection | undefined,
+): Promise<string> {
+  if (!connection) return "bounded Browser window state unavailable";
+  try {
+    const response = await fetch(`${connection.base.replace(/\/$/, "")}/browser/state`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (!response.ok) return `bounded Browser window state HTTP ${response.status}`;
+    const value = await response.json() as Record<string, unknown>;
+    const engine = value.engine && typeof value.engine === "object" && !Array.isArray(value.engine)
+      ? value.engine as Record<string, unknown>
+      : {};
+    const pool = value.enginePool && typeof value.enginePool === "object" && !Array.isArray(value.enginePool)
+      ? value.enginePool as Record<string, unknown>
+      : {};
+    const pooled = Array.isArray(pool.engines) ? pool.engines : [];
+    return `bounded Browser window state open=${value.windowOpen === true} foregroundMounted=${engine.mounted === true} pooledMounted=${pooled.filter((row) => row && typeof row === "object" && !Array.isArray(row) && (row as Record<string, unknown>).mounted === true).length} tabs=${Array.isArray(value.tabs) ? value.tabs.length : 0} tasks=${Array.isArray(value.tasks) ? value.tasks.length : 0}`;
+  } catch {
+    return "bounded Browser window state unavailable";
+  }
 }
 
 export async function closeReleaseSurfaceInstalledInputWindow(

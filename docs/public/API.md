@@ -3014,9 +3014,17 @@ fail closed to deny.
   density: "compact" | "default" | "comfortable";
   theme: "black" | "black_warm" | "bright";
   chatFontPx: number;               // 12..26
+  browserDownloadFolder: string;
+  defaultAgentId: "grok" | "codex-cli" | "claude-code" | "antigravity-cli" | null;
+  defaultWorkingFolder: string;     // empty = reuse the last folder
   githubGhBinary: string;           // advanced compatibility setting
 }
 ```
+
+The optional agent and working-folder values prefill only new, untouched
+session tabs. They never rewrite an existing or already-started chat. ShellX
+still performs the normal provider availability and target checks before the
+first prompt starts a session.
 
 ### 6.2 `POST /settings`
 

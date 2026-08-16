@@ -29,6 +29,11 @@ assert(cargoToml.includes('"unstable"'), "Tauri unstable webview API is enabled 
 assert(rustBrowser.includes("BROWSER_ENGINE_WEBVIEW_LABEL"), "native Browser engine webview label is modeled");
 assert(tauriCapabilitiesSource.includes('"shellx-browser"'), "Browser window has Tauri permissions for debug API and engine commands");
 assert(
+  rustLib.includes("tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed")
+    && rustLib.includes("shellx_browser_registry.record_window_destroyed()"),
+  "Browser registry reconciles both requested and completed native window closure",
+);
+assert(
   tauriConfSource.includes("http://127.0.0.1:*") && tauriConfSource.includes("ws://127.0.0.1:*"),
   "production CSP allows Browser renderer debug API traffic on dynamic loopback ports",
 );

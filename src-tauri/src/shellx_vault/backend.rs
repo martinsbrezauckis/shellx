@@ -1075,16 +1075,22 @@ impl ShellxVaultBackend {
         passphrase: Option<String>,
     ) -> Result<(), String> {
         let _transition = self.state_transition.lock().await;
+        let passphrase = if enabled {
+            Some(
+                passphrase
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        "master passphrase is required to remember this device".to_string()
+                    })?,
+            )
+        } else {
+            None
+        };
         let mut profile = read_persisted_profile(&self.profile_path())
             .map_err(|e| format!("Vault profile load failed: {e}"))?;
-        if enabled {
-            let passphrase = passphrase
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    "master passphrase is required to remember this device".to_string()
-                })?;
+        if let Some(passphrase) = passphrase {
             self.remember_current_device_for_profile(&mut profile, passphrase)
                 .await?;
         } else {
@@ -3272,6 +3278,20 @@ mod tests {
         assert_eq!(
             backend.compat_get(secret_key).await.expect("read secret"),
             Some(secret_value.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn enabling_remembered_device_requires_passphrase_before_profile_access() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backend = ShellxVaultBackend::for_test(dir.path().to_path_buf());
+        let error = backend
+            .set_remembered_device_enabled(true, None)
+            .await
+            .expect_err("missing passphrase must fail before profile access");
+        assert_eq!(
+            error,
+            "master passphrase is required to remember this device"
         );
     }
 

@@ -320,7 +320,9 @@ async function api(
 }
 
 function expectStatus(result: ApiResult, expected: number, label: string): void {
-  if (result.status !== expected) throw new Error(`${label} returned ${result.status}, expected ${expected}`);
+  if (result.status !== expected) {
+    throw new Error(`${label} returned ${result.status}, expected ${expected}: ${JSON.stringify(result.body)}`);
+  }
 }
 
 function taskPath(task: TaskRecordFixture, suffix = ""): string {

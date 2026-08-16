@@ -231,6 +231,12 @@ import {
   type AgentSelection,
 } from "./lib/agent-selection";
 import {
+  isUntouchedNewSession,
+  newSessionWorkingFolder,
+  NO_NEW_SESSION_DEFAULTS,
+  type NewSessionDefaults,
+} from "./lib/new-session-defaults";
+import {
   normalizeShellxToolExposure,
   providerExecutionTargetLabel,
   providerSessionGroupShape,
@@ -572,20 +578,25 @@ interface SessionConnectionMeta {
   connectionTransport?: string;
 }
 
-function newTabEntry(cwd: string, autonomy: AutonomyMode): TabEntry {
+function newTabEntry(
+  cwd: string,
+  autonomy: AutonomyMode,
+  defaults: NewSessionDefaults,
+): TabEntry {
   // Cheap uuid — collision risk is irrelevant for a per-app tab id.
   const id = "tab-" + Math.random().toString(36).slice(2, 10);
   return {
     tabId: id,
     sessionId: null,
     title: "new session",
-    cwd,
+    cwd: newSessionWorkingFolder(cwd, defaults),
     autonomy,
     // Defaults: each tab starts on Local with no project or branch yet.
     projectId: undefined,
     connectionId: null,
     connectionLabel: "Local",
     connectionTransport: "local",
+    agentId: defaults.defaultAgentId,
     shellxToolExposure: DEFAULT_SHELLX_TOOL_EXPOSURE,
     branchName: undefined,
     branchAhead: undefined,
@@ -760,15 +771,15 @@ function latestAgentFromEventFrames(frames: RawEventFrame[]): AgentSelection {
   return null;
 }
 
-function restorePersistedTabEntry(tab: TabEntry): TabEntry {
+function restorePersistedTabEntry(tab: TabEntry, defaults: NewSessionDefaults): TabEntry {
   const restoredAgent = normalizeAgentSelection(tab.agentId);
-  const idleUntouchedNewTab =
-    !tab.sessionId &&
-    !tab.firstMessageMs &&
-    (!tab.title || tab.title === "new session");
+  const idleUntouchedNewTab = isUntouchedNewSession(tab);
   return {
     ...tab,
-    agentId: idleUntouchedNewTab ? null : restoredAgent,
+    agentId: idleUntouchedNewTab ? defaults.defaultAgentId : restoredAgent,
+    cwd: idleUntouchedNewTab
+      ? newSessionWorkingFolder(tab.cwd, defaults)
+      : tab.cwd,
     shellxToolExposure: normalizeShellxToolExposure(tab.shellxToolExposure),
     autonomy: tab.autonomy === "default"
       ? "bypassPermissions"
@@ -1366,6 +1377,12 @@ export default function App(): JSX.Element {
           const merged = normalizeSettings({ ...DEFAULT_SETTINGS, ...settings, ...j });
           setSettings(merged);
           applyTheme(merged);
+          setTabs((current) => current.map((tab) => {
+            if (!isUntouchedNewSession(tab)) return tab;
+            const nextCwd = newSessionWorkingFolder(tab.cwd || cwdRef.current, merged);
+            if (tab.agentId === merged.defaultAgentId && tab.cwd === nextCwd) return tab;
+            return { ...tab, agentId: merged.defaultAgentId, cwd: nextCwd };
+          }));
         }
       })
       .catch(() => { /* debug-api off, stay with localStorage */ });
@@ -1378,13 +1395,13 @@ export default function App(): JSX.Element {
       if (raw) {
         const parsed = JSON.parse(raw) as TabEntry[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((t) => restorePersistedTabEntry(t));
+          return parsed.map((t) => restorePersistedTabEntry(t, settings));
         }
       }
     } catch { /* no-op */ }
     // Cold start: seed one tab with the standing autonomy default so the
     // session strip isn't a lonely "+" button.
-    return [newTabEntry("", "bypassPermissions")];
+    return [newTabEntry("", "bypassPermissions", settings)];
   });
   const tabsRef = useRef<TabEntry[]>(tabs);
   useEffect(() => { tabsRef.current = tabs; }, [tabs]);
@@ -1769,7 +1786,7 @@ export default function App(): JSX.Element {
         if (cancelled) return;
         const restoredTabs = readArray<TabEntry>(SESSIONS_KEY);
         if (restoredTabs && restoredTabs.length > 0) {
-          setTabs(restoredTabs.map((t) => restorePersistedTabEntry(t)));
+          setTabs(restoredTabs.map((t) => restorePersistedTabEntry(t, settings)));
         }
         setProjects(readArray<StoredProject>(PROJECTS_KEY) ?? []);
         setChatTitleOverrides(readObject<Record<string, string>>(CHAT_TITLES_KEY) ?? {});
@@ -5148,7 +5165,7 @@ export default function App(): JSX.Element {
 
   /** ⌘T: open a new idle tab. */
   function handleNewTab(): void {
-    const t = newTabEntry(cwd, autonomy);
+    const t = newTabEntry(cwd, autonomy, settings);
     setTabs((prev) => {
       // Soft-warn at 10/20/50 tabs: active agent subprocesses can be heavy.
       // No hard cap.
@@ -5231,7 +5248,7 @@ export default function App(): JSX.Element {
     const past = pastChats.find((c) => c.id === id);
     const closed = closedTabs.find((c) => c.sessionId === id);
     const recoveredCwd = past?.cwd && past.cwd.length > 0 ? past.cwd : cwd;
-    const t = newTabEntry(recoveredCwd, autonomy);
+    const t = newTabEntry(recoveredCwd, autonomy, NO_NEW_SESSION_DEFAULTS);
     t.sessionId = id;
     t.connectionId = past?.connectionId ?? closed?.connectionId ?? fallbackMeta?.connectionId ?? null;
     t.connectionLabel =

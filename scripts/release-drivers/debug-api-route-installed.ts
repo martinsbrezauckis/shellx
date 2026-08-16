@@ -636,7 +636,7 @@ const OPERATOR_GATED_ROUTES: Record<string, {
   },
   "POST /browser/task/autonomy": {
     requestPath: "/browser/task/autonomy",
-    statePath: "/browser/state",
+    statePath: "/browser/tasks",
     body: { taskId: "release-surface-fixed-policy", autonomy: "assistedAutonomous" },
     responseShape: "flat-code-error",
     errorCode: "browser_task_autonomy_policy_fixed",
@@ -1183,13 +1183,18 @@ async function exerciseRoute(
       outcome.observedEffect = effect;
       return outcome;
     }
+    if (canonicalPath === "/screenshot") {
+      const effect = await fetchAndVerifyScreenshotRoute(connection, request.platform, requestPath);
+      outcome.invoke = "pass";
+      outcome.effect = "pass";
+      outcome.observedEffect = effect;
+      return outcome;
+    }
     const response = canonicalPath === "/build/receipts"
       ? await fetchRouteAllowingAbsentBuild(connection, requestPath)
       : await fetchRoute(connection, requestPath);
     outcome.invoke = "pass";
-    const effect = canonicalPath === "/screenshot"
-      ? await verifyScreenshotBody(response)
-      : canonicalPath === "/sessions/history/:id"
+    const effect = canonicalPath === "/sessions/history/:id"
         ? verifyDebugApiSessionHistory(await response.text(), sessionFixture)
       : canonicalPath.endsWith("SKILL.md")
         ? verifySkillBody(await response.text())
@@ -2021,9 +2026,13 @@ const BOTTOM_TAB_VALUES = {
 type BottomTabValue = typeof BOTTOM_TAB_VALUES[keyof typeof BOTTOM_TAB_VALUES];
 
 function requireQuiescentUiCommands(state: Record<string, unknown>): void {
+  const debugSurface = state.debugSurface;
+  if (debugSurface !== undefined && debugSurface !== null && debugSurface !== "app") {
+    throw new Error("UI-state fixture is not quiescent: debugSurface is active");
+  }
   for (const key of [
     "composerMenu", "openModal", "vaultRequestCenterOpen", "setupGuideDismissed", "debugClick",
-    "debugInput", "debugDrag", "debugSurface", "clickSelector", "cwdPicker",
+    "debugInput", "debugDrag", "clickSelector", "cwdPicker",
   ]) {
     if (state[key] !== undefined && state[key] !== null) {
       throw new Error(`UI-state fixture is not quiescent: ${key} is active`);
@@ -2033,6 +2042,7 @@ function requireQuiescentUiCommands(state: Record<string, unknown>): void {
 
 function stripUiAudit(value: Record<string, unknown>): Record<string, unknown> {
   const copy = structuredClone(value);
+  delete copy.debugSurface;
   delete copy.uiRevision;
   delete copy.lastUiPatchMs;
   delete copy.lastUiPatchSource;
@@ -2218,6 +2228,8 @@ async function exercisePanelMutation(
 type PublicSettings = {
   browserDownloadFolder: string;
   chatFontPx: number;
+  defaultAgentId: "grok" | "codex-cli" | "claude-code" | "antigravity-cli" | null;
+  defaultWorkingFolder: string;
   density: "compact" | "default" | "comfortable";
   githubGhBinary: "gh" | "gh.exe";
   theme: "black" | "black_warm" | "bright";
@@ -2244,6 +2256,8 @@ async function exerciseSettingsMutation(
     const target: PublicSettings = {
       browserDownloadFolder: "shellx-release-downloads",
       chatFontPx: baseline.chatFontPx === 17 ? 18 : 17,
+      defaultAgentId: baseline.defaultAgentId === "codex-cli" ? "grok" : "codex-cli",
+      defaultWorkingFolder: "shellx-release-workspace",
       density: baseline.density === "compact" ? "comfortable" : "compact",
       githubGhBinary: baseline.githubGhBinary === "gh" ? "gh.exe" : "gh",
       theme: baseline.theme === "bright" ? "black_warm" : "bright",
@@ -2255,10 +2269,10 @@ async function exerciseSettingsMutation(
     }
     const observed = await readSettings(connection);
     if (JSON.stringify(observed) !== JSON.stringify(target)) {
-      throw new Error("POST /settings did not persist all six exact public fields");
+      throw new Error("POST /settings did not persist all seven exact public fields");
     }
     outcome.effect = "pass";
-    outcome.observedEffect = "POST /settings changed all six normalized public fields without retaining their values in evidence.";
+    outcome.observedEffect = "POST /settings changed all seven normalized public fields without retaining their values in evidence.";
   } catch (error) {
     outcome.error = error instanceof Error ? error.message : String(error);
   } finally {
@@ -2311,12 +2325,16 @@ function validatePublicSettings(value: unknown, label: string): PublicSettings {
   requireExactKeys(body, [
     "browserDownloadFolder",
     "chatFontPx",
+    "defaultAgentId",
+    "defaultWorkingFolder",
     "density",
     "githubGhBinary",
     "theme",
   ], label);
   if (typeof body.browserDownloadFolder !== "string" || body.browserDownloadFolder.length > 4096
     || !Number.isSafeInteger(body.chatFontPx) || Number(body.chatFontPx) < 12 || Number(body.chatFontPx) > 26
+    || !(body.defaultAgentId === null || ["grok", "codex-cli", "claude-code", "antigravity-cli"].includes(String(body.defaultAgentId)))
+    || typeof body.defaultWorkingFolder !== "string" || body.defaultWorkingFolder.length > 4096
     || !["compact", "default", "comfortable"].includes(String(body.density))
     || !["gh", "gh.exe"].includes(String(body.githubGhBinary))
     || !["black", "black_warm", "bright"].includes(String(body.theme))) {
@@ -3704,7 +3722,7 @@ function verifyJsonBody(
     return "Agent documentation alias returned the installed session-scoped ShellX host manifest.";
   }
   if (path === "/settings") {
-    const expectedKeys = ["browserDownloadFolder", "chatFontPx", "density", "githubGhBinary", "theme"];
+    const expectedKeys = ["browserDownloadFolder", "chatFontPx", "defaultAgentId", "defaultWorkingFolder", "density", "githubGhBinary", "theme"];
     const actualKeys = Object.keys(body).sort();
     if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)) {
       throw new Error(`settings returned unexpected keys: ${actualKeys.join(", ")}`);
@@ -3713,10 +3731,12 @@ function verifyJsonBody(
       || !["black", "black_warm", "bright"].includes(String(body.theme))
       || typeof body.chatFontPx !== "number" || body.chatFontPx < 12 || body.chatFontPx > 26
       || typeof body.browserDownloadFolder !== "string"
+      || !(body.defaultAgentId === null || ["grok", "codex-cli", "claude-code", "antigravity-cli"].includes(String(body.defaultAgentId)))
+      || typeof body.defaultWorkingFolder !== "string"
       || !["gh", "gh.exe"].includes(String(body.githubGhBinary))) {
       throw new Error("settings did not match the normalized public schema");
     }
-    return "Settings returned exactly six normalized public fields and no credential field.";
+    return "Settings returned exactly seven normalized public fields and no credential field.";
   }
   if (path === "/connections") {
     const presets = requireArray(body, "presets", path);
@@ -3987,9 +4007,24 @@ function verifyJsonBody(
     return `Marketplace health returned ${entries.length} launcher snapshot${entries.length === 1 ? "" : "s"} for ${body.tabId}.`;
   }
   if (path === "/state/session_tooling") {
-    requireExactKeys(body, ["desired", "health", "session", "tabId"], path);
+    requireExactKeys(body, ["cut", "desired", "health", "session", "tabId"], path);
     const desired = requireArray(body, "desired", path);
     const health = requireArray(body, "health", path);
+    const cut = requireObject(body.cut, `${path}.cut`);
+    const cutKeys = Object.keys(cut);
+    const requiredCutKeys = ["canOpen", "detail", "schemaVersion", "status", "target"];
+    if (requiredCutKeys.some((key) => !cutKeys.includes(key))
+      || cutKeys.some((key) => ![...requiredCutKeys, "actionHint"].includes(key))) {
+      throw new Error("session tooling Cut status returned unexpected keys");
+    }
+    if (cut.schemaVersion !== "shellx.cut.tooling-status.v1"
+      || !["checking", "ready", "installedEditorClosed", "notInstalled", "unsupportedTarget", "unavailableToProvider", "unavailable"].includes(String(cut.status))
+      || typeof cut.detail !== "string" || !cut.detail
+      || typeof cut.target !== "string" || !cut.target
+      || typeof cut.canOpen !== "boolean"
+      || (cut.actionHint !== undefined && cut.actionHint !== null && typeof cut.actionHint !== "string")) {
+      throw new Error("session tooling Cut status omitted its bounded typed projection");
+    }
     if (typeof body.tabId !== "string" || !body.tabId || !body.session || typeof body.session !== "object") {
       throw new Error("session tooling omitted tab or session context");
     }
@@ -4001,7 +4036,7 @@ function verifyJsonBody(
       }
     }
     for (const entry of health) requireMarketplaceHealthEntry(entry, path);
-    return `Session tooling returned ${desired.length} desired entr${desired.length === 1 ? "y" : "ies"} and ${health.length} health receipt(s).`;
+    return `Session tooling returned ${desired.length} desired entr${desired.length === 1 ? "y" : "ies"}, ${health.length} health receipt(s), and a typed ShellX Cut readiness state.`;
   }
   if (path === "/state/session_activity") {
     requireExactKeys(body, [
@@ -4398,6 +4433,27 @@ async function verifyScreenshotBody(response: Response): Promise<string> {
     throw new Error("screenshot PNG had zero width or height");
   }
   return "Installed native window returned a non-empty PNG capture with valid dimensions; image bytes were not retained.";
+}
+
+async function fetchAndVerifyScreenshotRoute(
+  connection: { base: string; token: string },
+  platform: ReleaseSurfaceDriverRequest["platform"],
+  path: string,
+): Promise<string> {
+  const response = await fetch(`${connection.base}${path}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${connection.token}` },
+  });
+  if (response.ok) return verifyScreenshotBody(response);
+  const body = await response.text();
+  const documentedWindowUnavailable = response.status === 503
+    && body.includes("shellX window not found and full-screen capture not enabled")
+    && body.includes("Pass ?fullScreen=1 to opt-in")
+    && body.includes("privacy: captures entire primary monitor");
+  if (platform === "linux-installed" && documentedWindowUnavailable) {
+    return "The Linux compositor did not expose the ShellX window to the capture backend, so the installed endpoint returned its documented privacy-safe 503 and did not fall back to whole-monitor capture.";
+  }
+  throw new Error(`GET ${path} failed ${response.status}: ${body}`);
 }
 
 async function fetchRoute(connection: { base: string; token: string }, path: string): Promise<Response> {

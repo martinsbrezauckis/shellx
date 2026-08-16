@@ -1057,6 +1057,27 @@ pub struct UiStatePatch {
     /// settings/help/palette/assets. Relayed only; not persisted in UiState.
     #[serde(rename = "openModal", default)]
     pub open_modal: Option<String>,
+    /// Fixed Agent CLI setup renderer fixture. The backend accepts only the
+    /// finite frontend fixture modes and relays them only for an isolated
+    /// final-candidate profile; it never probes, installs, authenticates, or
+    /// invokes a provider.
+    #[serde(
+        rename = "agentCliSetupFixture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_cli_setup_fixture: Option<String>,
+    /// Fixed renderer-only provider-picker readiness fixture. It exposes only
+    /// the normal finite provider catalogue rows needed by the installed UI
+    /// driver; it never starts, probes, authenticates, or selects a provider.
+    /// The command is transient and accepted only for an isolated final
+    /// candidate profile.
+    #[serde(
+        rename = "debugAgentPickerFixture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub debug_agent_picker_fixture: Option<String>,
     /// Debug-driver renderer command for opening the non-approval Vault
     /// Request Center popover. Approval/deny buttons remain human-only.
     #[serde(rename = "vaultRequestCenterOpen", default)]

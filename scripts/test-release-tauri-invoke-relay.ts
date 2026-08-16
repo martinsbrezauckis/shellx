@@ -23,6 +23,7 @@ const nonce = "b".repeat(32);
       }
       return { id, status: "passed" } as T;
     },
+    adoptRotatedToken: () => {},
   });
   assert.deepEqual(invoked, [{ command: "vault_status", args: {} }]);
   assert.equal(calls.length, 2);
@@ -45,8 +46,29 @@ const nonce = "b".repeat(32);
       completions.push(body);
       return { id, status: "failed" } as T;
     },
+    adoptRotatedToken: () => {},
   });
   assert.deepEqual(completions, [{ nonce, status: "failed", error: "bounded fixture failure" }]);
+}
+
+{
+  const rotated = "c".repeat(32);
+  const order: string[] = [];
+  await handleReleaseTauriInvokeEvent({ id, nonce }, {
+    invokeCommand: async () => rotated,
+    postJson: async <T>(path: string) => {
+      if (path.endsWith("/claim")) {
+        return { id, command: "shellxagent_token_regenerate", args: {} } as T;
+      }
+      order.push("complete");
+      return { id, status: "passed" } as T;
+    },
+    adoptRotatedToken: (token) => {
+      assert.equal(token, rotated);
+      order.push("adopt");
+    },
+  });
+  assert.deepEqual(order, ["adopt", "complete"]);
 }
 
 {
@@ -60,12 +82,16 @@ const nonce = "b".repeat(32);
       touched = true;
       return null as T;
     },
+    adoptRotatedToken: () => {
+      touched = true;
+    },
   });
   assert.equal(touched, false);
 }
 
 const rust = readFileSync("src-tauri/src/debug_api_release_relay.rs", "utf8");
 const app = readFileSync("src/App.tsx", "utf8");
+const shellxagentSettings = readFileSync("src/components/settings/ShellxagentTab.tsx", "utf8");
 const apiDocs = readFileSync("docs/public/API.md", "utf8");
 const controllerClient = readFileSync("scripts/lib/release-surface-tauri-invoke-client.ts", "utf8");
 const allowlist = readFileSync("src-tauri/src/release_tauri_command_allowlist.txt", "utf8")
@@ -88,6 +114,7 @@ assert.match(controllerClient, /async invokeExpectFailure\(/);
 assert.match(controllerClient, /async #waitForFailure\(/);
 assert.match(controllerClient, /unexpectedly passed/);
 assert.match(app, /startReleaseTauriInvokeRelay\(\)/);
+assert.match(shellxagentSettings, /adoptRotatedDebugToken\(t\)/);
 assert.doesNotMatch(app, /TAURI_CHANNELS[\s\S]{0,1000}release-test-tauri-invoke/);
 assert.match(apiDocs, /Isolated release-test Tauri relay/);
 assert.match(apiDocs, /Relay arguments, results, and errors are not written to the Debug event ring/);

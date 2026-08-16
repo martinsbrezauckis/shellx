@@ -1672,9 +1672,25 @@ async fn cleanup_normal_tab_session(
 /// 16 MiB cap to keep the modal responsive.
 fn effective_preview_session_cwd(
     registry_cwd: Option<String>,
-    _frontend_cwd: Option<String>,
+    frontend_cwd: Option<String>,
 ) -> Option<String> {
-    non_empty_string(registry_cwd)
+    effective_preview_session_cwd_with_isolation(
+        registry_cwd,
+        frontend_cwd,
+        crate::isolated_test_instance_requested(),
+    )
+}
+
+fn effective_preview_session_cwd_with_isolation(
+    registry_cwd: Option<String>,
+    frontend_cwd: Option<String>,
+    isolated_test_instance: bool,
+) -> Option<String> {
+    non_empty_string(registry_cwd).or_else(|| {
+        isolated_test_instance
+            .then(|| non_empty_string(frontend_cwd))
+            .flatten()
+    })
 }
 
 fn non_empty_string(v: Option<String>) -> Option<String> {
@@ -7956,7 +7972,10 @@ pub fn run() {
         })
         .on_window_event(move |window, event| {
             if window.label() == crate::shellx_browser::BROWSER_WINDOW_LABEL
-                && matches!(event, tauri::WindowEvent::Destroyed)
+                && matches!(
+                    event,
+                    tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+                )
             {
                 shellx_browser_registry.record_window_destroyed();
             }
@@ -8307,6 +8326,19 @@ mod preview_scope_tests {
             "C:/Users/FixtureUser/project/src/main.rs",
             cwd.as_deref(),
         ));
+    }
+
+    #[test]
+    fn isolated_release_candidate_can_use_its_owned_frontend_cwd() {
+        let cwd = effective_preview_session_cwd_with_isolation(
+            None,
+            Some("C:\\Users\\ShellXFinal\\owned-profile".to_string()),
+            true,
+        );
+        assert_eq!(
+            cwd.as_deref(),
+            Some("C:\\Users\\ShellXFinal\\owned-profile")
+        );
     }
 
     #[tokio::test]

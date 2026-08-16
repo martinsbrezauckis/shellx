@@ -63,7 +63,10 @@ export async function probeReleaseSurfaceRuntimeCandidate(
   return {
     schema: RELEASE_SURFACE_RUNTIME_PROBE_SCHEMA,
     phase,
-    observedAt: new Date().toISOString(),
+    observedAt: releaseSurfaceEnclosingObservedAt(Date.now(), [
+      inspected.windowsNativeRuntime?.observedAt,
+      inspected.posixNativeRuntime?.observedAt,
+    ]),
     runtime: request.runtime,
     health: inspected.health,
     protectedProbe: { path: "/browser/state", status: 200 },
@@ -73,6 +76,21 @@ export async function probeReleaseSurfaceRuntimeCandidate(
     ...(inspected.windowsNativeRuntime ? { windowsNativeRuntime: inspected.windowsNativeRuntime } : {}),
     ...(inspected.posixNativeRuntime ? { posixNativeRuntime: inspected.posixNativeRuntime } : {}),
   };
+}
+
+export function releaseSurfaceEnclosingObservedAt(
+  observedAtMs: number,
+  nestedObservedAt: Array<string | undefined>,
+): string {
+  if (!Number.isFinite(observedAtMs)) throw new Error("enclosing observation time must be finite");
+  let enclosingMs = observedAtMs;
+  for (const value of nestedObservedAt) {
+    if (value === undefined) continue;
+    const nestedMs = Date.parse(value);
+    if (!Number.isFinite(nestedMs)) throw new Error("nested observation time must be a valid ISO timestamp");
+    enclosingMs = Math.max(enclosingMs, nestedMs);
+  }
+  return new Date(enclosingMs).toISOString();
 }
 
 export function validateReleaseSurfaceRuntimeProbe(

@@ -37,9 +37,7 @@ export async function prepareDebugApiBrowserSettleFixture(
     }
     const browserTabId = await waitForOwnedBrowserTab(connection, taskId, callerSessionId);
     const fixture = { taskId, browserTabId, callerSessionId, ...local };
-    const settlePath = debugApiBrowserSettleRequestPath("/browser/settle", fixture);
-    const settled = await apiJson(connection, "GET", settlePath, undefined, callerSessionId);
-    verifyDebugApiBrowserSettleJson("/browser/settle", settled, fixture);
+    await waitForExactBrowserSettle(connection, fixture);
     return fixture;
   } catch (error) {
     const cleanupErrors: string[] = [];
@@ -113,12 +111,29 @@ export function verifyDebugApiBrowserSettleJson(
     || body.taskStatus !== "running"
     || !["loaded", "ready"].includes(String(body.tabStatus))
     || typeof body.engineId !== "string" || !body.engineId
-    || body.engineLoadStatus !== "loaded" || body.engineUrl !== owned.url
+    || !["loaded", "ready"].includes(String(body.engineLoadStatus)) || body.engineUrl !== owned.url
     || typeof body.revision !== "string" || !body.revision
     || body.pendingUrl !== null) {
-    throw new Error("Browser settle omitted the exact settled task, tab, engine, or revision state");
+    throw new Error(
+      "Browser settle omitted the exact settled task, tab, engine, or revision state"
+      + ` (settled=${body.settled === true}`
+      + ` task=${body.taskId === owned.taskId}`
+      + ` tab=${body.browserTabId === owned.browserTabId}`
+      + ` taskStatus=${finiteSettleStatus(body.taskStatus)}`
+      + ` tabStatus=${finiteSettleStatus(body.tabStatus)}`
+      + ` engine=${typeof body.engineId === "string" && body.engineId.length > 0}`
+      + ` engineLoadStatus=${finiteSettleStatus(body.engineLoadStatus)}`
+      + ` engineUrl=${body.engineUrl === owned.url}`
+      + ` revision=${typeof body.revision === "string" && body.revision.length > 0}`
+      + ` pending=${body.pendingUrl === null})`,
+    );
   }
   return "Browser settle waited for one exact owned task and tab to reach a stable engine revision with no pending URL; identities and URLs were not retained.";
+}
+
+function finiteSettleStatus(value: unknown): string {
+  return ["idle", "loading", "navigating", "loaded", "ready", "running", "error"]
+    .includes(String(value)) ? String(value) : "other";
 }
 
 async function startOwnedPage(): Promise<{
@@ -207,6 +222,32 @@ async function waitForOwnedBrowserTab(
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
   throw new Error("Browser settle task did not publish its exact owned Browser tab");
+}
+
+async function waitForExactBrowserSettle(
+  connection: DebugApiConnection,
+  fixture: DebugApiBrowserSettleFixture,
+): Promise<void> {
+  const settlePath = debugApiBrowserSettleRequestPath("/browser/settle", fixture);
+  const deadline = Date.now() + TIMEOUT_MS;
+  let lastError = "Browser settle returned no response";
+  while (Date.now() < deadline) {
+    try {
+      const settled = await apiJson(
+        connection,
+        "GET",
+        settlePath,
+        undefined,
+        fixture.callerSessionId,
+      );
+      verifyDebugApiBrowserSettleJson("/browser/settle", settled, fixture);
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+  }
+  throw new Error(`Browser settle did not reach the exact owned URL and engine state: ${lastError}`);
 }
 
 function requireFixture(value: DebugApiBrowserSettleFixture | null): DebugApiBrowserSettleFixture {

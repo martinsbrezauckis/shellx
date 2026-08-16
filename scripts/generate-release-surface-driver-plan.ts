@@ -79,7 +79,11 @@ const UI_NATIVE_PICKER_DRIVER_ID = "ui-control-native-picker-lifecycle-installed
 const APP_FOLDER_SURFACE_ID =
   'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-folder"]@src/components/BottomPanel.tsx#22';
 const SETTINGS_NATIVE_PICKER_SURFACE_ID =
-  'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-browser-download-folder-choose"]@src/components/settings/GeneralTab.tsx#8';
+  'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-browser-download-folder-choose"]@src/components/settings/GeneralTab.tsx#12';
+const SETTINGS_DEFAULT_FOLDER_PICKER_SURFACE_ID =
+  'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-default-working-folder-choose"]@src/components/settings/GeneralTab.tsx#3';
+const SETTINGS_DEFAULT_FOLDER_CLEAR_SURFACE_ID =
+  'ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id="settings-default-working-folder-clear"]@src/components/settings/GeneralTab.tsx#4';
 const BROWSER_NATIVE_PICKER_SURFACE_ID =
   'ui-control:src/browser/components/DownloadSidecar.tsx:[data-debug-id="shellx-browser-download-folder-choose"]@src/browser/components/DownloadSidecar.tsx#3';
 const VAULT_KEYFILE_SELECT_NATIVE_PICKER_SURFACE_ID =
@@ -94,6 +98,8 @@ const NATIVE_PICKER_SURFACE_IDS = new Set([
   'ui-control:src/components/BottomPanel.tsx:[data-debug-id="composer-attach"]@src/components/BottomPanel.tsx#15',
   APP_FOLDER_SURFACE_ID,
   SETTINGS_NATIVE_PICKER_SURFACE_ID,
+  SETTINGS_DEFAULT_FOLDER_PICKER_SURFACE_ID,
+  SETTINGS_DEFAULT_FOLDER_CLEAR_SURFACE_ID,
   VAULT_KEYFILE_SELECT_NATIVE_PICKER_SURFACE_ID,
   VAULT_KEYFILE_CLEAR_NATIVE_PICKER_SURFACE_ID,
 ]);
@@ -1522,6 +1528,7 @@ const promotedTauriFailClosedCommands = new Set([
   "approve_build_plan",
   "approve_goal_plan",
   "archive_session_artifacts",
+  "get_build_receipts",
   "shellx_browser_approve_developer_mode_host",
   "shellx_browser_claim_cowork_prompt",
   "shellx_browser_control_task",
@@ -3607,6 +3614,12 @@ const promotedUiControls = new Map<string, {
     oracleId: "ui:boolean-state-transition",
     cleanupId: "ui:restore-general-setting-and-close-settings",
   }] as const),
+  ['src/components/settings/GeneralTab.tsx:[data-debug-id="settings-default-agent"]', {
+    fixtureId: "ui:general-setting-owned-baseline",
+    expectedEffect: "Native selection changes the optional default Agent used to prefill new sessions, without starting a provider, before exact baseline restoration.",
+    oracleId: "ui:choice-state-transition",
+    cleanupId: "ui:restore-general-setting-and-close-settings",
+  }],
   ...[
     ["Use Black theme", "black"],
     ["Use Black and warm theme", "black_warm"],
@@ -5233,6 +5246,26 @@ function promotedNativePickerAssignment(surface: ReleaseSurfaceItem): FinalSurfa
       cleanupId: "native-picker:restore-exact-settings-delete-fixture",
     };
   }
+  if (surface.id === SETTINGS_DEFAULT_FOLDER_PICKER_SURFACE_ID) {
+    return {
+      surfaceId: surface.id,
+      driverId: UI_NATIVE_PICKER_DRIVER_ID,
+      fixtureId: "native-picker:owned-settings-default-directory",
+      expectedEffect: "The native directory picker selects the exact receipt-owned starting folder for new sessions and proves its public backing state without starting a provider.",
+      oracleId: "ui:activation:native-picker-exact-default-settings-directory-selected",
+      cleanupId: "native-picker:restore-empty-default-settings-delete-fixture",
+    };
+  }
+  if (surface.id === SETTINGS_DEFAULT_FOLDER_CLEAR_SURFACE_ID) {
+    return {
+      surfaceId: surface.id,
+      driverId: UI_NATIVE_PICKER_DRIVER_ID,
+      fixtureId: "native-picker:owned-settings-default-directory",
+      expectedEffect: "After an exact owned starting folder is selected, native activation restores the optional new-session behavior to reuse the last folder.",
+      oracleId: "ui:activation:native-picker-default-settings-directory-cleared",
+      cleanupId: "native-picker:restore-empty-default-settings-delete-fixture",
+    };
+  }
   if (surface.id === BROWSER_NATIVE_PICKER_SURFACE_ID) {
     return {
       surfaceId: surface.id,
@@ -6209,7 +6242,7 @@ function promotedDebugApiSettingsMutationAssignment(surface: ReleaseSurfaceItem)
     surfaceId: surface.id,
     driverId: "debug-api-route-installed",
     fixtureId: "debug-api:isolated-settings-profile",
-    expectedEffect: "POST /settings changes all six normalized public settings fields before restoring the exact original object.",
+    expectedEffect: "POST /settings changes all seven normalized public settings fields before restoring the exact original object.",
     oracleId: "debug-api:POST-settings:semantic-effect",
     cleanupId: "debug-api:restore-settings-baseline",
   };

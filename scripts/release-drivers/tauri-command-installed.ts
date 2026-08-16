@@ -456,6 +456,7 @@ const EXPECTED_REJECTIONS = new Map<SupportedCommand, string>([
   ["shellx_vault_unlock", "vault passphrase must not be empty"],
   ["start_build_mode", "/build requires an objective"],
   ["grok_trace_export", "no registered tab session"],
+  ["get_build_receipts", "no build run for this tab"],
   ["interject_prompt", "Empty interjection"],
   ["mcp_marketplace_install", "unknown marketplace id: final-surface-absent-marketplace"],
   ["mcp_marketplace_set_enabled", "unknown marketplace id: final-surface-absent-marketplace"],
@@ -591,7 +592,7 @@ async function exerciseCommand(
     if (GOAL_COMMANDS.has(command)) {
       goalFixture = prepareGoalFixture(command, request);
     }
-    if (FILE_MUTATION_COMMANDS.has(command)) {
+    if (FILE_MUTATION_COMMANDS.has(command) || command === "read_text_file_for_path") {
       fileFixture = prepareFileMutationFixture(command, request);
     }
     if (VAULT_MUTATION_COMMANDS.has(command)) {
@@ -840,12 +841,14 @@ async function exerciseCommand(
         if (removed !== true) throw new Error("owned Grok session slot was not removed during cleanup");
         await waitForSessionChild(request, tabId, false, "start_grok_session cleanup");
       } else if (command === "archive_session_artifacts") {
-        const removed = await invokeTemporaryTauriCommand(
+        await invokeTemporaryTauriCommand(
           webdriver,
           "drop_tab_session",
           { tabId: "final-surface-archive-validation" },
         );
-        if (removed !== true) throw new Error("archive validation session slot was not removed");
+        if (await sessionRegistryRow(request, "final-surface-archive-validation")) {
+          throw new Error("archive validation session slot remained after cleanup");
+        }
       } else if (command === "set_permission_mode") {
         const removed = await invokeTemporaryTauriCommand(
           webdriver,
@@ -1693,8 +1696,9 @@ function invocationArgs(
     };
   }
   if (command === "read_text_file_for_path") {
+    if (!fileFixture?.apiSource) throw new Error("owned text-read fixture is unavailable");
     return {
-      path: profileMarker,
+      path: fileFixture.apiSource,
       tabId: "final-surface-profile-fixture",
       sessionCwd: profileRoot,
     };
@@ -2117,7 +2121,16 @@ async function verifyCommandResult(
       const payload = requireRecord(row.payload, "renderer_error event payload");
       return row.kind === "renderer-error" && payload.message === marker;
     });
-    if (matches.length !== 1) throw new Error(`renderer_error produced ${matches.length} exact ledger events instead of one`);
+    if (matches.length !== 1) {
+      const rendererErrorCount = events.filter((event) => (
+        requireRecord(event, "renderer_error diagnostic event").kind === "renderer-error"
+      )).length;
+      const recentKinds = [...new Set(events.slice(-64).map((event) => {
+        const kind = requireRecord(event, "renderer_error diagnostic event").kind;
+        return typeof kind === "string" && /^[A-Za-z0-9:_-]{1,64}$/.test(kind) ? kind : "other";
+      }))].slice(0, 12).join(",");
+      throw new Error(`renderer_error produced ${matches.length} exact ledger events instead of one; totalRendererErrors=${rendererErrorCount} recentKinds=${recentKinds || "none"}`);
+    }
     const payload = requireRecord(requireRecord(matches[0], "renderer_error exact event").payload, "renderer_error exact payload");
     if (payload.stack !== "final-surface-renderer-stack" || payload.componentStack !== "final-surface-component-stack") {
       throw new Error("renderer_error omitted its exact bounded stack fields");
@@ -2324,8 +2337,10 @@ async function verifyCommandResult(
     return `Installed IPC listed ${rows.length} sorted visible profile entry row(s) and the exact owned marker; names and paths were not retained.`;
   }
   if (command === "read_text_file_for_path") {
-    verifyProfileMarkerText(value, command, request);
-    return "Installed IPC read and validated the exact owned release-profile marker; marker contents and paths were not retained.";
+    if (!fileFixture || value !== fileFixture.content) {
+      throw new Error("read_text_file_for_path did not return the exact owned bounded text fixture");
+    }
+    return "Installed IPC read the exact owned bounded text fixture under the isolated profile; contents and paths were not retained.";
   }
   if (command === "read_text_file_if_text") {
     const body = requireRecord(value, command);
@@ -3266,7 +3281,7 @@ function prepareFileMutationFixture(
     request.platform,
   );
   const parts = command === "shellx_browser_copy_local_artifact"
-    ? [".shellx", "browser-artifacts", "shellx-browser-traces", "final-surface-owned-copy"]
+    ? [".grok", "browser-artifacts", "shellx-browser-traces", "final-surface-owned-copy"]
     : ["final-surface-files", command];
   const apiRoot = joinApiPath(profileRoot, parts, request.platform);
   const nodeRoot = nodeReadablePath(apiRoot, request.platform);
@@ -3279,6 +3294,7 @@ function prepareFileMutationFixture(
   mkdirSync(nodeDestination, { recursive: true, mode: 0o700 });
   const needsSource = command === "copy_asset_to_scope"
     || command === "copy_to_scope"
+    || command === "read_text_file_for_path"
     || command === "shellx_browser_copy_local_artifact";
   const apiSource = needsSource ? joinApiPath(apiRoot, ["source.txt"], request.platform) : null;
   const nodeSource = apiSource ? nodeReadablePath(apiSource, request.platform) : null;
@@ -3676,10 +3692,10 @@ async function verifyGoalCommand(
   const expectedPaused = command === "pause_goal";
   if (state.active !== expectedActive
     || state.objective !== fixture.objective
-    || state.paused_by_user !== expectedPaused
-    || state.transport_kind !== "local"
-    || state.awaiting_approval !== true
-    || normalizePath(String(state.scratchboard_path)) !== normalizePath(fixture.apiGoalPath)) {
+    || state.pausedByUser !== expectedPaused
+    || state.transportKind !== "local"
+    || state.awaitingApproval !== true
+    || normalizePath(String(state.scratchboardPath)) !== normalizePath(fixture.apiGoalPath)) {
     throw new Error(`${command} did not produce the exact owned goal-state transition`);
   }
   if (!existsSync(fixture.nodeGoalPath)) throw new Error(`${command} did not retain its owned goal.md until cleanup`);

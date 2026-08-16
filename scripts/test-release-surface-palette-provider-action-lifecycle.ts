@@ -13,6 +13,15 @@ import { executePaletteProviderAction } from "./release-drivers/palette-action-p
 import { providerActionPromptMatches } from "../src/lib/debug-provider-action-fixture";
 
 const root = resolve(import.meta.dirname, "..");
+const debugProviderRouteSource = readFileSync(resolve(root, "src-tauri/src/debug_api_providers.rs"), "utf8");
+const nativeFixtureSource = readFileSync(resolve(root, "src-tauri/src/main.rs"), "utf8");
+for (const action of ["composer-send", "work-preview-palette-ask-fix"]) {
+  assert(
+    debugProviderRouteSource.includes(`"${action}"`)
+      && nativeFixtureSource.includes(`"${action}"`),
+    `installed provider fixture must authorize ${action} in both the authenticated route and native fixture process`,
+  );
+}
 const temp = mkdtempSync(join(tmpdir(), "shellx-palette-provider-action-"));
 const profileRoot = join(temp, `shellx-final-palette-provider-${"a".repeat(16)}`);
 const shellxHome = join(profileRoot, ".shellx");

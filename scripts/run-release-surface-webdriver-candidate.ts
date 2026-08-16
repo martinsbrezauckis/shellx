@@ -47,6 +47,10 @@ if (selectedSurfaceIds.length > 0 && selectedDriverIds.length === 0) {
   throw new Error("--surface-id requires one or more exact --driver-id values");
 }
 const targetedClosure = selectedDriverIds.length > 0 || selectedSurfaceIds.length > 0;
+const collectScenario = args.includes("--collect-scenario");
+if (collectScenario && !targetedClosure) {
+  throw new Error("--collect-scenario is valid only for a targeted post-matrix closure");
+}
 const expectedExecutionWindow = targetedClosure
   ? "targeted-post-matrix"
   : "immediately-before-publish";
@@ -132,7 +136,7 @@ const providerRoutePlanErrors = validateReleaseSurfaceProviderRouteBatchPlan({
   contract,
   platform,
 });
-if (!targetedClosure && providerRoutePlanErrors.length > 0) {
+if ((!targetedClosure || collectScenario) && providerRoutePlanErrors.length > 0) {
   throw new Error(`invalid provider route batch plan: ${providerRoutePlanErrors.join("; ")}`);
 }
 validateProviderRouteOutputs(providerRouteOutputDir, providerRoutePlan.routes, profileNodePath, driverOutputDir);
@@ -181,8 +185,8 @@ const result = await withReleaseSurfaceWebDriverOrchestration({
   profileCleanupEvidencePath,
   candidateTeardownEvidencePath,
   orchestrationEvidencePath,
-  requireProviderRouteBatch: !targetedClosure,
-  requireHealthEvidence: !targetedClosure,
+  requireProviderRouteBatch: !targetedClosure || collectScenario,
+  requireHealthEvidence: !targetedClosure || collectScenario,
   targetedClosure,
 }, async (session, context) => {
   const runtime = await waitForCandidateRuntime({
@@ -220,7 +224,7 @@ const result = await withReleaseSurfaceWebDriverOrchestration({
   context.bindCandidateAttestation(candidateAttestationPath);
   const candidate = loadReleaseSurfaceCandidateAttestation(candidateAttestationPath);
   const token = readCandidateToken(context.profile.debugTokenNodePath);
-  const healthCollector = targetedClosure
+  const healthCollector = targetedClosure && !collectScenario
     ? null
     : await startReleaseSurfaceHealthCollector({
       candidate,
@@ -285,7 +289,7 @@ const result = await withReleaseSurfaceWebDriverOrchestration({
   });
   const manifestPath = join(resolve(driverOutputDir), "run-manifest.json");
   context.bindDriverRunManifest(manifestPath);
-  const providerRoutes = targetedClosure
+  const providerRoutes = targetedClosure && !collectScenario
     ? null
     : await collectReleaseSurfaceProviderRouteBatch({
       plan: providerRoutePlan,

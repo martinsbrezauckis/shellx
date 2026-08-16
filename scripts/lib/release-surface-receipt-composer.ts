@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
@@ -73,7 +74,7 @@ import {
 } from "./release-surface-webdriver-binding";
 import {
   validateReleaseSurfaceControllerBinding,
-  verifyReleaseSurfaceControllerBinding,
+  verifyReleaseSurfaceControllerBindingFromGit,
 } from "./release-surface-controller-binding";
 import {
   validateReleaseSurfaceMacosNativeInputBinding,
@@ -95,7 +96,7 @@ function requirePassingVerdict(value: "pass" | "fail", surfaceId: string, phase:
 export interface ComposeFinalSurfaceReceiptInput {
   receiptsDir: string;
   driverRunDir: string;
-  scenarioReportPath: string;
+  scenarioReportPath?: string;
   signatureReceiptPath: string;
   candidateAttestationPath: string;
   candidateTeardownPath?: string;
@@ -107,9 +108,11 @@ export interface ComposeFinalSurfaceReceiptInput {
   sourceCommit: string;
   version: string;
   rootDir: string;
+  coverage?: "complete" | "slice";
 }
 
 export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInput): FinalSurfaceReceipt {
+  const coverage = input.coverage ?? "complete";
   const receiptsDir = resolve(input.receiptsDir);
   requireContainedDirectory(receiptsDir, input.driverRunDir, "driver run directory");
   const driverRunDir = resolve(input.driverRunDir);
@@ -124,7 +127,7 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
   const runManifestPath = join(driverRunDir, "run-manifest.json");
   const runManifest = JSON.parse(readFileSync(runManifestPath, "utf8")) as ReleaseSurfaceDriverRunManifest;
   const runManifestIdentity = identifyContainedFile(receiptsDir, runManifestPath, "driver run manifest");
-  validateRunManifest(runManifest, input);
+  validateRunManifest(runManifest, input, coverage);
   const signatureReceipt = identifyContainedFile(receiptsDir, input.signatureReceiptPath, "signature receipt");
   if (signatureReceipt.basename !== runManifest.signatureReceipt.basename
     || signatureReceipt.sha256 !== runManifest.signatureReceipt.sha256
@@ -218,18 +221,25 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
     throw new Error("candidate verification summary does not match the exact parsed attestation");
   }
 
-  identifyContainedFile(receiptsDir, input.scenarioReportPath, "scenario report");
-  const scenarioReport = loadReleaseSurfaceScenarioReport(input.scenarioReportPath);
-  const scenarioErrors = validateReleaseSurfaceScenarioReport({
-    report: scenarioReport,
-    contract: input.contract,
-    platform: input.platform,
-    sourceCommit: input.sourceCommit,
-    version: input.version,
-    inventoryDigest: input.inventory.digest,
-    artifactSha256: runManifest.artifact.sha256,
-  });
-  if (scenarioErrors.length > 0) throw new Error(`invalid final scenario report: ${scenarioErrors.join("; ")}`);
+  if (coverage === "complete" && !input.scenarioReportPath) {
+    throw new Error("complete final receipt composition requires a scenario report");
+  }
+  const scenarioReport = input.scenarioReportPath
+    ? loadReleaseSurfaceScenarioReport(input.scenarioReportPath)
+    : null;
+  if (input.scenarioReportPath && scenarioReport) {
+    identifyContainedFile(receiptsDir, input.scenarioReportPath, "scenario report");
+    const scenarioErrors = validateReleaseSurfaceScenarioReport({
+      report: scenarioReport,
+      contract: input.contract,
+      platform: input.platform,
+      sourceCommit: input.sourceCommit,
+      version: input.version,
+      inventoryDigest: input.inventory.digest,
+      artifactSha256: runManifest.artifact.sha256,
+    });
+    if (scenarioErrors.length > 0) throw new Error(`invalid final scenario report: ${scenarioErrors.join("; ")}`);
+  }
 
   const evidenceArtifacts: FinalSurfaceReceipt["evidenceArtifacts"] = [];
   const addEvidence = (id: string, path: string): string => {
@@ -306,55 +316,58 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
     parsedMacosNativeInputBinding = JSON.parse(readFileSync(bindingPath, "utf8")) as ReleaseSurfaceMacosNativeInputBindingEvidence;
     addEvidence("macos-native-input-binding", bindingPath);
   }
-  const scenarioEvidenceId = addEvidence("scenario-report", input.scenarioReportPath);
-  const healthEvidencePath = releaseSurfaceScenarioEvidencePath(
-    input.scenarioReportPath,
-    scenarioReport.health.evidence.basename,
-  );
-  const actualHealthEvidence = identifyContainedFile(receiptsDir, healthEvidencePath, "scenario health evidence");
-  requireExactIdentity(actualHealthEvidence, scenarioReport.health.evidence, "scenario health evidence");
-  const parsedHealthEvidence = loadReleaseSurfaceHealthEvidence(healthEvidencePath);
-  const expectedLinkSurfaceIds = new Set(input.inventory.items
-    .filter((surface) => surface.kind === "ui-control"
-      && surface.elementTag === "a"
-      && surface.platforms.includes(input.platform))
-    .map((surface) => surface.id));
-  const healthEvidenceErrors = validateReleaseSurfaceHealthEvidence({
-    evidence: parsedHealthEvidence,
-    candidate: parsedCandidateAttestation,
-    scenario: scenarioReport,
-    knownSurfaceIds: new Set(input.inventory.items.map((surface) => surface.id)),
-    ...(expectedLinkSurfaceIds.size > 0 ? { expectedLinkSurfaceIds } : {}),
-  });
-  if (healthEvidenceErrors.length > 0) {
-    throw new Error(`invalid scenario health evidence: ${healthEvidenceErrors.join("; ")}`);
-  }
-  const healthEvidenceId = addEvidence("scenario-health", healthEvidencePath);
+  let scenarioEvidenceId = "";
+  let healthEvidenceId = "";
   const routeVersionsByProvider = new Map<string, Set<string>>();
   const routeEvidenceIds = new Map<string, string>();
-  for (const route of scenarioReport.providerRoutes) {
-    const routeEvidencePath = releaseSurfaceScenarioEvidencePath(
+  if (input.scenarioReportPath && scenarioReport) {
+    scenarioEvidenceId = addEvidence("scenario-report", input.scenarioReportPath);
+    const healthEvidencePath = releaseSurfaceScenarioEvidencePath(
       input.scenarioReportPath,
-      route.evidence.basename,
+      scenarioReport.health.evidence.basename,
     );
-    const actualEvidence = identifyContainedFile(receiptsDir, routeEvidencePath, `provider route ${route.id} evidence`);
-    requireExactIdentity(actualEvidence, route.evidence, `provider route ${route.id} evidence`);
-    const parsedRouteEvidence = loadReleaseSurfaceProviderRouteEvidence(routeEvidencePath);
-    const routeEvidenceErrors = validateReleaseSurfaceProviderRouteEvidence({
-      evidence: parsedRouteEvidence,
+    const actualHealthEvidence = identifyContainedFile(receiptsDir, healthEvidencePath, "scenario health evidence");
+    requireExactIdentity(actualHealthEvidence, scenarioReport.health.evidence, "scenario health evidence");
+    const parsedHealthEvidence = loadReleaseSurfaceHealthEvidence(healthEvidencePath);
+    const expectedLinkSurfaceIds = new Set(input.inventory.items
+      .filter((surface) => surface.kind === "ui-control"
+        && surface.elementTag === "a"
+        && surface.platforms.includes(input.platform))
+      .map((surface) => surface.id));
+    const healthEvidenceErrors = validateReleaseSurfaceHealthEvidence({
+      evidence: parsedHealthEvidence,
       candidate: parsedCandidateAttestation,
-      expectedRoute: route,
+      scenario: scenarioReport,
+      knownSurfaceIds: new Set(input.inventory.items.map((surface) => surface.id)),
+      ...(expectedLinkSurfaceIds.size > 0 ? { expectedLinkSurfaceIds } : {}),
     });
-    if (routeEvidenceErrors.length > 0) {
-      throw new Error(`invalid provider route ${route.id} evidence: ${routeEvidenceErrors.join("; ")}`);
+    if (healthEvidenceErrors.length > 0) {
+      throw new Error(`invalid scenario health evidence: ${healthEvidenceErrors.join("; ")}`);
     }
-    const routeEvidenceId = addEvidence(`provider-route-${route.id}`, routeEvidencePath);
-    routeEvidenceIds.set(route.id, routeEvidenceId);
-    const versions = routeVersionsByProvider.get(route.providerId) ?? new Set<string>();
-    versions.add(route.provider.version);
-    routeVersionsByProvider.set(route.providerId, versions);
+    healthEvidenceId = addEvidence("scenario-health", healthEvidencePath);
+    for (const route of scenarioReport.providerRoutes) {
+      const routeEvidencePath = releaseSurfaceScenarioEvidencePath(
+        input.scenarioReportPath,
+        route.evidence.basename,
+      );
+      const actualEvidence = identifyContainedFile(receiptsDir, routeEvidencePath, `provider route ${route.id} evidence`);
+      requireExactIdentity(actualEvidence, route.evidence, `provider route ${route.id} evidence`);
+      const parsedRouteEvidence = loadReleaseSurfaceProviderRouteEvidence(routeEvidencePath);
+      const routeEvidenceErrors = validateReleaseSurfaceProviderRouteEvidence({
+        evidence: parsedRouteEvidence,
+        candidate: parsedCandidateAttestation,
+        expectedRoute: route,
+      });
+      if (routeEvidenceErrors.length > 0) {
+        throw new Error(`invalid provider route ${route.id} evidence: ${routeEvidenceErrors.join("; ")}`);
+      }
+      const routeEvidenceId = addEvidence(`provider-route-${route.id}`, routeEvidencePath);
+      routeEvidenceIds.set(route.id, routeEvidenceId);
+      const versions = routeVersionsByProvider.get(route.providerId) ?? new Set<string>();
+      versions.add(route.provider.version);
+      routeVersionsByProvider.set(route.providerId, versions);
+    }
   }
-
   const driverDefinitions = new Map(input.driverPlan.drivers.map((driver) => [driver.id, driver]));
   const inventoryById = new Map(input.inventory.items.map((surface) => [surface.id, surface]));
   const planAssignments = new Map(input.driverPlan.assignments.flatMap((assignment) => {
@@ -394,10 +407,9 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
     if (JSON.stringify(row.controller) !== JSON.stringify(request.controller)) {
       throw new Error(`driver ${row.driverId} request controller does not match the exact run manifest`);
     }
-    const controllerErrors = verifyReleaseSurfaceControllerBinding({
+    const controllerErrors = verifyReleaseSurfaceControllerBindingFromGit({
       rootDir: input.rootDir,
       binding: row.controller,
-      requireClean: true,
     });
     if (controllerErrors.length > 0) {
       throw new Error(`driver ${row.driverId} controller binding is invalid: ${controllerErrors.join("; ")}`);
@@ -485,6 +497,7 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
       inventoryById,
       runManifest,
       parsedCandidateAttestation,
+      coverage,
     );
     const reportErrors = validateReleaseSurfaceDriverReport(request, report);
     if (reportErrors.length > 0) throw new Error(`driver ${row.driverId} report is invalid: ${reportErrors.join("; ")}`);
@@ -517,7 +530,6 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
       });
     }
   }
-
   const applicableSurfaceIds = new Set(input.inventory.items
     .filter((surface) => surface.platforms.includes(input.platform))
     .map((surface) => surface.id));
@@ -528,7 +540,10 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
     .map((driver) => driver.id)
     .sort();
   const observedDriverIds = [...seenDrivers].sort();
-  if (JSON.stringify(readyDriverIds) !== JSON.stringify(observedDriverIds)) {
+  const expectedDriverIds = coverage === "complete"
+    ? readyDriverIds
+    : [...(runManifest.targetedClosure?.driverIds ?? [])].sort();
+  if (JSON.stringify(expectedDriverIds) !== JSON.stringify(observedDriverIds)) {
     throw new Error("driver run does not contain every exact ready driver once");
   }
   if (Boolean(runManifest.nativeWebDriverBinding) !== nativeWebDriverBindingUsed) {
@@ -562,15 +577,24 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
   if (candidateTeardownErrors.length > 0) {
     throw new Error(`invalid candidate teardown receipt: ${candidateTeardownErrors.join("; ")}`);
   }
+  const targetedSurfaceIds = runManifest.targetedClosure?.surfaceIds
+    ? new Set(runManifest.targetedClosure.surfaceIds)
+    : null;
+  const targetedDriverIds = new Set(runManifest.targetedClosure?.driverIds ?? []);
   const applicableIds = input.inventory.items
     .filter((surface) => surface.platforms.includes(input.platform))
+    .filter((surface) => coverage === "complete"
+      || (targetedSurfaceIds
+        ? targetedSurfaceIds.has(surface.id)
+        : input.driverPlan.assignments.some((assignment) => (
+            assignment.surfaceId === surface.id && targetedDriverIds.has(assignment.driverId)
+          ))))
     .map((surface) => surface.id)
     .sort();
   const observedIds = [...seenOutcomes].sort();
   if (JSON.stringify(applicableIds) !== JSON.stringify(observedIds)) {
     throw new Error(`driver reports do not cover the exact ${input.platform} inventory`);
   }
-
   return {
     schema: FINAL_SURFACE_RECEIPT_SCHEMA,
     mode: "final-frozen-candidate",
@@ -578,9 +602,9 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
     sourceCommit: input.sourceCommit,
     version: input.version,
     inventoryDigest: input.inventory.digest,
-    startedAt: earliestIso(runManifest.startedAt, scenarioReport.startedAt),
+    startedAt: scenarioReport ? earliestIso(runManifest.startedAt, scenarioReport.startedAt) : runManifest.startedAt,
     completedAt: latestIso(
-      latestIso(runManifest.completedAt, scenarioReport.completedAt),
+      scenarioReport ? latestIso(runManifest.completedAt, scenarioReport.completedAt) : runManifest.completedAt,
       parsedCandidateTeardown.completedAt,
     ),
     artifact: {
@@ -589,34 +613,47 @@ export function composeFinalSurfaceReceipt(input: ComposeFinalSurfaceReceiptInpu
       signatureStatus: parsedSignatureReceipt.status,
     },
     evidenceArtifacts,
-    transports: platformContract.requiredTransports.map((id) => ({ id, status: "pass", evidence: scenarioEvidenceId })),
-    providers: input.contract.requiredProviders.map((id) => ({
-      id,
-      status: "pass",
-      version: [...(routeVersionsByProvider.get(id) ?? [])].sort().join(" | "),
-      evidence: scenarioEvidenceId,
-    })),
-    providerRoutes: scenarioReport.providerRoutes.map((route) => ({
-      id: route.id,
-      transportId: route.transportId,
-      providerId: route.providerId,
-      status: "pass",
-      evidenceMode: route.evidenceMode,
-      version: route.provider.version,
-      executableSha256: route.provider.executableSha256,
-      evidence: routeEvidenceIds.get(route.id)!,
-    })),
-    health: {
-      startup: "pass",
-      shutdown: "pass",
-      brokenLinks: 0,
-      unexpectedConsoleErrors: 0,
-      evidence: healthEvidenceId,
-    },
+    transports: scenarioReport
+      ? platformContract.requiredTransports.map((id) => ({ id, status: "pass", evidence: scenarioEvidenceId }))
+      : [],
+    providers: scenarioReport
+      ? input.contract.requiredProviders.map((id) => ({
+          id,
+          status: "pass",
+          version: [...(routeVersionsByProvider.get(id) ?? [])].sort().join(" | "),
+          evidence: scenarioEvidenceId,
+        }))
+      : [],
+    providerRoutes: scenarioReport
+      ? scenarioReport.providerRoutes.map((route) => ({
+          id: route.id,
+          transportId: route.transportId,
+          providerId: route.providerId,
+          status: "pass",
+          evidenceMode: route.evidenceMode,
+          version: route.provider.version,
+          executableSha256: route.provider.executableSha256,
+          evidence: routeEvidenceIds.get(route.id)!,
+        }))
+      : [],
+    health: scenarioReport
+      ? {
+          startup: "pass",
+          shutdown: "pass",
+          brokenLinks: 0,
+          unexpectedConsoleErrors: 0,
+          evidence: healthEvidenceId,
+        }
+      : {
+          startup: "pass",
+          shutdown: "pass",
+          brokenLinks: 0,
+          unexpectedConsoleErrors: 0,
+          evidence: "",
+        },
     outcomes,
   };
 }
-
 export function releaseSurfaceScenarioEvidencePath(
   scenarioReportPath: string,
   evidenceBasename: string,
@@ -649,7 +686,6 @@ export function validateReleaseSurfaceMacosNativeInputComposition(input: {
   }
   return errors;
 }
-
 function requireExactIdentity(
   actual: { basename: string; sha256: string; bytes: number },
   expected: { basename: string; sha256: string; bytes: number },
@@ -663,17 +699,40 @@ function requireExactIdentity(
 function validateRunManifest(
   manifest: ReleaseSurfaceDriverRunManifest,
   input: ComposeFinalSurfaceReceiptInput,
+  coverage: "complete" | "slice",
 ): void {
-  if (manifest.targetedClosure) {
+  if (coverage === "complete" && manifest.targetedClosure) {
     throw new Error("targeted closure driver manifest cannot replace the complete discovery manifest");
+  }
+  if (coverage === "slice" && !manifest.targetedClosure) {
+    throw new Error("slice composition requires an explicit targeted closure driver manifest");
   }
   requireOnlyKeys(manifest, [
     "schema", "mode", "platform", "sourceCommit", "version", "inventoryDigest", "startedAt",
     "completedAt", "controller", "artifact", "signatureReceipt", "candidateAttestation",
     "installationReceipt", "candidateVerification", "signatureVerification", "nativeWebDriverBinding",
-    "macosNativeInputBinding",
+    "macosNativeInputBinding", "targetedClosure",
     "driverReports",
   ], "driver run manifest");
+  if (manifest.targetedClosure) {
+    requireOnlyKeys(
+      manifest.targetedClosure,
+      ["driverIds", "surfaceIds", "controllerDelta"],
+      "driver run targeted closure",
+    );
+    if (manifest.targetedClosure.driverIds.length === 0
+      || new Set(manifest.targetedClosure.driverIds).size !== manifest.targetedClosure.driverIds.length
+      || manifest.targetedClosure.driverIds.some((id) => !id.trim())) {
+      throw new Error("driver run targeted closure driver ids must be non-empty and unique");
+    }
+    if (manifest.targetedClosure.surfaceIds
+      && (manifest.targetedClosure.surfaceIds.length === 0
+        || new Set(manifest.targetedClosure.surfaceIds).size !== manifest.targetedClosure.surfaceIds.length
+        || manifest.targetedClosure.surfaceIds.some((id) => !id.trim()))) {
+      throw new Error("driver run targeted closure surface ids must be non-empty and unique");
+    }
+    validateTargetedControllerDelta(manifest, input.rootDir);
+  }
   for (const [value, label] of [
     [manifest.artifact, "driver run artifact"],
     [manifest.signatureReceipt, "driver run signature receipt"],
@@ -709,10 +768,9 @@ function validateRunManifest(
   if (controllerErrors.length > 0) {
     throw new Error(`driver run controller binding is invalid: ${controllerErrors.join("; ")}`);
   }
-  const liveControllerErrors = verifyReleaseSurfaceControllerBinding({
+  const liveControllerErrors = verifyReleaseSurfaceControllerBindingFromGit({
     rootDir: input.rootDir,
     binding: manifest.controller,
-    requireClean: true,
   });
   if (liveControllerErrors.length > 0) {
     throw new Error(`driver run controller no longer matches the frozen source: ${liveControllerErrors.join("; ")}`);
@@ -735,6 +793,49 @@ function validateRunManifest(
   }
 }
 
+function validateTargetedControllerDelta(
+  manifest: ReleaseSurfaceDriverRunManifest,
+  rootDir: string,
+): void {
+  const delta = manifest.targetedClosure?.controllerDelta;
+  if (!delta) {
+    if (manifest.controller.sourceCommit !== manifest.sourceCommit) {
+      throw new Error("targeted driver run changed controller commit without an exact controller delta");
+    }
+    return;
+  }
+  requireOnlyKeys(
+    delta,
+    ["candidateSourceCommit", "controllerSourceCommit", "changedPaths", "patchSha256"],
+    "driver run targeted controller delta",
+  );
+  if (delta.candidateSourceCommit !== manifest.sourceCommit
+    || delta.controllerSourceCommit !== manifest.controller.sourceCommit
+    || !/^[a-f0-9]{40,64}$/.test(delta.controllerSourceCommit)
+    || !/^[a-f0-9]{64}$/.test(delta.patchSha256)) {
+    throw new Error("targeted driver run controller delta identity is invalid");
+  }
+  execFileSync("git", ["-C", rootDir, "merge-base", "--is-ancestor", delta.candidateSourceCommit, delta.controllerSourceCommit]);
+  const changedPaths = execFileSync(
+    "git",
+    ["-C", rootDir, "diff", "--name-only", "--no-renames", "-z", `${delta.candidateSourceCommit}..${delta.controllerSourceCommit}`],
+    { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
+  ).split("\0").filter(Boolean);
+  if (JSON.stringify(changedPaths) !== JSON.stringify(delta.changedPaths)
+    || changedPaths.length === 0
+    || changedPaths.some((path) => !path.startsWith("scripts/") || path.includes("\\"))) {
+    throw new Error("targeted driver run controller delta changed-path set is invalid");
+  }
+  const patch = execFileSync(
+    "git",
+    ["-C", rootDir, "diff", "--binary", "--full-index", "--no-renames", `${delta.candidateSourceCommit}..${delta.controllerSourceCommit}`, "--", "scripts"],
+    { maxBuffer: 32 * 1024 * 1024 },
+  );
+  if (createHash("sha256").update(patch).digest("hex") !== delta.patchSha256) {
+    throw new Error("targeted driver run controller delta patch digest is invalid");
+  }
+}
+
 function validateDriverRequestAgainstPlan(
   request: ReleaseSurfaceDriverRequest,
   driverId: string,
@@ -744,6 +845,7 @@ function validateDriverRequestAgainstPlan(
   inventoryById: Map<string, ReleaseSurfaceInventory["items"][number]>,
   runManifest: ReleaseSurfaceDriverRunManifest,
   candidate: ReleaseSurfaceCandidateAttestation,
+  coverage: "complete" | "slice",
 ): void {
   if (request.schema !== RELEASE_SURFACE_DRIVER_REQUEST_SCHEMA) throw new Error(`driver ${driverId} request schema is invalid`);
   for (const [field, expected, actual] of [
@@ -825,9 +927,13 @@ function validateDriverRequestAgainstPlan(
       throw new Error(`driver ${driverId} request drifted from inventory surface ${row.surface.id}`);
     }
   }
+  const targetedSurfaceIds = runManifest.targetedClosure?.surfaceIds
+    ? new Set(runManifest.targetedClosure.surfaceIds)
+    : null;
   const expectedIds = input.driverPlan.assignments
     .filter((row) => row.driverId === driverId
       && inventoryById.get(row.surfaceId)?.platforms.includes(input.platform))
+    .filter((row) => coverage === "complete" || !targetedSurfaceIds || targetedSurfaceIds.has(row.surfaceId))
     .map((row) => row.surfaceId)
     .sort();
   const actualIds = request.assignments.map((row) => row.surface.id).sort();

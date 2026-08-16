@@ -17,6 +17,7 @@ import type { ReleaseSurfaceWebDriverSession } from "./lib/release-surface-webdr
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
+const requestedCaptureIds = repeatedArgs(args, "--capture-id");
 const webdriverBase = exactLoopbackOrigin(requiredArg(args, "--webdriver-base"), "WebDriver base");
 const debugBase = exactLoopbackOrigin(requiredArg(args, "--debug-base"), "Debug API base");
 const appDemoCwd = resolve(requiredArg(args, "--app-demo-cwd"));
@@ -46,6 +47,17 @@ const sourceCommit = requiredArg(args, "--source-commit");
 const visuals = JSON.parse(readFileSync(join(root, "docs/public/manual/shellx/visuals.json"), "utf8")) as {
   captures: Record<string, ManualAtlasCaptureTarget>;
 };
+const capturePlan = requestedCaptureIds.length === 0
+  ? MANUAL_ATLAS_CAPTURE_PLAN
+  : MANUAL_ATLAS_CAPTURE_PLAN.filter((entry) => requestedCaptureIds.includes(entry.id));
+if (capturePlan.length !== requestedCaptureIds.length) {
+  const known = new Set(MANUAL_ATLAS_CAPTURE_PLAN.map((entry) => entry.id));
+  const unknown = requestedCaptureIds.filter((id) => !known.has(id));
+  throw new Error(`unknown or repeated manual atlas capture id: ${unknown.join(", ") || requestedCaptureIds.join(", ")}`);
+}
+const captureTargets = Object.fromEntries(
+  capturePlan.map((entry) => [entry.id, visuals.captures[entry.id]]),
+) as Record<string, ManualAtlasCaptureTarget>;
 const webdriver: ReleaseSurfaceWebDriverSession = { base: webdriverBase, sessionId };
 let browserPrepared = false;
 
@@ -119,8 +131,8 @@ const adapter: ManualAtlasCaptureAdapter = {
 };
 
 const manifest = await captureManualAtlas({
-  plan: MANUAL_ATLAS_CAPTURE_PLAN,
-  targets: visuals.captures,
+  plan: capturePlan,
+  targets: captureTargets,
   candidate: {
     sourceCommit,
     productSourceSha256: calculateManualAtlasProductSourceSha256FromGit(root, sourceCommit),
@@ -258,6 +270,19 @@ function requiredArg(values: string[], name: string): string {
   const value = index >= 0 ? values[index + 1]?.trim() : "";
   if (!value) throw new Error(`missing required argument ${name}`);
   return value;
+}
+
+function repeatedArgs(values: string[], name: string): string[] {
+  const output: string[] = [];
+  for (let index = 0; index < values.length; index += 1) {
+    if (values[index] !== name) continue;
+    const value = values[index + 1]?.trim() ?? "";
+    if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(value)) {
+      throw new Error(`invalid ${name} value`);
+    }
+    output.push(value);
+  }
+  return output;
 }
 
 function optionalArg(values: string[], name: string): string | undefined {

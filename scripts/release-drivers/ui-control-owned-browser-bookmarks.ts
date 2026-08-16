@@ -657,9 +657,11 @@ async function openOwnedBrowserTab(
   profileId: string,
   url = "about:blank",
 ): Promise<BrowserTab> {
+  const expectedDomains = /^https?:\/\//i.test(url) ? [new URL(url).hostname] : [];
   const body = await apiJson<Record<string, unknown>>(connection, "POST", "/browser/tabs/open", {
     profileId,
     url,
+    ...(expectedDomains.length > 0 ? { expectedDomains } : {}),
   });
   const tab = record(body.tab);
   return {

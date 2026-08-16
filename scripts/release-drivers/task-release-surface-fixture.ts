@@ -156,7 +156,7 @@ export function taskDraft(
     executionPolicy: {
       permissionMode: "default",
       autonomyMode: "default",
-      toolExposureIds: [],
+      toolExposureIds: ["nativeFirst"],
     },
     attachmentRefs: [],
     vaultRequirements: [],

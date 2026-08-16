@@ -93,8 +93,9 @@ type UiState = Json & {
   openTabs?: unknown;
 };
 type SessionActionBaseline = {
-  activeTab: Json;
   activeTabId: string;
+  openTabIds: string[];
+  ownedTabId: string;
 };
 
 async function execute(request: ReleaseSurfaceDriverRequest): Promise<ReleaseSurfaceDriverReport> {
@@ -202,7 +203,7 @@ async function exerciseAction(
       screenshotProof = prepareOwnedScreenshotAttachmentProof(request);
     }
     if (actionId === "act-connect" || actionId === "act-abort") {
-      sessionBaseline = await prepareSessionAction(request, connection, actionId);
+      sessionBaseline = await prepareSessionAction(request, connection, webdriver, actionId);
     }
     await postUi(connection, { openModal: "palette" });
     const element = await waitForReleaseSurfaceWebDriverElement(webdriver, actionSelector);
@@ -228,19 +229,23 @@ async function exerciseAction(
       outcome.observedEffect = `${actionId} received a native installed-input click and changed renderer-backed autonomy state to ${target}.`;
     } else if (actionId === "act-attach-screenshot") {
       if (!screenshotProof) throw new Error("screenshot proof fixture was not prepared");
-      await waitForReleaseSurfaceWebDriverElement(webdriver, ".composer-attachment-chip.composer-attachment-image");
+      await waitForReleaseSurfaceWebDriverElement(
+        webdriver,
+        ".composer-attachment-chip.composer-attachment-image",
+        { timeoutMs: 15_000, pollMs: 50 },
+      );
       const screenshot = await waitForOwnedScreenshotAttachment(screenshotProof);
       screenshotProof.createdLocalPath = screenshot.localPath;
       await verifyOwnedScreenshotAttachmentChip(webdriver, screenshot.launchPath);
       outcome.observedEffect = `${actionId} received a native installed-input click, created one non-empty PNG inside the isolated run profile, and attached that exact file as an image chip.`;
     } else if (actionId === "act-connect") {
       if (!sessionBaseline) throw new Error("Connect session fixture was not prepared");
-      await waitForSessionChild(connection, sessionBaseline.activeTabId, true, "palette Connect provider child");
+      await waitForSessionChild(connection, sessionBaseline.ownedTabId, true, "palette Connect provider child");
       await waitForUiState(connection, (state) => activeTabStatus(state) === "Connected", "palette Connect renderer status");
       outcome.observedEffect = "act-connect received a native installed-input click, started and initialized one real local Grok ACP child for the exact isolated tab without sending a provider prompt, and exposed matching registry and renderer Connected state.";
     } else if (actionId === "act-abort") {
       if (!sessionBaseline) throw new Error("Abort session fixture was not prepared");
-      await waitForSessionChild(connection, sessionBaseline.activeTabId, false, "palette Abort provider cleanup");
+      await waitForSessionChild(connection, sessionBaseline.ownedTabId, false, "palette Abort provider cleanup");
       await waitForUiState(connection, (state) => activeTabStatus(state) === "Idle", "palette Abort renderer status");
       outcome.observedEffect = "act-abort received a native installed-input click, terminated the exact release-owned Grok ACP child, removed its registry slot, and returned the isolated renderer tab to Idle.";
     } else if (action) {
@@ -273,7 +278,7 @@ async function exerciseAction(
         await cleanupScreenshotAction(webdriver, screenshotProof);
       }
       if (sessionBaseline) {
-        await cleanupSessionAction(connection, sessionBaseline);
+        await cleanupSessionAction(request, connection, webdriver, sessionBaseline);
       }
       if (action) await waitForReleaseSurfaceWebDriverElementAbsent(webdriver, action.effectSelector);
       outcome.cleanup = "pass";
@@ -291,14 +296,24 @@ async function exerciseAction(
 async function prepareSessionAction(
   request: ReleaseSurfaceDriverRequest,
   connection: { base: string; token: string },
+  webdriver: ReleaseSurfaceInstalledInputSession,
   actionId: string,
 ): Promise<SessionActionBaseline> {
   const baseline = await uiState(connection);
-  const activeTab = record(baseline.activeTab, "palette session active tab");
-  const tabId = activeTabId(baseline);
-  if (!tabId || activeTab.tabId !== tabId) {
+  const baselineIds = sessionIds(baseline);
+  const baselineActiveId = activeTabId(baseline);
+  if (!baselineActiveId || !baselineIds.includes(baselineActiveId)) {
     throw new Error("palette session baseline did not expose one exact active renderer tab");
   }
+  await performReleaseSurfaceWebDriverKeyChord(webdriver, [commandKey(request), "t"]);
+  const ownedState = await waitForUiState(connection, (state) => {
+    const ids = sessionIds(state);
+    const active = activeTabId(state);
+    return ids.length === baselineIds.length + 1
+      && baselineIds.every((id) => ids.includes(id))
+      && Boolean(active && !baselineIds.includes(active));
+  }, "disposable palette session tab");
+  const tabId = activeTabId(ownedState);
   if (await sessionHasActiveChild(connection, tabId)) {
     throw new Error("palette session lifecycle refuses to replace an already-active provider child");
   }
@@ -307,25 +322,41 @@ async function prepareSessionAction(
     request.platform,
   );
   const ownedTab: Json = {
-    ...activeTab,
     tabId,
     cwd,
-    agentId: "grok",
-    status: "Idle",
-    isSending: false,
     connectionId: null,
     connectionLabel: "Local",
     connectionTransport: "local",
   };
-  await postUi(connection, { activeTab: ownedTab, activeTabId: tabId });
+  await postUi(connection, {
+    activeTab: ownedTab,
+    activeTabId: tabId,
+    ...(actionId === "act-connect" ? { debugAgentPickerFixture: "owned-ready" } : {}),
+  });
   await waitForUiState(connection, (state) => {
-    const current = state.activeTab;
+    const current = state.activeTab !== null
+      && typeof state.activeTab === "object"
+      && !Array.isArray(state.activeTab)
+      ? state.activeTab as Json
+      : null;
     return activeTabId(state) === tabId
-      && current !== null
-      && typeof current === "object"
-      && !Array.isArray(current)
-      && stableJson(current) === stableJson(ownedTab);
+      && current?.tabId === tabId
+      && current.cwd === cwd
+      && current.connectionId === null
+      && current.connectionLabel === "Local"
+      && current.connectionTransport === "local";
   }, "owned local Grok tab baseline");
+  if (actionId === "act-connect") {
+    const picker = await waitForReleaseSurfaceWebDriverElement(webdriver, "[data-debug-id='composer-agent']");
+    await clickReleaseSurfaceWebDriverElement(webdriver, picker);
+    const grok = await waitForReleaseSurfaceWebDriverElement(webdriver, "[data-agent-id='grok']");
+    await clickReleaseSurfaceWebDriverElement(webdriver, grok);
+    await waitForUiState(
+      connection,
+      (state) => activeTabAgent(state) === "grok",
+      "owned local Grok agent selection",
+    );
+  }
   if (actionId === "act-abort") {
     await apiJson(connection, "POST", "/connect", {
       cwd,
@@ -335,30 +366,39 @@ async function prepareSessionAction(
       mcpServers: null,
     });
     await waitForSessionChild(connection, tabId, true, "palette Abort setup provider child");
-    await postUi(connection, { activeTab: { ...ownedTab, status: "Connected" }, activeTabId: tabId });
-    await waitForUiState(connection, (state) => activeTabStatus(state) === "Connected", "palette Abort setup status");
   }
-  return { activeTab, activeTabId: tabId };
+  return { activeTabId: baselineActiveId, openTabIds: baselineIds, ownedTabId: tabId };
 }
 
 async function cleanupSessionAction(
+  request: ReleaseSurfaceDriverRequest,
   connection: { base: string; token: string },
+  webdriver: ReleaseSurfaceInstalledInputSession,
   baseline: SessionActionBaseline,
 ): Promise<void> {
-  if (await sessionHasActiveChild(connection, baseline.activeTabId)) {
+  if (await sessionHasActiveChild(connection, baseline.ownedTabId)) {
     await apiJson(
       connection,
       "POST",
-      `/abort?tabId=${encodeURIComponent(baseline.activeTabId)}`,
+      `/abort?tabId=${encodeURIComponent(baseline.ownedTabId)}`,
       {},
     );
   }
-  await waitForSessionChild(connection, baseline.activeTabId, false, "palette session cleanup");
-  await postUi(connection, { activeTab: baseline.activeTab, activeTabId: baseline.activeTabId });
-  await waitForUiState(connection, (state) => (
-    activeTabId(state) === baseline.activeTabId
-    && stableJson(state.activeTab) === stableJson(baseline.activeTab)
-  ), "palette exact tab restoration");
+  await postUi(connection, { debugAgentPickerFixture: "clear" });
+  await waitForSessionChild(connection, baseline.ownedTabId, false, "palette session cleanup");
+  await postUi(connection, { activeTabId: baseline.ownedTabId });
+  await waitForUiState(
+    connection,
+    (state) => activeTabId(state) === baseline.ownedTabId,
+    "owned palette session focus cleanup",
+  );
+  await performReleaseSurfaceWebDriverKeyChord(webdriver, [commandKey(request), "w"]);
+  await waitForExactSessionBaseline(
+    connection,
+    baseline.openTabIds,
+    baseline.activeTabId,
+    "palette exact tab restoration",
+  );
 }
 
 async function waitForSessionChild(
@@ -394,23 +434,26 @@ async function sessionHasActiveChild(
 }
 
 function activeTabStatus(state: UiState): string {
-  if (!state.activeTab || typeof state.activeTab !== "object" || Array.isArray(state.activeTab)) return "";
-  const status = (state.activeTab as Json).status;
+  const active = activeOpenTab(state);
+  const status = active?.status;
   return typeof status === "string" ? status : "";
 }
 
-function record(value: unknown, label: string): Json {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} is not an object`);
-  return value as Json;
+function activeTabAgent(state: UiState): string {
+  const agentId = activeOpenTab(state)?.agentId;
+  return typeof agentId === "string" ? agentId : "";
 }
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    const row = value as Json;
-    return `{${Object.keys(row).sort().map((key) => `${JSON.stringify(key)}:${stableJson(row[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "undefined";
+function activeOpenTab(state: UiState): Json | null {
+  const id = activeTabId(state);
+  if (!id || !Array.isArray(state.openTabs)) return null;
+  const matches = state.openTabs.filter((value) => (
+    value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && (value as Json).tabId === id
+  ));
+  return matches.length === 1 ? matches[0] as Json : null;
 }
 
 async function cleanupScreenshotAction(

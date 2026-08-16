@@ -113,6 +113,7 @@ assert(
 );
 assert(
   rustScreenshot.includes("capture_window_label_png(&s.app, &label).await")
+    && rustScreenshot.includes('get_webview_window("main")')
     && rustScreenshot.includes("title.eq_ignore_ascii_case(\"shellX\")")
     && rustScreenshot.indexOf("capture_window_label_png(&s.app, &label).await")
       < rustScreenshot.indexOf("let windows = xcap::Window::all().unwrap_or_default();"),
@@ -169,6 +170,15 @@ assert(
     && rustDebugApi.includes('matches!(command, "recording" | "clear")')
     && rustDebugApi.includes("release-test voice capture is unavailable outside an isolated test instance"),
   "voice cancel release proof must use one isolated-only transient synthetic capture command",
+);
+assert(
+  app.includes('p.debugAgentPickerFixture === "owned-ready"')
+    && app.includes('p.debugAgentPickerFixture === "clear"')
+    && app.includes('"debugAgentPickerFixture"')
+    && rustDebugApi.includes("debug_agent_picker_fixture")
+    && rustDebugApi.includes('matches!(command, "owned-ready" | "clear")')
+    && rustDebugApi.includes("release-test agent picker fixture is unavailable outside an isolated test instance"),
+  "agent picker release proof must use one isolated-only transient ready-catalogue fixture",
 );
 assert(
   app.includes('p.debugUpdateFixture === "owned-check"')

@@ -46,6 +46,12 @@ const expectedNativePickerIds = [
   "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-attach\"]@src/components/BottomPanel.tsx#15",
   "ui-control:src/components/BottomPanel.tsx:[data-debug-id=\"composer-folder\"]@src/components/BottomPanel.tsx#22",
 ].sort();
+const micSource = readFileSync(join(root, "src/components/MicButton.tsx"), "utf8");
+assert(
+  micSource.includes('data-release-control="composer-mic-button"')
+    && micSource.includes('data-shellx-release-observe="title disabled"'),
+  "MicButton must explicitly expose only title and disabled state to bounded release observation",
+);
 const backlogBlockerNeedles = new Map<string, string>();
 
 let fixture: ChildProcess | null = null;

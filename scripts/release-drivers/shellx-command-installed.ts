@@ -8,6 +8,7 @@ import {
   clearReleaseSurfaceInstalledInputElement as clearReleaseSurfaceWebDriverElement,
   clickReleaseSurfaceInstalledInputElement as clickReleaseSurfaceWebDriverElement,
   createReleaseSurfaceInstalledInputSession,
+  observeReleaseSurfaceInstalledInputElement,
   setReleaseSurfaceInstalledInputElementValue as setReleaseSurfaceWebDriverElementValue,
   waitForReleaseSurfaceInstalledInputElement as waitForReleaseSurfaceWebDriverElement,
   waitForReleaseSurfaceInstalledInputElementAbsent as waitForReleaseSurfaceWebDriverElementAbsent,
@@ -131,6 +132,7 @@ async function exerciseCommand(
     await clearReleaseSurfaceWebDriverElement(webdriver, promptElement);
     outcome.present = "pass";
     await setReleaseSurfaceWebDriverElementValue(webdriver, promptElement, command);
+    await waitForCommandInputState(webdriver, command);
     await clickReleaseSurfaceWebDriverElement(webdriver, sendElement);
     outcome.invoke = "pass";
     if (spec) await waitForReleaseSurfaceWebDriverElement(webdriver, spec.effectSelector);
@@ -160,6 +162,19 @@ async function exerciseCommand(
     outcome.error = "ShellX command did not satisfy every required verdict";
   }
   return outcome;
+}
+
+async function waitForCommandInputState(webdriver: WebDriver, command: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  let last = "value=other";
+  while (Date.now() < deadline) {
+    const prompt = await observeReleaseSurfaceInstalledInputElement(webdriver, PROMPT_SELECTOR, ["value"]);
+    last = `value=${prompt.value === command ? "exact" : "other"}`;
+    const valueReady = prompt.value === undefined || prompt.value === command;
+    if (valueReady) return;
+    await delay(50);
+  }
+  throw new Error(`ShellX command input did not reach its exact pre-submit state: ${last}`);
 }
 
 type GoalCommandFixture = {

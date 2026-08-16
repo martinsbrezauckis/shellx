@@ -914,6 +914,10 @@ cohort("ui:settings-tab-strip-visible", "src/components/Settings.tsx", [
   "settings-tab-about",
 ]);
 cohort("ui:settings-general-visible", "src/components/settings/GeneralTab.tsx", [
+  "settings-default-agent",
+  "settings-default-working-folder",
+  "settings-default-working-folder-choose",
+  "settings-default-working-folder-clear",
   "settings-density-comfortable",
   "settings-density-compact",
   "settings-density-default",

@@ -337,6 +337,7 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
       aria-label={title}
       data-debug-id={debugId}
       data-release-control="composer-mic-button"
+      data-shellx-release-observe="title disabled"
     >
       <span className="mic-ic"><ShellIcon name={iconName} size={14} /></span>
       {(label ?? modeLabel) && (

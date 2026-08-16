@@ -128,6 +128,15 @@ const GENERAL_FONT_RANGE = "[aria-label='Chat font size in pixels']";
 const GENERAL_FONT_RESET_SURFACE = "src/components/settings/GeneralTab.tsx:[title=\"Reset to default\"]";
 const GENERAL_FONT_RESET = "[title='Reset to default']";
 const GENERAL_FONT_DEFAULT = 19;
+const GENERAL_DEFAULT_AGENT_SURFACE = 'src/components/settings/GeneralTab.tsx:[data-debug-id="settings-default-agent"]';
+const GENERAL_DEFAULT_AGENT = "[data-debug-id='settings-default-agent']";
+const GENERAL_DEFAULT_AGENT_CHOICES = [
+  [null, "Choose each time"],
+  ["grok", "Grok"],
+  ["codex-cli", "Codex CLI"],
+  ["claude-code", "Claude Code"],
+  ["antigravity-cli", "Antigravity"],
+] as const;
 const DATA_DELETE_OPEN_SURFACE = 'src/components/settings/DataTab.tsx:[title^="Delete the "][title$=" on disk + in localStorage"]';
 const DATA_DELETE_CANCEL_SURFACE = 'src/components/settings/DataTab.tsx:[id="data-delete-cancel"]';
 const DATA_DELETE_CONFIRM_SURFACE = 'src/components/settings/DataTab.tsx:[id="data-delete-confirm"]';
@@ -421,6 +430,7 @@ export function supportsSafeUiControlFamily(assignment: Assignment): boolean {
     || name === CONNECTION_RUNTIME_SURFACE
     || name === CONNECTION_SSH_KEY_SURFACE
     || name in GENERAL_SETTING_CHOICES
+    || name === GENERAL_DEFAULT_AGENT_SURFACE
     || name === GENERAL_FONT_RANGE_SURFACE
     || name === GENERAL_FONT_RESET_SURFACE
     || name === DATA_DELETE_OPEN_SURFACE
@@ -464,6 +474,9 @@ export async function exerciseSafeUiControlFamily(
     return await exerciseConnectionSshKey(connection, webdriver, assignment);
   }
   if (name in GENERAL_SETTING_CHOICES) return await exerciseGeneralChoice(connection, webdriver, assignment);
+  if (name === GENERAL_DEFAULT_AGENT_SURFACE) {
+    return await exerciseGeneralDefaultAgent(connection, webdriver, assignment);
+  }
   if (name === GENERAL_FONT_RANGE_SURFACE || name === GENERAL_FONT_RESET_SURFACE) {
     return await exerciseGeneralFont(connection, webdriver, assignment);
   }
@@ -1121,6 +1134,48 @@ async function exerciseGeneralChoice(connection: Connection, webdriver: WebDrive
   return finalize(outcome);
 }
 
+async function exerciseGeneralDefaultAgent(
+  connection: Connection,
+  webdriver: WebDriver,
+  assignment: Assignment,
+) {
+  const outcome = emptyOutcome(assignment, "No native default-agent setting effect was observed.");
+  let baseline: PublicSettings | null = null;
+  try {
+    await openSettingsTab(connection, webdriver, "general");
+    baseline = await readPublicSettings(connection);
+    const targetAgentId = baseline.defaultAgentId === "codex-cli" ? "grok" : "codex-cli";
+    const target = GENERAL_DEFAULT_AGENT_CHOICES.find(([value]) => value === targetAgentId);
+    if (!target) throw new Error("no alternate default Agent choice exists");
+    const control = await waitForReleaseSurfaceWebDriverElement(webdriver, GENERAL_DEFAULT_AGENT);
+    outcome.present = "pass";
+    await setReleaseSurfaceWebDriverElementValue(webdriver, control, target[1]);
+    outcome.invoke = "pass";
+    await waitForPublicSetting(connection, "defaultAgentId", target[0]);
+    await waitForGeneralControlState(webdriver, GENERAL_DEFAULT_AGENT, { value: target[0] ?? "" });
+    outcome.effect = "pass";
+    outcome.observedEffect = "Native WebDriver selection changed the optional default Agent for new sessions without starting a provider.";
+  } catch (error) {
+    outcome.error = errorText(error);
+  } finally {
+    if (baseline) {
+      const originalAgentId = baseline.defaultAgentId;
+      await cleanupStep(outcome, async () => {
+      const baselineChoice = GENERAL_DEFAULT_AGENT_CHOICES.find(([value]) => value === originalAgentId);
+      if (!baselineChoice) throw new Error("default Agent baseline was outside its finite setting choices");
+      const current = (await readPublicSettings(connection)).defaultAgentId;
+      if (current !== originalAgentId) {
+        const control = await waitForReleaseSurfaceWebDriverElement(webdriver, GENERAL_DEFAULT_AGENT);
+        await setReleaseSurfaceWebDriverElementValue(webdriver, control, baselineChoice[1]);
+      }
+      await waitForPublicSetting(connection, "defaultAgentId", originalAgentId);
+      });
+    }
+    await cleanupSettings(connection, webdriver, outcome);
+  }
+  return finalize(outcome);
+}
+
 async function exerciseGeneralFont(connection: Connection, webdriver: WebDriver, assignment: Assignment) {
   const reset = assignment.surface.name === GENERAL_FONT_RESET_SURFACE;
   const outcome = emptyOutcome(assignment, "No native General font setting effect was observed.");
@@ -1703,6 +1758,8 @@ async function waitForDeclaredInputValue(webdriver: WebDriver, selector: string,
 type PublicSettings = {
   browserDownloadFolder: string;
   chatFontPx: number;
+  defaultAgentId: string | null;
+  defaultWorkingFolder: string;
   density: string;
   githubGhBinary: string;
   theme: string;
@@ -1711,6 +1768,8 @@ type PublicSettings = {
 async function readPublicSettings(connection: Connection): Promise<PublicSettings> {
   const body = await apiJson<Record<string, unknown>>(connection, "GET", "/settings");
   if (typeof body.browserDownloadFolder !== "string" || !Number.isSafeInteger(body.chatFontPx)
+    || !(body.defaultAgentId === null || ["grok", "codex-cli", "claude-code", "antigravity-cli"].includes(String(body.defaultAgentId)))
+    || typeof body.defaultWorkingFolder !== "string"
     || !["compact", "default", "comfortable"].includes(String(body.density))
     || !["gh", "gh.exe"].includes(String(body.githubGhBinary))
     || !["black", "black_warm", "bright"].includes(String(body.theme))) {
@@ -1721,8 +1780,8 @@ async function readPublicSettings(connection: Connection): Promise<PublicSetting
 
 async function waitForPublicSetting(
   connection: Connection,
-  key: GeneralSettingKey | "chatFontPx",
-  expected: string | number,
+  key: GeneralSettingKey | "chatFontPx" | "defaultAgentId",
+  expected: string | number | null,
 ): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {

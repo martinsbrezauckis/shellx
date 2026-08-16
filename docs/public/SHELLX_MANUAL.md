@@ -566,7 +566,7 @@ Send submits the visible prompt and attachments to the active tab. While work is
 
 <a id="shellx.interface.settings.general"></a>
 
-General controls chat typography, density, appearance, permission-prompt presentation, and other workspace preferences. Provider and model choice stay with the selected provider and its own defaults; General does not select a model or reasoning effort.
+General controls chat typography, density, appearance, downloads, and optional new-session defaults. Choose an agent and starting folder when you want every new tab ready to type and send; leave the agent unset to choose per session, and leave the folder unset to reuse the last one. Model and reasoning choices remain with the selected provider.
 
 ### Settings: Vault
 

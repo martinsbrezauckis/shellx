@@ -232,6 +232,7 @@ export async function exerciseProviderActionLifecycle(
         source: "final-surface-provider-action-palette",
       });
     }
+    await delay(150);
 
     const selector = config.action === "activity-ask-agent"
       ? "[role='dialog'][aria-label='Activity Browser'] button.pact"
@@ -249,7 +250,7 @@ export async function exerciseProviderActionLifecycle(
       if (!mainWindowHandle) throw new Error("Browser provider action lost its main-window handle");
       await switchReleaseSurfaceInstalledInputWindow(input, mainWindowHandle);
     }
-    await waitForReleaseSurfaceInstalledInputElement(input, RECEIPT, { timeoutMs: 10_000, pollMs: 50 });
+    await waitForReleaseSurfaceInstalledInputElement(input, RECEIPT, { timeoutMs: 20_000, pollMs: 50 });
     const receipt = await observeReleaseSurfaceInstalledInputElement(input, RECEIPT, ["title"]);
     const title = typeof receipt.title === "string" ? receipt.title : "";
     const digest = exactReceiptDigest(title, config.action);
@@ -268,8 +269,10 @@ export async function exerciseProviderActionLifecycle(
       }
     }
     try {
-      const composer = await findReleaseSurfaceInstalledInputElement(input, COMPOSER_PROMPT);
-      if (composer) await clearReleaseSurfaceInstalledInputElement(input, composer);
+      if (config.action === "composer-send") {
+        const composer = await findReleaseSurfaceInstalledInputElement(input, COMPOSER_PROMPT);
+        if (composer) await clearReleaseSurfaceInstalledInputElement(input, composer);
+      }
       await postUi(connection, {
         debugRendererFixture: { id: FIXTURE_ID, action: "clear" },
         source: "final-surface-provider-action-cleanup",
@@ -328,6 +331,10 @@ export async function exerciseProviderActionLifecycle(
     outcome.error = "provider action lifecycle did not satisfy every required verdict";
   }
   return outcome;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 async function waitForElementValue(

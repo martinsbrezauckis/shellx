@@ -164,9 +164,9 @@ assert(
 );
 assert(
   manualContent.includes("Check never opens the Cut editor.")
-    && manualContent.includes("General does not select a model or reasoning effort.")
+    && manualContent.includes("Model and reasoning choices remain with the selected provider.")
     && generatedManual.includes("Check never opens the Cut editor.")
-    && generatedManual.includes("General does not select a model or reasoning effort."),
+    && generatedManual.includes("Model and reasoning choices remain with the selected provider."),
   "generated manual must retain its canonical Cut and model-selection boundaries",
 );
 assert(

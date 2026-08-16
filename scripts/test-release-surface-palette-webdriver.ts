@@ -193,7 +193,11 @@ try {
     "--request", requestPath,
     "--out", reportPath,
   ], { cwd: root, encoding: "utf8", timeout: 30_000 });
-  assert.equal(run.status, 0, run.stderr || run.stdout);
+  assert.equal(
+    run.status,
+    0,
+    `${run.stderr || run.stdout}${existsSync(reportPath) ? `\n${readFileSync(reportPath, "utf8")}` : ""}`,
+  );
   const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
   assert.deepEqual(report.nativeWebDriver, request.nativeWebDriver);
   assert.equal(report.outcomes.length, actionIds.length);
@@ -243,11 +247,10 @@ try {
     connectionId: null,
     connectionLabel: "Local",
     connectionTransport: "local",
-    autonomy: "bypassPermissions",
   });
   assert.equal(existsSync(baselineScreenshotPath), true, "exact cleanup must preserve a pre-existing screenshot baseline");
-  assert.equal(auditBody.chords.length, 2, "session setup and cleanup use only the two bounded native tab chords");
-  assert.equal(auditBody.releaseCount, 2, "every native setup or cleanup chord must release held keys");
+  assert.equal(auditBody.chords.length, 6, "session actions isolate their setup and cleanup in disposable native tabs");
+  assert.equal(auditBody.releaseCount, 6, "every native setup or cleanup chord must release held keys");
 
   const screenshotRequest: ReleaseSurfaceDriverRequest = {
     ...request,

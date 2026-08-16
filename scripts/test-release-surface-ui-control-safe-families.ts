@@ -78,8 +78,8 @@ try {
         cleanupId: assignment.cleanupId,
       };
     });
-  assert.equal(safeAssignments.length, 57, "the focused safe-family fixture must cover the exact promoted slice");
-  assert.equal(new Set(safeAssignments.map((assignment) => assignment.surface.id)).size, 57);
+  assert.equal(safeAssignments.length, 58, "the focused safe-family fixture must cover the exact promoted slice");
+  assert.equal(new Set(safeAssignments.map((assignment) => assignment.surface.id)).size, 58);
   const connectorAssignments = safeAssignments.filter((assignment) => (
     assignment.surface.source === "src/components/settings/ConnectorsTab.tsx"
   ));
@@ -227,7 +227,7 @@ try {
     failedReport ? JSON.stringify(failedReport, null, 2) : run.stderr || run.stdout,
   );
   const report = JSON.parse(readFileSync(reportPath, "utf8")) as ReleaseSurfaceDriverReport;
-  assert.equal(report.outcomes.length, 57);
+  assert.equal(report.outcomes.length, 58);
   assert(report.outcomes.every((outcome) => (
     outcome.present === "pass"
     && outcome.invoke === "pass"
@@ -308,6 +308,8 @@ try {
   assert.deepEqual(audit.publicSettings, {
     browserDownloadFolder: "",
     chatFontPx: 19,
+    defaultAgentId: null,
+    defaultWorkingFolder: "",
     density: "default",
     githubGhBinary: "gh",
     theme: "black",
@@ -354,7 +356,7 @@ try {
   ], { cwd: root, encoding: "utf8", timeout: 60_000 });
   assert.notEqual(overwrite.status, 0, "safe-family evidence output must remain create-only");
 
-  console.log("Release surface safe UI-control native WebDriver families passed: 57 exact assignments");
+  console.log("Release surface safe UI-control native WebDriver families passed: 58 exact assignments");
 } finally {
   process.off("SIGINT", onTerminationSignal);
   process.off("SIGTERM", onTerminationSignal);

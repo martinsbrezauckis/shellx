@@ -222,6 +222,7 @@ export const UI_CONTROL_BOUNDED_INSTALLED_SURFACE_NAMES = new Set([
   'src/components/settings/GeneralTab.tsx:[aria-label="Use Black theme"]',
   'src/components/settings/GeneralTab.tsx:[aria-label="Use Bright theme"]',
   'src/components/settings/GeneralTab.tsx:[data-debug-id="settings-density-comfortable"]',
+  'src/components/settings/GeneralTab.tsx:[data-debug-id="settings-default-agent"]',
   'src/components/settings/GeneralTab.tsx:[data-debug-id="settings-browser-download-folder"]',
   'src/components/settings/GeneralTab.tsx:[data-debug-id="settings-density-compact"]',
   'src/components/settings/GeneralTab.tsx:[data-debug-id="settings-density-default"]',

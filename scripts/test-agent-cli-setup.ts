@@ -173,7 +173,10 @@ assert(
     && app.includes('agentCliSetupFixtureMode === "live-setup"')
     && app.includes('agentCliSetupFixtureMode === "install-lifecycle"')
     && debugFixture.includes("fixture-command-is-never-executed")
-    && debugFixture.includes("Every external and provider action is disabled."),
+    && debugFixture.includes("Every external and provider action is disabled.")
+    && debugApi.includes('rename = "agentCliSetupFixture"')
+    && debugApi.includes('"invalid_agent_cli_setup_fixture"')
+    && debugApi.includes('"release-test Agent CLI setup fixture is unavailable outside an isolated test instance"'),
   "authenticated Debug UI modes must retain inert synthetic setup state, expose isolated live-scan modes, and restore the exact closed state",
 );
 assert(

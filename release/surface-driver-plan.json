@@ -1,7 +1,7 @@
 {
   "schema": "shellx/final-surface-driver-plan@2",
   "mode": "final-frozen-candidate",
-  "inventoryDigest": "38eb0e726798f509ef01bc1a1957860ea9536b44fc1d3ae04d400c8c3fa8ddaf",
+  "inventoryDigest": "047f20129ccaa30f2b68eb71285145af4de0ca8f8ea98328e7d2f35287ef1e11",
   "releaseReady": true,
   "drivers": [
     {
@@ -3162,7 +3162,7 @@
       "surfaceId": "debug-api-route:POST /settings",
       "driverId": "debug-api-route-installed",
       "fixtureId": "debug-api:isolated-settings-profile",
-      "expectedEffect": "POST /settings changes all six normalized public settings fields before restoring the exact original object.",
+      "expectedEffect": "POST /settings changes all seven normalized public settings fields before restoring the exact original object.",
       "oracleId": "debug-api:POST-settings:semantic-effect",
       "cleanupId": "debug-api:restore-settings-baseline"
     },
@@ -4673,9 +4673,9 @@
     {
       "surfaceId": "tauri-command:get_build_receipts",
       "driverId": "tauri-command-installed",
-      "fixtureId": "tauri:installed-read-model",
-      "expectedEffect": "Installed Tauri IPC get_build_receipts returns its bounded read-only schema without retaining returned user data in release evidence.",
-      "oracleId": "tauri:get_build_receipts:read-schema",
+      "fixtureId": "tauri:isolated-fail-closed-validation",
+      "expectedEffect": "Installed Tauri IPC get_build_receipts returns its exact fail-closed validation or absent-state rejection before performing the guarded operation.",
+      "oracleId": "tauri:get_build_receipts:fail-closed",
       "cleanupId": "tauri:delete-invoke-state"
     },
     {
@@ -9439,7 +9439,7 @@
       "cleanupId": "ui:remove-owned-windows-desktop-integration-restore-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Chat font size in pixels\"]@src/components/settings/GeneralTab.tsx#1",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Chat font size in pixels\"]@src/components/settings/GeneralTab.tsx#5",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:general-setting-owned-baseline",
       "expectedEffect": "Native range input changes the persisted chat font size before exact baseline restoration.",
@@ -9447,7 +9447,7 @@
       "cleanupId": "ui:restore-general-setting-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black and warm theme\"]@src/components/settings/GeneralTab.tsx#5",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black and warm theme\"]@src/components/settings/GeneralTab.tsx#9",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:general-setting-owned-baseline",
       "expectedEffect": "A native click changes the persisted theme to black_warm before exact baseline restoration.",
@@ -9455,7 +9455,7 @@
       "cleanupId": "ui:restore-general-setting-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black theme\"]@src/components/settings/GeneralTab.tsx#4",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Black theme\"]@src/components/settings/GeneralTab.tsx#8",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:general-setting-owned-baseline",
       "expectedEffect": "A native click changes the persisted theme to black before exact baseline restoration.",
@@ -9463,7 +9463,7 @@
       "cleanupId": "ui:restore-general-setting-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Bright theme\"]@src/components/settings/GeneralTab.tsx#6",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[aria-label=\"Use Bright theme\"]@src/components/settings/GeneralTab.tsx#10",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:general-setting-owned-baseline",
       "expectedEffect": "A native click changes the persisted theme to bright before exact baseline restoration.",
@@ -9471,7 +9471,7 @@
       "cleanupId": "ui:restore-general-setting-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder-choose\"]@src/components/settings/GeneralTab.tsx#8",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder-choose\"]@src/components/settings/GeneralTab.tsx#12",
       "driverId": "ui-control-native-picker-lifecycle-installed",
       "fixtureId": "native-picker:owned-settings-download-directory",
       "expectedEffect": "The macOS candidate-bound native dialog or Windows/Linux isolated one-shot directory result traverses the production Settings handler and proves the exact receipt-owned download directory plus its public backing state.",
@@ -9479,7 +9479,7 @@
       "cleanupId": "native-picker:restore-exact-settings-delete-fixture"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder\"]@src/components/settings/GeneralTab.tsx#7",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-browser-download-folder\"]@src/components/settings/GeneralTab.tsx#11",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:settings-text-input-owned-baseline",
       "expectedEffect": "Native text entry changes the Browser download folder and its durable public setting before exact value and Settings-tab restoration.",
@@ -9487,7 +9487,31 @@
       "cleanupId": "ui:restore-settings-input-tab-and-dialog"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-comfortable\"]@src/components/settings/GeneralTab.tsx#3",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-default-agent\"]@src/components/settings/GeneralTab.tsx#1",
+      "driverId": "ui-control-bounded-installed",
+      "fixtureId": "ui:general-setting-owned-baseline",
+      "expectedEffect": "Native selection changes the optional default Agent used to prefill new sessions, without starting a provider, before exact baseline restoration.",
+      "oracleId": "ui:choice-state-transition",
+      "cleanupId": "ui:restore-general-setting-and-close-settings"
+    },
+    {
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-default-working-folder-choose\"]@src/components/settings/GeneralTab.tsx#3",
+      "driverId": "ui-control-native-picker-lifecycle-installed",
+      "fixtureId": "native-picker:owned-settings-default-directory",
+      "expectedEffect": "The native directory picker selects the exact receipt-owned starting folder for new sessions and proves its public backing state without starting a provider.",
+      "oracleId": "ui:activation:native-picker-exact-default-settings-directory-selected",
+      "cleanupId": "native-picker:restore-empty-default-settings-delete-fixture"
+    },
+    {
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-default-working-folder-clear\"]@src/components/settings/GeneralTab.tsx#4",
+      "driverId": "ui-control-native-picker-lifecycle-installed",
+      "fixtureId": "native-picker:owned-settings-default-directory",
+      "expectedEffect": "After an exact owned starting folder is selected, native activation restores the optional new-session behavior to reuse the last folder.",
+      "oracleId": "ui:activation:native-picker-default-settings-directory-cleared",
+      "cleanupId": "native-picker:restore-empty-default-settings-delete-fixture"
+    },
+    {
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-comfortable\"]@src/components/settings/GeneralTab.tsx#7",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:general-setting-owned-baseline",
       "expectedEffect": "A native click changes the persisted UI density to comfortable before exact baseline restoration.",
@@ -9495,7 +9519,7 @@
       "cleanupId": "ui:restore-general-setting-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-compact\"]@src/components/settings/GeneralTab.tsx#3",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-compact\"]@src/components/settings/GeneralTab.tsx#7",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:general-setting-owned-baseline",
       "expectedEffect": "A native click changes the persisted UI density to compact before exact baseline restoration.",
@@ -9503,7 +9527,7 @@
       "cleanupId": "ui:restore-general-setting-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-default\"]@src/components/settings/GeneralTab.tsx#3",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[data-debug-id=\"settings-density-default\"]@src/components/settings/GeneralTab.tsx#7",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:general-setting-owned-baseline",
       "expectedEffect": "A native click changes the persisted UI density to default before exact baseline restoration.",
@@ -9511,7 +9535,7 @@
       "cleanupId": "ui:restore-general-setting-and-close-settings"
     },
     {
-      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[title=\"Reset to default\"]@src/components/settings/GeneralTab.tsx#2",
+      "surfaceId": "ui-control:src/components/settings/GeneralTab.tsx:[title=\"Reset to default\"]@src/components/settings/GeneralTab.tsx#6",
       "driverId": "ui-control-bounded-installed",
       "fixtureId": "ui:general-setting-owned-baseline",
       "expectedEffect": "A native click resets a prepared non-default chat font size before exact original-baseline restoration.",
@@ -11911,7 +11935,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:settings-browser-download-folder-choose@src/components/settings/GeneralTab.tsx#3",
+      "surfaceId": "ui-debug-surface:settings-browser-download-folder-choose@src/components/settings/GeneralTab.tsx#7",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-general-visible",
       "expectedEffect": "settings-browser-download-folder-choose resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -11919,7 +11943,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:settings-browser-download-folder@src/components/settings/GeneralTab.tsx#2",
+      "surfaceId": "ui-debug-surface:settings-browser-download-folder@src/components/settings/GeneralTab.tsx#6",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-general-visible",
       "expectedEffect": "settings-browser-download-folder resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -11927,7 +11951,39 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:settings-density-comfortable@src/components/settings/GeneralTab.tsx#1",
+      "surfaceId": "ui-debug-surface:settings-default-agent@src/components/settings/GeneralTab.tsx#1",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:settings-general-visible",
+      "expectedEffect": "settings-default-agent resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:settings-default-working-folder-choose@src/components/settings/GeneralTab.tsx#3",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:settings-general-visible",
+      "expectedEffect": "settings-default-working-folder-choose resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:settings-default-working-folder-clear@src/components/settings/GeneralTab.tsx#4",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:settings-general-visible",
+      "expectedEffect": "settings-default-working-folder-clear resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:settings-default-working-folder@src/components/settings/GeneralTab.tsx#2",
+      "driverId": "ui-debug-surface-installed",
+      "fixtureId": "ui:settings-general-visible",
+      "expectedEffect": "settings-default-working-folder resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
+      "oracleId": "ui:visible-nonempty-rectangle",
+      "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
+    },
+    {
+      "surfaceId": "ui-debug-surface:settings-density-comfortable@src/components/settings/GeneralTab.tsx#5",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-general-visible",
       "expectedEffect": "settings-density-comfortable resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -11935,7 +11991,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:settings-density-compact@src/components/settings/GeneralTab.tsx#1",
+      "surfaceId": "ui-debug-surface:settings-density-compact@src/components/settings/GeneralTab.tsx#5",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-general-visible",
       "expectedEffect": "settings-density-compact resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",
@@ -11943,7 +11999,7 @@
       "cleanupId": "ui:clear-debug-highlight-and-restore-owned-state"
     },
     {
-      "surfaceId": "ui-debug-surface:settings-density-default@src/components/settings/GeneralTab.tsx#1",
+      "surfaceId": "ui-debug-surface:settings-density-default@src/components/settings/GeneralTab.tsx#5",
       "driverId": "ui-debug-surface-installed",
       "fixtureId": "ui:settings-general-visible",
       "expectedEffect": "settings-density-default resolves on the attested app renderer after its exact owned fixture state is established; no control activation is claimed.",

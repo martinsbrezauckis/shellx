@@ -118,6 +118,22 @@ const webdriver = createServer(async (request, response) => {
       if (command && activeCommand === command) return webdriverValue(response, element(`effect:${command.slice(1)}`));
       return webdriverError(response, 404, "no such element", `fixture does not expose ${selector}`);
     }
+    if (request.method === "POST" && path === `${prefix}/execute/sync`) {
+      const body = await requestJson(request);
+      if (typeof body.script !== "string" || !body.script.includes("SHELLX_BOUNDED_ELEMENT_OBSERVATION")) {
+        return webdriverError(response, 400, "invalid argument", "fixture supports only bounded element observation");
+      }
+      const values = Array.isArray(body.args) ? body.args : [];
+      const selector = values[0];
+      const fields = Array.isArray(values[1]) ? values[1] : [];
+      if (selector === "[data-debug-id='composer-prompt']" && fields.length === 1 && fields[0] === "value") {
+        return webdriverValue(response, { present: true, visible: true, observation: { value: promptValue } });
+      }
+      if (selector === "[data-debug-id='composer-send']" && fields.length === 1 && fields[0] === "disabled") {
+        return webdriverValue(response, { present: true, visible: true, observation: { disabled: promptValue.length === 0 } });
+      }
+      return webdriverError(response, 400, "invalid argument", "fixture received an undeclared command observation");
+    }
     const displayed = path.match(new RegExp(`^${escapeRegex(prefix)}/element/([^/]+)/displayed$`));
     if (request.method === "GET" && displayed) {
       const elementId = decodeURIComponent(displayed[1]!);

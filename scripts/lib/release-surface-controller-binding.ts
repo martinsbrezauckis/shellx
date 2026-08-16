@@ -121,6 +121,32 @@ export function verifyReleaseSurfaceControllerBinding(input: {
   }
 }
 
+export function verifyReleaseSurfaceControllerBindingFromGit(input: {
+  rootDir: string;
+  binding: ReleaseSurfaceControllerBinding;
+}): string[] {
+  const structural = validateReleaseSurfaceControllerBinding(input.binding);
+  if (structural.length > 0) return structural;
+  const root = resolve(input.rootDir);
+  try {
+    const topLevel = realpathSync(git(root, ["rev-parse", "--show-toplevel"]));
+    if (topLevel !== realpathSync(root)) {
+      return ["release controller root must be the exact Git worktree root"];
+    }
+    const tree = git(root, ["rev-parse", `${input.binding.sourceCommit}^{tree}`]);
+    if (tree !== input.binding.sourceTreeOid) {
+      return ["controller source tree does not match its exact Git commit"];
+    }
+    const errors: string[] = [];
+    for (const file of [input.binding.entrypoint, ...input.binding.auxiliaryFiles]) {
+      errors.push(...verifyBoundControllerFileFromGit(root, input.binding.sourceCommit, file));
+    }
+    return errors;
+  } catch (error) {
+    return [error instanceof Error ? error.message : String(error)];
+  }
+}
+
 export function resolveBoundReleaseSurfaceControllerFile(input: {
   rootDir: string;
   binding: ReleaseSurfaceControllerBinding;
@@ -173,6 +199,42 @@ function identifyTrackedControllerFile(
     throw new Error(`release controller file is not tracked by the frozen source commit: ${identity.relativePath}`);
   }
   return identity;
+}
+
+function verifyBoundControllerFileFromGit(
+  root: string,
+  sourceCommit: string,
+  expected: ReleaseSurfaceControllerFileIdentity,
+): string[] {
+  let treeEntry: string;
+  let value: Buffer;
+  try {
+    treeEntry = execFileSync(
+      "git",
+      ["-C", root, "ls-tree", "-z", sourceCommit, "--", expected.relativePath],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1024 * 1024 },
+    );
+    value = execFileSync(
+      "git",
+      ["-C", root, "show", `${sourceCommit}:${expected.relativePath}`],
+      { encoding: null, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024 },
+    );
+  } catch {
+    return [`controller Git file is unavailable: ${expected.relativePath}`];
+  }
+  const match = /^(100644|100755) blob [a-f0-9]{40,64}\t([^\0]+)\0$/.exec(treeEntry);
+  if (!match || match[2] !== expected.relativePath) {
+    return [`controller Git file is not one exact regular blob: ${expected.relativePath}`];
+  }
+  const actual = {
+    relativePath: expected.relativePath,
+    basename: basename(expected.relativePath),
+    sha256: sha256(value),
+    bytes: value.length,
+  };
+  return JSON.stringify(actual) === JSON.stringify(expected)
+    ? []
+    : [`controller Git file identity changed: ${expected.relativePath}`];
 }
 
 function identifyControllerFile(root: string, path: string): ReleaseSurfaceControllerFileIdentity {

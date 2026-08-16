@@ -604,6 +604,61 @@ pub(super) async fn set_ui_state(
     State(s): State<ApiState>,
     Json(mut body): Json<UiStatePatch>,
 ) -> Response {
+    if let Some(command) = body.agent_cli_setup_fixture.as_deref() {
+        if !matches!(
+            command,
+            "closed"
+                | "cards"
+                | "confirmation"
+                | "status-card"
+                | "live-status"
+                | "live-setup"
+                | "install-lifecycle"
+                | "clipboard-cards"
+                | "clipboard-confirmation"
+        ) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_agent_cli_setup_fixture",
+                    "message": "agentCliSetupFixture accepts only fixed Agent CLI setup fixture modes",
+                })),
+            )
+                .into_response();
+        }
+        if !crate::isolated_test_instance_requested() {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "release_test_route_unavailable",
+                    "message": "release-test Agent CLI setup fixture is unavailable outside an isolated test instance",
+                })),
+            )
+                .into_response();
+        }
+    }
+    if let Some(command) = body.debug_agent_picker_fixture.as_deref() {
+        if !matches!(command, "owned-ready" | "clear") {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_debug_agent_picker_fixture",
+                    "message": "debugAgentPickerFixture accepts only owned-ready or clear",
+                })),
+            )
+                .into_response();
+        }
+        if !crate::isolated_test_instance_requested() {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "release_test_route_unavailable",
+                    "message": "release-test agent picker fixture is unavailable outside an isolated test instance",
+                })),
+            )
+                .into_response();
+        }
+    }
     if let Some(command) = body.release_test_external_effect_boundary.as_deref() {
         if !matches!(command, "pr-create" | "artifact-archive" | "clear") {
             return (

@@ -24,6 +24,7 @@ import {
   runReleaseSurfaceDrivers,
 } from "./lib/release-surface-driver-runner";
 import { composeFinalSurfaceReceipt } from "./lib/release-surface-receipt-composer";
+import { recoverInterruptedReleaseSurfaceSlice } from "./lib/release-surface-interrupted-recovery";
 import { createReleaseSurfaceHealthEvidence } from "./create-release-surface-health-evidence";
 import {
   loadFinalSurfaceContract,
@@ -75,15 +76,18 @@ import {
   type ReleaseSurfaceRunProfileCleanupReceipt,
 } from "./lib/release-surface-run-profile";
 import {
+  createReleaseSurfaceControllerBinding,
   releaseSurfaceControllerModuleSpecifier,
   releaseSurfaceControllerNodeArguments,
   releaseSurfaceControllerTsxLoaderPath,
   releaseSurfaceControllerTsxLoaderSpecifier,
+  verifyReleaseSurfaceControllerBindingFromGit,
 } from "./lib/release-surface-controller-binding";
 import {
   RELEASE_SURFACE_WEBDRIVER_LIFECYCLE_SCHEMA,
   type ReleaseSurfaceWebDriverLifecycleReceipt,
 } from "./lib/release-surface-webdriver-lifecycle";
+import { releaseSurfaceEnclosingObservedAt } from "./lib/release-surface-runtime-candidate";
 
 const root = resolve(import.meta.dirname, "..");
 assert.equal(
@@ -107,6 +111,19 @@ assert.throws(
   /positive safe integer/,
   "an invalid process bound must fail closed",
 );
+assert.equal(
+  releaseSurfaceEnclosingObservedAt(
+    Date.parse("2026-07-28T18:00:01.000Z"),
+    ["2026-07-28T18:00:01.250Z"],
+  ),
+  "2026-07-28T18:00:01.250Z",
+  "an enclosing runtime probe must remain ordered when the wall clock steps backward after native collection",
+);
+assert.throws(
+  () => releaseSurfaceEnclosingObservedAt(Date.now(), ["invalid"]),
+  /nested observation time must be a valid ISO timestamp/,
+  "an invalid nested observation time must fail closed",
+);
 for (const script of [
   "scripts/run-release-surface-webdriver-candidate.ts",
   "scripts/run-release-surface-macos-candidate.ts",
@@ -129,10 +146,33 @@ for (const script of [
     runGitFixture(provenanceRoot, ["add", "scripts/controller.ts"]);
     runGitFixture(provenanceRoot, ["-c", "commit.gpgsign=false", "commit", "-m", "candidate"]);
     const candidateCommit = gitFixtureText(provenanceRoot, ["rev-parse", "HEAD"]);
+    const candidateController = createReleaseSurfaceControllerBinding({
+      rootDir: provenanceRoot,
+      sourceCommit: candidateCommit,
+      entrypoint: "scripts/controller.ts",
+      requireClean: true,
+    });
     writeFileSync(join(provenanceRoot, "scripts", "controller.ts"), "export const fixture = 2;\n", "utf8");
     runGitFixture(provenanceRoot, ["add", "scripts/controller.ts"]);
     runGitFixture(provenanceRoot, ["-c", "commit.gpgsign=false", "commit", "-m", "controller fix"]);
     const controllerCommit = gitFixtureText(provenanceRoot, ["rev-parse", "HEAD"]);
+    assert.deepEqual(
+      verifyReleaseSurfaceControllerBindingFromGit({
+        rootDir: provenanceRoot,
+        binding: candidateController,
+      }),
+      [],
+      "a historical controller must reverify from its exact Git object after the live worktree advances",
+    );
+    const forgedCandidateController = structuredClone(candidateController);
+    forgedCandidateController.entrypoint.sha256 = "0".repeat(64);
+    assert.match(
+      verifyReleaseSurfaceControllerBindingFromGit({
+        rootDir: provenanceRoot,
+        binding: forgedCandidateController,
+      }).join("; "),
+      /controller Git file identity changed/,
+    );
     const provenance = resolveReleaseSurfaceControllerProvenance({
       rootDir: provenanceRoot,
       candidateSourceCommit: candidateCommit,
@@ -607,6 +647,80 @@ try {
     profileCleanupIdentity,
   });
   writeJsonIdentity(candidateTeardownPath, teardown);
+
+  const interruptedLifecyclePath = join(temp, "interrupted-webdriver-lifecycle.json");
+  const interruptedProfileCleanupPath = join(temp, "interrupted-profile-cleanup.json");
+  const interruptedOrchestrationPath = join(temp, "interrupted-orchestration.json");
+  const interruptedCompletedMs = Date.parse(discovery.completedAt);
+  const interruptedLifecycle = {
+    ...lifecycle,
+    status: "failed" as const,
+    startedAt: discovery.startedAt,
+    completedAt: new Date(interruptedCompletedMs + 1).toISOString(),
+    session: { ...lifecycle.session, workCompleted: false },
+    cleanup: {
+      ...lifecycle.cleanup,
+      sessionDelete: {
+        requestedAt: discovery.completedAt,
+        completedAt: new Date(interruptedCompletedMs + 1).toISOString(),
+      },
+    },
+    error: "fixture candidate stopped before one independent section could record its after probe",
+  };
+  const interruptedLifecycleIdentity = writeJsonIdentity(interruptedLifecyclePath, interruptedLifecycle);
+  const interruptedProfileCleanup = {
+    ...profileCleanup,
+    startedAt: new Date(interruptedCompletedMs + 2).toISOString(),
+    completedAt: new Date(interruptedCompletedMs + 3).toISOString(),
+  };
+  const interruptedProfileCleanupIdentity = writeJsonIdentity(
+    interruptedProfileCleanupPath,
+    interruptedProfileCleanup,
+  );
+  const interruptedOrchestration = {
+    schema: "shellx/release-surface-webdriver-orchestration@5",
+    mode: "final-frozen-candidate",
+    executionWindow: "immediately-before-publish",
+    status: "failed",
+    platform: "linux-installed",
+    runId: teardownRunId,
+    startedAt: discovery.startedAt,
+    completedAt: new Date(interruptedCompletedMs + 4).toISOString(),
+    workCompleted: false,
+    application: {
+      bound: true,
+      processId: runtimeState.processId,
+      executableSha256: artifactSha256,
+    },
+    candidateAttestation: candidateIdentity,
+    webdriverLifecycle: { ...interruptedLifecycleIdentity, status: "failed" },
+    profileCleanup: { ...interruptedProfileCleanupIdentity, status: "pass" },
+    error: "fixture interruption retained complete earlier sections and one incomplete later section",
+  };
+  writeJsonIdentity(interruptedOrchestrationPath, interruptedOrchestration);
+  rmSync(join(discoveryOutputDir, "fixture-installed.runtime-after.json"));
+  const recovered = recoverInterruptedReleaseSurfaceSlice({
+    sourceId: "fixture-interrupted-discovery",
+    receiptsDir: temp,
+    driverRunDir: discoveryOutputDir,
+    orchestrationPath: interruptedOrchestrationPath,
+    lifecyclePath: interruptedLifecyclePath,
+    profileCleanupPath: interruptedProfileCleanupPath,
+    candidateAttestationPath,
+    signatureReceiptPath,
+    installationReceiptPath,
+    contract,
+    inventory: discoveryInventory,
+    driverPlan: discoveryPlan,
+    platform: "linux-installed",
+    sourceCommit,
+    version: releaseSurfaceFixtureVersion,
+    rootDir: root,
+  });
+  assert.deepEqual(recovered.incompleteDriverIds, ["fixture-installed"]);
+  assert.deepEqual(recovered.slice.outcomes.map((outcome) => outcome.id), ["tauri-command:fixture"]);
+  assert.equal(recovered.slice.outcomes[0]?.effect, "fail");
+  assert(recovered.evidenceArtifacts.some((row) => row.id === "incomplete-request-fixture-installed"));
 
   const scenarioPath = join(temp, "linux-scenario.json");
   const fixtureCandidate = JSON.parse(
