@@ -34,7 +34,7 @@ export function createReleaseSurfaceControllerBinding(input: {
     throw new Error("release driver controller HEAD does not match the frozen source commit");
   }
   const topLevel = realpathSync(git(root, ["rev-parse", "--show-toplevel"]));
-  if (topLevel !== realpathSync(root)) {
+  if (!sameCanonicalDirectory(topLevel, realpathSync(root))) {
     throw new Error("release driver controller root must be the exact Git worktree root");
   }
   if (input.requireClean && git(root, ["status", "--porcelain=v1", "--untracked-files=all"])) {
@@ -130,7 +130,7 @@ export function verifyReleaseSurfaceControllerBindingFromGit(input: {
   const root = resolve(input.rootDir);
   try {
     const topLevel = realpathSync(git(root, ["rev-parse", "--show-toplevel"]));
-    if (topLevel !== realpathSync(root)) {
+    if (!sameCanonicalDirectory(topLevel, realpathSync(root))) {
       return ["release controller root must be the exact Git worktree root"];
     }
     const tree = git(root, ["rev-parse", `${input.binding.sourceCommit}^{tree}`]);
@@ -145,6 +145,14 @@ export function verifyReleaseSurfaceControllerBindingFromGit(input: {
   } catch (error) {
     return [error instanceof Error ? error.message : String(error)];
   }
+}
+
+function sameCanonicalDirectory(left: string, right: string): boolean {
+  // `git rev-parse --show-toplevel` can preserve different drive-letter or
+  // directory casing than Node's realpath result on Windows. `path.relative`
+  // follows the host filesystem's case semantics while still refusing a
+  // parent, child, or sibling directory.
+  return relative(left, right) === "";
 }
 
 export function resolveBoundReleaseSurfaceControllerFile(input: {
