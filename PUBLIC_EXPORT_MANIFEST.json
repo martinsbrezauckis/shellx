@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@4",
   "source": {
-    "commit": "f05a990ac3aa380d4ce49c93d63717520c04d024",
-    "tree": "441e83d7e6e2c988c7607bb11469961087432443"
+    "commit": "4ccae8c9cf5db470e44ab38b0cc2928f988ddbad",
+    "tree": "c1e0c01dfa92f575ae75bd7270266ecf0a527718"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -25,8 +25,8 @@
   },
   "payload": {
     "fileCount": 1421,
-    "totalBytes": 38522917,
-    "digest": "cab774adc2ad72480033a73b7494b1d8b51cc8b725e238c8068106e8694a719c"
+    "totalBytes": 38523118,
+    "digest": "7759b7a33a3cfa11249a838be3bb2a12e26ed71e0cd5de8ea0b7a3393ebf8297"
   },
   "exclusions": {
     "fileCount": 40,
@@ -797,7 +797,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "e3f5b9d82774f10b6827df90e5d88f004eb5652e8b58ea15690d6615b8fa2d18",
+      "sha256": "00123f409d788fca070fca05719ec211b0bd378a505178ec49507cd97e25989c",
       "bytes": 385,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -4867,8 +4867,8 @@
     {
       "path": "scripts/test-provider-neutral-ui.ts",
       "mode": "100644",
-      "sha256": "0e9d1f060adfe2f9aa99d7828fb95c4474522eca4353d1300f9ff7ae5cd8c20b",
-      "bytes": 29943,
+      "sha256": "c3926da404752269e31a0827a77a881cdfc9748521ac3e9eeead876ac42c986a",
+      "bytes": 30144,
       "ruleId": "public-build-test-tooling",
       "matchedBy": "prefix",
       "matchedPath": "scripts/",

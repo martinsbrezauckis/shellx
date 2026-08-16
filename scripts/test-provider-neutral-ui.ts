@@ -168,7 +168,12 @@ function functionBody(source: string, name: string): string {
 
 assert(!functionBody(files.app, "handleNewTab").includes("connect("), "new tabs must not auto-connect to an agent");
 assert(!files.app.includes("handleOpenProject"), "retired project-open wiring must not silently create agent tabs");
-assert(!functionBody(files.app, "newTabEntry").includes("agentId"), "new tabs must not default the selected agent to Grok");
+assert(
+  functionBody(files.app, "newTabEntry").includes("agentId: defaults.defaultAgentId") &&
+    !functionBody(files.app, "newTabEntry").includes('agentId: "grok"') &&
+    files.settings.includes("defaultAgentId: null"),
+  "new tabs may use the optional user default but must remain provider-neutral when it is unset",
+);
 assert(files.app.includes("Choose an agent before sending."), "normal sends must require an explicit agent selection");
 assert(
   files.app.includes("const selectedAgentForTab = normalizeAgentSelection(activeTab?.agentId);") &&
