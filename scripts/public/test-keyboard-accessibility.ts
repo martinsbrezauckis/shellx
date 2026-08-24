@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
-import { SHORTCUTS } from "../src/lib/shortcuts";
+import { SHORTCUTS } from "../../src/lib/shortcuts";
 import { normalizedTextContent } from "./lib/text-content";
 import { readAppStyles } from "./lib/app-styles";
 

@@ -5,7 +5,7 @@ import {
   CUT_TOOLING_STATES,
   cutToolingPresentation,
   normalizeDebugCutToolingFixture,
-} from "../src/lib/cut-tooling";
+} from "../../src/lib/cut-tooling";
 
 const cutGateway = readFileSync("src-tauri/src/host_mcp/cut_mcp.rs", "utf8");
 const cutStatus = readFileSync("src-tauri/src/host_mcp/cut_status.rs", "utf8");

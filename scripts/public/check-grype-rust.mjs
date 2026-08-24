@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { validateGlibBackport } from "./lib/verify-glib-backport.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const POLICY_PATH = resolve(ROOT, "security", "grype-dispositions.json");
 
 function key(advisoryId, packageName, version) {

@@ -29,13 +29,6 @@ screenshots/
 tmp/
 logs/
 
-# Private release audit tooling and evidence
-scripts/release-docs-audit.ts
-scripts/release-quality-receipt.ts
-scripts/test-release-docs-audit.ts
-src/lib/release-docs-audit.ts
-release-evidence/
-
 # Editors and operating systems
 .vscode/
 .idea/

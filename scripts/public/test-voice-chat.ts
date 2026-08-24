@@ -11,9 +11,9 @@ import {
   extractAssistantTurnAfterIndex,
   extractLastAssistantTurn,
   getVoiceTurnToSpeak,
-} from "../src/lib/voice-chat";
-import { buildVoiceAwarePrompt } from "../src/lib/voice-chat-runtime";
-import type { RawEventFrame } from "../src/types/acp";
+} from "../../src/lib/voice-chat";
+import { buildVoiceAwarePrompt } from "../../src/lib/voice-chat-runtime";
+import type { RawEventFrame } from "../../src/types/acp";
 
 let failures = 0;
 function assert(cond: boolean, label: string): void {

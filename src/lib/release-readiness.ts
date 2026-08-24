@@ -177,7 +177,7 @@ export function buildReleaseReadinessChecks(input: ReleaseReadinessInput): Relea
       input.debugApiSurfaceSweepVerified,
       "Debug API user-facing surface sweep passed with screenshot/UI-route coverage.",
       "Run the debug API surface sweep against the installed app and fix uncovered surfaces.",
-      "pnpm exec tsx [retired maintainer tool]",
+      "Use the private release checklist to run the installed-app Debug API surface sweep.",
     ),
     check(
       "shellx-browser-debug-api",

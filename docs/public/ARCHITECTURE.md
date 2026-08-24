@@ -166,8 +166,8 @@ inventory. Families include `fs_*`, Browser read/action/workflow tools, Vault
 grants and mediated secret operations, build/goal orchestration, provider
 handoffs, `net_fetch`, vision, voice, X search, `mem_*`, `Agent` fan-out,
 `process_*`, screenshots, clock/sleep, compact ShellX Cut discovery/execution,
-`capabilities_summary`, and `search_tool`. The authoritative count and names live in
-`[retired maintainer contract]`. Tools are reachable as
+`capabilities_summary`, and `search_tool`. The authoritative names are defined
+by the shipped host MCP implementation. Tools are reachable as
   `grok-shell-host__<tool>` or, for the shellX-managed HTTP transport,
   `shellx-host-http__<tool>`. Mutating/tab-aware calls should prefer
   the HTTP-qualified name when advertised.

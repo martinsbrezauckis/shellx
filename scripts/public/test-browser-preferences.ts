@@ -7,7 +7,7 @@ import {
   initialHomeUrl,
   persistBrowserColorMode,
   persistBrowserHomeUrl,
-} from "../src/browser/browserPreferences";
+} from "../../src/browser/browserPreferences";
 
 const values = new Map<string, string>();
 const localStorage = {

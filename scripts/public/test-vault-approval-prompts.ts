@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { readRustModuleFamily } from "./read-rust-module-family";
 
-import { buildVaultApprovalPrompts, vaultPromptSummaryText } from "../src/lib/vault-approval-prompts";
+import { buildVaultApprovalPrompts, vaultPromptSummaryText } from "../../src/lib/vault-approval-prompts";
 
 const pendingGrant = {
   grantId: "browser-grant-1",

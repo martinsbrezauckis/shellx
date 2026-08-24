@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createTaskManagerSaveGuard } from "../src/lib/task-manager-save-guard";
+import { createTaskManagerSaveGuard } from "../../src/lib/task-manager-save-guard";
 
 const guard = createTaskManagerSaveGuard();
 const preflight = deferred<boolean>();

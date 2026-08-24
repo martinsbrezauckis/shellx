@@ -10,7 +10,7 @@ const markers = [
 const allowed = new Set([
   "src-tauri/tests/shellx_vault_integration.rs",
   "src-tauri/tests/shellx_browser.rs",
-  "scripts/test-shellx-vault-leakage.ts",
+  "scripts/public/test-shellx-vault-leakage.ts",
 ]);
 const roots = ["src-tauri/src", "src-tauri/tests", "src", "scripts", "docs", "shellx-browser"];
 

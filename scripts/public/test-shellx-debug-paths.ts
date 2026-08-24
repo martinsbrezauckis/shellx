@@ -34,11 +34,11 @@ const savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]
 for (const key of envKeys) delete process.env[key];
 
 const debugApiFilesSource = readFileSync(
-  resolve(import.meta.dirname, "..", "src-tauri", "src", "debug_api_files.rs"),
+  resolve(import.meta.dirname, "../..", "src-tauri", "src", "debug_api_files.rs"),
   "utf8",
 ).replaceAll("\r\n", "\n");
 const debugApiReportsSource = readFileSync(
-  resolve(import.meta.dirname, "..", "src-tauri", "src", "debug_api_reports.rs"),
+  resolve(import.meta.dirname, "../..", "src-tauri", "src", "debug_api_reports.rs"),
   "utf8",
 ).replaceAll("\r\n", "\n");
 assert.equal(

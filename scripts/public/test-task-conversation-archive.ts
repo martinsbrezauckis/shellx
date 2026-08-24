@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { isTaskRuntimeTabId } from "../src/lib/task-runtime-tab";
+import { isTaskRuntimeTabId } from "../../src/lib/task-runtime-tab";
 
-const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const runtime = readFileSync(new URL("../src-tauri/src/task_runtime_app.rs", import.meta.url), "utf8");
-const archive = readFileSync(new URL("../src-tauri/src/task_conversation.rs", import.meta.url), "utf8");
-const adapter = readFileSync(new URL("../src-tauri/src/task_execution_store_adapter.rs", import.meta.url), "utf8");
-const trace = readFileSync(new URL("../src-tauri/src/task_trace_evidence.rs", import.meta.url), "utf8");
-const projection = readFileSync(new URL("../src-tauri/src/task_state_projection.rs", import.meta.url), "utf8");
+const app = readFileSync(new URL("../../src/App.tsx", import.meta.url), "utf8");
+const runtime = readFileSync(new URL("../../src-tauri/src/task_runtime_app.rs", import.meta.url), "utf8");
+const archive = readFileSync(new URL("../../src-tauri/src/task_conversation.rs", import.meta.url), "utf8");
+const adapter = readFileSync(new URL("../../src-tauri/src/task_execution_store_adapter.rs", import.meta.url), "utf8");
+const trace = readFileSync(new URL("../../src-tauri/src/task_trace_evidence.rs", import.meta.url), "utf8");
+const projection = readFileSync(new URL("../../src-tauri/src/task_state_projection.rs", import.meta.url), "utf8");
 
 assert.equal(isTaskRuntimeTabId("task-run-0123456789abcdef0123456789abcdef"), true);
 assert.equal(isTaskRuntimeTabId("provider-session-0123456789abcdef0123456789abcdef"), false);

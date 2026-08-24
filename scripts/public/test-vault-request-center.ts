@@ -5,12 +5,12 @@ import {
   buildVaultRequestCenterItems,
   extractVaultPermissionRequests,
   vaultRequestSummaryText,
-} from "../src/lib/vault-request-center";
+} from "../../src/lib/vault-request-center";
 import {
   browserEventTouchesVaultRequests,
   mergeVaultRequestCenterAgentRequests,
   mergeVaultRequestCenterGrants,
-} from "../src/lib/useVaultRequestCenterState";
+} from "../../src/lib/useVaultRequestCenterState";
 import { readAppStyles } from "./lib/app-styles";
 
 const tabs = [

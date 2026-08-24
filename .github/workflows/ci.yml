@@ -2,7 +2,7 @@
 #
 # Runs on every push + pull request against any branch. Gates:
 # - Strict TypeScript type-check and the production Vite bundle
-# - Complete 1,636-surface source/driver contract on Linux, Windows, and macOS
+# - Public product and security contracts on Linux, Windows, and macOS
 # - Rust test/lint/format suite on macOS and Linux-native check/test coverage
 # - Rust Windows test suite
 # - Dependency audit (cargo audit + complete pnpm lockfile audit)
@@ -43,8 +43,8 @@ jobs:
       - name: Audit complete dependency lockfile
         run: pnpm run audit:dependencies
 
-  surface-contracts:
-    name: Surface contracts (${{ matrix.os }})
+  public-contracts:
+    name: Public contracts (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -64,17 +64,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install Linux surface fixture dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Dpkg::Use-Pty=0 -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y \
-            libglib2.0-dev \
-            nsis
-      - name: Verify every published surface contract and registered driver test
-        env:
-          SHELLX_REQUIRE_REAL_NSIS_FIXTURE: ${{ runner.os == 'Linux' && '1' || '0' }}
-        run: pnpm run ci:surface-contracts
+      - name: Verify public product and security contracts
+        run: pnpm run test:public
 
   rust:
     name: Rust (test + clippy + fmt)
@@ -193,8 +184,8 @@ jobs:
           done
           exit 1
       - name: cargo audit
-        run: node scripts/check-rustsec.mjs
+        run: node scripts/public/check-rustsec.mjs
       - name: Install Grype
         run: go install github.com/anchore/grype/cmd/grype@v0.114.0
       - name: Grype Rust/GHSA audit
-        run: node scripts/check-grype-rust.mjs
+        run: node scripts/public/check-grype-rust.mjs

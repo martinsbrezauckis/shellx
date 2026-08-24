@@ -20,11 +20,6 @@ const LEGACY_CEILINGS = new Map([
   ["src/styles/app-tools.css", { max: 2_000, target: 2_000 }],
   ["src/styles/app-navigation.css", { max: 2_000, target: 2_000 }],
   ["src/styles/app-polish.css", { max: 2_000, target: 2_000 }],
-  ["[retired maintainer tool]", { max: 1_000, target: 1_000 }],
-  ["[retired maintainer tool]", { max: 1_000, target: 1_000 }],
-  ["[retired maintainer tool]", { max: 1_000, target: 1_000 }],
-  ["[retired maintainer tool]", { max: 1_000, target: 1_000 }],
-  ["[retired maintainer tool]", { max: 1_000, target: 1_000 }],
 ]);
 
 function filesUnder(root) {
@@ -57,7 +52,7 @@ function isFocusedBrowserModule(path) {
   return /^src-tauri\/src\/(debug_api_browser|shellx_browser_).+\.rs$/.test(path);
 }
 
-const repositoryRoot = resolve(import.meta.dirname, "..");
+const repositoryRoot = resolve(import.meta.dirname, "../..");
 const candidates = [
   ...LEGACY_CEILINGS.keys(),
   ...filesUnder(resolve(repositoryRoot, "src/browser")).map(repositoryRelative),

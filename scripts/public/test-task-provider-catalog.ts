@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import type {
   ConnectionPreset,
   ConnectionProviderCapabilityTarget,
-} from "../src/components/ConnectionPicker";
+} from "../../src/components/ConnectionPicker";
 import {
   assertTaskProviderCatalog,
   TASK_PROVIDER_CATALOG_SCHEMA,
   TASK_PROVIDER_CATALOG_TTL_MS,
   type TaskProviderCatalog,
-} from "../src/lib/task-provider-catalog";
+} from "../../src/lib/task-provider-catalog";
 
 const NOW_MS = 1_800_000_100_000;
 const PROVIDER_IDS = ["grok", "codex-cli", "claude-code", "antigravity-cli"] as const;

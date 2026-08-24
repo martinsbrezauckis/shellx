@@ -6,8 +6,8 @@ import {
   browserTabHandoffRevalidationError,
   browserTabHandoffUrlContext,
   selectBrowserHandoffTask,
-} from "../src/browser/hooks/useBrowserTabs";
-import type { BrowserProfile, BrowserTab, BrowserTask } from "../src/browser/types";
+} from "../../src/browser/hooks/useBrowserTabs";
+import type { BrowserProfile, BrowserTab, BrowserTask } from "../../src/browser/types";
 
 const tab: BrowserTab = {
   browserTabId: "tab-owned-user",

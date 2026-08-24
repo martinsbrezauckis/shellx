@@ -2,8 +2,8 @@
 //
 // Agent-first protocol surface: an HTTP + WebSocket server bound to
 // 127.0.0.1:<debug-port> that exposes the running app to any client (e.g.
-// scripts/acp-driver.ts --mode=app). This is what closes the
-// development loop without a human paste-the-console step.
+// a local development driver). This closes the development loop without a
+// human paste-the-console step.
 //
 // Core endpoints
 // GET /health — { ok: true, processId, instanceId?, debug_api_port, debugApiPort,

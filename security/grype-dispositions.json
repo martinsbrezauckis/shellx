@@ -10,7 +10,7 @@
       "evidence": [
         "Resolved 2026-08-15: Cargo patches glib to vendor/glib while retaining version 0.18.5 for the Tauri 2.11.5 GTK3/WebKitGTK graph; Cargo.lock no longer resolves the glib package from the registry.",
         "The vendored tree is derived from crates.io package SHA-256 233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5 and applies only gtk-rs backport commit ea720152f28e293ef4362ee844ee5cc499f32d2a.",
-        "scripts/lib/verify-glib-backport.mjs seals the full patched vendor tree, the mutable out-parameter invariant, provenance, active Cargo patch, and path-resolved lock entry; the release gate builds an optimized temporary consumer that exercises every affected method."
+        "scripts/public/lib/verify-glib-backport.mjs seals the full patched vendor tree, the mutable out-parameter invariant, provenance, active Cargo patch, and path-resolved lock entry; the release gate builds an optimized temporary consumer that exercises every affected method."
       ],
       "upgradeCondition": "Remove this version-only scanner disposition when the Tauri Linux stack reaches glib 0.20 or later, or when Grype recognizes an official patched 0.18 release; reject any change that disables or alters the sealed backport in the meantime."
     }

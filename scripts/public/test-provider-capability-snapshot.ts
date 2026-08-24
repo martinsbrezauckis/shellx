@@ -10,7 +10,7 @@ import {
   type CliProbeResult,
   type ProviderCapabilityProbe,
   type ProviderCapabilitySnapshot,
-} from "../src/lib/provider-capability-snapshot";
+} from "../../src/lib/provider-capability-snapshot";
 
 assert.deepEqual(detectMarkers("codex exec --json --skip-git-repo-check", ["--json", "--missing"]), [
   { marker: "--json", present: true },

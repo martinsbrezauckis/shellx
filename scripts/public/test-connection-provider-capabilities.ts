@@ -3,14 +3,14 @@ import type {
   ConnectionPreset,
   ConnectionProviderCapabilitySnapshot,
   ConnectionProviderScanEntry,
-} from "../src/components/ConnectionPicker";
+} from "../../src/components/ConnectionPicker";
 import {
   assertConnectionProviderCapabilitySnapshot,
   connectionProviderScanRequestKey,
   CONNECTION_PROVIDER_CAPABILITY_SCHEMA,
   CONNECTION_PROVIDER_CAPABILITY_TTL_MS,
   providerScanStatus,
-} from "../src/lib/connection-provider-capabilities";
+} from "../../src/lib/connection-provider-capabilities";
 
 const NOW_MS = 1_800_000_100_000;
 const PROVIDER_IDS = ["grok", "codex-cli", "claude-code", "antigravity-cli"] as const;

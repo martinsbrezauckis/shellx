@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const root = resolve(import.meta.dirname, "..");
+const root = resolve(import.meta.dirname, "../..");
 const header = readFileSync(resolve(root, "src/components/Header.tsx"), "utf8");
 const bottomPanel = readFileSync(resolve(root, "src/components/BottomPanel.tsx"), "utf8");
 const app = readFileSync(resolve(root, "src/App.tsx"), "utf8");

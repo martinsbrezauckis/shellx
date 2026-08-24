@@ -1,5 +1,5 @@
 /**
- * scripts/test-permission-pill.ts — issue #374.
+ * scripts/public/test-permission-pill.ts — issue #374.
  *
  * Unit-test for the permission-pill insertion + resolution paths in
  * src/lib/grouping.ts. Plain Node script (no test runner): pass
@@ -22,8 +22,8 @@
  *   4. Two emits with the same reqId (registry insert + autoApproved
  *      re-emit) collapse to ONE pill that ends up resolved.
  */
-import { groupEvents } from "../src/lib/grouping";
-import type { RawEventFrame } from "../src/types/acp";
+import { groupEvents } from "../../src/lib/grouping";
+import type { RawEventFrame } from "../../src/types/acp";
 
 let failures = 0;
 function assert(cond: boolean, label: string): void {

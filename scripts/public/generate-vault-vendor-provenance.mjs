@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 
-const repoRoot = resolve(import.meta.dirname, "..");
+const repoRoot = resolve(import.meta.dirname, "../..");
 const vendorRoot = resolve(repoRoot, "vendor", "shellx-vault");
 const manifestPath = resolve(vendorRoot, "PROVENANCE.json");
 const crateNames = ["vault-broker", "vault-client", "vault-core", "vault-server"];
@@ -15,7 +15,7 @@ const revision = takeValue(args, "--upstream-revision");
 const committedAt = takeValue(args, "--upstream-committed-at");
 
 if (args.size > 0 || write === check) {
-  fail("usage: node scripts/generate-vault-vendor-provenance.mjs (--check | --write --upstream-revision=<40-hex> --upstream-committed-at=<ISO-8601>)");
+  fail("usage: node scripts/public/generate-vault-vendor-provenance.mjs (--check | --write --upstream-revision=<40-hex> --upstream-committed-at=<ISO-8601>)");
 }
 
 if (write) {

@@ -7,8 +7,8 @@
  *   via `SHELLX_VITE_PORT=<N>` env var to dodge collisions with
  *   other projects running their own Vite (every Vite scaffold defaults
  *   to 5173). `GROK_SHELL_VITE_PORT` remains a legacy fallback. Use
- *   `[retired maintainer tool]` to launch — it reads the same env vars and templates
- *   Tauri's devUrl to match.
+ *   the Tauri development command to launch; both layers read the same env vars
+ *   and keep Tauri's devUrl aligned with the chosen port.
  * - strictPort=true so a port collision fails fast instead of Vite
  *   silently switching ports and Tauri loading nothing.
  * - clearScreen=false so we can see Vite errors alongside `tauri dev`

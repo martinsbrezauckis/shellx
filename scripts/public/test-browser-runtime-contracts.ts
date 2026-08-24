@@ -1,6 +1,6 @@
-import { normalizeBrowserVaultFillActionResponse } from "../src/browser/api";
-import { normalizeBrowserObservation } from "../src/browser/vaultFillCandidates";
-import { parseRawEventFrame } from "../src/types/acp";
+import { normalizeBrowserVaultFillActionResponse } from "../../src/browser/api";
+import { normalizeBrowserObservation } from "../../src/browser/vaultFillCandidates";
+import { parseRawEventFrame } from "../../src/types/acp";
 
 let failures = 0;
 

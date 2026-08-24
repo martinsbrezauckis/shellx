@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { validateGlibBackport } from "./lib/verify-glib-backport.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const POLICY_PATH = resolve(ROOT, "security", "rustsec-dispositions.json");
 const LOCK_PATH = resolve(ROOT, "src-tauri", "Cargo.lock");
 const ROOT_MANIFEST_PATH = resolve(ROOT, "src-tauri", "Cargo.toml");

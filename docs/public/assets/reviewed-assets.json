@@ -3,10 +3,10 @@
   "reviewedAt": "2026-08-24T07:55:54Z",
   "revalidation": {
     "status": "reviewed",
-    "sourceCommit": "4435185e0ed7cc9892f935424063dffe6a001744",
-    "productSourceSha256": "e96666391796fa6389189ff04bc143800b1fc8667635fd98db325791e515b840",
-    "reviewedAt": "2026-08-24T09:40:36Z",
-    "evidenceSha256": "b5a743ebaae89724dc17b2b36e441304990f3f89e6d10e5134a60d7000c012c6"
+    "sourceCommit": "2777e3eecc23e666bc5537173a0b1df312b34886",
+    "productSourceSha256": "17748fcac8cf3035f3adcf2ebb5b85e05421cc4bd0d3472e6b33a65a1e31dea7",
+    "reviewedAt": "2026-08-24T13:50:24Z",
+    "evidenceSha256": "27d8b1cd750ab1c05fb97731980f4f9d8d35c5a7283dfd004903c306d196d93a"
   },
   "generation": {
     "mode": "gpt-image-background-plus-reviewed-product-composite",
@@ -32,7 +32,7 @@
         "status": "reviewed",
         "kind": "installed-candidate",
         "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
-        "productSourceSha256": "e96666391796fa6389189ff04bc143800b1fc8667635fd98db325791e515b840",
+        "productSourceSha256": "17748fcac8cf3035f3adcf2ebb5b85e05421cc4bd0d3472e6b33a65a1e31dea7",
         "appVersion": "0.3.61",
         "platform": "windows-installed",
         "sha256": "cb8deb149c27eb79804174e202ee8647e06499246c9666e60686e3f4b9b932fb",
@@ -51,7 +51,7 @@
         "status": "reviewed",
         "kind": "installed-browser-live-site-composite",
         "sourceCommit": "54a6eac17d9f7a8b526fb6e21e13043e743b2dd3",
-        "productSourceSha256": "e96666391796fa6389189ff04bc143800b1fc8667635fd98db325791e515b840",
+        "productSourceSha256": "17748fcac8cf3035f3adcf2ebb5b85e05421cc4bd0d3472e6b33a65a1e31dea7",
         "appVersion": "0.3.61",
         "platform": "windows-installed",
         "sha256": "3d471d289193c991799012905c72b6cf3447c7966cb1c01be481453cafd4f9c6",

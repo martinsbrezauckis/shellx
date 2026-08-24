@@ -3,7 +3,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const VENDOR_ROOT = resolve(ROOT, "vendor", "glib");
 const MANIFEST_PATH = resolve(ROOT, "src-tauri", "Cargo.toml");
 const LOCK_PATH = resolve(ROOT, "src-tauri", "Cargo.lock");

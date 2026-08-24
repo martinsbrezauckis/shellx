@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { TaskSchedule } from "../src/lib/task-manager-contract";
+import type { TaskSchedule } from "../../src/lib/task-manager-contract";
 import {
   createTaskManagerDraft,
   isTaskProviderCatalogueFresh,
@@ -13,13 +13,13 @@ import {
   taskSaveDisabledReason,
   taskScheduleSummary,
   taskScheduleValidationReason,
-} from "../src/lib/task-manager-contract";
+} from "../../src/lib/task-manager-contract";
 import {
   TASK_MANAGER_FIXTURE_CATALOGUE,
   TASK_MANAGER_FIXTURE_DATA,
   TASK_MANAGER_FIXTURE_DRAFT,
   TASK_MANAGER_FIXTURE_NOW_MS,
-} from "../src/lib/task-manager-fixtures";
+} from "../../src/lib/task-manager-fixtures";
 
 assert.equal(isTaskProviderCatalogueFresh(TASK_MANAGER_FIXTURE_CATALOGUE, "local", TASK_MANAGER_FIXTURE_NOW_MS), true);
 assert.equal(isTaskProviderCatalogueFresh(TASK_MANAGER_FIXTURE_CATALOGUE, "remote-windows", TASK_MANAGER_FIXTURE_NOW_MS), false);
