@@ -135,33 +135,48 @@ assert(css.includes(".ctxmenu-action:focus-visible") && css.includes(".fv-row-ma
 assert(shortcuts.includes('id: "palette"') && shortcuts.includes('desc: "Open command palette"'));
 const toggleTerminal = SHORTCUTS.find((shortcut) => shortcut.id === "toggle-terminal");
 assert(toggleTerminal, "toggle-terminal shortcut must remain registered");
-assert.equal(toggleTerminal.keys, "Ctrl+`", "the terminal shortcut label must describe the cross-platform chord");
+assert.equal(toggleTerminal.keys, "Ctrl+Shift+M", "the terminal shortcut label must describe the cross-platform chord");
 assert(
   toggleTerminal.match({
-    key: "§",
-    code: "Backquote",
+    key: "M",
+    code: "KeyM",
     ctrlKey: true,
+    shiftKey: true,
     metaKey: false,
   } as KeyboardEvent),
-  "the terminal shortcut must recognize the physical Backquote key on non-US keyboard layouts",
+  "the terminal shortcut must recognize the physical M key on every keyboard layout",
 );
 assert(
   !toggleTerminal.match({
-    key: "§",
-    code: "Digit1",
+    key: "M",
+    code: "KeyM",
     ctrlKey: true,
+    shiftKey: false,
     metaKey: false,
   } as KeyboardEvent),
-  "the terminal shortcut must not broaden to unrelated physical keys",
+  "the terminal shortcut must require Shift and not broaden to Ctrl+M",
 );
 assert(
   !toggleTerminal.match({
-    key: "`",
-    code: "Backquote",
-    ctrlKey: false,
+    key: "M",
+    code: "KeyM",
+    ctrlKey: true,
+    shiftKey: true,
+    altKey: true,
     metaKey: true,
   } as KeyboardEvent),
-  "the terminal shortcut must not advertise macOS Command+Backquote, which the OS reserves for window cycling",
+  "the terminal shortcut must not broaden to Command or Alt modifier combinations",
+);
+assert(
+  !SHORTCUTS.some((shortcut) => shortcut.id !== "toggle-terminal" && shortcut.match({
+    key: "M",
+    code: "KeyM",
+    ctrlKey: true,
+    shiftKey: true,
+    metaKey: false,
+    altKey: false,
+  } as KeyboardEvent)),
+  "the terminal shortcut must not conflict with another registered ShellX binding",
 );
 assert(
   !SHORTCUTS.some((shortcut) => shortcut.id === "cycle-autonomy")

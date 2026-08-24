@@ -1353,6 +1353,17 @@
   white-space: pre-wrap;
 }
 
+.manual-surface-notice {
+  margin: var(--space-2) var(--space-5);
+  padding: var(--space-2) var(--space-4);
+  background: color-mix(in srgb, var(--ok) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--ok) 55%, var(--hairline));
+  border-radius: 4px;
+  color: var(--ink-1);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 .debug-api-connection-banner {
   flex: 0 0 auto;
   display: flex;

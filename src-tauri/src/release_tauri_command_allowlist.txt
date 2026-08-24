@@ -47,6 +47,7 @@ interject_prompt
 list_background_tasks
 list_project_files
 list_stored_sessions
+manual_deep_link_take_pending_main
 mark_goal_complete
 mcp_marketplace_install
 mcp_marketplace_list

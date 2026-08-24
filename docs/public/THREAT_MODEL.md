@@ -447,7 +447,7 @@ Same as O1 — out of scope.
 | Host MCP stdio surface | T1, T2, T3, T5 | `host_mcp/filesystem_core.rs::validate_fs_path`, redaction, `net_fetch` allow-list |
 | ACP wire to grok | T2, T4 | `acp.rs::handle_terminal_create` intercept, `sessions/<sid>.jsonl` logging |
 | Vault | T3, O2 | `shellx_vault/*`, `vendor/shellx-vault/crates/vault-broker/*`, legacy `vault.rs` compatibility |
-| SSH/WSL tunnel | T7 | (planned) `#330` per-session token |
+| SSH/WSL tunnel | T7 | tab-bound host bridge and operator-approved remote targets |
 | Agent CLI setup | T10, O5 | `agent_cli_setup.rs` URL allowlist, staged digest confirmation, fixed interpreter, cleanup |
 | Vault executable requests | T11 | `shellx_vault/agent_requests.rs`, shared `vault-broker`, trusted Request Center commands |
 | Third-party marketplace MCP servers | T13, O5 | `mcp_marketplace.rs`, tab-bound host token and write-class gate |
@@ -455,33 +455,3 @@ Same as O1 — out of scope.
 | Browser Flight Recorder and evaluation artifacts | T12 | `shellx_browser_flight_recorder.rs`, `shellx_browser_evaluations.rs`, authenticated Debug API export route, artifact budgets |
 | Browser Vault fill targets | T15 | `shellx_browser_vault.rs`, current observation and same-origin form-action validation |
 | ShellX Cut compact proxy | T16 | `host_mcp/cut_mcp.rs`, standard install-path resolution, process/output bounds, and `cut_act` write-class gate |
-
-## Known open exposures (acknowledged, tracked)
-
-- **T7 / #330** — Static mcp.token on the remote-machine end of the
-  SSH reverse tunnel. The tunnel uses the bound MCP port published in
-  `~/.shellx/mcp-http.port`, not a fixed port. Tracked, hardening
-  planned. Operator workaround: use trusted remotes only.
-- **Full Auto defaults** — Provider sessions and Build workflows default
-  to auto/bypass permission behavior. This is intentional for ShellX's
-  agent-first workflow, but must remain visible as a warning-level mode
-  in user docs and UI copy.
-- **Token-file readability** — `shellxagent.token` and `mcp.token` use
-  mode 0600 on macOS/Linux and the user-private profile ACL on Windows,
-  but any same-user process can read them. Equivalent
-  exposure to `~/.aws/credentials`. Acceptable for single-user dev
-  tool posture.
-- **Vendor bootstrap downstream payloads** — ShellX verifies the exact bootstrap shown
-  at confirmation, but cannot independently attest later downloads when the vendor does
-  not publish a signature or pinned digest. Prefer package-manager integrity metadata or
-  vendor-signed artifacts where available.
-
-## Review cadence
-
-Review this document on every release that touches an auth path,
-adds a new MCP tool, adds a new wire surface, or changes a trust
-boundary. Last review: 2026-08-05 (Vault executable requests, Browser Flight
-Recorder artifacts, native Windows SSH, compact Browser gateway, protected-value
-artifact redaction, and observed Vault fill targets). Next:
-alongside #330 implementation, FR-2/FR-3, or any change to installer source
-domains/interpreters.

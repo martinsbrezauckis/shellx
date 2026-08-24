@@ -2,9 +2,9 @@
 
 # ShellX Manual
 
-Version: 0.3.60
+Version: 0.3.61
 
-Updated: 2026-08-14
+Updated: 2026-08-24
 
 ShellX is a desktop workspace for local and remote coding agents. It keeps conversations, project files, Browser tasks, Vault approvals, previews, Git state, and test evidence visible in one operator-controlled shell.
 
@@ -1366,13 +1366,3 @@ Check task ownership, tab/profile identity, locks, pending dialogs, grant state,
 1. Use a bounded Browser state summary and confirm the intended task/tab.
 2. Resolve operator prompts or unlock Vault rather than retrying the same blocked action.
 3. Clean up only the task, profile, process, or test fixture owned by the current run.
-
-### Release-grade verification
-
-<a id="shellx.troubleshooting.release"></a>
-
-A release candidate needs source gates, exact artifact identity, a disposable installed profile, cross-host behavior, and fresh receipts.
-
-1. Record source commit, app version, artifact hash, platform, and installed executable identity.
-2. Run focused source tests before expensive native/installed matrices.
-3. Test Windows, Linux, macOS, and remote flows that are actually claimed; label unavailable surfaces honestly.

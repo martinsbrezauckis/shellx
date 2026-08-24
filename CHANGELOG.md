@@ -7,7 +7,13 @@ can see or rely on. Internal hardening, private audit notes, and
 implementation-only cleanup stay out unless they close a public issue or
 explain a visible behavior change.
 
-## [0.3.60] - Unreleased
+## [0.3.61] - 2026-08-24
+
+### Fixed
+
+- Bugfixes.
+
+## [0.3.60] - 2026-08-16
 
 ### Added
 

@@ -24,7 +24,7 @@
  * ⌘K / Ctrl+K  command palette
  * ⌘T / ⌘W      new / close session tab
  * ⌘U           attach file picker
- * Ctrl+`       toggle Chat ↔ Terminal in bottom panel
+ * Ctrl+Shift+M toggle Chat ↔ Terminal in bottom panel
  * ⌘,           open settings
  * j/k/y/n/e    per-hunk diff nav (handled inside ChatOutput)
  * * File attach: picker, OS drag/drop, pasted clipboard images/files, and
@@ -96,6 +96,11 @@ import {
   type DebugModalId,
   type RightTab,
 } from "./lib/ui-navigation";
+import type { ManualMainSurface } from "./lib/manual-surface-handoff";
+import {
+  useManualSurfaceHandoff,
+  type ManualSurfaceHandoffResult,
+} from "./hooks/useManualSurfaceHandoff";
 import { api, apiGet, apiPost, apiPostJson, debugApiBase, getDebugToken } from "./lib/debug-api";
 import {
   DEBUG_UI_CONNECT_TIMEOUT_MS,
@@ -995,6 +1000,9 @@ export default function App(): JSX.Element {
   const [releaseTestVoiceRecording, setReleaseTestVoiceRecording] = useState(false);
   const [releaseTestExternalEffectBoundary, setReleaseTestExternalEffectBoundary] =
     useState<"pr-create" | "artifact-archive" | null>(null);
+  // A documentation handoff can report only local reveal status. It never
+  // acknowledges an OS launch, starts work, or exposes a user record.
+  const [manualSurfaceNotice, setManualSurfaceNotice] = useState<string | null>(null);
 
   // ─── UI state ─────────────────────────────────────────────────────────
   // Autonomy default is "bypassPermissions". Key is v2 so any persisted
@@ -1022,8 +1030,10 @@ export default function App(): JSX.Element {
   const [helpOpen, setHelpOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTabRequest, setSettingsTabRequest] = useState<{ tab: SettingsTab; seq: number } | null>(null);
   const openSettingsTab = useCallback((tab: SettingsTab) => {
     try { localStorage.setItem(SETTINGS_TAB_KEY, tab); } catch { /* ignore */ }
+    setSettingsTabRequest((current) => ({ tab, seq: (current?.seq ?? 0) + 1 }));
     setSettingsOpen(true);
   }, []);
   // #360:  global "open Settings on a specific tab" listener.
@@ -2109,6 +2119,58 @@ export default function App(): JSX.Element {
     }
     void taskManagerController.load(context);
   }, [taskManagerController, taskManagerCurrentContext]);
+  const revealManualMainSurface = useCallback(async (surface: ManualMainSurface): Promise<boolean> => {
+    // This switch is deliberately closed over a typed, local registry. It
+    // changes only existing visible-surface state and never calls a command,
+    // dispatches a click, starts a task, changes settings values, or opens a
+    // Browser URL.
+    const intent = surface.intent;
+    switch (intent.kind) {
+      case "settings":
+        openSettingsTab(intent.tab);
+        break;
+      case "rightRail":
+        setRightRailRequest((current) => ({
+          tab: intent.tab,
+          seq: (current?.seq ?? 0) + 1,
+        }));
+        break;
+      case "bottomPanel":
+        setBottomTab(intent.tab);
+        break;
+      case "modal":
+        if (intent.modal === "palette") setPaletteOpen(true);
+        else if (intent.modal === "plugins") setPluginsOpen(true);
+        else if (intent.modal === "connectorInbox") setConnectorInboxOpen(true);
+        else if (intent.modal === "taskManager") openTaskManager("edit");
+        break;
+      case "find":
+        // The Find field is an always-mounted header control. Focus happens
+        // below; there is no search submission or other side effect here.
+        break;
+    }
+    const { focusManualSurfaceDebugId } = await import("./lib/manual-surface-handoff");
+    return focusManualSurfaceDebugId(surface.focusId);
+  }, [openSettingsTab, openTaskManager]);
+  const reportManualSurfaceHandoff = useCallback((result: ManualSurfaceHandoffResult): void => {
+    if (result.kind === "shown") {
+      setManualSurfaceNotice("Manual surface shown in ShellX.");
+      return;
+    }
+    if (result.kind === "unsupported") {
+      setManualSurfaceNotice("This ShellX version cannot show that manual surface.");
+      return;
+    }
+    if (result.kind === "focus-missing") {
+      setManualSurfaceNotice("ShellX opened the manual surface, but its exact control is unavailable in this version.");
+      return;
+    }
+    setManualSurfaceNotice("ShellX could not receive the manual request. Try again after restarting ShellX.");
+  }, []);
+  useManualSurfaceHandoff({
+    reveal: revealManualMainSurface,
+    onResult: reportManualSurfaceHandoff,
+  });
   async function reclaimImportedTaskAttachments(
     attachments: DurableTaskAttachmentReference[],
   ): Promise<void> {
@@ -3001,6 +3063,11 @@ export default function App(): JSX.Element {
       } else if (p.releaseTestExternalEffectBoundary === "clear") {
         setReleaseTestExternalEffectBoundary(null);
       }
+      if (p.debugManualSurfaceNotice === "shown") {
+        setManualSurfaceNotice("Manual surface shown in ShellX.");
+      } else if (p.debugManualSurfaceNotice === "clear") {
+        setManualSurfaceNotice(null);
+      }
       const agentCliSetupFixturePatch = normalizeDebugAgentCliSetupFixtureMode(
         p.agentCliSetupFixture,
       );
@@ -3172,6 +3239,7 @@ export default function App(): JSX.Element {
         "releaseTestLegacyAutonomy",
         "releaseTestVoiceCapture",
         "releaseTestExternalEffectBoundary",
+        "debugManualSurfaceNotice",
         "agentCliSetupFixture",
         "debugAgentPickerFixture",
         "debugUpdateFixture",
@@ -5749,7 +5817,7 @@ export default function App(): JSX.Element {
             run: () => void handleAskGrokToFixPreview(activeWorkPreviewState),
           }]
         : []),
-      { id: "act-toggle-term", label: "Toggle Chat / Terminal (Ctrl+`)", group: "Action", run: toggleTerminalTab },
+      { id: "act-toggle-term", label: "Toggle Chat / Terminal (Ctrl+Shift+M)", group: "Action", run: toggleTerminalTab },
       { id: "act-pr", label: "Create pull request (/pr)", group: "Action", run: () => setPrModalOpen(true) },
       { id: "act-vault", label: "Open vault (secrets)", group: "Action", run: () => openVaultPanel("overview") },
       { id: "act-help",     label: "Show keyboard shortcuts (?)", group: "Action", run: () => setHelpOpen(true) },
@@ -5949,6 +6017,11 @@ export default function App(): JSX.Element {
       />
 
       {error && <div className="error-banner" role="alert" aria-live="assertive">{error}</div>}
+      {manualSurfaceNotice && (
+        <div className="manual-surface-notice" data-debug-id="manual-surface-notice" role="status" aria-live="polite">
+          {manualSurfaceNotice}
+        </div>
+      )}
 
       <DebugApiConnectionBanner
         status={debugUiConnectionFixture ?? debugUiConnectionStatus}
@@ -6675,6 +6748,8 @@ export default function App(): JSX.Element {
           <Settings
             open
             onClose={() => setSettingsOpen(false)}
+            requestedTab={settingsTabRequest?.tab}
+            requestedTabSeq={settingsTabRequest?.seq}
             initial={settings}
             onChange={handleSettingsChange}
             debugShellxagentFixture={debugShellxagentFixture}

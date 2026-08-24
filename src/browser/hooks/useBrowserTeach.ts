@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { emitTo, listen } from "@tauri-apps/api/event";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import {
   approveBrowserTeachDraftForOperator,
@@ -23,11 +25,71 @@ import {
   type BrowserTeachSourceCandidate,
   type BrowserTeachValueEdit,
 } from "../browserTeach";
-import { openTaskDraftFromBrowserTeach } from "../../lib/task-teach-handoff-bridge";
+import { inTauri } from "../../lib/tauri-bridge";
 import {
   normalizeBrowserTeachTaskHandoff,
+  normalizeBrowserTeachTaskHandoffResult,
+  TASK_TEACH_HANDOFF_EVENT,
+  TASK_TEACH_HANDOFF_RESULT_EVENT,
   type BrowserTeachTaskHandoff,
 } from "../../lib/task-teach-handoff-events";
+
+const MAIN_WINDOW_LABEL = "main";
+const HANDOFF_ACK_TIMEOUT_MS = 5_000;
+
+async function openTaskDraftFromBrowserTeach(
+  handoff: BrowserTeachTaskHandoff,
+): Promise<void> {
+  if (!inTauri()) throw new Error("Create Task is available only inside ShellX desktop.");
+  const exact = normalizeBrowserTeachTaskHandoff(handoff);
+  if (!exact) throw new Error("Browser Teach returned an invalid Task handoff receipt.");
+  const main = await WebviewWindow.getByLabel(MAIN_WINDOW_LABEL);
+  if (!main) throw new Error("Open the main ShellX workspace before creating a Task draft.");
+
+  let stop: (() => void) | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let pending = true;
+  const result = new Promise<void>((resolve, reject) => {
+    timeoutId = setTimeout(
+      () => {
+        if (!pending) return;
+        pending = false;
+        reject(new Error("The main ShellX workspace did not acknowledge the Task draft."));
+      },
+      HANDOFF_ACK_TIMEOUT_MS,
+    );
+    void listen<unknown>(TASK_TEACH_HANDOFF_RESULT_EVENT, ({ payload }) => {
+      const ack = normalizeBrowserTeachTaskHandoffResult(payload);
+      if (!pending || !ack || ack.requestId !== exact.requestId) return;
+      pending = false;
+      if (ack.ok) resolve();
+      else reject(new Error(ack.error ?? "The main ShellX workspace did not accept the Task draft."));
+    }).then((unlisten) => {
+      if (!pending) {
+        unlisten();
+        return;
+      }
+      stop = unlisten;
+      const fail = (cause: unknown): void => {
+        if (!pending) return;
+        pending = false;
+        reject(cause);
+      };
+      void emitTo(MAIN_WINDOW_LABEL, TASK_TEACH_HANDOFF_EVENT, exact).catch(fail);
+      void main.unminimize().then(() => main.show()).then(() => main.setFocus()).catch(() => undefined);
+    }).catch((cause) => {
+      if (!pending) return;
+      pending = false;
+      reject(cause);
+    });
+  });
+  try {
+    await result;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+    stop?.();
+  }
+}
 
 export type BrowserTeachPhase =
   | "idle"

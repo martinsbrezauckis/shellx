@@ -1046,6 +1046,15 @@ pub struct UiStatePatch {
         skip_serializing_if = "Option::is_none"
     )]
     pub release_test_external_effect_boundary: Option<String>,
+    /// Fixed renderer-only manual handoff notice fixture. The renderer accepts
+    /// only `shown` and `clear`; no URL, feature id, command, or external
+    /// protocol request crosses this transient release-test relay.
+    #[serde(
+        rename = "debugManualSurfaceNotice",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub debug_manual_surface_notice: Option<String>,
     /// Renderer-reported receipts for debug-driver actions.
     #[serde(rename = "debugActionResults", default)]
     pub debug_action_results: Option<Vec<serde_json::Value>>,

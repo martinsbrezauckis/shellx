@@ -320,36 +320,39 @@ fn token_present(headers: &HeaderMap, path: &str, query: Option<&str>, expected:
     false
 }
 
-pub(super) async fn require_auth(request: Request<Body>, next: Next) -> Result<Response, Response> {
+pub(super) async fn require_auth(request: Request<Body>, next: Next) -> Response {
     if !loopback_host_allowed(request.headers()) {
-        return Err((StatusCode::FORBIDDEN, "host not allowed").into_response());
+        return (StatusCode::FORBIDDEN, "host not allowed").into_response();
     }
     if !origin_allowed(request.headers()) {
-        return Err((StatusCode::FORBIDDEN, "origin not allowed").into_response());
+        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
     }
     if request.uri().path() == "/health" || request.method() == axum::http::Method::OPTIONS {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     }
-    let accepted_token = current_debug_token().map_err(|_| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Debug API token authority is unavailable",
-        )
-            .into_response()
-    })?;
+    let accepted_token = match current_debug_token() {
+        Ok(token) => token,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Debug API token authority is unavailable",
+            )
+                .into_response();
+        }
+    };
     if !token_present(
         request.headers(),
         request.uri().path(),
         request.uri().query(),
         &accepted_token,
     ) {
-        return Err((
+        return (
             StatusCode::UNAUTHORIZED,
             "missing or invalid bearer token (use ShellX-owned discovery or a private process-local integration)",
         )
-            .into_response());
+            .into_response();
     }
-    Ok(next.run(request).await)
+    next.run(request).await
 }
 
 pub(super) async fn add_api_version(request: Request<Body>, next: Next) -> Response {

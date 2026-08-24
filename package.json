@@ -1,6 +1,6 @@
 {
   "name": "shellx",
-  "version": "0.3.60",
+  "version": "0.3.61",
   "description": "Cross-platform desktop shell for agent CLIs and ACP-speaking agents",
   "license": "MIT",
   "private": true,
@@ -39,6 +39,7 @@
     "docs:test-sync": "node [retired maintainer tool]",
     "docs:test-surfaces": "node [retired maintainer tool]",
     "docs:test-protocols": "tsx [retired maintainer tool]",
+    "docs:test-placement": "node [retired maintainer tool]",
     "docs:verify-atlas": "tsx [retired maintainer tool] && tsx [retired maintainer tool] && tsx [retired maintainer tool]",
     "docs:capture-atlas": "tsx [retired maintainer tool]",
     "public:export": "bash [retired maintainer tool]",

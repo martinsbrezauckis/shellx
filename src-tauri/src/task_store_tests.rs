@@ -294,6 +294,14 @@ fn revision_requires_the_exact_current_hash_and_id() {
 }
 
 #[test]
+fn dropping_store_releases_the_exclusive_lock_for_immediate_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = TaskStore::open(directory.path()).unwrap();
+    drop(store);
+    TaskStore::open(directory.path()).unwrap();
+}
+
+#[test]
 fn reopen_refuses_tampered_historical_revision_content() {
     let directory = tempfile::tempdir().unwrap();
     let first_revision_id = {

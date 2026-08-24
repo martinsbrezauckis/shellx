@@ -126,6 +126,7 @@ export function ConnectorInboxModal({
     >
       <div
         ref={dialogRef}
+        data-manual-focus-id="connector-inbox-modal"
         data-debug-id="surface-components-connectorinboxmodal-2"
         data-connector-inbox-manual-refresh-sequence={manualRefreshReceipt.sequence}
         data-connector-inbox-manual-refresh-completed-at-ms={manualRefreshReceipt.completedAtMs ?? ""}
@@ -137,6 +138,7 @@ export function ConnectorInboxModal({
         role="dialog"
         aria-modal="true"
         aria-label="Connector inbox"
+        tabIndex={-1}
       >
         <div className="pmodal-hdr">
           <span className="pmodal-title">Connector inbox</span>

@@ -1,4 +1,5 @@
 (() => {
+  const manualHandoffSchema = "shellx.manual-handoff.v1";
   const search = document.querySelector("[data-manual-search]");
   const status = document.querySelector("[data-search-status]");
   const empty = document.querySelector("[data-empty-state]");
@@ -14,7 +15,9 @@
   const interfaceMapDataNode = document.querySelector("[data-interface-map-data]");
   const interfaceMapData = parseInterfaceMapData(interfaceMapDataNode?.textContent);
   const highlight = document.querySelector("[data-manual-highlight]");
-  const surfaceLink = document.querySelector("[data-map-open-image]");
+  const mapControlsList = document.querySelector("[data-map-controls-list]");
+  const mapControlsCount = document.querySelector("[data-map-controls-count]");
+  const hotspotLayer = document.querySelector("[data-map-hotspot-layer]");
   const detailTitle = document.querySelector("[data-detail-title]");
   const detailDescription = document.querySelector("[data-detail-description]");
   const detailView = document.querySelector("[data-detail-view]");
@@ -25,6 +28,7 @@
   const detailNoteText = document.querySelector("[data-detail-note-text]");
   const detailOpenImage = document.querySelector("[data-detail-open-image]");
   const detailArticleLink = document.querySelector("[data-detail-article-link]");
+  const detailHandoff = document.querySelector("[data-detail-handoff]");
 
   function parseInterfaceMapData(text) {
     if (!text) return {};
@@ -49,6 +53,22 @@
       : null;
   }
 
+  function isHandoff(handoff) {
+    if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return false;
+    if (handoff.schema !== manualHandoffSchema) return false;
+    if (!["supported", "conditional", "not-routable"].includes(handoff.availability)) return false;
+    if (handoff.availability === "not-routable") return typeof handoff.unavailableReason === "string" && handoff.unavailableReason.length > 0;
+    return (handoff.window === "main" || handoff.window === "browser")
+      && handoff.intent && typeof handoff.intent === "object" && !Array.isArray(handoff.intent)
+      && (handoff.availability !== "conditional" || (typeof handoff.condition === "string" && handoff.condition.length > 0));
+  }
+
+  function manualLaunchHref(feature) {
+    if (!featureFragmentHref(feature?.id) || !isHandoff(feature.handoff)) return null;
+    if (feature.handoff.availability !== "supported" && feature.handoff.availability !== "conditional") return null;
+    return `shellx-app://manual/open?feature=${encodeURIComponent(feature.id)}&v=1`;
+  }
+
   function setNavOpen(open) {
     nav?.classList.toggle("is-open", open);
     navToggle?.setAttribute("aria-expanded", String(open));
@@ -58,6 +78,85 @@
   navToggle?.addEventListener("click", () => {
     setNavOpen(navToggle.getAttribute("aria-expanded") !== "true");
   });
+
+  function captureFeatures(captureId) {
+    return Object.values(interfaceMapData).filter((feature) => feature?.capture?.id === captureId);
+  }
+
+  function createMapControl(feature, selectedFeatureId) {
+    const button = document.createElement("button");
+    button.className = "manual-map-control";
+    button.type = "button";
+    button.dataset.manualMapControl = feature.id;
+    button.setAttribute("aria-pressed", String(feature.id === selectedFeatureId));
+    button.textContent = feature.label;
+    return button;
+  }
+
+  function createHotspot(feature, selectedFeatureId) {
+    const button = document.createElement("button");
+    const [left, top, width, height] = feature.focus;
+    button.className = "manual-hotspot";
+    button.type = "button";
+    button.dataset.manualHotspot = feature.id;
+    button.setAttribute("aria-label", `Select ${feature.label} in ${feature.capture.label}`);
+    button.setAttribute("aria-pressed", String(feature.id === selectedFeatureId));
+    button.style.left = `${left}%`;
+    button.style.top = `${top}%`;
+    button.style.width = `${width}%`;
+    button.style.height = `${height}%`;
+    const label = document.createElement("span");
+    label.textContent = feature.label;
+    button.append(label);
+    return button;
+  }
+
+  function updateMapControls(feature) {
+    const captureMembers = captureFeatures(feature.capture.id);
+    if (mapControlsList) {
+      mapControlsList.replaceChildren(...captureMembers.map((item) => createMapControl(item, feature.id)));
+    }
+    if (mapControlsCount) {
+      mapControlsCount.textContent = `${captureMembers.length} control${captureMembers.length === 1 ? "" : "s"}`;
+    }
+    if (hotspotLayer) {
+      const children = captureMembers.map((item) => createHotspot(item, feature.id));
+      if (highlight) children.push(highlight);
+      hotspotLayer.replaceChildren(...children);
+    }
+  }
+
+  function updateHandoffAction(feature) {
+    if (!detailHandoff || !isHandoff(feature.handoff)) return;
+    const href = manualLaunchHref(feature);
+    const action = document.createElement(href ? "a" : "button");
+    action.className = "manual-show-in-app";
+    action.dataset.showInShellx = "";
+    const helper = document.createElement("p");
+    helper.dataset.detailHandoffStatus = "";
+    if (href) {
+      action.textContent = "Show in ShellX";
+      action.setAttribute("href", href);
+      action.addEventListener("click", () => {
+        window.setTimeout(() => {
+          helper.dataset.state = "launch-requested";
+          helper.textContent = "Launch requested — continue in ShellX if it is installed.";
+        }, 0);
+      });
+      helper.dataset.state = feature.handoff.availability;
+      helper.textContent = feature.handoff.availability === "conditional"
+        ? feature.handoff.condition
+        : "Opens this surface in the installed ShellX desktop app.";
+    } else {
+      action.textContent = "Not available in app";
+      action.setAttribute("type", "button");
+      action.setAttribute("disabled", "");
+      action.setAttribute("aria-disabled", "true");
+      helper.dataset.state = "not-routable";
+      helper.textContent = feature.handoff.unavailableReason;
+    }
+    detailHandoff.replaceChildren(action, helper);
+  }
 
   function updateInterfaceMap(featureId) {
     if (!Object.hasOwn(interfaceMapData, featureId)) return false;
@@ -76,7 +175,8 @@
       focus.length !== 4 ||
       !focus.every(Number.isFinite) ||
       !Number.isFinite(feature.capture.width) ||
-      !Number.isFinite(feature.capture.height)
+      !Number.isFinite(feature.capture.height) ||
+      !isHandoff(feature.handoff)
     ) return false;
     if (interfaceMapImage) {
       interfaceMapImage.setAttribute("src", imagePath);
@@ -84,6 +184,7 @@
       interfaceMapImage.height = feature.capture.height;
       interfaceMapImage.alt = `ShellX interface showing ${feature.label}`;
     }
+    updateMapControls(feature);
     if (highlight) {
       const [left, top, width, height] = focus;
       highlight.style.left = `${left}%`;
@@ -93,10 +194,6 @@
       highlight.dataset.label = feature.label;
       highlight.dataset.labelSide = top > 74 ? "above" : "below";
       highlight.dataset.labelAlign = left > 68 ? "end" : "start";
-    }
-    if (surfaceLink) {
-      surfaceLink.setAttribute("href", imagePath);
-      surfaceLink.setAttribute("aria-label", `Open full UI capture for ${feature.label}`);
     }
     if (detailTitle) detailTitle.textContent = feature.label;
     if (detailDescription) detailDescription.textContent = feature.summary;
@@ -118,6 +215,7 @@
     }
     if (detailOpenImage) detailOpenImage.setAttribute("href", imagePath);
     if (detailArticleLink) detailArticleLink.setAttribute("href", articleHref);
+    updateHandoffAction(feature);
     if (interfaceMap) interfaceMap.dataset.selectedFeature = featureId;
     return true;
   }
@@ -141,6 +239,14 @@
   for (const link of links) {
     link.addEventListener("click", () => selectFeature(link.dataset.featureLink));
   }
+
+  interfaceMap?.addEventListener("click", (event) => {
+    const control = event.target instanceof Element
+      ? event.target.closest("[data-manual-map-control], [data-manual-hotspot]")
+      : null;
+    if (!(control instanceof HTMLElement) || !interfaceMap.contains(control)) return;
+    selectFeature(control.dataset.manualMapControl || control.dataset.manualHotspot);
+  });
 
   function applySearch() {
     const query = (search?.value || "").trim().toLowerCase();

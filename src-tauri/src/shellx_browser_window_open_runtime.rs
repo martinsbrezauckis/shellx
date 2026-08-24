@@ -71,12 +71,12 @@ pub async fn open_or_focus_browser_window_bounded(
     app: AppHandle,
     registry: Arc<ShellxBrowserRegistry>,
     start_url: Option<String>,
-) -> Result<BrowserWindowOpenResponse, BrowserWindowOpenFailure> {
+) -> Result<BrowserWindowOpenResponse, Box<BrowserWindowOpenFailure>> {
     let timeout_ms = BROWSER_WINDOW_OPEN_TIMEOUT_MS;
     let guard = match Arc::clone(&registry.window_open_lock).try_lock_owned() {
         Ok(guard) => guard,
         Err(_) => {
-            return Err(record_window_open_failure(
+            return Err(Box::new(record_window_open_failure(
                 &registry,
                 start_url,
                 None,
@@ -84,7 +84,7 @@ pub async fn open_or_focus_browser_window_bounded(
                 "ShellX Browser window initialization is already in progress".to_string(),
                 true,
                 timeout_ms,
-            ));
+            )));
         }
     };
     let ticket = registry.prepare_window_open(start_url.clone());
@@ -100,7 +100,7 @@ pub async fn open_or_focus_browser_window_bounded(
                 Ok(_) => registry
                     .open_window_record(ticket, start_url.clone())
                     .map_err(|message| {
-                        record_window_open_failure(
+                        Box::new(record_window_open_failure(
                             &registry,
                             start_url,
                             None,
@@ -108,9 +108,9 @@ pub async fn open_or_focus_browser_window_bounded(
                             message,
                             true,
                             timeout_ms,
-                        )
+                        ))
                     }),
-                Err(message) => Err(record_window_open_failure(
+                Err(message) => Err(Box::new(record_window_open_failure(
                     &registry,
                     start_url,
                     Some(ticket),
@@ -118,7 +118,7 @@ pub async fn open_or_focus_browser_window_bounded(
                     message,
                     true,
                     timeout_ms,
-                )),
+                ))),
             };
             drop(guard);
             response
@@ -139,17 +139,19 @@ pub async fn open_or_focus_browser_window_bounded(
                 timeout_ms,
             );
             spawn_late_browser_window_open_watcher(app, Arc::clone(&registry), ticket, task);
-            Err(failure)
+            Err(Box::new(failure))
         }
-        BrowserWindowOpenOperationResult::WorkerFailed(message) => Err(record_window_open_failure(
-            &registry,
-            start_url,
-            Some(ticket),
-            "browser_window_open_worker_failed",
-            message,
-            true,
-            timeout_ms,
-        )),
+        BrowserWindowOpenOperationResult::WorkerFailed(message) => {
+            Err(Box::new(record_window_open_failure(
+                &registry,
+                start_url,
+                Some(ticket),
+                "browser_window_open_worker_failed",
+                message,
+                true,
+                timeout_ms,
+            )))
+        }
     }
 }
 

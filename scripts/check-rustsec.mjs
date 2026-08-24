@@ -11,6 +11,7 @@ const POLICY_PATH = resolve(ROOT, "security", "rustsec-dispositions.json");
 const LOCK_PATH = resolve(ROOT, "src-tauri", "Cargo.lock");
 const ROOT_MANIFEST_PATH = resolve(ROOT, "src-tauri", "Cargo.toml");
 const WINRT_VENDOR_ROOT = resolve(ROOT, "vendor", "tauri-winrt-notification");
+const MIN_CARGO_AUDIT_VERSION = [0, 22, 2];
 
 const WINRT_UPSTREAM_HASHES = new Map([
   ["src/lib.rs", "02737ddf3e28757572c6da5ed492496a07f59e56e78bc3dbea327ebaeb8913f1"],
@@ -93,6 +94,17 @@ function readJson(path) {
   }
 }
 
+export function cargoAuditVersionIsSupported(output) {
+  const match = output.match(/\b(\d+)\.(\d+)\.(\d+)\b/u);
+  if (!match) return false;
+  const actual = match.slice(1).map(Number);
+  for (let index = 0; index < MIN_CARGO_AUDIT_VERSION.length; index += 1) {
+    if (actual[index] > MIN_CARGO_AUDIT_VERSION[index]) return true;
+    if (actual[index] < MIN_CARGO_AUDIT_VERSION[index]) return false;
+  }
+  return true;
+}
+
 export function normalizePolicyText(value) {
   return value.replace(/\r\n/g, "\n");
 }
@@ -138,6 +150,15 @@ export function validateWinrtPatch() {
 }
 
 function runCargoAudit() {
+  const version = spawnSync("cargo", ["audit", "--version"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  if (version.error) throw new Error(`cargo audit version check failed to start: ${version.error.message}`);
+  if (version.status !== 0 || !cargoAuditVersionIsSupported(version.stdout)) {
+    const observed = version.stdout.trim() || version.stderr.trim() || `exit ${version.status}`;
+    throw new Error(`cargo-audit 0.22.2 or newer is required; observed ${observed}`);
+  }
   const result = spawnSync("cargo", ["audit", "--file", LOCK_PATH, "--json"], {
     cwd: ROOT,
     encoding: "utf8",

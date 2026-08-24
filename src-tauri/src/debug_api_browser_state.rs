@@ -725,6 +725,7 @@ pub(crate) async fn browser_open_http(
             Json(response).into_response()
         }
         Err(failure) => {
+            let failure = *failure;
             emit_browser_receipt(&s, &failure.receipt);
             let status = match failure.code.as_str() {
                 "browser_window_open_timeout" => StatusCode::GATEWAY_TIMEOUT,

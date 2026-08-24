@@ -188,7 +188,7 @@ jobs:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: |
           for attempt in 1 2 3; do
-            cargo install cargo-audit --locked --version 0.22.1 && exit 0
+            cargo install cargo-audit --locked --version 0.22.2 && exit 0
             sleep $((attempt * 10))
           done
           exit 1

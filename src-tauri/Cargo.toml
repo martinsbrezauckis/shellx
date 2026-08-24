@@ -12,7 +12,7 @@
 
 [package]
 name = "shellx"
-version = "0.3.60"
+version = "0.3.61"
 description = "shellX — cross-platform desktop host for Grok Build, Claude Code, Codex CLI, and ACP-speaking agents"
 authors = ["Martins Brezauckis <martins.brezauckis@gmail.com>"]
 license = "MIT"
@@ -113,7 +113,11 @@ tauri-plugin-notification = "2"
 # focuses the existing window instead of spawning a second app.exe.
 # Pairs with retry-bind in mcp_http/debug_api to survive transient
 # TIME_WAIT after a clean shutdown.
-tauri-plugin-single-instance = "2"
+# Deep links delivered to an existing desktop instance must first pass through
+# the deep-link plugin; its single-instance integration forwards only the
+# statically configured scheme to the existing process.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2.4.9"
 
 # P-Voice (#75, 2026-05-18): xAI Grok STT REST API client. multipart for
 # the audio file upload, rustls-tls for a TLS implementation that

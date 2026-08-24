@@ -229,6 +229,7 @@ export function PluginsModal({
     <div data-debug-id="surface-components-pluginsmodal-1" className="pmodal-backdrop" onClick={onClose}>
       <div
         ref={dialogRef}
+        data-manual-focus-id="plugins-modal"
         className="pmodal plugins-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"

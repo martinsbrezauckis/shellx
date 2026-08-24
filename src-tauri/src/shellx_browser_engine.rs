@@ -294,7 +294,7 @@ impl ShellxBrowserRegistry {
         request: &BrowserActionRequest,
         action: &str,
         wait_timeout: Duration,
-    ) -> Result<BrowserEngineActionSlotGuard<'_>, BrowserActionResponse> {
+    ) -> Result<BrowserEngineActionSlotGuard<'_>, Box<BrowserActionResponse>> {
         let action = clean_string(action);
         let engine_id = self.engine_id_for_action_request(request);
         let wait_id = browser_id("browser-engine-wait");
@@ -337,13 +337,13 @@ impl ShellxBrowserRegistry {
                     _guard: guard,
                 })
             }
-            Err(_) => Err(self.record_engine_wait_timeout(
+            Err(_) => Err(Box::new(self.record_engine_wait_timeout(
                 &engine_id,
                 &wait_id,
                 request,
                 &action,
                 wait_timeout,
-            )),
+            ))),
         }
     }
 

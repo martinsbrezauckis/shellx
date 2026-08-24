@@ -41,6 +41,7 @@ pub mod provider_sessions;
 mod host_mem;
 mod http_body;
 mod loopback_security;
+mod manual_deep_link;
 // Cross-process subagent state mirror. Sibling
 // to host_mem.rs — same SQLite-WAL pattern, separate `subagents.db`.
 // Needed because host_mcp's `--mcp-server` child writes the in-memory
@@ -7367,6 +7368,10 @@ pub fn run() {
         }))
     };
     let builder = builder
+        // Must follow the single-instance plugin: on Windows/Linux the
+        // deep-link plugin hands a second process' registered protocol URL to
+        // the first process before the single-instance callback focuses it.
+        .plugin(tauri_plugin_deep_link::init())
         // We use tracing_subscriber for backend logs; tauri-plugin-log
         // conflicts because both register a global logger.
         // Dialog plugin powers Attach + workspace picker.
@@ -7400,6 +7405,10 @@ pub fn run() {
         .manage(shellx_browser_registry.clone())
         .manage(shellx_vault_backend.clone())
         .manage(task_store)
+        // Public documentation links can queue one exact non-mutating surface
+        // reveal. The queue is volatile and contains no browser URL, path,
+        // Vault value, provider/session data, or command.
+        .manage(manual_deep_link::ManualDeepLinkState::default())
         // Pending provider/tool permission requests. Created at boot and
         // resolved by the matching provider-owned UI control. Normal ShellX
         // sessions use provider-native Full Auto.
@@ -7468,6 +7477,7 @@ pub fn run() {
             get_home_dir,
             read_text_file_for_path,
             open_url_in_browser,
+            manual_deep_link::manual_deep_link_take_pending_main,
             git_branches,
             crate::session_git::git_session_status,
             crate::session_git::git_session_diff,
@@ -7699,6 +7709,23 @@ pub fn run() {
             // it always returns a State (or panics if unmanaged, but we
             // know the .manage above ran).
             use tauri::Manager;
+            use tauri_plugin_deep_link::DeepLinkExt;
+            // Register before reading startup URLs. On a warm launch the
+            // single-instance plugin invokes this callback; on a cold launch
+            // `get_current` below drains the plugin's initial URL set. The
+            // receiver accepts only the strict shellx-app/manual/open grammar
+            // and merely queues an opaque feature id for the renderer.
+            let deep_link_handle = _app.handle().clone();
+            let _manual_deep_link_listener = _app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    crate::manual_deep_link::receive_manual_open_url(&deep_link_handle, &url);
+                }
+            });
+            if let Some(start_urls) = _app.deep_link().get_current()? {
+                for url in start_urls {
+                    crate::manual_deep_link::receive_manual_open_url(_app.handle(), &url);
+                }
+            }
             if let Some(profile) = isolated_test_instance_home() {
                 if let Err(error) = _app.asset_protocol_scope().allow_directory(&profile, true) {
                     return Err(format!(

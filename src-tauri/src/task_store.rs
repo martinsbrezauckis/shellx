@@ -162,6 +162,15 @@ pub(crate) struct TaskStore {
     pub(crate) state: Mutex<PersistedTaskStore>,
 }
 
+impl Drop for TaskStore {
+    fn drop(&mut self) {
+        // Closing the file also releases the platform lock, but an explicit
+        // unlock makes an immediate same-process reopen deterministic on
+        // high-concurrency Linux test and scheduler hosts.
+        let _ = fs2::FileExt::unlock(&self._lock_file);
+    }
+}
+
 impl TaskStore {
     pub(crate) fn open(root: impl Into<PathBuf>) -> Result<Self, TaskStoreError> {
         let root = root.into();

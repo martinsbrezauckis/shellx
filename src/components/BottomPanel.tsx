@@ -211,7 +211,7 @@ export function highlightSlashTokens(text: string): React.ReactNode[] {
 /**
  * Read the persisted bottom-tab on init. Exported so the parent
  * (App.tsx) can initialize its controlled state to match localStorage —
- * keeps the Ctrl+` toggle correct on first paint.
+ * keeps the Ctrl+Shift+M toggle correct on first paint.
  */
 export function readPersistedBottomTab(): BottomTab {
   try {
@@ -258,7 +258,7 @@ export function BottomPanel({
   connected,
   events,
   groups = [],
- // controlled tab — parent owns the state so Ctrl+`
+ // controlled tab — parent owns the state so Ctrl+Shift+M
  // can flip Chat ↔ Terminal globally. When `tab` is undefined the
  // component falls back to its own state (preserves old callers).
   tab: controlledTab,
@@ -2171,7 +2171,7 @@ function HintPill(): JSX.Element {
           <div className="hint-line"><kbd>⇧⏎</kbd> newline</div>
           <div className="hint-line"><kbd>{C}K</kbd> palette</div>
           <div className="hint-line"><kbd>{C}T</kbd> new tab</div>
-          <div className="hint-line"><kbd>{C}`</kbd> terminal</div>
+          <div className="hint-line"><kbd>Ctrl+⇧M</kbd> terminal</div>
           <div className="hint-line"><kbd>{C}U</kbd> attach</div>
           <div className="hint-line"><kbd>@</kbd> file · <kbd>#</kbd> PR/issue · <kbd>/</kbd> command</div>
           <div className="hint-line"><kbd>?</kbd> shortcuts</div>

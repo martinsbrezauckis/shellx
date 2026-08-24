@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "shellX",
-  "version": "0.3.60",
+  "version": "0.3.61",
   "identifier": "lv.shellx.app",
   "build": {
     "frontendDist": "../dist",
@@ -70,6 +70,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["shellx-app"]
+      }
+    },
     "updater": {
       "active": true,
       "endpoints": [

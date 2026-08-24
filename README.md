@@ -21,13 +21,6 @@ artifacts when CI passes.
   host, Vault, Browser, and provider runtimes.
 - [ShellX Browser module guide](shellx-browser/README.md) — Browser profiles,
   compact agent tools, Vault/session grants, actions, receipts, and debugging.
-- [Final release surface gate]([retired maintainer contract]) — the exhaustive
-  signed-candidate test contract used immediately before publication, not a
-  routine development walkthrough.
-- [Documentation and public-export workflow]([retired maintainer document]) —
-  how one canonical source stays synchronized with the repository manual,
-  website source, and reviewed public export without promoting private plans or
-  evidence.
 
 ## Preview
 
@@ -39,15 +32,15 @@ the exact installed page bounds.
 
 ### ShellX workspace
 
-![ShellX 0.3.60 work session with Preview Center displaying a high-contrast snow-leopard image](docs/public/assets/shellx-desktop-0.3.60.png)
+![ShellX 0.3.61 work session with Preview Center displaying a high-contrast snow-leopard image](docs/public/assets/shellx-desktop-0.3.61.png)
 
 ### ShellX Browser
 
-![ShellX Browser 0.3.60 with theshellx.com open, secure native navigation chrome, and the agent sidebar visible](docs/public/assets/shellx-browser-0.3.60.png)
+![ShellX Browser 0.3.61 with theshellx.com open, secure native navigation chrome, and the agent sidebar visible](docs/public/assets/shellx-browser-0.3.61.png)
 
 ### ShellX Vault
 
-![ShellX 0.3.60 Vault settings with password, profile-card, and agent-wallet surfaces visible](docs/public/assets/shellx-vault-0.3.60.png)
+![ShellX 0.3.61 Vault settings with password, profile-card, and agent-wallet surfaces visible](docs/public/assets/shellx-vault-0.3.61.png)
 
 ## What it does
 
@@ -247,11 +240,6 @@ For full quick-start, open **Settings → About → Quick start**.
 The synchronized source manual is [docs/public/SHELLX_MANUAL.md](docs/public/SHELLX_MANUAL.md).
 Its structured source is `docs/public/manual/shellx/content.json`; run
 `pnpm docs:build` after changing it and `pnpm docs:check` before committing.
-The version-locked three-target workflow for repository, local website source,
-and a staged public-export checkout is documented in
-[[retired maintainer document]]([retired maintainer document]).
-Contributor-facing interface changes follow
-[[retired maintainer document]]([retired maintainer document]).
 The web-manual destination is
 [docs.theshellx.com/manual/shellx](https://docs.theshellx.com/manual/shellx/).
 Synchronizing the local website source does not publish it; deployment remains

@@ -421,20 +421,17 @@ review and backend mutation share one fail-closed state identity.
 module sizes. `host_mcp.rs` is now a thin MCP wire and dispatch root whose domain
 behavior lives under `host_mcp/`. `debug_api.rs` keeps the authenticated server,
 shared state model, and route composition while domain handlers live in focused
-`debug_api_*.rs` modules. New Browser behavior must land
-in `host_mcp/`, `debug_api_browser_*`, or `shellx_browser_*` focused modules;
-new Vault behavior belongs under `shellx_vault/` or the shared
-`vendor/shellx-vault` broker. `pnpm source:size` enforces a 1,000-line default
-for focused Browser modules and no-regrowth ceilings for named legacy files.
+`debug_api_*.rs` modules. Browser and Vault domain code is organized in focused
+module families; the private engineering rules define contribution placement
+and source-size maintenance policy.
 The vendored Vault boundary carries `vendor/shellx-vault/PROVENANCE.json`, which
 binds the full standalone upstream Git revision to deterministic SHA-256 source
 digests for each included crate. Public CI recalculates those digests from the
 checkout, so provenance verification does not depend on a sibling Vault clone.
 The Linux GTK3 boundary resolves `glib 0.18.5` through `vendor/glib` because the
 current Tauri/WebKitGTK graph still requires the gtk-rs 0.18 API. `UPSTREAM`
-binds the published crate digest and the reviewed gtk-rs `VariantStrIter`
-soundness backport. Release checks seal the complete patched tree and execute
-every affected iterator operation in an optimized consumer build.
+records the published crate digest and the reviewed gtk-rs `VariantStrIter`
+soundness backport.
 
 | File | LOC | Role |
 |---|---|---|

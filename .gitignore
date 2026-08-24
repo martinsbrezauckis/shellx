@@ -18,6 +18,7 @@ coverage/
 
 # Workspace-only state and temporary artifacts
 .project/
+/.scratch/
 .worktrees
 .worktrees/
 .shellx-scratch/

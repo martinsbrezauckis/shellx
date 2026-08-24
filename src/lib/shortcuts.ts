@@ -96,12 +96,12 @@ export const SHORTCUTS: ShortcutDef[] = [
   {
     id: "toggle-terminal",
     group: "Navigation",
-    keys: "Ctrl+`",
+    keys: "Ctrl+Shift+M",
     desc: "Toggle Chat / Terminal in bottom panel",
- // `event.key` is layout-dependent; `code` keeps the physical key stable.
- // Ctrl is deliberate on every platform: macOS reserves Command+Backquote
- // for cycling application windows before the renderer can receive it.
-    match: (e) => e.ctrlKey && !e.metaKey && (e.key === "`" || e.code === "Backquote"),
+ // This remains a physical letter binding so keyboard layouts do not alter it.
+ // Ctrl+Backquote failed in the installed macOS app, while Ctrl+Shift+M has
+ // no competing ShellX binding or native menu accelerator.
+    match: (e) => e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === "KeyM",
     skipInInput: false,
   },
 

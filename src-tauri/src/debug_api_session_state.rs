@@ -825,7 +825,7 @@ pub(super) async fn set_ui_state(
     }
     if let Some(command) = body.release_test_host_mcp_child.take() {
         if let Err(response) = handle_release_test_host_mcp_child(&s, &command).await {
-            return response;
+            return *response;
         }
     }
     if let Some(command) = body.release_test_reset_browser_personal_lock.take() {
@@ -904,26 +904,26 @@ pub(super) async fn set_ui_state(
 async fn handle_release_test_host_mcp_child(
     state: &ApiState,
     command: &str,
-) -> Result<(), Response> {
+) -> Result<(), Box<Response>> {
     if command != "spawn-owned" && command != "clear-owned" {
-        return Err((
+        return Err(Box::new((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
                 "error": "invalid_release_test_host_mcp_child",
                 "message": "releaseTestHostMcpChild accepts only the fixed spawn-owned or clear-owned commands",
             })),
         )
-            .into_response());
+            .into_response()));
     }
     if !crate::isolated_test_instance_requested() {
-        return Err((
+        return Err(Box::new((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": "release_test_route_unavailable",
                 "message": "release-test Host MCP child setup is unavailable outside an isolated test instance",
             })),
         )
-            .into_response());
+            .into_response()));
     }
     let tab_id = state
         .hub()
@@ -931,14 +931,14 @@ async fn handle_release_test_host_mcp_child(
         .active_tab_id
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| {
-            (
+            Box::new((
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
                     "error": "release_test_active_tab_required",
                     "message": "release-test Host MCP child setup requires one exact active tab",
                 })),
             )
-                .into_response()
+                .into_response())
         })?;
     let registry = state
         .app
@@ -963,14 +963,16 @@ async fn handle_release_test_host_mcp_child(
                     .signal_tree(&task.task_id, "SIGKILL")
                     .await
                     .map_err(|error| {
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({
-                                "error": "release_test_host_mcp_child_cleanup_failed",
-                                "message": error,
-                            })),
+                        Box::new(
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({
+                                    "error": "release_test_host_mcp_child_cleanup_failed",
+                                    "message": error,
+                                })),
+                            )
+                                .into_response(),
                         )
-                            .into_response()
                     })?;
                 registry
                     .mark_exited(
@@ -984,14 +986,16 @@ async fn handle_release_test_host_mcp_child(
                 .release_test_forget_owned_host_mcp(&task.task_id, &tab_id, RELEASE_OWNED_COMMAND)
                 .await
                 .map_err(|error| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({
-                            "error": "release_test_host_mcp_child_forget_failed",
-                            "message": error,
-                        })),
+                    Box::new(
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "error": "release_test_host_mcp_child_forget_failed",
+                                "message": error,
+                            })),
+                        )
+                            .into_response(),
                     )
-                        .into_response()
                 })?;
         }
         return Ok(());
@@ -1001,14 +1005,16 @@ async fn handle_release_test_host_mcp_child(
         .await
         .is_empty()
     {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({
-                "error": "release_test_host_mcp_child_collision",
-                "message": "the active tab already owns a live Host MCP child",
-            })),
-        )
-            .into_response());
+        return Err(Box::new(
+            (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "release_test_host_mcp_child_collision",
+                    "message": "the active tab already owns a live Host MCP child",
+                })),
+            )
+                .into_response(),
+        ));
     }
 
     #[cfg(target_os = "windows")]
@@ -1032,25 +1038,29 @@ async fn handle_release_test_host_mcp_child(
     crate::winproc::apply_pdeathsig_preexec(&mut child_command);
     crate::winproc::apply_new_session_preexec(&mut child_command);
     let mut child = child_command.spawn().map_err(|error| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "release_test_host_mcp_child_spawn_failed",
-                "message": error.to_string(),
-            })),
+        Box::new(
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "release_test_host_mcp_child_spawn_failed",
+                    "message": error.to_string(),
+                })),
+            )
+                .into_response(),
         )
-            .into_response()
     })?;
     let Some(pid) = child.id() else {
         let _ = child.start_kill();
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": "release_test_host_mcp_child_pid_missing",
-                "message": "the owned Host MCP child did not expose a process id",
-            })),
-        )
-            .into_response());
+        return Err(Box::new(
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "release_test_host_mcp_child_pid_missing",
+                    "message": "the owned Host MCP child did not expose a process id",
+                })),
+            )
+                .into_response(),
+        ));
     };
     crate::winproc::tie_to_parent_lifetime(pid);
     let task_id = registry

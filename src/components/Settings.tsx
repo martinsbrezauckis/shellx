@@ -54,6 +54,8 @@ export function Settings({
   debugClipboardFixture = null,
   connectorsDebugFixture = null,
   debugUpdateFixture = "live",
+  requestedTab,
+  requestedTabSeq,
 }: {
   open: boolean;
   onClose: () => void;
@@ -63,6 +65,9 @@ export function Settings({
   debugClipboardFixture?: "shellxagent-token" | "vault-draft" | null;
   connectorsDebugFixture?: ConnectorsDebugFixture | null;
   debugUpdateFixture?: DebugUpdateFixtureMode;
+  /** An existing Settings dialog must also honour an exact safe reveal. */
+  requestedTab?: SettingsTab;
+  requestedTabSeq?: number;
 }): JSX.Element | null {
   const [s, setS] = useState<SettingsValues>(initial);
   const [tab, setTab] = useState<SettingsTab>(() => readSettingsTab());
@@ -83,6 +88,13 @@ export function Settings({
   useEffect(() => {
     if (open) setTab(readSettingsTab());
   }, [open]);
+
+ // Unlike a first open, an already-visible Settings dialog does not remount
+ // and therefore cannot discover a new localStorage tab itself. This typed
+ // request changes only the visible tab—the same state a user tab click sets.
+  useEffect(() => {
+    if (open && requestedTab) setTab(requestedTab);
+  }, [open, requestedTab, requestedTabSeq]);
 
  // Persist active tab whenever it changes (not just on close — survives
  // crashes mid-session).

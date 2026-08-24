@@ -129,7 +129,7 @@ pub(crate) async fn browser_action_http(
                 Err(response) => {
                     emit_browser_receipt(&s, &response.receipt);
                     emit_browser_latest(&s, &registry);
-                    return Json(response).into_response();
+                    return Json(*response).into_response();
                 }
             }
         } else {
