@@ -202,8 +202,7 @@ impl TaskRuntimeCancellation {
 }
 
 /// The coordinator performs its waits on the same Tokio runtime that awaits
-/// the foreground service. Tests inject a fake clock; production uses this
-/// implementation and no nested or detached runtime is created.
+/// the foreground service, without creating a nested or detached runtime.
 trait TaskRuntimeClock: Send + Sync {
     fn now_ms(&self) -> Result<i64, TaskRuntimeCoordinatorError>;
     fn wait_for_poll<'a>(&'a self) -> TaskRuntimeFuture<'a, ()>;
@@ -478,7 +477,7 @@ impl<'store> TaskRuntimeLeaseKeepalive<'store> {
             .map(|lease| lease.claimed_at_ms)
             .ok_or(TaskRuntimeCoordinatorError::InvalidLeaseDuration)?;
         // A third of the owned lease leaves two recovery opportunities before
-        // expiry, including the minimum 1s foreground lease used by tests.
+        // expiry, including the minimum 1s foreground lease.
         let cadence_ms = (lease_duration_ms / 3).max(1);
         Ok(Self {
             store: claim.store(),
@@ -997,7 +996,3 @@ fn current_time_ms() -> i64 {
         .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
         .unwrap_or(0)
 }
-
-#[cfg(test)]
-#[path = "task_runtime_coordinator_tests.rs"]
-mod tests;

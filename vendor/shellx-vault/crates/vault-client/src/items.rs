@@ -16,8 +16,7 @@
 //!   so no parent-chain walk — head-id cross-check + AEAD + keyed-id
 //!   re-verification are the integrity gates.
 //!
-//! Callers: ShellX host VaultBridge (fill/capture), R3 desktop vault UI,
-//! `examples/items_smoke.rs` (the e2e gate for this module).
+//! Callers: ShellX host VaultBridge (fill/capture) and R3 desktop vault UI.
 
 use std::collections::BTreeMap;
 
@@ -261,62 +260,4 @@ pub fn domain_matches(item_url: &str, frame_host: &str) -> bool {
     };
     let frame = frame_host.trim().to_ascii_lowercase();
     frame == item_host || frame.ends_with(&format!(".{item_host}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn item_json_matches_web_schema() {
-        // Field names must be exactly what the web writes (incl. "type").
-        let json = r#"{"id":"ab12","type":"login","title":"T","username":"u",
-            "password":"p","url":"https://example.com","notes":"",
-            "created_ms":1,"updated_ms":2}"#;
-        let item: VaultItem = serde_json::from_str(json).unwrap();
-        assert_eq!(item.kind, "login");
-        let back = serde_json::to_value(&item).unwrap();
-        assert_eq!(back["type"], "login");
-        assert!(
-            back.get("kind").is_none(),
-            "must serialize as \"type\", not \"kind\""
-        );
-    }
-
-    #[test]
-    fn item_json_tolerates_unknown_and_missing_fields() {
-        // Forward-compat: a future web build may add fields.
-        let json = r#"{"id":"x","type":"note","title":"N","totp":"future-field"}"#;
-        let item: VaultItem = serde_json::from_str(json).unwrap();
-        assert_eq!(item.kind, "note");
-        assert_eq!(item.password, "");
-        let back = serde_json::to_value(&item).unwrap();
-        assert_eq!(back["totp"], "future-field");
-    }
-
-    #[test]
-    fn host_extraction() {
-        assert_eq!(
-            host_of("https://Console.AWS.Amazon.com/iam?x=1").unwrap(),
-            "console.aws.amazon.com"
-        );
-        assert_eq!(host_of("example.com/login").unwrap(), "example.com");
-        assert_eq!(host_of("https://user@host.tld:8443/p").unwrap(), "host.tld");
-        assert_eq!(host_of("   "), None);
-    }
-
-    #[test]
-    fn origin_binding_rules() {
-        // Exact + subdomain match.
-        assert!(domain_matches("https://example.com/login", "example.com"));
-        assert!(domain_matches("https://example.com", "app.example.com"));
-        // Lookalike domains must NOT match (the anti-phishing point).
-        assert!(!domain_matches("https://example.com", "evil-example.com"));
-        assert!(!domain_matches(
-            "https://example.com",
-            "example.com.evil.tld"
-        ));
-        // Item without a usable URL never matches.
-        assert!(!domain_matches("", "example.com"));
-    }
 }

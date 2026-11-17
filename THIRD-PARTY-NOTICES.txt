@@ -94,3 +94,820 @@ INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, WHETHER IN AN ACTION OF
 CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF THE USE OR INABILITY TO USE
 THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE FONT SOFTWARE.
 
+Production dependency notices
+-----------------------------
+
+This notice lists the declared licenses for ShellX production dependencies in
+the supported Windows, macOS, and Linux dependency graphs.
+
+The npm closure below contains 133 production packages. The Cargo
+rows contain 666 unique package/version/license/source records;
+each lists the supported target graphs that include it. Build-only Cargo
+dependencies are excluded.
+
+NPM production dependency closure
+---------------------------------
+
+- @fontsource-variable/onest@5.2.11 — OFL-1.1
+- @shikijs/core@1.29.2 — MIT
+- @shikijs/engine-javascript@1.29.2 — MIT
+- @shikijs/engine-oniguruma@1.29.2 — MIT
+- @shikijs/langs@1.29.2 — MIT
+- @shikijs/themes@1.29.2 — MIT
+- @shikijs/types@1.29.2 — MIT
+- @shikijs/vscode-textmate@10.0.2 — MIT
+- @tauri-apps/api@2.11.1 — Apache-2.0 OR MIT
+- @tauri-apps/plugin-dialog@2.7.2 — MIT OR Apache-2.0
+- @tauri-apps/plugin-process@2.3.1 — MIT OR Apache-2.0
+- @tauri-apps/plugin-updater@2.10.1 — MIT OR Apache-2.0
+- @types/debug@4.1.13 — MIT
+- @types/estree@1.0.8 — MIT
+- @types/estree-jsx@1.0.5 — MIT
+- @types/hast@3.0.4 — MIT
+- @types/mdast@4.0.4 — MIT
+- @types/ms@2.1.0 — MIT
+- @types/prop-types@15.7.15 — MIT
+- @types/react@18.3.28 — MIT
+- @types/unist@2.0.11 — MIT
+- @types/unist@3.0.3 — MIT
+- @ungap/structured-clone@1.3.1 — ISC
+- @xterm/addon-fit@0.11.0 — MIT
+- @xterm/addon-web-links@0.12.0 — MIT
+- bail@2.0.2 — MIT
+- ccount@2.0.1 — MIT
+- character-entities@2.0.2 — MIT
+- character-entities-html4@2.1.0 — MIT
+- character-entities-legacy@3.0.0 — MIT
+- character-reference-invalid@2.0.1 — MIT
+- comma-separated-tokens@2.0.3 — MIT
+- csstype@3.2.3 — MIT
+- debug@4.4.3 — MIT
+- decode-named-character-reference@1.3.0 — MIT
+- dequal@2.0.3 — MIT
+- devlop@1.1.0 — MIT
+- emoji-regex-xs@1.0.0 — MIT
+- escape-string-regexp@5.0.0 — MIT
+- estree-util-is-identifier-name@3.0.0 — MIT
+- extend@3.0.2 — MIT
+- hast-util-to-html@9.0.5 — MIT
+- hast-util-to-jsx-runtime@2.3.6 — MIT
+- hast-util-whitespace@3.0.0 — MIT
+- html-url-attributes@3.0.1 — MIT
+- html-void-elements@3.0.0 — MIT
+- inline-style-parser@0.2.7 — MIT
+- is-alphabetical@2.0.1 — MIT
+- is-alphanumerical@2.0.1 — MIT
+- is-decimal@2.0.1 — MIT
+- is-hexadecimal@2.0.1 — MIT
+- is-plain-obj@4.1.0 — MIT
+- js-tokens@4.0.0 — MIT
+- longest-streak@3.1.0 — MIT
+- loose-envify@1.4.0 — MIT
+- lucide-react@1.16.0 — ISC
+- markdown-table@3.0.4 — MIT
+- mdast-util-find-and-replace@3.0.2 — MIT
+- mdast-util-from-markdown@2.0.3 — MIT
+- mdast-util-gfm@3.1.0 — MIT
+- mdast-util-gfm-autolink-literal@2.0.1 — MIT
+- mdast-util-gfm-footnote@2.1.0 — MIT
+- mdast-util-gfm-strikethrough@2.0.0 — MIT
+- mdast-util-gfm-table@2.0.0 — MIT
+- mdast-util-gfm-task-list-item@2.0.0 — MIT
+- mdast-util-mdx-expression@2.0.1 — MIT
+- mdast-util-mdx-jsx@3.2.0 — MIT
+- mdast-util-mdxjs-esm@2.0.1 — MIT
+- mdast-util-phrasing@4.1.0 — MIT
+- mdast-util-to-hast@13.2.1 — MIT
+- mdast-util-to-markdown@2.1.2 — MIT
+- mdast-util-to-string@4.0.0 — MIT
+- micromark@4.0.2 — MIT
+- micromark-core-commonmark@2.0.3 — MIT
+- micromark-extension-gfm@3.0.0 — MIT
+- micromark-extension-gfm-autolink-literal@2.1.0 — MIT
+- micromark-extension-gfm-footnote@2.1.0 — MIT
+- micromark-extension-gfm-strikethrough@2.1.0 — MIT
+- micromark-extension-gfm-table@2.1.1 — MIT
+- micromark-extension-gfm-tagfilter@2.0.0 — MIT
+- micromark-extension-gfm-task-list-item@2.1.0 — MIT
+- micromark-factory-destination@2.0.1 — MIT
+- micromark-factory-label@2.0.1 — MIT
+- micromark-factory-space@2.0.1 — MIT
+- micromark-factory-title@2.0.1 — MIT
+- micromark-factory-whitespace@2.0.1 — MIT
+- micromark-util-character@2.1.1 — MIT
+- micromark-util-chunked@2.0.1 — MIT
+- micromark-util-classify-character@2.0.1 — MIT
+- micromark-util-combine-extensions@2.0.1 — MIT
+- micromark-util-decode-numeric-character-reference@2.0.2 — MIT
+- micromark-util-decode-string@2.0.1 — MIT
+- micromark-util-encode@2.0.1 — MIT
+- micromark-util-html-tag-name@2.0.1 — MIT
+- micromark-util-normalize-identifier@2.0.1 — MIT
+- micromark-util-resolve-all@2.0.1 — MIT
+- micromark-util-sanitize-uri@2.0.1 — MIT
+- micromark-util-subtokenize@2.1.0 — MIT
+- micromark-util-symbol@2.0.1 — MIT
+- micromark-util-types@2.0.2 — MIT
+- ms@2.1.3 — MIT
+- oniguruma-to-es@2.3.0 — MIT
+- parse-entities@4.0.2 — MIT
+- property-information@7.1.0 — MIT
+- react@18.3.1 — MIT
+- react-dom@18.3.1 — MIT
+- react-markdown@9.1.0 — MIT
+- react-resizable-panels@2.1.9 — MIT
+- regex@5.1.1 — MIT
+- regex-recursion@5.1.1 — MIT
+- regex-utilities@2.3.0 — MIT
+- remark-gfm@4.0.1 — MIT
+- remark-parse@11.0.0 — MIT
+- remark-rehype@11.1.2 — MIT
+- remark-stringify@11.0.0 — MIT
+- scheduler@0.23.2 — MIT
+- shiki@1.29.2 — MIT
+- space-separated-tokens@2.0.2 — MIT
+- stringify-entities@4.0.4 — MIT
+- style-to-js@1.1.21 — MIT
+- style-to-object@1.0.14 — MIT
+- trim-lines@3.0.1 — MIT
+- trough@2.2.0 — MIT
+- unified@11.0.5 — MIT
+- unist-util-is@6.0.1 — MIT
+- unist-util-position@5.0.0 — MIT
+- unist-util-stringify-position@4.0.0 — MIT
+- unist-util-visit@5.1.0 — MIT
+- unist-util-visit-parents@6.0.2 — MIT
+- vfile@6.0.3 — MIT
+- vfile-message@4.0.3 — MIT
+- xterm@5.3.0 — MIT
+- zwitch@2.0.4 — MIT
+
+Cargo normal dependency graphs
+------------------------------
+
+- adler2@2.0.1 — 0BSD OR MIT OR Apache-2.0; crates.io; linux,macos,windows
+- aead@0.5.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- aes@0.8.4 — MIT OR Apache-2.0; crates.io; linux
+- aho-corasick@1.1.4 — Unlicense OR MIT; crates.io; linux,macos,windows
+- alloc-no-stdlib@2.0.4 — BSD-3-Clause; crates.io; linux,macos,windows
+- alloc-stdlib@0.2.2 — BSD-3-Clause; crates.io; linux,macos,windows
+- anstream@1.0.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- anstyle@1.0.14 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- anstyle-parse@1.0.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- anstyle-query@1.1.5 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- anstyle-wincon@3.0.11 — MIT OR Apache-2.0; crates.io; windows
+- anyhow@1.0.103 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- arboard@3.6.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- argon2@0.5.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- arrayref@0.3.9 — BSD-2-Clause; crates.io; linux,macos,windows
+- arrayvec@0.7.6 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- async-broadcast@0.5.1 — MIT OR Apache-2.0; crates.io; linux
+- async-broadcast@0.7.2 — MIT OR Apache-2.0; crates.io; linux
+- async-channel@2.5.0 — Apache-2.0 OR MIT; crates.io; linux
+- async-executor@1.14.0 — Apache-2.0 OR MIT; crates.io; linux
+- async-fs@1.6.0 — Apache-2.0 OR MIT; crates.io; linux
+- async-io@1.13.0 — Apache-2.0 OR MIT; crates.io; linux
+- async-io@2.6.0 — Apache-2.0 OR MIT; crates.io; linux
+- async-lock@2.8.0 — Apache-2.0 OR MIT; crates.io; linux
+- async-lock@3.4.2 — Apache-2.0 OR MIT; crates.io; linux
+- async-process@2.5.0 — Apache-2.0 OR MIT; crates.io; linux
+- async-recursion@1.1.1 — MIT OR Apache-2.0; crates.io; linux
+- async-signal@0.2.14 — Apache-2.0 OR MIT; crates.io; linux
+- async-task@4.7.1 — Apache-2.0 OR MIT; crates.io; linux
+- async-trait@0.1.89 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- atk@0.18.2 — MIT; crates.io; linux
+- atk-sys@0.18.2 — MIT; crates.io; linux
+- atomic-waker@1.1.2 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- aws-lc-rs@1.18.1 — ISC AND (Apache-2.0 OR ISC); crates.io; linux,macos,windows
+- aws-lc-sys@0.45.0 — ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0); crates.io; linux,macos,windows
+- axum@0.7.9 — MIT; crates.io; linux,macos,windows
+- axum@0.8.9 — MIT; crates.io; linux,macos,windows
+- axum-core@0.4.5 — MIT; crates.io; linux,macos,windows
+- axum-core@0.5.6 — MIT; crates.io; linux,macos,windows
+- base64@0.21.7 — MIT OR Apache-2.0; crates.io; macos
+- base64@0.22.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- base64ct@1.8.3 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- bit-set@0.8.0 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- bit-vec@0.8.0 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- bitflags@1.3.2 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- bitflags@2.13.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- blake2@0.10.6 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- blake3@1.8.5 — CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception; crates.io; linux,macos,windows
+- block-buffer@0.10.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- block-padding@0.3.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- block2@0.6.2 — MIT; crates.io; macos
+- blocking@1.6.2 — Apache-2.0 OR MIT; crates.io; linux
+- brotli@8.0.2 — BSD-3-Clause AND MIT; crates.io; linux,macos,windows
+- brotli-decompressor@5.0.0 — BSD-3-Clause/MIT; crates.io; linux,macos,windows
+- bs58@0.5.1 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- bstr@1.12.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- bumpalo@3.20.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- bytemuck@1.25.0 — Zlib OR Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- bytemuck_derive@1.10.2 — Zlib OR Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- byteorder@1.5.0 — Unlicense OR MIT; crates.io; linux,macos,windows
+- byteorder-lite@0.1.0 — Unlicense OR MIT; crates.io; linux,macos,windows
+- bytes@1.11.1 — MIT; crates.io; linux,macos,windows
+- cairo-rs@0.18.5 — MIT; crates.io; linux
+- cairo-sys-rs@0.18.2 — MIT; crates.io; linux
+- camino@1.2.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- cargo_metadata@0.19.2 — MIT; crates.io; linux,macos,windows
+- cargo-platform@0.1.9 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- cbc@0.1.2 — MIT OR Apache-2.0; crates.io; linux
+- cfb@0.7.3 — MIT; crates.io; linux,macos,windows
+- cfg-if@1.0.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- chacha20@0.10.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- chacha20@0.9.1 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- chacha20poly1305@0.10.1 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- chrono@0.4.44 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- chrono-tz@0.10.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- cipher@0.4.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- clap@4.6.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- clap_builder@4.6.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- clap_derive@4.6.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- clap_lex@1.1.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- clipboard-win@5.4.1 — BSL-1.0; crates.io; windows
+- cobs@0.3.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- colorchoice@1.0.5 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- concurrent-queue@2.5.0 — Apache-2.0 OR MIT; crates.io; linux
+- const-random@0.1.18 — MIT OR Apache-2.0; crates.io; linux
+- const-random-macro@0.1.16 — MIT OR Apache-2.0; crates.io; linux
+- constant_time_eq@0.4.2 — CC0-1.0 OR MIT-0 OR Apache-2.0; crates.io; linux,macos,windows
+- cookie@0.18.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- core-foundation@0.10.1 — MIT OR Apache-2.0; crates.io; macos
+- core-foundation@0.9.4 — MIT OR Apache-2.0; crates.io; macos
+- core-foundation-sys@0.8.7 — MIT OR Apache-2.0; crates.io; macos
+- core-graphics@0.25.0 — MIT OR Apache-2.0; crates.io; macos
+- core-graphics-types@0.2.0 — MIT OR Apache-2.0; crates.io; macos
+- cpufeatures@0.2.17 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- cpufeatures@0.3.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- crc32fast@1.5.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- crossbeam-channel@0.5.15 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- crossbeam-deque@0.8.6 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- crossbeam-epoch@0.9.20 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- crossbeam-utils@0.8.21 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- crunchy@0.2.4 — MIT; crates.io; linux
+- crypto-common@0.1.7 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- cssparser@0.36.0 — MPL-2.0; crates.io; linux,macos,windows
+- cssparser-macros@0.6.1 — MPL-2.0; crates.io; linux,macos,windows
+- ctor@0.8.0 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- ctor-proc-macro@0.0.7 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- curve25519-dalek@4.1.3 — BSD-3-Clause; crates.io; linux,macos,windows
+- curve25519-dalek-derive@0.1.1 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- darling@0.23.0 — MIT; crates.io; linux,macos,windows
+- darling_core@0.23.0 — MIT; crates.io; linux,macos,windows
+- darling_macro@0.23.0 — MIT; crates.io; linux,macos,windows
+- data-encoding@2.11.0 — MIT; crates.io; linux,macos,windows
+- dbus@0.9.11 — Apache-2.0/MIT; crates.io; linux
+- deranged@0.5.8 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- derivative@2.2.0 — MIT/Apache-2.0; crates.io; linux
+- derive_more@2.1.1 — MIT; crates.io; linux,macos,windows
+- derive_more-impl@2.1.1 — MIT; crates.io; linux,macos,windows
+- digest@0.10.7 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- dirs@6.0.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- dirs-sys@0.5.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- dispatch2@0.3.1 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- displaydoc@0.2.5 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- dlopen2@0.8.2 — MIT; crates.io; linux
+- dlopen2_derive@0.4.3 — MIT; crates.io; linux
+- dlv-list@0.5.2 — MIT OR Apache-2.0; crates.io; linux
+- dom_query@0.27.0 — MIT; crates.io; linux,macos,windows
+- downcast-rs@1.2.1 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- dpi@0.1.2 — Apache-2.0 AND MIT; crates.io; linux,macos,windows
+- dtoa@1.0.11 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- dtoa-short@0.3.5 — MPL-2.0; crates.io; linux,macos,windows
+- dtor@0.3.0 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- dtor-proc-macro@0.0.6 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- dunce@1.0.5 — CC0-1.0 OR MIT-0 OR Apache-2.0; crates.io; linux,macos,windows
+- dyn-clone@1.0.20 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- either@1.15.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- embed_plist@1.2.2 — MIT OR Apache-2.0; crates.io; macos
+- embedded-io@0.4.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- embedded-io@0.6.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- encoding_rs@0.8.35 — (Apache-2.0 OR MIT) AND BSD-3-Clause; crates.io; linux,macos,windows
+- endi@1.1.1 — MIT; crates.io; linux
+- enumflags2@0.7.12 — MIT OR Apache-2.0; crates.io; linux
+- enumflags2_derive@0.7.12 — MIT OR Apache-2.0; crates.io; linux
+- equivalent@1.0.2 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- erased-serde@0.4.10 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- errno@0.3.14 — MIT OR Apache-2.0; crates.io; linux,macos
+- error-code@3.3.2 — BSL-1.0; crates.io; windows
+- event-listener@2.5.3 — Apache-2.0 OR MIT; crates.io; linux
+- event-listener@5.4.2 — Apache-2.0 OR MIT; crates.io; linux
+- event-listener-strategy@0.5.4 — Apache-2.0 OR MIT; crates.io; linux
+- fallible-iterator@0.3.0 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- fallible-streaming-iterator@0.1.9 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- fastcdc@4.0.1 — MIT; crates.io; linux,macos,windows
+- fastrand@1.9.0 — Apache-2.0 OR MIT; crates.io; linux
+- fastrand@2.4.1 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- fax@0.2.7 — MIT; crates.io; linux,macos,windows
+- fdeflate@0.3.7 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- fern@0.7.1 — MIT; crates.io; linux,macos,windows
+- field-offset@0.3.6 — MIT OR Apache-2.0; crates.io; linux
+- file-id@0.2.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- filedescriptor@0.8.3 — MIT; crates.io; linux,macos,windows
+- filetime@0.2.29 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- flate2@1.1.9 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- fnv@1.0.7 — Apache-2.0 / MIT; crates.io; linux,macos,windows
+- foldhash@0.2.0 — Zlib; crates.io; linux,macos,windows
+- foreign-types@0.5.0 — MIT/Apache-2.0; crates.io; macos
+- foreign-types-macros@0.2.3 — MIT/Apache-2.0; crates.io; macos
+- foreign-types-shared@0.3.1 — MIT/Apache-2.0; crates.io; macos
+- form_urlencoded@1.2.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- fs2@0.4.3 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- fsevent-sys@4.1.0 — MIT; crates.io; macos
+- futures-channel@0.3.32 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- futures-core@0.3.32 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- futures-executor@0.3.32 — MIT OR Apache-2.0; crates.io; linux
+- futures-io@0.3.32 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- futures-lite@1.13.0 — Apache-2.0 OR MIT; crates.io; linux
+- futures-lite@2.6.1 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- futures-macro@0.3.32 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- futures-sink@0.3.32 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- futures-task@0.3.32 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- futures-util@0.3.32 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- gdk@0.18.2 — MIT; crates.io; linux
+- gdk-pixbuf@0.18.5 — MIT; crates.io; linux
+- gdk-pixbuf-sys@0.18.0 — MIT; crates.io; linux
+- gdk-sys@0.18.2 — MIT; crates.io; linux
+- gdkwayland-sys@0.18.2 — MIT; crates.io; linux
+- gdkx11@0.18.2 — MIT; crates.io; linux
+- gdkx11-sys@0.18.2 — MIT; crates.io; linux
+- generic-array@0.14.7 — MIT; crates.io; linux,macos,windows
+- gethostname@1.1.0 — Apache-2.0; crates.io; linux
+- getrandom@0.2.17 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- getrandom@0.3.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- getrandom@0.4.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- gio@0.18.4 — MIT; crates.io; linux
+- gio-sys@0.18.1 — MIT; crates.io; linux
+- glib@0.18.5 — MIT; vendored:vendor/glib; linux
+- glib-macros@0.18.5 — MIT; crates.io; linux
+- glib-sys@0.18.1 — MIT; crates.io; linux
+- glob@0.3.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- globset@0.4.18 — Unlicense OR MIT; crates.io; linux,macos,windows
+- gobject-sys@0.18.0 — MIT; crates.io; linux
+- gtk@0.18.2 — MIT; crates.io; linux
+- gtk-sys@0.18.2 — MIT; crates.io; linux
+- gtk3-macros@0.18.2 — MIT; crates.io; linux
+- h2@0.4.16 — MIT; crates.io; linux,macos,windows
+- half@2.7.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- hash32@0.2.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- hashbrown@0.12.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- hashbrown@0.14.5 — MIT OR Apache-2.0; crates.io; linux
+- hashbrown@0.17.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- hashlink@0.12.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- heapless@0.7.17 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- heck@0.4.1 — MIT OR Apache-2.0; crates.io; linux
+- heck@0.5.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- hex@0.4.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- hkdf@0.12.4 — MIT OR Apache-2.0; crates.io; linux
+- hmac@0.12.1 — MIT OR Apache-2.0; crates.io; linux
+- html5ever@0.38.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- http@1.4.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- http-body@1.0.1 — MIT; crates.io; linux,macos,windows
+- http-body-util@0.1.3 — MIT; crates.io; linux,macos,windows
+- http-range@0.1.5 — MIT; crates.io; linux,macos,windows
+- http-range-header@0.4.2 — MIT; crates.io; linux,macos,windows
+- httparse@1.10.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- httpdate@1.0.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- hyper@1.9.0 — MIT; crates.io; linux,macos,windows
+- hyper-rustls@0.27.9 — Apache-2.0 OR ISC OR MIT; crates.io; linux,macos,windows
+- hyper-util@0.1.20 — MIT; crates.io; linux,macos,windows
+- iana-time-zone@0.1.65 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- ico@0.5.0 — MIT; crates.io; linux,macos,windows
+- icu_collections@2.2.0 — Unicode-3.0; crates.io; linux,macos,windows
+- icu_locale_core@2.2.0 — Unicode-3.0; crates.io; linux,macos,windows
+- icu_normalizer@2.2.0 — Unicode-3.0; crates.io; linux,macos,windows
+- icu_normalizer_data@2.2.0 — Unicode-3.0; crates.io; linux,macos,windows
+- icu_properties@2.2.0 — Unicode-3.0; crates.io; linux,macos,windows
+- icu_properties_data@2.2.0 — Unicode-3.0; crates.io; linux,macos,windows
+- icu_provider@2.2.0 — Unicode-3.0; crates.io; linux,macos,windows
+- ident_case@1.0.1 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- idna@1.1.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- idna_adapter@1.2.2 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- ignore@0.4.25 — Unlicense OR MIT; crates.io; linux,macos,windows
+- image@0.25.10 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- indexmap@1.9.3 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- indexmap@2.14.0 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- infer@0.19.0 — MIT; crates.io; linux,macos,windows
+- inotify@0.11.2 — ISC; crates.io; linux
+- inotify@0.9.6 — ISC; crates.io; linux
+- inotify-sys@0.1.5 — ISC; crates.io; linux
+- inout@0.1.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- io-lifetimes@1.0.11 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; crates.io; linux
+- ioctl-rs@0.1.6 — MIT; crates.io; linux,macos
+- ipnet@2.12.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- is_terminal_polyfill@1.70.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- itoa@1.0.18 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- javascriptcore-rs@1.1.2 — MIT; crates.io; linux
+- javascriptcore-rs-sys@1.1.1 — MIT; crates.io; linux
+- json-patch@3.0.1 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- jsonptr@0.6.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- keyboard-types@0.7.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- keyring@2.3.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- lazy_static@1.5.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- libappindicator@0.9.0 — Apache-2.0 OR MIT; crates.io; linux
+- libappindicator-sys@0.9.0 — Apache-2.0 OR MIT; crates.io; linux
+- libc@0.2.186 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- libdbus-sys@0.2.7 — Apache-2.0/MIT; crates.io; linux
+- libloading@0.7.4 — ISC; crates.io; linux
+- libsqlite3-sys@0.39.1 — MIT; crates.io; linux,macos,windows
+- linux-keyutils@0.2.5 — Apache-2.0 OR MIT; crates.io; linux
+- linux-raw-sys@0.12.1 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; crates.io; linux
+- linux-raw-sys@0.3.8 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; crates.io; linux
+- litemap@0.8.2 — Unicode-3.0; crates.io; linux,macos,windows
+- lock_api@0.4.14 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- log@0.4.29 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- lru-slab@0.1.2 — MIT OR Apache-2.0 OR Zlib; crates.io; linux,macos,windows
+- lz4_flex@0.13.1 — MIT; crates.io; linux,macos,windows
+- mac-notification-sys@0.6.12 — MIT/Apache-2.0; crates.io; macos
+- markup5ever@0.38.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- matchers@0.2.0 — MIT; crates.io; linux,macos,windows
+- matchit@0.7.3 — MIT AND BSD-3-Clause; crates.io; linux,macos,windows
+- matchit@0.8.4 — MIT AND BSD-3-Clause; crates.io; linux,macos,windows
+- memchr@2.8.0 — Unlicense OR MIT; crates.io; linux,macos,windows
+- memoffset@0.6.5 — MIT; crates.io; linux,macos,windows
+- memoffset@0.7.1 — MIT; crates.io; linux
+- memoffset@0.9.1 — MIT; crates.io; linux
+- memory-serve@2.1.0 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- mime@0.3.17 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- mime_guess@2.0.5 — MIT; crates.io; linux,macos,windows
+- minisign-verify@0.2.5 — MIT; crates.io; linux,macos,windows
+- miniz_oxide@0.8.9 — MIT OR Zlib OR Apache-2.0; crates.io; linux,macos,windows
+- mio@0.8.11 — MIT; crates.io; linux
+- mio@1.2.0 — MIT; crates.io; linux,macos,windows
+- moxcms@0.8.1 — BSD-3-Clause OR Apache-2.0; crates.io; linux,macos,windows
+- muda@0.19.1 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- new_debug_unreachable@1.0.6 — MIT; crates.io; linux,macos,windows
+- nix@0.25.1 — MIT; crates.io; linux,macos,windows
+- nix@0.26.4 — MIT; crates.io; linux
+- nix@0.27.1 — MIT; crates.io; linux,macos
+- nix@0.31.3 — MIT; crates.io; macos
+- notify@6.1.1 — CC0-1.0; crates.io; linux,macos,windows
+- notify@8.2.0 — CC0-1.0; crates.io; linux,macos,windows
+- notify-debouncer-full@0.7.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- notify-rust@4.17.0 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- notify-types@2.1.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- ntapi@0.4.3 — Apache-2.0 OR MIT; crates.io; windows
+- nu-ansi-term@0.50.3 — MIT; crates.io; linux,macos,windows
+- num@0.4.3 — MIT OR Apache-2.0; crates.io; linux
+- num_threads@0.1.7 — MIT OR Apache-2.0; crates.io; linux,macos
+- num-bigint@0.4.6 — MIT OR Apache-2.0; crates.io; linux
+- num-complex@0.4.6 — MIT OR Apache-2.0; crates.io; linux
+- num-conv@0.2.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- num-integer@0.1.46 — MIT OR Apache-2.0; crates.io; linux
+- num-iter@0.1.45 — MIT OR Apache-2.0; crates.io; linux
+- num-rational@0.4.2 — MIT OR Apache-2.0; crates.io; linux
+- num-traits@0.2.19 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- objc2@0.6.4 — MIT; crates.io; macos
+- objc2-app-kit@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-av-foundation@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-avf-audio@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-cloud-kit@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-core-audio@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-core-audio-types@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-core-data@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-core-foundation@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-core-graphics@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-core-image@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-core-media@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-core-text@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-core-video@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-encode@4.1.0 — MIT; crates.io; macos
+- objc2-exception-helper@0.1.1 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-foundation@0.3.2 — MIT; crates.io; macos
+- objc2-image-io@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-io-surface@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-media-toolbox@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-metal@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-osa-kit@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-quartz-core@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- objc2-web-kit@0.3.2 — Zlib OR Apache-2.0 OR MIT; crates.io; macos
+- once_cell@1.21.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- once_cell_polyfill@1.70.2 — MIT OR Apache-2.0; crates.io; windows
+- opaque-debug@0.3.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- openssl-probe@0.2.1 — MIT OR Apache-2.0; crates.io; linux
+- option-ext@0.2.0 — MPL-2.0; crates.io; linux,macos,windows
+- ordered-multimap@0.7.3 — MIT; crates.io; linux
+- ordered-stream@0.2.0 — MIT OR Apache-2.0; crates.io; linux
+- osakit@0.3.1 — MIT OR Apache-2.0; crates.io; macos
+- pango@0.18.3 — MIT; crates.io; linux
+- pango-sys@0.18.0 — MIT; crates.io; linux
+- parking@2.2.1 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- parking_lot@0.12.5 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- parking_lot_core@0.9.12 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- password-hash@0.5.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- percent-encoding@2.3.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- phf@0.12.1 — MIT; crates.io; linux,macos,windows
+- phf@0.13.1 — MIT; crates.io; linux,macos,windows
+- phf_generator@0.13.1 — MIT; crates.io; linux,macos,windows
+- phf_macros@0.13.1 — MIT; crates.io; linux,macos,windows
+- phf_shared@0.12.1 — MIT; crates.io; linux,macos,windows
+- phf_shared@0.13.1 — MIT; crates.io; linux,macos,windows
+- pin-project-lite@0.2.17 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- pin-utils@0.1.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- piper@0.2.5 — MIT OR Apache-2.0; crates.io; linux
+- plist@1.10.0 — MIT; crates.io; linux,macos,windows
+- png@0.17.16 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- png@0.18.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- polling@2.8.0 — Apache-2.0 OR MIT; crates.io; linux
+- polling@3.11.0 — Apache-2.0 OR MIT; crates.io; linux
+- poly1305@0.8.0 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- portable-pty@0.8.1 — MIT; crates.io; linux,macos,windows
+- postcard@1.1.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- potential_utf@0.1.5 — Unicode-3.0; crates.io; linux,macos,windows
+- powerfmt@0.2.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- ppv-lite86@0.2.21 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- precomputed-hash@0.1.1 — MIT; crates.io; linux,macos,windows
+- proc-macro-crate@1.3.1 — MIT OR Apache-2.0; crates.io; linux
+- proc-macro-crate@2.0.2 — MIT OR Apache-2.0; crates.io; linux
+- proc-macro-crate@3.5.0 — MIT OR Apache-2.0; crates.io; linux
+- proc-macro-error@1.0.4 — MIT OR Apache-2.0; crates.io; linux
+- proc-macro-error-attr@1.0.4 — MIT OR Apache-2.0; crates.io; linux
+- proc-macro2@1.0.106 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- pxfm@0.1.29 — BSD-3-Clause OR Apache-2.0; crates.io; linux,macos,windows
+- quick-error@2.0.1 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- quick-xml@0.41.0 — MIT; crates.io; linux,macos,windows
+- quinn@0.11.9 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- quinn-proto@0.11.19 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- quinn-udp@0.5.16 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- quote@1.0.45 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rand@0.10.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rand@0.8.6 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rand@0.9.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rand_chacha@0.3.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rand_chacha@0.9.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rand_core@0.10.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rand_core@0.6.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rand_core@0.9.5 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rand_pcg@0.10.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- raw-window-handle@0.6.2 — MIT OR Apache-2.0 OR Zlib; crates.io; linux,macos,windows
+- rayon@1.12.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rayon-core@1.13.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- ref-cast@1.0.25 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- ref-cast-impl@1.0.25 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- regex@1.12.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- regex-automata@0.4.14 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- regex-syntax@0.8.10 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- reqwest@0.12.28 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- reqwest@0.13.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rfd@0.16.0 — MIT; crates.io; linux,macos,windows
+- ring@0.17.14 — Apache-2.0 AND ISC; crates.io; linux,macos,windows
+- rpassword@7.5.4 — Apache-2.0; crates.io; linux,macos,windows
+- rtoolbox@0.0.5 — Apache-2.0; crates.io; linux,macos,windows
+- rusqlite@0.41.1 — MIT; crates.io; linux,macos,windows
+- rust-ini@0.21.3 — MIT; crates.io; linux
+- rustc-hash@2.1.2 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- rustix@0.37.28 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; crates.io; linux
+- rustix@1.1.6 — Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; crates.io; linux,macos
+- rustls@0.23.46 — Apache-2.0 OR ISC OR MIT; crates.io; linux,macos,windows
+- rustls-native-certs@0.8.3 — Apache-2.0 OR ISC OR MIT; crates.io; linux
+- rustls-pki-types@1.14.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rustls-platform-verifier@0.7.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- rustls-webpki@0.103.16 — ISC; crates.io; linux,macos,windows
+- rustversion@1.0.22 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- ryu@1.0.23 — Apache-2.0 OR BSL-1.0; crates.io; linux,macos,windows
+- same-file@1.0.6 — Unlicense/MIT; crates.io; linux,macos,windows
+- schemars@0.8.22 — MIT; crates.io; linux,macos,windows
+- schemars@0.9.0 — MIT; crates.io; linux,macos,windows
+- schemars@1.2.1 — MIT; crates.io; linux,macos,windows
+- schemars_derive@0.8.22 — MIT; crates.io; linux,macos,windows
+- scopeguard@1.2.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- secret-service@3.1.0 — MIT OR Apache-2.0; crates.io; linux
+- security-framework@2.11.1 — MIT OR Apache-2.0; crates.io; macos
+- security-framework@3.7.0 — MIT OR Apache-2.0; crates.io; macos
+- security-framework-sys@2.17.0 — MIT OR Apache-2.0; crates.io; macos
+- selectors@0.36.1 — MPL-2.0; crates.io; linux,macos,windows
+- semver@1.0.28 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde@1.0.228 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_core@1.0.228 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_derive@1.0.228 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_derive_internals@0.29.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_json@1.0.149 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_path_to_error@0.1.20 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_repr@0.1.20 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_spanned@0.6.9 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_spanned@1.1.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_urlencoded@0.7.1 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- serde_with@3.21.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde_with_macros@3.21.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serde-untagged@0.1.9 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serial@0.4.0 — MIT; crates.io; linux,macos,windows
+- serial-core@0.4.0 — MIT; crates.io; linux,macos,windows
+- serial-unix@0.4.0 — MIT; crates.io; linux,macos
+- serial-windows@0.4.0 — MIT; crates.io; windows
+- serialize-to-javascript@0.1.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- serialize-to-javascript-impl@0.1.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- servo_arc@0.4.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- sha1@0.10.6 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- sha2@0.10.9 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- sha256@1.6.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- sharded-slab@0.1.7 — MIT; crates.io; linux,macos,windows
+- shared_library@0.1.9 — Apache-2.0/MIT; crates.io; windows
+- shell-words@1.1.1 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- signal-hook-registry@1.4.8 — MIT OR Apache-2.0; crates.io; linux,macos
+- simd-adler32@0.3.9 — MIT; crates.io; linux,macos,windows
+- siphasher@1.0.3 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- slab@0.4.12 — MIT; crates.io; linux,macos,windows
+- smallvec@1.15.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- socket2@0.4.10 — MIT OR Apache-2.0; crates.io; linux
+- socket2@0.6.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- softbuffer@0.4.8 — MIT OR Apache-2.0; crates.io; windows
+- soup3@0.5.0 — MIT; crates.io; linux
+- soup3-sys@0.5.0 — MIT; crates.io; linux
+- spin@0.9.8 — MIT; crates.io; linux,macos,windows
+- stable_deref_trait@1.2.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- static_assertions@1.1.0 — MIT OR Apache-2.0; crates.io; linux
+- string_cache@0.9.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- strsim@0.11.1 — MIT; crates.io; linux,macos,windows
+- subtle@2.6.1 — BSD-3-Clause; crates.io; linux,macos,windows
+- swift-rs@1.0.7 — MIT OR Apache-2.0; crates.io; macos
+- syn@1.0.109 — MIT OR Apache-2.0; crates.io; linux
+- syn@2.0.117 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- syn@3.0.10 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- sync_wrapper@1.0.2 — Apache-2.0; crates.io; linux,macos,windows
+- synstructure@0.13.2 — MIT; crates.io; linux,macos,windows
+- sysinfo@0.30.13 — MIT; crates.io; linux,macos,windows
+- system-configuration@0.7.0 — MIT OR Apache-2.0; crates.io; macos
+- system-configuration-sys@0.6.0 — MIT OR Apache-2.0; crates.io; macos
+- tao@0.35.2 — Apache-2.0; vendored:vendor/tao-0.35.2; linux,macos,windows
+- tar@0.4.46 — MIT OR Apache-2.0; crates.io; linux,macos
+- tauri@2.11.5 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-codegen@2.6.3 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-macros@2.6.3 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-plugin-deep-link@2.4.9 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-plugin-dialog@2.7.2 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-plugin-fs@2.5.1 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-plugin-log@2.9.0 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-plugin-notification@2.3.3 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-plugin-process@2.3.1 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-plugin-single-instance@2.4.2 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-plugin-updater@2.10.1 — Apache-2.0 OR MIT; vendored:vendor/tauri-plugin-updater-2.10.1; linux,macos,windows
+- tauri-runtime@2.11.3 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-runtime-wry@2.11.4 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-utils@2.9.3 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tauri-winrt-notification@0.7.2 — MIT OR Apache-2.0; vendored:vendor/tauri-winrt-notification; windows
+- tempfile@3.27.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- tendril@0.5.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- termios@0.2.2 — MIT; crates.io; linux,macos
+- thiserror@1.0.69 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- thiserror@2.0.21 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- thiserror-impl@1.0.69 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- thiserror-impl@2.0.21 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- thread_local@1.1.9 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- tiff@0.11.3 — MIT; crates.io; linux,macos,windows
+- time@0.3.47 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- time-core@0.1.8 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- time-macros@0.2.27 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- tiny-keccak@2.0.2 — CC0-1.0; crates.io; linux
+- tinystr@0.8.3 — Unicode-3.0; crates.io; linux,macos,windows
+- tinyvec@1.11.0 — Zlib OR Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- tinyvec_macros@0.1.1 — MIT OR Apache-2.0 OR Zlib; crates.io; linux,macos,windows
+- tokio@1.53.3 — MIT; crates.io; linux,macos,windows
+- tokio-macros@2.7.0 — MIT; crates.io; linux,macos,windows
+- tokio-rustls@0.26.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- tokio-tungstenite@0.24.0 — MIT; crates.io; linux,macos,windows
+- tokio-util@0.7.18 — MIT; crates.io; linux,macos,windows
+- toml@0.8.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- toml@0.9.12+spec-1.1.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- toml_datetime@0.6.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- toml_datetime@0.7.5+spec-1.1.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- toml_datetime@1.1.1+spec-1.1.0 — MIT OR Apache-2.0; crates.io; linux
+- toml_edit@0.19.15 — MIT OR Apache-2.0; crates.io; linux
+- toml_edit@0.20.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- toml_edit@0.25.11+spec-1.1.0 — MIT OR Apache-2.0; crates.io; linux
+- toml_parser@1.1.2+spec-1.1.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- toml_writer@1.1.1+spec-1.1.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- tower@0.5.3 — MIT; crates.io; linux,macos,windows
+- tower-http@0.5.2 — MIT; crates.io; linux,macos,windows
+- tower-http@0.6.10 — MIT; crates.io; linux,macos,windows
+- tower-layer@0.3.3 — MIT; crates.io; linux,macos,windows
+- tower-service@0.3.3 — MIT; crates.io; linux,macos,windows
+- tracing@0.1.44 — MIT; crates.io; linux,macos,windows
+- tracing-attributes@0.1.31 — MIT; crates.io; linux,macos,windows
+- tracing-core@0.1.36 — MIT; crates.io; linux,macos,windows
+- tracing-log@0.2.0 — MIT; crates.io; linux,macos,windows
+- tracing-subscriber@0.3.23 — MIT; crates.io; linux,macos,windows
+- tray-icon@0.24.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- try-lock@0.2.5 — MIT; crates.io; linux,macos,windows
+- tungstenite@0.24.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- twox-hash@2.1.2 — MIT; crates.io; linux,macos,windows
+- typed-path@0.13.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- typeid@1.0.3 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- typenum@1.20.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- unic-char-property@0.9.0 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- unic-char-range@0.9.0 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- unic-common@0.9.0 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- unic-ucd-ident@0.9.0 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- unic-ucd-version@0.9.0 — MIT/Apache-2.0; crates.io; linux,macos,windows
+- unicase@2.9.0 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- unicode-ident@1.0.24 — (MIT OR Apache-2.0) AND Unicode-3.0; crates.io; linux,macos,windows
+- unicode-segmentation@1.13.2 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- universal-hash@0.5.1 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- untrusted@0.9.0 — ISC; crates.io; linux,macos,windows
+- url@2.5.8 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- urlencoding@2.1.3 — MIT; crates.io; linux,macos,windows
+- urlpattern@0.3.0 — MIT; crates.io; linux,macos,windows
+- utf-8@0.7.6 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- utf8_iter@1.0.4 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- utf8parse@0.2.2 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- uuid@1.23.1 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- vault-broker@0.1.0 — MIT; vendored:vendor/shellx-vault/crates/vault-broker; linux,macos,windows
+- vault-client@0.1.0 — MIT; vendored:vendor/shellx-vault/crates/vault-client; linux,macos,windows
+- vault-core@0.1.0 — MIT; vendored:vendor/shellx-vault/crates/vault-core; linux,macos,windows
+- vault-server@0.1.0 — MIT; vendored:vendor/shellx-vault/crates/vault-server; linux,macos,windows
+- waker-fn@1.2.0 — Apache-2.0 OR MIT; crates.io; linux
+- walkdir@2.5.0 — Unlicense/MIT; crates.io; linux,macos,windows
+- want@0.3.1 — MIT; crates.io; linux,macos,windows
+- web_atoms@0.2.4 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- webkit2gtk@2.0.2 — MIT; crates.io; linux
+- webkit2gtk-sys@2.0.2 — MIT; crates.io; linux
+- webpki-roots@0.26.11 — CDLA-Permissive-2.0; crates.io; linux,macos,windows
+- webpki-roots@1.0.10 — CDLA-Permissive-2.0; crates.io; linux,macos,windows
+- webview2-com@0.38.2 — MIT; crates.io; windows
+- webview2-com-macros@0.8.1 — MIT; crates.io; windows
+- webview2-com-sys@0.38.2 — MIT; crates.io; windows
+- weezl@0.1.12 — MIT OR Apache-2.0; crates.io; linux,macos,windows
+- winapi@0.3.9 — MIT/Apache-2.0; crates.io; windows
+- winapi-util@0.1.11 — Unlicense OR MIT; crates.io; windows
+- window-vibrancy@0.6.0 — Apache-2.0 OR MIT; crates.io; macos,windows
+- windows@0.52.0 — MIT OR Apache-2.0; crates.io; windows
+- windows@0.58.0 — MIT OR Apache-2.0; crates.io; windows
+- windows@0.61.3 — MIT OR Apache-2.0; crates.io; windows
+- windows_x86_64_msvc@0.48.5 — MIT OR Apache-2.0; crates.io; windows
+- windows_x86_64_msvc@0.52.6 — MIT OR Apache-2.0; crates.io; windows
+- windows_x86_64_msvc@0.53.1 — MIT OR Apache-2.0; crates.io; windows
+- windows-collections@0.2.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-core@0.52.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-core@0.58.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-core@0.61.2 — MIT OR Apache-2.0; crates.io; windows
+- windows-future@0.2.1 — MIT OR Apache-2.0; crates.io; windows
+- windows-implement@0.58.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-implement@0.60.2 — MIT OR Apache-2.0; crates.io; windows
+- windows-interface@0.58.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-interface@0.59.3 — MIT OR Apache-2.0; crates.io; windows
+- windows-link@0.1.3 — MIT OR Apache-2.0; crates.io; windows
+- windows-link@0.2.1 — MIT OR Apache-2.0; crates.io; windows
+- windows-numerics@0.2.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-registry@0.5.3 — MIT OR Apache-2.0; crates.io; windows
+- windows-registry@0.6.1 — MIT OR Apache-2.0; crates.io; windows
+- windows-result@0.2.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-result@0.3.4 — MIT OR Apache-2.0; crates.io; windows
+- windows-result@0.4.1 — MIT OR Apache-2.0; crates.io; windows
+- windows-strings@0.1.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-strings@0.4.2 — MIT OR Apache-2.0; crates.io; windows
+- windows-strings@0.5.1 — MIT OR Apache-2.0; crates.io; windows
+- windows-sys@0.48.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-sys@0.52.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-sys@0.59.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-sys@0.60.2 — MIT OR Apache-2.0; crates.io; windows
+- windows-sys@0.61.2 — MIT OR Apache-2.0; crates.io; windows
+- windows-targets@0.48.5 — MIT OR Apache-2.0; crates.io; windows
+- windows-targets@0.52.6 — MIT OR Apache-2.0; crates.io; windows
+- windows-targets@0.53.5 — MIT OR Apache-2.0; crates.io; windows
+- windows-threading@0.1.0 — MIT OR Apache-2.0; crates.io; windows
+- windows-version@0.1.7 — MIT OR Apache-2.0; crates.io; windows
+- winnow@0.5.40 — MIT; crates.io; linux,macos,windows
+- winnow@0.7.15 — MIT; crates.io; linux,macos,windows
+- winnow@1.0.3 — MIT; crates.io; linux,macos,windows
+- winreg@0.10.1 — MIT; crates.io; windows
+- writeable@0.6.3 — Unicode-3.0; crates.io; linux,macos,windows
+- wry@0.55.1 — Apache-2.0 OR MIT; vendored:vendor/wry-0.55.1; linux,macos,windows
+- x11@2.21.0 — MIT; crates.io; linux
+- x11-dl@2.21.0 — MIT; crates.io; linux
+- x11rb@0.13.2 — MIT OR Apache-2.0; crates.io; linux
+- x11rb-protocol@0.13.2 — MIT OR Apache-2.0; crates.io; linux
+- x25519-dalek@2.0.1 — BSD-3-Clause; crates.io; linux,macos,windows
+- xattr@1.6.1 — MIT OR Apache-2.0; crates.io; linux,macos
+- xcap@0.1.1 — Apache-2.0; crates.io; linux,windows
+- xcap@0.9.5 — Apache-2.0; crates.io; macos
+- xcb@1.7.1 — MIT; crates.io; linux
+- xdg-home@1.3.0 — MIT; crates.io; linux
+- yoke@0.8.2 — Unicode-3.0; crates.io; linux,macos,windows
+- yoke-derive@0.8.2 — Unicode-3.0; crates.io; linux,macos,windows
+- zbus@3.15.2 — MIT; crates.io; linux
+- zbus@5.15.0 — MIT; crates.io; linux
+- zbus_macros@3.15.2 — MIT; crates.io; linux
+- zbus_macros@5.15.0 — MIT; crates.io; linux
+- zbus_names@2.6.1 — MIT; crates.io; linux
+- zbus_names@4.3.2 — MIT; crates.io; linux
+- zerocopy@0.8.48 — BSD-2-Clause OR Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- zerocopy-derive@0.8.48 — BSD-2-Clause OR Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- zerofrom@0.1.8 — Unicode-3.0; crates.io; linux,macos,windows
+- zerofrom-derive@0.1.7 — Unicode-3.0; crates.io; linux,macos,windows
+- zeroize@1.8.2 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- zeroize_derive@1.4.3 — Apache-2.0 OR MIT; crates.io; linux,macos,windows
+- zerotrie@0.2.4 — Unicode-3.0; crates.io; linux,macos,windows
+- zerovec@0.11.6 — Unicode-3.0; crates.io; linux,macos,windows
+- zerovec-derive@0.11.3 — Unicode-3.0; crates.io; linux,macos,windows
+- zip@9.4.1 — MIT; crates.io; linux,macos,windows
+- zlib-rs@0.6.8 — Zlib; crates.io; linux,macos,windows
+- zmij@1.0.21 — MIT; crates.io; linux,macos,windows
+- zopfli@0.8.3 — Apache-2.0; crates.io; linux,macos,windows
+- zune-core@0.5.1 — MIT OR Apache-2.0 OR Zlib; crates.io; linux,macos,windows
+- zune-jpeg@0.5.15 — MIT OR Apache-2.0 OR Zlib; crates.io; linux,macos,windows
+- zvariant@3.15.2 — MIT; crates.io; linux
+- zvariant@5.11.0 — MIT; crates.io; linux
+- zvariant_derive@3.15.2 — MIT; crates.io; linux
+- zvariant_derive@5.11.0 — MIT; crates.io; linux
+- zvariant_utils@1.0.1 — MIT; crates.io; linux
+- zvariant_utils@3.3.1 — MIT; crates.io; linux

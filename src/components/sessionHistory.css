@@ -1,0 +1,219 @@
+.session-history-open {
+  position: sticky;
+  top: 8px;
+  z-index: 4;
+  width: fit-content;
+  margin: 8px 10px 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--surface) 90%, transparent);
+  color: var(--ink-2);
+  font: 12px var(--sans);
+  cursor: pointer;
+}
+
+.session-history-open:hover:not(:disabled),
+.session-history-open:focus-visible {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.session-history-open:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.session-history-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 62%);
+}
+
+.session-history-modal {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(100%, 1080px);
+  height: min(88vh, 860px);
+  overflow: hidden;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-modal);
+  background: var(--surface);
+  box-shadow: 0 18px 56px rgb(0 0 0 / 55%);
+}
+
+.session-history-loading-modal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: auto;
+  min-height: 76px;
+  padding: 14px 16px;
+}
+
+.session-history-loading-modal .session-history-status {
+  padding: 0;
+}
+
+.session-history-header,
+.session-history-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-color: var(--hairline);
+}
+
+.session-history-header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.session-history-header h2 {
+  margin: 0;
+  color: var(--ink);
+  font: 600 17px var(--display);
+}
+
+.session-history-header p {
+  margin: 3px 0 0;
+  color: var(--ink-3);
+  font: 12px var(--sans);
+}
+
+.session-history-close,
+.session-history-footer button {
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font: 12px var(--sans);
+  cursor: pointer;
+}
+
+.session-history-close {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+}
+
+.session-history-footer {
+  justify-content: flex-end;
+  min-height: 54px;
+  border-top: 1px solid var(--hairline);
+}
+
+.session-history-footer button {
+  min-height: 30px;
+  padding: 5px 10px;
+}
+
+.session-history-footer button:hover:not(:disabled),
+.session-history-close:hover,
+.session-history-footer button:focus-visible,
+.session-history-close:focus-visible {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.session-history-footer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.session-history-status {
+  display: grid;
+  gap: 6px;
+  padding: 0 16px;
+  color: var(--ink-3);
+  font: 12px var(--sans);
+}
+
+.session-history-error,
+.session-history-warning,
+.session-history-indexing {
+  display: block;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 5px;
+}
+
+.session-history-error {
+  border: 1px solid color-mix(in oklab, var(--danger) 56%, transparent);
+  background: color-mix(in oklab, var(--danger) 12%, transparent);
+  color: var(--ink);
+}
+
+.session-history-warning {
+  border: 1px solid color-mix(in oklab, var(--warn) 55%, transparent);
+  background: color-mix(in oklab, var(--warn) 12%, transparent);
+  color: var(--ink-2);
+}
+
+.session-history-indexing {
+  border: 1px solid color-mix(in oklab, var(--accent) 55%, transparent);
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  color: var(--ink-2);
+}
+
+.session-history-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 0;
+}
+
+.session-history-content > .output {
+  min-height: 0;
+  overflow: visible;
+  padding-top: 0;
+}
+
+.session-history-content .session-history-open {
+  display: none;
+}
+
+.session-history-empty {
+  margin: 22px auto;
+  max-width: 540px;
+  padding: 12px 16px;
+  color: var(--ink-3);
+  font: 13px var(--sans);
+  text-align: center;
+}
+
+.session-history-end {
+  margin-left: auto;
+  color: var(--ink-3);
+  font: 12px var(--sans);
+}
+
+@media (max-width: 640px) {
+  .session-history-backdrop { padding: 10px; }
+
+  .session-history-modal {
+    width: 100%;
+    height: min(94vh, 860px);
+  }
+
+  .session-history-header,
+  .session-history-footer { padding: 12px; }
+
+  .session-history-footer {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .session-history-end {
+    width: 100%;
+    margin-left: 0;
+  }
+}

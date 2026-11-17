@@ -24,7 +24,7 @@
  * the environment into the next agent-session start. Editing fires
  * `onEdit(preset?)` so the parent can mount ConnectionEditor.
  */
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type JSX } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
@@ -133,8 +133,16 @@ export function ConnectionPicker({
   const [pendingDelete, setPendingDelete] = useState<ConnectionPreset | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const pickerContentRef = useRef<HTMLDivElement | null>(null);
+  const newButtonRef = useRef<HTMLButtonElement | null>(null);
   const deleteCancelRef = useRef<HTMLButtonElement | null>(null);
   const deleteConfirmRef = useRef<HTMLButtonElement | null>(null);
+
+  const closeAndRestoreFocus = useCallback(() => {
+    onClose();
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('[data-picker-anchor="connection"]')?.focus({ preventScroll: true });
+    });
+  }, [onClose]);
 
   const refresh = useCallback(async () => {
  // invoke throws outside Tauri (no __TAURI_INTERNALS__ → no IPC
@@ -159,6 +167,14 @@ export function ConnectionPicker({
   }, [open, refresh]);
 
   useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      newButtonRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
+
+  useEffect(() => {
     if (pendingDelete) {
       pickerContentRef.current?.setAttribute("inert", "");
       deleteCancelRef.current?.focus();
@@ -179,7 +195,7 @@ export function ConnectionPicker({
  // Don't close on clicks on the pill that toggled us open —
  // otherwise the pill's onClick would immediately re-open us.
       if (t.closest('[data-picker-anchor="connection"]')) return;
-      onClose();
+      closeAndRestoreFocus();
     };
     window.addEventListener("mousedown", onDoc);
  // Bubble-phase Esc handler — fires after App's closeAllModals so
@@ -187,7 +203,7 @@ export function ConnectionPicker({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (pendingDelete) setPendingDelete(null);
-        else onClose();
+        else closeAndRestoreFocus();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -195,23 +211,53 @@ export function ConnectionPicker({
       window.removeEventListener("mousedown", onDoc);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open, onClose, pendingDelete]);
+  }, [closeAndRestoreFocus, open, pendingDelete]);
 
  // Portaled picker — compute pill rect and anchor the bottom edge at
  // (pill_top - 6) so it grows upward. Escapes the .bottom-body
  // overflow:auto and react-resizable-panels clip.
   const [coords, setCoords] = useState<{ left: number; bottom: number; width: number } | null>(null);
-  useEffect(() => {
-    if (!open) { setCoords(null); return; }
-    const anchor = document.querySelector('[data-picker-anchor="connection"]');
+  const recomputeCoords = useCallback(() => {
+    const anchor = document.querySelector<HTMLElement>('[data-picker-anchor="connection"]');
     if (!anchor) return;
+    const width = Math.min(360, Math.max(0, window.innerWidth - 16));
+    if (width === 0) return;
     const r = anchor.getBoundingClientRect();
     setCoords({
-      left: r.left,
-      bottom: window.innerHeight - r.top + 6,
-      width: 360,
+      left: Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - width - 8)),
+      bottom: Math.max(8, window.innerHeight - r.top + 6),
+      width,
     });
-  }, [open]);
+  }, []);
+  useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null);
+      return;
+    }
+    recomputeCoords();
+    let frame = 0;
+    const schedule = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(recomputeCoords);
+    };
+    const anchor = document.querySelector<HTMLElement>('[data-picker-anchor="connection"]');
+    const observer = typeof ResizeObserver === "undefined" || !anchor
+      ? null
+      : new ResizeObserver(schedule);
+    if (observer && anchor) {
+      for (let element: HTMLElement | null = anchor; element && element !== document.body; element = element.parentElement) {
+        observer.observe(element);
+      }
+    }
+    window.addEventListener("scroll", schedule, true);
+    window.addEventListener("resize", schedule);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("scroll", schedule, true);
+      window.removeEventListener("resize", schedule);
+    };
+  }, [open, recomputeCoords]);
 
   if (!open || !coords) return null;
 
@@ -244,8 +290,10 @@ export function ConnectionPicker({
   return createPortal(
     <div
       ref={rootRef}
+      id="connection-picker-popover"
       className="connection-picker-pop"
       role="dialog"
+      aria-modal="false"
       aria-label="Saved connections"
       style={{
         position: "fixed",
@@ -259,6 +307,7 @@ export function ConnectionPicker({
           <span>Connections</span>
           <button
             type="button"
+            ref={newButtonRef}
             onClick={() => onEdit(undefined)}
             className="cp-new"
             title="Add a new connection"
@@ -279,7 +328,7 @@ export function ConnectionPicker({
                 preset={p}
                 active={p.id === activeId}
                 testResult={testCache[p.id]}
-                onSelect={() => { onSelect(p); onClose(); }}
+                onSelect={() => { onSelect(p); closeAndRestoreFocus(); }}
                 onTest={() => handleTest(p.id)}
                 onEdit={() => onEdit(p)}
                 onDelete={() => setPendingDelete(p)}

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { takeShellxReleasePickerClaim } from "../../lib/shellx-dialog";
 
 type SetupMode = "local" | "external";
 
@@ -23,11 +22,6 @@ type LegacyImportReceipt = {
   skipped: boolean;
 };
 
-export const OWNED_DEBUG_VAULT_RECOVERY_WORDS = [
-  "shellx", "release", "owned", "recovery", "fixture", "never",
-  "operator", "secret", "vault", "copy", "proof", "zero",
-] as const;
-
 function VaultField({ label, children }: { label: string; children: JSX.Element }): JSX.Element {
   return (
     <label className="vault-field">
@@ -40,11 +34,9 @@ function VaultField({ label, children }: { label: string; children: JSX.Element 
 export function VaultSetupPanel({
   status,
   onRefresh,
-  debugRecoveryWords = null,
 }: {
   status: VaultStatus | null;
   onRefresh: () => void;
-  debugRecoveryWords?: readonly string[] | null;
 }): JSX.Element {
   const [mode, setMode] = useState<SetupMode>("local");
   const [passphrase, setPassphrase] = useState("");
@@ -57,6 +49,7 @@ export function VaultSetupPanel({
   const [rememberDevice, setRememberDevice] = useState(true);
   const [rememberPassphrase, setRememberPassphrase] = useState("");
   const [recoveryKit, setRecoveryKit] = useState<RecoveryKit | null>(null);
+  const [acknowledgedNoRecovery, setAcknowledgedNoRecovery] = useState(false);
   const [importLegacy, setImportLegacy] = useState(false);
   const [showSetupForm, setShowSetupForm] = useState(false);
   const [message, setMessage] = useState("");
@@ -81,16 +74,6 @@ export function VaultSetupPanel({
     setRememberDevice(status?.rememberedDeviceEnabled ?? true);
   }, [status?.rememberedDeviceEnabled]);
 
-  useEffect(() => {
-    if (!debugRecoveryWords?.length) return;
-    setRecoveryKit({
-      confirmationId: "release-owned-recovery-clipboard-fixture",
-      words: [...debugRecoveryWords],
-      warning: "Synthetic release fixture. No operator recovery material is loaded.",
-    });
-    setMessage("Synthetic release fixture. No operator recovery material is loaded.");
-  }, [debugRecoveryWords]);
-
   async function beginSetup(): Promise<void> {
     if (passphrase !== confirmPassphrase) {
       setMessage("passphrases do not match");
@@ -112,6 +95,7 @@ export function VaultSetupPanel({
         },
       });
       setRecoveryKit(kit);
+      setAcknowledgedNoRecovery(false);
       setPassphrase("");
       setConfirmPassphrase("");
       setMessage(kit.warning);
@@ -123,7 +107,7 @@ export function VaultSetupPanel({
   }
 
   async function confirmRecovery(): Promise<void> {
-    if (!recoveryKit?.confirmationId || busy) return;
+    if (!recoveryKit?.confirmationId || !acknowledgedNoRecovery || busy) return;
     setBusy(true);
     setMessage("");
     try {
@@ -137,10 +121,11 @@ export function VaultSetupPanel({
       setKeyfileJson("");
       setSelectedKeyfileName("");
       setRecoveryKit(null);
+      setAcknowledgedNoRecovery(false);
       setMessage(
         receipt.skipped
-          ? "Recovery confirmed. Vault is ready without imported ShellX secrets."
-          : `Recovery confirmed. Imported ${receipt.importedKeys} ShellX secrets.`,
+          ? "Setup confirmed. Vault is ready without imported ShellX secrets."
+          : `Setup confirmed. Imported ${receipt.importedKeys} ShellX secrets.`,
       );
       onRefresh();
     } catch (err) {
@@ -193,16 +178,6 @@ export function VaultSetupPanel({
     }
   }
 
-  async function copyRecoveryKit(): Promise<void> {
-    if (!recoveryKit?.words.length) return;
-    try {
-      await navigator.clipboard.writeText(recoveryKit.words.join(" "));
-      setMessage("Recovery words copied. Keep them offline and private.");
-    } catch {
-      setMessage("Clipboard blocked. Select and copy the recovery words manually.");
-    }
-  }
-
   async function handleKeyfileFile(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.currentTarget.files?.[0] ?? null;
     event.currentTarget.value = "";
@@ -233,26 +208,9 @@ export function VaultSetupPanel({
     setMessage("Existing keyfile selected.");
   }
 
-  async function chooseKeyfile(): Promise<void> {
+  function chooseKeyfile(): void {
     setMessage("");
-    try {
-      const claim = await takeShellxReleasePickerClaim("file");
-      if (!claim) {
-        keyfileInputRef.current?.click();
-        return;
-      }
-      if (typeof claim.syntheticText !== "string" || claim.syntheticText.length > 16 * 1024) {
-        throw new Error("isolated keyfile picker result omitted bounded synthetic text");
-      }
-      acceptKeyfileText(
-        claim.syntheticText,
-        claim.path.split(/[\\/]/).filter(Boolean).at(-1) ?? "vault-keyfile.json",
-      );
-    } catch {
-      setKeyfileJson("");
-      setSelectedKeyfileName("");
-      setMessage("Selected file is not valid JSON.");
-    }
+    keyfileInputRef.current?.click();
   }
 
   function clearSelectedKeyfile(): void {
@@ -490,14 +448,14 @@ export function VaultSetupPanel({
                 onClick={() => void beginSetup()}
                 disabled={!canBegin || busy}
               >
-                Create recovery kit
+                Create Vault
               </button>
               <button
                 type="button"
                 className={`settings-pill ${recoveryKit ? "active" : ""}`}
                 data-debug-id="shellx-vault-recovery-confirm"
                 onClick={() => void confirmRecovery()}
-                disabled={!recoveryKit || busy}
+                disabled={!recoveryKit || !acknowledgedNoRecovery || busy}
               >
                 {recoveryKit ? "Save setup and unlock vault" : "Save setup"}
               </button>
@@ -514,18 +472,20 @@ export function VaultSetupPanel({
             </label>
           </div>
           {passphraseMismatch && <p className="vault-hint">passphrases do not match</p>}
-          {recoveryKit?.words.length ? (
+          {recoveryKit ? (
             <div className="vault-recovery-kit">
-              <code>{recoveryKit.words.join(" ")}</code>
-              <button
-                type="button"
-                className="settings-pill"
-                data-debug-id="shellx-vault-recovery-copy"
-                onClick={() => void copyRecoveryKit()}
-                disabled={busy}
-              >
-                Copy recovery words
-              </button>
+              <p>{recoveryKit.warning}</p>
+              <label className="vault-check-row">
+                <input
+                  type="checkbox"
+                  data-debug-id="shellx-vault-setup-ack"
+                  data-shellx-release-observe="checked"
+                  checked={acknowledgedNoRecovery}
+                  onChange={(event) => setAcknowledgedNoRecovery(event.currentTarget.checked)}
+                  disabled={busy}
+                />
+                I understand that ShellX has no recovery words and loss of my passphrase or required Vault data may permanently block access.
+              </label>
               <label className="vault-check-row">
                 <input
                   type="checkbox"

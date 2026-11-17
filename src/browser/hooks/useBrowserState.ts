@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
+import { createDebugUiCommandConsumer } from "../../lib/debug-ui-commands";
 import { inTauri } from "../../lib/tauri-bridge";
 import { parseRawEventFrame, type RawEventFrame } from "../../types/acp";
-import { browserApiGet, browserDebugApiBase, getBrowserDebugToken } from "../api";
+import { browserApiGet, browserApiPostJson, browserDebugApiBase, getBrowserDebugToken } from "../api";
+import {
+  createBrowserRefreshScheduler,
+  type BrowserRefreshScope,
+  waitForBrowserRefreshSlices,
+} from "../browserRefreshScheduler";
 import {
   normalizeBrowserDebugHighlights,
   normalizeBrowserDebugSurface,
@@ -65,16 +71,6 @@ function normalizeBrowserRightTabPatch(value: unknown): BrowserRightPanelPatch |
   return null;
 }
 
-function transientPatchFromEvent(patch: unknown): Record<string, unknown> {
-  if (!patch || typeof patch !== "object") return {};
-  const p = patch as Record<string, unknown>;
-  const transient: Record<string, unknown> = {};
-  for (const key of ["rightTab", "debugClick", "debugInput", "debugDrag", "debugSurface", "debugHighlights", "clickSelector"]) {
-    if (Object.prototype.hasOwnProperty.call(p, key)) transient[key] = p[key];
-  }
-  return transient;
-}
-
 export function useBrowserState({
   address,
   profileId,
@@ -92,10 +88,25 @@ export function useBrowserState({
   onSessionEvent,
   onCoworkUiState,
 }: UseBrowserStateOptions): UseBrowserStateResult {
-  const [state, setState] = useState<BrowserState | null>(null);
+  const publicManualState = (import.meta.env.SHELLX_PUBLIC_MANUAL_BUILD || import.meta.env.DEV)
+    ? (globalThis as typeof globalThis & { __SHELLX_PUBLIC_MANUAL_BROWSER_STATE__?: BrowserState })
+      .__SHELLX_PUBLIC_MANUAL_BROWSER_STATE__
+    : undefined;
+  const publicManualPreview = publicManualState !== undefined;
+  const [state, setState] = useState<BrowserState | null>(() => publicManualState ?? null);
   const [error, setError] = useState<string | null>(null);
   const [debugHighlights, setDebugHighlights] = useState<DebugHighlightRequest[]>([]);
-  const [eventConnected, setEventConnected] = useState(false);
+  if (import.meta.env.SHELLX_PUBLIC_MANUAL_BUILD || import.meta.env.DEV) {
+    (globalThis as typeof globalThis & {
+      __SHELLX_PUBLIC_MANUAL_SET_BROWSER_HIGHLIGHTS__?: Dispatch<SetStateAction<DebugHighlightRequest[]>>;
+    }).__SHELLX_PUBLIC_MANUAL_SET_BROWSER_HIGHLIGHTS__ = setDebugHighlights;
+  }
+  const commandConsumerRef = useRef<ReturnType<typeof createDebugUiCommandConsumer> | null>(null);
+  const refreshScopeRunnerRef = useRef<(scope: BrowserRefreshScope) => Promise<void>>(async () => undefined);
+  const refreshSchedulerRef = useRef<ReturnType<typeof createBrowserRefreshScheduler> | null>(null);
+  if (!refreshSchedulerRef.current) {
+    refreshSchedulerRef.current = createBrowserRefreshScheduler((scope) => refreshScopeRunnerRef.current(scope));
+  }
   const lastSummaryRevisionRef = useRef<string | null>(null);
   const onSessionEventRef = useRef(onSessionEvent);
   const onCoworkUiStateRef = useRef(onCoworkUiState);
@@ -164,47 +175,52 @@ export function useBrowserState({
     mergeStatePatch({ consoleLogs: next.logs });
   }, [mergeStatePatch]);
 
-  const refresh = useCallback(async () => {
-    await refreshCore();
-    const slices: Array<Promise<void>> = [refreshBookmarks(), refreshRequests(), refreshTransfers()];
-    if (historyOpen) slices.push(refreshHistory());
-    if (rightPanelTab === "actions") slices.push(refreshReceipts());
-    if (rightPanelTab === "errors") slices.push(refreshLogs());
-    await Promise.all(slices);
-  }, [historyOpen, refreshBookmarks, refreshCore, refreshHistory, refreshLogs, refreshReceipts, refreshRequests, refreshTransfers, rightPanelTab]);
-
-  const refreshForBrowserEvent = useCallback(async (receiptKind: string) => {
+  const refreshScope = useCallback(async (scope: BrowserRefreshScope) => {
     await refreshCore();
     const slices: Array<Promise<void>> = [];
-    if (receiptKind.includes("Bookmark") || bookmarksOpen) slices.push(refreshBookmarks());
-    if (
-      receiptKind.includes("SessionGrant") ||
+    if (scope.bookmarks) slices.push(refreshBookmarks());
+    if (scope.requests) slices.push(refreshRequests());
+    if (scope.transfers) slices.push(refreshTransfers());
+    if (scope.history) slices.push(refreshHistory());
+    if (scope.receipts) slices.push(refreshReceipts());
+    if (scope.logs) slices.push(refreshLogs());
+    await waitForBrowserRefreshSlices(slices);
+  }, [refreshBookmarks, refreshCore, refreshHistory, refreshLogs, refreshReceipts, refreshRequests, refreshTransfers]);
+  refreshScopeRunnerRef.current = refreshScope;
+
+  const scheduleRefresh = useCallback((scope: BrowserRefreshScope) => refreshSchedulerRef.current!.refresh(scope), []);
+
+  const refresh = useCallback(() => scheduleRefresh({
+    bookmarks: true,
+    requests: true,
+    transfers: true,
+    history: historyOpen,
+    receipts: rightPanelTab === "actions",
+    logs: rightPanelTab === "errors",
+  }), [historyOpen, rightPanelTab, scheduleRefresh]);
+
+  const refreshForBrowserEvent = useCallback((receiptKind: string) => scheduleRefresh({
+    bookmarks: receiptKind.includes("Bookmark") || bookmarksOpen,
+    requests: receiptKind.includes("SessionGrant") ||
       receiptKind.includes("VaultDeposit") ||
       receiptKind.includes("Dialog") ||
       receiptKind.includes("Permission") ||
-      rightPanelTab === "requests"
-    ) {
-      slices.push(refreshRequests());
-    }
-    if (
-      receiptKind.includes("Download") ||
+      rightPanelTab === "requests",
+    transfers: receiptKind.includes("Download") ||
       receiptKind.includes("Upload") ||
       receiptKind.includes("Transfer") ||
-      transfersOpen
-    ) {
-      slices.push(refreshTransfers());
-    }
-    if (historyOpen) slices.push(refreshHistory());
-    if (rightPanelTab === "actions") slices.push(refreshReceipts());
-    if (rightPanelTab === "errors") slices.push(refreshLogs());
-    await Promise.all(slices);
-  }, [bookmarksOpen, historyOpen, refreshBookmarks, refreshCore, refreshHistory, refreshLogs, refreshReceipts, refreshRequests, refreshTransfers, rightPanelTab, transfersOpen]);
+      transfersOpen,
+    history: historyOpen,
+    receipts: rightPanelTab === "actions",
+    logs: rightPanelTab === "errors",
+  }), [bookmarksOpen, historyOpen, rightPanelTab, scheduleRefresh, transfersOpen]);
   const refreshForBrowserEventRef = useRef(refreshForBrowserEvent);
   useEffect(() => {
     refreshForBrowserEventRef.current = refreshForBrowserEvent;
   }, [refreshForBrowserEvent]);
 
   useEffect(() => {
+    if (publicManualPreview) return;
     void refresh().catch((err) => {
       if (inTauri()) setError(err instanceof Error ? err.message : String(err));
     });
@@ -212,28 +228,31 @@ export function useBrowserState({
   }, [refresh]);
 
   useEffect(() => {
-    if (eventConnected) return;
+    if (publicManualPreview) return;
+    // Native callbacks and timeout tasks can update the registry without a
+    // Debug API broadcast. Keep compact reconciliation even with a live socket.
     let cancelled = false;
     let timer: number | null = null;
     const pollSummary = async () => {
       try {
         const summary = await browserApiGet<BrowserSummary>("/browser/summary");
+        if (cancelled) return;
         const previous = lastSummaryRevisionRef.current;
-        lastSummaryRevisionRef.current = summary.revisions.state;
-        if (previous !== null && previous !== summary.revisions.state) {
+        if (previous !== summary.revisions.state) {
           await refresh();
+          if (!cancelled) lastSummaryRevisionRef.current = summary.revisions.state;
         }
       } catch {
-        // A disconnected Browser renderer keeps retrying the compact summary only.
+        // Preserve the last reconciled revision so failed refreshes retry.
       }
-      if (!cancelled) timer = window.setTimeout(() => void pollSummary(), 15_000);
+      if (!cancelled) timer = window.setTimeout(() => void pollSummary(), transfersOpen ? 1_000 : 15_000);
     };
     void pollSummary();
     return () => {
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [eventConnected, refresh]);
+  }, [publicManualPreview, refresh, transfersOpen]);
 
   useEffect(() => {
     if (!inTauri()) return;
@@ -242,7 +261,14 @@ export function useBrowserState({
     let retryTimer: number | null = null;
     let browserRefreshTimer: number | null = null;
     let pendingBrowserReceiptKind = "browserEvent";
-    const connectedAfterMs = Date.now() - 500;
+    let commandPollTimer: number | null = null;
+    const commandCursorKey = "shellx.browserDebugUiCommandCursor.v1";
+    if (!commandConsumerRef.current) {
+      let saved: unknown = null;
+      try { saved = JSON.parse(sessionStorage.getItem(commandCursorKey) ?? "null"); } catch { /* Memory cursor remains available. */ }
+      commandConsumerRef.current = createDebugUiCommandConsumer(saved, "browser");
+    }
+    const commandConsumer = commandConsumerRef.current;
 
     const applyPatch = (patch: unknown) => {
       if (!patch || typeof patch !== "object") return;
@@ -267,16 +293,37 @@ export function useBrowserState({
       }
     };
 
-    const applyAuthoritativeUiPatch = (eventPatch: unknown) => {
-      void browserApiGet<Record<string, unknown>>("/state/ui")
-        .then((state) => {
+    let commandReadActive = false;
+    let commandReadRequested = false;
+    const requestUiCommands = async () => {
+      commandReadRequested = true;
+      if (commandReadActive || closed) return;
+      commandReadActive = true;
+      try {
+        while (commandReadRequested && !closed) {
+          commandReadRequested = false;
+          const state = await browserApiGet<Record<string, unknown>>("/state/ui");
           if (closed) return;
           onCoworkUiStateRef.current?.(state);
-          applyPatch({ ...state, ...transientPatchFromEvent(eventPatch) });
-        })
-        .catch(() => {
-          if (!closed) applyPatch(eventPatch);
-        });
+          commandConsumer.consume(state, applyPatch, (cursor) => {
+            try { sessionStorage.setItem(commandCursorKey, JSON.stringify(cursor)); } catch { /* Keep the memory cursor. */ }
+          }, (missing) => {
+            void browserApiPostJson("/state/ui", {
+              source: "renderer-browser-ui-command-gap", debugSurface: "browser",
+              debugActionResults: [{ action: "uiCommandDelivery", status: "failed",
+                message: `UI commands ${missing.from}–${missing.to} expired before delivery. Reissue the intended commands.` }],
+            }).catch(() => undefined);
+          });
+        }
+      } catch {
+        /* Retry exact snapshot commands; redacted event payloads are not executable. */
+      } finally {
+        commandReadActive = false;
+      }
+    };
+    const pollUiCommands = async () => {
+      await requestUiCommands();
+      if (!closed) commandPollTimer = window.setTimeout(() => void pollUiCommands(), 1000);
     };
 
     const connect = async () => {
@@ -285,9 +332,6 @@ export function useBrowserState({
         if (closed) return;
         const url = `${base.replace(/^http/, "ws")}/events?token=${encodeURIComponent(token)}`;
         socket = new WebSocket(url);
-        socket.onopen = () => {
-          if (!closed) setEventConnected(true);
-        };
         socket.onmessage = (event) => {
           try {
             const frame = parseRawEventFrame(JSON.parse(String(event.data)));
@@ -302,17 +346,10 @@ export function useBrowserState({
               receipt?: { kind?: string; t?: number };
             } | null;
             if (frame.kind === "debug-ui-state-patch") {
-              if (typeof frame.t === "number" && frame.t < connectedAfterMs) return;
-              applyAuthoritativeUiPatch(payload?.patch);
+              void requestUiCommands();
               return;
             }
             if (frame.kind !== "browser-event") return;
-            const revision = payload?.revision ?? payload?.receipt?.t ?? frame.t;
-            if (typeof revision === "string" || typeof revision === "number") {
-              lastSummaryRevisionRef.current = String(revision).startsWith("state-")
-                ? String(revision)
-                : `state-${revision}`;
-            }
             pendingBrowserReceiptKind = payload?.receipt?.kind ?? "browserEvent";
             if (browserRefreshTimer !== null) window.clearTimeout(browserRefreshTimer);
             browserRefreshTimer = window.setTimeout(() => {
@@ -325,7 +362,6 @@ export function useBrowserState({
         };
         socket.onclose = () => {
           if (closed) return;
-          setEventConnected(false);
           retryTimer = window.setTimeout(() => void connect(), 2000);
         };
       } catch {
@@ -334,10 +370,12 @@ export function useBrowserState({
     };
 
     void connect();
+    void pollUiCommands();
     return () => {
       closed = true;
       if (retryTimer !== null) window.clearTimeout(retryTimer);
       if (browserRefreshTimer !== null) window.clearTimeout(browserRefreshTimer);
+      if (commandPollTimer !== null) window.clearTimeout(commandPollTimer);
       socket?.close();
     };
   }, [onDebugClick, onDebugDrag, onDebugInput, onRightPanelPatch]);

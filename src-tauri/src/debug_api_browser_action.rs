@@ -609,10 +609,17 @@ pub(crate) async fn browser_action_http(
                     .into_response();
             }
         };
-    match engine_response
-        .map(Ok)
-        .unwrap_or_else(|| registry.apply_action(body))
-    {
+    let applied = if let Some(response) = engine_response {
+        Ok(response)
+    } else {
+        crate::shellx_browser_personal_lock::with_personal_native_cover_after(
+            s.app(),
+            &registry,
+            || registry.apply_action(body),
+        )
+        .await
+    };
+    match applied {
         Ok(response) => {
             if let Err(e) = sync_browser_action_navigation_to_engine(
                 &s.app,
@@ -717,7 +724,13 @@ async fn guard_direct_browser_action_with_observation_recovery(
             .await
             {
                 Ok(Some(response)) => Some(response),
-                Ok(None) => registry.apply_action(observe_request).ok(),
+                Ok(None) => crate::shellx_browser_personal_lock::with_personal_native_cover_after(
+                    state.app(),
+                    registry,
+                    || registry.apply_action(observe_request),
+                )
+                .await
+                .ok(),
                 Err(_) => None,
             };
             if let Some(refreshed) = refreshed {
@@ -806,7 +819,14 @@ pub(super) async fn debug_ui_build_tab_mutation_rejection(
     }
     let next = patch.active_tab.as_ref()?;
     let ui = state.hub().ui_snapshot();
-    if !ui_active_tab_context_changed(ui.active_tab.as_ref(), next) {
+    let previous = ui
+        .active_tab
+        .as_ref()
+        .filter(|tab| tab.tab_id == next.tab_id)
+        .cloned()
+        .or_else(|| active_tab_for_id_from_open_tabs(&ui.open_tabs, &next.tab_id));
+    let next = next.apply_to(previous.as_ref());
+    if !ui_active_tab_context_changed(previous.as_ref(), &next) {
         return None;
     }
     if !debug_build_tab_is_protected(&state.app, &next.tab_id).await {

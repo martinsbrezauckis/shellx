@@ -208,10 +208,10 @@ fn validate_attention_record(
         }
         TaskAttentionSource::AttentionLedgerSaturated => {
             if record.occurrence_id.is_some()
-                || !record
+                || record
                     .source_record_id
                     .strip_prefix("overflow:")
-                    .is_some_and(|sequence| sequence.parse::<u64>().is_ok())
+                    .is_none_or(|sequence| sequence.parse::<u64>().is_err())
             {
                 return Err("task attention overflow source is invalid".to_string());
             }

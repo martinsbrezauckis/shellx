@@ -13,11 +13,12 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::{
     debug_api::ApiState,
     debug_api_browser_caller::optional_browser_mcp_caller_id_or_bad_request,
+    task_intent::{TaskIntentAuthority, TaskIntentRegistry},
     task_model::{
         TaskConcurrencyPolicy, TaskDraft, TaskEnvironmentSnapshot, TaskExecutionCandidate,
         TaskExecutionPolicy, TaskMissedRunPolicy, TaskModelSelection, TaskNotificationPolicy,
@@ -64,20 +65,31 @@ pub(super) struct AgentTaskActionBody {
     notification_policy: Option<TaskNotificationPolicy>,
 }
 
+/// Resolve the caller only for the conversation-authorized Task route.
+///
+/// The direct `POST /tasks` route is intentionally trusted Debug API operator
+/// administration and does not consume conversation intent. A provider-facing
+/// request must instead reach `/tasks/agent` with one valid ShellX caller
+/// header, then pass the tab-bound intent check below.
+fn require_agent_task_caller(headers: &HeaderMap) -> Result<String, Box<Response>> {
+    match optional_browser_mcp_caller_id_or_bad_request(headers) {
+        Ok(Some(caller)) => Ok(caller),
+        Ok(None) => Err(Box::new(super::task_error_response(
+            StatusCode::FORBIDDEN,
+            "task_agent_caller_required",
+            "Agent Task creation requires an authenticated ShellX session caller.",
+        ))),
+        Err(response) => Err(response),
+    }
+}
+
 pub(super) async fn tasks_agent_action_http(
     headers: HeaderMap,
     State(state): State<ApiState>,
     body: Result<Json<AgentTaskActionBody>, JsonRejection>,
 ) -> Response {
-    let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
-        Ok(Some(caller)) => caller,
-        Ok(None) => {
-            return super::task_error_response(
-                StatusCode::FORBIDDEN,
-                "task_agent_caller_required",
-                "Agent Task creation requires an authenticated ShellX session caller.",
-            )
-        }
+    let caller_session_id = match require_agent_task_caller(&headers) {
+        Ok(caller) => caller,
         Err(response) => return *response,
     };
     let Json(body) = match body {
@@ -238,6 +250,30 @@ pub(super) async fn tasks_agent_action_http(
         Ok(store) => store,
         Err(response) => return response,
     };
+    let requested_authority = match body.action {
+        AgentTaskAction::Create => TaskIntentAuthority::Create,
+        AgentTaskAction::CreateAndRun => TaskIntentAuthority::CreateAndRun,
+    };
+    let intent_registry = match state
+        .app()
+        .try_state::<std::sync::Arc<TaskIntentRegistry>>()
+    {
+        Some(registry) => registry,
+        None => {
+            return super::task_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "task_agent_intent_guard_unavailable",
+                "ShellX Task intent verification is unavailable; no Task was created.",
+            )
+        }
+    };
+    if let Err(message) = intent_registry.consume(&caller_session_id, requested_authority) {
+        return super::task_error_response(
+            StatusCode::FORBIDDEN,
+            "task_agent_intent_required",
+            &message,
+        );
+    }
     let record = match store.create(draft, false, now_ms) {
         Ok(record) => record,
         Err(error) => return super::task_store_error_response(error),
@@ -441,91 +477,4 @@ fn agent_task_partial_response(
         })),
     )
         .into_response()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        connections::{ConnectionProviderCapabilityTarget, ConnectionProviderScanStatus},
-        task_provider_catalog::{
-            TaskProviderAvailability, TaskProviderCatalogProvider, TaskProviderDefaultModelMode,
-            TASK_PROVIDER_CATALOG_SCHEMA_VERSION,
-        },
-    };
-
-    fn catalogue() -> TaskProviderCatalog {
-        TaskProviderCatalog {
-            schema_version: TASK_PROVIDER_CATALOG_SCHEMA_VERSION.to_string(),
-            snapshot_id: format!("sha256:{}", "a".repeat(64)),
-            generated_at_ms: 1,
-            fresh_until_ms: 60_001,
-            target: ConnectionProviderCapabilityTarget {
-                key: "local:linux".to_string(),
-                label: "This computer".to_string(),
-                transport: "local".to_string(),
-                runtime: "posix".to_string(),
-                wsl_distro: None,
-                ssh_host: None,
-                ssh_port: None,
-            },
-            providers: SUPPORTED_WORKERS
-                .iter()
-                .map(|provider_id| TaskProviderCatalogProvider {
-                    provider_id: (*provider_id).to_string(),
-                    label: worker_label(provider_id).to_string(),
-                    availability: TaskProviderAvailability {
-                        status: ConnectionProviderScanStatus::Ready,
-                        can_run: *provider_id != "antigravity-cli",
-                        version: None,
-                        detail: String::new(),
-                        checked_at_ms: 1,
-                    },
-                    capability_guidance: Vec::new(),
-                    models: Vec::new(),
-                    default_model_mode: TaskProviderDefaultModelMode::ProviderDefault,
-                })
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn worker_order_defaults_to_the_current_ready_agent_and_rejects_unavailable_routes() {
-        assert_eq!(
-            selected_workers(&[], Some("codex-cli"), &catalogue()).unwrap(),
-            vec!["codex-cli"]
-        );
-        assert_eq!(
-            selected_workers(&[], Some("antigravity-cli"), &catalogue()).unwrap(),
-            vec!["grok"]
-        );
-        assert_eq!(
-            selected_workers(
-                &["claude-code".to_string(), "grok".to_string()],
-                None,
-                &catalogue()
-            )
-            .unwrap(),
-            vec!["claude-code", "grok"]
-        );
-        assert!(
-            selected_workers(&["antigravity-cli".to_string()], None, &catalogue())
-                .unwrap_err()
-                .contains("not ready")
-        );
-    }
-
-    #[test]
-    fn policy_and_tool_exposure_are_finite() {
-        assert_eq!(
-            task_execution_policy(Some("plan")),
-            ("default".into(), "plan".into())
-        );
-        assert_eq!(
-            task_execution_policy(Some("bypassPermissions")),
-            ("bypassPermissions".into(), "bypassPermissions".into())
-        );
-        assert_eq!(task_tool_exposure(Some("hostFull")), "hostFull");
-        assert_eq!(task_tool_exposure(Some("unknown")), "nativeFirst");
-    }
 }

@@ -205,7 +205,12 @@ function assertProviderRow(
   }
   if (status === "versionFailed" && (
     !entry.canRun || !entry.binary || entry.version !== undefined
-    || entry.binarySha256 !== undefined || entry.binaryBytes !== undefined
+    // The producer checks identity independently of --version. A failed
+    // version probe may retain a complete stable identity; it is still not ready.
+    || ((entry.binarySha256 !== undefined || entry.binaryBytes !== undefined) && (
+      !/^[a-f0-9]{64}$/i.test(entry.binarySha256 ?? "")
+      || !Number.isSafeInteger(entry.binaryBytes) || Number(entry.binaryBytes) <= 0
+    ))
   )) {
     throw new Error(`versionFailed provider capability row ${entry.providerId} is inconsistent`);
   }

@@ -219,7 +219,7 @@ impl ShellxBrowserRegistry {
         record_permission_event_locked(&mut state, request)
     }
 
-    #[cfg(any(windows, test))]
+    #[cfg(windows)]
     pub(crate) fn record_bound_engine_permission_event(
         &self,
         engine_id: &str,

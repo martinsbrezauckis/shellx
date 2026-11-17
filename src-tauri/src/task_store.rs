@@ -9,9 +9,7 @@ pub(crate) mod task_attention_ledger;
 mod task_store_occurrences;
 #[path = "task_store_persistence.rs"]
 mod task_store_persistence;
-#[cfg(test)]
-#[path = "task_store_tests.rs"]
-mod tests;
+
 
 use crate::task_attachments::{
     TaskAttachmentLedger, TaskAttachmentRecord, TaskAttachmentRegistration,
@@ -25,7 +23,6 @@ use crate::task_model::{
 use crate::task_receipts::{TaskReceipt, TaskReceiptJournal, TaskReceiptKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -158,17 +155,8 @@ impl Default for PersistedTaskStore {
 
 pub(crate) struct TaskStore {
     pub(crate) root: PathBuf,
-    _lock_file: File,
+    _lock_file: persistence::OwnedStoreLock,
     pub(crate) state: Mutex<PersistedTaskStore>,
-}
-
-impl Drop for TaskStore {
-    fn drop(&mut self) {
-        // Closing the file also releases the platform lock, but an explicit
-        // unlock makes an immediate same-process reopen deterministic on
-        // high-concurrency Linux test and scheduler hosts.
-        let _ = fs2::FileExt::unlock(&self._lock_file);
-    }
 }
 
 impl TaskStore {

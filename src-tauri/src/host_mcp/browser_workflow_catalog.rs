@@ -150,6 +150,7 @@ fn browser_workflow_bookmark_summary(
         "secretKinds": secret_kinds,
         "recipeId": json_string(Some(workflow), "recipeId"),
         "recipePath": json_string(Some(workflow), "recipePath"),
+        "recipeSha256": json_string(Some(workflow), "recipeSha256"),
         "goal": json_string(Some(workflow), "goal"),
         "steps": workflow.get("steps").and_then(|value| value.as_u64()),
         "source": json_string(Some(workflow), "source"),
@@ -265,6 +266,7 @@ fn browser_workflow_matches_query(workflow: &Value, query: &str) -> bool {
         "contractAuditReason",
         "recipeId",
         "recipePath",
+        "recipeSha256",
         "goal",
         "source",
         "health",
@@ -305,14 +307,7 @@ pub(super) fn browser_workflow_summaries_from_bookmarks_state(
         .unwrap_or_default()
 }
 
-#[cfg(test)]
-pub(super) fn browser_workflow_recipe_path_from_bookmarks_state(
-    state: &Value,
-    bookmark_id: &str,
-) -> Option<String> {
-    browser_workflow_summary_from_bookmarks_state(state, bookmark_id)
-        .and_then(|workflow| json_string(Some(&workflow), "recipePath"))
-}
+
 
 pub(super) fn browser_workflow_summary_from_bookmarks_state(
     state: &Value,

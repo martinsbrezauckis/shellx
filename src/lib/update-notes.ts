@@ -1,17 +1,6 @@
 const DRAFT_VISIBILITY_NOTE =
   "This draft is not visible to auto-update clients until the release is published.";
 
-export type DebugUpdateFixtureMode = "live" | "owned-check" | "owned-available" | "owned-cleared";
-
-export const DEBUG_UPDATE_FIXTURE = {
-  version: "0.3.5-release-fixture",
-  body: "[Release notes](https://github.com/martinsbrezauckis/shellx/releases/tag/v0.3.5-release-fixture)",
-  url: "https://github.com/martinsbrezauckis/shellx/releases/tag/v0.3.5-release-fixture",
-} as const;
-
-export const DEBUG_UPDATE_CHECK_RECEIPT = "release fixture update check completed";
-export const DEBUG_UPDATE_INSTALL_RECEIPT = "release fixture update install boundary completed";
-
 export function cleanUpdateNotes(body: string | null | undefined): string {
   if (!body) return "";
   return body

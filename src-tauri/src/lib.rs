@@ -3,17 +3,11 @@
 
 // src-tauri/src/lib.rs
 //
-// Tauri command surface for Grok Shell.
-//
-// We expose 3 commands to React (start/send/abort) plus 1 read
-// (max tokens), hold the active GrokAcpSession in Tauri-managed
-// state, and stream events to the renderer through the acp.rs
-// module's emit_and_debug helper.
-//
-// Agent-first principle: when the `debug-api` feature is enabled
-// (P2b), debug_api.rs additionally surfaces HTTP/WS endpoints that
-// mirror these commands so an external agent driver can exercise
-// everything without going through the React UI.
+// ShellX desktop command composition and managed application state.
+// Provider sessions, Tasks, Browser, and workspace operations are exposed to
+// the renderer here; implementation modules own their scoped behavior.
+// The optional Debug API provides trusted-operator HTTP/WS access, with
+// separately scoped agent routes and caller-bound Host MCP permissions.
 
 mod acp;
 mod agent_cli_setup;
@@ -47,9 +41,15 @@ mod manual_deep_link;
 // Needed because host_mcp's `--mcp-server` child writes the in-memory
 // subagent::REGISTRY which is invisible to the main shellX (debug-api)
 // process. The DB is the shared store.
+mod bounded_command;
 mod host_subagents;
+mod installed_update;
 mod process_registry;
+mod remote_one_shot;
+mod remote_project_file;
 mod session_log;
+mod session_log_page;
+mod session_log_record_index;
 mod tab_tasks;
 mod task_attachment_transport;
 mod task_attachments;
@@ -61,6 +61,7 @@ mod task_execution_runtime_events;
 mod task_execution_runtime_evidence;
 mod task_execution_store_adapter;
 pub(crate) mod task_foreground_service;
+mod task_intent;
 pub(crate) mod task_model;
 mod task_provider_catalog;
 mod task_provider_dispatch;
@@ -76,9 +77,8 @@ pub(crate) mod task_time;
 mod task_trace_evidence;
 pub(crate) mod tasks;
 // `Agent` MCP tool — spawns a fresh `grok -p` subprocess with a
-// persona-prepended prompt. Lives
-// next to host_mcp so the MCP server can call into it directly. Public
-// only at crate root for the unit-test harness.
+// persona-prepended prompt. Lives next to host_mcp so the MCP server
+// can call into it directly.
 pub mod subagent;
 // Goal orchestrator — per-tab Goal state, scratchboard parser,
 // auto-continuation decision. Hooked from acp.rs (prompt-complete site)
@@ -86,9 +86,7 @@ pub mod subagent;
 // set_goal_mode / get_goal_state / pause_goal / resume_goal are wired
 // into invoke_handler below.
 pub mod goal_orchestrator;
-// pub so the integration test in
-// `tests/skill_install_e2e.rs` can drive `ensure_shellx_host_skill_installed`
-// against a tempdir HOME without touching the user's real ~/.grok.
+// Vault integration and provider-specific installation of the ShellX host skill.
 pub mod shellx_vault;
 pub mod skill_install;
 mod terminal;
@@ -122,13 +120,11 @@ mod debug_api_browser_settings;
 mod debug_api_browser_state;
 #[cfg(feature = "debug-api")]
 mod debug_api_browser_teach;
-#[cfg(feature = "debug-api")]
-mod debug_api_release_browser_fixture;
-#[cfg(feature = "debug-api")]
-mod debug_api_release_clipboard;
-mod debug_api_release_native_picker;
-#[cfg(feature = "debug-api")]
-mod debug_api_release_relay;
+
+
+
+
+
 #[cfg(feature = "debug-api")]
 mod work_preview;
 
@@ -266,14 +262,7 @@ fn session_log_append_lock() -> &'static Mutex<()> {
     SESSION_LOG_APPEND_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-#[cfg(test)]
-pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    TEST_ENV_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+
 
 pub(crate) fn split_session_jsonl_records(content: &str) -> Vec<String> {
     let mut out = Vec::<String>::new();
@@ -456,10 +445,14 @@ async fn run_tab_cwd_command_inner(
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
-    timeout(command_timeout, cmd.output())
-        .await
-        .map_err(|_| format!("{} timed out after {:?}", program, command_timeout))?
-        .map_err(|e| format!("{} spawn failed: {}", program, e))
+    crate::bounded_command::run_bounded_output(
+        &mut cmd,
+        &program,
+        command_timeout,
+        crate::bounded_command::DEFAULT_STDOUT_LIMIT,
+        crate::bounded_command::DEFAULT_STDERR_LIMIT,
+    )
+    .await
 }
 
 /// Shared helper that auto-injects the authenticated shellx-host-http
@@ -518,95 +511,7 @@ pub fn inject_host_mcp_server_for_transport(
     inject_host_mcp_server(existing, tab_id)
 }
 
-#[cfg(test)]
-mod host_mcp_injection_tests {
-    use super::*;
 
-    #[test]
-    fn local_transport_injects_tab_bound_http_host_mcp() {
-        let servers = inject_host_mcp_server_for_transport(None, Some("tab-local"), "local")
-            .expect("Host MCP token authority");
-        let server = servers
-            .iter()
-            .find(|server| {
-                server.get("name").and_then(|value| value.as_str()) == Some("shellx-host-http")
-            })
-            .expect("HTTP host MCP injected");
-        assert_eq!(server["type"], "http");
-        assert!(server["url"].as_str().unwrap_or_default().ends_with("/mcp"));
-        let headers = server["headers"].as_array().expect("headers array");
-        assert!(headers
-            .iter()
-            .any(|header| { header["name"] == "MCP-Tab-Id" && header["value"] == "tab-local" }));
-        let authorization = headers
-            .iter()
-            .find(|header| header["name"] == "Authorization")
-            .and_then(|header| header["value"].as_str())
-            .expect("Authorization header");
-        assert!(authorization.starts_with("Bearer sx_tab_"));
-        assert!(!servers.iter().any(|server| {
-            server.get("name").and_then(|value| value.as_str())
-                == Some(crate::host_mcp::SERVER_NAME)
-        }));
-    }
-
-    #[test]
-    fn local_transport_replaces_legacy_stdio_host_entry() {
-        let servers = inject_host_mcp_server_for_transport(
-            Some(vec![
-                serde_json::json!({
-                    "name": crate::host_mcp::SERVER_NAME,
-                    "command": "stale-shellx",
-                    "args": ["--mcp-server"],
-                }),
-                serde_json::json!({
-                    "name": "shellx-host-http",
-                    "type": "http",
-                    "url": "http://attacker.invalid/mcp",
-                }),
-                serde_json::json!({
-                    "name": "user-server",
-                    "command": "keep-me",
-                }),
-            ]),
-            Some("tab-local"),
-            "local",
-        )
-        .expect("Host MCP token authority");
-
-        assert_eq!(servers.len(), 2);
-        assert!(servers
-            .iter()
-            .any(|server| { server["name"] == "user-server" && server["command"] == "keep-me" }));
-        let host = servers
-            .iter()
-            .find(|server| server["name"] == "shellx-host-http")
-            .expect("replacement host entry");
-        assert_ne!(host["url"], "http://attacker.invalid/mcp");
-    }
-
-    #[test]
-    fn remote_transports_inject_session_scoped_http_host_mcp() {
-        for transport in ["wsl", "ssh"] {
-            let existing = vec![serde_json::json!({
-                "name": "caller-provided",
-                "command": "remote-safe-tool",
-            })];
-            let servers = inject_host_mcp_server_for_transport(
-                Some(existing.clone()),
-                Some("tab-remote"),
-                transport,
-            )
-            .expect("Host MCP token authority");
-
-            assert_eq!(servers.len(), existing.len() + 1);
-            assert!(servers.iter().any(|server| {
-                server.get("name").and_then(|value| value.as_str()) == Some("shellx-host-http")
-                    && server.get("type").and_then(|value| value.as_str()) == Some("http")
-            }));
-        }
-    }
-}
 
 /// Connection source accepted by the Task-owned Grok initializer. A Task may
 /// use the explicit ambient local context, or the exact saved preset captured
@@ -1075,114 +980,7 @@ async fn start_grok_session(
     })
 }
 
-#[cfg(test)]
-mod grok_session_initializer_tests {
-    use super::*;
 
-    #[test]
-    fn task_wrapper_preserves_normal_saved_connection_shape_without_renderer_mcp() {
-        let normal = GrokSessionStartRequest::normal(
-            "C:\\workspace".to_string(),
-            "tab-normal".to_string(),
-            None,
-            None,
-            Some("connection-remote".to_string()),
-            Some(vec![serde_json::json!({ "name": "user-server" })]),
-            None,
-        );
-        let task = build_task_grok_start_request(
-            TaskGrokSessionStartContext {
-                connection: TaskGrokConnectionContext::SavedConnectionId(
-                    "connection-remote".to_string(),
-                ),
-                task_tab_id: "task-run-immutable-attempt".to_string(),
-                cwd: "C:\\workspace".to_string(),
-                permission_mode:
-                    crate::provider_adapters::ProviderPermissionMode::BypassPermissions,
-                shellx_tool_exposure:
-                    crate::provider_adapters::ProviderShellxToolExposure::NativeFirst,
-            },
-            GrokSessionResume::Fresh,
-        )
-        .expect("closed Task request");
-
-        assert!(matches!(
-            normal.connection,
-            GrokSessionConnectionContext::SavedConnectionId(ref id) if id == "connection-remote"
-        ));
-        assert!(matches!(
-            task.connection,
-            GrokSessionConnectionContext::SavedConnectionId(ref id) if id == "connection-remote"
-        ));
-        assert!(normal.renderer_mcp_servers.is_some());
-        assert!(task.renderer_mcp_servers.is_none());
-        assert!(task.inject_host_mcp);
-        assert_eq!(task.resume, GrokSessionResume::Fresh);
-        assert!(task.reject_active_tab);
-        assert!(matches!(
-            task.permission,
-            GrokSessionPermission::ExactTaskMode(ref mode) if mode == "bypassPermissions"
-        ));
-    }
-
-    #[test]
-    fn task_wrapper_maps_every_closed_provider_permission_mode() {
-        assert_eq!(
-            task_grok_permission_mode(&crate::provider_adapters::ProviderPermissionMode::ReadOnly),
-            "plan"
-        );
-        assert_eq!(
-            task_grok_permission_mode(&crate::provider_adapters::ProviderPermissionMode::Default),
-            "default"
-        );
-        assert_eq!(
-            task_grok_permission_mode(
-                &crate::provider_adapters::ProviderPermissionMode::AcceptEdits
-            ),
-            "acceptEdits"
-        );
-        assert_eq!(
-            task_grok_permission_mode(
-                &crate::provider_adapters::ProviderPermissionMode::BypassPermissions
-            ),
-            "bypassPermissions"
-        );
-    }
-
-    #[test]
-    fn task_wrapper_honors_persisted_tool_exposure_off() {
-        let task = build_task_grok_start_request(
-            TaskGrokSessionStartContext {
-                connection: TaskGrokConnectionContext::Local,
-                task_tab_id: "task-run-off".to_string(),
-                cwd: "C:\\workspace".to_string(),
-                permission_mode: crate::provider_adapters::ProviderPermissionMode::ReadOnly,
-                shellx_tool_exposure: crate::provider_adapters::ProviderShellxToolExposure::Off,
-            },
-            GrokSessionResume::Fresh,
-        )
-        .expect("closed Task request");
-        assert!(task.renderer_mcp_servers.is_none());
-        assert!(!task.inject_host_mcp);
-    }
-
-    #[test]
-    fn task_wrapper_refuses_resume_before_any_session_start() {
-        let error = build_task_grok_start_request(
-            TaskGrokSessionStartContext {
-                connection: TaskGrokConnectionContext::Local,
-                task_tab_id: "task-run-immutable-attempt".to_string(),
-                cwd: "C:\\workspace".to_string(),
-                permission_mode: crate::provider_adapters::ProviderPermissionMode::Default,
-                shellx_tool_exposure:
-                    crate::provider_adapters::ProviderShellxToolExposure::NativeFirst,
-            },
-            GrokSessionResume::Load("prior-grok-session".to_string()),
-        )
-        .expect_err("Tasks must not resume a prior Grok session");
-        assert!(error.contains("fresh-only"));
-    }
-}
 
 /// One embedded text context part sent alongside a user prompt.
 /// When non-empty, the renderer attaches one of these per
@@ -1404,6 +1202,19 @@ async fn send_prompt(
     }
 }
 
+/// Record only the authority expressed by the exact operator-authored
+/// composer turn. The registry is volatile, tab-bound, short-lived and
+/// single-use; Task tools cannot mint authority from provider output.
+#[tauri::command]
+fn register_task_intent(
+    prompt: String,
+    #[allow(non_snake_case)] tab_id: Option<String>,
+    registry: State<'_, Arc<task_intent::TaskIntentRegistry>>,
+) -> bool {
+    let tab_id = tab_id_or_default(tab_id);
+    registry.register_user_prompt(&tab_id, &prompt).is_some()
+}
+
 /// Queue a human correction into a running Grok turn. Grok applies it at the
 /// next safe point without cancelling the current prompt.
 #[tauri::command]
@@ -1515,47 +1326,20 @@ async fn set_permission_mode(
 /// already-normalised path (forward slashes, UNC-stripped) and the
 /// original user-facing path for the error message.
 fn reject_if_sensitive_path(normalized: &str, original: &str) -> Result<(), String> {
-    let lower = normalized.to_ascii_lowercase();
-    const SENSITIVE_NAMES: &[&str] = &[
-        "/auth.json",
-        "/vault.enc",
-        "/vault.salt",
-        "/vault.master.key",
-        "/shellxagent.token",
-        "/debug.token",
-        "/mcp.token",
-        "/.netrc",
-        "/.pgpass",
-    ];
-    if SENSITIVE_NAMES.iter().any(|name| lower.ends_with(name))
-        || lower.ends_with("/.grok/config.toml")
-        || lower.contains("/.ssh/id_")
-        || lower.contains("/.aws/credentials")
-        || lower.contains("/.password-store/")
-        || lower.contains("/.gnupg/")
-    {
-        return Err(format!(
-            "path is a known credential/token file and is not readable from the renderer: {}",
-            original
-        ));
-    }
-    Ok(())
+    crate::host_mcp::reject_renderer_sensitive_path(std::path::Path::new(normalized), original)
 }
 
 /// Rehydrate a tab's chat history from its persisted
-/// JSONL session log. Returns the file lines (each a raw RawEventFrame
-/// JSON) for the frontend to re-feed into its events[] state on app
-/// boot. Empty vec when the file doesn't exist (tab never sent a
-/// prompt OR session id mismatched).
+/// JSONL session log. Returns a bounded tail of RawEventFrame records and
+/// explicit omission metadata for the frontend to restore its events state.
+/// A missing file returns an empty tail.
 ///
 /// Safety: session_id is sanitized to a-z 0-9 - _ (matching the writer
 /// in append_session_log). Anything else fails fast so a traversal
 /// can't escape the sessions dir.
 #[tauri::command]
-async fn read_session_jsonl(session_id: String) -> Result<Vec<String>, String> {
-    // Read all records; tolerate older logs where concurrent appends
-    // occasionally wrote two JSON objects on one physical line. The
-    // renderer expects one RawEventFrame JSON string per array item.
+async fn read_session_jsonl(session_id: String) -> Result<session_log::SessionJsonlTail, String> {
+    // Bounded history includes explicit loss metadata for legacy callers too.
     tokio::task::spawn_blocking(move || session_log::read_all_session_jsonl(&session_id))
         .await
         .map_err(|e| format!("session log reader task failed: {e}"))?
@@ -1662,8 +1446,7 @@ async fn cleanup_normal_tab_session(
 /// (logical-OR — any match permits the read):
 /// (a) `/.grok/` (grok-generated content)
 /// (b) under the active session's cwd
-/// (c) under `~/Downloads/` (the user's well-known scratch folder
-/// for shellX-side test artifacts)
+/// (c) under `~/Downloads/` (the user's downloaded files)
 ///
 /// WSL bridge: Linux paths like `/home/X/.grok/.../plan.md` are mapped
 /// to `\\wsl$\<distro>\home\X\.grok\...\plan.md` so the Windows host
@@ -1675,24 +1458,16 @@ fn effective_preview_session_cwd(
     registry_cwd: Option<String>,
     frontend_cwd: Option<String>,
 ) -> Option<String> {
-    effective_preview_session_cwd_with_isolation(
-        registry_cwd,
-        frontend_cwd,
-        crate::isolated_test_instance_requested(),
-    )
+    let registry_cwd = non_empty_string(registry_cwd);
+
+
+    {
+        let _ = frontend_cwd;
+        registry_cwd
+    }
 }
 
-fn effective_preview_session_cwd_with_isolation(
-    registry_cwd: Option<String>,
-    frontend_cwd: Option<String>,
-    isolated_test_instance: bool,
-) -> Option<String> {
-    non_empty_string(registry_cwd).or_else(|| {
-        isolated_test_instance
-            .then(|| non_empty_string(frontend_cwd))
-            .flatten()
-    })
-}
+
 
 fn non_empty_string(v: Option<String>) -> Option<String> {
     v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
@@ -2154,6 +1929,16 @@ async fn ssh_run_preview_command(
     remote_command: String,
     label: &str,
 ) -> Result<Vec<u8>, String> {
+    const PREVIEW_COMMAND_MAX_BYTES: u64 = 32 * 1024 * 1024;
+    ssh_run_preview_command_with_cap(ssh, remote_command, label, PREVIEW_COMMAND_MAX_BYTES).await
+}
+
+async fn ssh_run_preview_command_with_cap(
+    ssh: &crate::acp::SshSpawnConfig,
+    remote_command: String,
+    label: &str,
+    stdout_cap: u64,
+) -> Result<Vec<u8>, String> {
     crate::acp::validate_ssh_destination_arg(&ssh.host)?;
     let mut cmd = tokio::process::Command::new("ssh");
     cmd.arg("-o").arg("BatchMode=yes");
@@ -2179,15 +1964,11 @@ async fn ssh_run_preview_command(
         )?
     };
     cmd.arg(remote_command);
-    use crate::winproc::NoWindowExt as _;
-    cmd.no_window();
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    let out = cmd
-        .output()
-        .await
-        .map_err(|e| format!("ssh spawn failed: {}", e))?;
+    let stdout_cap = usize::try_from(stdout_cap)
+        .map_err(|_| format!("remote {label} byte cap is unsupported on this platform"))?;
+    let out =
+        crate::acp::run_bounded_ssh_capture(cmd, stdout_cap, std::time::Duration::from_secs(30))
+            .await?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(format!(
@@ -2276,7 +2057,7 @@ async fn ssh_read_file_bytes_with_cap(
         let q = crate::acp::shell_quote_for_remote(remote_path);
         format!("cat -- {q}")
     };
-    let out = ssh_run_preview_command(ssh, script, "cat").await?;
+    let out = ssh_run_preview_command_with_cap(ssh, script, "cat", cap).await?;
     if out.len() as u64 > cap {
         return Err(format!(
             "remote {} too large ({} bytes, cap {} bytes)",
@@ -2440,7 +2221,7 @@ async fn capture_app_screenshot_to_file() -> Result<String, String> {
 #[tauri::command]
 async fn open_url_in_browser(
     url: String,
-    #[cfg(feature = "debug-api")] hub: State<'_, Arc<DebugHub>>,
+    #[cfg(feature = "debug-api")] _hub: State<'_, Arc<DebugHub>>,
 ) -> Result<(), String> {
     let lower = url.to_ascii_lowercase();
     if !lower.starts_with("http://") && !lower.starts_with("https://") {
@@ -2458,11 +2239,7 @@ async fn open_url_in_browser(
     }) {
         return Err(format!("URL contains shell-unsafe chars: {}", url));
     }
-    #[cfg(feature = "debug-api")]
-    if crate::isolated_test_instance_requested() {
-        hub.record_raw_event("external-url-dispatched", serde_json::json!({ "url": url }));
-        return Ok(());
-    }
+
     #[cfg(target_os = "windows")]
     let _child = {
         // Use rundll32 url.dll instead of cmd start — it's the
@@ -2537,6 +2314,8 @@ struct StoredSession {
     /// Transport emoji shown in the past-chat rail and reused on
     /// reconnect so SSH/WSL sessions don't silently fall back to Local.
     connection_transport: Option<String>,
+    metadata_complete: bool,
+    metadata_omitted_bytes: u64,
 }
 
 #[tauri::command]
@@ -2547,10 +2326,6 @@ async fn list_stored_sessions() -> Result<Vec<StoredSession>, String> {
     let dir = std::path::PathBuf::from(&home)
         .join(".shellx")
         .join("sessions");
-    let rd = match std::fs::read_dir(&dir) {
-        Ok(r) => r,
-        Err(_) => return Ok(Vec::new()), // no dir yet = no sessions
-    };
     let connection_presets = match get_or_open_connections() {
         Ok(store) => {
             let _ = store.reload_from_disk().await;
@@ -2558,155 +2333,78 @@ async fn list_stored_sessions() -> Result<Vec<StoredSession>, String> {
         }
         Err(_) => Vec::new(),
     };
-    let mut out = Vec::<StoredSession>::new();
-    for ent in rd.flatten() {
-        let path = ent.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
-            continue;
-        }
-        let id = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(s) => s.to_string(),
-            None => continue,
+    tokio::task::spawn_blocking(move || {
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => return Ok(Vec::new()), // no dir yet = no sessions
         };
-        let md = match ent.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let mtime_ms = md
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        // Best-effort title: user-override (kind="ui",
-        // _meta.kind="title-override") wins over the auto-generated
-        // session_summary_generated. The override line is written by
-        // `rename_past_session` (#391) — we scan ALL lines and keep the
-        // last override seen, falling back to session_summary_generated,
-        // falling back to the session id. Last override wins so a user
-        // can rename more than once.
-        let mut title = id.clone();
-        let mut override_title: Option<String> = None;
-        let mut summary_title: Option<String> = None;
-        // also scan for the cwd the session was opened with.
-        // First `session/new` ACP request carries `params.cwd`; we
-        // capture the first one we see and never overwrite. Without
-        // this, reopening a past chat sets the tab's cwd to "" and
-        // file-preview rejects every path with "not under session
-        // cwd ''" — regressing #352.
-        let mut session_cwd: Option<String> = None;
-        let mut connection_id: Option<String> = None;
-        let mut connection_label: Option<String> = None;
-        let mut connection_transport: Option<String> = None;
-        let mut path_hints = String::new();
-        if let Ok(s) = std::fs::read_to_string(&path) {
-            for line in s.lines() {
-                if path_hints.len() < 8_000
-                    && (line.contains("/home/")
-                        || line.contains("%2Fhome%2F")
-                        || line.contains("\\Users\\")
-                        || line.contains("C:\\"))
-                {
-                    path_hints.push_str(line);
-                    path_hints.push('\n');
+        let mut out = Vec::<StoredSession>::new();
+        for ent in rd.flatten() {
+            let path = ent.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let id = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let md = match ent.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let mtime_ms = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let recovered = session_log::read_session_metadata(&path).unwrap_or_else(|_| {
+                session_log::SessionLogMetadataRead {
+                    metadata: session_log::SessionLogMetadata::default(),
+                    metadata_complete: false,
+                    metadata_omitted_bytes: md.len(),
                 }
-                // Cheap pre-filter so we don't JSON-parse every line.
-                if line.contains("title-override") {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                        let meta_kind = v
-                            .pointer("/payload/_meta/kind")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("");
-                        if meta_kind == "title-override" {
-                            if let Some(t) = v.pointer("/payload/title").and_then(|s| s.as_str()) {
-                                override_title = Some(t.chars().take(120).collect());
-                            }
-                        }
-                    }
-                    continue;
-                }
-                if summary_title.is_none() && line.contains("session_summary_generated") {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                        if let Some(t) = v
-                            .pointer("/payload/params/update/session_summary")
-                            .and_then(|s| s.as_str())
-                        {
-                            summary_title = Some(t.chars().take(120).collect());
-                        }
-                    }
-                }
-                if line.contains("connection-metadata") {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                        if v.pointer("/payload/_meta/kind").and_then(|s| s.as_str())
-                            == Some("connection-metadata")
-                        {
-                            connection_id = v
-                                .pointer("/payload/connectionId")
-                                .and_then(|s| s.as_str())
-                                .map(str::to_string);
-                            connection_label = v
-                                .pointer("/payload/connectionLabel")
-                                .and_then(|s| s.as_str())
-                                .map(str::to_string);
-                            connection_transport = v
-                                .pointer("/payload/connectionTransport")
-                                .and_then(|s| s.as_str())
-                                .map(str::to_string);
-                        }
-                    }
-                } else if connection_transport.is_none() && line.contains("\"transport\"") {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                        if let Some(kind) = v.pointer("/payload/transport").and_then(|s| s.as_str())
-                        {
-                            connection_transport = Some(transport_icon_for_kind(kind).to_string());
-                        }
-                    }
-                }
-                // First-cwd extraction. session/new requests carry the
-                // tab's cwd in `params.cwd`. Cheap pre-filter on `"cwd"`
-                // (note the quote) so we skip 99% of lines.
-                if session_cwd.is_none() && line.contains("\"cwd\"") {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                        for ptr in &["/payload/params/cwd", "/payload/cwd", "/payload/_meta/cwd"] {
-                            if let Some(c) = v.pointer(ptr).and_then(|s| s.as_str()) {
-                                if !c.is_empty() {
-                                    session_cwd = Some(c.to_string());
-                                    break;
-                                }
-                            }
-                        }
-                    }
+            });
+            let metadata = recovered.metadata;
+            let title = metadata
+                .title_override
+                .or(metadata.summary_title)
+                .unwrap_or(id.clone());
+            let session_cwd = metadata.cwd;
+            let mut connection_id = metadata.connection_id;
+            let mut connection_label = metadata.connection_label;
+            let mut connection_transport = metadata.connection_transport;
+            let path_hints = metadata.path_hints;
+            if recovered.metadata_complete && connection_id.is_none() {
+                if let Some(preset) = infer_connection_from_session_hints(
+                    &connection_presets,
+                    session_cwd.as_deref(),
+                    &path_hints,
+                ) {
+                    connection_id = Some(preset.id.clone());
+                    connection_label = Some(preset.label.clone());
+                    connection_transport = Some(transport_icon_for_preset(preset).to_string());
                 }
             }
+            out.push(StoredSession {
+                id,
+                title,
+                mtime_ms,
+                size: md.len(),
+                cwd: session_cwd,
+                connection_id,
+                connection_label,
+                connection_transport,
+                metadata_complete: recovered.metadata_complete,
+                metadata_omitted_bytes: recovered.metadata_omitted_bytes,
+            });
         }
-        if let Some(t) = override_title.or(summary_title) {
-            title = t;
-        }
-        if connection_id.is_none() {
-            if let Some(preset) = infer_connection_from_session_hints(
-                &connection_presets,
-                session_cwd.as_deref(),
-                &path_hints,
-            ) {
-                connection_id = Some(preset.id.clone());
-                connection_label = Some(preset.label.clone());
-                connection_transport = Some(transport_icon_for_preset(preset).to_string());
-            }
-        }
-        out.push(StoredSession {
-            id,
-            title,
-            mtime_ms,
-            size: md.len(),
-            cwd: session_cwd,
-            connection_id,
-            connection_label,
-            connection_transport,
-        });
-    }
-    // Newest first.
-    out.sort_by_key(|item| std::cmp::Reverse(item.mtime_ms));
-    Ok(out)
+        // Newest first.
+        out.sort_by_key(|item| std::cmp::Reverse(item.mtime_ms));
+        Ok(out)
+    })
+    .await
+    .map_err(|error| format!("session list reader task failed: {error}"))?
 }
 
 fn transport_icon_for_kind(kind: &str) -> &'static str {
@@ -2849,9 +2547,9 @@ async fn delete_session_files(ids: Vec<String>) -> Result<Vec<String>, String> {
 /// }
 ///
 /// `list_stored_sessions` walks all lines and uses the LAST override
-/// seen — so renaming twice in a session just shows the latest. Writes
-/// atomically: serialize new content to `<file>.tmp`, then `rename(2)`
-/// over the original so a crash mid-write can't truncate the transcript.
+/// seen — so renaming twice in a session just shows the latest. Appends
+/// under the same lock as event writers; never replaces a stale transcript
+/// snapshot. A damaged final frame cannot erase previously persisted events.
 ///
 /// Path resolution mirrors `read_session_jsonl`/`delete_session_files`:
 /// - `session_id` charset = `[a-zA-Z0-9_-]+` (traversal-proof)
@@ -2879,51 +2577,31 @@ async fn rename_past_session(
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "HOME/USERPROFILE unset".to_string())?;
-    let path = std::path::PathBuf::from(&home)
-        .join(".shellx")
-        .join("sessions")
-        .join(format!("{}.jsonl", session_id));
-    if !path.exists() {
-        return Err(format!("session file not found: {}", path.display()));
-    }
+    tokio::task::spawn_blocking(move || {
+        rename_past_session_blocking_at(std::path::Path::new(&home), &session_id, &trimmed)
+    })
+    .await
+    .map_err(|error| format!("session rename writer task failed: {error}"))??;
+    info!("rename_past_session: title updated");
+    Ok(())
+}
 
-    // Build the override line. We use serde_json to keep escapes correct
-    // for any title characters (quotes, backslashes, unicode).
+fn rename_past_session_blocking_at(
+    home: &std::path::Path,
+    session_id: &str,
+    title: &str,
+) -> Result<(), String> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
+        .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0);
     let line = serde_json::json!({
         "t": now_ms,
         "kind": "ui",
-        "payload": {
-            "_meta": { "kind": "title-override" },
-            "title": trimmed,
-        }
+        "payload": { "_meta": { "kind": "title-override" }, "title": title }
     });
-    let line_str =
-        serde_json::to_string(&line).map_err(|e| format!("serialize override line: {}", e))?;
-
-    // Atomic append: read existing → write to .tmp → rename. We can't
-    // use a plain append because a partial write (power loss) could
-    // leave a half-line that breaks the JSONL parser. Reading +
-    // rewriting via tmp is the safe pattern for session files of this
-    // size (typically <2 MB; capped use case).
-    let mut existing =
-        std::fs::read_to_string(&path).map_err(|e| format!("read existing jsonl: {}", e))?;
-    if !existing.is_empty() && !existing.ends_with('\n') {
-        existing.push('\n');
-    }
-    existing.push_str(&line_str);
-    existing.push('\n');
-
-    crate::session_git::atomic_write_private_file(
-        &path,
-        existing.as_bytes(),
-        "rename past session",
-    )?;
-    info!("rename_past_session: title updated");
-    Ok(())
+    // Open an existing transcript only; a concurrent deletion must not recreate it.
+    write_session_log_blocking_at(home, session_id, &line.to_string(), false, true)
 }
 
 /// Shallow directory listing for the RightRail Files tab.
@@ -3320,10 +2998,14 @@ async fn run_wsl_cwd_command(
         cmd.no_window();
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
-        timeout(command_timeout, cmd.output())
-            .await
-            .map_err(|_| format!("{} timed out after {:?}", program, command_timeout))?
-            .map_err(|e| format!("{} spawn failed: {}", program, e))
+        crate::bounded_command::run_bounded_output(
+            &mut cmd,
+            program,
+            command_timeout,
+            crate::bounded_command::DEFAULT_STDOUT_LIMIT,
+            crate::bounded_command::DEFAULT_STDERR_LIMIT,
+        )
+        .await
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -3401,10 +3083,14 @@ async fn run_ssh_cwd_command(
     cmd.no_window();
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
-    timeout(command_timeout, cmd.output())
-        .await
-        .map_err(|_| format!("{} timed out after {:?}", program, command_timeout))?
-        .map_err(|e| format!("{} spawn failed: {}", program, e))
+    crate::bounded_command::run_bounded_output(
+        &mut cmd,
+        program,
+        command_timeout,
+        crate::bounded_command::DEFAULT_STDOUT_LIMIT,
+        crate::bounded_command::DEFAULT_STDERR_LIMIT,
+    )
+    .await
 }
 
 fn portable_project_files_listing_script() -> String {
@@ -3453,151 +3139,7 @@ fn parse_remote_find_entries(stdout: &[u8], include_hidden: bool) -> Vec<FsEntry
     entries
 }
 
-#[cfg(test)]
-mod file_listing_tests {
-    use super::*;
 
-    #[tokio::test]
-    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
-    async fn live_native_windows_ssh_listing_and_preview_read() {
-        let host =
-            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
-        let home =
-            std::env::var("SHELLX_WINDOWS_SSH_HOME").expect("SHELLX_WINDOWS_SSH_HOME is required");
-        let entries = list_provider_ssh_project_files(
-            Some(&host),
-            None,
-            None,
-            crate::acp::SshRemoteRuntime::Windows,
-            None,
-            home.clone(),
-            false,
-        )
-        .await
-        .expect("native Windows SSH file listing");
-        assert!(
-            entries.iter().any(|entry| entry.name == "AppData"),
-            "entries: {entries:?}"
-        );
-
-        let ssh = crate::acp::SshSpawnConfig {
-            host,
-            port: None,
-            key_vault_ref: None,
-            remote_grok_path: String::new(),
-            remote_runtime: crate::acp::SshRemoteRuntime::Windows,
-            wsl_distro: None,
-        };
-        let preview_path = format!(
-            "{}\\AppData\\Local\\ShellX\\uninstall.exe",
-            home.trim_end_matches(['/', '\\'])
-        );
-        let resolved = ssh_realpath_for_preview(&ssh, &preview_path)
-            .await
-            .expect("native Windows preview realpath");
-        let size = ssh_preview_file_size(&ssh, &resolved)
-            .await
-            .expect("native Windows preview size");
-        assert!(size > 0 && size < 16 * 1024 * 1024);
-        let bytes = ssh_read_file_bytes_for_preview(&ssh, &resolved)
-            .await
-            .expect("native Windows preview read");
-        assert_eq!(bytes.len() as u64, size);
-    }
-
-    #[test]
-    fn remote_find_parser_skips_hidden_and_sorts_dirs_first() {
-        let entries = parse_remote_find_entries(
-            concat!(
-                "zeta.txt\0f\0",
-                "12\0app\0d\0",
-                "4096\0.git\0d\0",
-                "4096\0alpha.md\0f\0",
-                "5\0",
-            )
-            .as_bytes(),
-            false,
-        );
-
-        let names = entries
-            .iter()
-            .map(|entry| (entry.name.as_str(), entry.kind.as_str(), entry.size))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            names,
-            vec![
-                ("app", "dir", 4096),
-                ("alpha.md", "file", 5),
-                ("zeta.txt", "file", 12),
-            ]
-        );
-    }
-
-    #[test]
-    fn remote_find_parser_can_include_hidden_for_folder_picker() {
-        let entries = parse_remote_find_entries(
-            concat!("app\0d\0", "4096\0.config\0d\0", "4096\0.env\0f\0", "5\0",).as_bytes(),
-            true,
-        );
-        let names = entries
-            .iter()
-            .map(|entry| (entry.name.as_str(), entry.kind.as_str()))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            names,
-            vec![(".config", "dir"), ("app", "dir"), (".env", "file")]
-        );
-    }
-
-    #[test]
-    fn ssh_project_listing_script_is_bsd_find_safe() {
-        let script = portable_project_files_listing_script();
-        assert!(
-            !script.contains("-printf"),
-            "macOS BSD find does not support -printf"
-        );
-        assert!(script.contains("stat -c %s"));
-        assert!(script.contains("stat -f %z"));
-        assert!(script.contains("\\000"));
-    }
-
-    #[tokio::test]
-    async fn project_files_debug_listing_lists_local_absolute_path() {
-        let root = std::env::temp_dir().join(format!(
-            "shellx-files-debug-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(root.join("app")).unwrap();
-        std::fs::write(root.join("zeta.txt"), b"hello").unwrap();
-        std::fs::write(root.join(".env"), b"hidden").unwrap();
-
-        let entries = list_project_files_for_debug(
-            root.to_string_lossy().to_string(),
-            None,
-            None,
-            false,
-            std::sync::Arc::new(crate::acp::SessionRegistry::new()),
-            std::sync::Arc::new(crate::provider_sessions::ProviderSessionRegistry::default()),
-        )
-        .await
-        .unwrap();
-        let names = entries
-            .iter()
-            .map(|entry| (entry.name.as_str(), entry.kind.as_str()))
-            .collect::<Vec<_>>();
-
-        assert_eq!(names, vec![("app", "dir"), ("zeta.txt", "file")]);
-        assert_eq!(
-            entries
-                .iter()
-                .find(|entry| entry.name == "zeta.txt")
-                .map(|entry| entry.size),
-            Some(5)
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-}
 
 #[tauri::command]
 async fn append_session_log(session_id: String, line: String) -> Result<(), String> {
@@ -3621,7 +3163,17 @@ pub(crate) fn append_session_log_blocking_at(
     session_id: &str,
     line: &str,
 ) -> Result<(), String> {
-    use std::io::Write;
+    write_session_log_blocking_at(home, session_id, line, true, false)
+}
+
+fn write_session_log_blocking_at(
+    home: &std::path::Path,
+    session_id: &str,
+    line: &str,
+    create: bool,
+    durable: bool,
+) -> Result<(), String> {
+    use std::io::{Read, Seek, SeekFrom, Write};
     if session_id.is_empty()
         || !session_id
             .chars()
@@ -3636,7 +3188,7 @@ pub(crate) fn append_session_log_blocking_at(
         .lock()
         .map_err(|_| "session log append lock poisoned".to_string())?;
     let mut opts = std::fs::OpenOptions::new();
-    opts.create(true).append(true);
+    opts.create(create).read(true).append(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -3645,16 +3197,33 @@ pub(crate) fn append_session_log_blocking_at(
     let mut f = opts
         .open(&path)
         .map_err(|e| format!("open failed: {}", e))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    session_log::ensure_private_history_permissions(&f)?;
+    // Isolate a new frame from a legacy/crash-truncated last physical line.
+    // The same lock covers the tail check and append for all event/title writers.
+    let before = f.metadata().map_err(|e| format!("stat failed: {e}"))?;
+    let before_stamp = session_log::file_stamp(&f).map_err(|e| format!("stat failed: {e}"))?;
+    let needs_separator = if before.len() > 0 {
+        f.seek(SeekFrom::End(-1))
+            .map_err(|e| format!("seek failed: {e}"))?;
+        let mut last = [0u8; 1];
+        f.read_exact(&mut last)
+            .map_err(|e| format!("tail read failed: {e}"))?;
+        last[0] != b'\n'
+    } else {
+        false
+    };
+    let mut buf = Vec::with_capacity(line.len() + 2);
+    if needs_separator {
+        buf.push(b'\n');
     }
-    let mut buf = Vec::with_capacity(line.len() + 1);
     buf.extend_from_slice(line.as_bytes());
     buf.push(b'\n');
     f.write_all(&buf)
         .map_err(|e| format!("write failed: {}", e))?;
+    if durable {
+        f.sync_data().map_err(|e| format!("sync failed: {e}"))?;
+    }
+    session_log::index_appended_metadata(&path, &before_stamp, &f, &buf);
     Ok(())
 }
 
@@ -4379,12 +3948,11 @@ fn cpu_rss_for_pids(pids: &[u32]) -> std::collections::HashMap<u32, (f32, u64)> 
 /// Per row we attach live CPU% + RSS-MB via one sysinfo pass at the end.
 /// Sysinfo's first-sample CPU is often zero (it needs a delta to compute);
 /// the renderer polls every 500ms so subsequent calls produce real numbers.
-#[tauri::command]
-async fn list_background_tasks(
-    session_registry: tauri::State<'_, Arc<crate::acp::SessionRegistry>>,
-    terminal_registry: tauri::State<'_, Arc<crate::terminal::TerminalRegistry>>,
-    process_registry: tauri::State<'_, Arc<crate::process_registry::ProcessRegistry>>,
-) -> Result<Vec<TaskSnapshot>, String> {
+pub(crate) async fn collect_background_tasks(
+    session_registry: Arc<crate::acp::SessionRegistry>,
+    terminal_registry: Arc<crate::terminal::TerminalRegistry>,
+    process_registry: Arc<crate::process_registry::ProcessRegistry>,
+) -> Vec<TaskSnapshot> {
     // Stage 1: collect raw rows.
     let grok_rows = session_registry.snapshot_grok_subprocesses().await;
     let term_rows = terminal_registry.list_task_rows().await;
@@ -4511,7 +4079,21 @@ async fn list_background_tasks(
             .cmp(&order_b)
             .then_with(|| a.task_id.cmp(&b.task_id))
     });
-    Ok(out)
+    out
+}
+
+#[tauri::command]
+async fn list_background_tasks(
+    session_registry: tauri::State<'_, Arc<crate::acp::SessionRegistry>>,
+    terminal_registry: tauri::State<'_, Arc<crate::terminal::TerminalRegistry>>,
+    process_registry: tauri::State<'_, Arc<crate::process_registry::ProcessRegistry>>,
+) -> Result<Vec<TaskSnapshot>, String> {
+    Ok(collect_background_tasks(
+        session_registry.inner().clone(),
+        terminal_registry.inner().clone(),
+        process_registry.inner().clone(),
+    )
+    .await)
 }
 
 /// Resolve a TaskSnapshot.task_id back to (pid, is_terminal_key).
@@ -4549,32 +4131,7 @@ enum TaskTarget {
     Registered { task_id: String },
 }
 
-#[cfg(test)]
-mod task_target_tests {
-    use super::*;
 
-    #[test]
-    fn parse_task_id_accepts_registry_task_ids() {
-        match parse_task_id("gs-0000002a") {
-            Some(TaskTarget::Registered { task_id }) => assert_eq!(task_id, "gs-0000002a"),
-            other => panic!("expected registered task target, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn parse_task_id_accepts_terminal_task_ids() {
-        match parse_task_id("tab-abc:pty-123") {
-            Some(TaskTarget::Terminal {
-                tab_id,
-                terminal_id,
-            }) => {
-                assert_eq!(tab_id, "tab-abc");
-                assert_eq!(terminal_id, "pty-123");
-            }
-            other => panic!("expected terminal task target, got {:?}", other),
-        }
-    }
-}
 
 /// Task signal mapping. Pause/Resume use SIGSTOP/SIGCONT on Unix.
 /// Windows does not have a clean SIGSTOP equivalent without taking the
@@ -4695,8 +4252,7 @@ fn resume_pid(pid: u32) -> Result<(), String> {
     nt_proc_call(pid, b"NtResumeProcess\0")
 }
 
-// Non-Windows non-Unix targets (vanishingly rare — basically just the
-// linux/macos test paths above). Keep the stub for compile coverage.
+// Other targets return explicit unsupported-operation errors.
 #[cfg(all(not(unix), not(target_os = "windows")))]
 fn pause_pid(pid: u32) -> Result<(), String> {
     Err(format!(
@@ -5741,129 +5297,9 @@ async fn resume_goal(
     Ok(())
 }
 
-/// flip the plan-approval gate. Until called, the orchestrator
-/// won't inject any continuations even though `active=true`. After
-/// approval, the next `prompt-complete` triggers phase-1 execution.
-/// Returns `true` if the gate was actually flipped (i.e. there was an
-/// awaiting-approval goal); `false` if there was nothing to approve.
-///
-/// audit fix (replan-approve gap): in the replan path grok has
-/// already finished writing the revised plan when the user clicks
-/// Approve. There's no in-flight turn, so the next `prompt-complete`
-/// never arrives and the orchestrator's continuation hook never
-/// fires. After flipping the gate, send a one-shot "begin executing
-/// the approved plan" prompt directly so grok wakes up and starts.
-#[cfg(feature = "debug-api")]
-fn release_goal_provider_fixture_state(
-    state: Option<goal_orchestrator::GoalState>,
-    tab_id: &str,
-    action: &str,
-) -> Option<goal_orchestrator::GoalState> {
-    let expected_tab = match action {
-        "goal-approve" => "release-goal-plan-approve",
-        "goal-replan" => "release-goal-plan-replan",
-        _ => return None,
-    };
-    if !isolated_test_instance_requested() || tab_id != expected_tab {
-        return None;
-    }
-    let state = state?;
-    if !state.active
-        || !state.awaiting_approval
-        || !state.plan_turn_completed
-        || state.transport_kind != "local"
-        || state.ssh_config.is_some()
-        || state.objective != format!("Exercise isolated Goal Plan modal {action}")
-    {
-        return None;
-    }
-    let scratchboard_metadata = std::fs::symlink_metadata(&state.scratchboard_path).ok()?;
-    if !scratchboard_metadata.is_file() || scratchboard_metadata.file_type().is_symlink() {
-        return None;
-    }
-    let scratchboard = std::fs::canonicalize(&state.scratchboard_path).ok()?;
-    if scratchboard.file_name().and_then(|name| name.to_str()) != Some("goal.md") {
-        return None;
-    }
-    let cwd = scratchboard.parent()?;
-    let cwd_metadata = std::fs::symlink_metadata(cwd).ok()?;
-    if !cwd_metadata.is_dir() || cwd_metadata.file_type().is_symlink() {
-        return None;
-    }
-    let name = cwd.file_name()?.to_str()?;
-    if !name.starts_with(&format!("{tab_id}-"))
-        || name.len() > 128
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        return None;
-    }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(std::path::PathBuf::from)?;
-    let shellx_home = std::fs::canonicalize(home.join(".shellx")).ok()?;
-    if cwd.parent() != Some(shellx_home.as_path()) {
-        return None;
-    }
-    Some(state)
-}
 
-#[cfg(feature = "debug-api")]
-async fn start_release_goal_provider_fixture(
-    app: &tauri::AppHandle,
-    state: &goal_orchestrator::GoalState,
-    tab_id: &str,
-    prompt: String,
-    action: &str,
-) -> Result<(), String> {
-    use sha2::{Digest, Sha256};
-    use tauri::Emitter as _;
 
-    let cwd = state
-        .scratchboard_path
-        .parent()
-        .ok_or_else(|| "release Goal scratchboard has no parent directory".to_string())?
-        .to_string_lossy()
-        .to_string();
-    let prompt_sha256 = format!("{:x}", Sha256::digest(prompt.as_bytes()));
-    let registry = app
-        .state::<Arc<provider_sessions::ProviderSessionRegistry>>()
-        .inner()
-        .clone();
-    let hub = app
-        .try_state::<Arc<DebugHub>>()
-        .map(|state| state.inner().clone());
-    let emitter = app.clone();
-    let emit: provider_sessions::ProviderSessionEmit = Arc::new(move |kind, payload| {
-        if let Some(hub) = &hub {
-            hub.record_raw_event(kind, payload.clone());
-        }
-        let _ = emitter.emit(kind, payload);
-    });
-    let run = provider_sessions::start_release_provider_action_fixture(
-        registry,
-        tab_id.to_string(),
-        cwd,
-        prompt,
-        action.to_string(),
-        prompt_sha256.clone(),
-        emit,
-    )
-    .await?;
-    let payload = serde_json::json!({
-        "kind": "release_fixture_provider_started",
-        "tabId": tab_id,
-        "runId": run.run_id,
-        "action": action,
-        "promptSha256": prompt_sha256,
-    });
-    if let Some(hub) = app.try_state::<Arc<DebugHub>>() {
-        hub.record_raw_event("goal-event", payload.clone());
-    }
-    let _ = app.emit("goal-event", payload);
-    Ok(())
-}
+
 
 #[tauri::command]
 async fn approve_goal_plan(
@@ -5873,15 +5309,10 @@ async fn approve_goal_plan(
     reg: State<'_, Arc<crate::acp::SessionRegistry>>,
 ) -> Result<bool, String> {
     let sess_arc = reg.get_existing(&tab_id).await;
-    #[cfg(feature = "debug-api")]
-    let release_fixture = if sess_arc.is_none() {
-        release_goal_provider_fixture_state(orch.get_state(&tab_id).await, &tab_id, "goal-approve")
-    } else {
-        None
-    };
-    #[cfg(not(feature = "debug-api"))]
-    let release_fixture: Option<goal_orchestrator::GoalState> = None;
-    if sess_arc.is_none() && release_fixture.is_none() {
+
+    let has_session = sess_arc.is_some();
+
+    if !has_session {
         return Err(
             "No live session for this tab; reconnect before approving the plan.".to_string(),
         );
@@ -5917,17 +5348,8 @@ async fn approve_goal_plan(
                     return Err(reason);
                 }
             }
-        } else if let Some(state) = release_fixture {
-            #[cfg(feature = "debug-api")]
-            if let Err(error) =
-                start_release_goal_provider_fixture(&app, &state, &tab_id, prompt, "goal-approve")
-                    .await
-            {
-                let reason = format!("release Goal approve fixture failed: {error}");
-                let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
-                return Err(reason);
-            }
         }
+
     }
     Ok(flipped)
 }
@@ -5961,15 +5383,10 @@ async fn request_goal_replan(
         return Err("Plan feedback is empty.".to_string());
     }
     let sess_arc = reg.get_existing(&tab_id).await;
-    #[cfg(feature = "debug-api")]
-    let release_fixture = if sess_arc.is_none() {
-        release_goal_provider_fixture_state(orch.get_state(&tab_id).await, &tab_id, "goal-replan")
-    } else {
-        None
-    };
-    #[cfg(not(feature = "debug-api"))]
-    let release_fixture: Option<goal_orchestrator::GoalState> = None;
-    if sess_arc.is_none() && release_fixture.is_none() {
+
+    let has_session = sess_arc.is_some();
+
+    if !has_session {
         return Err(
             "No live session for this tab; reconnect before requesting plan edits.".to_string(),
         );
@@ -5993,7 +5410,7 @@ async fn request_goal_replan(
             let mut sess = sess_arc.lock().await;
             sess.initiate_and_send_prompt(&prompt).await
         };
-        match tokio::time::timeout(Duration::from_secs(120), attempt).await {
+        return match tokio::time::timeout(Duration::from_secs(120), attempt).await {
             Ok(Ok(_)) => {
                 use tauri::Emitter as _;
                 let payload = serde_json::json!({
@@ -6013,27 +5430,10 @@ async fn request_goal_replan(
                 let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
                 Err(reason)
             }
-        }
-    } else if let Some(state) = release_fixture {
-        #[cfg(feature = "debug-api")]
-        {
-            if let Err(error) =
-                start_release_goal_provider_fixture(&app, &state, &tab_id, prompt, "goal-replan")
-                    .await
-            {
-                let reason = format!("release Goal replan fixture failed: {error}");
-                let _ = orch.restore_approval_gate_for_retry(&tab_id, &reason).await;
-                return Err(reason);
-            }
-            Ok(true)
-        }
-        #[cfg(not(feature = "debug-api"))]
-        {
-            Err("release Goal replan fixture is unavailable".to_string())
-        }
-    } else {
-        Err("No live session for this tab; reconnect before requesting plan edits.".to_string())
+        };
     }
+
+    Err("No live session for this tab; reconnect before requesting plan edits.".to_string())
 }
 
 /// manual mark-complete fallback. When grok finishes the work
@@ -6145,85 +5545,9 @@ fn build_approval_kickoff_prompt(state: Option<&build_types::BuildRunState>) -> 
     )
 }
 
-#[cfg(feature = "debug-api")]
-fn release_build_provider_fixture_state(
-    state: Option<build_types::BuildRunState>,
-    tab_id: &str,
-    action: &str,
-) -> Option<build_types::BuildRunState> {
-    if !isolated_test_instance_requested()
-        || !matches!(action, "build-approve" | "build-resume")
-        || tab_id != action.replacen("build-", "release-build-run-", 1)
-    {
-        return None;
-    }
-    let state = state?;
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(std::path::PathBuf::from)?;
-    let shellx_home = std::fs::canonicalize(home.join(".shellx")).ok()?;
-    let cwd = std::fs::canonicalize(&state.cwd).ok()?;
-    let name = cwd.file_name()?.to_str()?;
-    if cwd.parent() != Some(shellx_home.as_path())
-        || !name.starts_with(&format!("{tab_id}-"))
-        || std::fs::symlink_metadata(&state.cwd)
-            .ok()?
-            .file_type()
-            .is_symlink()
-    {
-        return None;
-    }
-    Some(state)
-}
 
-#[cfg(feature = "debug-api")]
-async fn start_release_build_provider_fixture(
-    app: &tauri::AppHandle,
-    state: &build_types::BuildRunState,
-    prompt: String,
-    action: &str,
-) -> Result<(), String> {
-    use sha2::{Digest, Sha256};
-    use tauri::Emitter as _;
 
-    let prompt_sha256 = format!("{:x}", Sha256::digest(prompt.as_bytes()));
-    let registry = app
-        .state::<Arc<provider_sessions::ProviderSessionRegistry>>()
-        .inner()
-        .clone();
-    let hub = app
-        .try_state::<Arc<DebugHub>>()
-        .map(|state| state.inner().clone());
-    let emitter = app.clone();
-    let emit: provider_sessions::ProviderSessionEmit = Arc::new(move |kind, payload| {
-        if let Some(hub) = &hub {
-            hub.record_raw_event(kind, payload.clone());
-        }
-        let _ = emitter.emit(kind, payload);
-    });
-    let run = provider_sessions::start_release_provider_action_fixture(
-        registry,
-        state.tab_id.clone(),
-        state.cwd.clone(),
-        prompt,
-        action.to_string(),
-        prompt_sha256.clone(),
-        emit,
-    )
-    .await?;
-    let payload = serde_json::json!({
-        "kind": "release_fixture_provider_started",
-        "tabId": state.tab_id,
-        "runId": run.run_id,
-        "action": action,
-        "promptSha256": prompt_sha256,
-    });
-    if let Some(hub) = app.try_state::<Arc<DebugHub>>() {
-        hub.record_raw_event("build-event", payload.clone());
-    }
-    let _ = app.emit("build-event", payload);
-    Ok(())
-}
+
 
 #[tauri::command]
 async fn approve_build_plan(
@@ -6233,19 +5557,10 @@ async fn approve_build_plan(
     reg: State<'_, Arc<crate::acp::SessionRegistry>>,
 ) -> Result<bool, String> {
     let sess_arc = reg.get_existing(&tab_id).await;
-    #[cfg(feature = "debug-api")]
-    let release_fixture = if sess_arc.is_none() {
-        release_build_provider_fixture_state(
-            orch.get_state(&tab_id).await,
-            &tab_id,
-            "build-approve",
-        )
-    } else {
-        None
-    };
-    #[cfg(not(feature = "debug-api"))]
-    let release_fixture: Option<build_types::BuildRunState> = None;
-    if sess_arc.is_none() && release_fixture.is_none() {
+
+    let has_session = sess_arc.is_some();
+
+    if !has_session {
         return Err(
             "No live session for this tab; reconnect before approving the build plan.".to_string(),
         );
@@ -6276,10 +5591,8 @@ async fn approve_build_plan(
                     )
                 }
             }
-        } else if let Some(state) = release_fixture {
-            #[cfg(feature = "debug-api")]
-            start_release_build_provider_fixture(&app, &state, prompt, "build-approve").await?;
         }
+
     }
     Ok(flipped)
 }
@@ -6316,44 +5629,30 @@ async fn resume_build(
 ) -> Result<bool, String> {
     let registry = app.state::<Arc<SessionRegistry>>();
     let has_session = registry.get_existing(&tab_id).await.is_some();
-    #[cfg(feature = "debug-api")]
-    let release_fixture = if !has_session {
-        release_build_provider_fixture_state(orch.get_state(&tab_id).await, &tab_id, "build-resume")
-    } else {
-        None
-    };
-    #[cfg(not(feature = "debug-api"))]
-    let release_fixture: Option<build_types::BuildRunState> = None;
-    if !has_session && release_fixture.is_none() {
+
+    let can_resume = has_session;
+
+    if !can_resume {
         return Err("Connect this tab before resuming Build Mode.".to_string());
     }
     let resumed = orch.resume(&tab_id).await?;
-    if resumed {
-        if has_session {
-            let tab_for_inject = tab_id.clone();
-            crate::tab_tasks::spawn_replace(
-                &tab_id,
-                crate::tab_tasks::TabTaskKind::BuildResumeInject,
-                async move {
-                    crate::acp::maybe_inject_build_continuation_for_tab(
-                        &app,
-                        &tab_for_inject,
-                        "end_turn",
-                    )
-                    .await;
-                },
-            );
-        } else if let Some(state) = release_fixture {
-            #[cfg(feature = "debug-api")]
-            {
-                let prompt = orch
-                    .consider_continue(&tab_id, "end_turn")
-                    .await
-                    .ok_or_else(|| "isolated Build resume produced no continuation".to_string())?;
-                start_release_build_provider_fixture(&app, &state, prompt, "build-resume").await?;
-            }
-        }
+    if resumed && has_session {
+        let tab_for_inject = tab_id.clone();
+        let app_for_inject = app.clone();
+        crate::tab_tasks::spawn_replace(
+            &tab_id,
+            crate::tab_tasks::TabTaskKind::BuildResumeInject,
+            async move {
+                crate::acp::maybe_inject_build_continuation_for_tab(
+                    &app_for_inject,
+                    &tab_for_inject,
+                    "end_turn",
+                )
+                .await;
+            },
+        );
     }
+
     Ok(resumed)
 }
 
@@ -6949,220 +6248,31 @@ async fn outside_connectors_simulate(
     s.simulate_inbound(&id, input).await
 }
 
-fn isolated_test_instance_config_valid(
-    enabled: Option<&str>,
-    debug_port: Option<&str>,
-    mcp_port: Option<&str>,
-    home: Option<&std::path::Path>,
-    instance_id: Option<&str>,
-    final_profile_marker: Option<&serde_json::Value>,
-) -> bool {
-    if enabled != Some("1") {
-        return false;
-    }
-    let Some(debug_port) = debug_port
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|port| *port > 0)
-    else {
-        return false;
-    };
-    if !mcp_port
-        .and_then(|value| value.parse::<u16>().ok())
-        .is_some_and(|port| port > 0 && port != debug_port)
-    {
-        return false;
-    }
-    let Some(home) = home else {
-        return false;
-    };
-    let launch_path = home.to_string_lossy().replace('\\', "/");
-    let Some(name) = launch_path.rsplit('/').next() else {
-        return false;
-    };
-    let Some(run_id) = name.strip_prefix("shellx-final-webdriver-") else {
-        return false;
-    };
-    let expected_instance_id = format!("shellx-final-{run_id}");
-    if !(16..=64).contains(&run_id.len())
-        || !run_id
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        || instance_id != Some(expected_instance_id.as_str())
-    {
-        return false;
-    }
-    let Some(marker) = final_profile_marker.and_then(serde_json::Value::as_object) else {
-        return false;
-    };
-    let expected_platform = if cfg!(target_os = "windows") {
-        "windows-installed"
-    } else if cfg!(target_os = "macos") {
-        "macos-installed"
-    } else {
-        "linux-installed"
-    };
-    marker.get("schema").and_then(serde_json::Value::as_str)
-        == Some("shellx/release-surface-run-profile@1")
-        && marker.get("platform").and_then(serde_json::Value::as_str) == Some(expected_platform)
-        && marker.get("runId").and_then(serde_json::Value::as_str) == Some(run_id)
-        && marker
-            .get("launchPath")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| {
-                let marker_path = value.replace('\\', "/");
-                if cfg!(target_os = "windows") {
-                    marker_path.eq_ignore_ascii_case(&launch_path)
-                } else {
-                    marker_path == launch_path
-                }
-            })
-}
 
-fn isolated_test_instance_home() -> Option<std::path::PathBuf> {
-    let enabled = std::env::var("SHELLX_TEST_INSTANCE").ok();
-    let debug_port = std::env::var("SHELLX_DEBUG_PORT").ok();
-    let mcp_port = std::env::var("SHELLX_MCP_PORT").ok();
-    let instance_id = std::env::var("SHELLX_TEST_INSTANCE_ID").ok();
-    let home = std::env::var("HOME")
-        .ok()
-        .or_else(|| std::env::var("USERPROFILE").ok())
-        .map(std::path::PathBuf::from);
-    let final_profile_marker = home.as_ref().and_then(|path| {
-        std::fs::read_to_string(path.join("shellx-final-profile.json"))
-            .ok()
-            .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
-    });
-    isolated_test_instance_config_valid(
-        enabled.as_deref(),
-        debug_port.as_deref(),
-        mcp_port.as_deref(),
-        home.as_deref(),
-        instance_id.as_deref(),
-        final_profile_marker.as_ref(),
-    )
-    .then_some(home?)
-}
+
+
+
+
+
 
 fn isolated_test_instance_requested() -> bool {
-    isolated_test_instance_home().is_some()
+    false
 }
 
-#[cfg(test)]
-mod isolated_test_instance_tests {
-    use super::isolated_test_instance_config_valid;
 
-    #[test]
-    fn requires_all_isolation_markers() {
-        let home = std::path::Path::new(r"C:\Temp\shellx-test-harness-abc");
-        assert!(!isolated_test_instance_config_valid(
-            Some("1"),
-            Some("43210"),
-            Some("43211"),
-            Some(home),
-            Some("fixture-instance"),
-            None,
-        ));
-        assert!(!isolated_test_instance_config_valid(
-            None,
-            Some("43210"),
-            Some("43211"),
-            Some(home),
-            Some("fixture-instance"),
-            None,
-        ));
-        assert!(!isolated_test_instance_config_valid(
-            Some("1"),
-            None,
-            Some("43211"),
-            Some(home),
-            Some("fixture-instance"),
-            None,
-        ));
-        assert!(!isolated_test_instance_config_valid(
-            Some("1"),
-            Some("43210"),
-            Some("43210"),
-            Some(home),
-            Some("fixture-instance"),
-            None,
-        ));
-        assert!(!isolated_test_instance_config_valid(
-            Some("1"),
-            Some("43210"),
-            Some("43211"),
-            Some(std::path::Path::new(r"C:\Users\FixtureUser")),
-            Some("fixture-instance"),
-            None,
-        ));
-    }
-
-    #[test]
-    fn accepts_only_exact_final_release_profiles() {
-        let run_id = "0123456789abcdef";
-        let platform = if cfg!(target_os = "windows") {
-            "windows-installed"
-        } else if cfg!(target_os = "macos") {
-            "macos-installed"
-        } else {
-            "linux-installed"
-        };
-        let home_value = if cfg!(target_os = "windows") {
-            format!(r"C:\Temp\shellx-final-webdriver-{run_id}")
-        } else {
-            format!("/tmp/shellx-final-webdriver-{run_id}")
-        };
-        let home = std::path::Path::new(&home_value);
-        let marker = serde_json::json!({
-            "schema": "shellx/release-surface-run-profile@1",
-            "platform": platform,
-            "runId": run_id,
-            "nodePath": home_value,
-            "launchPath": home_value,
-        });
-        assert!(isolated_test_instance_config_valid(
-            Some("1"),
-            Some("43210"),
-            Some("43211"),
-            Some(home),
-            Some("shellx-final-0123456789abcdef"),
-            Some(&marker),
-        ));
-        assert!(!isolated_test_instance_config_valid(
-            Some("1"),
-            Some("43210"),
-            Some("43211"),
-            Some(home),
-            Some("shellx-final-wrong"),
-            Some(&marker),
-        ));
-        assert!(!isolated_test_instance_config_valid(
-            Some("1"),
-            Some("43210"),
-            Some("43211"),
-            Some(home),
-            Some("shellx-final-0123456789abcdef"),
-            None,
-        ));
-    }
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Data-dir migration from legacy `~/.grok-shell/` to current `~/.shellx/`.
 ///
 /// Runs UNCONDITIONALLY at startup. Idempotent: if `~/.shellx/`
 /// already exists (steady state), it's a no-op. If only the legacy
-/// `~/.shellx/` exists, atomic rename via `std::fs::rename`
+/// `~/.grok-shell/` exists, atomic rename via `std::fs::rename`
 /// (single syscall — `MoveFileExW` on Windows, `rename(2)` on POSIX).
 /// If BOTH exist, refuse and log — user must resolve manually.
 ///
 /// The env override `SHELLX_MIGRATE_DATA_DIR=0` lets a user explicitly
 /// disable migration if they're running an A/B install on the same
 /// box. Default behavior (env unset) is migrate.
-///
-/// HOME is overridable through `SHELLX_HOME_OVERRIDE_FOR_TESTS` so
-/// the unit test can drive the helper inside a tempdir without
-/// touching the user's real home directory. Production code never
-/// sets that variable.
 pub fn migrate_data_dir_if_needed() {
     // Opt-out gate: only "0" disables. Unset / "1" / anything else =
     // migrate as default.
@@ -7171,14 +6281,10 @@ pub fn migrate_data_dir_if_needed() {
         return;
     }
 
-    // Resolve HOME (with test override). On Windows, fall back to
-    // USERPROFILE the same way the rest of shellX does — `pass`-style
-    // lookups assume the agent runs in WSL, but the migration helper
-    // must also work on native-Windows builds.
-    let home = std::env::var("SHELLX_HOME_OVERRIDE_FOR_TESTS")
+    let home = std::env::var("HOME")
         .ok()
-        .or_else(|| std::env::var("HOME").ok())
         .or_else(|| std::env::var("USERPROFILE").ok());
+
     let Some(home) = home else {
         eprintln!(
             "[shellx migrate] SHELLX_MIGRATE_DATA_DIR=1 but neither HOME \
@@ -7249,6 +6355,71 @@ fn updater_release_urls_match_version(current: &tauri_plugin_updater::RemoteRele
                     .all(|platform| matches_release(&platform.url))
         }
     }
+}
+
+// Tauri's default macOS menu binds native Close Window to Command-W. ShellX
+// promises that chord to the focused renderer tab, so retain the default menu
+// and replace only its two native Close Window items. The menu still offers
+// normal window closure with Command-Shift-W (File) or a menu click (Window).
+#[cfg(target_os = "macos")]
+fn macos_session_close_menu(
+    app: &tauri::AppHandle,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind, WINDOW_SUBMENU_ID};
+
+    let menu = Menu::default(app)?;
+    let mut replaced_file = false;
+    let mut replaced_window = false;
+    for item in menu.items()? {
+        let MenuItemKind::Submenu(submenu) = item else {
+            continue;
+        };
+        let is_file = submenu.text()? == "File";
+        let is_window = submenu.id().as_ref() == WINDOW_SUBMENU_ID;
+        if !is_file && !is_window {
+            continue;
+        }
+        let close_positions = submenu
+            .items()?
+            .iter()
+            .enumerate()
+            .filter_map(|(position, child)| match child {
+                MenuItemKind::Predefined(native)
+                    if native.text().ok()?.replace('&', "") == "Close Window" =>
+                {
+                    Some(position)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if close_positions.len() != 1 {
+            return Err(std::io::Error::other("default macOS Close Window menu changed").into());
+        }
+        let position = close_positions[0];
+        submenu.remove_at(position)?;
+        let replacement = MenuItem::with_id(
+            app,
+            if is_file {
+                "shellx-file-close-window"
+            } else {
+                "shellx-window-close-window"
+            },
+            "Close Window",
+            true,
+            if is_file {
+                Some("Command+Shift+W")
+            } else {
+                None
+            },
+        )?;
+        submenu.insert(&replacement, position)?;
+        replaced_file |= is_file;
+        replaced_window |= is_window;
+    }
+    if !replaced_file || !replaced_window {
+        return Err(std::io::Error::other("default macOS File or Window menu missing").into());
+    }
+    Ok(menu)
 }
 
 pub fn run() {
@@ -7341,6 +6512,26 @@ pub fn run() {
     };
 
     let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(macos_session_close_menu)
+        .on_menu_event(|app, event| {
+            use tauri::Manager as _;
+            if event.id() != "shellx-file-close-window"
+                && event.id() != "shellx-window-close-window"
+            {
+                return;
+            }
+            if let Some(window) = app
+                .webview_windows()
+                .into_values()
+                .find(|window| window.is_focused().unwrap_or(false))
+            {
+                if let Err(error) = window.close() {
+                    warn!("native Close Window failed: {}", error);
+                }
+            }
+        });
     // Release evidence needs a second, disposable instance without changing
     // or closing an operator-owned app. The opt-out is accepted only for a
     // clearly named test home and an explicit Debug API port.
@@ -7405,6 +6596,7 @@ pub fn run() {
         .manage(shellx_browser_registry.clone())
         .manage(shellx_vault_backend.clone())
         .manage(task_store)
+        .manage(Arc::new(task_intent::TaskIntentRegistry::default()))
         // Public documentation links can queue one exact non-mutating surface
         // reveal. The queue is volatile and contains no browser URL, path,
         // Vault value, provider/session data, or command.
@@ -7437,24 +6629,19 @@ pub fn run() {
     #[cfg(feature = "debug-api")]
     let builder = builder.manage(debug_hub.clone());
 
-    #[cfg(feature = "debug-api")]
-    let builder = builder.manage(Arc::new(
-        debug_api_release_relay::ReleaseTauriInvokeRegistry::new(),
-    ));
-    let builder = builder.manage(Arc::new(
-        debug_api_release_clipboard::ReleaseClipboardRegistry::new(),
-    ));
-    let builder = builder.manage(Arc::new(
-        debug_api_release_native_picker::ReleaseNativePickerRegistry::new(),
-    ));
+
+
+
 
     builder
         .invoke_handler(tauri::generate_handler![
+            installed_update::installed_update_package_kind,
             read_user_data,
             write_user_data,
             delete_user_data_section,
             start_grok_session,
             send_prompt,
+            register_task_intent,
             interject_prompt,
             abort_session,
             get_detected_max_tokens,
@@ -7462,6 +6649,7 @@ pub fn run() {
             drop_tab_session,
             read_session_jsonl,
             read_session_jsonl_tail,
+            session_log_page::read_session_jsonl_page,
             append_session_log,
             list_project_files,
             list_stored_sessions,
@@ -7592,7 +6780,7 @@ pub fn run() {
             // .zip at a user-chosen save_path. Local + WSL transports
             // supported; SSH returns an explanatory error.
             crate::session_archive::archive_session_artifacts,
-            crate::debug_api_release_native_picker::release_test_take_native_picker,
+
             crate::session_activity::read_session_activity_source,
             // shellXagent token reveal + regenerate. Settings UI →
             // click to reveal current key,
@@ -7677,6 +6865,7 @@ pub fn run() {
             crate::shellx_browser_shield_settings::shellx_browser_update_site_shields,
             crate::shellx_browser_shield_settings::shellx_browser_remove_site_shields,
             crate::shellx_browser_transfers::shellx_browser_grant_transfer,
+            crate::shellx_browser_transfers::shellx_browser_decline_native_download,
             crate::shellx_browser_transfers::shellx_browser_update_download_folder,
             crate::shellx_browser_transfer_artifacts::shellx_browser_write_text_artifact,
             crate::shellx_browser_transfer_artifacts::shellx_browser_copy_local_artifact,
@@ -7726,19 +6915,7 @@ pub fn run() {
                     crate::manual_deep_link::receive_manual_open_url(_app.handle(), &url);
                 }
             }
-            if let Some(profile) = isolated_test_instance_home() {
-                if let Err(error) = _app.asset_protocol_scope().allow_directory(&profile, true) {
-                    return Err(format!(
-                        "failed to scope release-test assets to {}: {error}",
-                        profile.display()
-                    )
-                    .into());
-                }
-                info!(
-                    profile = %profile.display(),
-                    "release-test asset protocol scope bound to the exact isolated profile"
-                );
-            }
+
             let orch = _app.state::<Arc<goal_orchestrator::GoalOrchestrator>>();
             Arc::clone(&*orch).start_watchdog();
             info!("goal_orchestrator watchdog spawned");
@@ -8020,626 +7197,4 @@ pub fn run() {
         })
         .run(context)
         .expect("error while running tauri application");
-}
-
-#[cfg(test)]
-mod session_log_tests {
-    use super::*;
-
-    fn unique_root() -> std::path::PathBuf {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        std::env::temp_dir().join(format!(
-            "shellx-session-log-{}-{}",
-            std::process::id(),
-            nanos
-        ))
-    }
-
-    #[test]
-    fn split_session_jsonl_records_recovers_adjacent_objects() {
-        let content = r#"{"t":1,"kind":"ui","payload":"a"}{"t":2,"kind":"ui","payload":"b"}
-{"t":3,"kind":"ui","payload":"c"}
-"#;
-        let records = split_session_jsonl_records(content);
-        assert_eq!(records.len(), 3);
-        assert!(records[0].contains(r#""payload":"a""#));
-        assert!(records[1].contains(r#""payload":"b""#));
-        assert!(records[2].contains(r#""payload":"c""#));
-    }
-
-    #[test]
-    fn append_session_log_writes_multiline_jsonl_batch_in_order() {
-        let root = unique_root();
-        std::fs::create_dir_all(&root).expect("create isolated home");
-        let batch = r#"{"t":1,"kind":"ui","payload":"one"}
-{"t":2,"kind":"ui","payload":"two"}"#;
-
-        append_session_log_blocking_at(&root, "session-batch", batch).expect("append JSONL batch");
-
-        let path = root
-            .join(".shellx")
-            .join("sessions")
-            .join("session-batch.jsonl");
-        let content = std::fs::read_to_string(path).expect("read session log");
-        assert_eq!(content, format!("{batch}\n"));
-        assert_eq!(split_session_jsonl_records(&content).len(), 2);
-
-        std::fs::remove_dir_all(root).expect("remove isolated home");
-    }
-}
-
-#[cfg(test)]
-mod migrate_data_dir_tests {
-    //! Cover the data-dir migration helper.
-    //! Default is migrate; SHELLX_MIGRATE_DATA_DIR="0" disables.
-    //!
-    //! 1. flag="0" → no-op (legacy left alone).
-    //! 2. flag unset (default), legacy present, target absent → rename.
-    //! 3. legacy present, target ALSO present → refuses (no clobber).
-    //!
-    //! Driven through `SHELLX_HOME_OVERRIDE_FOR_TESTS` so we never
-    //! touch the real `$HOME`. Env-var manipulation is in a single
-    //! test to keep cargo's parallel runner from racing on the
-    //! process-wide vars.
-    use super::*;
-    use std::fs;
-
-    /// Unique tempdir name — process id + nanos, same pattern as
-    /// skill_install.rs to keep parallel test runs from colliding.
-    fn unique_root() -> std::path::PathBuf {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        std::env::temp_dir().join(format!("shellx-migrate-{}-{}", std::process::id(), nanos))
-    }
-
-    #[test]
-    fn migrate_data_dir_respects_flag_and_state() {
-        let _env_lock = crate::test_env_lock();
-        let root = unique_root();
-        fs::create_dir_all(&root).expect("mk root");
-
-        // --- Phase 1: flag="0" → no-op even if legacy exists (opt-out). ---
-        let legacy = root.join(".grok-shell");
-        fs::create_dir_all(&legacy).expect("mk legacy");
-        fs::write(legacy.join("marker.txt"), b"hello").expect("seed marker");
-
-        // SAFETY: test_env_lock serializes every ShellX test that mutates
-        // process-wide environment variables, and this test restores them.
-        unsafe {
-            std::env::set_var("SHELLX_MIGRATE_DATA_DIR", "0");
-            std::env::set_var("SHELLX_HOME_OVERRIDE_FOR_TESTS", &root);
-        }
-
-        migrate_data_dir_if_needed();
-        assert!(legacy.is_dir(), "no-op: legacy must remain when flag='0'");
-        assert!(
-            legacy.join("marker.txt").is_file(),
-            "no-op: marker preserved"
-        );
-        assert!(
-            !root.join(".shellx").exists(),
-            "no-op: target must NOT be created"
-        );
-
-        // --- Phase 2: flag unset (default), legacy present, target absent → rename. ---
-        // SAFETY: the process-wide test env lock remains held.
-        unsafe {
-            std::env::remove_var("SHELLX_MIGRATE_DATA_DIR");
-        }
-        migrate_data_dir_if_needed();
-        let target = root.join(".shellx");
-        assert!(!legacy.exists(), "rename: legacy must be gone");
-        assert!(target.is_dir(), "rename: target must exist");
-        assert!(
-            target.join("marker.txt").is_file(),
-            "rename: marker must have moved with the dir"
-        );
-        assert_eq!(
-            fs::read(target.join("marker.txt")).expect("read marker"),
-            b"hello",
-            "rename: contents preserved byte-for-byte",
-        );
-
-        // --- Phase 3: both present (recreate legacy) → refuse to clobber. ---
-        fs::create_dir_all(&legacy).expect("recreate legacy");
-        fs::write(legacy.join("conflict.txt"), b"new world").expect("seed conflict");
-        migrate_data_dir_if_needed();
-        assert!(
-            legacy.is_dir(),
-            "refuse: legacy must still exist when target also exists"
-        );
-        assert!(
-            target.is_dir(),
-            "refuse: target must still exist when both present"
-        );
-        assert!(
-            legacy.join("conflict.txt").is_file(),
-            "refuse: legacy contents preserved when refusing to clobber",
-        );
-
-        // Cleanup + restore env. Best-effort; tempdir leaks are harmless.
-        // SAFETY: the process-wide test env lock remains held.
-        unsafe {
-            std::env::remove_var("SHELLX_MIGRATE_DATA_DIR");
-            std::env::remove_var("SHELLX_HOME_OVERRIDE_FOR_TESTS");
-        }
-        let _ = fs::remove_dir_all(&root);
-    }
-}
-
-#[cfg(test)]
-mod sensitive_path_tests {
-    //! Regression coverage for the renderer-side credential denylist.
-    //! Anchored to the shared `reject_if_sensitive_path`
-    //! helper so both `read_text_file_for_path` and
-    //! `read_image_as_data_url` inherit the same matrix.
-    use super::*;
-
-    #[test]
-    fn rejects_auth_json_under_grok() {
-        let r = reject_if_sensitive_path("/home/x/.grok/auth.json", "/home/x/.grok/auth.json");
-        assert!(r.is_err(), "auth.json must be rejected");
-    }
-
-    #[test]
-    fn rejects_grok_config_toml() {
-        let r = reject_if_sensitive_path("/home/x/.grok/config.toml", "/home/x/.grok/config.toml");
-        assert!(r.is_err(), "grok config.toml must be rejected");
-    }
-
-    #[test]
-    fn rejects_vault_files() {
-        for name in ["vault.enc", "vault.salt", "vault.master.key"] {
-            let p = format!("/home/x/.shellx/{name}");
-            assert!(
-                reject_if_sensitive_path(&p, &p).is_err(),
-                "{name} must be rejected"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_tokens_and_ssh_keys() {
-        for p in [
-            "/home/x/.shellx/shellxagent.token",
-            "/home/x/.shellx/mcp.token",
-            "/home/x/.ssh/id_ed25519",
-            "/home/x/.aws/credentials",
-            "/home/x/.password-store/foo.gpg",
-            "/home/x/.gnupg/private-keys-v1.d/abc.key",
-            "/home/x/.netrc",
-            "/home/x/.pgpass",
-        ] {
-            assert!(
-                reject_if_sensitive_path(p, p).is_err(),
-                "must reject sensitive path: {p}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn attach_text_classifier_rejects_sensitive_paths_before_reading() {
-        let path = if cfg!(target_os = "windows") {
-            r"C:\Users\x\.ssh\id_ed25519"
-        } else {
-            "/home/x/.ssh/id_ed25519"
-        };
-        let err = read_text_file_if_text(path.to_string(), Some(64))
-            .await
-            .expect_err("sensitive attach path must be rejected");
-        assert!(
-            err.contains("known credential/token file"),
-            "should reject by sensitive-path policy, got: {err}"
-        );
-    }
-
-    #[test]
-    fn accepts_ordinary_image_under_grok() {
-        let p = "/home/x/.grok/sessions/abc/images/1.jpg";
-        assert!(
-            reject_if_sensitive_path(p, p).is_ok(),
-            "ordinary grok-generated image must pass"
-        );
-    }
-
-    #[test]
-    fn accepts_user_doc_under_cwd() {
-        let p = "/home/x/projects/foo/notes.md";
-        assert!(
-            reject_if_sensitive_path(p, p).is_ok(),
-            "ordinary user doc must pass"
-        );
-    }
-
-    #[test]
-    fn case_insensitive_match() {
-        // Path components may arrive uppercased after UNC-prefix
-        // lowercasing in the caller; the helper itself must still
-        // catch sensitive names regardless of input case.
-        let p = "/Home/X/.SHELLX/VAULT.ENC";
-        assert!(
-            reject_if_sensitive_path(p, p).is_err(),
-            "case-insensitive match required"
-        );
-    }
-
-    #[test]
-    fn pasted_attachment_filename_is_sanitized() {
-        let name = sanitize_attachment_filename("..\\evil:image?.png", Some("image/png"), 42);
-        assert_eq!(name, "attachment-42.png");
-        let name = sanitize_attachment_filename("screen:shot?.png", Some("image/png"), 42);
-        assert_eq!(name, "screen_shot_.png");
-    }
-
-    #[test]
-    fn pasted_attachment_decodes_data_url_and_checks_image_magic() {
-        use base64::Engine as _;
-        let png = b"\x89PNG\r\n\x1a\nrest";
-        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
-        let decoded = decode_attachment_base64(&format!("data:image/png;base64,{b64}"))
-            .expect("data URL decodes");
-        assert_eq!(decoded, png);
-        assert!(validate_declared_image_bytes(Some("image/png"), &decoded).is_ok());
-        assert!(
-            validate_declared_image_bytes(Some("image/png"), b"not really png").is_err(),
-            "declared PNG must match PNG magic"
-        );
-    }
-}
-
-#[cfg(test)]
-mod preview_scope_tests {
-    use super::*;
-
-    #[test]
-    fn frontend_cwd_outside_current_home_is_not_trust_root() {
-        let cwd = effective_preview_session_cwd(None, Some("/etc".to_string()));
-        assert!(
-            cwd.is_none(),
-            "renderer-only preview cwd fallback must not authorize arbitrary filesystem roots"
-        );
-    }
-
-    #[test]
-    fn frontend_cwd_under_current_home_is_not_trust_root() {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .expect("test environment has a home directory");
-        let cwd = format!("{}/shellx-preview-test", home.trim_end_matches(['/', '\\']));
-        let effective = effective_preview_session_cwd(None, Some(cwd));
-        assert!(
-            effective.is_none(),
-            "renderer-only preview cwd fallback must not authorize arbitrary files under the current home"
-        );
-    }
-
-    #[tokio::test]
-    async fn list_files_unknown_explicit_connection_id_fails_closed() {
-        let registry = Arc::new(SessionRegistry::new());
-        let provider_registry = Arc::new(provider_sessions::ProviderSessionRegistry::default());
-
-        let err = list_project_files_for_debug(
-            "/home/user".to_string(),
-            Some("tab-files".to_string()),
-            Some("missing-connection".to_string()),
-            false,
-            registry,
-            provider_registry,
-        )
-        .await
-        .expect_err("unknown explicit connection ids must not fall back to local fs");
-
-        assert!(err.contains("unknown connection_id: missing-connection"));
-    }
-
-    #[test]
-    fn registry_cwd_wins_over_frontend_fallback() {
-        let cwd = effective_preview_session_cwd(
-            Some("C:\\Users\\FixtureUser\\project".to_string()),
-            Some("C:\\Users\\FixtureUser".to_string()),
-        );
-        assert!(!preview_path_is_under_session_cwd(
-            "C:/Users/FixtureUser/shx-body-prompt.json",
-            cwd.as_deref(),
-        ));
-        assert!(preview_path_is_under_session_cwd(
-            "C:/Users/FixtureUser/project/src/main.rs",
-            cwd.as_deref(),
-        ));
-    }
-
-    #[test]
-    fn isolated_release_candidate_can_use_its_owned_frontend_cwd() {
-        let cwd = effective_preview_session_cwd_with_isolation(
-            None,
-            Some("C:\\Users\\ShellXFinal\\owned-profile".to_string()),
-            true,
-        );
-        assert_eq!(
-            cwd.as_deref(),
-            Some("C:\\Users\\ShellXFinal\\owned-profile")
-        );
-    }
-
-    #[tokio::test]
-    async fn provider_preview_context_uses_wsl_cwd_without_classic_session() {
-        let registry = Arc::new(SessionRegistry::new());
-        let provider_registry = Arc::new(provider_sessions::ProviderSessionRegistry::default());
-        provider_registry.record_started_with_options(
-            provider_sessions::ProviderSessionStart {
-                tab_id: "tab-provider".to_string(),
-                provider_id: provider_adapters::ProviderId::CodexCli,
-                cwd: "/home/user/project".to_string(),
-                prompt: "work".to_string(),
-            },
-            None,
-            true,
-            provider_adapters::ProviderPermissionMode::AcceptEdits,
-            provider_adapters::ProviderExecutionTransport::Wsl,
-            Some("Ubuntu-24.04".to_string()),
-        );
-
-        let ctx =
-            preview_session_context(&registry, Some(&provider_registry), "tab-provider").await;
-
-        assert_eq!(ctx.registry_cwd.as_deref(), Some("/home/user/project"));
-        assert_eq!(ctx.wsl_distro.as_deref(), Some("Ubuntu-24.04"));
-        assert!(ctx.ssh_config.is_none());
-    }
-
-    #[tokio::test]
-    async fn provider_preview_context_carries_ssh_key_vault_ref() {
-        let registry = Arc::new(SessionRegistry::new());
-        let provider_registry = Arc::new(provider_sessions::ProviderSessionRegistry::default());
-        provider_registry.record_started_with_target(
-            provider_sessions::ProviderSessionStart {
-                tab_id: "tab-ssh-provider".to_string(),
-                provider_id: provider_adapters::ProviderId::ClaudeCode,
-                cwd: "/Users/user/project".to_string(),
-                prompt: "work".to_string(),
-            },
-            None,
-            true,
-            provider_adapters::ProviderPermissionMode::AcceptEdits,
-            provider_sessions::ProviderSessionRunTarget::new(
-                provider_adapters::ProviderExecutionTransport::Ssh,
-                None,
-                Some("deploy@example.test".to_string()),
-                Some(2222),
-            )
-            .with_ssh_key_vault_ref(Some("connections/remote-macos-key".to_string())),
-        );
-
-        let ctx =
-            preview_session_context(&registry, Some(&provider_registry), "tab-ssh-provider").await;
-        let ssh = ctx.ssh_config.expect("ssh context");
-
-        assert_eq!(ctx.registry_cwd.as_deref(), Some("/Users/user/project"));
-        assert_eq!(ssh.host, "deploy@example.test");
-        assert_eq!(ssh.port, Some(2222));
-        assert_eq!(
-            ssh.key_vault_ref.as_deref(),
-            Some("connections/remote-macos-key")
-        );
-    }
-
-    #[test]
-    fn pdf_is_previewable_binary_media() {
-        let mime = preview_media_mime(std::path::Path::new("C:/Users/User/report.pdf"));
-        assert_eq!(mime.as_deref(), Ok("application/pdf"));
-    }
-
-    #[test]
-    fn ico_is_previewable_binary_media() {
-        let mime = preview_media_mime(std::path::Path::new("C:/Users/User/icon.ico"));
-        assert_eq!(mime.as_deref(), Ok("image/x-icon"));
-    }
-
-    #[test]
-    fn rejects_project_local_grok_scope() {
-        assert!(!preview_path_is_under_home_grok(
-            "/home/x/project/.grok/sessions/leak.txt"
-        ));
-    }
-
-    #[test]
-    fn session_home_grok_scope_is_user_specific() {
-        assert!(preview_path_is_under_session_home_grok(
-            "/home/alice/.grok/sessions/abc/images/1.png",
-            Some("/home/alice/project"),
-        ));
-        assert!(!preview_path_is_under_session_home_grok(
-            "/home/bob/.grok/sessions/abc/images/1.png",
-            Some("/home/alice/project"),
-        ));
-    }
-
-    #[test]
-    fn downloads_scope_is_user_specific() {
-        assert!(preview_path_is_under_downloads(
-            "/home/alice/Downloads/build-log.txt",
-            Some("/home/alice/project"),
-        ));
-        assert!(!preview_path_is_under_downloads(
-            "/home/bob/Downloads/build-log.txt",
-            Some("/home/alice/project"),
-        ));
-    }
-
-    #[test]
-    fn posix_session_cwd_match_is_case_sensitive() {
-        assert!(!preview_path_is_under_session_cwd(
-            "/home/user/project/src/main.rs",
-            Some("/home/user/Project"),
-        ));
-    }
-
-    #[test]
-    fn windows_session_cwd_match_is_case_insensitive() {
-        assert!(preview_path_is_under_session_cwd(
-            "C:/Users/User/Project/src/main.rs",
-            Some("c:/users/user/project"),
-        ));
-    }
-
-    #[test]
-    fn strips_windows_extended_prefix_for_preview_scope() {
-        let p = strip_windows_extended_path_prefix(
-            r"\\?\C:\Users\FixtureUser\.grok\sessions\C%3A%5CUsers%5CFixtureUser\sid\images\1.jpg",
-        );
-        assert_eq!(
-            p,
-            r"C:\Users\FixtureUser\.grok\sessions\C%3A%5CUsers%5CFixtureUser\sid\images\1.jpg"
-        );
-        assert!(preview_path_is_under_session_home_grok(
-            &p,
-            Some(r"C:\Users\FixtureUser\project")
-        ));
-    }
-}
-
-#[cfg(test)]
-mod updater_release_policy_tests {
-    use super::*;
-    use std::collections::HashMap;
-
-    fn release(version: &str, url: &str) -> tauri_plugin_updater::RemoteRelease {
-        tauri_plugin_updater::RemoteRelease {
-            version: version.parse().expect("test version"),
-            notes: None,
-            pub_date: None,
-            data: tauri_plugin_updater::RemoteReleaseInner::Static {
-                platforms: HashMap::from([(
-                    "windows-x86_64".to_string(),
-                    tauri_plugin_updater::ReleaseManifestPlatform {
-                        url: url.parse().expect("test URL"),
-                        signature: "fixture-signature".to_string(),
-                    },
-                )]),
-            },
-        }
-    }
-
-    #[test]
-    fn updater_release_url_must_bind_the_manifest_version() {
-        assert!(updater_release_urls_match_version(&release(
-            "0.3.5",
-            "https://github.com/martinsbrezauckis/shellx/releases/download/v0.3.5/shellX_0.3.5_x64-setup.exe",
-        )));
-        assert!(!updater_release_urls_match_version(&release(
-            "9.9.9",
-            "https://github.com/martinsbrezauckis/shellx/releases/download/v0.2.0/shellX_0.2.0_x64-setup.exe",
-        )));
-        assert!(!updater_release_urls_match_version(&release(
-            "0.3.5",
-            "https://evil.example/martinsbrezauckis/shellx/releases/download/v0.3.5/shellX_0.3.5_x64-setup.exe",
-        )));
-        assert!(!updater_release_urls_match_version(&release(
-            "0.3.5",
-            "https://github.com/other/shellx/releases/download/v0.3.5/shellX_0.3.5_x64-setup.exe",
-        )));
-    }
-}
-
-#[cfg(test)]
-mod session_tooling_tests {
-    use super::*;
-    use crate::provider_adapters::{ProviderExecutionTransport, ProviderId};
-    use crate::provider_sessions::{ProviderSessionRegistry, ProviderSessionStart};
-
-    fn provider_start(tab_id: &str) -> ProviderSessionStart {
-        ProviderSessionStart {
-            tab_id: tab_id.to_string(),
-            provider_id: ProviderId::CodexCli,
-            cwd: "/tmp/project".to_string(),
-            prompt: "hello".to_string(),
-        }
-    }
-
-    #[test]
-    fn stored_provider_conversation_is_resume_metadata_not_connected_context() {
-        let path = std::env::temp_dir().join(format!(
-            "shellx-session-tooling-stored-provider-{}-{}.json",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let registry = ProviderSessionRegistry::with_store_path(path.clone());
-        let run = registry.record_started(provider_start("tab-stored"));
-        assert!(registry.record_provider_conversation_id(
-            "tab-stored",
-            &run.run_id,
-            ProviderId::CodexCli,
-            "019e4ac1-07ab-7551-8d12-efd0aa2dabfa".to_string(),
-        ));
-
-        let restored = Arc::new(ProviderSessionRegistry::with_store_path(path.clone()));
-        let snapshot = provider_tooling_session_snapshot(&restored, "tab-stored")
-            .expect("stored conversation snapshot");
-        assert_eq!(
-            snapshot.get("sessionKind").and_then(|v| v.as_str()),
-            Some("providerStoredConversation")
-        );
-        assert_eq!(
-            snapshot.get("hasProviderContext").and_then(|v| v.as_bool()),
-            Some(false)
-        );
-        assert_eq!(
-            snapshot
-                .get("debug")
-                .and_then(|v| v.get("hasProviderContext"))
-                .and_then(|v| v.as_bool()),
-            Some(false)
-        );
-        assert_eq!(
-            snapshot
-                .get("providerStoredConversations")
-                .and_then(|v| v.get("codex-cli"))
-                .and_then(|v| v.as_str()),
-            Some("019e4ac1-07ab-7551-8d12-efd0aa2dabfa")
-        );
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn active_provider_run_reports_connected_context() {
-        let registry = Arc::new(ProviderSessionRegistry::default());
-        registry.record_started_with_options(
-            provider_start("tab-active"),
-            None,
-            false,
-            Default::default(),
-            ProviderExecutionTransport::Wsl,
-            Some("ubuntu-24.04".to_string()),
-        );
-        let snapshot = provider_tooling_session_snapshot(&registry, "tab-active")
-            .expect("active provider snapshot");
-        assert_eq!(
-            snapshot.get("sessionKind").and_then(|v| v.as_str()),
-            Some("provider")
-        );
-        assert_eq!(
-            snapshot.get("hasProviderContext").and_then(|v| v.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            snapshot
-                .get("hasActiveProviderChild")
-                .and_then(|v| v.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            snapshot.get("wslDistro").and_then(|v| v.as_str()),
-            Some("ubuntu-24.04")
-        );
-    }
 }

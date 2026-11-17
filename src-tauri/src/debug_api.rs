@@ -94,14 +94,17 @@ mod session_lifecycle_http;
 mod session_state_http;
 #[path = "debug_api_tasks.rs"]
 mod tasks_http;
+#[path = "debug_api_ui_state.rs"]
+mod ui_state_http;
+
 #[path = "debug_api_vault.rs"]
 mod vault_http;
 
 use assets_http::*;
+
 use auth_http::{add_api_version, require_auth, shellx_home, write_private_text_file};
 pub(crate) use auth_http::{
     current_debug_token, initialize_debug_token_authority, rotate_debug_token,
-    shellxagent_token_path,
 };
 pub(crate) use browser_actions_http::{
     browser_action_http, browser_registry, sync_browser_action_navigation_to_engine,
@@ -120,7 +123,6 @@ use history_settings_http::*;
 use preview_tools_http::*;
 use providers_http::*;
 use reports_http::*;
-#[cfg(not(target_os = "linux"))]
 pub(crate) use screenshot_http::capture_window_label_png;
 use screenshot_http::screenshot;
 use session_lifecycle_http::*;
@@ -320,12 +322,10 @@ struct DebugProviderAssetAggregate {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiState {
-    /// True only for the strictly validated disposable release profile. The
-    /// renderer uses this read-only bit to enable bounded console/error
-    /// capture for native macOS final-surface evidence; callers cannot patch
-    /// it through `POST /state/ui`.
-    #[serde(default, rename = "releaseTestInstance")]
-    pub release_test_instance: bool,
+    /// Bounded operator-command delivery, independent of renderer observations.
+    #[serde(default)]
+    pub command_stream: ui_state_http::UiCommandStream,
+
     /// Current panel sizes (percentages 0..100). Mirrors the React
     /// `react-resizable-panels` group sizes; localStorage persists in
     /// the renderer, this struct is the cross-session debug view.
@@ -512,6 +512,23 @@ pub struct DebugHighlightRequest {
     /// element separately declares it through data-shellx-release-observe.
     #[serde(default)]
     pub observe: Vec<DebugElementObservationField>,
+    #[serde(default)]
+    pub hit_test: Option<DebugHighlightHitTest>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugHighlightHitTest {
+    pub x_fraction: f64,
+    pub y_fraction: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugHighlightHitResult {
+    pub x: f64,
+    pub y: f64,
+    pub matches: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -558,6 +575,8 @@ pub struct DebugHighlightResult {
     pub viewport_height: f64,
     #[serde(default)]
     pub observation: Option<DebugElementObservation>,
+    #[serde(default)]
+    pub hit_test: Option<DebugHighlightHitResult>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -612,8 +631,8 @@ pub struct PanelSizes {
 
 impl Default for PanelSizes {
     fn default() -> Self {
-        // Calibrated to the v8 mockup's 320/1fr/500 grid + a generous
-        // bottom panel for the prompt input row.
+        // Reserve a balanced three-column workspace and a bottom panel for
+        // the prompt input row.
         Self {
             horizontal: [18.0, 56.0, 26.0],
             vertical: [72.0, 28.0],
@@ -692,9 +711,12 @@ impl DebugHub {
                 bytes: 0,
             }),
             tx,
-            ui_state: StdMutex::new(UiState {
-                release_test_instance: crate::isolated_test_instance_requested(),
-                ..UiState::default()
+            ui_state: StdMutex::new({
+
+
+                {
+                    UiState::default()
+                }
             }),
             debug_websocket_active: AtomicU64::new(0),
             debug_websocket_generation: AtomicU64::new(0),
@@ -724,8 +746,11 @@ impl DebugHub {
     /// Apply a partial UI-state patch. Any `None` field on `patch` keeps
     /// the existing value. The autonomy / panels / preview / tab fields
     /// are independent.
-    pub fn ui_apply(&self, patch: UiStatePatch) {
+    pub fn ui_apply(&self, patch: UiStatePatch) -> Result<UiState, &'static str> {
         let mut s = lock_or_recover(&self.ui_state, "DebugHub ui_state");
+        // Validate and record before changing any observed state. Both the
+        // command and its response snapshot belong to this single lock hold.
+        s.command_stream.record(&patch)?;
         let composer_menu = patch.composer_menu.clone();
         let open_modal = patch.open_modal.clone();
         let vault_request_center_open = patch.vault_request_center_open;
@@ -778,7 +803,14 @@ impl DebugHub {
                 }
             }
         }
-        if let Some(tab) = patch.active_tab {
+        if let Some(tab_patch) = patch.active_tab {
+            let previous = s
+                .active_tab
+                .as_ref()
+                .filter(|tab| tab.tab_id == tab_patch.tab_id)
+                .cloned()
+                .or_else(|| active_tab_for_id_from_open_tabs(&s.open_tabs, &tab_patch.tab_id));
+            let tab = tab_patch.apply_to(previous.as_ref());
             s.active_tab_id = Some(tab.tab_id.clone());
             s.active_tab = Some(tab);
         }
@@ -809,6 +841,13 @@ impl DebugHub {
                 .into_iter()
                 .filter_map(|mut item| {
                     if item.selector.trim().is_empty() {
+                        return None;
+                    }
+                    if item.hit_test.as_ref().is_some_and(|point| {
+                        ![point.x_fraction, point.y_fraction]
+                            .iter()
+                            .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+                    }) {
                         return None;
                     }
                     item.observe = normalize_debug_observation_fields(item.observe);
@@ -877,6 +916,7 @@ impl DebugHub {
         s.ui_revision = s.ui_revision.saturating_add(1);
         s.last_ui_patch_ms = Some(now_ms());
         s.last_ui_patch_source = Some(source);
+        Ok(s.clone())
     }
 
     /// Called from acp.rs::emit_and_debug whenever a Tauri event is
@@ -930,284 +970,10 @@ impl DebugHub {
             .collect()
     }
 
-    #[cfg(test)]
-    pub(crate) fn buffered_bytes(&self) -> usize {
-        lock_or_recover(&self.buffer, "DebugHub buffer").bytes
-    }
+
 }
 
-/// Partial UI patch — every field optional so callers can update only
-/// what changed. The renderer POSTs this to /panels, /preview, /autonomy
-/// etc and the debug driver reads /state/* to verify.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct UiStatePatch {
-    pub panels: Option<PanelSizes>,
-    pub preview: Option<PreviewTarget>,
-    #[serde(
-        rename = "clearPreview",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub clear_preview: Option<bool>,
-    pub autonomy: Option<String>,
-    #[serde(rename = "bottomTab", default)]
-    pub bottom_tab: Option<String>,
-    #[serde(rename = "leftTab", default)]
-    pub left_tab: Option<String>,
-    #[serde(rename = "rightTab", default)]
-    pub right_tab: Option<String>,
-    #[serde(rename = "activeTabId", default)]
-    pub active_tab_id: Option<String>,
-    #[serde(rename = "activeTab", default)]
-    pub active_tab: Option<UiActiveTabContext>,
-    #[serde(rename = "openTabs", default)]
-    pub open_tabs: Option<Vec<UiOpenTabContext>>,
-    /// Debug-driver tutorial/demo callouts. Stored in UiState so a
-    /// screenshot script can verify which selectors resolved.
-    #[serde(rename = "debugHighlights", default)]
-    pub debug_highlights: Option<Vec<DebugHighlightRequest>>,
-    /// Renderer-reported resolution state for the current callouts.
-    #[serde(rename = "debugHighlightResults", default)]
-    pub debug_highlight_results: Option<Vec<DebugHighlightResult>>,
-    /// Exact release-driver cleanup for an isolated Personal Browser Lock
-    /// verifier. The handler consumes this fixed command before broadcasting
-    /// the remaining patch, so it can never enter renderer state or events.
-    /// It is unavailable outside an attested isolated test instance and does
-    /// not accept PIN or verifier material.
-    #[serde(
-        rename = "releaseTestResetBrowserPersonalLock",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub release_test_reset_browser_personal_lock: Option<String>,
-    /// Spawn one inert Host MCP child owned by the active tab so the final
-    /// installed-candidate driver can prove the Tasks cleanup control against
-    /// a real process. Consumed by the HTTP handler and never broadcast or
-    /// persisted. The fixed command is available only in isolated test
-    /// instances and refuses tabs that already own a live Host MCP child.
-    #[serde(
-        rename = "releaseTestHostMcpChild",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub release_test_host_mcp_child: Option<String>,
-    /// Trigger one transient renderer render error so an isolated final
-    /// candidate can prove ErrorBoundary reset and reload recovery. The
-    /// command is never persisted in UiState and is rejected outside an
-    /// attested isolated test instance.
-    #[serde(
-        rename = "releaseTestRendererCrash",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub release_test_renderer_crash: Option<bool>,
-    /// Mount one deterministic local LazySurface error fixture so the final
-    /// candidate can prove its scoped Retry and Close recovery controls. The
-    /// fixture is transient and rejected outside an attested test instance.
-    #[serde(
-        rename = "releaseTestLazySurface",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub release_test_lazy_surface: Option<String>,
-    /// Seed the retired pre-migration autonomy value so the final candidate
-    /// can prove the visible Full Auto palette action performs a real state
-    /// transition. This is a transient isolated-test relay, never persisted.
-    #[serde(
-        rename = "releaseTestLegacyAutonomy",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub release_test_legacy_autonomy: Option<String>,
-    /// Put the real voice-chat MicButton state machine into a synthetic active
-    /// capture for native cancel-path verification. Relayed only for isolated
-    /// final candidates and never persisted in UiState.
-    #[serde(
-        rename = "releaseTestVoiceCapture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub release_test_voice_capture: Option<String>,
-    /// Select a fixed, non-network updater state for installed-candidate UI
-    /// verification. Relayed only for isolated final candidates and never
-    /// persisted in UiState.
-    #[serde(
-        rename = "debugUpdateFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_update_fixture: Option<String>,
-    /// Select one fixed pre-effect boundary for UI actions that would normally
-    /// mutate remote or operator filesystem state. Relayed only for isolated
-    /// final candidates and never persisted in UiState.
-    #[serde(
-        rename = "releaseTestExternalEffectBoundary",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub release_test_external_effect_boundary: Option<String>,
-    /// Fixed renderer-only manual handoff notice fixture. The renderer accepts
-    /// only `shown` and `clear`; no URL, feature id, command, or external
-    /// protocol request crosses this transient release-test relay.
-    #[serde(
-        rename = "debugManualSurfaceNotice",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_manual_surface_notice: Option<String>,
-    /// Renderer-reported receipts for debug-driver actions.
-    #[serde(rename = "debugActionResults", default)]
-    pub debug_action_results: Option<Vec<serde_json::Value>>,
-    /// Debug-driver renderer command for composer popovers such as
-    /// connection/agent/branch. Relayed only; not persisted in UiState.
-    #[serde(rename = "composerMenu", default)]
-    pub composer_menu: Option<String>,
-    /// Debug-driver renderer command for App-level modals such as
-    /// settings/help/palette/assets. Relayed only; not persisted in UiState.
-    #[serde(rename = "openModal", default)]
-    pub open_modal: Option<String>,
-    /// Fixed Agent CLI setup renderer fixture. The backend accepts only the
-    /// finite frontend fixture modes and relays them only for an isolated
-    /// final-candidate profile; it never probes, installs, authenticates, or
-    /// invokes a provider.
-    #[serde(
-        rename = "agentCliSetupFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub agent_cli_setup_fixture: Option<String>,
-    /// Fixed renderer-only provider-picker readiness fixture. It exposes only
-    /// the normal finite provider catalogue rows needed by the installed UI
-    /// driver; it never starts, probes, authenticates, or selects a provider.
-    /// The command is transient and accepted only for an isolated final
-    /// candidate profile.
-    #[serde(
-        rename = "debugAgentPickerFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_agent_picker_fixture: Option<String>,
-    /// Debug-driver renderer command for opening the non-approval Vault
-    /// Request Center popover. Approval/deny buttons remain human-only.
-    #[serde(rename = "vaultRequestCenterOpen", default)]
-    pub vault_request_center_open: Option<bool>,
-    /// Debug-driver renderer command for resetting or dismissing the
-    /// first-run setup guide before UI evidence capture.
-    #[serde(rename = "setupGuideDismissed", default)]
-    pub setup_guide_dismissed: Option<bool>,
-    /// Debug-driver renderer command for rescanning the bounded stored-session
-    /// index after an owned fixture file is created or removed. Relayed only;
-    /// no transcript content is accepted or returned through this field.
-    #[serde(rename = "refreshPastChats", default)]
-    pub refresh_past_chats: Option<bool>,
-    /// Debug-driver renderer command for attaching owned fixture files through
-    /// the real composer attachment pipeline. Relayed only and bounded again
-    /// in the renderer; the command never sends a prompt to an agent.
-    #[serde(rename = "debugAttachPaths", default)]
-    pub debug_attach_paths: Option<Vec<String>>,
-    /// Debug-driver renderer command for removing only the exact owned fixture
-    /// paths added by `debugAttachPaths`. Relayed only; unrelated attachments
-    /// remain untouched.
-    #[serde(rename = "debugRemoveAttachmentPaths", default)]
-    pub debug_remove_attachment_paths: Option<Vec<String>>,
-    /// Debug-driver renderer fixture command. Relayed only and interpreted as
-    /// a fixed, bounded in-memory event projection; it cannot emit provider
-    /// work or persist transcript data.
-    #[serde(
-        rename = "debugRendererFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_renderer_fixture: Option<serde_json::Value>,
-    /// Fixed renderer-only Task Manager fixture. The renderer accepts only
-    /// its bounded, in-memory fixture modes plus `clear`; no Task store,
-    /// scheduler, provider, Vault, or filesystem state is mutated. Relayed
-    /// only and never persisted in UiState.
-    #[serde(
-        rename = "debugTaskManagerFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_task_manager_fixture: Option<String>,
-    /// Fixed renderer-only ShellX Cut state fixture. The renderer accepts
-    /// only the seven typed Cut status values plus `clear`; it never probes,
-    /// starts, focuses, or otherwise controls the Cut editor. Relayed only
-    /// for isolated final-candidate profiles and never persisted in UiState.
-    #[serde(
-        rename = "debugCutToolingFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_cut_tooling_fixture: Option<String>,
-    /// Plugins release fixture. `owned-safe` is fixed and inert;
-    /// `owned-production` is accepted only for an isolated final-candidate
-    /// profile and filters the real catalog while keeping production
-    /// marketplace/Vault paths active. Relayed only and never persisted.
-    #[serde(
-        rename = "debugPluginsFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_plugins_fixture: Option<String>,
-    /// Fixed renderer-only Build plan review fixture. The renderer accepts
-    /// only `owned-ready` and `clear`; no Build state, provider, or project
-    /// mutation is performed. Relayed only and never persisted.
-    #[serde(
-        rename = "debugBuildPlanFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_build_plan_fixture: Option<String>,
-    /// Fixed renderer-only ShellX Agent credential fixture. The renderer
-    /// accepts only `owned-safe` and `clear`; the synthetic token never enters
-    /// authoritative UI state and clipboard/token rotation stay disabled.
-    #[serde(
-        rename = "debugShellxagentFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_shellxagent_fixture: Option<String>,
-    /// Fixed renderer-only clipboard source fixture. The renderer accepts only
-    /// narrowly enumerated owned surfaces plus `clear`; no operator clipboard,
-    /// Vault value, token, or recovery content is accepted by this relay.
-    #[serde(
-        rename = "debugClipboardFixture",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub debug_clipboard_fixture: Option<String>,
-    /// Debug-driver DOM click helper. Relayed only; not persisted in UiState.
-    #[serde(rename = "debugClick", default)]
-    pub debug_click: Option<serde_json::Value>,
-    /// Debug-driver DOM input helper. Relayed only; not persisted in UiState.
-    #[serde(rename = "debugInput", default)]
-    pub debug_input: Option<serde_json::Value>,
-    /// Debug-driver DOM drag helper. Relayed only; not persisted in UiState.
-    #[serde(rename = "debugDrag", default)]
-    pub debug_drag: Option<serde_json::Value>,
-    /// Optional renderer surface for debug-driver commands. Relayed only;
-    /// not persisted in UiState. Supported values are frontend-owned, e.g.
-    /// "browser" for the standalone ShellX Browser chrome.
-    #[serde(rename = "debugSurface", default)]
-    pub debug_surface: Option<String>,
-    /// Alias for debugClick used by a few older driver scripts.
-    #[serde(rename = "clickSelector", default)]
-    pub click_selector: Option<serde_json::Value>,
-    /// Debug-driver renderer command. The backend only relays this
-    /// through `debug-ui-state-patch`; it is intentionally not stored
-    /// in UiState because modal-open state is transient.
-    #[serde(rename = "cwdPicker", default)]
-    pub cwd_picker: Option<serde_json::Value>,
-    /// Optional mutation source for debug receipts. Renderer-originated
-    /// patches set this to "renderer"; external drivers can set their own
-    /// stable label.
-    #[serde(default)]
-    pub source: Option<String>,
-    /// Explicit opt-in for automation that intentionally changes cwd or
-    /// connection metadata on a tab with an active Build Mode run.
-    #[serde(rename = "allowBuildTabMutation", default)]
-    pub allow_build_tab_mutation: Option<bool>,
-}
+pub use ui_state_http::UiStatePatch;
 
 fn active_tab_for_id_from_open_tabs(
     open_tabs: &[UiOpenTabContext],
@@ -1310,7 +1076,7 @@ pub fn is_debug_enabled() -> bool {
 pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
     let app_state = ApiState { app: app.clone() };
 
-    let router: Router = Router::new()
+    let router: Router<ApiState> = Router::new()
         .route("/health", get(health))
         .route("/shellxagent.json", get(shellxagent_descriptor_http))
         .route(
@@ -1424,6 +1190,7 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         // don't already know the tab inventory (fresh shellXagent
         // drivers, React session-recovery flow, headless diagnostics).
         .route("/state/sessions", get(state_sessions))
+        .route("/state/background-tasks", get(state_background_tasks))
         .route("/state/tabs/report", get(state_tabs_report))
         .route("/state/agent_runs", get(state_agent_runs))
         .route("/state/session_assets", get(state_session_assets))
@@ -1461,20 +1228,6 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         .merge(tasks_http::task_routes())
         // ShellX Browser routes live in debug_api_browser.rs so route ownership stays scan-friendly.
         .merge(crate::debug_api_browser::browser_routes())
-        // Frozen-candidate-only Tauri invoke relay. Every handler repeats the
-        // exact isolated-profile gate before touching its private state.
-        .merge(crate::debug_api_release_relay::release_tauri_invoke_routes())
-        // Isolated frozen-candidate clipboard lease. It never returns clipboard
-        // contents and refuses to clear data that does not match the owned hash.
-        .merge(crate::debug_api_release_clipboard::release_clipboard_routes())
-        // Fixed child-webview form/hash bridge for exhaustive Vault-fill
-        // evidence. It accepts no script, selector, URL, or secret material and
-        // every request is bound to the active owned Browser tab and task.
-        .merge(crate::debug_api_release_browser_fixture::release_browser_fixture_routes())
-        // One-shot isolated picker result used by renderer-bound Windows/Linux
-        // candidate drivers. The production handler consumes it through a
-        // Tauri command before falling back to the real OS dialog.
-        .merge(crate::debug_api_release_native_picker::release_native_picker_routes())
         // GET /screenshot returns a PNG of the shellX window. Used by
         // orchestrating agents (and the diagnostics suite) for visual
         // verification.
@@ -1533,13 +1286,9 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         .route("/diagnostics", post(diagnostics_run))
         // // PR creation (best-effort via gh CLI).
         .route("/github/pr/create", post(github_pr_create))
-        // // Local encrypted secrets store. Keys-only
-        // listing (values never appear in /vault/keys), one-at-a-time
-        // POST /vault/get for the value. All endpoints require the
-        // bearer token from the existing auth middleware. The /vault/get
-        // handler is the FIRST endpoint where a successful response body
-        // contains a secret — the middleware's existing redaction of
-        // body bytes-out applies to that route by exclusion below.
+        // Local encrypted Vault metadata. Keys and resources omit values;
+        // /vault/get always returns the bounded raw-reveal denial. All
+        // endpoints require the existing authenticated loopback middleware.
         .route("/vault/status", get(vault_status_http))
         .route("/vault/lock", post(vault_lock_http))
         .route("/vault/setup/begin", post(vault_setup_begin_http))
@@ -1564,22 +1313,9 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
             "/vault/agent-requests/:request_id/cancel",
             post(vault_agent_request_cancel_http),
         )
-        .route("/vault/e2e/reset", post(vault_e2e_reset_http))
-        .route("/vault/e2e/seed-secret", post(vault_e2e_seed_secret_http))
-        .route("/vault/e2e/probe-use", post(vault_e2e_probe_use_http))
-        .route(
-            "/vault/e2e/approve-grant",
-            post(vault_e2e_approve_grant_http),
-        )
-        .route("/vault/e2e/deny-grant", post(vault_e2e_deny_grant_http))
-        .route("/vault/e2e/revoke-grant", post(vault_e2e_revoke_grant_http))
-        .route("/vault/e2e/expire-grant", post(vault_e2e_expire_grant_http))
-        .route("/vault/e2e/audit", get(vault_e2e_audit_http))
         .route("/vault/keys", get(vault_keys_http))
         .route("/vault/resources", get(vault_resources_http))
         .route("/vault/get", post(vault_get_http))
-        .route("/vault/set", post(vault_set_http))
-        .route("/vault/delete", post(vault_delete_http))
         // // Saved connection presets. Preset
         // bodies hold transport config + vault refs (no secrets) — see
         // connections.rs doc-comment for the threat model.
@@ -1637,8 +1373,16 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
             "/outside-connectors/:id/simulate",
             post(outside_connectors_simulate_http),
         )
-        .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
-        .with_state(app_state);
+        .layer(DefaultBodyLimit::max(32 * 1024 * 1024));
+
+
+    let router = router
+        .route("/vault/set", post(vault_set_http))
+        .route("/vault/delete", post(vault_delete_http));
+
+
+
+    let router = router.with_state(app_state);
 
     // Host + Origin gate every route. Token gates everything except /health
     // and comes from SHELLX_DEBUG_SECRET / legacy GROK_SHELL_DEBUG_SECRET
@@ -1832,7 +1576,7 @@ fn agent_doc_manifest_value(port: u16) -> serde_json::Value {
                 "installedPaths": [
                     "~/.shellx/agent-docs/shellx-host/SKILL.md"
                 ],
-                "activation": "session-scoped; injected only into agents launched by ShellX"
+                "activation": "full skill persists only in ShellX-owned agent docs; launched sessions receive compact runtime rules and, when enabled, session-scoped ShellX host MCP exposure"
             }
         ],
         "mcp": {
@@ -1939,8 +1683,7 @@ struct HealthResponse {
     ok: bool,
     #[serde(rename = "processId")]
     process_id: u32,
-    #[serde(rename = "instanceId", skip_serializing_if = "Option::is_none")]
-    instance_id: Option<String>,
+
     #[serde(rename = "appVersion")]
     app_version: &'static str,
     #[serde(rename = "debugApiVersion")]
@@ -1967,10 +1710,7 @@ fn health_response(port: u16, hub: &DebugHub) -> HealthResponse {
     HealthResponse {
         ok: true,
         process_id: std::process::id(),
-        instance_id: std::env::var("SHELLX_TEST_INSTANCE_ID")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
+
         app_version: env!("CARGO_PKG_VERSION"),
         debug_api_version: DEBUG_API_VERSION,
         build_commit: crate::build_metadata::SHELLX_BUILD_COMMIT,
@@ -1988,7 +1728,3 @@ async fn health(State(state): State<ApiState>) -> impl IntoResponse {
     let hub = state.hub();
     Json(health_response(debug_api_port(), &hub))
 }
-
-#[cfg(test)]
-#[path = "debug_api_tests.rs"]
-mod tests;

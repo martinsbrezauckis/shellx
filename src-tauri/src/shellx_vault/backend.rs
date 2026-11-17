@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -195,13 +196,7 @@ fn stable_default_profile_dir() -> PathBuf {
     shared_default_profile_dir().unwrap_or_else(|_| legacy_shellx_profile_dir())
 }
 
-fn stable_default_profile_dir_without_env_override() -> PathBuf {
-    let mut input = vault_broker::profile::current_profile_input();
-    input.override_dir = None;
-    vault_broker::profile::resolve_profile_dirs(input)
-        .map(|dirs| dirs.canonical_dir)
-        .unwrap_or_else(|_| legacy_shellx_profile_dir())
-}
+
 
 fn shared_default_profile_dir() -> Result<PathBuf, String> {
     vault_broker::profile::resolve_current_profile_dirs()
@@ -233,17 +228,9 @@ fn home_dir_from_env(home: Option<OsString>, userprofile: Option<OsString>) -> O
         .map(PathBuf::from)
 }
 
-fn normalize_guard_path(path: &Path) -> String {
-    let mut normalized = path.to_string_lossy().replace('\\', "/");
-    while normalized.ends_with('/') && normalized.len() > 1 {
-        normalized.pop();
-    }
-    normalized.to_ascii_lowercase()
-}
 
-fn paths_match_for_guard(left: &Path, right: &Path) -> bool {
-    normalize_guard_path(left) == normalize_guard_path(right)
-}
+
+
 
 fn profile_path(profile_dir: &Path) -> PathBuf {
     vault_broker::profile::canonical_profile_path(profile_dir)
@@ -418,16 +405,25 @@ pub struct ShellxVaultBackend {
     pending_session: tokio::sync::Mutex<Option<VaultBridgeSession>>,
     session: tokio::sync::Mutex<Option<VaultBridgeSession>>,
     manual_lock: tokio::sync::Mutex<bool>,
-    local_server: tokio::sync::Mutex<Option<vault_server::EmbeddedServer>>,
+    local_server: tokio::sync::Mutex<Option<LocalVaultServer>>,
     compat_mutation: tokio::sync::Mutex<()>,
     compat_values: tokio::sync::Mutex<BTreeMap<String, String>>,
     compat_meta: tokio::sync::Mutex<BTreeMap<String, ShellxVaultCompatMeta>>,
+    // The receipt belongs to legacy values staged during a pending confirmation.
+    // Retaining it until publication makes a failed confirmation retry report the
+    // import that its eventual durable flush performed.
+    staged_legacy_import_receipt: tokio::sync::Mutex<Option<LegacyImportReceipt>>,
+
+
+
+
     grants: tokio::sync::Mutex<BrokerGrantPolicy>,
-    debug_audit: tokio::sync::Mutex<Vec<VaultDebugAuditRecord>>,
+
 }
 
+
+
 const REMEMBERED_UNLOCK_RETRY_COOLDOWN_MS: i64 = 15_000;
-const MAX_DEBUG_AUDIT_RECORDS: usize = 512;
 
 #[derive(Debug, Default)]
 struct RememberedUnlockAttempt {
@@ -435,34 +431,12 @@ struct RememberedUnlockAttempt {
     last_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct VaultDebugAuditRecord {
-    pub receipt_id: String,
-    pub action: String,
-    pub secret_ref: Option<String>,
-    pub grant_id: Option<String>,
-    pub decision: Option<String>,
-    pub reason: Option<String>,
-    pub secret_present: Option<bool>,
-    pub secret_exposed: bool,
-    pub t: i64,
+struct LocalVaultServer {
+    server: vault_server::EmbeddedServer,
+    token: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct VaultDebugProbeResponse {
-    pub ok: bool,
-    pub decision: String,
-    pub reason: Option<String>,
-    pub secret_ref: String,
-    pub operation: String,
-    pub actor: GrantActorContext,
-    pub grant_id: Option<String>,
-    pub secret_present: bool,
-    pub secret_exposed: bool,
-    pub receipt_id: String,
-}
+
 
 #[derive(Clone)]
 struct VaultBridgeSession {
@@ -505,37 +479,9 @@ impl RememberedDeviceStore for OsRememberedDeviceStore {
     }
 }
 
-#[derive(Default)]
-struct MemoryRememberedDeviceStore {
-    values: Mutex<BTreeMap<String, String>>,
-}
 
-impl RememberedDeviceStore for MemoryRememberedDeviceStore {
-    fn get(&self, account: &str) -> Result<Option<String>, String> {
-        Ok(self
-            .values
-            .lock()
-            .map_err(|_| "remembered device memory store poisoned".to_string())?
-            .get(account)
-            .cloned())
-    }
 
-    fn set(&self, account: &str, value: &str) -> Result<(), String> {
-        self.values
-            .lock()
-            .map_err(|_| "remembered device memory store poisoned".to_string())?
-            .insert(account.to_string(), value.to_string());
-        Ok(())
-    }
 
-    fn delete(&self, account: &str) -> Result<(), String> {
-        self.values
-            .lock()
-            .map_err(|_| "remembered device memory store poisoned".to_string())?
-            .remove(account);
-        Ok(())
-    }
-}
 
 fn remembered_device_entry(account: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(REMEMBERED_DEVICE_KEYRING_SERVICE, account)
@@ -557,6 +503,7 @@ impl Default for ShellxVaultBackend {
             profile_dir,
             initial_status,
             Arc::new(OsRememberedDeviceStore),
+
         )
     }
 }
@@ -566,25 +513,17 @@ impl ShellxVaultBackend {
         &self.profile_dir
     }
 
-    pub fn for_test(profile_dir: PathBuf) -> Self {
-        Self::with_remembered_device_store_for_test(
-            profile_dir,
-            Arc::new(MemoryRememberedDeviceStore::default()),
-        )
-    }
 
-    fn with_remembered_device_store_for_test(
-        profile_dir: PathBuf,
-        remembered_device_store: Arc<dyn RememberedDeviceStore>,
-    ) -> Self {
-        let initial_status = load_persisted_profile_status(&profile_path(&profile_dir));
-        Self::with_initial_status_and_store(profile_dir, initial_status, remembered_device_store)
-    }
+
+
+
+
 
     fn with_initial_status_and_store(
         profile_dir: PathBuf,
         mut initial_status: ShellxVaultStatus,
         remembered_device_store: Arc<dyn RememberedDeviceStore>,
+
     ) -> Self {
         let grants = match read_persisted_grants(&grants_path(&profile_dir)) {
             Ok(grants) => grants,
@@ -609,17 +548,20 @@ impl ShellxVaultBackend {
             compat_mutation: tokio::sync::Mutex::new(()),
             compat_values: tokio::sync::Mutex::new(BTreeMap::new()),
             compat_meta: tokio::sync::Mutex::new(BTreeMap::new()),
+            staged_legacy_import_receipt: tokio::sync::Mutex::new(None),
+
+
+
+
             grants: tokio::sync::Mutex::new(grants),
-            debug_audit: tokio::sync::Mutex::new(Vec::new()),
+
         }
     }
 
     pub async fn status(&self) -> ShellxVaultStatus {
         let _ = self.ensure_remembered_device_unlocked_for_access().await;
         let mut status = self.status.lock().await.clone();
-        status.legacy_vault_detected = legacy_vault_path()
-            .map(|path| path.exists())
-            .unwrap_or(false);
+        status.legacy_vault_detected = self.legacy_vault_detected().await;
         status.active_grants = self
             .grants
             .lock()
@@ -630,58 +572,6 @@ impl ShellxVaultBackend {
             .filter(|grant| grant.status == BrokerGrantStatus::Approved)
             .count();
         status
-    }
-
-    pub fn debug_require_isolated_e2e_profile(&self) -> Result<(), String> {
-        self.debug_require_isolated_e2e_profile_for_env(std::env::var_os(
-            "SHELLX_VAULT_PROFILE_DIR",
-        ))
-    }
-
-    fn debug_require_isolated_e2e_profile_for_env(
-        &self,
-        profile_dir_env: Option<OsString>,
-    ) -> Result<(), String> {
-        let configured = profile_dir_env
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                "Vault E2E routes require SHELLX_VAULT_PROFILE_DIR to point at a disposable test profile".to_string()
-            })?;
-        if !paths_match_for_guard(&self.profile_dir, &configured) {
-            return Err(format!(
-                "Vault E2E profile mismatch: backend uses {}, but SHELLX_VAULT_PROFILE_DIR is {}",
-                self.profile_dir.display(),
-                configured.display()
-            ));
-        }
-        if !self.profile_dir.is_absolute() {
-            return Err(format!(
-                "Vault E2E profile must be an absolute disposable path, got {}",
-                self.profile_dir.display()
-            ));
-        }
-        let profile_key = normalize_guard_path(&self.profile_dir);
-        let stable_key = normalize_guard_path(&stable_default_profile_dir_without_env_override());
-        if profile_key == stable_key || profile_key.ends_with("/.shellx/shellx-vault") {
-            return Err(format!(
-                "Vault E2E profile refuses stable user Vault path {}",
-                self.profile_dir.display()
-            ));
-        }
-        let leaf = self
-            .profile_dir
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if !leaf.contains("e2e") && !leaf.contains("test") {
-            return Err(format!(
-                "Vault E2E profile path must be clearly disposable and include e2e or test, got {}",
-                self.profile_dir.display()
-            ));
-        }
-        Ok(())
     }
 
     pub async fn begin_setup(&self, request: SetupRequest) -> Result<RecoveryKit, String> {
@@ -705,12 +595,31 @@ impl ShellxVaultBackend {
             SetupTarget::External => ShellxVaultMode::External,
         };
         let remember_device = request.remember_device.unwrap_or(true);
+        // The local setup UI has no token field. When changing an already
+        // confirmed local setup, keep its embedded-server token so candidate
+        // validation reaches the existing server without changing its data.
+        let existing_local_token = if matches!(request.target, SetupTarget::Local)
+            && request
+                .token
+                .as_deref()
+                .map(|token| token.trim().is_empty())
+                .unwrap_or(true)
+        {
+            read_persisted_profile(&self.profile_path())
+                .ok()
+                .filter(|profile| {
+                    matches!(profile.mode, ShellxVaultMode::Local) && profile.recovery.confirmed
+                })
+                .and_then(|profile| profile.token)
+        } else {
+            None
+        };
         let (server_url, token, keyfile_json, keyfile_to_publish, session) = self
             .prepare_session(
                 &request.target,
                 request.server_url.as_deref(),
                 request.repo.as_deref().unwrap_or("default"),
-                request.token.as_deref(),
+                request.token.as_deref().or(existing_local_token.as_deref()),
                 request.keyfile_json.as_deref(),
                 &request.passphrase,
             )
@@ -743,6 +652,13 @@ impl ShellxVaultBackend {
                 pending_confirmation_id: Some(kit.confirmation_id.clone()),
             },
         };
+        // Candidate preparation succeeded. Replacing the live session and
+        // pending setup state is now safe to publish as one transition.
+        *self.session.lock().await = None;
+        *self.manual_lock.lock().await = false;
+        self.compat_values.lock().await.clear();
+        self.compat_meta.lock().await.clear();
+        *self.staged_legacy_import_receipt.lock().await = None;
         *self.pending_profile.lock().await = Some(profile);
         *self.pending_keyfile_publish.lock().await = keyfile_to_publish;
         *self.pending_remembered_device_secret.lock().await = remembered_device_secret;
@@ -753,6 +669,8 @@ impl ShellxVaultBackend {
         status.mode = ShellxVaultMode::Unconfigured;
         status.unlocked = false;
         status.recovery_confirmed = false;
+        status.remembered_device_enabled = false;
+        status.last_error = None;
         Ok(kit)
     }
 
@@ -761,10 +679,11 @@ impl ShellxVaultBackend {
             return Err("vault passphrase must not be empty".into());
         }
         let _transition = self.state_transition.lock().await;
+        let cancelling_pending_setup = self.pending_profile.lock().await.is_some();
         let mut profile = read_persisted_profile(&self.profile_path())
             .map_err(|e| format!("Vault profile load failed: {e}"))?;
         if !profile.recovery.confirmed {
-            return Err("vault recovery has not been confirmed".into());
+            return Err("vault setup has not been confirmed".into());
         }
         let remember_device = request.remember_device.unwrap_or(profile.remember_device);
         let target = match profile.mode {
@@ -801,18 +720,34 @@ impl ShellxVaultBackend {
         } else {
             self.forget_current_device_for_profile(&mut profile).await?;
         }
+        if !cancelling_pending_setup {
+            self.flush_compat_cache_to_session(&session).await?;
+        }
         self.write_profile(&profile)?;
+        if cancelling_pending_setup {
+            self.compat_values.lock().await.clear();
+            self.compat_meta.lock().await.clear();
+            *self.staged_legacy_import_receipt.lock().await = None;
+            *self.pending_profile.lock().await = None;
+            *self.pending_keyfile_publish.lock().await = None;
+            *self.pending_remembered_device_secret.lock().await = None;
+            *self.pending_session.lock().await = None;
+        }
         *self.session.lock().await = Some(session.clone());
         *self.manual_lock.lock().await = false;
-        self.flush_compat_cache_to_session(&session).await?;
-        let legacy_xai_import_error = self.import_legacy_xai_key_if_present().await.err();
         *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
-        let mut status = self.status.lock().await;
-        status.mode = profile.mode;
-        status.unlocked = true;
-        status.recovery_confirmed = true;
-        status.remembered_device_enabled = profile.remember_device;
-        status.last_error = remember_device_error.or_else(|| {
+        {
+            let mut status = self.status.lock().await;
+            status.mode = profile.mode;
+            status.unlocked = true;
+            status.recovery_confirmed = true;
+            status.remembered_device_enabled = profile.remember_device;
+            status.last_error = remember_device_error.clone();
+        }
+        // Optional import uses the activated Vault, including after cancelling
+        // an unfinished replacement whose old status was unconfigured.
+        let legacy_xai_import_error = self.import_legacy_xai_key_if_present().await.err();
+        self.status.lock().await.last_error = remember_device_error.or_else(|| {
             legacy_xai_import_error.map(|err| format!("Legacy xAI key import skipped: {err}"))
         });
         Ok(())
@@ -826,13 +761,14 @@ impl ShellxVaultBackend {
                 return Err("vault is not configured".into());
             }
             if !status.recovery_confirmed {
-                return Err("vault recovery has not been confirmed".into());
+                return Err("vault setup has not been confirmed".into());
             }
         }
         *self.manual_lock.lock().await = true;
         *self.session.lock().await = None;
         self.compat_values.lock().await.clear();
         self.compat_meta.lock().await.clear();
+        *self.staged_legacy_import_receipt.lock().await = None;
         *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
         let mut status = self.status.lock().await;
         status.unlocked = false;
@@ -859,13 +795,7 @@ impl ShellxVaultBackend {
         String,
     > {
         let (server, token) = match target {
-            SetupTarget::Local => {
-                let token = token
-                    .map(str::to_string)
-                    .unwrap_or_else(|| hex::encode(vault_core::random_bytes::<24>()));
-                let server = self.ensure_local_server(&token).await?;
-                (server, token)
-            }
+            SetupTarget::Local => self.ensure_local_server(token).await?,
             SetupTarget::External => {
                 let server = server_url
                     .map(str::trim)
@@ -1055,16 +985,19 @@ impl ShellxVaultBackend {
                 &device_secret,
             )
             .await?;
+        self.flush_compat_cache_to_session(&session).await?;
         *self.session.lock().await = Some(session.clone());
         *self.manual_lock.lock().await = false;
-        self.flush_compat_cache_to_session(&session).await?;
+        {
+            let mut status = self.status.lock().await;
+            status.mode = profile.mode;
+            status.unlocked = true;
+            status.recovery_confirmed = true;
+            status.remembered_device_enabled = true;
+            status.last_error = None;
+        }
         let legacy_xai_import_error = self.import_legacy_xai_key_if_present().await.err();
-        let mut status = self.status.lock().await;
-        status.mode = profile.mode;
-        status.unlocked = true;
-        status.recovery_confirmed = true;
-        status.remembered_device_enabled = true;
-        status.last_error =
+        self.status.lock().await.last_error =
             legacy_xai_import_error.map(|err| format!("Legacy xAI key import skipped: {err}"));
         Ok(true)
     }
@@ -1154,19 +1087,64 @@ impl ShellxVaultBackend {
         }
     }
 
-    async fn ensure_local_server(&self, token: &str) -> Result<String, String> {
-        let mut guard = self.local_server.lock().await;
-        if let Some(server) = guard.as_ref() {
-            return Ok(format!("http://{}", server.addr));
+    /// Public compatibility operations must operate on a live Vault session.
+    ///
+    /// The compatibility maps are reserved for legacy values staged while a
+    /// recovery confirmation is still pending. They are intentionally never a
+    /// fallback for an ordinary read or mutation: that would acknowledge a
+    /// value that disappears when this backend is reconstructed.
+    async fn require_durable_compat_session(&self) -> Result<VaultBridgeSession, String> {
+        let status = self.status.lock().await;
+        if matches!(status.mode, ShellxVaultMode::Unconfigured) {
+            return Err("vault is not configured; configure it before using secrets".into());
         }
+        if !status.recovery_confirmed {
+            return Err(
+                "vault setup has not been confirmed; finish setup before using secrets".into(),
+            );
+        }
+        drop(status);
+        if let Some(session) = self.session.lock().await.clone() {
+            return Ok(session);
+        }
+        Err("vault is locked; unlock before using secrets".into())
+    }
+
+    async fn ensure_local_server(
+        &self,
+        requested_token: Option<&str>,
+    ) -> Result<(String, String), String> {
+        let requested_token = requested_token
+            .map(str::trim)
+            .filter(|token| !token.is_empty());
+        let mut guard = self.local_server.lock().await;
+        if let Some(active) = guard.as_ref() {
+            if let Some(requested_token) = requested_token {
+                if requested_token != active.token.as_str() {
+                    return Err(
+                        "local Vault token does not match the active embedded server".into(),
+                    );
+                }
+            }
+            return Ok((
+                format!("http://{}", active.server.addr),
+                active.token.clone(),
+            ));
+        }
+        let token = requested_token
+            .map(str::to_string)
+            .unwrap_or_else(|| hex::encode(vault_core::random_bytes::<24>()));
         let dir = self.profile_dir.join("local-vault-server");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let server = vault_server::serve_embedded(&dir, "default", token)
+        let server = vault_server::serve_embedded(&dir, "default", &token)
             .await
             .map_err(|e| e.to_string())?;
         let url = format!("http://{}", server.addr);
-        *guard = Some(server);
-        Ok(url)
+        *guard = Some(LocalVaultServer {
+            server,
+            token: token.clone(),
+        });
+        Ok((url, token))
     }
 
     pub async fn confirm_recovery_saved(
@@ -1174,11 +1152,12 @@ impl ShellxVaultBackend {
         confirmation_id: &str,
         import_legacy: bool,
     ) -> Result<LegacyImportReceipt, String> {
-        let legacy_pairs = if import_legacy {
-            self.extract_legacy_pairs().await?
-        } else {
-            Vec::new()
-        };
+        let legacy_pairs =
+            if import_legacy && self.staged_legacy_import_receipt.lock().await.is_none() {
+                self.extract_legacy_pairs().await?
+            } else {
+                Vec::new()
+            };
         self.confirm_recovery_saved_with_legacy_pairs(confirmation_id, import_legacy, legacy_pairs)
             .await
     }
@@ -1191,15 +1170,13 @@ impl ShellxVaultBackend {
     ) -> Result<LegacyImportReceipt, String> {
         let _transition = self.state_transition.lock().await;
         self.ensure_pending_confirmation(confirmation_id).await?;
-        let receipt = if import_legacy {
+        let staged_receipt = self.staged_legacy_import_receipt.lock().await.clone();
+        let receipt = if let Some(receipt) = staged_receipt {
+            receipt
+        } else if import_legacy {
             self.stage_legacy_pairs(legacy_pairs).await?
         } else {
-            LegacyImportReceipt {
-                imported_keys: 0,
-                skipped: true,
-                backup_path: None,
-                completed_at_ms: now_ms(),
-            }
+            legacy_import_noop_receipt()
         };
 
         let mut profile = {
@@ -1208,7 +1185,7 @@ impl ShellxVaultBackend {
                 .as_ref()
                 .ok_or_else(|| "no pending vault setup".to_string())?;
             if profile.recovery.pending_confirmation_id.as_deref() != Some(confirmation_id) {
-                return Err("recovery confirmation id did not match".into());
+                return Err("setup confirmation id did not match".into());
             }
             profile.clone()
         };
@@ -1252,16 +1229,22 @@ impl ShellxVaultBackend {
             self.remembered_device_store
                 .delete(&self.remembered_device_account())?;
         }
+        self.flush_compat_cache_to_session(&session_to_activate)
+            .await?;
+
+
         self.write_profile(&profile)?;
         *self.pending_profile.lock().await = Some(profile.clone());
-        let activated_session = self.pending_session.lock().await.take();
-        *self.session.lock().await = activated_session.clone();
+        let activated_session = self
+            .pending_session
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| "no pending vault session".to_string())?;
+        *self.session.lock().await = Some(activated_session);
         *self.manual_lock.lock().await = false;
         *self.pending_keyfile_publish.lock().await = None;
         *self.pending_remembered_device_secret.lock().await = None;
-        if let Some(session) = activated_session.as_ref() {
-            self.flush_compat_cache_to_session(session).await?;
-        }
         *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
         let mut status = self.status.lock().await;
         status.mode = profile.mode.clone();
@@ -1269,6 +1252,7 @@ impl ShellxVaultBackend {
         status.recovery_confirmed = true;
         status.remembered_device_enabled = profile.remember_device;
         status.last_error = remember_device_error;
+        *self.staged_legacy_import_receipt.lock().await = None;
         Ok(receipt)
     }
 
@@ -1278,7 +1262,7 @@ impl ShellxVaultBackend {
             .as_ref()
             .ok_or_else(|| "no pending vault setup".to_string())?;
         if profile.recovery.pending_confirmation_id.as_deref() != Some(confirmation_id) {
-            return Err("recovery confirmation id did not match".into());
+            return Err("setup confirmation id did not match".into());
         }
         Ok(())
     }
@@ -1291,9 +1275,19 @@ impl ShellxVaultBackend {
         let metadata = self.compat_meta.lock().await.clone();
         for (key, value) in staged {
             let meta = metadata.get(&key).cloned().unwrap_or_default();
+
             save_compat_item(session, &key, &value, meta).await?;
         }
+        self.compat_values.lock().await.clear();
+        self.compat_meta.lock().await.clear();
         Ok(())
+    }
+
+    async fn legacy_vault_detected(&self) -> bool {
+
+        legacy_vault_path()
+            .map(|path| path.exists())
+            .unwrap_or(false)
     }
 
     async fn extract_legacy_pairs(&self) -> Result<Vec<(String, String)>, String> {
@@ -1302,6 +1296,7 @@ impl ShellxVaultBackend {
             return Err("vault setup must be started first".into());
         }
         drop(pending);
+
         if !legacy_vault_path()
             .map(|path| path.exists())
             .unwrap_or(false)
@@ -1325,8 +1320,10 @@ impl ShellxVaultBackend {
         &self,
         pairs: Vec<(String, String)>,
     ) -> Result<LegacyImportReceipt, String> {
-        let mut compat = self.compat_values.lock().await;
-        let starting_len = compat.len();
+        if let Some(receipt) = self.staged_legacy_import_receipt.lock().await.clone() {
+            return Ok(receipt);
+        }
+        let mut normalized_pairs = Vec::with_capacity(pairs.len());
         for (key, value) in pairs {
             let key = key.trim().to_string();
             if key.is_empty() {
@@ -1335,21 +1332,31 @@ impl ShellxVaultBackend {
             if value.len() > 64 * 1024 {
                 return Err(format!("legacy value for {key} exceeds 64KB cap"));
             }
-            compat.insert(canonical_legacy_import_key(&key).to_string(), value);
+            normalized_pairs.push((canonical_legacy_import_key(&key).to_string(), value));
+        }
+        let mut compat = self.compat_values.lock().await;
+        let starting_len = compat.len();
+        for (key, value) in normalized_pairs {
+            compat.insert(key, value);
         }
         let imported_keys = compat.len().saturating_sub(starting_len);
-        Ok(LegacyImportReceipt {
-            imported_keys,
+        drop(compat);
+        let mut staged_receipt = self.staged_legacy_import_receipt.lock().await;
+        let receipt = staged_receipt.get_or_insert_with(|| LegacyImportReceipt {
+            imported_keys: 0,
             skipped: false,
             backup_path: None,
             completed_at_ms: now_ms(),
-        })
+        });
+        receipt.imported_keys = imported_keys;
+        Ok(receipt.clone())
     }
 
     async fn import_legacy_xai_key_if_present(&self) -> Result<LegacyImportReceipt, String> {
         if self.session.lock().await.is_none() {
             return Ok(legacy_import_noop_receipt());
         }
+
         if !legacy_vault_path()
             .map(|path| path.exists())
             .unwrap_or(false)
@@ -1365,18 +1372,18 @@ impl ShellxVaultBackend {
                 pairs.push(((*key).to_string(), value));
             }
         }
-        self.import_legacy_xai_pairs_for_existing_vault(pairs).await
+        self.import_legacy_xai_pairs_for_existing_vault_locked(pairs)
+            .await
     }
 
-    async fn import_legacy_xai_pairs_for_existing_vault(
+
+
+    async fn import_legacy_xai_pairs_for_existing_vault_locked(
         &self,
         pairs: Vec<(String, String)>,
     ) -> Result<LegacyImportReceipt, String> {
-        if self.session.lock().await.is_none() {
-            return Err("vault must be unlocked before importing legacy xAI key".into());
-        }
-        if self
-            .compat_get_current_session_or_cache("xai/api-key")
+        let session = self.require_durable_compat_session().await?;
+        if Self::compat_get_from_session(&session, "xai/api-key")
             .await?
             .is_some()
         {
@@ -1396,7 +1403,7 @@ impl ShellxVaultBackend {
             if value.trim().is_empty() {
                 continue;
             }
-            self.compat_set_default_meta_current_session_or_cache("xai/api-key", &value)
+            self.compat_set_default_meta_current_session("xai/api-key", &value)
                 .await?;
             return Ok(LegacyImportReceipt {
                 imported_keys: 1,
@@ -1408,40 +1415,32 @@ impl ShellxVaultBackend {
         Ok(legacy_import_noop_receipt())
     }
 
-    async fn compat_get_current_session_or_cache(
-        &self,
+    async fn compat_get_from_session(
+        session: &VaultBridgeSession,
         key: &str,
     ) -> Result<Option<String>, String> {
-        if let Some(session) = self.session.lock().await.clone() {
-            let id = compat_key_to_item_id(key);
-            return items::read_item(&session.api, &session.master, &id)
-                .await
-                .map(|item| item.and_then(compat_value_from_item))
-                .map_err(|e| e.to_string());
-        }
-        Ok(self.compat_values.lock().await.get(key).cloned())
+        let id = compat_key_to_item_id(key);
+        items::read_item(&session.api, &session.master, &id)
+            .await
+            .map(|item| item.and_then(compat_value_from_item))
+            .map_err(|e| e.to_string())
     }
 
     pub async fn compat_get(&self, key: &str) -> Result<Option<String>, String> {
         self.ensure_remembered_device_unlocked_for_access().await?;
-        self.compat_get_current_session_or_cache(key).await
+        let _transition = self.state_transition.lock().await;
+        let session = self.require_durable_compat_session().await?;
+        Self::compat_get_from_session(&session, key).await
     }
 
-    async fn compat_set_default_meta_current_session_or_cache(
+    async fn compat_set_default_meta_current_session(
         &self,
         key: &str,
         value: &str,
     ) -> Result<(), String> {
         let meta = ShellxVaultCompatMeta::default();
-        if let Some(session) = self.session.lock().await.clone() {
-            save_compat_item(&session, key, value, meta.clone()).await?;
-        }
-        self.compat_values
-            .lock()
-            .await
-            .insert(key.to_string(), value.to_string());
-        self.compat_meta.lock().await.insert(key.to_string(), meta);
-        Ok(())
+        let session = self.require_durable_compat_session().await?;
+        save_compat_item(&session, key, value, meta).await
     }
 
     pub async fn compat_set(&self, key: &str, value: &str) -> Result<(), String> {
@@ -1492,8 +1491,9 @@ impl ShellxVaultBackend {
         }
         let _mutation = self.compat_mutation.lock().await;
         self.ensure_remembered_device_unlocked_for_access().await?;
-        if self
-            .compat_get_current_session_or_cache(key)
+        let _transition = self.state_transition.lock().await;
+        let session = self.require_durable_compat_session().await?;
+        if Self::compat_get_from_session(&session, key)
             .await?
             .is_some()
         {
@@ -1501,6 +1501,7 @@ impl ShellxVaultBackend {
         }
         let meta = self.compat_meta_for_key(key).await?;
         self.compat_set_resource_with_metadata_locked(
+            &session,
             key,
             value,
             description,
@@ -1529,14 +1530,16 @@ impl ShellxVaultBackend {
         }
         let _mutation = self.compat_mutation.lock().await;
         self.ensure_remembered_device_unlocked_for_access().await?;
-        if self
-            .compat_get_current_session_or_cache(key)
+        let _transition = self.state_transition.lock().await;
+        let session = self.require_durable_compat_session().await?;
+        if Self::compat_get_from_session(&session, key)
             .await?
             .is_some()
         {
             return Ok(false);
         }
         self.compat_set_resource_with_metadata_locked(
+            &session,
             key,
             value,
             description,
@@ -1585,7 +1588,11 @@ impl ShellxVaultBackend {
         resource_fields: Vec<String>,
     ) -> Result<(), String> {
         let _mutation = self.compat_mutation.lock().await;
+        self.ensure_remembered_device_unlocked_for_access().await?;
+        let _transition = self.state_transition.lock().await;
+        let session = self.require_durable_compat_session().await?;
         self.compat_set_resource_with_metadata_locked(
+            &session,
             key,
             value,
             description,
@@ -1601,6 +1608,7 @@ impl ShellxVaultBackend {
     #[allow(clippy::too_many_arguments)]
     async fn compat_set_resource_with_metadata_locked(
         &self,
+        session: &VaultBridgeSession,
         key: &str,
         value: &str,
         description: Option<String>,
@@ -1613,7 +1621,6 @@ impl ShellxVaultBackend {
         if key.trim().is_empty() {
             return Err("vault key cannot be empty".into());
         }
-        self.ensure_remembered_device_unlocked_for_access().await?;
         let description = normalize_description(description)?;
         let resource_summary = normalize_resource_text(resource_summary, "resource summary")?;
         let resource_provider = normalize_resource_text(resource_provider, "resource provider")?;
@@ -1626,17 +1633,7 @@ impl ShellxVaultBackend {
             resource_provider,
             resource_fields,
         };
-        if let Some(session) = self.session.lock().await.clone() {
-            save_compat_item(&session, key, value, meta.clone()).await?;
-        }
-        self.compat_values
-            .lock()
-            .await
-            .insert(key.to_string(), value.to_string());
-        self.compat_meta
-            .lock()
-            .await
-            .insert(key.to_string(), meta.clone());
+        save_compat_item(session, key, value, meta.clone()).await?;
         if user_only {
             self.revoke_grants_for_secret(key).await?;
         }
@@ -1646,14 +1643,12 @@ impl ShellxVaultBackend {
     pub async fn compat_delete(&self, key: &str) -> Result<(), String> {
         let _mutation = self.compat_mutation.lock().await;
         self.ensure_remembered_device_unlocked_for_access().await?;
-        if let Some(session) = self.session.lock().await.clone() {
-            let id = compat_key_to_item_id(key);
-            items::delete_item(&session.api, &session.master, &session.device, &id)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-        self.compat_values.lock().await.remove(key);
-        self.compat_meta.lock().await.remove(key);
+        let _transition = self.state_transition.lock().await;
+        let session = self.require_durable_compat_session().await?;
+        let id = compat_key_to_item_id(key);
+        items::delete_item(&session.api, &session.master, &session.device, &id)
+            .await
+            .map_err(|e| e.to_string())?;
         self.revoke_grants_for_secret(key).await?;
         Ok(())
     }
@@ -1672,35 +1667,14 @@ impl ShellxVaultBackend {
         prefix: Option<&str>,
     ) -> Result<Vec<ShellxVaultKeyMeta>, String> {
         self.ensure_remembered_device_unlocked_for_access().await?;
-        if let Some(session) = self.session.lock().await.clone() {
-            let mut rows = items::list_items(&session.api, &session.master)
-                .await
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .filter_map(compat_item_to_key_meta)
-                .filter(|row| prefix.map(|p| row.key.starts_with(p)).unwrap_or(true))
-                .collect::<Vec<_>>();
-            rows.sort_by(|a, b| a.key.cmp(&b.key));
-            return Ok(rows);
-        }
-        let compat = self.compat_values.lock().await;
-        let metadata = self.compat_meta.lock().await;
-        let mut rows = compat
-            .keys()
-            .filter(|key| prefix.map(|p| key.starts_with(p)).unwrap_or(true))
-            .map(|key| {
-                let meta = metadata.get(key).cloned().unwrap_or_default();
-                sanitize_key_meta_for_listing(ShellxVaultKeyMeta {
-                    key: key.clone(),
-                    description: meta.description,
-                    user_only: meta.user_only,
-                    resource_kind: meta.resource_kind,
-                    resource_summary: meta.resource_summary,
-                    resource_provider: meta.resource_provider,
-                    resource_fields: meta.resource_fields,
-                    last_modified_ms: 0,
-                })
-            })
+        let _transition = self.state_transition.lock().await;
+        let session = self.require_durable_compat_session().await?;
+        let mut rows = items::list_items(&session.api, &session.master)
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter_map(compat_item_to_key_meta)
+            .filter(|row| prefix.map(|p| row.key.starts_with(p)).unwrap_or(true))
             .collect::<Vec<_>>();
         rows.sort_by(|a, b| a.key.cmp(&b.key));
         Ok(rows)
@@ -1754,25 +1728,19 @@ impl ShellxVaultBackend {
             return Err("vault key cannot be empty".into());
         }
         self.ensure_remembered_device_unlocked_for_access().await?;
+        let _transition = self.state_transition.lock().await;
+        let session = self.require_durable_compat_session().await?;
         let mut meta = self.compat_meta_for_key(key).await?;
         meta.description = normalize_description(description)?;
         meta.user_only = user_only;
-        if let Some(session) = self.session.lock().await.clone() {
-            let id = compat_key_to_item_id(key);
-            let item = items::read_item(&session.api, &session.master, &id)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("vault key not found: {key}"))?;
-            let value = compat_value_from_item(item)
-                .ok_or_else(|| format!("vault key not found: {key}"))?;
-            save_compat_item(&session, key, &value, meta.clone()).await?;
-        } else if !self.compat_values.lock().await.contains_key(key) {
-            return Err(format!("vault key not found: {key}"));
-        }
-        self.compat_meta
-            .lock()
+        let id = compat_key_to_item_id(key);
+        let item = items::read_item(&session.api, &session.master, &id)
             .await
-            .insert(key.to_string(), meta.clone());
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("vault key not found: {key}"))?;
+        let value =
+            compat_value_from_item(item).ok_or_else(|| format!("vault key not found: {key}"))?;
+        save_compat_item(&session, key, &value, meta.clone()).await?;
         if user_only {
             self.revoke_grants_for_secret(key).await?;
         }
@@ -1780,17 +1748,13 @@ impl ShellxVaultBackend {
     }
 
     async fn compat_meta_for_key(&self, key: &str) -> Result<ShellxVaultCompatMeta, String> {
-        if let Some(meta) = self.compat_meta.lock().await.get(key).cloned() {
-            return Ok(meta);
-        }
-        if let Some(session) = self.session.lock().await.clone() {
-            let id = compat_key_to_item_id(key);
-            if let Some(item) = items::read_item(&session.api, &session.master, &id)
-                .await
-                .map_err(|e| e.to_string())?
-            {
-                return Ok(compat_meta_from_item(&item).unwrap_or_default());
-            }
+        let session = self.require_durable_compat_session().await?;
+        let id = compat_key_to_item_id(key);
+        if let Some(item) = items::read_item(&session.api, &session.master, &id)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            return Ok(compat_meta_from_item(&item).unwrap_or_default());
         }
         Ok(ShellxVaultCompatMeta::default())
     }
@@ -1979,204 +1943,6 @@ impl ShellxVaultBackend {
             .await
             .map(|meta| meta.user_only)
             .unwrap_or(false)
-    }
-
-    pub async fn debug_reset_e2e(&self) -> Result<VaultDebugAuditRecord, String> {
-        let _transition = self.state_transition.lock().await;
-        let mut reset_warning: Option<String> = None;
-        self.compat_values.lock().await.clear();
-        self.compat_meta.lock().await.clear();
-        *self.grants.lock().await = BrokerGrantPolicy::default();
-        self.write_grants_snapshot().await?;
-        *self.pending_profile.lock().await = None;
-        *self.pending_keyfile_publish.lock().await = None;
-        *self.pending_remembered_device_secret.lock().await = None;
-        *self.pending_session.lock().await = None;
-        *self.session.lock().await = None;
-        *self.manual_lock.lock().await = false;
-        *self.remembered_unlock_attempt.lock().await = RememberedUnlockAttempt::default();
-        *self.local_server.lock().await = None;
-        super::agent_requests::debug_reset_agent_state(self)?;
-        if let Err(err) = self
-            .remembered_device_store
-            .delete(&self.remembered_device_account())
-        {
-            reset_warning = Some(err);
-        }
-        match fs::remove_file(self.profile_path()) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(format!("Vault E2E profile reset failed: {err}")),
-        }
-        let local_server_dir = self.profile_dir.join("local-vault-server");
-        match fs::remove_dir_all(&local_server_dir) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(format!("Vault E2E local store reset failed: {err}")),
-        }
-        *self.status.lock().await = ShellxVaultStatus::default();
-        self.debug_audit.lock().await.clear();
-        Ok(self
-            .push_debug_audit(VaultDebugAuditInput {
-                reason: reset_warning,
-                ..VaultDebugAuditInput::new("vaultE2eReset")
-            })
-            .await)
-    }
-
-    pub async fn debug_seed_secret(
-        &self,
-        secret_ref: &str,
-        value: &str,
-    ) -> Result<VaultDebugAuditRecord, String> {
-        let secret_ref = secret_ref.trim();
-        if secret_ref.is_empty() {
-            return Err("seed secret requires secretRef".to_string());
-        }
-        if value.is_empty() {
-            return Err("seed secret value must not be empty".to_string());
-        }
-        self.compat_set(secret_ref, value).await?;
-        Ok(self
-            .push_debug_audit(VaultDebugAuditInput {
-                secret_ref: Some(secret_ref.to_string()),
-                secret_present: Some(true),
-                ..VaultDebugAuditInput::new("vaultE2eSecretSeeded")
-            })
-            .await)
-    }
-
-    pub async fn debug_probe_secret_use(
-        &self,
-        grant_id: Option<&str>,
-        secret_ref: &str,
-        operation: &GrantOperation,
-        actor: &GrantActorContext,
-    ) -> Result<VaultDebugProbeResponse, String> {
-        let secret_ref = secret_ref.trim();
-        if secret_ref.is_empty() {
-            return Err("probe requires secretRef".to_string());
-        }
-        let secret_present = self.compat_get(secret_ref).await?.is_some();
-        let decision = if let Some(grant_id) = grant_id.filter(|value| !value.trim().is_empty()) {
-            self.authorize_secret_use_for_actor(grant_id, secret_ref, operation, actor)
-                .await
-        } else {
-            GrantDecision::Deny {
-                reason: "grantNotFound".to_string(),
-            }
-        };
-        let (decision_label, reason) = match decision {
-            GrantDecision::AllowMediated => ("allowMediated".to_string(), None),
-            GrantDecision::AllowRawReveal => ("allowRawReveal".to_string(), None),
-            GrantDecision::Deny { reason } => ("deny".to_string(), Some(reason)),
-        };
-        let audit = self
-            .push_debug_audit(VaultDebugAuditInput {
-                secret_ref: Some(secret_ref.to_string()),
-                grant_id: grant_id.map(str::to_string),
-                decision: Some(decision_label.clone()),
-                reason: reason.clone(),
-                secret_present: Some(secret_present),
-                ..VaultDebugAuditInput::new("vaultE2eSecretUseProbed")
-            })
-            .await;
-        Ok(VaultDebugProbeResponse {
-            ok: reason.is_none(),
-            decision: decision_label,
-            reason,
-            secret_ref: secret_ref.to_string(),
-            operation: format!("{:?}", operation),
-            actor: actor.clone(),
-            grant_id: grant_id.map(str::to_string),
-            secret_present,
-            secret_exposed: false,
-            receipt_id: audit.receipt_id,
-        })
-    }
-
-    pub async fn debug_expire_grant(
-        &self,
-        grant_id: &str,
-    ) -> Result<VaultDebugAuditRecord, String> {
-        let mut policy = self.grants.lock().await;
-        let mut snapshot = policy.to_snapshot();
-        let Some(grant) = snapshot.grants.get_mut(grant_id) else {
-            return Err("grant not found".to_string());
-        };
-        grant.constraints.expires_at_ms = Some(1);
-        *policy = BrokerGrantPolicy::from_snapshot(snapshot);
-        drop(policy);
-        self.write_grants_snapshot().await?;
-        Ok(self
-            .push_debug_audit(VaultDebugAuditInput {
-                grant_id: Some(grant_id.to_string()),
-                ..VaultDebugAuditInput::new("vaultE2eGrantExpired")
-            })
-            .await)
-    }
-
-    pub async fn debug_audit(&self) -> Vec<VaultDebugAuditRecord> {
-        self.debug_audit.lock().await.clone()
-    }
-
-    pub async fn debug_record_e2e_event(
-        &self,
-        action: &str,
-        secret_ref: Option<String>,
-        grant_id: Option<String>,
-    ) -> VaultDebugAuditRecord {
-        self.push_debug_audit(VaultDebugAuditInput {
-            secret_ref,
-            grant_id,
-            ..VaultDebugAuditInput::new(action)
-        })
-        .await
-    }
-
-    async fn push_debug_audit(&self, input: VaultDebugAuditInput<'_>) -> VaultDebugAuditRecord {
-        let record = VaultDebugAuditRecord {
-            receipt_id: format!("vault-e2e-{}", hex::encode(vault_core::random_bytes::<8>())),
-            action: input.action.to_string(),
-            secret_ref: input.secret_ref,
-            grant_id: input.grant_id,
-            decision: input.decision,
-            reason: input.reason,
-            secret_present: input.secret_present,
-            secret_exposed: input.secret_exposed,
-            t: now_ms(),
-        };
-        let mut audit = self.debug_audit.lock().await;
-        audit.push(record.clone());
-        let overflow = audit.len().saturating_sub(MAX_DEBUG_AUDIT_RECORDS);
-        if overflow > 0 {
-            audit.drain(..overflow);
-        }
-        record
-    }
-}
-
-struct VaultDebugAuditInput<'a> {
-    action: &'a str,
-    secret_ref: Option<String>,
-    grant_id: Option<String>,
-    decision: Option<String>,
-    reason: Option<String>,
-    secret_present: Option<bool>,
-    secret_exposed: bool,
-}
-
-impl<'a> VaultDebugAuditInput<'a> {
-    fn new(action: &'a str) -> Self {
-        Self {
-            action,
-            secret_ref: None,
-            grant_id: None,
-            decision: None,
-            reason: None,
-            secret_present: None,
-            secret_exposed: false,
-        }
     }
 }
 
@@ -2773,860 +2539,4 @@ fn typed_resource_item_from_compat(
         extra: BTreeMap::new(),
     }
     .to_vault_item()
-}
-
-#[cfg(test)]
-#[path = "backend_reliability_tests.rs"]
-mod reliability_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn compatibility_bridge_round_trips_one_backend_across_active_surfaces() {
-        let dir = tempfile::tempdir().expect("vault profile tempdir");
-        let backend = ShellxVaultBackend::for_test(dir.path().to_path_buf());
-        let key = "ssh/test-host-key";
-        let value = "/tmp/test-host-key";
-
-        backend.compat_set(key, value).await.expect("modern write");
-        let listed = backend
-            .compat_list_agent_visible_keys_with_meta(Some("ssh/"))
-            .await
-            .expect("modern list");
-        assert_eq!(listed.len(), 1, "marketplace/list surfaces see the write");
-        assert_eq!(listed[0].key, key);
-        assert_eq!(
-            crate::shellx_vault::resolve_internal_secret(&backend, key)
-                .await
-                .expect("SSH/session resolver"),
-            Some(value.to_string())
-        );
-
-        backend.compat_delete(key).await.expect("modern delete");
-        assert!(
-            crate::shellx_vault::resolve_internal_secret(&backend, key)
-                .await
-                .expect("read after delete")
-                .is_none(),
-            "all active surfaces must observe the same delete"
-        );
-    }
-
-    fn test_backend_with_store(
-        profile_dir: PathBuf,
-        store: Arc<dyn RememberedDeviceStore>,
-    ) -> ShellxVaultBackend {
-        ShellxVaultBackend::with_remembered_device_store_for_test(profile_dir, store)
-    }
-
-    struct DeleteFailingRememberedDeviceStore;
-
-    impl RememberedDeviceStore for DeleteFailingRememberedDeviceStore {
-        fn get(&self, _account: &str) -> Result<Option<String>, String> {
-            Ok(None)
-        }
-
-        fn set(&self, _account: &str, _value: &str) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn delete(&self, _account: &str) -> Result<(), String> {
-            Err("remembered device keyring delete failed: unavailable".to_string())
-        }
-    }
-
-    #[test]
-    fn profile_dir_prefers_shared_vault_config_home_and_keeps_shellx_legacy_candidate() {
-        let selected = home_dir_from_env(
-            Some(OsString::from("/tmp/home")),
-            Some(OsString::from("C:\\Users\\User")),
-        )
-        .expect("home dir");
-        let profile_dir =
-            vault_broker::profile::resolve_profile_dirs(vault_broker::profile::ProfileDirInput {
-                platform: vault_broker::profile::ProfilePlatform::Linux,
-                home: Some(selected.clone()),
-                xdg_config_home: None,
-                appdata: None,
-                override_dir: None,
-            })
-            .unwrap()
-            .canonical_dir;
-
-        assert!(profile_dir.ends_with(Path::new(".config").join("shellx-vault")));
-        assert!(legacy_profile_dir_candidates(&profile_dir)
-            .iter()
-            .any(|candidate| candidate.ends_with(Path::new(".shellx").join("shellx-vault"))));
-    }
-
-    #[test]
-    fn profile_file_uses_broker_canonical_name_and_imports_shellx_legacy_name() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let canonical = profile_path(dir.path());
-        let legacy = shellx_legacy_profile_path(dir.path());
-        fs::write(
-            &legacy,
-            serde_json::json!({
-                "mode": "local",
-                "serverUrl": "http://127.0.0.1:12345",
-                "repo": "default",
-                "token": "redacted-token",
-                "keyfileJson": "{\"redacted\":true}",
-                "recovery": {
-                    "confirmed": true,
-                    "confirmedAtMs": 123,
-                    "pendingConfirmationId": null
-                }
-            })
-            .to_string(),
-        )
-        .expect("write legacy profile");
-
-        assert_eq!(
-            canonical.file_name().and_then(|name| name.to_str()),
-            Some("profile.json")
-        );
-        migrate_legacy_profile_dir(dir.path()).expect("migrate legacy profile");
-
-        assert!(
-            canonical.exists(),
-            "legacy shellx-profile.json should copy to profile.json"
-        );
-        let profile = read_persisted_profile(&canonical).expect("profile");
-        assert_eq!(
-            profile.server_url.as_deref(),
-            Some("http://127.0.0.1:12345")
-        );
-        assert_eq!(profile.mode, ShellxVaultMode::Local);
-    }
-
-    #[test]
-    fn standalone_profile_shape_loads_as_external_shellx_profile() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let canonical = profile_path(dir.path());
-        fs::write(
-            &canonical,
-            serde_json::json!({
-                "server": "https://vault.example.test",
-                "repo": "main",
-                "token": "redacted-token",
-                "keyfileJson": "{\"redacted\":true}"
-            })
-            .to_string(),
-        )
-        .expect("write standalone profile");
-
-        let profile = read_persisted_profile(&canonical).expect("profile");
-        assert_eq!(profile.mode, ShellxVaultMode::External);
-        assert_eq!(
-            profile.server_url.as_deref(),
-            Some("https://vault.example.test")
-        );
-        assert_eq!(profile.repo, "main");
-        assert_eq!(profile.token.as_deref(), Some("redacted-token"));
-        assert!(profile.recovery.confirmed);
-    }
-
-    #[test]
-    fn e2e_profile_guard_requires_explicit_env_profile() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let profile_dir = dir.path().join("shellx-vault-e2e");
-        let backend = ShellxVaultBackend::for_test(profile_dir);
-
-        let err = backend
-            .debug_require_isolated_e2e_profile_for_env(None)
-            .expect_err("missing e2e profile env should fail closed");
-
-        assert!(err.contains("SHELLX_VAULT_PROFILE_DIR"));
-    }
-
-    #[test]
-    fn e2e_profile_guard_rejects_stable_user_vault_path() {
-        let profile_dir = stable_default_profile_dir();
-        let backend = ShellxVaultBackend::for_test(profile_dir.clone());
-
-        let err = backend
-            .debug_require_isolated_e2e_profile_for_env(Some(profile_dir.into_os_string()))
-            .expect_err("stable user vault path should fail closed");
-
-        assert!(err.contains("refuses stable user Vault path"));
-    }
-
-    #[test]
-    fn e2e_profile_guard_rejects_ambiguous_temp_profile() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let profile_dir = dir.path().join("vault-profile");
-        let backend = ShellxVaultBackend::for_test(profile_dir.clone());
-
-        let err = backend
-            .debug_require_isolated_e2e_profile_for_env(Some(profile_dir.into_os_string()))
-            .expect_err("ambiguous profile path should fail closed");
-
-        assert!(err.contains("include e2e or test"));
-    }
-
-    #[test]
-    fn e2e_profile_guard_accepts_explicit_disposable_profile() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let profile_dir = dir.path().join("shellx-vault-e2e");
-        let backend = ShellxVaultBackend::for_test(profile_dir.clone());
-
-        backend
-            .debug_require_isolated_e2e_profile_for_env(Some(profile_dir.into_os_string()))
-            .expect("explicit disposable e2e profile should be accepted");
-    }
-
-    #[test]
-    fn e2e_profile_guard_stable_default_ignores_env_override() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let profile_dir = dir.path().join("shellx-vault-e2e");
-
-        assert_ne!(
-            normalize_guard_path(&profile_dir),
-            normalize_guard_path(&stable_default_profile_dir_without_env_override())
-        );
-    }
-
-    #[test]
-    fn persisted_profile_loads_configured_locked_status() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = profile_path(dir.path());
-        let profile = VaultProfile {
-            mode: ShellxVaultMode::Local,
-            server_url: Some("http://127.0.0.1:12345".to_string()),
-            repo: "default".to_string(),
-            token: Some("redacted-token".to_string()),
-            keyfile_json: Some("{\"redacted\":true}".to_string()),
-            remember_device: true,
-            remembered_keyfile_json: None,
-            recovery: RecoveryState {
-                confirmed: true,
-                confirmed_at_ms: Some(123),
-                pending_confirmation_id: None,
-            },
-        };
-        fs::write(
-            &path,
-            serde_json::to_string(&profile).expect("profile json"),
-        )
-        .expect("write profile");
-
-        let status = load_persisted_profile_status(&path);
-
-        assert_eq!(status.mode, ShellxVaultMode::Local);
-        assert!(status.recovery_confirmed);
-        assert!(!status.unlocked);
-        assert!(status.remembered_device_enabled);
-        assert!(status.last_error.is_none());
-    }
-
-    #[test]
-    fn persisted_legacy_profile_defaults_remember_device_on() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = shellx_legacy_profile_path(dir.path());
-        fs::write(
-            &path,
-            serde_json::json!({
-                "mode": "local",
-                "serverUrl": "http://127.0.0.1:12345",
-                "repo": "default",
-                "token": "redacted-token",
-                "keyfileJson": "{\"redacted\":true}",
-                "recovery": {
-                    "confirmed": true,
-                    "confirmedAtMs": 123,
-                    "pendingConfirmationId": null
-                }
-            })
-            .to_string(),
-        )
-        .expect("write legacy profile");
-
-        let profile = read_persisted_profile(&path).expect("profile");
-        assert!(profile.remember_device);
-        assert!(profile.remembered_keyfile_json.is_none());
-
-        let status = load_persisted_profile_status(&path);
-        assert!(status.remembered_device_enabled);
-    }
-
-    #[tokio::test]
-    async fn debug_reset_e2e_clears_persisted_setup_state() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = profile_path(dir.path());
-        let local_server_dir = dir.path().join("local-vault-server");
-        fs::create_dir_all(&local_server_dir).expect("local server dir");
-        fs::write(local_server_dir.join("sentinel.txt"), "old-store").expect("local sentinel");
-        fs::write(
-            &path,
-            serde_json::json!({
-                "mode": "local",
-                "serverUrl": "http://127.0.0.1:12345",
-                "repo": "default",
-                "token": "redacted-token",
-                "keyfileJson": "{\"redacted\":true}",
-                "rememberDevice": true,
-                "recovery": {
-                    "confirmed": true,
-                    "confirmedAtMs": 123,
-                    "pendingConfirmationId": null
-                }
-            })
-            .to_string(),
-        )
-        .expect("write profile");
-        let backend = ShellxVaultBackend::for_test(dir.path().to_path_buf());
-        assert_eq!(backend.status().await.mode, ShellxVaultMode::Local);
-
-        let receipt = backend.debug_reset_e2e().await.expect("e2e reset");
-
-        assert_eq!(receipt.action, "vaultE2eReset");
-        let status = backend.status().await;
-        assert_eq!(status.mode, ShellxVaultMode::Unconfigured);
-        assert!(!status.unlocked);
-        assert!(!status.recovery_confirmed);
-        assert!(!path.exists());
-        assert!(!local_server_dir.exists());
-    }
-
-    #[tokio::test]
-    async fn debug_reset_e2e_continues_when_remembered_device_delete_fails() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = profile_path(dir.path());
-        let local_server_dir = dir.path().join("local-vault-server");
-        fs::create_dir_all(&local_server_dir).expect("local server dir");
-        fs::write(local_server_dir.join("sentinel.txt"), "old-store").expect("local sentinel");
-        fs::write(
-            &path,
-            serde_json::json!({
-                "mode": "local",
-                "serverUrl": "http://127.0.0.1:12345",
-                "repo": "default",
-                "token": "redacted-token",
-                "keyfileJson": "{\"redacted\":true}",
-                "rememberDevice": true,
-                "recovery": {
-                    "confirmed": true,
-                    "confirmedAtMs": 123,
-                    "pendingConfirmationId": null
-                }
-            })
-            .to_string(),
-        )
-        .expect("write profile");
-        let backend = test_backend_with_store(
-            dir.path().to_path_buf(),
-            Arc::new(DeleteFailingRememberedDeviceStore),
-        );
-
-        let receipt = backend.debug_reset_e2e().await.expect("e2e reset");
-
-        assert_eq!(receipt.action, "vaultE2eReset");
-        assert!(receipt
-            .reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("remembered device keyring delete failed")));
-        let status = backend.status().await;
-        assert_eq!(status.mode, ShellxVaultMode::Unconfigured);
-        assert!(!status.unlocked);
-        assert!(!status.recovery_confirmed);
-        assert!(!path.exists());
-        assert!(!local_server_dir.exists());
-    }
-
-    #[tokio::test]
-    async fn persisted_local_profile_unlocks_after_restart() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let passphrase = "restart-passphrase";
-        let secret_key = "test/restart-secret";
-        let secret_value = "restart-value";
-        let store: Arc<dyn RememberedDeviceStore> =
-            Arc::new(MemoryRememberedDeviceStore::default());
-        let backend = test_backend_with_store(dir.path().to_path_buf(), store.clone());
-        let recovery = backend
-            .begin_setup(SetupRequest {
-                target: SetupTarget::Local,
-                passphrase: passphrase.to_string(),
-                server_url: None,
-                repo: Some("default".to_string()),
-                token: None,
-                keyfile_json: None,
-                remember_device: None,
-            })
-            .await
-            .expect("begin setup");
-        backend
-            .confirm_recovery_saved(&recovery.confirmation_id, false)
-            .await
-            .expect("confirm recovery");
-        backend
-            .compat_set(secret_key, secret_value)
-            .await
-            .expect("store secret");
-        drop(backend);
-
-        let profile_dir = dir.path().to_path_buf();
-        let restarted = test_backend_with_store(profile_dir.clone(), store);
-
-        let locked_status = restarted.status().await;
-        assert_eq!(locked_status.mode, ShellxVaultMode::Local);
-        assert!(locked_status.recovery_confirmed);
-        assert!(locked_status.remembered_device_enabled);
-        assert!(locked_status.unlocked);
-        assert_eq!(
-            restarted.compat_get(secret_key).await.expect("read secret"),
-            Some(secret_value.to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn remembered_device_list_unlocks_before_status_poll() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let passphrase = "list-before-status-passphrase";
-        let secret_key = "test/list-before-status";
-        let secret_value = "list-before-status-value";
-        let store: Arc<dyn RememberedDeviceStore> =
-            Arc::new(MemoryRememberedDeviceStore::default());
-        let backend = test_backend_with_store(dir.path().to_path_buf(), store.clone());
-        let recovery = backend
-            .begin_setup(SetupRequest {
-                target: SetupTarget::Local,
-                passphrase: passphrase.to_string(),
-                server_url: None,
-                repo: Some("default".to_string()),
-                token: None,
-                keyfile_json: None,
-                remember_device: None,
-            })
-            .await
-            .expect("begin setup");
-        backend
-            .confirm_recovery_saved(&recovery.confirmation_id, false)
-            .await
-            .expect("confirm recovery");
-        backend
-            .compat_set(secret_key, secret_value)
-            .await
-            .expect("store secret");
-        drop(backend);
-
-        let restarted = test_backend_with_store(dir.path().to_path_buf(), store);
-        let listed = restarted
-            .compat_list_keys_with_meta(None)
-            .await
-            .expect("list secrets before status");
-
-        assert!(
-            listed.iter().any(|entry| entry.key == secret_key),
-            "Vault listing must trigger remembered-device unlock before Settings status polling"
-        );
-        assert!(restarted.status().await.unlocked);
-    }
-
-    #[tokio::test]
-    async fn manual_lock_blocks_remembered_device_auto_unlock_until_passphrase_unlock() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let passphrase = "manual-lock-passphrase";
-        let secret_key = "test/manual-lock";
-        let secret_value = "manual-lock-value";
-        let store: Arc<dyn RememberedDeviceStore> =
-            Arc::new(MemoryRememberedDeviceStore::default());
-        let backend = test_backend_with_store(dir.path().to_path_buf(), store);
-        let recovery = backend
-            .begin_setup(SetupRequest {
-                target: SetupTarget::Local,
-                passphrase: passphrase.to_string(),
-                server_url: None,
-                repo: Some("default".to_string()),
-                token: None,
-                keyfile_json: None,
-                remember_device: None,
-            })
-            .await
-            .expect("begin setup");
-        backend
-            .confirm_recovery_saved(&recovery.confirmation_id, false)
-            .await
-            .expect("confirm recovery");
-        backend
-            .compat_set(secret_key, secret_value)
-            .await
-            .expect("store secret");
-        assert!(backend.status().await.unlocked);
-
-        backend.lock().await.expect("manual lock");
-        let locked_status = backend.status().await;
-        assert!(!locked_status.unlocked);
-        assert!(locked_status.remembered_device_enabled);
-        let err = backend
-            .compat_get(secret_key)
-            .await
-            .expect_err("manual lock blocks secret use");
-        assert!(err.contains("vault is locked"));
-
-        backend
-            .unlock(UnlockRequest {
-                passphrase: passphrase.to_string(),
-                keyfile_json: None,
-                remember_device: None,
-            })
-            .await
-            .expect("passphrase unlock");
-        assert!(backend.status().await.unlocked);
-        assert_eq!(
-            backend.compat_get(secret_key).await.expect("read secret"),
-            Some(secret_value.to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn enabling_remembered_device_requires_passphrase_before_profile_access() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let backend = ShellxVaultBackend::for_test(dir.path().to_path_buf());
-        let error = backend
-            .set_remembered_device_enabled(true, None)
-            .await
-            .expect_err("missing passphrase must fail before profile access");
-        assert_eq!(
-            error,
-            "master passphrase is required to remember this device"
-        );
-    }
-
-    #[tokio::test]
-    async fn disabling_remembered_device_requires_passphrase_after_restart() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let passphrase = "disable-remember-passphrase";
-        let secret_key = "test/disable-remember";
-        let secret_value = "disable-remember-value";
-        let store: Arc<dyn RememberedDeviceStore> =
-            Arc::new(MemoryRememberedDeviceStore::default());
-        let backend = test_backend_with_store(dir.path().to_path_buf(), store.clone());
-        let recovery = backend
-            .begin_setup(SetupRequest {
-                target: SetupTarget::Local,
-                passphrase: passphrase.to_string(),
-                server_url: None,
-                repo: Some("default".to_string()),
-                token: None,
-                keyfile_json: None,
-                remember_device: None,
-            })
-            .await
-            .expect("begin setup");
-        backend
-            .confirm_recovery_saved(&recovery.confirmation_id, false)
-            .await
-            .expect("confirm recovery");
-        backend
-            .compat_set(secret_key, secret_value)
-            .await
-            .expect("store secret");
-        backend
-            .set_remembered_device_enabled(false, None)
-            .await
-            .expect("disable remembered device");
-        drop(backend);
-
-        let profile_dir = dir.path().to_path_buf();
-        let restarted = test_backend_with_store(profile_dir.clone(), store);
-        let locked_status = restarted.status().await;
-        assert!(!locked_status.remembered_device_enabled);
-        assert!(!locked_status.unlocked);
-
-        restarted
-            .unlock(UnlockRequest {
-                passphrase: passphrase.to_string(),
-                keyfile_json: None,
-                remember_device: None,
-            })
-            .await
-            .expect("unlock after restart");
-
-        let unlocked_status = restarted.status().await;
-        assert!(unlocked_status.unlocked);
-        assert_eq!(
-            restarted.compat_get(secret_key).await.expect("read secret"),
-            Some(secret_value.to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn always_grants_survive_backend_restart_and_revocation() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let backend = ShellxVaultBackend::for_test(dir.path().to_path_buf());
-        let recovery = backend
-            .begin_setup(SetupRequest {
-                target: SetupTarget::Local,
-                passphrase: "persistent-grants-passphrase".into(),
-                server_url: None,
-                repo: Some("default".into()),
-                token: None,
-                keyfile_json: None,
-                remember_device: None,
-            })
-            .await
-            .expect("begin setup");
-        backend
-            .confirm_recovery_saved(&recovery.confirmation_id, false)
-            .await
-            .expect("confirm recovery");
-        backend
-            .compat_set("test/persistent-grant", "persistent-secret")
-            .await
-            .expect("store secret");
-        let grant = backend
-            .create_grant(GrantRequest {
-                secret_ref: "test/persistent-grant".into(),
-                actor_scope: GrantScope::AllShellxAgents,
-                operation: GrantOperation::Fill,
-                origin: Some("https://accounts.example.test".into()),
-                expires_at_ms: None,
-            })
-            .await
-            .expect("create grant");
-        assert!(
-            grant.created_at_ms > 0,
-            "new grant summaries must carry a creation timestamp for request-center ordering"
-        );
-        let grant = backend
-            .approve_grant(&grant.grant_id)
-            .await
-            .expect("approve grant");
-        drop(backend);
-
-        let restarted = ShellxVaultBackend::for_test(dir.path().to_path_buf());
-        let grants = restarted.list_grants().await.expect("list grants");
-        assert_eq!(grants.len(), 1);
-        assert_eq!(grants[0].grant_id, grant.grant_id);
-        assert_eq!(grants[0].secret_ref, "test/persistent-grant");
-        assert_eq!(grants[0].operation, "Fill");
-        assert_eq!(
-            grants[0].origin.as_deref(),
-            Some("https://accounts.example.test")
-        );
-        assert_eq!(grants[0].created_at_ms, grant.created_at_ms);
-        assert!(!grants[0].revoked);
-        assert!(grants[0].approved);
-
-        restarted
-            .revoke_grant(&grant.grant_id)
-            .await
-            .expect("revoke grant");
-        drop(restarted);
-
-        let restarted_again = ShellxVaultBackend::for_test(dir.path().to_path_buf());
-        let grants = restarted_again.list_grants().await.expect("list grants");
-        assert_eq!(grants.len(), 1);
-        assert_eq!(grants[0].grant_id, grant.grant_id);
-        assert!(grants[0].revoked);
-    }
-
-    #[tokio::test]
-    async fn browser_grants_require_and_enforce_exact_origin() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let backend = ShellxVaultBackend::for_test(dir.path().to_path_buf());
-        backend
-            .compat_set("test/origin-bound-grant", "secret")
-            .await
-            .expect("store secret");
-
-        let missing = backend
-            .create_grant(GrantRequest {
-                secret_ref: "test/origin-bound-grant".into(),
-                actor_scope: GrantScope::AllShellxAgents,
-                operation: GrantOperation::Fill,
-                origin: None,
-                expires_at_ms: None,
-            })
-            .await
-            .expect_err("browser fill grant without an origin must fail closed");
-        assert!(missing.contains("exact http/https origin"));
-
-        let grant = backend
-            .create_grant(GrantRequest {
-                secret_ref: "test/origin-bound-grant".into(),
-                actor_scope: GrantScope::AllShellxAgents,
-                operation: GrantOperation::Fill,
-                origin: Some("https://accounts.example.test".into()),
-                expires_at_ms: None,
-            })
-            .await
-            .expect("create origin-bound grant");
-        let grant = backend
-            .approve_grant(&grant.grant_id)
-            .await
-            .expect("approve origin-bound grant");
-        let actor = |origin: &str| GrantActorContext {
-            agent_id: Some("fixture-agent".into()),
-            origin: Some(origin.into()),
-            ..GrantActorContext::default()
-        };
-
-        assert_eq!(
-            backend
-                .authorize_secret_use_for_actor(
-                    &grant.grant_id,
-                    "test/origin-bound-grant",
-                    &GrantOperation::Fill,
-                    &actor("https://accounts.example.test"),
-                )
-                .await,
-            GrantDecision::AllowMediated
-        );
-        assert_eq!(
-            backend
-                .authorize_secret_use_for_actor(
-                    &grant.grant_id,
-                    "test/origin-bound-grant",
-                    &GrantOperation::Fill,
-                    &actor("https://attacker.example.test"),
-                )
-                .await,
-            GrantDecision::Deny {
-                reason: "originMismatch".into()
-            }
-        );
-
-        let scoped = backend
-            .create_grant(GrantRequest {
-                secret_ref: "test/origin-bound-grant".into(),
-                actor_scope: GrantScope::BrowserOrigin {
-                    origin: "https://accounts.example.test".into(),
-                },
-                operation: GrantOperation::Fill,
-                origin: Some("https://accounts.example.test".into()),
-                expires_at_ms: None,
-            })
-            .await
-            .expect("create browser-origin actor grant");
-        let scoped = backend
-            .approve_grant(&scoped.grant_id)
-            .await
-            .expect("approve browser-origin actor grant");
-        assert_eq!(
-            backend
-                .authorize_secret_use_for_actor(
-                    &scoped.grant_id,
-                    "test/origin-bound-grant",
-                    &GrantOperation::Fill,
-                    &actor("https://accounts.example.test"),
-                )
-                .await,
-            GrantDecision::AllowMediated,
-            "the grant's browser-origin actor must use tab origin instead of caller agent id"
-        );
-    }
-
-    #[test]
-    fn browser_grant_origin_parser_rejects_broadened_urls() {
-        assert_eq!(
-            normalize_browser_grant_origin("HTTPS://Example.COM:443/").unwrap(),
-            "https://example.com"
-        );
-        for invalid in [
-            "ftp://example.com",
-            "https://user@example.com",
-            "https://example.com/login",
-            "https://example.com/?next=login",
-            "https://example.com/#login",
-        ] {
-            assert!(
-                normalize_browser_grant_origin(invalid).is_err(),
-                "{invalid} must not be accepted as an exact browser origin"
-            );
-        }
-    }
-
-    #[test]
-    fn legacy_persisted_grants_without_approval_default_pending() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = grants_path(dir.path());
-        fs::write(
-            &path,
-            serde_json::json!({
-                "grant-legacy": {
-                    "request": {
-                        "secretRef": "test/legacy-grant",
-                        "actorScope": { "kind": "allShellxAgents" },
-                        "operation": "fill",
-                        "expiresAtMs": null
-                    },
-                    "revoked": false
-                }
-            })
-            .to_string(),
-        )
-        .expect("write legacy grants");
-
-        let grants = read_persisted_grants(&path).expect("read legacy grants");
-        let grant = grants.grant("grant-legacy").expect("legacy grant loaded");
-        assert!(
-            grant.status == BrokerGrantStatus::Pending,
-            "legacy grants without an explicit approved field must require fresh operator approval"
-        );
-        assert_eq!(
-            grant.created_at_ms, 0,
-            "legacy grants without a timestamp remain loadable and sort behind current requests"
-        );
-    }
-
-    #[tokio::test]
-    async fn existing_unlocked_vault_imports_legacy_xai_alias_without_overwrite() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let backend = ShellxVaultBackend::for_test(dir.path().to_path_buf());
-        let recovery = backend
-            .begin_setup(SetupRequest {
-                target: SetupTarget::Local,
-                passphrase: "existing-xai-import".into(),
-                server_url: None,
-                repo: Some("default".into()),
-                token: None,
-                keyfile_json: None,
-                remember_device: None,
-            })
-            .await
-            .expect("begin setup");
-        backend
-            .confirm_recovery_saved(&recovery.confirmation_id, false)
-            .await
-            .expect("confirm recovery");
-
-        let receipt = backend
-            .import_legacy_xai_pairs_for_existing_vault(vec![(
-                "providers.xai.api_key".into(),
-                "SXV_EXISTING_LEGACY_XAI".into(),
-            )])
-            .await
-            .expect("import xai alias");
-        assert_eq!(receipt.imported_keys, 1);
-        assert_eq!(
-            backend.compat_get("xai/api-key").await.unwrap(),
-            Some("SXV_EXISTING_LEGACY_XAI".into())
-        );
-        assert_eq!(
-            backend.compat_get("providers.xai.api_key").await.unwrap(),
-            None
-        );
-
-        backend
-            .compat_set("xai/api-key", "SXV_CURRENT_XAI")
-            .await
-            .expect("set current");
-        let receipt = backend
-            .import_legacy_xai_pairs_for_existing_vault(vec![(
-                "grok/api-key".into(),
-                "SXV_SHOULD_NOT_OVERWRITE".into(),
-            )])
-            .await
-            .expect("skip existing");
-        assert_eq!(receipt.imported_keys, 0);
-        assert!(receipt.skipped);
-        assert_eq!(
-            backend.compat_get("xai/api-key").await.unwrap(),
-            Some("SXV_CURRENT_XAI".into())
-        );
-    }
 }

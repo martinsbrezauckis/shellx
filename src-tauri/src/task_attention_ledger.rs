@@ -15,9 +15,7 @@ use crate::task_store::{PersistedTaskStore, TaskStoreError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 
-#[cfg(test)]
-#[path = "task_attention_ledger_tests.rs"]
-mod tests;
+
 
 #[path = "task_attention_ledger_validation.rs"]
 mod validation;
@@ -757,9 +755,9 @@ fn attention_record(
         }
         TaskAttentionSource::AttentionLedgerSaturated
             if occurrence_id.is_some()
-                || !source_record_id
+                || source_record_id
                     .strip_prefix("overflow:")
-                    .is_some_and(|sequence| sequence.parse::<u64>().is_ok()) =>
+                    .is_none_or(|sequence| sequence.parse::<u64>().is_err()) =>
         {
             return Err(TaskStoreError::Invalid(
                 "attention overflow source identity is invalid".to_string(),

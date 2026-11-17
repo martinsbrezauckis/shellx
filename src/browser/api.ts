@@ -15,6 +15,7 @@ import type {
   BrowserReceipt,
   BrowserShieldSettings,
   BrowserTabShieldState,
+  BrowserTransferEntry,
   BrowserTask,
   BrowserVisibleAdMode,
 } from "./types";
@@ -407,6 +408,12 @@ export async function grantBrowserTransfer(request: {
   ttlSeconds?: number | null;
 }): Promise<BrowserTransferApproval> {
   return await invoke<BrowserTransferApproval>("shellx_browser_grant_transfer", { request });
+}
+
+export async function declineBrowserNativeDownload(request: {
+  transferId: string;
+}): Promise<BrowserTransferEntry> {
+  return await invoke<BrowserTransferEntry>("shellx_browser_decline_native_download", { request });
 }
 
 export async function writeBrowserTextArtifact(request: {

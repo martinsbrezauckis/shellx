@@ -113,6 +113,11 @@ export function normalizeUserDataBlob(blob: Record<string, unknown>): Record<str
 let cachedBlob: Record<string, unknown> = {};
 let diskHydrated = false;
 
+function publicManualPreview(): boolean {
+  return typeof document !== "undefined"
+    && document.documentElement.dataset.shellxPublicManualPreview === "true";
+}
+
 export function mergeUserDataBlobs(
   diskBlob: Record<string, unknown>,
   pendingBlob: Record<string, unknown>,
@@ -124,6 +129,7 @@ export function mergeUserDataBlobs(
 }
 
 async function ensureDiskHydratedForWrite(): Promise<boolean> {
+  if (publicManualPreview()) return false;
   if (diskHydrated) return true;
   try {
     const diskBlob = (await invoke<Record<string, unknown>>("read_user_data")) || {};
@@ -140,6 +146,7 @@ async function ensureDiskHydratedForWrite(): Promise<boolean> {
  * copy the disk value in. Runs ONCE at App boot. After this, the rest
  * of the codebase reads localStorage and is unchanged. */
 export async function hydrateUserData(): Promise<Record<string, unknown>> {
+  if (publicManualPreview()) return {};
   let blob: Record<string, unknown> = {};
   try {
     blob = (await invoke<Record<string, unknown>>("read_user_data")) || {};
@@ -193,6 +200,7 @@ export function persistUserData(key: UserDataKey, value: unknown): void {
     delete cachedBlob[legacyKey];
   }
   cachedBlob[key] = value;
+  if (publicManualPreview()) return;
  // Debounce: a single tab-list edit can trigger 3-4 successive writes.
  // 200 ms covers a typing burst without making the disk version stale.
   if (writeTimer !== null) {

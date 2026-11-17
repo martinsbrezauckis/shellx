@@ -8,13 +8,15 @@ pub(super) async fn set_panels(
     State(s): State<ApiState>,
     Json(body): Json<PanelSizes>,
 ) -> impl IntoResponse {
-    apply_and_broadcast_ui_patch(
+    if let Err(response) = apply_and_broadcast_ui_patch(
         &s,
         UiStatePatch {
             panels: Some(body.clone()),
             ..Default::default()
         },
-    );
+    ) {
+        return *response;
+    }
     Json(serde_json::json!({ "ok": true, "panels": body })).into_response()
 }
 
@@ -27,14 +29,16 @@ pub(super) async fn set_preview(
     State(s): State<ApiState>,
     Json(body): Json<Option<PreviewTarget>>,
 ) -> impl IntoResponse {
-    apply_and_broadcast_ui_patch(
+    if let Err(response) = apply_and_broadcast_ui_patch(
         &s,
         UiStatePatch {
             preview: body.clone(),
             clear_preview: body.is_none().then_some(true),
             ..Default::default()
         },
-    );
+    ) {
+        return *response;
+    }
     Json(serde_json::json!({ "ok": true, "preview": body })).into_response()
 }
 
@@ -196,7 +200,7 @@ pub(super) async fn work_preview_stop_http(
 // Each handler is the loopback path to the in-process ProcessRegistry
 // (Tauri managed state) and to the same native helpers host_mcp.rs
 // reaches in standalone mode. Two consumers:
-// 1. curl from a test harness or notebook — direct verification.
+// 1. curl or a notebook — direct operator verification.
 // 2. The standalone `--mcp-server` child process — it proxies its
 // tools/call requests through here when the app is reachable, so
 // grok sees a single coherent registry regardless of which side

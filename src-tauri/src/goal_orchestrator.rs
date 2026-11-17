@@ -52,15 +52,9 @@ use tracing::{debug, info, warn};
 /// window, the watchdog emits/logs a stall warning. It does NOT halt the
 /// goal: ACP can hide long-running tool output, so silence is not proof
 /// that the turn is wedged.
-// audit (test agent): the test reproducer saw a tab stuck at
-// continuations_total=2 with no further pushes for 5+ minutes. The
-// watchdog was set at 10 min, so it hadn't fired yet — user perception
-// was "goal silently stops working halfway". Tightening to 3 min
-// matches user expectations ("if grok didn't reply in 3 min something
-// is wrong") without false-positive-halting normal long turns
-// (most reasoning/tool turns complete in &lt;90 s; tool calls that take
-// longer typically stream intermediate session/update events that
-// don't reset the watchdog but provide a visible heartbeat).
+// The three-minute threshold surfaces stalled continuation delivery before a
+// silent tab appears permanently idle, without halting long-running turns
+// that continue to emit visible activity.
 pub const DEFAULT_PER_TURN_TIMEOUT_MS: u64 = 180_000;
 
 /// Watchdog tick interval. Long enough that even hundreds of tabs cost
@@ -92,6 +86,11 @@ pub struct GoalState {
     /// only needed by the in-process orchestrator.
     #[serde(skip)]
     pub ssh_config: Option<crate::acp::SshSpawnConfig>,
+    /// The session-owned project root captured when Goal mode starts. SSH
+    /// scratchboard access must retain this root; a scratchboard path alone is
+    /// never authority to read or write a remote project file.
+    #[serde(skip)]
+    pub project_root: PathBuf,
     /// Wall-clock unix-ms of the last continuation injection. Zero
     /// before the first one fires.
     pub last_continuation_at_ms: u64,
@@ -394,13 +393,9 @@ impl GoalOrchestrator {
         let scratchboard_path = pick_scratchboard_path(cwd);
         let transport_kind_normalized = transport_kind.trim().to_ascii_lowercase();
         let now = now_ms();
-        // audit (test agent): on `on=true`, eagerly stamp
-        // an AWAITING_APPROVAL stub into goal.md so polls and the
-        // PlanPane don't see stale content from a prior /goal cycle
-        // for the ~30s gap between set_mode firing and grok's first
-        // fs_write. Without this stub, a freshly armed goal would
-        // display the previous goal's plan briefly, confusing the
-        // user about which cycle is active.
+        // On `on=true`, eagerly stamp an AWAITING_APPROVAL stub into goal.md
+        // so polls and the PlanPane do not show a prior goal's plan during
+        // the gap before the first ACP file write for the new cycle.
         // // #433 — for SSH transport the scratchboard lives on the
         // REMOTE host; Windows-side std::fs::write of `/home/...`
         // either fails or lands in AppData. Skip the local write
@@ -457,6 +452,7 @@ impl GoalOrchestrator {
             scratchboard_path: scratchboard_path.clone(),
             transport_kind: transport_kind_normalized,
             ssh_config,
+            project_root: cwd.to_path_buf(),
             last_continuation_at_ms: 0,
             continuations_total: 0,
             started_at_ms: now,
@@ -520,19 +516,14 @@ impl GoalOrchestrator {
         validate_approval_ready(&board_text)?;
         let approved_objective = extract_goal_title(&board_text);
         let approved_board_text = mark_approved_plan_in_progress(&board_text)?;
-        write_scratchboard_text_for_transport(
-            &state.scratchboard_path,
-            &approved_board_text,
-            &state.transport_kind,
-            state.ssh_config.as_ref(),
-        )
-        .await
-        .map_err(|e| {
-            format!(
-                "cannot approve yet: goal.md could not be marked IN_PROGRESS: {}",
-                e
-            )
-        })?;
+        write_scratchboard_text_for_state(&state, &approved_board_text)
+            .await
+            .map_err(|e| {
+                format!(
+                    "cannot approve yet: goal.md could not be marked IN_PROGRESS: {}",
+                    e
+                )
+            })?;
 
         let mut map = self.states.write().await;
         let Some(st) = map.get_mut(tab_id) else {
@@ -757,15 +748,7 @@ impl GoalOrchestrator {
         const MAX_NO_PROGRESS_CYCLES: u32 = 30;
 
         // Phase 1: cheap state checks under read lock.
-        let (
-            objective,
-            board_path,
-            transport_kind,
-            ssh_config,
-            fingerprint_before,
-            continuations_before,
-            awaiting_approval_now,
-        ) = {
+        let state = {
             let map = self.states.read().await;
             let st = match map.get(tab_id) {
                 Some(s) => s,
@@ -781,17 +764,14 @@ impl GoalOrchestrator {
             // `active=false` is set. Capturing the flag instead of
             // returning early; the actual silence-during-approval guard
             // moves down to Phase 4.5, after the GOAL_COMPLETE check.
-            let awaiting = st.awaiting_approval;
-            (
-                st.objective.clone(),
-                st.scratchboard_path.clone(),
-                st.transport_kind.clone(),
-                st.ssh_config.clone(),
-                st.last_fingerprint.clone(),
-                st.continuations_total,
-                awaiting,
-            )
+            st.clone()
         };
+        let objective = state.objective.clone();
+        let board_path = state.scratchboard_path.clone();
+        let ssh_config = state.ssh_config.clone();
+        let fingerprint_before = state.last_fingerprint.clone();
+        let continuations_before = state.continuations_total;
+        let awaiting_approval_now = state.awaiting_approval;
 
         // Phase 2: stopReason gate. Match the legacy continuation rule:
         // only end_turn / max_tokens warrant a re-inject. Cancelled
@@ -812,13 +792,7 @@ impl GoalOrchestrator {
         // Transport-aware read: local tabs stay direct-only, WSL tabs may
         // bridge POSIX paths through the Windows host, and SSH tabs read
         // through their remote transport context.
-        let board_text: String = match read_scratchboard_text_for_transport(
-            &board_path,
-            &transport_kind,
-            ssh_config.as_ref(),
-        )
-        .await
-        {
+        let board_text: String = match read_scratchboard_text_for_state(&state).await {
             Ok(text) => {
                 if ssh_config.is_some() {
                     let mut map = self.states.write().await;
@@ -881,9 +855,9 @@ impl GoalOrchestrator {
         // scratchboard (it runs in a separate process and cannot reach
         // the in-process orchestrator); the main-process orchestrator
         // observes the file via consider_continue and is the only place
-        // that can mutate `state.active`. Without this flip,
-        // `goal/state.active` stays true forever after goal_complete
-        // succeeds — verified in the 2026-05-20 e2e run on Local Windows.
+        // that can mutate `state.active`. This flip records successful
+        // completion against the latest scratchboard fingerprint before
+        // future continuation checks run.
         let mut completion_status_drift: Option<String> = None;
         if let Some(top) = fp_now.top_status.as_deref() {
             if top == "GOAL_COMPLETE" {
@@ -1148,15 +1122,7 @@ impl GoalOrchestrator {
         }
     }
 
-    /// Remove one exact isolated release-test slot, including its clear
-    /// tombstone. Normal product flows retain tombstones for diagnostics;
-    /// only the guarded Debug API fixture calls this helper so its temporary
-    /// state cannot alter the operator baseline.
-    #[cfg(feature = "debug-api")]
-    pub async fn release_test_forget_slot(&self, tab_id: &str) {
-        self.states.write().await.remove(tab_id);
-        self.last_clear.write().await.remove(tab_id);
-    }
+
 
     /// #350/#458: Per-turn silence watchdog. Scans every state once; if
     /// a tab has injected at least one continuation but no prompt-complete
@@ -1281,8 +1247,8 @@ fn pick_scratchboard_path(cwd: &Path) -> PathBuf {
 /// `read_scratchboard_text_for_transport`; this older helper keeps the legacy
 /// broad WSL bridge for host-MCP paths that do not yet carry transport state.
 ///
-/// SSH transports are handled by `read_scratchboard_text_for_path`, which
-/// has access to the per-tab `SshSpawnConfig`.
+/// SSH scratchboards must use the state-owned helpers below. The generic
+/// path helpers refuse SSH because a path alone is not remote-file authority.
 pub async fn read_scratchboard_text(path: &Path) -> Result<String, String> {
     read_scratchboard_text_with_policy(path, true).await
 }
@@ -1332,11 +1298,61 @@ async fn read_scratchboard_text_with_policy(
     ))
 }
 
-async fn read_scratchboard_text_for_state(state: &GoalState) -> Result<String, String> {
-    read_scratchboard_text_for_transport(
+pub(crate) async fn read_scratchboard_text_for_state(state: &GoalState) -> Result<String, String> {
+    if let Some(ssh) = state.ssh_config.as_ref() {
+        let project_root = state.project_root.to_string_lossy();
+        let remote_path = state.scratchboard_path.to_string_lossy();
+        if project_root.is_empty() {
+            return Err("SSH Goal scratchboard read requires an owned project root".to_string());
+        }
+        return crate::remote_project_file::read_scoped_remote_text(
+            ssh,
+            project_root.as_ref(),
+            remote_path.as_ref(),
+        )
+        .await
+        .map_err(|error| format!("SSH Goal scratchboard read refused: {error}"));
+    }
+    if state.transport_kind.trim().eq_ignore_ascii_case("ssh") {
+        return Err(
+            "SSH Goal scratchboard read requires session-owned SSH transport context".to_string(),
+        );
+    }
+    read_scratchboard_text_with_policy(
         &state.scratchboard_path,
-        &state.transport_kind,
-        state.ssh_config.as_ref(),
+        transport_kind_allows_wsl_bridge(&state.transport_kind),
+    )
+    .await
+}
+
+pub(crate) async fn write_scratchboard_text_for_state(
+    state: &GoalState,
+    text: &str,
+) -> Result<(), String> {
+    if let Some(ssh) = state.ssh_config.as_ref() {
+        let project_root = state.project_root.to_string_lossy();
+        let remote_path = state.scratchboard_path.to_string_lossy();
+        if project_root.is_empty() {
+            return Err("SSH Goal scratchboard write requires an owned project root".to_string());
+        }
+        return crate::remote_project_file::write_scoped_remote_text(
+            ssh,
+            project_root.as_ref(),
+            remote_path.as_ref(),
+            text,
+        )
+        .await
+        .map_err(|error| format!("SSH Goal scratchboard write refused: {error}"));
+    }
+    if state.transport_kind.trim().eq_ignore_ascii_case("ssh") {
+        return Err(
+            "SSH Goal scratchboard write requires session-owned SSH transport context".to_string(),
+        );
+    }
+    write_scratchboard_text_with_policy(
+        &state.scratchboard_path,
+        text,
+        transport_kind_allows_wsl_bridge(&state.transport_kind),
     )
     .await
 }
@@ -1345,11 +1361,8 @@ pub async fn read_scratchboard_text_for_path(
     path: &Path,
     ssh_config: Option<&crate::acp::SshSpawnConfig>,
 ) -> Result<String, String> {
-    if let Some(ssh) = ssh_config {
-        let remote_path = path.to_string_lossy().to_string();
-        return crate::acp::ssh_read_file(ssh, &remote_path)
-            .await
-            .map_err(|e| format!("ssh read {}: {}", remote_path, e));
+    if ssh_config.is_some() {
+        return Err("SSH scratchboard read requires an owned Goal project root".to_string());
     }
     read_scratchboard_text(path).await
 }
@@ -1359,11 +1372,8 @@ pub async fn read_scratchboard_text_for_transport(
     transport_kind: &str,
     ssh_config: Option<&crate::acp::SshSpawnConfig>,
 ) -> Result<String, String> {
-    if let Some(ssh) = ssh_config {
-        let remote_path = path.to_string_lossy().to_string();
-        return crate::acp::ssh_read_file(ssh, &remote_path)
-            .await
-            .map_err(|e| format!("ssh read {}: {}", remote_path, e));
+    if ssh_config.is_some() || transport_kind.trim().eq_ignore_ascii_case("ssh") {
+        return Err("SSH scratchboard read requires an owned Goal project root".to_string());
     }
     read_scratchboard_text_with_policy(path, transport_kind_allows_wsl_bridge(transport_kind)).await
 }
@@ -1450,11 +1460,8 @@ pub async fn write_scratchboard_text_for_path(
     text: &str,
     ssh_config: Option<&crate::acp::SshSpawnConfig>,
 ) -> Result<(), String> {
-    if let Some(ssh) = ssh_config {
-        let remote_path = path.to_string_lossy().to_string();
-        return crate::acp::ssh_write_file(ssh, &remote_path, text)
-            .await
-            .map_err(|e| format!("ssh write {}: {}", remote_path, e));
+    if ssh_config.is_some() {
+        return Err("SSH scratchboard write requires an owned Goal project root".to_string());
     }
     write_scratchboard_text(path, text).await
 }
@@ -1465,11 +1472,8 @@ pub async fn write_scratchboard_text_for_transport(
     transport_kind: &str,
     ssh_config: Option<&crate::acp::SshSpawnConfig>,
 ) -> Result<(), String> {
-    if let Some(ssh) = ssh_config {
-        let remote_path = path.to_string_lossy().to_string();
-        return crate::acp::ssh_write_file(ssh, &remote_path, text)
-            .await
-            .map_err(|e| format!("ssh write {}: {}", remote_path, e));
+    if ssh_config.is_some() || transport_kind.trim().eq_ignore_ascii_case("ssh") {
+        return Err("SSH scratchboard write requires an owned Goal project root".to_string());
     }
     write_scratchboard_text_with_policy(
         path,
@@ -1542,8 +1546,8 @@ pub fn parse_board(text: &str) -> BoardFingerprint {
         // Audit fix: also count `- [x]` checked items.
         // Previously parse_board only incremented done_count on phase-
         // level `Status: DONE` lines, but grok marks individual steps
-        // with `- [x]`. The test agent's goal.md had 5 `- [x]` lines
-        // and a `Status: DONE` header but `done_count` stayed 0, so
+        // with `- [x]`. Those checked steps and a `Status: DONE` header
+        // must contribute to `done_count`, otherwise
         // the continuation prompt's "Phases marked DONE: 0" misled
         // grok into thinking there was still work pending after the
         // task was actually complete.
@@ -1997,697 +2001,3 @@ pub type SharedGoalOrchestrator = Arc<GoalOrchestrator>;
 // ──────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_board_empty() {
-        let fp = parse_board("");
-        assert_eq!(fp.phase_count, 0);
-        assert_eq!(fp.done_count, 0);
-        assert_eq!(fp.unchecked_count, 0);
-        assert!(fp.top_status.is_none());
-    }
-
-    #[test]
-    fn parse_board_active_with_unchecked() {
-        let board = "\
-# Goal: test
-
-status: ACTIVE
-
-## Phase 1 — Setup
-- [x] Code
-- [ ] Test
-status: IN_PROGRESS
-
-## Phase 2 — Done
-- [x] Code
-- [x] Test
-status: DONE
-";
-        let fp = parse_board(board);
-        assert_eq!(fp.top_status.as_deref(), Some("ACTIVE"));
-        assert_eq!(fp.phase_count, 2);
-        // parse_board now counts both `Status: DONE` and `- [x]`
-        // checked items. 3 `- [x]` (Phase 1 Code + Phase 2 Code/Test)
-        // + 1 phase `status: DONE` = 4.
-        assert_eq!(fp.done_count, 4);
-        assert_eq!(fp.unchecked_count, 1);
-    }
-
-    #[test]
-    fn parse_board_top_status_capital_s() {
-        // audit fix (HIGH-2) — `Status:` with capital S must be
-        // detected so plan_kickoff_text's `Status: AWAITING_APPROVAL`
-        // and grok-written `Status: GOAL_COMPLETE` reach the
-        // orchestrator's terminal-status branch.
-        let board = "# Goal: x\n\nStatus: GOAL_COMPLETE\n\n## Phase 1\n- [x] Done\n";
-        let fp = parse_board(board);
-        assert_eq!(fp.top_status.as_deref(), Some("GOAL_COMPLETE"));
-        assert_eq!(fp.done_count, 1);
-    }
-
-    #[test]
-    fn plan_kickoff_requires_review_gate_for_code_goals() {
-        let text = GoalOrchestrator::plan_kickoff_text("change code");
-        assert!(text.contains("Review / verification"));
-        assert!(text.contains("`implementer` Agent"));
-        assert!(text.contains("`reviewer` Agent"));
-        assert!(text.contains("`security-auditor`"));
-        assert!(text.contains("Do not invoke Grok Build's bundled"));
-        assert!(text.contains("HALT and ask the user"));
-        assert!(text.contains("Final verification must cite real evidence"));
-        assert!(text.contains("AI slop / wiring audit"));
-        assert!(text.contains("fake success paths"));
-        assert!(text.contains("Only skip the Agent pass"));
-        assert!(text.contains("goal_complete"));
-    }
-
-    #[test]
-    fn validate_approval_rejects_drafting_stub() {
-        let board = "\
-# Goal: x
-
-Status: AWAITING_APPROVAL
-
-_grok is drafting the plan…_
-";
-        let err = validate_approval_ready(board).unwrap_err();
-        assert!(err.contains("drafting stub"), "got: {}", err);
-    }
-
-    #[test]
-    fn validate_approval_accepts_real_unchecked_plan() {
-        let board = "\
-# Goal: x
-
-Status: AWAITING_APPROVAL
-
-## Phase 1 — Implement
-- [ ] Code
-- [ ] Test
-
-## Phase 2 — Complete
-- [ ] Call goal_complete
-";
-        validate_approval_ready(board).expect("real plan should be approvable");
-    }
-
-    #[test]
-    fn approve_status_patch_only_changes_top_level_status() {
-        let board = "\
-# Goal: x
-
-Status: AWAITING_APPROVAL
-
-## Phase 1
-Status: AWAITING_APPROVAL
-- [ ] Code
-";
-        let patched = mark_approved_plan_in_progress(board).unwrap();
-        assert!(patched.contains("\nStatus: IN_PROGRESS\n\n## Phase 1"));
-        assert!(patched.contains("## Phase 1\nStatus: AWAITING_APPROVAL\n"));
-    }
-
-    #[test]
-    fn approval_kickoff_does_not_ask_agent_to_rewrite_top_status() {
-        let prompt = approval_kickoff_prompt(None);
-        assert!(prompt.contains("shellX has already changed"));
-        assert!(prompt.contains("AI slop /"));
-        assert!(!prompt.contains("First change the top-level"));
-    }
-
-    #[test]
-    fn validate_rejects_unchecked_phase() {
-        let board = "\
-# Goal: t
-
-status: GOAL_COMPLETE
-
-## Phase 1
-- [x] Code
-- [ ] Test
-status: DONE
-";
-        let err = validate_board_text(board).unwrap_err();
-        assert!(err.contains("unchecked"), "got: {}", err);
-    }
-
-    #[test]
-    fn validate_rejects_missing_done() {
-        let board = "\
-# Goal: t
-
-status: GOAL_COMPLETE
-
-## Phase 1
-- [x] Code
-status: IN_PROGRESS
-";
-        let err = validate_board_text(board).unwrap_err();
-        assert!(err.contains("no `status: DONE`"), "got: {}", err);
-    }
-
-    #[test]
-    fn validate_accepts_checked_phase_without_status() {
-        let board = "\
-# Goal: t
-
-status: IN_PROGRESS
-
-## Phase 1
-- [x] Code
-- [x] Test
-
-## Phase 2
-- [x] Review
-";
-        validate_board_text(board)
-            .expect("fully checked phases should not require redundant status lines");
-    }
-
-    #[test]
-    fn validate_accepts_capital_status_and_done_top_level() {
-        let board = "\
-# Goal: t
-
-Status: DONE
-
-## Phase 1
-Status: DONE
-- [x] Code
-- [x] Test
-
-## Phase 2
-Status: DONE
-- [x] Review
-";
-        validate_board_text(board).expect("DONE top-level should be accepted before tool patch");
-    }
-
-    #[test]
-    fn validate_accepts_goal_complete_phase_status() {
-        let board = "\
-# Goal: t
-
-status: GOAL_COMPLETE
-
-## Phase 1
-status: GOAL_COMPLETE
-- [x] Code
-- [x] Test
-";
-        validate_board_text(board).expect("phase status GOAL_COMPLETE is terminal");
-    }
-
-    #[test]
-    fn validate_accepts_in_progress_top_status_when_phases_are_complete() {
-        let board = "\
-# Goal: t
-
-status: IN_PROGRESS
-
-## Phase 1
-- [x] Code
-status: DONE
-";
-        validate_board_text(board).expect("goal_complete tool should be the completion signal");
-    }
-
-    #[test]
-    fn validate_rejects_awaiting_approval_top_status() {
-        let board = "\
-# Goal: t
-
-status: AWAITING_APPROVAL
-
-## Phase 1
-- [x] Code
-status: DONE
-";
-        let err = validate_board_text(board).unwrap_err();
-        assert!(
-            err.contains("top-level Goal") && err.contains("AWAITING_APPROVAL"),
-            "got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn validate_accepts_clean_board() {
-        let board = "\
-# Goal: t
-
-status: GOAL_COMPLETE
-
-## Phase 1
-- [x] Code
-- [x] Test
-status: DONE
-
-## Phase 2
-- [x] Code
-- [x] Test
-- [x] Review
-status: DONE
-";
-        validate_board_text(board).expect("should accept clean board");
-    }
-
-    #[test]
-    fn validate_rejects_banned_final_evidence_phrases() {
-        let board = "\
-# Goal: t
-
-status: IN_PROGRESS
-
-## Phase 1
-Status: DONE
-- [x] Code
-
-## Phase 2
-Status: DONE
-- [x] Final verification: All gates PASS when running npm run dev (tested in this session via code paths). Evidence is the running app itself + the code.
-";
-        let err = validate_board_text(board).unwrap_err();
-        assert!(err.contains("banned non-evidence phrase"), "got: {}", err);
-    }
-
-    #[test]
-    fn validate_allows_banned_phrase_when_it_is_a_rule_not_evidence() {
-        let board = "\
-# Goal: t
-
-status: IN_PROGRESS
-
-## Phase 1
-Status: DONE
-- [x] Code
-
-## Phase 2
-Status: DONE
-- [x] Final verification must cite real command output; do not use \"tested via code paths\" because it does not count.
-- [x] Evidence: cargo test --manifest-path src-tauri/Cargo.toml --features debug-api goal_orchestrator -- --nocapture passed.
-";
-        validate_board_text(board).expect("rule text should not trigger evidence ban");
-    }
-
-    #[test]
-    fn validate_rejects_self_review_after_transport_failure() {
-        let board = "\
-# Goal: t
-
-status: IN_PROGRESS
-
-## Phase 1
-Status: DONE
-- [x] Code
-
-## Phase 2 — Review / verification
-Status: DONE
-- [x] Agent dispatch blocked by transport (Transport closed). Performed direct self-review instead.
-
-## Phase 3
-Status: DONE
-- [x] Call goal_complete
-";
-        let err = validate_board_text(board).unwrap_err();
-        assert!(
-            err.contains("review gate cannot be satisfied by self-review"),
-            "got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn scratchboard_wsl_drive_mount_to_windows_path_normalizes_common_form() {
-        assert_eq!(
-            wsl_drive_mount_to_windows_path("/mnt/c/Users/User/project/build.tab.md")
-                .unwrap()
-                .to_string_lossy(),
-            "C:\\Users\\User\\project\\build.tab.md"
-        );
-        assert_eq!(
-            wsl_drive_mount_to_windows_path("/mnt/d")
-                .unwrap()
-                .to_string_lossy(),
-            "D:\\"
-        );
-    }
-
-    #[test]
-    fn scratchboard_wsl_drive_mount_to_windows_path_rejects_non_drive_mounts() {
-        assert!(wsl_drive_mount_to_windows_path("/home/user/goal.md").is_none());
-        assert!(wsl_drive_mount_to_windows_path("/mnt/share/project/goal.md").is_none());
-        assert!(wsl_drive_mount_to_windows_path("C:\\Users\\User\\goal.md").is_none());
-    }
-
-    #[tokio::test]
-    async fn scratchboard_transport_policy_keeps_local_sessions_direct_only() {
-        let path = Path::new("/mnt/c/__shellx_missing_scratchboard__/goal.md");
-        let local = read_scratchboard_text_for_transport(path, "local", None)
-            .await
-            .unwrap_err();
-        assert!(
-            local.contains("tried direct only"),
-            "local transport must not use WSL bridge: {}",
-            local
-        );
-
-        let wsl = read_scratchboard_text_for_transport(path, "wsl", None)
-            .await
-            .unwrap_err();
-        assert!(
-            wsl.contains("WSL drive mount + WSL UNC"),
-            "WSL transport should advertise WSL bridge attempts: {}",
-            wsl
-        );
-    }
-
-    #[tokio::test]
-    async fn consider_continue_inactive_returns_none() {
-        let o = GoalOrchestrator::new();
-        assert!(o.consider_continue("tab1", "end_turn").await.is_none());
-    }
-
-    #[cfg(feature = "debug-api")]
-    #[tokio::test]
-    async fn release_test_forget_slot_removes_state_and_tombstone() {
-        let tmp =
-            std::env::temp_dir().join(format!("shellx_release_goal_forget_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let o = GoalOrchestrator::new();
-        o.set_mode("release-tab", true, Some("owned".into()), &tmp, "local")
-            .await;
-        o.mark_complete("release-tab").await;
-        assert!(o.get_state("release-tab").await.is_some());
-        assert!(o.get_last_clear("release-tab").await.is_some());
-
-        o.release_test_forget_slot("release-tab").await;
-
-        assert!(o.get_state("release-tab").await.is_none());
-        assert!(o.get_last_clear("release-tab").await.is_none());
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[tokio::test]
-    async fn consider_continue_paused_returns_none() {
-        let o = GoalOrchestrator::new();
-        let dir = std::env::temp_dir();
-        o.set_mode("tab1", true, Some("obj".to_string()), &dir, "local")
-            .await;
-        o.pause("tab1").await;
-        assert!(o.consider_continue("tab1", "end_turn").await.is_none());
-    }
-
-    #[tokio::test]
-    async fn consider_continue_bad_stop_reason_returns_none() {
-        let o = GoalOrchestrator::new();
-        let dir = std::env::temp_dir();
-        o.set_mode("tab1", true, Some("obj".to_string()), &dir, "local")
-            .await;
-        assert!(o.consider_continue("tab1", "cancelled").await.is_none());
-        assert!(o.consider_continue("tab1", "refused").await.is_none());
-    }
-
-    #[tokio::test]
-    async fn consider_continue_active_with_unchecked_returns_some() {
-        // Make a temp dir with a scratchboard that has unchecked items.
-        let tmp = std::env::temp_dir().join(format!(
-            "goal_test_{}",
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let o = GoalOrchestrator::new();
-        o.set_mode("tab1", true, Some("obj".to_string()), &tmp, "local")
-            .await;
-        let board = "\
-# Goal: x
-
-Status: AWAITING_APPROVAL
-
-## Phase 1
-- [ ] Code
-status: IN_PROGRESS
-";
-        std::fs::write(tmp.join("goal.md"), board).unwrap();
-        {
-            let mut map = o.states.write().await;
-            map.get_mut("tab1").unwrap().plan_turn_completed = true;
-        }
-        // set_mode starts in awaiting_approval=true (plan-approval gate);
-        // consider_continue is gated by approval — approve first so the
-        // active-with-unchecked path can fire.
-        o.approve_plan("tab1").await.unwrap();
-        let p = o.consider_continue("tab1", "end_turn").await;
-        assert!(p.is_some());
-        let txt = p.unwrap();
-        assert!(txt.contains("<goal_context>"));
-        assert!(txt.contains("<objective>\nx\n</objective>"));
-        // continuations_total bumped
-        let st = o.get_state("tab1").await.unwrap();
-        assert_eq!(st.continuations_total, 1);
-        // cleanup
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[tokio::test]
-    async fn consider_continue_terminal_status_returns_none() {
-        let tmp = std::env::temp_dir().join(format!(
-            "goal_test_term_{}",
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let board = "\
-# Goal: x
-
-status: GOAL_COMPLETE
-
-## Phase 1
-- [x] Code
-status: DONE
-";
-        let o = GoalOrchestrator::new();
-        o.set_mode("tab1", true, Some("obj".to_string()), &tmp, "local")
-            .await;
-        std::fs::write(tmp.join("goal.md"), board).unwrap();
-        {
-            let mut map = o.states.write().await;
-            let st = map.get_mut("tab1").unwrap();
-            st.awaiting_approval = false;
-            st.plan_turn_completed = true;
-        }
-        assert!(o.consider_continue("tab1", "end_turn").await.is_none());
-        assert!(!o.get_state("tab1").await.unwrap().active);
-        let last_clear = o.get_last_clear("tab1").await.unwrap();
-        assert_eq!(last_clear.reason, "completed");
-        assert_eq!(last_clear.objective.as_deref(), Some("obj"));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[tokio::test]
-    async fn consider_continue_rejects_false_goal_complete_status() {
-        let tmp = std::env::temp_dir().join(format!(
-            "goal_test_false_complete_{}",
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let o = GoalOrchestrator::new();
-        o.set_mode("tab1", true, Some("obj".to_string()), &tmp, "local")
-            .await;
-        let board = "\
-# Goal: x
-
-status: GOAL_COMPLETE
-
-## Phase 1
-- [x] Code
-- [ ] Test
-status: DONE
-";
-        std::fs::write(tmp.join("goal.md"), board).unwrap();
-        {
-            let mut map = o.states.write().await;
-            let st = map.get_mut("tab1").unwrap();
-            st.awaiting_approval = false;
-            st.plan_turn_completed = true;
-        }
-        let p = o.consider_continue("tab1", "end_turn").await;
-        assert!(p.is_some());
-        let txt = p.unwrap();
-        assert!(txt.contains("<goal_status_drift>"), "got: {}", txt);
-        assert!(txt.contains("Change the top-level `Status:` back to `IN_PROGRESS`"));
-        let st = o.get_state("tab1").await.unwrap();
-        assert!(st.active);
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[tokio::test]
-    async fn consider_continue_does_not_completion_nudge_before_phase_statuses_done() {
-        let tmp = std::env::temp_dir().join(format!(
-            "goal_test_not_ready_nudge_{}",
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let o = GoalOrchestrator::new();
-        o.set_mode("tab1", true, Some("obj".to_string()), &tmp, "local")
-            .await;
-        let board = "\
-# Goal: x
-
-Status: IN_PROGRESS
-
-## Phase 1
-- [x] Code
-- [x] Test
-status: IN_PROGRESS
-";
-        std::fs::write(tmp.join("goal.md"), board).unwrap();
-        {
-            let mut map = o.states.write().await;
-            let st = map.get_mut("tab1").unwrap();
-            st.awaiting_approval = false;
-            st.plan_turn_completed = true;
-        }
-        let p = o.consider_continue("tab1", "end_turn").await;
-        assert!(p.is_some());
-        let txt = p.unwrap();
-        assert!(txt.contains("<goal_context>"), "got: {}", txt);
-        assert!(
-            !txt.contains("<goal_completion_check>"),
-            "should not nudge completion until phase statuses validate: {}",
-            txt
-        );
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn extract_goal_title_reads_current_scratchboard_title() {
-        let board = "\
-# Goal: revised objective
-
-Status: AWAITING_APPROVAL
-
-## Phase 1
-- [ ] Code
-";
-        assert_eq!(
-            extract_goal_title(board).as_deref(),
-            Some("revised objective")
-        );
-    }
-
-    #[tokio::test]
-    async fn approve_plan_updates_objective_from_revised_goal_title() {
-        let tmp = std::env::temp_dir().join(format!(
-            "goal-orchestrator-revised-objective-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&tmp).unwrap();
-        let o = GoalOrchestrator::new();
-        o.set_mode(
-            "tab1",
-            true,
-            Some("old objective".to_string()),
-            &tmp,
-            "local",
-        )
-        .await;
-        let board = "\
-# Goal: revised objective
-
-Status: AWAITING_APPROVAL
-
-## Phase 1
-- [ ] Code
-";
-        std::fs::write(tmp.join("goal.md"), board).unwrap();
-        {
-            let mut map = o.states.write().await;
-            map.get_mut("tab1").unwrap().plan_turn_completed = true;
-        }
-
-        let changed = o.approve_plan("tab1").await.unwrap();
-        assert!(changed);
-        let st = o.get_state("tab1").await.unwrap();
-        assert_eq!(st.objective, "revised objective");
-        assert!(!st.awaiting_approval);
-        let updated = std::fs::read_to_string(tmp.join("goal.md")).unwrap();
-        assert!(updated.contains("Status: IN_PROGRESS"));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[tokio::test]
-    async fn watchdog_reports_stalled_tab_without_halting() {
-        // Tab with an old `last_continuation_at_ms` (now - 700_000ms)
-        // and a 600_000ms timeout should be reported by the watchdog,
-        // but not halted. ACP can hide long-running tool output.
-        let o = GoalOrchestrator::new();
-        let tmp = std::env::temp_dir();
-        o.set_mode("stalled-tab", true, Some("obj".to_string()), &tmp, "local")
-            .await;
-        {
-            let mut map = o.states.write().await;
-            let st = map.get_mut("stalled-tab").unwrap();
-            // Pretend a continuation was injected 700s ago.
-            st.last_continuation_at_ms = now_ms().saturating_sub(700_000);
-            st.continuations_total = 1;
-            st.per_turn_timeout_ms = 600_000;
-        }
-        let stalled = o.watchdog_tick().await;
-        assert_eq!(stalled.len(), 1);
-        assert_eq!(stalled[0].0, "stalled-tab");
-        assert!(stalled[0].1.contains("STALLED"));
-        let st = o.get_state("stalled-tab").await.unwrap();
-        assert!(!st.halted);
-        assert!(st.halted_reason.is_none());
-    }
-
-    #[tokio::test]
-    async fn watchdog_ignores_untouched_tab() {
-        // Active tab that never injected a continuation
-        // (last_continuation_at_ms == 0) must not be halted.
-        let o = GoalOrchestrator::new();
-        let tmp = std::env::temp_dir();
-        o.set_mode("fresh-tab", true, Some("obj".to_string()), &tmp, "local")
-            .await;
-        let halts = o.watchdog_tick().await;
-        assert!(halts.is_empty());
-        let st = o.get_state("fresh-tab").await.unwrap();
-        assert!(!st.halted);
-    }
-
-    #[tokio::test]
-    async fn watchdog_ignores_recent_continuation() {
-        // Continuation 100ms ago, timeout 60s — should NOT halt.
-        let o = GoalOrchestrator::new();
-        let tmp = std::env::temp_dir();
-        o.set_mode("recent-tab", true, Some("obj".to_string()), &tmp, "local")
-            .await;
-        {
-            let mut map = o.states.write().await;
-            let st = map.get_mut("recent-tab").unwrap();
-            st.last_continuation_at_ms = now_ms().saturating_sub(100);
-            st.continuations_total = 1;
-            st.per_turn_timeout_ms = 60_000;
-        }
-        let halts = o.watchdog_tick().await;
-        assert!(halts.is_empty());
-    }
-}

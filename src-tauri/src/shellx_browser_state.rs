@@ -9,6 +9,9 @@ use crate::shellx_browser::{
     BrowserTabSummary, BrowserTaskSnapshot, BrowserTaskSummary, BrowserVaultDepositResponse,
     ShellxBrowserRegistry,
 };
+#[path = "shellx_browser_state_revision.rs"]
+mod revision;
+use revision::browser_title_revision;
 
 const BROWSER_SUMMARY_PENDING_REQUEST_LIMIT: usize = 10;
 const BROWSER_SUMMARY_GOAL_CHARS: usize = 300;
@@ -159,7 +162,12 @@ fn pending_request_summaries(state: &BrowserState) -> Vec<BrowserPendingRequestS
         .downloads
         .iter()
         .chain(state.uploads.iter())
-        .filter(|entry| !matches!(entry.status.as_str(), "completed" | "failed" | "cancelled"))
+        .filter(|entry| {
+            !matches!(
+                entry.status.as_str(),
+                "completed" | "declined" | "failed" | "cancelled"
+            )
+        })
     {
         pending.push(BrowserPendingRequestSummary {
             request_id: transfer.transfer_id.clone(),
@@ -204,8 +212,16 @@ impl ShellxBrowserRegistry {
             developer_mode: state.developer_mode.clone(),
             session_grants: state.session_grants.clone(),
             vault_deposits: state.vault_deposits.clone(),
-            downloads: state.downloads.clone(),
+            downloads: state
+                .downloads
+                .iter()
+                .map(|entry| {
+                    crate::shellx_browser_transfers::public_download_transfer_entry(&state, entry)
+                })
+                .collect(),
             uploads: state.uploads.clone(),
+            interrupted_native_download_stage_count: state.interrupted_native_download_stage_count,
+            native_download_cleanup_state_unknown: state.native_download_cleanup_state_unknown,
             console_logs: state.console_logs.clone(),
             dialogs: state.dialogs.clone(),
             permissions: state.permissions.clone(),
@@ -247,6 +263,8 @@ impl ShellxBrowserRegistry {
             vault_deposits: Vec::new(),
             downloads: Vec::new(),
             uploads: Vec::new(),
+            interrupted_native_download_stage_count: state.interrupted_native_download_stage_count,
+            native_download_cleanup_state_unknown: state.native_download_cleanup_state_unknown,
             console_logs: Vec::new(),
             dialogs: Vec::new(),
             permissions: Vec::new(),
@@ -338,6 +356,12 @@ impl ShellxBrowserRegistry {
             .receipts
             .last()
             .map(|receipt| receipt.receipt_id.as_str());
+        let state_revision_token = format!(
+            "state-{}-{}-{:016x}",
+            latest_receipt_id.unwrap_or("none"),
+            state_revision.max(0),
+            browser_title_revision(&state),
+        );
         let pending_request_count = state
             .session_grants
             .iter()
@@ -358,16 +382,17 @@ impl ShellxBrowserRegistry {
                 .iter()
                 .chain(state.uploads.iter())
                 .filter(|entry| {
-                    !matches!(entry.status.as_str(), "completed" | "failed" | "cancelled")
+                    !matches!(
+                        entry.status.as_str(),
+                        "completed" | "declined" | "failed" | "cancelled"
+                    )
                 })
                 .count();
         BrowserSummarySnapshot {
             browser_protocol_version: crate::build_metadata::BROWSER_PROTOCOL_VERSION,
             browser_schema_revision: crate::build_metadata::BROWSER_SCHEMA_REVISION,
             revisions: BrowserSummaryRevisions {
-                state: latest_receipt_id
-                    .map(|receipt_id| format!("state-{receipt_id}"))
-                    .unwrap_or_else(|| summary_revision("state", state_revision)),
+                state: state_revision_token,
                 tasks: summary_revision("tasks", task_revision),
                 tabs: summary_revision("tabs", tab_revision),
                 engine: summary_revision("engine", engine_revision),
@@ -650,7 +675,14 @@ impl ShellxBrowserRegistry {
     }
 
     pub fn downloads(&self) -> Vec<BrowserFileTransferEntry> {
-        lock_or_recover(&self.state).downloads.clone()
+        let state = lock_or_recover(&self.state);
+        state
+            .downloads
+            .iter()
+            .map(|entry| {
+                crate::shellx_browser_transfers::public_download_transfer_entry(&state, entry)
+            })
+            .collect()
     }
 
     pub fn downloads_for_agent_session(
@@ -668,7 +700,9 @@ impl ShellxBrowserRegistry {
                     caller_session_id,
                 )
             })
-            .cloned()
+            .map(|entry| {
+                crate::shellx_browser_transfers::public_download_transfer_entry(&state, entry)
+            })
             .collect()
     }
 

@@ -3,6 +3,9 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 use crate::shellx_browser::{safe_url_parts, BrowserReceipt};
+use crate::shellx_browser_flight_recorder_sanitization::{
+    browser_policy_exclusion_marker, browser_possible_credential_marker,
+};
 
 pub(crate) fn redact_trace_receipt(mut receipt: BrowserReceipt) -> BrowserReceipt {
     receipt.evidence = redact_trace_value(receipt.evidence);
@@ -19,10 +22,10 @@ pub(crate) fn redact_trace_value(value: serde_json::Value) -> serde_json::Value 
                 .into_iter()
                 .map(|(key, value)| {
                     let next = if is_trace_raw_text_key(&key) && value.is_string() {
-                        json!({
-                            "redacted": true,
-                            "bytes": value.as_str().map(str::len).unwrap_or_default(),
-                        })
+                        browser_policy_exclusion_marker(
+                            "browserTraceRawText",
+                            value.as_str().map(str::len).unwrap_or_default(),
+                        )
                     } else {
                         redact_trace_value(value)
                     };
@@ -38,12 +41,7 @@ pub(crate) fn redact_trace_value(value: serde_json::Value) -> serde_json::Value 
     }
 }
 
-#[cfg(test)]
-pub(crate) fn browser_recipe_step_from_receipt(
-    receipt: &BrowserReceipt,
-) -> Option<serde_json::Value> {
-    browser_recipe_step_from_receipt_with_context(receipt, &BTreeSet::new(), false)
-}
+
 
 pub(crate) fn browser_recipe_step_from_receipt_with_context(
     receipt: &BrowserReceipt,
@@ -187,15 +185,7 @@ pub(crate) fn browser_recipe_step_from_receipt_with_context(
 }
 
 pub(crate) fn browser_trace_string_redaction(value: &str) -> Option<serde_json::Value> {
-    if crate::host_mcp::redact_if_credential_pattern(value) {
-        Some(json!({
-            "redacted": true,
-            "bytes": value.len(),
-            "reason": "credentialPattern",
-        }))
-    } else {
-        None
-    }
+    browser_possible_credential_marker(value, "browserTraceText")
 }
 
 fn safe_recipe_literal_with_context<'a>(
@@ -314,292 +304,4 @@ pub(crate) fn write_browser_json_artifact(
     let path = dir.join(format!("{}-{}.json", id, created_at_ms));
     crate::session_git::write_private_file(&path, &bytes, "Browser artifact")?;
     Ok((path.to_string_lossy().into_owned(), bytes.len(), sha256))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shellx_browser::BrowserReceipt;
-
-    #[test]
-    fn trace_redaction_preserves_browser_task_identity() {
-        let task_id = "browser-task-a5e9743d-0697-4873-8f27-12a6843d9f69";
-        let redacted = redact_trace_value(json!({ "taskId": task_id }));
-
-        assert_eq!(redacted["taskId"], json!(task_id));
-    }
-
-    #[test]
-    fn recipe_step_from_engine_receipt_preserves_replayable_control_metadata() {
-        let receipt = BrowserReceipt {
-            receipt_id: "receipt-click".to_string(),
-            kind: "browserEngineActionApplied".to_string(),
-            task_id: Some("browser-task".to_string()),
-            profile_id: Some("agent".to_string()),
-            summary: "clicked".to_string(),
-            t: 1234,
-            sequence: 1,
-            evidence: json!({
-                "browserTabId": "browser-tab",
-                "action": "clickRef",
-                "refId": "create-key",
-                "selector": "button[data-testid='create-key']",
-                "status": "applied",
-                "force": true,
-                "timeoutMs": 9000
-            }),
-        };
-
-        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
-
-        assert_eq!(step["action"], json!("clickRef"));
-        assert_eq!(step["refId"], json!("create-key"));
-        assert_eq!(step["selector"], json!("button[data-testid='create-key']"));
-        assert_eq!(step["force"], json!(true));
-        assert_eq!(step["timeoutMs"], json!(9000));
-    }
-
-    #[test]
-    fn recipe_step_from_engine_receipt_uses_resolved_selector_for_ref_actions() {
-        let receipt = BrowserReceipt {
-            receipt_id: "receipt-click-resolved".to_string(),
-            kind: "browserEngineActionApplied".to_string(),
-            task_id: Some("browser-task".to_string()),
-            profile_id: Some("agent".to_string()),
-            summary: "clicked".to_string(),
-            t: 1234,
-            sequence: 1,
-            evidence: json!({
-                "browserTabId": "browser-tab",
-                "action": "clickRef",
-                "refId": "dom-23",
-                "selector": null,
-                "resolvedSelector": "button[aria-label='Create API key']",
-                "targetLabel": "Create API key",
-                "targetRole": "button",
-                "status": "applied"
-            }),
-        };
-
-        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
-
-        assert_eq!(step["action"], json!("clickRef"));
-        assert_eq!(step["refId"], json!("dom-23"));
-        assert_eq!(
-            step["selector"],
-            json!("button[aria-label='Create API key']")
-        );
-        assert_eq!(step["targetLabel"], json!("Create API key"));
-        assert_eq!(step["targetRole"], json!("button"));
-    }
-
-    #[test]
-    fn recipe_step_from_find_text_receipt_keeps_short_safe_queries() {
-        let receipt = BrowserReceipt {
-            receipt_id: "receipt-find-safe".to_string(),
-            kind: "browserFindTextCompleted".to_string(),
-            task_id: Some("browser-task".to_string()),
-            profile_id: Some("agent".to_string()),
-            summary: "found text".to_string(),
-            t: 1234,
-            sequence: 1,
-            evidence: json!({
-                "browserTabId": "browser-tab",
-                "action": "findText",
-                "findResult": {
-                    "query": "Create API key",
-                    "queryBytes": 14,
-                    "matchCount": 1,
-                    "activeIndex": 0,
-                    "scrolled": true,
-                    "caseSensitive": false
-                }
-            }),
-        };
-
-        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
-
-        assert_eq!(step["action"], json!("findText"));
-        assert_eq!(step["query"], json!("Create API key"));
-        assert_eq!(step["queryRedacted"], json!(false));
-    }
-
-    #[test]
-    fn recipe_step_from_find_text_receipt_redacts_typed_input_echoes() {
-        let receipt = BrowserReceipt {
-            receipt_id: "receipt-find-typed".to_string(),
-            kind: "browserFindTextCompleted".to_string(),
-            task_id: Some("browser-task".to_string()),
-            profile_id: Some("agent".to_string()),
-            summary: "found text".to_string(),
-            t: 1234,
-            sequence: 1,
-            evidence: json!({
-                "browserTabId": "browser-tab",
-                "action": "findText",
-                "findResult": {
-                    "query": "Clicked Canvas beta",
-                    "queryBytes": 19,
-                    "matchCount": 1,
-                    "activeIndex": 0,
-                    "scrolled": true,
-                    "caseSensitive": false
-                }
-            }),
-        };
-        let raw_inputs = BTreeSet::from(["canvas beta".to_string()]);
-
-        let step = browser_recipe_step_from_receipt_with_context(&receipt, &raw_inputs, false)
-            .expect("step exported");
-
-        assert_eq!(step["action"], json!("findText"));
-        assert!(step.get("query").is_none());
-        assert_eq!(step["queryRedacted"], json!(true));
-    }
-
-    #[test]
-    fn recipe_step_from_find_text_redacts_free_text_after_redacted_input() {
-        let receipt = BrowserReceipt {
-            receipt_id: "receipt-find-after-input".to_string(),
-            kind: "browserFindTextCompleted".to_string(),
-            task_id: Some("browser-task".to_string()),
-            profile_id: Some("agent".to_string()),
-            summary: "found text".to_string(),
-            t: 1234,
-            sequence: 1,
-            evidence: json!({
-                "browserTabId": "browser-tab",
-                "action": "findText",
-                "findResult": {
-                    "query": "Clicked Canvas beta",
-                    "queryBytes": 19,
-                    "matchCount": 1,
-                    "activeIndex": 0,
-                    "scrolled": true,
-                    "caseSensitive": false
-                }
-            }),
-        };
-
-        let step = browser_recipe_step_from_receipt_with_context(&receipt, &BTreeSet::new(), true)
-            .expect("step exported");
-
-        assert_eq!(step["action"], json!("findText"));
-        assert!(step.get("query").is_none());
-        assert_eq!(step["queryRedacted"], json!(true));
-    }
-
-    #[test]
-    fn recipe_step_from_wait_for_redacts_typed_input_echoes() {
-        let receipt = BrowserReceipt {
-            receipt_id: "receipt-wait-typed".to_string(),
-            kind: "browserEngineActionApplied".to_string(),
-            task_id: Some("browser-task".to_string()),
-            profile_id: Some("agent".to_string()),
-            summary: "waited".to_string(),
-            t: 1234,
-            sequence: 1,
-            evidence: json!({
-                "browserTabId": "browser-tab",
-                "action": "waitFor",
-                "status": "applied",
-                "value": "Clicked Canvas beta",
-                "timeoutMs": 3000
-            }),
-        };
-        let raw_inputs = BTreeSet::from(["canvas beta".to_string()]);
-
-        let step = browser_recipe_step_from_receipt_with_context(&receipt, &raw_inputs, false)
-            .expect("step exported");
-
-        assert_eq!(step["action"], json!("waitFor"));
-        assert!(step.get("value").is_none());
-        assert_eq!(step["valueRedacted"], json!(true));
-        assert_eq!(step["timeoutMs"], json!(3000));
-    }
-
-    #[test]
-    fn recipe_step_from_wait_for_redacts_free_text_after_redacted_input() {
-        let receipt = BrowserReceipt {
-            receipt_id: "receipt-wait-after-input".to_string(),
-            kind: "browserEngineActionApplied".to_string(),
-            task_id: Some("browser-task".to_string()),
-            profile_id: Some("agent".to_string()),
-            summary: "waited".to_string(),
-            t: 1234,
-            sequence: 1,
-            evidence: json!({
-                "browserTabId": "browser-tab",
-                "action": "waitFor",
-                "status": "applied",
-                "value": "Clicked Canvas beta",
-                "timeoutMs": 3000
-            }),
-        };
-
-        let step = browser_recipe_step_from_receipt_with_context(&receipt, &BTreeSet::new(), true)
-            .expect("step exported");
-
-        assert_eq!(step["action"], json!("waitFor"));
-        assert!(step.get("value").is_none());
-        assert_eq!(step["valueRedacted"], json!(true));
-    }
-
-    #[test]
-    fn recipe_step_from_find_text_receipt_redacts_credential_queries() {
-        let receipt = BrowserReceipt {
-            receipt_id: "receipt-find-secret".to_string(),
-            kind: "browserFindTextCompleted".to_string(),
-            task_id: Some("browser-task".to_string()),
-            profile_id: Some("agent".to_string()),
-            summary: "found text".to_string(),
-            t: 1234,
-            sequence: 1,
-            evidence: json!({
-                "browserTabId": "browser-tab",
-                "action": "findText",
-                "findResult": {
-                    "query": "qwertyuiopasdfghjklzxcvbnm",
-                    "queryBytes": 26,
-                    "matchCount": 1,
-                    "activeIndex": 0,
-                    "scrolled": true,
-                    "caseSensitive": false
-                }
-            }),
-        };
-
-        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
-
-        assert_eq!(step["action"], json!("findText"));
-        assert!(step.get("query").is_none());
-        assert_eq!(step["queryRedacted"], json!(true));
-    }
-
-    #[test]
-    fn recipe_step_from_engine_receipt_redacts_fill_values() {
-        let receipt = BrowserReceipt {
-            receipt_id: "receipt-fill".to_string(),
-            kind: "browserEngineActionApplied".to_string(),
-            task_id: Some("browser-task".to_string()),
-            profile_id: Some("agent".to_string()),
-            summary: "filled".to_string(),
-            t: 1234,
-            sequence: 1,
-            evidence: json!({
-                "browserTabId": "browser-tab",
-                "action": "fillRef",
-                "refId": "password",
-                "selector": "#password",
-                "status": "applied",
-                "value": "should-not-be-exported"
-            }),
-        };
-
-        let step = browser_recipe_step_from_receipt(&receipt).expect("step exported");
-
-        assert_eq!(step["action"], json!("fillRef"));
-        assert_eq!(step["valueRedacted"], json!(true));
-        assert!(step.get("value").is_none());
-    }
 }

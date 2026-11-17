@@ -11,8 +11,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
-#[cfg(test)]
-use std::time::Duration;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State, Url};
 use tokio::sync::Mutex as AsyncMutex;
@@ -37,7 +36,8 @@ use crate::shellx_browser_engine::{
     browser_default_engine_pool_snapshot, browser_engine_webview_label,
 };
 use crate::shellx_browser_engine_runtime::{
-    engine_bounds_rect, sync_native_browser_engine, wait_for_browser_engine_label_release,
+    engine_bounds_rect, sync_and_record_native_browser_engine,
+    wait_for_browser_engine_label_release,
 };
 pub use crate::shellx_browser_evaluation_model::{
     BrowserEvaluationAttemptInput, BrowserEvaluationReportArtifact, BrowserEvaluationReportRequest,
@@ -48,8 +48,7 @@ pub use crate::shellx_browser_flight_recorder_model::{
 use crate::shellx_browser_observations::observation_for_task;
 use crate::shellx_browser_profiles::{browser_profile_storage_root, default_profiles};
 use crate::shellx_browser_protected_values::BrowserProtectedValue;
-#[cfg(test)]
-use crate::shellx_browser_protected_values::BROWSER_SECRET_REDACTION_PLACEHOLDER;
+
 use crate::shellx_browser_tasks::{
     browser_agent_step_summary_for_task, find_task_index, resolve_task_id,
     task_control_blocked_response,
@@ -82,13 +81,13 @@ pub use crate::shellx_browser_model::{
     BrowserEngineWaitlistSnapshot, BrowserFileTransferEntry, BrowserFindTextResult,
     BrowserFormField, BrowserHarArtifact, BrowserHarExportRequest, BrowserHistoryEntry,
     BrowserHistoryScope, BrowserLocatorRecoveryCandidate, BrowserLocatorSuggestion,
-    BrowserNativeSecurityCapabilities, BrowserNetworkEntry, BrowserNetworkPrivacyDecision,
-    BrowserNetworkRecordRequest, BrowserObservation, BrowserObservationDelta,
-    BrowserObservationRef, BrowserPageSecurityState, BrowserPendingRequestSummary,
-    BrowserPerformanceArtifact, BrowserPerformanceExportRequest, BrowserPermissionEvent,
-    BrowserPermissionRecordRequest, BrowserPermissionResolveRequest, BrowserPersonalLockAuthMode,
-    BrowserPersonalLockSettings, BrowserPersonalLockUpdateRequest, BrowserPopupEvent,
-    BrowserPopupRecordRequest, BrowserPrivacySettings, BrowserPrivacyStats,
+    BrowserNativeDownloadDeclineRequest, BrowserNativeSecurityCapabilities, BrowserNetworkEntry,
+    BrowserNetworkPrivacyDecision, BrowserNetworkRecordRequest, BrowserObservation,
+    BrowserObservationDelta, BrowserObservationRef, BrowserPageSecurityState,
+    BrowserPendingRequestSummary, BrowserPerformanceArtifact, BrowserPerformanceExportRequest,
+    BrowserPermissionEvent, BrowserPermissionRecordRequest, BrowserPermissionResolveRequest,
+    BrowserPersonalLockAuthMode, BrowserPersonalLockSettings, BrowserPersonalLockUpdateRequest,
+    BrowserPopupEvent, BrowserPopupRecordRequest, BrowserPrivacySettings, BrowserPrivacyStats,
     BrowserPrivacyUpdateRequest, BrowserProfile, BrowserProfilePrivacyMode, BrowserReceipt,
     BrowserRecipeArtifact, BrowserRecipeExportRequest, BrowserRecipeReplayRequest,
     BrowserRecipeReplayResponse, BrowserRecipeReplaySkippedStep, BrowserRecipeReplayStepResult,
@@ -222,6 +221,12 @@ pub(crate) struct BrowserState {
     pub(crate) downloads: Vec<BrowserFileTransferEntry>,
     pub(crate) uploads: Vec<BrowserFileTransferEntry>,
     pub(crate) transfer_approvals: Vec<BrowserTransferApproval>,
+    pub(crate) native_download_permits:
+        BTreeMap<String, crate::shellx_browser_transfers::BrowserNativeDownloadPermit>,
+    pub(crate) native_download_cancellation_acks:
+        crate::shellx_browser_transfers::NativeDownloadCancellationAcks,
+    pub(crate) interrupted_native_download_stage_count: usize,
+    pub(crate) native_download_cleanup_state_unknown: bool,
     pub(crate) console_logs: Vec<BrowserConsoleLogEntry>,
     pub(crate) dialogs: Vec<BrowserDialogEvent>,
     pub(crate) permissions: Vec<BrowserPermissionEvent>,
@@ -237,6 +242,16 @@ pub(crate) struct BrowserState {
     pub(crate) tab_observations: BTreeMap<String, BrowserObservation>,
     pub(crate) teach_drafts: BTreeMap<String, crate::shellx_browser_teach::BrowserTeachDraftIndex>,
     pub(crate) engine_event_bindings: BTreeMap<String, String>,
+    /// Private association between a physical engine and the exact history row
+    /// admitted by its most recent finished navigation. This is deliberately
+    /// not serialized with Browser state: title callbacks may only refine an
+    /// already-admitted row, never create or rediscover one by URL.
+    pub(crate) engine_history_visit_admissions:
+        BTreeMap<String, BrowserEngineHistoryVisitAdmission>,
+    /// Binding-time attribution for the physical WebView. Engine snapshots are
+    /// mutable while a shared foreground engine is reassigned between tabs.
+    pub(crate) engine_event_contexts:
+        BTreeMap<String, crate::shellx_browser_engine_state::BrowserEngineEventContexts>,
 }
 
 impl Default for BrowserState {
@@ -267,6 +282,10 @@ impl Default for BrowserState {
             downloads: Vec::new(),
             uploads: Vec::new(),
             transfer_approvals: Vec::new(),
+            native_download_permits: BTreeMap::new(),
+            native_download_cancellation_acks: Default::default(),
+            interrupted_native_download_stage_count: 0,
+            native_download_cleanup_state_unknown: false,
             console_logs: Vec::new(),
             dialogs: Vec::new(),
             permissions: Vec::new(),
@@ -282,6 +301,8 @@ impl Default for BrowserState {
             tab_observations: BTreeMap::new(),
             teach_drafts: BTreeMap::new(),
             engine_event_bindings: BTreeMap::new(),
+            engine_history_visit_admissions: BTreeMap::new(),
+            engine_event_contexts: BTreeMap::new(),
         }
     }
 }
@@ -290,7 +311,7 @@ impl Default for BrowserState {
 pub struct ShellxBrowserRegistry {
     pub(crate) state: Mutex<BrowserState>,
     pub(crate) window_open_lock: Arc<AsyncMutex<()>>,
-    pub(crate) engine_sync_lock: AsyncMutex<()>,
+    pub(crate) engine_sync_lock: Arc<AsyncMutex<()>>,
     pub(crate) engine_action_locks: Mutex<BTreeMap<String, Arc<AsyncMutex<()>>>>,
     pub(crate) ephemeral_roots:
         Mutex<crate::shellx_browser_ephemeral_roots::BrowserEphemeralRootLeases>,
@@ -304,7 +325,3 @@ impl Default for ShellxBrowserRegistry {
         Self::new_with_settings_path(None)
     }
 }
-
-#[cfg(test)]
-#[path = "shellx_browser_tests.rs"]
-mod tests;

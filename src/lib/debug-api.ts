@@ -30,10 +30,11 @@
 // Settings.tsx. RightRail uses raw fetch for external URL previews.
 
 import { invoke } from "@tauri-apps/api/core";
+import { isPublicManualPreview } from "./public-manual-mode";
 
 /**
  * Default port. Override at runtime: launch the Tauri app (and any
- * external driver) with `SHELLX_DEBUG_PORT=<N>` so the Rust
+ * external diagnostic client) with `SHELLX_DEBUG_PORT=<N>` so the Rust
  * server binds there. The wrapper resolves the actual bound port via
  * `invoke('get_bound_ports')` on first call and caches the URL, so
  * multiple grok-shell-derived apps (and the orphan-socket fallback
@@ -135,7 +136,7 @@ export function adoptRotatedDebugToken(token: string): void {
  * Resolution order:
  * 1. Module cache (set on first successful resolve).
  * 2. `invoke('get_debug_token')` — works inside Tauri shell.
- * 3. `window.__GROK_DEBUG_TOKEN__` — set by a future init_script if any.
+ * 3. `window.__GROK_DEBUG_TOKEN__` — provided by an embedding context when available.
  * 4. Empty string — caller proceeds without auth header. The middleware
  * will 401 if SHELLX_DEBUG_SECRET is set, or succeed if not.
  *
@@ -171,6 +172,16 @@ export async function getDebugToken(): Promise<string> {
  * @param init same shape as the standard `fetch` init.
  */
 export async function api(path: string, init?: RequestInit): Promise<Response> {
+  if (isPublicManualPreview()) {
+    return new Response(JSON.stringify({
+      error: "ShellX desktop services are disabled in the public manual preview.",
+      path,
+    }), {
+      status: 409,
+      statusText: "Manual Preview",
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   const [token, base] = await Promise.all([getDebugToken(), getBaseUrl()]);
   const headers = new Headers(init?.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);

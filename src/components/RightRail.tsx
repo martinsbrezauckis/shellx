@@ -18,6 +18,7 @@ import pkg from "../../package.json";
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import { inTauri } from "../lib/tauri-bridge";
 import { SafeMarkdownLink } from "../lib/markdown-links";
+import { isPublicManualPreview } from "../lib/public-manual-mode";
 import { grokSearchCapabilities, shellxRuntimeCapabilities, type SearchCapability } from "../lib/session-capabilities";
 import {
   summarizeUpdateDiagnostic,
@@ -25,26 +26,22 @@ import {
   type UpdateDiagnosticInput,
 } from "../lib/update-diagnostics";
 import {
+  MANUAL_UPDATE_DOWNLOAD_URL,
+  resolveUpdateInstallMethod,
+  type UpdateInstallMethod,
+} from "../lib/update-install-policy";
+import {
   getBuildReceipts,
   getBuildState,
   isBuildTerminalStatus,
   type BuildReceipt,
   type BuildRunState,
 } from "../lib/build-run";
-import {
-  DEBUG_UPDATE_FIXTURE,
-  DEBUG_UPDATE_CHECK_RECEIPT,
-  DEBUG_UPDATE_INSTALL_RECEIPT,
-  cleanUpdateNotes,
-  firstUpdateNotesUrl,
-  type DebugUpdateFixtureMode,
-} from "../lib/update-notes";
+import { cleanUpdateNotes, firstUpdateNotesUrl } from "../lib/update-notes";
 import { TasksPanel } from "./TasksPanel";
 import type { ConnectionPreset, ConnectionProviderScanEntry } from "./ConnectionPicker";
-import type { AgentCliSetupFixture } from "./AgentCliSetupAssistant";
 import { LazySurface } from "./LazySurface";
 import { apiPost } from "../lib/debug-api";
-import { DEBUG_AGENT_CLI_SETUP_PRESET } from "../lib/debug-agent-cli-setup-fixture";
 import {
   normalizeShellxToolExposure,
   DEFAULT_SHELLX_TOOL_EXPOSURE,
@@ -53,7 +50,6 @@ import {
 } from "../lib/provider-sessions";
 import {
   CUT_TOOLING_FIXTURES,
-  type CutToolingState,
   type CutToolingStatus,
 } from "../lib/cut-tooling";
 import { CutToolingRow } from "./CutToolingRow";
@@ -64,15 +60,19 @@ import {
 import { getModelInstructionCards } from "../lib/model-instruction-cards-api";
 import type { WorkPreviewState } from "../lib/work-preview";
 import type { RawEventFrame } from "../types/acp";
-import type { DebugBuildRunCockpitFixture } from "../lib/debug-renderer-fixture";
 import { RIGHT_RAIL_TABS, isRightTab, type RightTab } from "../lib/ui-navigation";
 import { ShellIcon, TransportIcon, type ShellIconName } from "./icons";
-import type { DebugRightRailGitLifecycleFixture } from "../lib/debug-right-rail-git-fixture";
-import type { DebugProviderAction } from "../lib/debug-provider-action-fixture";
 import { useEventAwarePolling, type PollCurrent } from "../lib/useEventAwarePolling";
 
-const GitPane = lazy(() => import("./GitPane")
-  .then((module) => ({ default: module.GitPane })));
+// The static manual never opens Git and has no local repository. Excluding
+// this lazy branch also excludes its Shiki grammar payload from that build.
+// Some non-Vite module consumers import this component through Node, where
+// import.meta has no env object.
+const isPublicManualBuild = import.meta.env?.SHELLX_PUBLIC_MANUAL_BUILD === true;
+const GitPane = isPublicManualBuild
+  ? null
+  : lazy(() => import("./GitPane")
+    .then((module) => ({ default: module.GitPane })));
 const WorkPreviewPanel = lazy(() => import("./WorkPreviewPanel")
   .then((module) => ({ default: module.WorkPreviewPanel })));
 const FilesPane = lazy(() => import("./FilesPane")
@@ -119,6 +119,87 @@ const RIGHT_TAB_META: Record<RightTab, { label: string; icon: ShellIconName; tit
     title: "Files - project browser",
   },
 };
+
+const MANUAL_RIGHT_RAIL_CONTENT: Record<RightTab, {
+  eyebrow: string;
+  summary: string;
+  rows: Array<{ label: string; value: string }>;
+}> = {
+  Tasks: {
+    eyebrow: "Session activity",
+    summary: "Follow agent turns, terminal processes, and background work owned by the active session.",
+    rows: [
+      { label: "Agent turn", value: "Streaming" },
+      { label: "Terminal process", value: "Completed" },
+      { label: "Ownership", value: "Active tab" },
+    ],
+  },
+  Tooling: {
+    eyebrow: "Capability health",
+    summary: "See the selected computer, provider CLI, ShellX host bridge, MCP connections, and ShellX Cut readiness together.",
+    rows: [
+      { label: "Environment", value: "Connected" },
+      { label: "Provider CLI", value: "Ready" },
+      { label: "Host tools", value: "Session scoped" },
+    ],
+  },
+  Git: {
+    eyebrow: "Project changes",
+    summary: "Inspect repository status and diffs, then manage local checkpoints, branches, and worktrees from the session folder.",
+    rows: [
+      { label: "Branch", value: "feature/manual" },
+      { label: "Working changes", value: "2 files" },
+      { label: "Checkpoint", value: "Available" },
+    ],
+  },
+  Preview: {
+    eyebrow: "Live work preview",
+    summary: "Start supported web work, open its loopback URL, inspect output, and collect Preview Doctor diagnostics.",
+    rows: [
+      { label: "Preview server", value: "Ready" },
+      { label: "Browser view", value: "Open" },
+      { label: "Diagnostics", value: "Available" },
+    ],
+  },
+  Plan: {
+    eyebrow: "Build scratchboard",
+    summary: "Review the active goal, its current steps, gate state, and auditable run receipts in one session-owned view.",
+    rows: [
+      { label: "Objective", value: "In progress" },
+      { label: "Plan steps", value: "3 of 5 complete" },
+      { label: "Receipts", value: "Recorded" },
+    ],
+  },
+  Files: {
+    eyebrow: "Project browser",
+    summary: "Browse the active project tree, preview supported files, and attach selected paths to the current prompt.",
+    rows: [
+      { label: "src", value: "Application code" },
+      { label: "docs", value: "Public documentation" },
+      { label: "tests", value: "Verification" },
+    ],
+  },
+};
+
+function ManualRightRailPreview({ tab }: { tab: RightTab }): JSX.Element {
+  const content = MANUAL_RIGHT_RAIL_CONTENT[tab];
+  return (
+    <section className="manual-right-rail-preview" data-debug-id={`manual-right-rail-${tab.toLowerCase()}`}>
+      <div className="manual-right-rail-kicker">Guided preview · {content.eyebrow}</div>
+      <h2>{RIGHT_TAB_META[tab].label}</h2>
+      <p>{content.summary}</p>
+      <div className="manual-right-rail-rows">
+        {content.rows.map((row) => (
+          <div className="manual-right-rail-row" key={row.label}>
+            <span>{row.label}</span>
+            <strong>{row.value}</strong>
+          </div>
+        ))}
+      </div>
+      <small>The installed app fills this panel with the active session&apos;s live data.</small>
+    </section>
+  );
+}
 
 function readPersistedRightTab(): RightTab {
   try {
@@ -291,77 +372,6 @@ export interface GrokEnvironmentSnapshot {
   error?: string | null;
 }
 
-const DEBUG_PROVIDER_ACTION_MCP_ENTRY: McpEntryStatus = {
-  id: "shellx-release-provider-action",
-  name: "ShellX release fixture",
-  tier: "a",
-  kind: "stdio",
-  description: "Release-owned connector prompt fixture.",
-  category: "release",
-  vaultKeys: [],
-  installed: true,
-  enabled: true,
-  keysAvailable: [],
-  allKeysPresent: true,
-};
-
-const DEBUG_PROVIDER_ACTION_MCP_HEALTH: MarketplaceHealthEntry = {
-  entryId: DEBUG_PROVIDER_ACTION_MCP_ENTRY.id,
-  tabId: "release-provider-action",
-  status: "missing",
-  launcher: "shellx-release-provider-action-missing",
-  installHint: null,
-  stderrTail: null,
-  lastCheckMs: 0,
-};
-
-const DEBUG_PROVIDER_ACTION_GROK_ENVIRONMENT: GrokEnvironmentSnapshot = {
-  tabId: "release-provider-action",
-  status: "warn",
-  checkedAtMs: 0,
-  transport: "local release fixture",
-  cwd: "SHELLX_RELEASE_PROVIDER_ACTION_ENVIRONMENT_035",
-  sessionId: "release-provider-action",
-  doctor: null,
-  inspect: {
-    grokVersion: "release-fixture",
-    projectTrusted: true,
-    instructionCount: 1,
-    skillCount: 1,
-    pluginCount: 1,
-    mcpServerCount: 1,
-    lspServerCount: 0,
-  },
-  setup: {
-    summary: { status: "warn", readyCount: 0, attentionCount: 1, totalCount: 1 },
-    checks: [{
-      id: "release-fixture",
-      label: "Release fixture check",
-      status: "warn",
-      detail: "SHELLX_RELEASE_PROVIDER_ACTION_ENVIRONMENT_035",
-    }],
-  },
-  readiness: {
-    summary: { status: "warn", readyCount: 0, attentionCount: 1, totalCount: 1 },
-    checks: [{
-      id: "release-fixture",
-      label: "Release fixture readiness",
-      feature: "provider-action-lifecycle",
-      status: "warn",
-      required: false,
-      detail: "SHELLX_RELEASE_PROVIDER_ACTION_ENVIRONMENT_035",
-    }],
-  },
-  apiKeyHint: {
-    preferredEnv: "XAI_API_KEY",
-    legacyEnv: "GROK_API_KEY",
-    preferredPresent: false,
-    legacyPresent: false,
-    detail: "No credential is used by the release fixture.",
-  },
-  trace: { available: false, detail: "Release fixture trace is intentionally unavailable." },
-};
-
 interface GrokTraceExportResult {
   status: GrokEnvironmentStatus;
   sessionId: string;
@@ -400,17 +410,9 @@ export function RightRail({
   onAskGrokToFixPreview,
   onConnectActiveTab,
   activeAgentId = null,
-  debugBuildRunFixture = null,
-  debugRightRailGitFixture = null,
-  debugProviderAction = null,
-  debugCutToolingFixture = null,
-  debugClipboardFixture = null,
-  debugUpdateFixture = "live",
   shellxToolExposure = DEFAULT_SHELLX_TOOL_EXPOSURE,
   onShellxToolExposureChange,
   onProviderScanUpdated,
-  agentCliStatusFixture,
-  agentCliStatusLive = false,
 }: {
  /** Current autonomy mode — drives the Plan tab empty-state copy. */
   autonomy?: string;
@@ -445,19 +447,12 @@ export function RightRail({
   onAskGrokToFixPreview?: (state: WorkPreviewState) => void;
   onConnectActiveTab?: (target?: { tabId?: string | null; cwd?: string | null }) => Promise<boolean> | boolean | void;
   activeAgentId?: string | null;
-  debugBuildRunFixture?: DebugBuildRunCockpitFixture | null;
-  debugRightRailGitFixture?: DebugRightRailGitLifecycleFixture | null;
-  debugProviderAction?: DebugProviderAction | null;
-  debugCutToolingFixture?: CutToolingState | null;
-  debugClipboardFixture?: "tasks" | "work-preview" | null;
-  debugUpdateFixture?: DebugUpdateFixtureMode;
   shellxToolExposure?: ProviderShellxToolExposure;
   onShellxToolExposureChange?: (mode: ProviderShellxToolExposure) => void;
   onProviderScanUpdated?: (preset: ConnectionPreset, providers: ConnectionProviderScanEntry[]) => void;
-  agentCliStatusFixture?: AgentCliSetupFixture;
-  agentCliStatusLive?: boolean;
 }): JSX.Element {
   const [tab, setTab] = useState<RightTab>(readPersistedRightTab);
+  const manualPreview = isPublicManualPreview();
 
   useEffect(() => {
     writePersistedRightTab(tab);
@@ -516,15 +511,15 @@ export function RightRail({
  * own subprocess rows. host-MCP subagents currently lack a
  * tabId and surface in an "Unattributed" section inside the
  * panel. */}
-      {tab === "Tasks" && (
+      {manualPreview && <ManualRightRailPreview tab={tab} />}
+      {!manualPreview && tab === "Tasks" && (
         <TasksPanel
           activeTabId={activeTabId ?? null}
           activeAgentId={activeAgentId ?? null}
           onAskAgent={onSendPromptToActiveTab}
-          debugClipboardFixture={debugClipboardFixture === "tasks" ? "owned-safe" : null}
         />
       )}
-      {tab === "Tooling" && (
+      {!manualPreview && tab === "Tooling" && (
         <ToolingPane
           activeTabId={activeTabId ?? null}
           cwd={cwd}
@@ -538,24 +533,17 @@ export function RightRail({
           onShellxToolExposureChange={onShellxToolExposureChange}
           onSendPromptToActiveTab={onSendPromptToActiveTab}
           onProviderScanUpdated={onProviderScanUpdated}
-          agentCliStatusFixture={agentCliStatusFixture}
-          agentCliStatusLive={agentCliStatusLive}
-          debugFixture={debugRightRailGitFixture}
-          debugProviderAction={debugProviderAction}
-          debugCutToolingFixture={debugCutToolingFixture}
-          debugUpdateFixture={debugUpdateFixture}
         />
       )}
-      {tab === "Git" && (
+      {!manualPreview && GitPane && tab === "Git" && (
         <LazySurface label="Git panel" variant="inline" onDismiss={() => setTab("Tasks")}>
           <GitPane
             activeTabId={activeTabId ?? null}
             cwd={cwd}
-            debugFixture={debugRightRailGitFixture}
           />
         </LazySurface>
       )}
-      {tab === "Preview" && (
+      {!manualPreview && tab === "Preview" && (
         <LazySurface label="Preview panel" variant="inline" onDismiss={() => setTab("Tasks")}>
           <WorkPreviewPanel
             activeTabId={activeTabId ?? null}
@@ -564,11 +552,10 @@ export function RightRail({
             onStateChange={onWorkPreviewStateChange}
             onOpenPreview={onOpenWorkPreview}
             onAskGrokToFix={onAskGrokToFixPreview}
-            debugClipboardFixture={debugClipboardFixture === "work-preview" ? "owned-safe" : null}
           />
         </LazySurface>
       )}
-      {tab === "Plan" && (
+      {!manualPreview && tab === "Plan" && (
         <PlanPane
           autonomy={autonomy}
           events={events}
@@ -580,10 +567,9 @@ export function RightRail({
           onOpenGoalReview={onOpenGoalReview}
           sessionStatus={sessionStatus}
           onConnectActiveTab={onConnectActiveTab}
-          debugBuildRunFixture={debugBuildRunFixture}
         />
       )}
-      {tab === "Files" && (
+      {!manualPreview && tab === "Files" && (
         <LazySurface label="Files panel" variant="inline" onDismiss={() => setTab("Tasks")}>
           <FilesPane
             activeTabId={activeTabId ?? null}
@@ -613,12 +599,6 @@ function ToolingPane({
   shellxToolExposure,
   onShellxToolExposureChange,
   onProviderScanUpdated,
-  agentCliStatusFixture,
-  agentCliStatusLive,
-  debugFixture,
-  debugProviderAction,
-  debugCutToolingFixture,
-  debugUpdateFixture,
 }: {
   activeTabId: string | null;
   cwd: string;
@@ -632,12 +612,6 @@ function ToolingPane({
   onShellxToolExposureChange?: (mode: ProviderShellxToolExposure) => void;
   onSendPromptToActiveTab?: (text: string) => void;
   onProviderScanUpdated?: (preset: ConnectionPreset, providers: ConnectionProviderScanEntry[]) => void;
-  agentCliStatusFixture?: AgentCliSetupFixture;
-  agentCliStatusLive: boolean;
-  debugFixture?: DebugRightRailGitLifecycleFixture | null;
-  debugProviderAction?: DebugProviderAction | null;
-  debugCutToolingFixture?: CutToolingState | null;
-  debugUpdateFixture: DebugUpdateFixtureMode;
 }): JSX.Element {
   const [entries, setEntries] = useState<McpEntryStatus[]>([]);
   const [health, setHealth] = useState<Record<string, MarketplaceHealthEntry>>({});
@@ -663,14 +637,6 @@ function ToolingPane({
     setCutActionError(null);
     setHasLoaded(false);
     setError(null);
-    if (debugFixture || debugProviderAction || debugCutToolingFixture) {
-      setHasLoaded(true);
-      return;
-    }
-    if (agentCliStatusFixture || agentCliStatusLive) {
-      setHasLoaded(true);
-      return;
-    }
     if (!activeTabId || !inTauri()) return;
 
     let cancelled = false;
@@ -702,12 +668,10 @@ function ToolingPane({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [activeTabId, agentCliStatusFixture, agentCliStatusLive, connectionLabel, connectionTransport, connectionId, debugFixture, debugProviderAction, debugCutToolingFixture]);
+  }, [activeTabId, connectionLabel, connectionTransport, connectionId]);
 
   useEffect(() => {
     setConnectionPreset(null);
-    if (debugFixture || debugProviderAction || debugCutToolingFixture) return;
-    if (agentCliStatusFixture || agentCliStatusLive) return;
     if (!connectionId || !inTauri()) return;
     let cancelled = false;
     void invoke<ConnectionPreset[]>("connections_list")
@@ -721,7 +685,7 @@ function ToolingPane({
     return () => {
       cancelled = true;
     };
-  }, [agentCliStatusFixture, agentCliStatusLive, connectionId, debugFixture, debugProviderAction, debugCutToolingFixture]);
+  }, [connectionId]);
 
   const desired = useMemo(
     () => entries.filter((entry) => entry.installed && entry.enabled),
@@ -746,7 +710,7 @@ function ToolingPane({
     ? (hasConnectedEnvironment ? sessionStatus : "awaiting session")
     : sessionStatus;
   const checkCutStatus = async (): Promise<void> => {
-    if (debugCutToolingFixture || !activeTabId || cutChecking || cutOpening) return;
+    if (!activeTabId || cutChecking || cutOpening) return;
     setCutActionError(null);
     setCutChecking(true);
     setCutStatus((current) => current
@@ -764,7 +728,7 @@ function ToolingPane({
     }
   };
   const openCut = async (): Promise<void> => {
-    if (debugCutToolingFixture || !activeTabId || cutOpening) return;
+    if (!activeTabId || cutOpening) return;
     setCutActionError(null);
     setCutOpening(true);
     try {
@@ -776,66 +740,6 @@ function ToolingPane({
       setCutOpening(false);
     }
   };
-
-  if (debugFixture) {
-    return (
-      <div className="tooling-pane" data-right-rail-fixture="owned-read-only">
-        <GrokEnvironmentCard
-          activeTabId={activeTabId}
-          cwd={cwd}
-          sessionInfo={null}
-          debugSnapshot={debugFixture.environmentSnapshot as unknown as GrokEnvironmentSnapshot}
-        />
-        <ModelInstructionCardsCard debugFixture={debugFixture} />
-      </div>
-    );
-  }
-
-  if (debugProviderAction === "right-rail-environment-ask") {
-    return (
-      <div className="tooling-pane" data-right-rail-provider-action-fixture="environment">
-        <GrokEnvironmentCard
-          activeTabId={activeTabId}
-          cwd={cwd}
-          sessionInfo={null}
-          onSendPromptToActiveTab={onSendPromptToActiveTab}
-          debugSnapshot={DEBUG_PROVIDER_ACTION_GROK_ENVIRONMENT}
-        />
-      </div>
-    );
-  }
-
-  if (debugProviderAction === "right-rail-connector-action") {
-    return (
-      <div className="tooling-pane" data-right-rail-provider-action-fixture="connector">
-        <div className="tooling-list">
-          <ToolingRow
-            entry={DEBUG_PROVIDER_ACTION_MCP_ENTRY}
-            health={DEBUG_PROVIDER_ACTION_MCP_HEALTH}
-            connectionLabel="release-owned local fixture"
-            onSendPromptToActiveTab={onSendPromptToActiveTab}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  if (agentCliStatusFixture || agentCliStatusLive) {
-    return (
-      <div className="tooling-pane">
-        <LazySurface label="Agent CLI status" variant="inline">
-          <AgentCliStatusCard
-            activeTabId={activeTabId ?? "release-surface-agent-cli-status"}
-            sessionInfo={null}
-            connectionId={null}
-            connectionTransport="local"
-            connectionPreset={DEBUG_AGENT_CLI_SETUP_PRESET}
-            fixture={agentCliStatusFixture}
-          />
-        </LazySurface>
-      </div>
-    );
-  }
 
   if (!activeTabId) {
     return (
@@ -871,7 +775,7 @@ function ToolingPane({
         </div>
       </div>
 
-      <UpdateDiagnosticsCard debugFixture={debugUpdateFixture} />
+      <UpdateDiagnosticsCard />
 
       <ShellXToolExposureCard
         mode={shellxToolExposure}
@@ -879,10 +783,8 @@ function ToolingPane({
       />
 
       <CutToolingRow
-        status={debugCutToolingFixture
-          ? CUT_TOOLING_FIXTURES[debugCutToolingFixture]
-          : cutStatus ?? CUT_TOOLING_FIXTURES.checking}
-        checking={debugCutToolingFixture === "checking" || (!debugCutToolingFixture && (loading || cutChecking))}
+        status={cutStatus ?? CUT_TOOLING_FIXTURES.checking}
+        checking={loading || cutChecking}
         opening={cutOpening}
         checkSequence={cutCheckSequence}
         actionError={cutActionError}
@@ -1046,30 +948,16 @@ function ShellXToolExposureCard({
   );
 }
 
-function UpdateDiagnosticsCard({
-  debugFixture = "live",
-}: {
-  debugFixture?: DebugUpdateFixtureMode;
-} = {}): JSX.Element {
+function UpdateDiagnosticsCard(): JSX.Element {
   const [state, setState] = useState<UpdateDiagnosticInput>({
     currentVersion: VERSION,
     kind: "idle",
   });
   const [body, setBody] = useState<string>("");
   const [releaseReceipt, setReleaseReceipt] = useState<string | null>(null);
+  const [installMethod, setInstallMethod] = useState<UpdateInstallMethod>("automatic");
 
   async function checkForUpdates(): Promise<void> {
-    if (debugFixture === "owned-check" || debugFixture === "owned-available") {
-      setBody(DEBUG_UPDATE_FIXTURE.body);
-      setState({
-        currentVersion: VERSION,
-        kind: "available",
-        remoteVersion: DEBUG_UPDATE_FIXTURE.version,
-        checkedAtMs: Number.MAX_SAFE_INTEGER,
-      });
-      setReleaseReceipt(DEBUG_UPDATE_CHECK_RECEIPT);
-      return;
-    }
     if (!inTauri()) return;
     setState((prev) => ({ ...prev, kind: "checking", errorMessage: null }));
     try {
@@ -1077,7 +965,9 @@ function UpdateDiagnosticsCard({
       const update = await check();
       const checkedAtMs = Date.now();
       if (update) {
+        const nextInstallMethod = await resolveUpdateInstallMethod();
         setBody(cleanUpdateNotes(update.body));
+        setInstallMethod(nextInstallMethod);
         setState({
           currentVersion: VERSION,
           kind: "available",
@@ -1105,10 +995,11 @@ function UpdateDiagnosticsCard({
   }
 
   async function installUpdate(): Promise<void> {
-    if (debugFixture === "owned-available") {
-      setBody("");
-      setState({ currentVersion: VERSION, kind: "current", checkedAtMs: Number.MAX_SAFE_INTEGER });
-      setReleaseReceipt(DEBUG_UPDATE_INSTALL_RECEIPT);
+    const nextInstallMethod = await resolveUpdateInstallMethod();
+    setInstallMethod(nextInstallMethod);
+    if (nextInstallMethod === "manual") {
+      openExternal(MANUAL_UPDATE_DOWNLOAD_URL);
+      setReleaseReceipt("Manual package update opened in the browser.");
       return;
     }
     setState((prev) => ({ ...prev, kind: "installing", progress: 0, errorMessage: null }));
@@ -1145,30 +1036,9 @@ function UpdateDiagnosticsCard({
   }
 
   useEffect(() => {
-    setReleaseReceipt(null);
-    if (debugFixture === "owned-available") {
-      setBody(DEBUG_UPDATE_FIXTURE.body);
-      setState({
-        currentVersion: VERSION,
-        kind: "available",
-        remoteVersion: DEBUG_UPDATE_FIXTURE.version,
-        checkedAtMs: Number.MAX_SAFE_INTEGER,
-      });
-      return;
-    }
-    if (debugFixture === "owned-cleared") {
-      setBody("");
-      setState({ currentVersion: VERSION, kind: "idle" });
-      return;
-    }
-    if (debugFixture === "owned-check") {
-      setBody("");
-      setState({ currentVersion: VERSION, kind: "idle" });
-      return;
-    }
     if (!inTauri()) return;
     void checkForUpdates();
-  }, [debugFixture]);
+  }, []);
 
   const summary = summarizeUpdateDiagnostic(state);
   const releaseNotesUrl = firstUpdateNotesUrl(body);
@@ -1193,6 +1063,9 @@ function UpdateDiagnosticsCard({
           Host app <code>v{VERSION}</code>
           {state.checkedAtMs ? ` · checked ${new Date(state.checkedAtMs).toLocaleTimeString()}` : ""}
         </div>
+        {state.kind === "available" && installMethod === "manual" && (
+          <div>Installed Linux packages update through their package manager.</div>
+        )}
         {quietError && <div className="tooling-issue">Updater endpoint is not advertising a usable release manifest right now.</div>}
       </div>
       <div className="tooling-actions">
@@ -1204,11 +1077,12 @@ function UpdateDiagnosticsCard({
         {state.kind === "available" && (
           <button
             type="button"
+            data-debug-id="update-right-rail-install"
             data-release-update-control="right-rail-install"
             className="mp-action-btn mp-action-btn-primary"
             onClick={() => void installUpdate()}
           >
-            Install
+            {installMethod === "manual" ? "Download update" : "Install"}
           </button>
         )}
         <button
@@ -1231,28 +1105,20 @@ function GrokEnvironmentCard({
   cwd,
   sessionInfo,
   onSendPromptToActiveTab,
-  debugSnapshot = null,
 }: {
   activeTabId: string | null;
   cwd: string;
   sessionInfo: SessionToolingSnapshot["session"] | null;
   onSendPromptToActiveTab?: (text: string) => void;
-  debugSnapshot?: GrokEnvironmentSnapshot | null;
 }): JSX.Element {
-  const [snapshot, setSnapshot] = useState<GrokEnvironmentSnapshot | null>(debugSnapshot ?? null);
+  const [snapshot, setSnapshot] = useState<GrokEnvironmentSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [traceBusy, setTraceBusy] = useState(false);
   const [environmentRefreshSequence, setEnvironmentRefreshSequence] = useState(0);
-  const [traceFixtureReceipt, setTraceFixtureReceipt] = useState<string | null>(null);
   const [copiedReport, setCopiedReport] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refresh = async (force = false): Promise<void> => {
-    if (debugSnapshot) {
-      setSnapshot(debugSnapshot);
-      if (force) setEnvironmentRefreshSequence((sequence) => sequence + 1);
-      return;
-    }
     if (!activeTabId || !inTauri()) return;
     setLoading(true);
     setMessage(null);
@@ -1271,20 +1137,12 @@ function GrokEnvironmentCard({
   };
 
   useEffect(() => {
-    if (debugSnapshot) {
-      setSnapshot(debugSnapshot);
-      setMessage(null);
-      setEnvironmentRefreshSequence(0);
-      setTraceFixtureReceipt(null);
-      return;
-    }
     setSnapshot(null);
     setMessage(null);
     setEnvironmentRefreshSequence(0);
-    setTraceFixtureReceipt(null);
     if (!activeTabId) return;
     void refresh(true);
-  }, [activeTabId, cwd, debugSnapshot, sessionInfo?.hasActiveChild, sessionInfo?.sessionId]);
+  }, [activeTabId, cwd, sessionInfo?.hasActiveChild, sessionInfo?.sessionId]);
 
   const status = grokEnvironmentStatus(snapshot?.status ?? "idle");
   const failingServers = snapshot?.doctor?.servers.filter((server) => !server.healthy) ?? [];
@@ -1298,10 +1156,6 @@ function GrokEnvironmentCard({
 
   async function exportTrace(): Promise<void> {
     if (!activeTabId || !snapshot?.trace.available) return;
-    if (debugSnapshot) {
-      setTraceFixtureReceipt("release fixture trace export boundary completed");
-      return;
-    }
     setTraceBusy(true);
     setMessage(null);
     try {
@@ -1447,7 +1301,7 @@ function GrokEnvironmentCard({
           className="mp-action-btn mp-action-btn-secondary"
           onClick={() => void exportTrace()}
           disabled={!snapshot?.trace.available || traceBusy}
-          title={traceFixtureReceipt ?? snapshot?.trace.detail ?? "No session id is available yet."}
+          title={snapshot?.trace.detail ?? "No session id is available yet."}
         >
           <ShellIcon name="file" size={12} />
           Trace
@@ -1468,11 +1322,7 @@ function GrokEnvironmentCard({
   );
 }
 
-function ModelInstructionCardsCard({
-  debugFixture = null,
-}: {
-  debugFixture?: DebugRightRailGitLifecycleFixture | null;
-}): JSX.Element {
+function ModelInstructionCardsCard(): JSX.Element {
   const [state, setState] = useState<ModelInstructionCardsState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1480,13 +1330,6 @@ function ModelInstructionCardsCard({
 
   async function refresh(showLoading = true): Promise<void> {
     if (showLoading) setLoading(true);
-    if (debugFixture) {
-      setState(debugFixture.modelInstructionCards);
-      setError(null);
-      setManualRefreshSequence((sequence) => sequence + 1);
-      if (showLoading) setLoading(false);
-      return;
-    }
     try {
       const next = await getModelInstructionCards();
       setState(next);
@@ -1501,12 +1344,6 @@ function ModelInstructionCardsCard({
 
   useEffect(() => {
     setManualRefreshSequence(0);
-    if (debugFixture) {
-      setState(debugFixture.modelInstructionCards);
-      setError(null);
-      setLoading(false);
-      return;
-    }
     let cancelled = false;
     const load = async () => {
       setLoading(true);
@@ -1525,7 +1362,7 @@ function ModelInstructionCardsCard({
     return () => {
       cancelled = true;
     };
-  }, [debugFixture]);
+  }, []);
 
   const cards = state?.cards ?? [];
   const categories = useMemo(() => summarizeCardCategories(cards), [cards]);
@@ -2008,7 +1845,6 @@ function PlanPane({
   onOpenGoalReview,
   sessionStatus,
   onConnectActiveTab,
-  debugBuildRunFixture,
 }: {
   autonomy?: string;
   events: { kind: string; payload?: unknown }[];
@@ -2023,7 +1859,6 @@ function PlanPane({
   onOpenGoalReview?: () => void;
   sessionStatus: string;
   onConnectActiveTab?: (target?: { tabId?: string | null; cwd?: string | null }) => Promise<boolean> | boolean | void;
-  debugBuildRunFixture: DebugBuildRunCockpitFixture | null;
 }): JSX.Element {
  // Grok plan-mode wire:
  // 1. session/update with sessionUpdate=current_mode_update,
@@ -2059,9 +1894,9 @@ function PlanPane({
   const [buildReceipts, setBuildReceipts] = useState<BuildReceipt[]>([]);
   const [buildScratchboardText, setBuildScratchboardText] = useState<string>("");
   const [buildRefreshSeq, setBuildRefreshSeq] = useState(0);
-  const renderedBuildState = debugBuildRunFixture?.state ?? buildState;
-  const renderedBuildReceipts = debugBuildRunFixture?.receipts ?? buildReceipts;
-  const renderedBuildScratchboardText = debugBuildRunFixture?.scratchboardText ?? buildScratchboardText;
+  const renderedBuildState = buildState;
+  const renderedBuildReceipts = buildReceipts;
+  const renderedBuildScratchboardText = buildScratchboardText;
   const goalPollingEnabled = inTauri() && Boolean(activeTabId);
   const refreshGoalState = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
     if (!activeTabId) return;
@@ -2093,7 +1928,7 @@ function PlanPane({
     setGoalScratchboardText("");
   }, [goalPollingEnabled]);
 
-  const buildPollingEnabled = inTauri() && Boolean(activeTabId) && !debugBuildRunFixture;
+  const buildPollingEnabled = inTauri() && Boolean(activeTabId);
   const refreshBuildState = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
     if (!activeTabId) return;
     try {
@@ -2120,23 +1955,18 @@ function PlanPane({
 
   useEventAwarePolling({
     enabled: buildPollingEnabled,
-    scopeKey: `build:${activeTabId ?? "none"}:${debugBuildRunFixture ? "fixture" : "live"}`,
+    scopeKey: `build:${activeTabId ?? "none"}`,
     eventRevision: events.length + buildRefreshSeq,
     intervalMs: 2500,
     poll: refreshBuildState,
   });
 
   useEffect(() => {
-    if (debugBuildRunFixture) {
-      setBuildState(null);
-      setBuildReceipts([]);
-      return;
-    }
     if (!buildPollingEnabled) {
       setBuildState(null);
       setBuildReceipts([]);
     }
-  }, [buildPollingEnabled, debugBuildRunFixture]);
+  }, [buildPollingEnabled]);
   const refreshGoalScratchboard = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
     if (!goalScratchboardPath) return;
     try {
@@ -2184,19 +2014,15 @@ function PlanPane({
   }, [activeCwd, activeTabId, buildScratchboardPath]);
 
   useEventAwarePolling({
-    enabled: Boolean(buildScratchboardPath) && !debugBuildRunFixture,
+    enabled: Boolean(buildScratchboardPath),
     scopeKey: `build-file:${activeTabId ?? "none"}:${buildScratchboardPath ?? "none"}:${activeCwd ?? ""}`,
     eventRevision: events.length,
     poll: refreshBuildScratchboard,
   });
 
   useEffect(() => {
-    if (debugBuildRunFixture) {
-      setBuildScratchboardText(debugBuildRunFixture.scratchboardText);
-      return;
-    }
     if (!buildScratchboardPath) setBuildScratchboardText("");
-  }, [buildScratchboardPath, debugBuildRunFixture]);
+  }, [buildScratchboardPath]);
 
  // When App's cache updates with a fresher body, adopt it — but
  // only when non-empty, so an empty/undefined cache can't blank a
@@ -2447,6 +2273,14 @@ function GoalStatusBar({
   state: GoalStatusState | null;
   onOpenGoalReview?: () => void;
 }): JSX.Element {
+  const [pendingAction, setPendingAction] = useState<"pause" | "resume" | "complete" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingAction(null);
+    setActionError(null);
+  }, [activeTabId, state?.active]);
+
   if (!state || !state.active) return <></>;
 
   const elapsedMs = Date.now() - state.startedAtMs;
@@ -2462,12 +2296,17 @@ function GoalStatusBar({
         ? "PAUSED"
         : "ACTIVE";
 
-  const onTogglePause = (): void => {
+  const onTogglePause = async (): Promise<void> => {
     if (!activeTabId || !inTauri()) return;
-    if (state.pausedByUser) {
-      void invoke("resume_goal", { tabId: activeTabId }).catch(() => {});
-    } else {
-      void invoke("pause_goal", { tabId: activeTabId }).catch(() => {});
+    const action = state.pausedByUser ? "resume" : "pause";
+    setPendingAction(action);
+    setActionError(null);
+    try {
+      await invoke(action === "resume" ? "resume_goal" : "pause_goal", { tabId: activeTabId });
+    } catch (error) {
+      setActionError(`${action === "resume" ? "Resume" : "Pause"} failed: ${String(error)}`);
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -2482,10 +2321,18 @@ function GoalStatusBar({
  // and keeps injecting continuations. This button calls
  // mark_goal_complete which flips active=false without touching the
  // scratchboard, so the user can close the cycle manually.
-  const onMarkComplete = (): void => {
+  const onMarkComplete = async (): Promise<void> => {
     if (!activeTabId || !inTauri()) return;
     if (!window.confirm("Mark this build as complete? The auto-continuation loop will stop. Use this when the agent finished the work but did not call the completion tool itself.")) return;
-    void invoke("mark_goal_complete", { tabId: activeTabId }).catch(() => {});
+    setPendingAction("complete");
+    setActionError(null);
+    try {
+      await invoke("mark_goal_complete", { tabId: activeTabId });
+    } catch (error) {
+      setActionError(`Mark Complete failed: ${String(error)}`);
+    } finally {
+      setPendingAction(null);
+    }
   };
 
   return (
@@ -2521,24 +2368,29 @@ function GoalStatusBar({
             <button
               type="button"
               className="goal-status-btn"
-              onClick={onTogglePause}
+              onClick={() => void onTogglePause()}
+              disabled={pendingAction !== null}
+              aria-busy={pendingAction === "pause" || pendingAction === "resume"}
               title={state.pausedByUser ? "Resume auto-continuation" : "Pause auto-continuation (only user can pause)"}
             >
               <ShellIcon name={state.pausedByUser ? "play" : "pause"} size={12} />
-              <span>{state.pausedByUser ? "Resume" : "Pause"}</span>
+              <span>{pendingAction === "resume" ? "Resuming…" : pendingAction === "pause" ? "Pausing…" : state.pausedByUser ? "Resume" : "Pause"}</span>
             </button>
             <button
               type="button"
               className="goal-status-btn goal-status-btn-complete"
-              onClick={onMarkComplete}
+              onClick={() => void onMarkComplete()}
+              disabled={pendingAction !== null}
+              aria-busy={pendingAction === "complete"}
               title="Mark build as complete — stops the auto-continuation loop. Use when the agent finished but did not call the completion tool itself."
             >
               <ShellIcon name="check" size={12} />
-              <span>Mark Complete</span>
+              <span>{pendingAction === "complete" ? "Completing…" : "Mark Complete"}</span>
             </button>
           </>
         )}
       </div>
+      {actionError && <div className="goal-status-meta" role="alert">{actionError}</div>}
     </>
   );
 }

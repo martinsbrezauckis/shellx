@@ -210,7 +210,7 @@ export function BrowserOptionsMenu({
               data-debug-id="shellx-browser-personal-lock-auth-mode"
               aria-label="Personal Browser Lock unlock method"
             >
-              <option value="deviceAuthPreferred">Device auth preferred</option>
+              <option value="deviceAuthPreferred">Operator confirmation</option>
               <option value="pinOnly">Session PIN</option>
             </select>
           </label>

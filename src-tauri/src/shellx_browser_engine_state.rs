@@ -4,12 +4,12 @@ use tauri::Url;
 
 use crate::shellx_browser::{
     browser_id, clean_string, ensure_engine_snapshot_locked, lock_or_recover, now_ms,
-    push_network_entry, push_receipt, record_history_visit, update_tab_url, BrowserActionRequest,
-    BrowserActionResponse, BrowserAdMode, BrowserDialogEvent, BrowserEngineSnapshot,
-    BrowserEngineSyncRequest, BrowserEngineTabState, BrowserEngineVisibilityState,
-    BrowserEngineVisualCaptureState, BrowserEngineWaitlistSnapshot, BrowserNetworkRecordRequest,
-    EnsureEngineSnapshotRequest, ShellxBrowserRegistry, BROWSER_ENGINE_FOREGROUND_ID,
-    BROWSER_ENGINE_WEBVIEW_LABEL,
+    push_network_entry, push_receipt, record_history_visit, update_admitted_history_visit_title,
+    update_tab_url, BrowserActionRequest, BrowserActionResponse, BrowserAdMode, BrowserDialogEvent,
+    BrowserEngineHistoryVisitAdmission, BrowserEngineSnapshot, BrowserEngineSyncRequest,
+    BrowserEngineTabState, BrowserEngineVisibilityState, BrowserEngineVisualCaptureState,
+    BrowserEngineWaitlistSnapshot, BrowserNetworkRecordRequest, EnsureEngineSnapshotRequest,
+    ShellxBrowserRegistry, BROWSER_ENGINE_FOREGROUND_ID, BROWSER_ENGINE_WEBVIEW_LABEL,
 };
 use crate::shellx_browser_engine::{
     browser_background_engine_bounds, browser_engine_bounds_are_background,
@@ -25,23 +25,11 @@ use crate::shellx_browser_shields::{ad_mode_for_profile, effective_ad_mode_for_p
 use crate::shellx_browser_tabs::find_tab_index;
 use crate::shellx_browser_tasks::{find_task_index, resolve_task_id};
 
+#[path = "shellx_browser_engine_event_context.rs"]
+mod event_context;
+pub(crate) use event_context::{BrowserEngineEventContext, BrowserEngineEventContexts};
+
 impl ShellxBrowserRegistry {
-    pub(crate) fn begin_engine_event_binding(&self, engine_id: &str) -> String {
-        let engine_id = clean_string(engine_id);
-        let binding = crate::shellx_browser::browser_id("browser-engine-events");
-        lock_or_recover(&self.state)
-            .engine_event_bindings
-            .insert(engine_id, binding.clone());
-        binding
-    }
-
-    pub(crate) fn engine_event_binding_is_current(&self, engine_id: &str, binding: &str) -> bool {
-        lock_or_recover(&self.state)
-            .engine_event_bindings
-            .get(&clean_string(engine_id))
-            .is_some_and(|current| current == binding)
-    }
-
     pub fn normalize_engine_sync_request(
         &self,
         mut request: BrowserEngineSyncRequest,
@@ -420,6 +408,24 @@ impl ShellxBrowserRegistry {
         } else {
             url.clone()
         };
+        let previous_url = state.engine_pool.engines[engine_idx].url.clone();
+        let admission_has_different_url = state
+            .engine_history_visit_admissions
+            .get(&engine_id)
+            .is_some_and(|admission| admission.url != committed_url);
+        // Native page-initiated navigation reaches this handler without an
+        // earlier command sync. A new URL must not inherit the previous
+        // document title or its admitted history row. Started also covers a
+        // same-URL reload, which is a distinct document despite its URL.
+        let navigation_started_or_committed_to_new_url = event == PageLoadEvent::Started
+            || previous_url
+                .as_deref()
+                .is_some_and(|previous| previous != committed_url)
+            || admission_has_different_url;
+        let reset_title_for_native_navigation = navigation_started_or_committed_to_new_url;
+        if reset_title_for_native_navigation {
+            state.engine_history_visit_admissions.remove(&engine_id);
+        }
         let load_status = match event {
             PageLoadEvent::Started => "loading",
             PageLoadEvent::Finished => "loaded",
@@ -427,6 +433,9 @@ impl ShellxBrowserRegistry {
         .to_string();
         {
             let engine = &mut state.engine_pool.engines[engine_idx];
+            if reset_title_for_native_navigation {
+                engine.title = None;
+            }
             engine.mounted = true;
             engine.url = Some(committed_url.clone());
             engine.pending_url = None;
@@ -443,6 +452,9 @@ impl ShellxBrowserRegistry {
                 .find(|tab| tab.browser_tab_id == tab_id)
             {
                 update_tab_url(tab, Some(committed_url.clone()), &shields);
+                if reset_title_for_native_navigation {
+                    tab.title = None;
+                }
                 tab.status = load_status.clone();
                 tab.engine_state = BrowserEngineTabState::Live;
                 tab.updated_at_ms = snapshot.updated_at_ms;
@@ -455,7 +467,7 @@ impl ShellxBrowserRegistry {
                     task.updated_at_ms = now_ms();
                 }
             }
-            record_history_visit(
+            if let Some(entry) = record_history_visit(
                 &mut state,
                 snapshot.task_id.clone(),
                 snapshot
@@ -464,7 +476,19 @@ impl ShellxBrowserRegistry {
                     .unwrap_or_else(|| "agent-work".to_string()),
                 committed_url.clone(),
                 snapshot.title.clone(),
-            );
+            ) {
+                state.engine_history_visit_admissions.insert(
+                    engine_id.clone(),
+                    BrowserEngineHistoryVisitAdmission {
+                        history_id: entry.history_id,
+                        event_binding: event_binding.map(str::to_owned),
+                        browser_tab_id: snapshot.browser_tab_id.clone(),
+                        task_id: entry.task_id,
+                        profile_id: entry.profile_id,
+                        url: entry.url,
+                    },
+                );
+            }
         }
         push_network_entry(
             &mut state,
@@ -514,6 +538,21 @@ impl ShellxBrowserRegistry {
         } else {
             url.clone()
         };
+        let engine_id = state.engine.engine_id.clone();
+        let previous_url = state.engine.url.clone();
+        let admission_has_different_url = state
+            .engine_history_visit_admissions
+            .get(&engine_id)
+            .is_some_and(|admission| admission.url != committed_url);
+        let reset_title_for_native_navigation = event == PageLoadEvent::Started
+            || previous_url
+                .as_deref()
+                .is_some_and(|previous| previous != committed_url)
+            || admission_has_different_url;
+        if reset_title_for_native_navigation {
+            state.engine_history_visit_admissions.remove(&engine_id);
+            state.engine.title = None;
+        }
         state.engine.mounted = true;
         state.engine.webview_label = BROWSER_ENGINE_WEBVIEW_LABEL.to_string();
         state.engine.url = Some(committed_url.clone());
@@ -535,6 +574,9 @@ impl ShellxBrowserRegistry {
                 .find(|tab| tab.browser_tab_id == active_tab_id)
             {
                 update_tab_url(tab, Some(committed_url.clone()), &shields);
+                if reset_title_for_native_navigation {
+                    tab.title = None;
+                }
                 tab.status = engine_status.clone();
                 tab.updated_at_ms = engine_updated_at_ms;
             }
@@ -590,13 +632,26 @@ impl ShellxBrowserRegistry {
                     task.updated_at_ms = now_ms();
                 }
             }
-            record_history_visit(
+            if let Some(entry) = record_history_visit(
                 &mut state,
                 active_task_id.clone(),
                 profile_id,
                 committed_url.clone(),
                 title,
-            );
+            ) {
+                let browser_tab_id = state.engine.browser_tab_id.clone();
+                state.engine_history_visit_admissions.insert(
+                    engine_id,
+                    BrowserEngineHistoryVisitAdmission {
+                        history_id: entry.history_id,
+                        event_binding: None,
+                        browser_tab_id,
+                        task_id: entry.task_id,
+                        profile_id: entry.profile_id,
+                        url: entry.url,
+                    },
+                );
+            }
         }
         let snapshot = state.engine.clone();
         if event == PageLoadEvent::Finished {
@@ -712,6 +767,7 @@ impl ShellxBrowserRegistry {
                 }
             }
         }
+        update_admitted_history_visit_title(&mut state, &engine_id, event_binding, &snapshot);
         if state.active_browser_tab_id.as_deref() == snapshot.browser_tab_id.as_deref() {
             state.engine = snapshot.clone();
             state.engine_waitlist = snapshot.waitlist.clone();
@@ -721,6 +777,9 @@ impl ShellxBrowserRegistry {
 
     pub fn record_engine_title(&self, title: String) -> BrowserEngineSnapshot {
         let mut state = lock_or_recover(&self.state);
+        if state.engine.pending_url.is_some() {
+            return state.engine.clone();
+        }
         state.engine.mounted = true;
         state.engine.webview_label = BROWSER_ENGINE_WEBVIEW_LABEL.to_string();
         state.engine.title = Some(title.trim().chars().take(180).collect());
@@ -739,7 +798,9 @@ impl ShellxBrowserRegistry {
                 }
             }
         }
-        state.engine.clone()
+        let snapshot = state.engine.clone();
+        update_admitted_history_visit_title(&mut state, &snapshot.engine_id, None, &snapshot);
+        snapshot
     }
 
     pub fn record_engine_error(&self, message: String) -> BrowserEngineSnapshot {

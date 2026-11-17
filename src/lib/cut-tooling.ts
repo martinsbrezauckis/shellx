@@ -10,13 +10,6 @@ export const CUT_TOOLING_STATES = [
 
 export type CutToolingState = (typeof CUT_TOOLING_STATES)[number];
 
-export function normalizeDebugCutToolingFixture(value: unknown): CutToolingState | "clear" | null {
-  if (value === "clear") return "clear";
-  return typeof value === "string" && CUT_TOOLING_STATES.includes(value as CutToolingState)
-    ? value as CutToolingState
-    : null;
-}
-
 export interface CutToolingStatus {
   schemaVersion: "shellx.cut.tooling-status.v1";
   status: CutToolingState;

@@ -14,7 +14,6 @@ export interface VaultPasswordPocket {
 }
 
 export const VAULT_PASSWORD_POCKET_TTL_MS = 10 * 60 * 1000;
-export const OWNED_DEBUG_VAULT_PASSWORD = "Sx035-owned-disposable!";
 
 export const DEFAULT_VAULT_PASSWORD_OPTIONS: VaultPasswordGeneratorOptions = {
   length: 24,

@@ -33,11 +33,7 @@ export interface ChatHit {
 }
 
 /**
- * Search the live session-tab `corpus` supplied by the parent. Full-
- * content JSONL search lives behind a future `/sessions/search?q=…`
- * Rust route; until then this matches against open-tab titles only.
- *
- * @internal — exported for unit tests.
+ * Search the live session-tab `corpus` supplied by the parent.
  */
 export function searchChats(q: string, corpus: ChatHit[] = []): ChatHit[] {
   if (!q.trim()) return corpus.slice(0, 8);
@@ -86,9 +82,7 @@ export function FindPopover({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
 
- /* real content search via /sessions/search debug-api.
- * Owner reported the previous title-only search felt fake. Now the
- * popover shows two-tier results:
+ /* The popover shows two-tier search results:
  * (1) Open-tab hits — match against the live tabs[] (corpus prop),
  * same as before. Fastest, zero round-trip.
  * (2) Disk hits — match against every ~/.shellx/sessions/*.jsonl
@@ -106,12 +100,7 @@ export function FindPopover({
   const [diskHits, setDiskHits] = useState<DiskHit[]>([]);
   const [searching, setSearching] = useState(false);
 
- /* surface search errors so they're not silent. The
- * old version swallowed every failure (4xx, network error, parse
- * error) and set hits=[] — the user reported "search not working
- * after a whole day" because the popup just showed empty without
- * any hint as to WHY. Now `searchError` is rendered as a one-line
- * red note above the empty state. */
+ /* Render search failures as a one-line note above the empty state. */
   const [searchError, setSearchError] = useState<string | null>(null);
   useEffect(() => {
     const needle = q.trim();

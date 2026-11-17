@@ -31,9 +31,9 @@ export interface BuiltinDoc {
   body: string;
 }
 
-const FEATURES = `# shellX features
+const FEATURES = `# ShellX features
 
-shellX is a desktop client for Grok Build, Claude Code, Codex CLI,
+ShellX is a desktop client for Grok Build, Claude Code, Codex CLI,
 Antigravity CLI, and other ACP-compatible agents. It combines chat,
 projects, tools, previews, Git, and local automation in one app.
 
@@ -43,14 +43,14 @@ projects, tools, previews, Git, and local automation in one app.
 
 - Multi-tab agent chat with one working folder and connection per tab.
 - Persistent chat history with search and archived past sessions.
-- Markdown file links open in shellX; external links open in the browser.
+- Markdown file links open in ShellX; external links open in the browser.
 - Tool output, diffs, terminals, generated images, and generated videos
   render inside the conversation.
-- File picker, paste, drag/drop, screenshots, and Send to shellX create
+- File picker, paste, drag/drop, screenshots, and Send to ShellX create
   attachment chips instead of raw paths in the composer.
 - The **Assets** button opens pending attachments plus session images and
   videos in one board.
-- On Windows, **Settings -> Desktop** can install **Send to shellX** as
+- On Windows, **Settings -> Desktop** can install **Send to ShellX** as
   a right-click menu item and SendTo shortcut for selected files.
 - Select text and release the mouse to copy it.
 
@@ -58,7 +58,7 @@ projects, tools, previews, Git, and local automation in one app.
 
 - Local Windows sessions.
 - WSL sessions with Linux path handling.
-- SSH sessions to Linux, macOS, or WSL targets with the shellX host toolset
+- SSH sessions to Linux, macOS, or WSL targets with the ShellX host toolset
   tunneled to the remote environment.
 - Native Windows OpenSSH can run Windows-installed CLI agents directly with
   PowerShell commands and Windows paths. WSL is not required.
@@ -70,7 +70,7 @@ Switch connection per tab from the composer footer.
 ## Build Mode
 
 \`/build "make this project production-ready"\` starts a long-running
-build workflow. shellX keeps the scratchboard, receipts, checkpoints,
+build workflow. ShellX keeps the scratchboard, receipts, checkpoints,
 review/verifier gates, and completion state visible in the Plan tab.
 
 Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
@@ -103,7 +103,7 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
   feature each one affects, so agents can explain preview/tool failures without
   re-discovering basic tooling.
 - Search capability status shows when Grok Web Search, Web Fetch, or
-  shellX X Search are available.
+  ShellX X Search are available.
 - The Plugins button manages curated MCP connectors and required keys.
 
 ## Files, Git, and Trace
@@ -173,7 +173,7 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
 ## Connectors
 
 - Telegram direct messages can route to the connector inbox or a target
-  shellX session when allowlisted.
+  ShellX session when allowlisted.
 - Telegram Session Chat can send active-session text replies and referenced
   image outputs back to the chat.
 - Discord bot messages can route to the connector inbox or an eligible target
@@ -217,6 +217,8 @@ Use \`/pause\`, \`/resume\`, and \`/stop\` while a build is running.
   settings, Vault actions, first-class Task state/actions, build state, and
   diagnostics over loopback.
 - API access uses a private per-user bearer resolved internally by ShellX-owned clients.
+  A custom Debug API bearer is trusted local operator access; agent-specific
+  routes retain their own caller and intent checks.
 - The updater checks signed release manifests and offers in-app updates
   when a published release is available.
 
@@ -232,7 +234,7 @@ ShellX receive compact session rules and the host MCP surface, while direct
 CLI sessions remain unchanged. The full reference copy lives under
 \`~/.shellx/agent-docs/\` and the authenticated Debug API.
 When Grok advertises upstream skills such as \`/check-work\`,
-\`/best-of-n\`, or \`/execute-plan\`, treat them as manual commands; shellX
+\`/best-of-n\`, or \`/execute-plan\`, treat them as manual commands; ShellX
 \`/build\` uses its own Agent receipts for release-grade gates.
 
 ---
@@ -265,22 +267,22 @@ Use **Settings → Data** to manage projects, session names, and
 caches per item.
 `;
 
-const README = `# shellX — quick start
+const README = `# ShellX — quick start
 
 ## Install
 
 1. Download the latest installer from
    [github.com/martinsbrezauckis/shellx/releases](https://github.com/martinsbrezauckis/shellx/releases).
 2. Run the installer.
-3. Launch shellX from the Start Menu.
+3. Launch ShellX from the Start Menu.
 
 ## Sign in to an agent
 
-For Grok sessions, shellX talks to xAI's Grok Build CLI. You need either:
+For Grok sessions, ShellX talks to xAI's Grok Build CLI. You need either:
 
 - **\`grok login\`** in a terminal once (or **\`grok login --device-auth\`**
   on a remote/headless target) — stores an OAuth token at
-  \`~/.grok/auth.json\` that shellX picks up automatically. *(Recommended.)*
+  \`~/.grok/auth.json\` that ShellX picks up automatically. *(Recommended.)*
 - **Or** an xAI API key stored in **Settings -> Vault**.
 
 Voice (STT) and vision use the OAuth token by default, so most users
@@ -310,16 +312,16 @@ ShellX is development-stage software. Features can change, break, or be
 overhauled between versions, so keep backups of important projects and
 credentials.
 
-ShellX Vault keeps secrets under your control. Save your recovery materials,
-and review sensitive browser or agent actions such as sign-ins, purchases,
+ShellX Vault has no recovery words or restore flow. Keep the master passphrase
+and required encrypted Vault data available. Review sensitive browser or agent actions such as sign-ins, purchases,
 account changes, data submission, and secret use.
 
 ## Send files to a session
 
 - Use **Attach** or paste/drop files into the composer for normal
   attachments.
-- On Windows, open **Settings -> Desktop** and install **Send files to shellX**
-  to add **Send to shellX** in Explorer. Multi-selected files arrive as
+- On Windows, open **Settings -> Desktop** and install **Send files to ShellX**
+  to add **Send to ShellX** in Explorer. Multi-selected files arrive as
   composer chips in the active tab.
 - Open **Assets** from the bottom toolbar to inspect pending attachments,
   generated images, and generated videos for the current session.
@@ -333,7 +335,7 @@ being re-prompted, choose Grok for the tab and type:
 /build "build a TODO CLI in Rust with tests"
 \`\`\`
 
-shellX writes a scoped scratchboard, lets Grok plan + work + verify,
+ShellX writes a scoped scratchboard, lets Grok plan + work + verify,
 requires checkpoint/reviewer/verification receipts for code changes,
 and auto-continues each turn until Grok calls \`build_complete\`. For
 UI/web/app work, Preview Doctor can feed render/log errors back to Grok.
@@ -356,7 +358,7 @@ Open the right rail's **Preview** tab:
 
 Open **Settings → Connections** and add a connection preset:
 
-- **WSL** — enter the distro name. For Grok tabs, shellX runs
+- **WSL** — enter the distro name. For Grok tabs, ShellX runs
   \`wsl.exe -d <distro> -- grok\`; provider tabs launch the selected CLI
   in that WSL distro. Filesystem reads route via UNC paths.
 - **SSH** — host + user using your SSH config, key file, or ssh-agent.

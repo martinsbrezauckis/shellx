@@ -1,15 +1,25 @@
 use super::*;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BrowserEngineHistoryVisitAdmission {
+    pub(crate) history_id: String,
+    pub(crate) event_binding: Option<String>,
+    pub(crate) browser_tab_id: Option<String>,
+    pub(crate) task_id: Option<String>,
+    pub(crate) profile_id: String,
+    pub(crate) url: String,
+}
+
 pub(crate) fn record_history_visit(
     state: &mut BrowserState,
     task_id: Option<String>,
     profile_id: String,
     url: String,
     title: Option<String>,
-) {
+) -> Option<BrowserHistoryEntry> {
     let url = clean_string(url);
     if url.is_empty() || url == "about:blank" {
-        return;
+        return None;
     }
     let profile_id = clean_string(profile_id);
     let profile_id = if profile_id.is_empty() {
@@ -20,18 +30,67 @@ pub(crate) fn record_history_visit(
     state
         .history
         .retain(|entry| !(entry.url == url && entry.profile_id == profile_id));
-    state.history.insert(
-        0,
-        BrowserHistoryEntry {
-            history_id: browser_id("browser-history"),
-            task_id,
-            profile_id,
-            url,
-            title: title.map(clean_string).filter(|value| !value.is_empty()),
-            visited_at_ms: now_ms(),
-        },
-    );
+    retain_existing_history_visit_admissions(state);
+    let entry = BrowserHistoryEntry {
+        history_id: browser_id("browser-history"),
+        task_id,
+        profile_id,
+        url,
+        title: title.map(clean_string).filter(|value| !value.is_empty()),
+        visited_at_ms: now_ms(),
+    };
+    state.history.insert(0, entry.clone());
     state.history.truncate(200);
+    retain_existing_history_visit_admissions(state);
+    Some(entry)
+}
+
+pub(crate) fn retain_existing_history_visit_admissions(state: &mut BrowserState) {
+    let retained_history_ids = state
+        .history
+        .iter()
+        .map(|entry| entry.history_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    state
+        .engine_history_visit_admissions
+        .retain(|_, admission| retained_history_ids.contains(&admission.history_id));
+}
+
+pub(crate) fn update_admitted_history_visit_title(
+    state: &mut BrowserState,
+    engine_id: &str,
+    event_binding: Option<&str>,
+    snapshot: &BrowserEngineSnapshot,
+) {
+    let Some(admission) = state
+        .engine_history_visit_admissions
+        .get(engine_id)
+        .cloned()
+    else {
+        return;
+    };
+    if admission.event_binding.as_deref() != event_binding
+        || admission.browser_tab_id != snapshot.browser_tab_id
+        || admission.task_id != snapshot.task_id
+        || snapshot.profile_id.as_deref() != Some(admission.profile_id.as_str())
+        || snapshot.url.as_deref() != Some(admission.url.as_str())
+    {
+        return;
+    }
+    let Some(entry) = state
+        .history
+        .iter_mut()
+        .find(|entry| entry.history_id == admission.history_id)
+    else {
+        return;
+    };
+    if entry.task_id != admission.task_id
+        || entry.profile_id != admission.profile_id
+        || entry.url != admission.url
+    {
+        return;
+    }
+    entry.title = snapshot.title.clone().filter(|title| !title.is_empty());
 }
 
 pub(crate) fn ensure_engine_task_matches_active_context(
@@ -432,6 +491,8 @@ pub(crate) fn reset_browser_engine_snapshots_for_empty_tabs_locked(state: &mut B
     state.engine_waitlist = BrowserEngineWaitlistSnapshot::default();
     state.engine_pool.engines.clear();
     state.engine_event_bindings.clear();
+    state.engine_history_visit_admissions.clear();
+    state.engine_event_contexts.clear();
     state.engine_pool.waiting.clear();
     state.engine_pool.parked_tabs.clear();
 }

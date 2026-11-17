@@ -22,6 +22,9 @@ use crate::build_types::{
 #[derive(Clone, Debug)]
 struct BuildRuntimeState {
     state: BuildRunState,
+    // Captured when the tab starts its Build run. `state.scratchboard_path`
+    // is persisted for display only and is never authority for file access.
+    project_root: PathBuf,
     ssh_config: Option<crate::acp::SshSpawnConfig>,
 }
 
@@ -186,6 +189,9 @@ Status: TODO\n\
         transport_kind: &str,
         ssh_config: Option<crate::acp::SshSpawnConfig>,
     ) -> Result<BuildRunState, String> {
+        if cwd.as_os_str().is_empty() {
+            return Err("Build Mode requires a selected project root".to_string());
+        }
         let now = now_ms();
         let run_id = format!("build-{}", Uuid::new_v4());
         let scratchboard_path = pick_build_scratchboard_path(cwd, tab_id, &run_id);
@@ -244,6 +250,7 @@ Status: TODO\n\
         crate::build_store::write_state(&self.store_base, &state)?;
         let runtime = BuildRuntimeState {
             state: state.clone(),
+            project_root: cwd.to_path_buf(),
             ssh_config,
         };
         self.states
@@ -275,6 +282,13 @@ Status: TODO\n\
     }
 
     pub async fn get_state(&self, tab_id: &str) -> Option<BuildRunState> {
+        if let Err(error) = self.ensure_runtime_loaded(tab_id).await {
+            warn!(
+                "build_orchestrator: failed to load owned state for tab='{}': {}",
+                tab_id, error
+            );
+            return None;
+        }
         if let Some(state) = self.refresh_draft_plan_if_ready(tab_id).await {
             return Some(state);
         }
@@ -292,24 +306,20 @@ Status: TODO\n\
     }
 
     async fn refresh_draft_plan_if_ready(&self, tab_id: &str) -> Option<BuildRunState> {
-        let (state, ssh_config) = {
+        let runtime = {
             let map = self.states.read().await;
             let runtime = map.get(tab_id)?;
             if runtime.state.status != BuildRunStatus::Draft {
                 return Some(runtime.state.clone());
             }
-            (runtime.state.clone(), runtime.ssh_config.clone())
+            runtime.clone()
         };
 
-        let path = PathBuf::from(&state.scratchboard_path);
-        let ready = crate::goal_orchestrator::read_scratchboard_text_for_transport(
-            &path,
-            &state.transport_kind,
-            ssh_config.as_ref(),
-        )
-        .await
-        .map(|text| validate_build_approval_ready(&text).is_ok())
-        .unwrap_or(false);
+        let state = runtime.state.clone();
+        let ready = read_owned_build_scratchboard(&runtime)
+            .await
+            .map(|text| validate_build_approval_ready(&text).is_ok())
+            .unwrap_or(false);
         if !ready {
             return Some(state);
         }
@@ -336,16 +346,26 @@ Status: TODO\n\
         if self.states.read().await.contains_key(tab_id) {
             return Ok(());
         }
-        let Some(state) = crate::build_store::read_latest_state_for_tab(&self.store_base, tab_id)?
+        let Some(mut state) =
+            crate::build_store::read_latest_state_for_tab(&self.store_base, tab_id)?
         else {
             return Ok(());
         };
+        let project_root = owned_build_project_root(&state)?;
+        let owned_scratchboard = owned_build_scratchboard_path(&project_root, &state);
+        if state.scratchboard_path != owned_scratchboard.to_string_lossy() {
+            // A lazy restore must not write while a concurrent loader may have
+            // installed newer runtime state. This display-only repair is
+            // persisted by the next normal state transition.
+            state.scratchboard_path = owned_scratchboard.to_string_lossy().to_string();
+        }
         let mut map = self.states.write().await;
         if !map.contains_key(tab_id) {
             map.insert(
                 tab_id.to_string(),
                 BuildRuntimeState {
                     state,
+                    project_root,
                     ssh_config: None,
                 },
             );
@@ -353,18 +373,13 @@ Status: TODO\n\
         Ok(())
     }
 
+
+
     pub async fn clear_tab(&self, tab_id: &str) {
         self.states.write().await.remove(tab_id);
     }
 
-    /// Remove one exact isolated release-test Build slot and its persisted
-    /// run namespace. Normal Build history is durable; only the guarded Debug
-    /// API cleanup path calls this helper for a `release-build-run-*` tab.
-    #[cfg(feature = "debug-api")]
-    pub async fn release_test_clear_tab(&self, tab_id: &str) -> Result<(), String> {
-        self.states.write().await.remove(tab_id);
-        crate::build_store::remove_release_test_tab(&self.store_base, tab_id)
-    }
+
 
     pub async fn get_receipts(&self, tab_id: &str) -> Result<Vec<BuildReceipt>, String> {
         let state = self
@@ -405,24 +420,14 @@ Status: TODO\n\
         ) {
             return Ok(false);
         }
-        let path = PathBuf::from(&runtime.state.scratchboard_path);
-        let text = crate::goal_orchestrator::read_scratchboard_text_for_transport(
-            &path,
-            &runtime.state.transport_kind,
-            runtime.ssh_config.as_ref(),
-        )
-        .await
-        .map_err(|e| format!("cannot approve build plan: build.md is not readable: {}", e))?;
+        let text = read_owned_build_scratchboard(&runtime)
+            .await
+            .map_err(|e| format!("cannot approve build plan: build.md is not readable: {}", e))?;
         validate_build_approval_ready(&text)?;
         let patched = mark_build_plan_in_progress(&text)?;
-        crate::goal_orchestrator::write_scratchboard_text_for_transport(
-            &path,
-            &patched,
-            &runtime.state.transport_kind,
-            runtime.ssh_config.as_ref(),
-        )
-        .await
-        .map_err(|e| format!("cannot approve build plan: build.md write failed: {}", e))?;
+        write_owned_build_scratchboard(&runtime, &patched)
+            .await
+            .map_err(|e| format!("cannot approve build plan: build.md write failed: {}", e))?;
 
         let hash = plan_hash(&text);
         {
@@ -699,63 +704,105 @@ Status: TODO\n\
         Ok(true)
     }
 
-    pub async fn append_receipt(&self, mut receipt: BuildReceipt) -> Result<(), String> {
+    pub async fn append_receipt(&self, receipt: BuildReceipt) -> Result<(), String> {
+        self.append_normalized_receipt(receipt).await.map(|_| ())
+    }
+
+    /// Normalize a receipt against its run-owned scratchboard before writing
+    /// it, then return the exact persisted receipt. Callers that do not expose
+    /// receipts can use [`Self::append_receipt`] and discard this result.
+    pub(crate) async fn append_normalized_receipt(
+        &self,
+        mut receipt: BuildReceipt,
+    ) -> Result<Option<BuildReceipt>, String> {
         self.ensure_runtime_loaded(&receipt.tab_id).await?;
         let path_for_receipt = receipt
             .data
             .get("path")
             .or_else(|| receipt.data.get("dst"))
-            .and_then(|v| v.as_str());
-        let (scratchboard_match, build_evidence_log) = {
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned);
+        let runtime = {
             let map = self.states.read().await;
-            if let Some(runtime) = map
-                .get(&receipt.tab_id)
+            map.get(&receipt.tab_id)
                 .filter(|runtime| runtime.state.run_id == receipt.run_id)
-            {
-                (
-                    path_for_receipt
-                        .map(|path| classify_scratchboard_receipt_path(path, &runtime.state)),
-                    path_for_receipt
-                        .map(|path| is_build_evidence_log_path(Path::new(path), &runtime.state))
-                        .unwrap_or(false),
-                )
-            } else {
-                (None, false)
-            }
+                .cloned()
         };
-        if let Some(scratchboard_match) = scratchboard_match {
-            if let Some(path) = path_for_receipt {
-                let path = path.to_string();
-                if scratchboard_match.is_match() {
+        if let Some(runtime) = runtime.as_ref() {
+            let owned_scratchboard = owned_build_scratchboard_path_for_runtime(runtime);
+            if let Some(path) = path_for_receipt.as_deref() {
+                if build_receipt_path_matches(path, owned_scratchboard.to_string_lossy().as_ref()) {
                     match receipt.kind {
                         BuildReceiptKind::FileWrite => {
                             receipt.kind = BuildReceiptKind::PlanWritten;
-                            receipt.summary = format!("Build scratchboard written: {}", path);
-                            if let serde_json::Value::Object(ref mut map) = receipt.data {
-                                map.insert("scratchboard".into(), serde_json::Value::Bool(true));
-                                map.insert(
-                                    "scratchboardPath".into(),
-                                    serde_json::Value::String(path),
-                                );
-                                if scratchboard_match == ScratchboardPathMatch::ValidatedAlias {
-                                    map.insert(
-                                        "scratchboardAlias".into(),
-                                        serde_json::Value::Bool(true),
-                                    );
-                                }
-                            }
+                            receipt.summary = format!(
+                                "Build scratchboard written: {}",
+                                owned_scratchboard.display()
+                            );
                         }
                         BuildReceiptKind::FileDelete | BuildReceiptKind::FileCopy => {
-                            return Ok(());
+                            return Ok(None);
                         }
                         _ => {}
                     }
-                } else if build_evidence_log {
+                } else if build_scratchboard_receipt_candidate(
+                    path,
+                    &runtime.state,
+                    &owned_scratchboard,
+                ) {
+                    return Err(format!(
+                        "Build scratchboard receipt path does not match the owned run scratchboard: expected {}, got {}",
+                        owned_scratchboard.display(),
+                        path
+                    ));
+                } else if is_build_evidence_log_path_for_scratchboard(
+                    Path::new(path),
+                    &owned_scratchboard,
+                ) {
                     if let serde_json::Value::Object(ref mut map) = receipt.data {
                         map.insert("buildInternal".into(), serde_json::Value::Bool(true));
                         map.insert("buildEvidenceLog".into(), serde_json::Value::Bool(true));
                     }
                 }
+            }
+
+            if receipt.kind == BuildReceiptKind::PlanWritten {
+                if let Some(claimed_path) = receipt
+                    .data
+                    .get("scratchboardPath")
+                    .and_then(|value| value.as_str())
+                {
+                    if !build_receipt_path_matches(
+                        claimed_path,
+                        owned_scratchboard.to_string_lossy().as_ref(),
+                    ) {
+                        return Err(format!(
+                            "Build PlanWritten receipt path does not match the owned run scratchboard: expected {}, got {}",
+                            owned_scratchboard.display(),
+                            claimed_path
+                        ));
+                    }
+                }
+                if let Some(path) = path_for_receipt.as_deref() {
+                    if !build_receipt_path_matches(
+                        path,
+                        owned_scratchboard.to_string_lossy().as_ref(),
+                    ) {
+                        return Err(format!(
+                            "Build PlanWritten receipt path does not match the owned run scratchboard: expected {}, got {}",
+                            owned_scratchboard.display(),
+                            path
+                        ));
+                    }
+                }
+                let data = receipt.data.as_object_mut().ok_or_else(|| {
+                    "Build PlanWritten receipt must contain an object data payload".to_string()
+                })?;
+                data.insert("scratchboard".into(), serde_json::Value::Bool(true));
+                data.insert(
+                    "scratchboardPath".into(),
+                    serde_json::Value::String(owned_scratchboard.to_string_lossy().to_string()),
+                );
             }
         }
         if receipt.kind == BuildReceiptKind::CheckpointCreated {
@@ -768,49 +815,34 @@ Status: TODO\n\
                             runtime.ssh_config.is_none()
                                 && runtime.state.transport_kind.trim() == "local",
                             runtime.state.clone(),
+                            owned_build_scratchboard_path_for_runtime(runtime),
                         )
                     })
             };
-            if let Some((is_local, state)) = checkpoint_state {
-                maybe_attach_build_worktree_fingerprint(&mut receipt, is_local, &state);
+            if let Some((is_local, state, scratchboard_path)) = checkpoint_state {
+                maybe_attach_build_worktree_fingerprint(
+                    &mut receipt,
+                    is_local,
+                    &state,
+                    &scratchboard_path,
+                );
             }
         }
         let plan_approval_ready = if receipt.kind == BuildReceiptKind::PlanWritten {
-            let (path, transport_kind, ssh_config) = {
+            let runtime = {
                 let map = self.states.read().await;
-                if let Some(runtime) = map
-                    .get(&receipt.tab_id)
+                map.get(&receipt.tab_id)
                     .filter(|runtime| runtime.state.run_id == receipt.run_id)
-                {
-                    let path = receipt
-                        .data
-                        .get("scratchboardPath")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(&runtime.state.scratchboard_path)
-                        .to_string();
-                    (
-                        Some(PathBuf::from(path)),
-                        runtime.state.transport_kind.clone(),
-                        runtime.ssh_config.clone(),
-                    )
-                } else {
-                    (None, "local".to_string(), None)
-                }
+                    .cloned()
             };
-            if let Some(path) = path {
-                match crate::goal_orchestrator::read_scratchboard_text_for_transport(
-                    &path,
-                    &transport_kind,
-                    ssh_config.as_ref(),
-                )
-                .await
-                {
+            if let Some(runtime) = runtime {
+                match read_owned_build_scratchboard(&runtime).await {
                     Ok(text) => validate_build_approval_ready(&text).is_ok(),
                     Err(e) => {
                         warn!(
                             "build_orchestrator: planWritten validation read failed for tab='{}' path={} err={}",
                             receipt.tab_id,
-                            path.display(),
+                            owned_build_scratchboard_path_for_runtime(&runtime).display(),
                             e
                         );
                         false
@@ -832,16 +864,16 @@ Status: TODO\n\
         .map_err(|error| format!("build receipt writer join failed: {error}"))??;
         let mut map = self.states.write().await;
         let Some(runtime) = map.get_mut(&receipt.tab_id) else {
-            return Ok(());
+            return Ok(Some(receipt));
         };
         if runtime.state.run_id != receipt.run_id {
-            return Ok(());
+            return Ok(Some(receipt));
         }
         if matches!(
             runtime.state.status,
             BuildRunStatus::Complete | BuildRunStatus::Halted | BuildRunStatus::TransportFailed
         ) {
-            return Ok(());
+            return Ok(Some(receipt));
         }
         runtime.state.last_receipt_id = Some(receipt.receipt_id.clone());
         runtime.state.updated_at_ms = now_ms();
@@ -877,13 +909,10 @@ Status: TODO\n\
                 }
             }
             BuildReceiptKind::PlanWritten => {
-                if let Some(path) = receipt
-                    .data
-                    .get("scratchboardPath")
-                    .and_then(|v| v.as_str())
-                {
-                    runtime.state.scratchboard_path = path.to_string();
-                }
+                runtime.state.scratchboard_path =
+                    owned_build_scratchboard_path_for_runtime(runtime)
+                        .to_string_lossy()
+                        .to_string();
                 if plan_approval_ready && runtime.state.status == BuildRunStatus::Draft {
                     runtime.state.status = BuildRunStatus::AwaitingApproval;
                 }
@@ -936,7 +965,8 @@ Status: TODO\n\
             }
             _ => {}
         }
-        crate::build_store::write_state(&self.store_base, &runtime.state)
+        crate::build_store::write_state(&self.store_base, &runtime.state)?;
+        Ok(Some(receipt))
     }
 
     pub async fn consider_continue(&self, tab_id: &str, stop_reason: &str) -> Option<String> {
@@ -964,13 +994,9 @@ Status: TODO\n\
             .map(|r| format!("{:?}: {}", r.kind, r.summary))
             .unwrap_or_else(|| "none".to_string());
 
-        let text = crate::goal_orchestrator::read_scratchboard_text_for_transport(
-            Path::new(&runtime.state.scratchboard_path),
-            &runtime.state.transport_kind,
-            runtime.ssh_config.as_ref(),
-        )
-        .await
-        .unwrap_or_default();
+        let text = read_owned_build_scratchboard(&runtime)
+            .await
+            .unwrap_or_default();
         let board = crate::goal_orchestrator::parse_board(&text);
         if board.top_status.as_deref() == Some("GOAL_COMPLETE")
             && crate::goal_orchestrator::validate_board_text(&text).is_ok()
@@ -1094,13 +1120,8 @@ Status: TODO\n\
                 blocker
             ));
         }
-        let text = crate::goal_orchestrator::read_scratchboard_text_for_transport(
-            Path::new(&runtime.state.scratchboard_path),
-            &runtime.state.transport_kind,
-            runtime.ssh_config.as_ref(),
-        )
-        .await
-        .map_err(|e| {
+        let scratchboard_path = owned_build_scratchboard_path_for_runtime(&runtime);
+        let text = read_owned_build_scratchboard(&runtime).await.map_err(|e| {
             format!(
                 "build_complete rejected: Build Mode scratchboard is not readable: {}",
                 e
@@ -1113,7 +1134,7 @@ Status: TODO\n\
             && runtime.ssh_config.is_none()
             && local_git_worktree_has_code_changes(
                 Path::new(&runtime.state.cwd),
-                Path::new(&runtime.state.scratchboard_path),
+                &scratchboard_path,
             )
         {
             let mut map = self.states.write().await;
@@ -1141,7 +1162,7 @@ Status: TODO\n\
                 } else {
                     local_build_worktree_fingerprint(
                         Path::new(&runtime.state.cwd),
-                        Path::new(&runtime.state.scratchboard_path),
+                        &scratchboard_path,
                     )?
                 };
                 if let Some(current_fingerprint) = current_fingerprint {
@@ -1241,6 +1262,95 @@ fn pick_build_scratchboard_path(cwd: &Path, tab_id: &str, run_id: &str) -> PathB
     } else {
         cwd.join(filename)
     }
+}
+
+fn owned_build_project_root(state: &BuildRunState) -> Result<PathBuf, String> {
+    let cwd = state.cwd.trim();
+    if cwd.is_empty() {
+        return Err("Build Mode persisted state is missing its owned project root".to_string());
+    }
+    Ok(PathBuf::from(cwd))
+}
+
+fn owned_build_scratchboard_path(project_root: &Path, state: &BuildRunState) -> PathBuf {
+    pick_build_scratchboard_path(project_root, &state.tab_id, &state.run_id)
+}
+
+fn owned_build_scratchboard_path_for_runtime(runtime: &BuildRuntimeState) -> PathBuf {
+    owned_build_scratchboard_path(&runtime.project_root, &runtime.state)
+}
+
+async fn read_owned_build_scratchboard(runtime: &BuildRuntimeState) -> Result<String, String> {
+    let scratchboard_path = owned_build_scratchboard_path_for_runtime(runtime);
+    if let Some(ssh) = runtime.ssh_config.as_ref() {
+        let project_root = runtime.project_root.to_string_lossy();
+        let remote_path = scratchboard_path.to_string_lossy();
+        if project_root.is_empty() {
+            return Err("SSH Build scratchboard read requires an owned project root".to_string());
+        }
+        return crate::remote_project_file::read_scoped_remote_text(
+            ssh,
+            project_root.as_ref(),
+            remote_path.as_ref(),
+        )
+        .await
+        .map_err(|error| format!("SSH Build scratchboard read refused: {error}"));
+    }
+    if runtime
+        .state
+        .transport_kind
+        .trim()
+        .eq_ignore_ascii_case("ssh")
+    {
+        return Err(
+            "SSH Build scratchboard read requires session-owned SSH transport context".to_string(),
+        );
+    }
+    crate::goal_orchestrator::read_scratchboard_text_for_transport(
+        &scratchboard_path,
+        &runtime.state.transport_kind,
+        None,
+    )
+    .await
+}
+
+async fn write_owned_build_scratchboard(
+    runtime: &BuildRuntimeState,
+    text: &str,
+) -> Result<(), String> {
+    let scratchboard_path = owned_build_scratchboard_path_for_runtime(runtime);
+    if let Some(ssh) = runtime.ssh_config.as_ref() {
+        let project_root = runtime.project_root.to_string_lossy();
+        let remote_path = scratchboard_path.to_string_lossy();
+        if project_root.is_empty() {
+            return Err("SSH Build scratchboard write requires an owned project root".to_string());
+        }
+        return crate::remote_project_file::write_scoped_remote_text(
+            ssh,
+            project_root.as_ref(),
+            remote_path.as_ref(),
+            text,
+        )
+        .await
+        .map_err(|error| format!("SSH Build scratchboard write refused: {error}"));
+    }
+    if runtime
+        .state
+        .transport_kind
+        .trim()
+        .eq_ignore_ascii_case("ssh")
+    {
+        return Err(
+            "SSH Build scratchboard write requires session-owned SSH transport context".to_string(),
+        );
+    }
+    crate::goal_orchestrator::write_scratchboard_text_for_transport(
+        &scratchboard_path,
+        text,
+        &runtime.state.transport_kind,
+        None,
+    )
+    .await
 }
 
 fn build_objective_requires_preview(objective: &str) -> bool {
@@ -1360,41 +1470,17 @@ fn build_receipt_path_matches(a: &str, b: &str) -> bool {
     normalize(a) == normalize(b)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ScratchboardPathMatch {
-    None,
-    Exact,
-    ValidatedAlias,
-}
-
-impl ScratchboardPathMatch {
-    fn is_match(self) -> bool {
-        !matches!(self, ScratchboardPathMatch::None)
-    }
-}
-
-fn classify_scratchboard_receipt_path(path: &str, state: &BuildRunState) -> ScratchboardPathMatch {
-    if build_receipt_path_matches(path, &state.scratchboard_path) {
-        return ScratchboardPathMatch::Exact;
-    }
-    if !matches!(
-        state.status,
-        BuildRunStatus::Draft | BuildRunStatus::AwaitingApproval
-    ) || state.approved_plan_hash.is_some()
-    {
-        return ScratchboardPathMatch::None;
-    }
-    if probable_build_plan_alias_path(path, state) && validated_build_plan_file(path) {
-        ScratchboardPathMatch::ValidatedAlias
-    } else {
-        ScratchboardPathMatch::None
-    }
-}
-
-fn probable_build_plan_alias_path(path: &str, state: &BuildRunState) -> bool {
+/// Recognize a path that purports to be this run's scratchboard so a sibling
+/// alias cannot be promoted into a PlanWritten receipt. It is intentionally
+/// narrower than a generic Markdown file: ordinary project writes remain
+/// FileWrite receipts and code-change evidence.
+fn build_scratchboard_receipt_candidate(
+    path: &str,
+    state: &BuildRunState,
+    owned_scratchboard: &Path,
+) -> bool {
     let actual = Path::new(path);
-    let expected = Path::new(&state.scratchboard_path);
-    if actual.parent() != expected.parent() {
+    if actual.parent() != owned_scratchboard.parent() {
         return false;
     }
     let Some(actual_name) = actual.file_name().and_then(|s| s.to_str()) else {
@@ -1407,22 +1493,6 @@ fn probable_build_plan_alias_path(path: &str, state: &BuildRunState) -> bool {
     let tab = if tab.is_empty() { "tab" } else { tab.as_str() };
     let required_prefix = format!("build.{}.", tab);
     actual_ext.eq_ignore_ascii_case("md") && actual_prefix.starts_with(&required_prefix)
-}
-
-fn validated_build_plan_file(path: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let has_build_heading = text
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .map(|line| line.trim_start().starts_with("# Build:"))
-        .unwrap_or(false);
-    has_build_heading && validate_build_approval_ready(&text).is_ok()
-}
-
-fn is_build_evidence_log_path(path: &Path, state: &BuildRunState) -> bool {
-    is_build_evidence_log_path_for_scratchboard(path, Path::new(&state.scratchboard_path))
 }
 
 fn is_build_evidence_log_path_for_scratchboard(path: &Path, scratchboard_path: &Path) -> bool {
@@ -2074,14 +2144,14 @@ fn maybe_attach_build_worktree_fingerprint(
     receipt: &mut BuildReceipt,
     is_local: bool,
     state: &BuildRunState,
+    scratchboard_path: &Path,
 ) {
     if !is_local {
         return;
     }
-    let Ok(Some(fingerprint)) = local_build_worktree_fingerprint(
-        Path::new(&state.cwd),
-        Path::new(&state.scratchboard_path),
-    ) else {
+    let Ok(Some(fingerprint)) =
+        local_build_worktree_fingerprint(Path::new(&state.cwd), scratchboard_path)
+    else {
         return;
     };
     if let serde_json::Value::Object(ref mut map) = receipt.data {
@@ -2377,2152 +2447,4 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::build_types::{BuildReceiptConfidence, BuildReceiptKind};
-
-    fn temp_base(name: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!("shellx-build-orch-{}-{}", name, std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    fn complete_board() -> String {
-        r#"# Build: test
-
-Status: IN_PROGRESS
-
-## Phase 1 - Plan
-Status: DONE
-- [x] planned
-
-## Phase 2 - Complete
-Status: DONE
-- [x] Call build_complete
-"#
-        .to_string()
-    }
-
-    fn goal_complete_board() -> String {
-        complete_board().replace("Status: IN_PROGRESS", "Status: GOAL_COMPLETE")
-    }
-
-    fn approvable_build_plan() -> &'static str {
-        r#"# Build: test
-
-Status: AWAITING_APPROVAL
-
-## Phase 1 - Plan
-- [ ] planned
-
-## Phase 2 - Review
-- [ ] Reviewer must run an AI slop / wiring audit: unwired UI controls, placeholder/mock code, fake success paths, missing frontend/backend bridges, config/schema drift, and release-debug leaks
-"#
-    }
-
-    fn receipt(
-        state: &BuildRunState,
-        kind: BuildReceiptKind,
-        confidence: BuildReceiptConfidence,
-    ) -> BuildReceipt {
-        let data = match kind {
-            BuildReceiptKind::ReviewCompleted => json!({
-                "checkpointId": "cp-1",
-                "persona": "reviewer",
-                "status": "completed",
-                "stdoutChars": 420,
-                "gateEvidence": {
-                    "accepted": true,
-                    "reason": "review report shape matched",
-                    "matchedMarkers": ["review", "summary", "finding"],
-                    "stdoutChars": 420
-                }
-            }),
-            BuildReceiptKind::VerificationCompleted => json!({
-                "checkpointId": "cp-1",
-                "persona": "verifier",
-                "status": "completed",
-                "stdoutChars": 420,
-                "gateEvidence": {
-                    "accepted": true,
-                    "reason": "verification report shape matched",
-                    "matchedMarkers": ["verification", "behavior evidence", "gaps"],
-                    "stdoutChars": 420
-                }
-            }),
-            _ => json!({ "checkpointId": "cp-1" }),
-        };
-        BuildReceipt {
-            receipt_id: new_receipt_id(),
-            run_id: state.run_id.clone(),
-            tab_id: state.tab_id.clone(),
-            kind,
-            created_at_ms: now_ms(),
-            actor: "test".into(),
-            summary: "ok".into(),
-            confidence,
-            data,
-        }
-    }
-
-    fn run_git(cwd: &Path, args: &[&str]) {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .output()
-            .unwrap_or_else(|e| panic!("git {:?} spawn failed: {}", args, e));
-        assert!(
-            output.status.success(),
-            "git {:?} failed\nstdout={}\nstderr={}",
-            args,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    #[test]
-    fn parse_build_command_extracts_objective() {
-        assert_eq!(
-            BuildOrchestrator::parse_build_command("/build ship it").as_deref(),
-            Some("ship it")
-        );
-        assert_eq!(
-            BuildOrchestrator::parse_build_command("   /build").as_deref(),
-            Some("")
-        );
-        assert_eq!(
-            BuildOrchestrator::parse_build_command("/goal ship it").as_deref(),
-            Some("ship it")
-        );
-    }
-
-    #[test]
-    fn plan_kickoff_text_is_plan_only() {
-        let text = BuildOrchestrator::plan_kickoff_text("change code");
-        assert!(text.contains("Scratchboard path:"));
-        assert!(text.contains("Status: AWAITING_APPROVAL"));
-        assert!(text.contains("Status: TODO"));
-        assert!(text.contains("Do not execute any phase yet"));
-        assert!(text.contains("build_complete"));
-        assert!(text.contains("Do not invent `Status: COMPLETE`"));
-        assert!(text.contains("Do not call Grok"));
-        assert!(
-            text.contains("native write/edit file tool")
-                && text.contains("WSL/SSH")
-                && text.contains("instead of opening a blocker"),
-            "build kickoff should steer POSIX scratchboard writes away from host fs_write"
-        );
-        assert!(
-            text.contains("test-writer"),
-            "build kickoff should advertise a dedicated test-writing persona"
-        );
-        assert!(
-            text.contains("AI slop / wiring audit") && text.contains("fake success paths"),
-            "build kickoff should require the slop/wiring review pass"
-        );
-        assert!(
-            text.contains("wait=true"),
-            "build kickoff should steer sequential agent phases toward wait=true"
-        );
-        assert!(
-            text.contains("wait=false"),
-            "build kickoff should reserve wait=false for real fan-out"
-        );
-        assert!(
-            text.contains("Establish git baseline")
-                && text.contains("git rev-parse --show-toplevel")
-                && text.contains("git init")
-                && text.contains("git status --short"),
-            "build kickoff should require a git baseline task"
-        );
-    }
-
-    #[test]
-    fn scratchboard_path_is_tab_and_run_scoped() {
-        let cwd = PathBuf::from("/tmp/project");
-        let a = pick_build_scratchboard_path(&cwd, "tab-a", "build-111111111111-aaaa");
-        let b = pick_build_scratchboard_path(&cwd, "tab-b", "build-222222222222-bbbb");
-        assert_ne!(a, b);
-        assert!(a.to_string_lossy().contains("tab-a"));
-        assert!(b.to_string_lossy().contains("tab-b"));
-    }
-
-    #[test]
-    fn build_fingerprint_ignores_scratchboard_content() {
-        let cwd = temp_base("build-fingerprint-cwd");
-        run_git(&cwd, &["init"]);
-        run_git(
-            &cwd,
-            &["config", "user.email", "shellx-test@example.invalid"],
-        );
-        run_git(&cwd, &["config", "user.name", "shellX Test"]);
-        std::fs::write(cwd.join("index.mjs"), "export const label = 'before';\n").unwrap();
-        run_git(&cwd, &["add", "index.mjs"]);
-        run_git(&cwd, &["commit", "-m", "initial"]);
-
-        let scratchboard = cwd.join("build.tab1.abcdef.md");
-        std::fs::write(&scratchboard, "# Build: test\n\nStatus: IN_PROGRESS\n").unwrap();
-        let first = local_build_worktree_fingerprint(&cwd, &scratchboard)
-            .unwrap()
-            .expect("fingerprint");
-        std::fs::write(
-            &scratchboard,
-            "# Build: test\n\nStatus: IN_PROGRESS\n\n## Phase\n- [x] done\n",
-        )
-        .unwrap();
-        let second = local_build_worktree_fingerprint(&cwd, &scratchboard)
-            .unwrap()
-            .expect("fingerprint");
-        assert_eq!(
-            first, second,
-            "scratchboard-only edits should not stale build checkpoints"
-        );
-
-        std::fs::create_dir_all(cwd.join("dist")).unwrap();
-        std::fs::write(cwd.join("dist/release-summary.json"), "{}\n").unwrap();
-        let third = local_build_worktree_fingerprint(&cwd, &scratchboard)
-            .unwrap()
-            .expect("fingerprint");
-        assert_ne!(
-            second, third,
-            "non-scratchboard release artifacts should remain part of the build fingerprint"
-        );
-        let _ = std::fs::remove_dir_all(cwd);
-    }
-
-    #[tokio::test]
-    async fn local_build_complete_uses_build_fingerprint_not_generic_session_fingerprint() {
-        let cwd = temp_base("local-complete-build-fp-cwd");
-        let store = temp_base("local-complete-build-fp-store");
-        run_git(&cwd, &["init"]);
-        run_git(
-            &cwd,
-            &["config", "user.email", "shellx-test@example.invalid"],
-        );
-        run_git(&cwd, &["config", "user.name", "shellX Test"]);
-        std::fs::write(cwd.join("index.mjs"), "export const label = 'before';\n").unwrap();
-        run_git(&cwd, &["add", "index.mjs"]);
-        run_git(&cwd, &["commit", "-m", "initial"]);
-
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        std::fs::write(cwd.join("index.mjs"), "export const label = 'after';\n").unwrap();
-        std::fs::create_dir_all(cwd.join("dist")).unwrap();
-        std::fs::write(cwd.join("dist/release-summary.json"), "{}\n").unwrap();
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "cp-local-build-fp",
-            "staged": 0,
-            "unstaged": 1,
-            "untracked": 1,
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::ObservedAcp,
-        ))
-        .await
-        .unwrap();
-
-        std::fs::write(
-            &state.scratchboard_path,
-            format!(
-                "{}\n<!-- final scratchboard-only edit -->\n",
-                complete_board()
-            ),
-        )
-        .unwrap();
-        let checkpoint_fingerprint = latest_checkpoint_worktree_fingerprint(
-            &store,
-            "tab1",
-            &state.run_id,
-            "cp-local-build-fp",
-        )
-        .unwrap()
-        .expect("checkpoint fingerprint");
-        let generic_fingerprint = crate::session_git::local_worktree_fingerprint(&cwd)
-            .unwrap()
-            .expect("generic fingerprint");
-        assert_ne!(
-            checkpoint_fingerprint, generic_fingerprint,
-            "the generic session fingerprint includes scratchboard-only edits"
-        );
-
-        orch.validate_complete_with_current_fingerprint("tab1", "done", Some(generic_fingerprint))
-            .await
-            .unwrap();
-        assert_eq!(
-            orch.get_state("tab1").await.unwrap().status,
-            BuildRunStatus::Complete
-        );
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn late_receipts_do_not_reopen_terminal_builds() {
-        let cwd = temp_base("late-receipt-cwd");
-        let store = temp_base("late-receipt-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Complete;
-        }
-
-        let mut blocker = receipt(
-            &state,
-            BuildReceiptKind::BlockerOpened,
-            BuildReceiptConfidence::ModelDeclared,
-        );
-        blocker.summary = "late post-complete blocker".into();
-        orch.append_receipt(blocker).await.unwrap();
-
-        let current = orch.get_state("tab1").await.unwrap();
-        assert_eq!(current.status, BuildRunStatus::Complete);
-        assert_eq!(current.open_blocker, None);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn agent_completion_clears_matching_in_flight_agent_blocker() {
-        let cwd = temp_base("agent-blocker-cwd");
-        let store = temp_base("agent-blocker-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        let subagent_id = "2c76d5b3-27fb-4bbb-9d28-d7bde7dd8dc6";
-
-        let mut blocker = receipt(
-            &state,
-            BuildReceiptKind::BlockerOpened,
-            BuildReceiptConfidence::ModelDeclared,
-        );
-        blocker.summary =
-            format!("blocked by in-flight Agent {subagent_id} still running with 0 stdout");
-        orch.append_receipt(blocker).await.unwrap();
-
-        let blocked = orch.get_state("tab1").await.unwrap();
-        assert_eq!(blocked.status, BuildRunStatus::Blocked);
-        assert!(blocked
-            .open_blocker
-            .as_deref()
-            .unwrap()
-            .contains(subagent_id));
-
-        let mut completed = receipt(
-            &state,
-            BuildReceiptKind::AgentCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        completed.data = json!({
-            "subagentId": subagent_id,
-            "status": "completed",
-            "exitCode": 0
-        });
-        orch.append_receipt(completed).await.unwrap();
-
-        let current = orch.get_state("tab1").await.unwrap();
-        assert_eq!(current.status, BuildRunStatus::Active);
-        assert_eq!(current.open_blocker, None);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn trusted_agent_start_after_blocker_marks_build_active() {
-        let cwd = temp_base("agent-progress-clears-blocker-cwd");
-        let store = temp_base("agent-progress-clears-blocker-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-
-        let mut blocker = receipt(
-            &state,
-            BuildReceiptKind::BlockerOpened,
-            BuildReceiptConfidence::ModelDeclared,
-        );
-        blocker.summary = "reviewer Agent spawn failed; waiting for operator action".into();
-        orch.append_receipt(blocker).await.unwrap();
-
-        let mut started = receipt(
-            &state,
-            BuildReceiptKind::AgentStarted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        started.summary = "implementer Agent started: next build stage".into();
-        started.data = json!({
-            "subagentId": "agent-2",
-            "persona": "implementer",
-            "status": "running"
-        });
-        orch.append_receipt(started).await.unwrap();
-
-        let current = orch.get_state("tab1").await.unwrap();
-        assert_eq!(current.status, BuildRunStatus::Active);
-        assert_eq!(current.open_blocker, None);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn operator_notes_are_injected_once_on_next_build_continuation() {
-        let cwd = temp_base("operator-note-cwd");
-        let store = temp_base("operator-note-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(
-            &state.scratchboard_path,
-            "# Build: test\n\nStatus: IN_PROGRESS\n\n## Phase\nStatus: IN_PROGRESS\n- [ ] next\n",
-        )
-        .unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        let note = orch
-            .add_operator_note("tab1", "Use the simpler fill tolerance first.")
-            .await
-            .unwrap();
-        assert!(note.note_id.starts_with("bon-"));
-
-        let queued = orch.get_state("tab1").await.unwrap();
-        assert_eq!(queued.pending_operator_notes.len(), 1);
-
-        let prompt = orch.consider_continue("tab1", "end_turn").await.unwrap();
-        assert!(prompt.contains("<operator_notes>"));
-        assert!(prompt.contains("Use the simpler fill tolerance first."));
-
-        let drained = orch.get_state("tab1").await.unwrap();
-        assert!(drained.pending_operator_notes.is_empty());
-
-        let next_prompt = orch.consider_continue("tab1", "end_turn").await.unwrap();
-        assert!(!next_prompt.contains("<operator_notes>"));
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn recheck_blocker_clears_satisfied_review_gate_blocker() {
-        let cwd = temp_base("recheck-review-blocker-cwd");
-        let store = temp_base("recheck-review-blocker-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-
-        let mut blocker = receipt(
-            &state,
-            BuildReceiptKind::BlockerOpened,
-            BuildReceiptConfidence::ModelDeclared,
-        );
-        blocker.summary = "reviewer gate blocked by timed out reviewer".into();
-        orch.append_receipt(blocker).await.unwrap();
-
-        let mut review = receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        review.summary = "replacement reviewer completed".into();
-        orch.append_receipt(review).await.unwrap();
-
-        let result = orch.recheck_blocker("tab1").await.unwrap();
-        assert!(result.checked);
-        assert!(result.cleared);
-        assert!(result.message.contains("Blocker cleared"));
-
-        let current = orch.get_state("tab1").await.unwrap();
-        assert_eq!(current.status, BuildRunStatus::Active);
-        assert_eq!(current.open_blocker, None);
-
-        let receipts = orch.get_receipts("tab1").await.unwrap();
-        assert!(receipts
-            .iter()
-            .any(|r| r.kind == BuildReceiptKind::BlockerResolved
-                && r.actor == "shellx"
-                && r.summary.contains("Rechecked blocker")));
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn recheck_blocker_keeps_running_agent_blocker() {
-        let cwd = temp_base("recheck-running-agent-cwd");
-        let store = temp_base("recheck-running-agent-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        let subagent_id = "7f6b8b33-29fe-4811-85b3-1fefc870b7a0";
-
-        let mut started = receipt(
-            &state,
-            BuildReceiptKind::AgentStarted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        started.data = json!({
-            "subagentId": subagent_id,
-            "persona": "reviewer",
-            "status": "running"
-        });
-        orch.append_receipt(started).await.unwrap();
-
-        let mut blocker = receipt(
-            &state,
-            BuildReceiptKind::BlockerOpened,
-            BuildReceiptConfidence::ModelDeclared,
-        );
-        blocker.summary =
-            format!("blocked by in-flight Agent {subagent_id} still running with 0 stdout");
-        orch.append_receipt(blocker).await.unwrap();
-
-        let result = orch.recheck_blocker("tab1").await.unwrap();
-        assert!(result.checked);
-        assert!(!result.cleared);
-        assert!(result.message.contains("Still blocked"));
-
-        let current = orch.get_state("tab1").await.unwrap();
-        assert_eq!(current.status, BuildRunStatus::Blocked);
-        assert!(current
-            .open_blocker
-            .as_deref()
-            .unwrap()
-            .contains(subagent_id));
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn approve_build_plan_hashes_snapshot() {
-        let cwd = temp_base("approve-cwd");
-        let store = temp_base("approve-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        let plan = approvable_build_plan();
-        std::fs::write(&state.scratchboard_path, plan).unwrap();
-        assert!(orch.approve_plan("tab1").await.unwrap());
-        let approved = orch.get_state("tab1").await.unwrap();
-        assert_eq!(approved.status, BuildRunStatus::Active);
-        assert_eq!(approved.approved_plan_hash, Some(plan_hash(plan)));
-        let patched = std::fs::read_to_string(&state.scratchboard_path).unwrap();
-        assert!(patched.contains("Status: IN_PROGRESS"));
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[cfg(feature = "debug-api")]
-    #[tokio::test]
-    async fn release_test_clear_tab_removes_runtime_and_persisted_state() {
-        let cwd = temp_base("release-clear-cwd");
-        let store = temp_base("release-clear-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        orch.start_run("release-build-run-owned", "test", &cwd, "local")
-            .await
-            .unwrap();
-        assert!(orch.get_state("release-build-run-owned").await.is_some());
-
-        orch.release_test_clear_tab("release-build-run-owned")
-            .await
-            .unwrap();
-
-        assert!(orch.get_state("release-build-run-owned").await.is_none());
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn start_run_stays_draft_until_valid_plan_written() {
-        let cwd = temp_base("draft-plan-cwd");
-        let store = temp_base("draft-plan-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch
-            .start_run("tab-draft", "test", &cwd, "local")
-            .await
-            .unwrap();
-        assert_eq!(state.status, BuildRunStatus::Draft);
-        let stub = std::fs::read_to_string(&state.scratchboard_path).unwrap();
-        assert!(stub.contains("Status: DRAFTING"));
-
-        let mut stub_write = receipt(
-            &state,
-            BuildReceiptKind::FileWrite,
-            BuildReceiptConfidence::ObservedAcp,
-        );
-        stub_write.data = json!({ "path": state.scratchboard_path.clone() });
-        orch.append_receipt(stub_write).await.unwrap();
-        let still_draft = orch.get_state("tab-draft").await.unwrap();
-        assert_eq!(still_draft.status, BuildRunStatus::Draft);
-
-        let plan = approvable_build_plan();
-        std::fs::write(&still_draft.scratchboard_path, plan).unwrap();
-        let mut plan_write = receipt(
-            &still_draft,
-            BuildReceiptKind::FileWrite,
-            BuildReceiptConfidence::ObservedAcp,
-        );
-        plan_write.data = json!({ "path": still_draft.scratchboard_path.clone() });
-        orch.append_receipt(plan_write).await.unwrap();
-        let awaiting = orch.get_state("tab-draft").await.unwrap();
-        assert_eq!(awaiting.status, BuildRunStatus::AwaitingApproval);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn draft_plan_poll_recovers_after_write_observation_race() {
-        let cwd = temp_base("draft-plan-race-cwd");
-        let store = temp_base("draft-plan-race-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch
-            .start_run("tab-draft-race", "test", &cwd, "local")
-            .await
-            .unwrap();
-        assert_eq!(state.status, BuildRunStatus::Draft);
-
-        let mut early_write = receipt(
-            &state,
-            BuildReceiptKind::FileWrite,
-            BuildReceiptConfidence::ObservedAcp,
-        );
-        early_write.data = json!({ "path": state.scratchboard_path.clone() });
-        orch.append_receipt(early_write).await.unwrap();
-        let still_draft = orch.get_state("tab-draft-race").await.unwrap();
-        assert_eq!(still_draft.status, BuildRunStatus::Draft);
-
-        std::fs::write(&still_draft.scratchboard_path, approvable_build_plan()).unwrap();
-        let recovered = orch.get_state("tab-draft-race").await.unwrap();
-        assert_eq!(recovered.status, BuildRunStatus::AwaitingApproval);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn approve_build_rejects_plan_without_slop_review_gate() {
-        let cwd = temp_base("approve-noslop-cwd");
-        let store = temp_base("approve-noslop-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch
-            .start_run("tab-noslop", "test", &cwd, "local")
-            .await
-            .unwrap();
-        let plan = r#"# Build: test
-
-Status: AWAITING_APPROVAL
-
-## Phase 1 - Plan
-- [ ] planned
-
-## Phase 2 - Review
-- [ ] Reviewer checks code
-"#;
-        std::fs::write(&state.scratchboard_path, plan).unwrap();
-        let err = orch.approve_plan("tab-noslop").await.unwrap_err();
-        assert!(err.contains("AI slop / wiring audit"), "got: {}", err);
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn plan_written_accepts_valid_tab_scoped_alias_path() {
-        let cwd = temp_base("alias-plan-cwd");
-        let store = temp_base("alias-plan-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch
-            .start_run("build-live-023e", "test", &cwd, "local")
-            .await
-            .unwrap();
-        let alias_path = cwd.join("build.build-live-023e.other-run-id.md");
-        let plan = approvable_build_plan();
-        std::fs::write(&alias_path, plan).unwrap();
-        let mut write = receipt(
-            &state,
-            BuildReceiptKind::FileWrite,
-            BuildReceiptConfidence::ObservedAcp,
-        );
-        write.data = json!({ "path": alias_path.to_string_lossy() });
-        orch.append_receipt(write).await.unwrap();
-
-        let updated = orch.get_state("build-live-023e").await.unwrap();
-        assert_eq!(updated.status, BuildRunStatus::AwaitingApproval);
-        assert_eq!(
-            updated.scratchboard_path,
-            alias_path.to_string_lossy().to_string()
-        );
-        assert!(
-            !updated.code_changed,
-            "scratchboard plan writes must not trip code-change gates"
-        );
-        let receipts = orch.get_receipts("build-live-023e").await.unwrap();
-        let plan_receipt = receipts
-            .iter()
-            .find(|r| r.kind == BuildReceiptKind::PlanWritten)
-            .expect("planWritten receipt");
-        assert_eq!(
-            plan_receipt
-                .data
-                .get("scratchboardAlias")
-                .and_then(|v| v.as_bool()),
-            Some(true)
-        );
-
-        assert!(orch.approve_plan("build-live-023e").await.unwrap());
-        let approved = orch.get_state("build-live-023e").await.unwrap();
-        assert_eq!(approved.status, BuildRunStatus::Active);
-        assert_eq!(approved.approved_plan_hash, Some(plan_hash(plan)));
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_complete_rejects_missing_review_gate() {
-        let cwd = temp_base("reject-cwd");
-        let store = temp_base("reject-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = false;
-            runtime.state.checkpoint_id = Some("cp-1".into());
-        }
-        let err = orch.validate_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("reviewer receipt"), "got: {}", err);
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-        let _ = state;
-    }
-
-    #[tokio::test]
-    async fn build_complete_rejects_weak_review_gate_receipt() {
-        let cwd = temp_base("weak-review-cwd");
-        let store = temp_base("weak-review-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = true;
-            runtime.state.checkpoint_id = Some("cp-1".into());
-        }
-        let mut weak_review = receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        weak_review.data = json!({
-            "persona": "reviewer",
-            "status": "completed",
-            "stdoutChars": 2,
-            "gateEvidence": {
-                "accepted": false,
-                "reason": "too little reviewer output",
-                "matchedMarkers": [],
-                "stdoutChars": 2
-            }
-        });
-        orch.append_receipt(weak_review).await.unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert!(
-            !updated.review_satisfied,
-            "weak reviewer output must not satisfy review gate"
-        );
-        let err = orch.validate_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("reviewer receipt"), "got: {}", err);
-        assert!(err.contains("evidence"), "got: {}", err);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_complete_rejects_weak_verification_gate_receipt() {
-        let cwd = temp_base("weak-verification-cwd");
-        let store = temp_base("weak-verification-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = true;
-            runtime.state.checkpoint_id = Some("cp-1".into());
-        }
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        let mut weak_verification = receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        weak_verification.data = json!({
-            "persona": "verifier",
-            "status": "completed",
-            "stdoutChars": 2,
-            "gateEvidence": {
-                "accepted": false,
-                "reason": "too little verifier output",
-                "matchedMarkers": [],
-                "stdoutChars": 2
-            }
-        });
-        orch.append_receipt(weak_verification).await.unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert!(
-            !updated.verification_satisfied,
-            "weak verifier output must not satisfy verification gate"
-        );
-        let err = orch.validate_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("verification receipt"), "got: {}", err);
-        assert!(err.contains("evidence"), "got: {}", err);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_complete_rejects_missing_preview_gate_for_ui_work() {
-        let cwd = temp_base("reject-preview-cwd");
-        let store = temp_base("reject-preview-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch
-            .start_run("tab1", "build a web page", &cwd, "local")
-            .await
-            .unwrap();
-        assert!(state.preview_required);
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-        let err = orch.validate_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("Preview Doctor"), "got: {}", err);
-
-        let mut preview = receipt(
-            &state,
-            BuildReceiptKind::PreviewDiagnosed,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        preview.data = json!({
-            "ok": true,
-            "url": "http://localhost:12345/",
-            "summary": "Preview Doctor passed"
-        });
-        orch.append_receipt(preview).await.unwrap();
-        orch.validate_complete("tab1", "done").await.unwrap();
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[test]
-    fn preview_gate_ignores_non_visual_browser_sdk_objectives() {
-        assert!(!build_objective_requires_preview(
-            "Create a standalone TypeScript package called shellx-browser-driver-sdk for the Browser Debug API over HTTP. No UI."
-        ));
-        assert!(!build_objective_requires_preview(
-            "Build a browser automation SDK with CLI examples"
-        ));
-        assert!(build_objective_requires_preview("build a web page"));
-        assert!(build_objective_requires_preview(
-            "build a browser settings screen"
-        ));
-    }
-
-    #[tokio::test]
-    async fn browser_debug_api_sdk_build_can_complete_without_preview_gate() {
-        let cwd = temp_base("browser-sdk-no-preview-cwd");
-        let store = temp_base("browser-sdk-no-preview-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch
-            .start_run(
-                "tab1",
-                "Create a standalone TypeScript package called shellx-browser-driver-sdk for the Browser Debug API over HTTP. No UI.",
-                &cwd,
-                "local",
-            )
-            .await
-            .unwrap();
-        assert!(
-            !state.preview_required,
-            "Browser Debug API SDK work must not require Preview Doctor"
-        );
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-        orch.validate_complete("tab1", "done").await.unwrap();
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_complete_detects_dirty_git_worktree_without_file_receipt() {
-        let cwd = temp_base("dirty-git-cwd");
-        let store = temp_base("dirty-git-store");
-        run_git(&cwd, &["init"]);
-        run_git(
-            &cwd,
-            &["config", "user.email", "shellx-test@example.invalid"],
-        );
-        run_git(&cwd, &["config", "user.name", "shellX Test"]);
-        std::fs::write(cwd.join("message.txt"), "before\n").unwrap();
-        run_git(&cwd, &["add", "message.txt"]);
-        run_git(&cwd, &["commit", "-m", "initial"]);
-        std::fs::write(cwd.join("message.txt"), "after\n").unwrap();
-
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        let err = orch.validate_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("checkpoint receipt"), "got: {}", err);
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert!(
-            updated.code_changed,
-            "dirty git worktree should mark code_changed"
-        );
-        assert!(
-            updated.review_required,
-            "dirty git worktree should require review"
-        );
-        assert!(
-            updated.verification_required,
-            "dirty git worktree should require verification"
-        );
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn manual_mark_complete_uses_completion_gates() {
-        let cwd = temp_base("manual-complete-cwd");
-        let store = temp_base("manual-complete-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = true;
-            runtime.state.checkpoint_id = Some("cp-1".into());
-        }
-
-        let err = orch.mark_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("reviewer receipt"), "got: {}", err);
-        assert_eq!(
-            orch.get_state("tab1").await.unwrap().status,
-            BuildRunStatus::Active
-        );
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_complete_accepts_required_receipts() {
-        let cwd = temp_base("accept-cwd");
-        let store = temp_base("accept-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = true;
-            runtime.state.checkpoint_id = Some("cp-1".into());
-        }
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::ObservedAcp,
-        ))
-        .await
-        .unwrap();
-        orch.validate_complete("tab1", "done").await.unwrap();
-        assert_eq!(
-            orch.get_state("tab1").await.unwrap().status,
-            BuildRunStatus::Complete
-        );
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn agent_checkpoint_marker_for_nongit_requires_review_and_verification() {
-        let cwd = temp_base("agent-nongit-cwd");
-        let store = temp_base("agent-nongit-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "agent-implementer-complete-nongit",
-            "agentCodeChange": true,
-            "checkpointUnavailable": true,
-            "checkpointUnavailableReason": "git rev-parse failed",
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-
-        let gated = orch.get_state("tab1").await.unwrap();
-        assert!(gated.code_changed);
-        assert_eq!(
-            gated.checkpoint_id.as_deref(),
-            Some("agent-implementer-complete-nongit")
-        );
-        assert!(gated.review_required);
-        assert!(gated.verification_required);
-
-        let err = orch.validate_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("reviewer receipt"), "got: {}", err);
-
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::ObservedAcp,
-        ))
-        .await
-        .unwrap();
-        orch.validate_complete("tab1", "done").await.unwrap();
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn nonlocal_build_complete_rejects_without_current_fingerprint() {
-        let cwd = temp_base("nonlocal-no-fingerprint-cwd");
-        let store = temp_base("nonlocal-no-fingerprint-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "wsl").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = true;
-            runtime.state.checkpoint_id = Some("cp-1".into());
-        }
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "cp-1",
-            "staged": 1,
-            "unstaged": 0,
-            "untracked": 0,
-            "worktreeFingerprint": "fp-1",
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::ObservedAcp,
-        ))
-        .await
-        .unwrap();
-
-        let err = orch.validate_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("current worktree fingerprint"), "got: {}", err);
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn nonlocal_build_complete_accepts_matching_current_fingerprint() {
-        let cwd = temp_base("nonlocal-matching-fingerprint-cwd");
-        let store = temp_base("nonlocal-matching-fingerprint-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "ssh").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = true;
-            runtime.state.checkpoint_id = Some("cp-1".into());
-        }
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "cp-1",
-            "staged": 1,
-            "unstaged": 0,
-            "untracked": 0,
-            "worktreeFingerprint": "fp-1",
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::ObservedAcp,
-        ))
-        .await
-        .unwrap();
-
-        orch.validate_complete_with_current_fingerprint("tab1", "done", Some("fp-1".into()))
-            .await
-            .unwrap();
-        assert_eq!(
-            orch.get_state("tab1").await.unwrap().status,
-            BuildRunStatus::Complete
-        );
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_complete_rejects_stale_checkpoint_fingerprint() {
-        let cwd = temp_base("stale-checkpoint-cwd");
-        let store = temp_base("stale-checkpoint-store");
-        run_git(&cwd, &["init"]);
-        run_git(
-            &cwd,
-            &["config", "user.email", "shellx-test@example.invalid"],
-        );
-        run_git(&cwd, &["config", "user.name", "shellX Test"]);
-        std::fs::write(cwd.join("message.txt"), "before\n").unwrap();
-        run_git(&cwd, &["add", "message.txt"]);
-        run_git(&cwd, &["commit", "-m", "initial"]);
-
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        std::fs::write(cwd.join("message.txt"), "checkpointed\n").unwrap();
-        let fingerprint = crate::session_git::local_worktree_fingerprint(&cwd)
-            .unwrap()
-            .expect("git fingerprint");
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "cp-1",
-            "staged": 0,
-            "unstaged": 1,
-            "untracked": 0,
-            "worktreeFingerprint": fingerprint,
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::ObservedAcp,
-        ))
-        .await
-        .unwrap();
-
-        std::fs::write(cwd.join("message.txt"), "changed after checkpoint\n").unwrap();
-        let err = orch.validate_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("checkpoint receipt"), "got: {}", err);
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert!(updated.checkpoint_id.is_none());
-        assert!(!updated.review_satisfied);
-        assert!(!updated.verification_satisfied);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn code_change_after_review_invalidates_completion_gates() {
-        let cwd = temp_base("stale-gate-cwd");
-        let store = temp_base("stale-gate-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = true;
-            runtime.state.checkpoint_id = Some("cp-1".into());
-        }
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::ObservedAcp,
-        ))
-        .await
-        .unwrap();
-
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::FileWrite,
-            BuildReceiptConfidence::ObservedAcp,
-        ))
-        .await
-        .unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert!(updated.checkpoint_id.is_none());
-        assert!(!updated.review_satisfied);
-        assert!(!updated.verification_satisfied);
-        let err = orch.validate_complete("tab1", "done").await.unwrap_err();
-        assert!(err.contains("checkpoint receipt"), "got: {}", err);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_evidence_log_write_does_not_invalidate_completion_gates() {
-        let cwd = temp_base("evidence-log-cwd");
-        let store = temp_base("evidence-log-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = true;
-            runtime.state.checkpoint_id = Some("cp-1".into());
-        }
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::ObservedAcp,
-        ))
-        .await
-        .unwrap();
-
-        let evidence_path = cwd.join("build.md");
-        std::fs::write(
-            &evidence_path,
-            "# shellX Build Evidence Log\n\nBuild Mode scratchboard: build.tab1.test.md\n\nCall build_complete after gates pass.\n",
-        )
-        .unwrap();
-        let mut evidence_write = receipt(
-            &state,
-            BuildReceiptKind::FileWrite,
-            BuildReceiptConfidence::ObservedAcp,
-        );
-        evidence_write.data = json!({ "path": evidence_path.to_string_lossy() });
-        orch.append_receipt(evidence_write).await.unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert_eq!(updated.checkpoint_id.as_deref(), Some("cp-1"));
-        assert!(updated.review_satisfied);
-        assert!(updated.verification_satisfied);
-        let receipts = orch.get_receipts("tab1").await.unwrap();
-        let evidence_receipt = receipts
-            .iter()
-            .rev()
-            .find(|r| r.kind == BuildReceiptKind::FileWrite)
-            .expect("evidence fileWrite receipt");
-        assert_eq!(
-            evidence_receipt
-                .data
-                .get("buildEvidenceLog")
-                .and_then(|v| v.as_bool()),
-            Some(true)
-        );
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[test]
-    fn git_dirty_check_ignores_recognized_build_evidence_log() {
-        let cwd = temp_base("evidence-log-git-cwd");
-        run_git(&cwd, &["init"]);
-        run_git(
-            &cwd,
-            &["config", "user.email", "shellx-test@example.invalid"],
-        );
-        run_git(&cwd, &["config", "user.name", "shellX Test"]);
-        std::fs::write(cwd.join("index.html"), "<h1>ok</h1>\n").unwrap();
-        run_git(&cwd, &["add", "index.html"]);
-        run_git(&cwd, &["commit", "-m", "initial"]);
-        let scratchboard = cwd.join("build.tab1.abc123.md");
-        std::fs::write(&scratchboard, complete_board()).unwrap();
-        std::fs::write(
-            cwd.join("build.md"),
-            "# shellX Build Evidence Log\n\nBuild Mode scratchboard: build.tab1.abc123.md\n\nCall build_complete after gates pass.\n",
-        )
-        .unwrap();
-
-        assert!(
-            !local_git_worktree_has_code_changes(&cwd, &scratchboard),
-            "recognized Build Mode evidence log should not dirty completion gates"
-        );
-        std::fs::write(cwd.join("notes.md"), "real code-adjacent change\n").unwrap();
-        assert!(local_git_worktree_has_code_changes(&cwd, &scratchboard));
-
-        let _ = std::fs::remove_dir_all(cwd);
-    }
-
-    #[tokio::test]
-    async fn halt_marks_run_halted_without_accepting_completion() {
-        let cwd = temp_base("halt-cwd");
-        let store = temp_base("halt-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        assert!(orch.halt("tab1", "Stopped from cockpit").await.unwrap());
-        let halted = orch.get_state("tab1").await.unwrap();
-        assert_eq!(halted.status, BuildRunStatus::Halted);
-        let receipts = orch.get_receipts("tab1").await.unwrap();
-        assert!(receipts
-            .iter()
-            .any(|r| r.kind == BuildReceiptKind::RunHalted));
-        assert!(!receipts
-            .iter()
-            .any(|r| r.kind == BuildReceiptKind::CompletionAccepted));
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-        let _ = state;
-    }
-
-    #[tokio::test]
-    async fn checkpoint_with_diff_marks_code_changed_and_requires_gates() {
-        let cwd = temp_base("checkpoint-diff-cwd");
-        let store = temp_base("checkpoint-diff-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "wsl").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "cp-1",
-            "staged": 0,
-            "unstaged": 1,
-            "untracked": 0,
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert!(updated.code_changed);
-        assert!(updated.review_required);
-        assert!(updated.verification_required);
-        assert_eq!(updated.checkpoint_id.as_deref(), Some("cp-1"));
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn bookkeeping_checkpoint_preserves_satisfied_gates() {
-        let cwd = temp_base("checkpoint-bookkeeping-cwd");
-        let store = temp_base("checkpoint-bookkeeping-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "wsl").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let st = &mut map.get_mut("tab1").unwrap().state;
-            st.status = BuildRunStatus::Active;
-            st.code_changed = true;
-            st.review_required = true;
-            st.review_satisfied = true;
-            st.verification_required = true;
-            st.verification_satisfied = true;
-            st.checkpoint_id = Some("cp-before".into());
-        }
-
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "post-verifier-reviewed-state",
-            "staged": 0,
-            "unstaged": 3,
-            "untracked": 4,
-            "conflicts": 0,
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert_eq!(
-            updated.checkpoint_id.as_deref(),
-            Some("post-verifier-reviewed-state")
-        );
-        assert!(updated.review_satisfied);
-        assert!(updated.verification_satisfied);
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn code_writer_checkpoint_requires_fresh_gates() {
-        let cwd = temp_base("checkpoint-code-writer-cwd");
-        let store = temp_base("checkpoint-code-writer-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "wsl").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let st = &mut map.get_mut("tab1").unwrap().state;
-            st.status = BuildRunStatus::Active;
-            st.code_changed = true;
-            st.review_required = true;
-            st.review_satisfied = true;
-            st.verification_required = true;
-            st.verification_satisfied = true;
-            st.checkpoint_id = Some("cp-before".into());
-        }
-
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "1779832326218-agent-test-writer-complete",
-            "staged": 0,
-            "unstaged": 3,
-            "untracked": 4,
-            "conflicts": 0,
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert_eq!(
-            updated.checkpoint_id.as_deref(),
-            Some("1779832326218-agent-test-writer-complete")
-        );
-        assert!(!updated.review_satisfied);
-        assert!(!updated.verification_satisfied);
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn no_op_test_writer_checkpoint_preserves_satisfied_gates() {
-        let cwd = temp_base("checkpoint-test-writer-noop-cwd");
-        let store = temp_base("checkpoint-test-writer-noop-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "wsl").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let st = &mut map.get_mut("tab1").unwrap().state;
-            st.status = BuildRunStatus::Active;
-            st.code_changed = true;
-            st.review_required = true;
-            st.verification_required = true;
-        }
-
-        let mut implementation_checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        implementation_checkpoint.data = json!({
-            "checkpointId": "post-implementer-buildstamp",
-            "staged": 0,
-            "unstaged": 2,
-            "untracked": 1,
-            "conflicts": 0,
-            "buildWorktreeFingerprint": "fp-1",
-        });
-        orch.append_receipt(implementation_checkpoint)
-            .await
-            .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-
-        let mut no_op_test_writer_checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        no_op_test_writer_checkpoint.data = json!({
-            "checkpointId": "1779836703735-agent-test-writer-complete",
-            "staged": 0,
-            "unstaged": 2,
-            "untracked": 2,
-            "conflicts": 0,
-            "buildWorktreeFingerprint": "fp-1",
-        });
-        orch.append_receipt(no_op_test_writer_checkpoint)
-            .await
-            .unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert!(updated.review_satisfied);
-        assert!(updated.verification_satisfied);
-
-        let mut real_test_writer_checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        real_test_writer_checkpoint.data = json!({
-            "checkpointId": "1779836703999-agent-test-writer-complete",
-            "staged": 0,
-            "unstaged": 3,
-            "untracked": 2,
-            "conflicts": 0,
-            "buildWorktreeFingerprint": "fp-2",
-        });
-        orch.append_receipt(real_test_writer_checkpoint)
-            .await
-            .unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert!(!updated.review_satisfied);
-        assert!(!updated.verification_satisfied);
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn release_manager_checkpoint_preserves_satisfied_gates() {
-        let cwd = temp_base("checkpoint-release-manager-cwd");
-        let store = temp_base("checkpoint-release-manager-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "wsl").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let st = &mut map.get_mut("tab1").unwrap().state;
-            st.status = BuildRunStatus::Active;
-            st.code_changed = true;
-            st.review_required = true;
-            st.review_satisfied = true;
-            st.verification_required = true;
-            st.verification_satisfied = true;
-            st.checkpoint_id = Some("cp-before".into());
-        }
-
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "1779835948461-agent-release-manager-complete",
-            "staged": 0,
-            "unstaged": 2,
-            "untracked": 3,
-            "conflicts": 0,
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-
-        let updated = orch.get_state("tab1").await.unwrap();
-        assert_eq!(
-            updated.checkpoint_id.as_deref(),
-            Some("1779835948461-agent-release-manager-complete")
-        );
-        assert!(updated.review_satisfied);
-        assert!(updated.verification_satisfied);
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn transport_failure_marks_active_run_failed() {
-        let cwd = temp_base("transport-failure-cwd");
-        let store = temp_base("transport-failure-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        orch.start_run("tab1", "test", &cwd, "ssh").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        assert!(orch
-            .mark_transport_failed("tab1", "responses API error: 403")
-            .await
-            .unwrap());
-        let failed = orch.get_state("tab1").await.unwrap();
-        assert_eq!(failed.status, BuildRunStatus::TransportFailed);
-        let receipts = orch.get_receipts("tab1").await.unwrap();
-        assert!(receipts.iter().any(|r| {
-            r.kind == BuildReceiptKind::TransportFailure
-                && r.summary.contains("responses API error")
-        }));
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn resume_recovers_transport_failed_run_after_auth_refresh() {
-        let cwd = temp_base("transport-resume-cwd");
-        let store = temp_base("transport-resume-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        assert!(orch
-            .mark_transport_failed("tab1", "responses API error: 401")
-            .await
-            .unwrap());
-        assert!(orch.resume("tab1").await.unwrap());
-        let resumed = orch.get_state("tab1").await.unwrap();
-        assert_eq!(resumed.status, BuildRunStatus::Active);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn resume_active_run_returns_true_for_reinject_after_reconnect() {
-        let cwd = temp_base("active-resume-reinject-cwd");
-        let store = temp_base("active-resume-reinject-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        assert!(orch.resume("tab1").await.unwrap());
-        let resumed = orch.get_state("tab1").await.unwrap();
-        assert_eq!(resumed.status, BuildRunStatus::Active);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn resume_recovers_persisted_transport_failed_run_after_restart() {
-        let cwd = temp_base("transport-resume-persisted-cwd");
-        let store = temp_base("transport-resume-persisted-store");
-        let writer = BuildOrchestrator::new(store.clone());
-        writer
-            .start_run("tab1", "test", &cwd, "local")
-            .await
-            .unwrap();
-        {
-            let mut map = writer.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-        assert!(writer
-            .mark_transport_failed("tab1", "responses API error: 401")
-            .await
-            .unwrap());
-
-        let reader = BuildOrchestrator::new(store.clone());
-        assert!(reader.resume("tab1").await.unwrap());
-        let resumed = reader.get_state("tab1").await.unwrap();
-        assert_eq!(resumed.status, BuildRunStatus::Active);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn operator_note_can_queue_on_persisted_transport_failed_run() {
-        let cwd = temp_base("transport-note-persisted-cwd");
-        let store = temp_base("transport-note-persisted-store");
-        let writer = BuildOrchestrator::new(store.clone());
-        writer
-            .start_run("tab1", "test", &cwd, "local")
-            .await
-            .unwrap();
-        {
-            let mut map = writer.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-        assert!(writer
-            .mark_transport_failed("tab1", "responses API error: 401")
-            .await
-            .unwrap());
-
-        let reader = BuildOrchestrator::new(store.clone());
-        let note = reader
-            .add_operator_note("tab1", "auth popup completed; continue existing build")
-            .await
-            .unwrap();
-        assert!(note.text.contains("auth popup"));
-        let state = reader.get_state("tab1").await.unwrap();
-        assert_eq!(state.pending_operator_notes.len(), 1);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn resume_transport_failure_clears_stale_satisfied_blocker() {
-        let cwd = temp_base("transport-resume-blocker-cwd");
-        let store = temp_base("transport-resume-blocker-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-
-        let mut blocker = receipt(
-            &state,
-            BuildReceiptKind::BlockerOpened,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        blocker.summary = "review blocked until reviewer Agent completes".into();
-        orch.append_receipt(blocker).await.unwrap();
-        orch.append_receipt(receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        ))
-        .await
-        .unwrap();
-        assert!(orch
-            .mark_transport_failed("tab1", "responses API error: 401")
-            .await
-            .unwrap());
-
-        assert!(orch.resume("tab1").await.unwrap());
-        let resumed = orch.get_state("tab1").await.unwrap();
-        assert_eq!(resumed.status, BuildRunStatus::Active);
-        assert_eq!(resumed.open_blocker, None);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn reads_persisted_state_and_receipts_when_run_is_not_active() {
-        let cwd = temp_base("persisted-read-cwd");
-        let store = temp_base("persisted-read-store");
-        let writer = BuildOrchestrator::new(store.clone());
-        let state = writer
-            .start_run("tab1", "test", &cwd, "local")
-            .await
-            .unwrap();
-        writer.clear_tab("tab1").await;
-
-        let reader = BuildOrchestrator::new(store.clone());
-        let loaded = reader.get_state("tab1").await.unwrap();
-        assert_eq!(loaded.run_id, state.run_id);
-
-        let receipts = reader.get_receipts("tab1").await.unwrap();
-        assert!(receipts
-            .iter()
-            .any(|r| r.kind == BuildReceiptKind::RunStarted));
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_continuation_respects_hard_gates() {
-        let cwd = temp_base("continue-cwd");
-        let store = temp_base("continue-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        assert!(orch.consider_continue("tab1", "end_turn").await.is_none());
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-        assert!(orch.consider_continue("tab1", "cancelled").await.is_none());
-        let prompt = orch.consider_continue("tab1", "end_turn").await.unwrap();
-        assert!(
-            prompt.contains("git rev-parse --show-toplevel")
-                && prompt.contains("git status --short")
-                && prompt.contains("checkpoint"),
-            "build continuation should keep git baseline/checkpoint guidance visible"
-        );
-        orch.pause("tab1").await.unwrap();
-        assert!(orch.consider_continue("tab1", "end_turn").await.is_none());
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_continuation_waits_while_agent_is_in_flight() {
-        let cwd = temp_base("continue-agent-cwd");
-        let store = temp_base("continue-agent-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-        let mut started = receipt(
-            &state,
-            BuildReceiptKind::AgentStarted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        started.data = json!({ "subagentId": "agent-1", "persona": "release-manager" });
-        orch.append_receipt(started).await.unwrap();
-        assert_eq!(
-            orch.in_flight_agent_summaries("tab1").await.unwrap(),
-            vec!["release-manager agent-1".to_string()]
-        );
-        assert!(orch.consider_continue("tab1", "end_turn").await.is_none());
-
-        let mut completed = receipt(
-            &state,
-            BuildReceiptKind::AgentCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        completed.data = json!({ "subagentId": "agent-1", "persona": "release-manager" });
-        orch.append_receipt(completed).await.unwrap();
-        assert!(orch
-            .in_flight_agent_summaries("tab1")
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(orch.consider_continue("tab1", "end_turn").await.is_some());
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn running_agent_completed_snapshot_stays_in_flight() {
-        let cwd = temp_base("continue-agent-running-cwd");
-        let store = temp_base("continue-agent-running-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        {
-            let mut map = orch.states.write().await;
-            map.get_mut("tab1").unwrap().state.status = BuildRunStatus::Active;
-        }
-        let mut started = receipt(
-            &state,
-            BuildReceiptKind::AgentStarted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        started.data = json!({ "subagentId": "agent-1", "persona": "implementer" });
-        orch.append_receipt(started).await.unwrap();
-
-        let mut wait_budget_snapshot = receipt(
-            &state,
-            BuildReceiptKind::AgentCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        wait_budget_snapshot.data = json!({
-            "subagentId": "agent-1",
-            "persona": "implementer",
-            "status": "running",
-            "waitBudgetExpired": true
-        });
-        orch.append_receipt(wait_budget_snapshot).await.unwrap();
-
-        assert_eq!(
-            orch.in_flight_agent_summaries("tab1").await.unwrap(),
-            vec!["implementer agent-1".to_string()]
-        );
-        assert_eq!(
-            orch.in_flight_agent_ids("tab1").await.unwrap(),
-            vec!["agent-1".to_string()]
-        );
-        assert!(orch.consider_continue("tab1", "end_turn").await.is_none());
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_continuation_forward_nudges_stale_review_verify_loop_without_blocking() {
-        let cwd = temp_base("continue-stale-loop-cwd");
-        let store = temp_base("continue-stale-loop-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch
-            .start_run("tab1", "paint app", &cwd, "local")
-            .await
-            .unwrap();
-        std::fs::write(
-            &state.scratchboard_path,
-            "# Build: paint app\n\nStatus: IN_PROGRESS\n\n## Phase\nStatus: IN_PROGRESS\n- [ ] implement next paint tool\n",
-        )
-        .unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let st = &mut map.get_mut("tab1").unwrap().state;
-            st.status = BuildRunStatus::Active;
-            st.code_changed = true;
-            st.review_required = true;
-            st.verification_required = true;
-            st.checkpoint_id = Some("cp-1".into());
-        }
-
-        let mut review = receipt(
-            &state,
-            BuildReceiptKind::ReviewCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        review.summary = "0 new findings on same visual scope".into();
-        orch.append_receipt(review).await.unwrap();
-        let mut verify = receipt(
-            &state,
-            BuildReceiptKind::VerificationCompleted,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        verify.summary = "verification gate satisfiable on same testable scope".into();
-        orch.append_receipt(verify).await.unwrap();
-
-        let prompt = orch.consider_continue("tab1", "end_turn").await.unwrap();
-        assert!(
-            prompt.contains("<build_forward_nudge"),
-            "stale review/verify suffix should produce a forward nudge, got: {}",
-            prompt
-        );
-        assert!(
-            prompt.contains("Do not dispatch another reviewer or verifier for the same scope"),
-            "nudge should prevent repeating the same reviewer/verifier loop, got: {}",
-            prompt
-        );
-        let nudged = orch.get_state("tab1").await.unwrap();
-        assert_eq!(nudged.status, BuildRunStatus::Active);
-        assert_eq!(nudged.open_blocker, None);
-        assert_eq!(nudged.no_progress_cycles, 1);
-
-        let prompt = orch.consider_continue("tab1", "end_turn").await.unwrap();
-        assert!(
-            prompt.contains("Forced forward step"),
-            "second stale continuation should escalate the nudge, got: {}",
-            prompt
-        );
-        let nudged = orch.get_state("tab1").await.unwrap();
-        assert_eq!(nudged.status, BuildRunStatus::Active);
-        assert_eq!(nudged.no_progress_cycles, 2);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_continuation_resets_forward_nudge_after_checkpoint_progress() {
-        let cwd = temp_base("continue-stale-reset-cwd");
-        let store = temp_base("continue-stale-reset-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch
-            .start_run("tab1", "paint app", &cwd, "local")
-            .await
-            .unwrap();
-        std::fs::write(
-            &state.scratchboard_path,
-            "# Build: paint app\n\nStatus: IN_PROGRESS\n\n## Phase\nStatus: IN_PROGRESS\n- [ ] implement next paint tool\n",
-        )
-        .unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let st = &mut map.get_mut("tab1").unwrap().state;
-            st.status = BuildRunStatus::Active;
-            st.no_progress_cycles = 3;
-        }
-
-        let mut checkpoint = receipt(
-            &state,
-            BuildReceiptKind::CheckpointCreated,
-            BuildReceiptConfidence::TrustedHost,
-        );
-        checkpoint.data = json!({
-            "checkpointId": "cp-new",
-            "staged": 0,
-            "unstaged": 1,
-            "untracked": 0,
-            "buildWorktreeFingerprint": "fp-new"
-        });
-        orch.append_receipt(checkpoint).await.unwrap();
-
-        let prompt = orch.consider_continue("tab1", "end_turn").await.unwrap();
-        assert!(
-            !prompt.contains("<build_forward_nudge"),
-            "fresh checkpoint progress should return to the normal continuation prompt, got: {}",
-            prompt
-        );
-        let nudged = orch.get_state("tab1").await.unwrap();
-        assert_eq!(nudged.no_progress_cycles, 0);
-
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
-
-    #[tokio::test]
-    async fn build_continuation_rejects_goal_complete_without_gates() {
-        let cwd = temp_base("complete-nudge-cwd");
-        let store = temp_base("complete-nudge-store");
-        let orch = BuildOrchestrator::new(store.clone());
-        let state = orch.start_run("tab1", "test", &cwd, "local").await.unwrap();
-        std::fs::write(&state.scratchboard_path, goal_complete_board()).unwrap();
-        {
-            let mut map = orch.states.write().await;
-            let runtime = map.get_mut("tab1").unwrap();
-            runtime.state.status = BuildRunStatus::Active;
-            runtime.state.code_changed = true;
-            runtime.state.review_required = true;
-            runtime.state.verification_required = true;
-        }
-
-        let prompt = orch.consider_continue("tab1", "end_turn").await.unwrap();
-        assert!(
-            prompt.contains("build_complete rejected"),
-            "got: {}",
-            prompt
-        );
-        assert!(
-            prompt.contains("checkpoint receipt") || prompt.contains("reviewer receipt"),
-            "got: {}",
-            prompt
-        );
-        assert_eq!(
-            orch.get_state("tab1").await.unwrap().status,
-            BuildRunStatus::Active
-        );
-        let _ = std::fs::remove_dir_all(cwd);
-        let _ = std::fs::remove_dir_all(store);
-    }
 }

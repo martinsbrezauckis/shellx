@@ -36,24 +36,19 @@ import {
 import { GeneralTab } from "./settings/GeneralTab";
 import { VaultTab } from "./settings/VaultTab";
 import { ConnectionsTab } from "./settings/ConnectionsTab";
-import { ConnectorsTab, type ConnectorsDebugFixture } from "./settings/ConnectorsTab";
+import { ConnectorsTab } from "./settings/ConnectorsTab";
 import { DesktopTab } from "./settings/DesktopTab";
 import { AboutTab } from "./settings/AboutTab";
-import { ShellxagentTab, type ShellxagentDebugFixture } from "./settings/ShellxagentTab";
+import { ShellxagentTab } from "./settings/ShellxagentTab";
 import { DataTab } from "./settings/DataTab";
 import { ShellIcon } from "./icons";
 import { useModalFocus } from "../lib/useModalFocus";
-import type { DebugUpdateFixtureMode } from "../lib/update-notes";
 
 export function Settings({
   open,
   onClose,
   initial,
   onChange,
-  debugShellxagentFixture = null,
-  debugClipboardFixture = null,
-  connectorsDebugFixture = null,
-  debugUpdateFixture = "live",
   requestedTab,
   requestedTabSeq,
 }: {
@@ -61,10 +56,6 @@ export function Settings({
   onClose: () => void;
   initial: SettingsValues;
   onChange: (s: SettingsValues) => void;
-  debugShellxagentFixture?: ShellxagentDebugFixture;
-  debugClipboardFixture?: "shellxagent-token" | "vault-draft" | null;
-  connectorsDebugFixture?: ConnectorsDebugFixture | null;
-  debugUpdateFixture?: DebugUpdateFixtureMode;
   /** An existing Settings dialog must also honour an exact safe reveal. */
   requestedTab?: SettingsTab;
   requestedTabSeq?: number;
@@ -102,16 +93,7 @@ export function Settings({
 
   if (!open) return null;
 
-  // The release driver can project the ShellX Agent tab without changing the
-  // operator's persisted Settings selection. Its child fixture disables every
-  // credential, clipboard, and file mutation while this override is active.
-  const renderedTab: SettingsTab = debugShellxagentFixture === "owned-safe" || debugClipboardFixture === "shellxagent-token"
-    ? "shellxagent"
-    : debugClipboardFixture === "vault-draft"
-      ? "vault"
-    : connectorsDebugFixture === "owned-safe"
-      ? "connectors"
-      : tab;
+  const renderedTab = tab;
 
  /**
  * Partial-patch for SettingsValues. Re-applies theme + persists +
@@ -208,13 +190,13 @@ export function Settings({
   {renderedTab === "general" && (
             <GeneralTab s={s} onPatch={patch} />
           )}
-          {renderedTab === "vault" && <VaultTab debugClipboardFixture={debugClipboardFixture === "vault-draft" ? "owned-safe" : null} />}
+          {renderedTab === "vault" && <VaultTab />}
           {renderedTab === "connections" && <ConnectionsTab />}
-          {renderedTab === "connectors" && <ConnectorsTab debugFixture={connectorsDebugFixture} />}
+          {renderedTab === "connectors" && <ConnectorsTab />}
           {renderedTab === "desktop" && <DesktopTab />}
-          {renderedTab === "shellxagent" && <ShellxagentTab debugFixture={debugClipboardFixture === "shellxagent-token" ? "owned-clipboard" : debugShellxagentFixture} />}
+          {renderedTab === "shellxagent" && <ShellxagentTab />}
           {renderedTab === "data" && <DataTab />}
-          {renderedTab === "about" && <AboutTab debugFixture={debugUpdateFixture} />}
+          {renderedTab === "about" && <AboutTab />}
         </div>
 
         <div className="modal-hint">

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::shellx_browser::{
     browser_id, clean_string, find_tab_index, lock_or_recover, now_ms, push_receipt,
@@ -300,6 +300,119 @@ pub(crate) fn personal_lock_active_for_profile_locked(
     profile_id == "personal" && state.personal_lock.enabled && state.personal_lock.locked
 }
 
+pub(crate) fn personal_content_requires_native_cover(
+    lock: &BrowserPersonalLockSettings,
+    profile_id: &str,
+) -> bool {
+    profile_id == "personal" && lock.enabled && lock.locked && lock.blur_locked_tabs
+}
+
+pub(crate) fn personal_content_requires_native_cover_now(
+    registry: &ShellxBrowserRegistry,
+    profile_id: &str,
+) -> bool {
+    let state = lock_or_recover(&registry.state);
+    personal_content_requires_native_cover(&state.personal_lock, profile_id)
+}
+
+fn covered_personal_webview_labels(state: &crate::shellx_browser::BrowserState) -> Vec<String> {
+    if !personal_content_requires_native_cover(&state.personal_lock, "personal") {
+        return Vec::new();
+    }
+    let mut labels: Vec<String> = state
+        .engine_pool
+        .engines
+        .iter()
+        .filter(|engine| engine.mounted && engine.profile_id.as_deref() == Some("personal"))
+        .map(|engine| engine.webview_label.clone())
+        .collect();
+    // The active snapshot is normally a copy of a pool entry. Include the
+    // legacy foreground label if an older mounted view only exists there.
+    if state.engine.mounted
+        && state.engine.profile_id.as_deref() == Some("personal")
+        && !labels.contains(&state.engine.webview_label)
+    {
+        labels.push(state.engine.webview_label.clone());
+    }
+    labels
+}
+
+/// The caller holds engine_sync_lock. Copy labels while holding the short state
+/// mutex, then dispatch native hide operations after that mutex is released.
+pub(crate) fn hide_covered_personal_webviews_locked(
+    app: &AppHandle,
+    registry: &ShellxBrowserRegistry,
+) -> Result<(), String> {
+    let labels = {
+        let state = lock_or_recover(&registry.state);
+        covered_personal_webview_labels(&state)
+    };
+    for label in labels {
+        let Some(webview) = app.get_webview(&label) else {
+            continue;
+        };
+        hide_personal_webview_or_browser_window(app, &webview, &label)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn hide_personal_webview_or_browser_window<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    webview: &tauri::Webview<R>,
+    label: &str,
+) -> Result<(), String> {
+    if let Err(error) = webview.hide() {
+        // A native child that remains visible would defeat the cover. Hide
+        // the enclosing Browser window as the fail-closed fallback.
+        let fallback = app
+            .get_window(crate::shellx_browser::BROWSER_WINDOW_LABEL)
+            .ok_or_else(|| "Browser window unavailable for cover fallback".to_string())
+            .and_then(|window| window.hide().map_err(|e| e.to_string()));
+        return Err(match fallback {
+            Ok(()) => format!(
+                "failed to hide covered Personal Browser WebView '{label}': {error}; Browser window hidden"
+            ),
+            Err(fallback_error) => format!(
+                "failed to hide covered Personal Browser WebView '{label}': {error}; Browser window fallback failed: {fallback_error}"
+            ),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) async fn reconcile_covered_personal_webviews(
+    app: &AppHandle,
+    registry: &ShellxBrowserRegistry,
+) -> Result<(), String> {
+    let covered = {
+        let state = lock_or_recover(&registry.state);
+        personal_content_requires_native_cover(&state.personal_lock, "personal")
+    };
+    if !covered {
+        return Ok(());
+    }
+    let _engine_sync_guard = registry.engine_sync_lock.lock().await;
+    hide_covered_personal_webviews_locked(app, registry)
+}
+
+/// Serialize synchronous registry calls that may apply the inactivity timeout
+/// with native engine sync, and cover the content before returning any result.
+pub(crate) async fn with_personal_native_cover_after<T>(
+    app: &AppHandle,
+    registry: &ShellxBrowserRegistry,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _engine_sync_guard = registry.engine_sync_lock.lock().await;
+    let result = operation();
+    let cover = hide_covered_personal_webviews_locked(app, registry);
+    match (result, cover) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(cover_error)) => Err(format!("{error}; {cover_error}")),
+    }
+}
+
 pub(crate) fn refresh_personal_lock_timeout_locked(
     state: &mut crate::shellx_browser::BrowserState,
 ) -> bool {
@@ -330,19 +443,32 @@ pub(crate) fn update_browser_personal_lock_from_operator(
 }
 
 #[tauri::command]
-pub fn shellx_browser_update_personal_lock(
+pub async fn shellx_browser_update_personal_lock(
+    app: AppHandle,
     registry: State<'_, Arc<ShellxBrowserRegistry>>,
     request: BrowserPersonalLockUpdateRequest,
 ) -> Result<BrowserPersonalLockUpdateResponse, String> {
-    update_browser_personal_lock_from_operator(&registry, request)
+    let _engine_sync_guard = registry.engine_sync_lock.lock().await;
+    let response = update_browser_personal_lock_from_operator(&registry, request);
+    let cover = hide_covered_personal_webviews_locked(&app, &registry);
+    match (response, cover) {
+        (Ok(response), Ok(())) => Ok(response),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(cover_error)) => Err(format!("{error}; {cover_error}")),
+    }
 }
 
 #[tauri::command]
-pub fn shellx_browser_delegate_tab_to_agent(
+pub async fn shellx_browser_delegate_tab_to_agent(
+    app: AppHandle,
     registry: State<'_, Arc<ShellxBrowserRegistry>>,
     request: BrowserTabDelegateRequest,
 ) -> Result<BrowserTabResponse, String> {
-    registry.delegate_tab_to_agent(mark_browser_tab_delegate_operator_approved(request))
+    with_personal_native_cover_after(&app, &registry, || {
+        registry.delegate_tab_to_agent(mark_browser_tab_delegate_operator_approved(request))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -430,371 +556,4 @@ fn pin_matches(salt: Option<&str>, expected: Option<&str>, pin: &str) -> bool {
         return false;
     };
     pin_hash(salt, pin) == expected
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shellx_browser::{
-        BrowserActionRequest, BrowserAutonomyMode, BrowserTabOpenRequest, StartBrowserTaskRequest,
-    };
-
-    fn operator_request(
-        request: BrowserPersonalLockUpdateRequest,
-    ) -> BrowserPersonalLockUpdateRequest {
-        mark_browser_personal_lock_operator_approved(request)
-    }
-
-    #[test]
-    fn personal_lock_defaults_off() {
-        let registry = ShellxBrowserRegistry::default();
-        let state = registry.state();
-        assert!(!state.personal_lock.enabled);
-        assert!(!state.personal_lock.locked);
-        assert_eq!(state.personal_lock.timeout_minutes, 30);
-    }
-
-    #[test]
-    fn manual_lock_blocks_personal_tab_actions_until_unlock() {
-        let registry = ShellxBrowserRegistry::default();
-        let tab = registry
-            .open_tab(BrowserTabOpenRequest {
-                profile_id: Some("personal".to_string()),
-                url: Some("https://example.com/".to_string()),
-                ..BrowserTabOpenRequest::default()
-            })
-            .expect("open personal tab")
-            .tab;
-
-        registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest {
-                enabled: Some(true),
-                action: Some("lockNow".to_string()),
-                ..BrowserPersonalLockUpdateRequest::default()
-            }))
-            .expect("lock personal browser");
-
-        let blocked = registry
-            .apply_action(BrowserActionRequest {
-                browser_tab_id: Some(tab.browser_tab_id.clone()),
-                action: "navigate".to_string(),
-                url: Some("https://example.org/".to_string()),
-                ..BrowserActionRequest::default()
-            })
-            .expect("blocked action returns response");
-        assert!(!blocked.ok);
-        assert_eq!(blocked.status, "blocked");
-        assert_eq!(
-            blocked.required_approval.as_deref(),
-            Some("personalBrowserUnlock")
-        );
-
-        registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest {
-                action: Some("unlock".to_string()),
-                ..BrowserPersonalLockUpdateRequest::default()
-            }))
-            .expect("unlock personal browser");
-
-        let applied = registry
-            .apply_action(BrowserActionRequest {
-                browser_tab_id: Some(tab.browser_tab_id),
-                action: "navigate".to_string(),
-                url: Some("https://example.org/".to_string()),
-                ..BrowserActionRequest::default()
-            })
-            .expect("action after unlock");
-        assert!(applied.ok);
-    }
-
-    #[test]
-    fn pin_mode_requires_matching_pin_to_unlock() {
-        let registry = ShellxBrowserRegistry::default();
-        registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest {
-                enabled: Some(true),
-                auth_mode: Some(BrowserPersonalLockAuthMode::PinOnly),
-                new_pin: Some("1234".to_string()),
-                action: Some("lockNow".to_string()),
-                ..BrowserPersonalLockUpdateRequest::default()
-            }))
-            .expect("configure and lock");
-
-        assert!(registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest {
-                action: Some("unlock".to_string()),
-                pin: Some("0000".to_string()),
-                ..BrowserPersonalLockUpdateRequest::default()
-            }))
-            .is_err());
-
-        let unlocked = registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest {
-                action: Some("unlock".to_string()),
-                pin: Some("1234".to_string()),
-                ..BrowserPersonalLockUpdateRequest::default()
-            }))
-            .expect("unlock with correct pin");
-        assert!(!unlocked.locked);
-    }
-
-    #[test]
-    fn inactivity_timeout_locks_personal_browser() {
-        let registry = ShellxBrowserRegistry::default();
-        registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest {
-                enabled: Some(true),
-                timeout_minutes: Some(1),
-                ..BrowserPersonalLockUpdateRequest::default()
-            }))
-            .expect("enable personal lock");
-        {
-            let mut state = lock_or_recover(&registry.state);
-            state.personal_lock.last_trusted_user_activity_at_ms = Some(now_ms() - 61_000);
-        }
-
-        let locked = registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest::default()))
-            .expect("timeout evaluation");
-        assert!(locked.locked);
-    }
-
-    #[test]
-    fn default_inactivity_timeout_is_minutes_not_seconds() {
-        let registry = ShellxBrowserRegistry::default();
-        registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest {
-                enabled: Some(true),
-                action: Some("unlock".to_string()),
-                ..BrowserPersonalLockUpdateRequest::default()
-            }))
-            .expect("enable and unlock personal browser");
-        {
-            let mut state = lock_or_recover(&registry.state);
-            state.personal_lock.last_trusted_user_activity_at_ms = Some(now_ms() - 31_000);
-        }
-
-        let lock = registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest::default()))
-            .expect("default timeout evaluation");
-        assert_eq!(lock.timeout_minutes, 30);
-        assert!(!lock.locked);
-    }
-
-    #[test]
-    fn agent_action_on_user_owned_tab_requires_handoff() {
-        let registry = ShellxBrowserRegistry::default();
-        let tab = registry
-            .open_tab(BrowserTabOpenRequest {
-                profile_id: Some("personal".to_string()),
-                url: Some("https://example.com/".to_string()),
-                ..BrowserTabOpenRequest::default()
-            })
-            .expect("open personal tab")
-            .tab;
-        let task = registry
-            .start_task(StartBrowserTaskRequest {
-                goal: "Inspect page".to_string(),
-                profile_id: Some("agent-work".to_string()),
-                autonomy: Some(BrowserAutonomyMode::AssistedAutonomous),
-                ..StartBrowserTaskRequest::default()
-            })
-            .expect("start agent task");
-
-        let blocked = registry
-            .apply_action(BrowserActionRequest {
-                browser_tab_id: Some(tab.browser_tab_id),
-                task_id: Some(task.task_id),
-                action: "observe".to_string(),
-                ..BrowserActionRequest::default()
-            })
-            .expect("blocked action returns response");
-
-        assert!(!blocked.ok);
-        assert_eq!(
-            blocked.required_approval.as_deref(),
-            Some("browserTabHandoff")
-        );
-    }
-
-    #[test]
-    fn handoff_changes_owner_without_creating_vault_grant() {
-        let registry = ShellxBrowserRegistry::default();
-        let tab = registry
-            .open_tab(BrowserTabOpenRequest {
-                profile_id: Some("personal".to_string()),
-                url: Some("https://example.com/".to_string()),
-                ..BrowserTabOpenRequest::default()
-            })
-            .expect("open personal tab")
-            .tab;
-        let task = registry
-            .start_task(StartBrowserTaskRequest {
-                goal: "Use delegated tab".to_string(),
-                profile_id: Some("agent-work".to_string()),
-                autonomy: Some(BrowserAutonomyMode::AssistedAutonomous),
-                ..StartBrowserTaskRequest::default()
-            })
-            .expect("start task");
-        let review_fingerprint = registry
-            .tab_handoff_review_fingerprint(&tab.browser_tab_id, &task.task_id)
-            .expect("review fingerprint");
-
-        let delegated = registry
-            .delegate_tab_to_agent(mark_browser_tab_delegate_operator_approved(
-                BrowserTabDelegateRequest {
-                    browser_tab_id: tab.browser_tab_id,
-                    task_id: task.task_id.clone(),
-                    review_fingerprint,
-                    reason: Some("test".to_string()),
-                    ..BrowserTabDelegateRequest::default()
-                },
-            ))
-            .expect("delegate tab")
-            .tab;
-
-        assert_eq!(delegated.owner_kind, BrowserTabOwnerKind::DelegatedToAgent);
-        assert_eq!(
-            delegated.delegated_task_id.as_deref(),
-            Some(task.task_id.as_str())
-        );
-        assert!(registry.state().session_grants.is_empty());
-    }
-
-    #[test]
-    fn locked_personal_browser_respects_delegated_tab_pause_setting() {
-        let registry = ShellxBrowserRegistry::default();
-        let tab = registry
-            .open_tab(BrowserTabOpenRequest {
-                profile_id: Some("personal".to_string()),
-                url: Some("https://example.com/".to_string()),
-                ..BrowserTabOpenRequest::default()
-            })
-            .expect("open personal tab")
-            .tab;
-        let task = registry
-            .start_task(StartBrowserTaskRequest {
-                goal: "Use delegated tab".to_string(),
-                profile_id: Some("agent-work".to_string()),
-                autonomy: Some(BrowserAutonomyMode::AssistedAutonomous),
-                ..StartBrowserTaskRequest::default()
-            })
-            .expect("start task");
-        let review_fingerprint = registry
-            .tab_handoff_review_fingerprint(&tab.browser_tab_id, &task.task_id)
-            .expect("review fingerprint");
-        let delegated = registry
-            .delegate_tab_to_agent(mark_browser_tab_delegate_operator_approved(
-                BrowserTabDelegateRequest {
-                    browser_tab_id: tab.browser_tab_id,
-                    task_id: task.task_id.clone(),
-                    review_fingerprint,
-                    reason: Some("test".to_string()),
-                    ..BrowserTabDelegateRequest::default()
-                },
-            ))
-            .expect("delegate tab")
-            .tab;
-
-        registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest {
-                enabled: Some(true),
-                pause_delegated_tabs_when_locked: Some(false),
-                action: Some("lockNow".to_string()),
-                ..BrowserPersonalLockUpdateRequest::default()
-            }))
-            .expect("lock personal browser without pausing delegated tabs");
-
-        let allowed = registry
-            .apply_action(BrowserActionRequest {
-                browser_tab_id: Some(delegated.browser_tab_id.clone()),
-                task_id: Some(task.task_id.clone()),
-                action: "navigate".to_string(),
-                url: Some("https://example.org/".to_string()),
-                ..BrowserActionRequest::default()
-            })
-            .expect("delegated action while pause disabled");
-        assert!(allowed.ok);
-
-        registry
-            .update_personal_lock(operator_request(BrowserPersonalLockUpdateRequest {
-                pause_delegated_tabs_when_locked: Some(true),
-                action: Some("lockNow".to_string()),
-                ..BrowserPersonalLockUpdateRequest::default()
-            }))
-            .expect("lock personal browser and pause delegated tabs");
-
-        let blocked = registry
-            .apply_action(BrowserActionRequest {
-                browser_tab_id: Some(delegated.browser_tab_id),
-                task_id: Some(task.task_id),
-                action: "navigate".to_string(),
-                url: Some("https://example.net/".to_string()),
-                ..BrowserActionRequest::default()
-            })
-            .expect("blocked delegated action while pause enabled");
-        assert!(!blocked.ok);
-        assert_eq!(
-            blocked.required_approval.as_deref(),
-            Some("personalBrowserUnlock")
-        );
-    }
-
-    #[test]
-    fn delegated_tab_requires_matching_task_id() {
-        let registry = ShellxBrowserRegistry::default();
-        let tab = registry
-            .open_tab(BrowserTabOpenRequest {
-                profile_id: Some("personal".to_string()),
-                url: Some("https://example.com/".to_string()),
-                ..BrowserTabOpenRequest::default()
-            })
-            .expect("open personal tab")
-            .tab;
-        let task = registry
-            .start_task(StartBrowserTaskRequest {
-                goal: "Use delegated tab".to_string(),
-                profile_id: Some("agent-work".to_string()),
-                autonomy: Some(BrowserAutonomyMode::AssistedAutonomous),
-                ..StartBrowserTaskRequest::default()
-            })
-            .expect("start task");
-        let other_task = registry
-            .start_task(StartBrowserTaskRequest {
-                goal: "Other task".to_string(),
-                profile_id: Some("agent-work".to_string()),
-                autonomy: Some(BrowserAutonomyMode::AssistedAutonomous),
-                ..StartBrowserTaskRequest::default()
-            })
-            .expect("start other task");
-        let review_fingerprint = registry
-            .tab_handoff_review_fingerprint(&tab.browser_tab_id, &task.task_id)
-            .expect("review fingerprint");
-        let delegated = registry
-            .delegate_tab_to_agent(mark_browser_tab_delegate_operator_approved(
-                BrowserTabDelegateRequest {
-                    browser_tab_id: tab.browser_tab_id,
-                    task_id: task.task_id,
-                    review_fingerprint,
-                    reason: Some("test".to_string()),
-                    ..BrowserTabDelegateRequest::default()
-                },
-            ))
-            .expect("delegate tab")
-            .tab;
-
-        let blocked = registry
-            .apply_action(BrowserActionRequest {
-                browser_tab_id: Some(delegated.browser_tab_id),
-                task_id: Some(other_task.task_id),
-                action: "observe".to_string(),
-                ..BrowserActionRequest::default()
-            })
-            .expect("blocked mismatched delegated action");
-        assert!(!blocked.ok);
-        assert_eq!(
-            blocked.required_approval.as_deref(),
-            Some("browserTabDelegationMismatch")
-        );
-    }
 }

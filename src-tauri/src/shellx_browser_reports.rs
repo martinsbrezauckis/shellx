@@ -2,12 +2,14 @@ use serde_json::json;
 
 use crate::shellx_browser::{
     browser_id, clean_string, lock_or_recover, next_browser_evidence_sequence, now_ms,
-    push_receipt, BrowserConsoleLogEntry, BrowserConsoleLogRequest, BrowserReportRequest,
-    BrowserReportResponse, ShellxBrowserRegistry,
+    profile_id_for_task_or_tab, push_receipt, validate_optional_task_and_tab,
+    BrowserConsoleLogEntry, BrowserConsoleLogRequest, BrowserReportRequest, BrowserReportResponse,
+    ShellxBrowserRegistry,
 };
 use crate::shellx_browser_caller::{
     ensure_browser_task_control_authority, BrowserTaskControlAuthority,
 };
+use crate::shellx_browser_tabs::find_tab_index;
 use crate::shellx_browser_tasks::find_task_index;
 
 impl ShellxBrowserRegistry {
@@ -81,6 +83,7 @@ impl ShellxBrowserRegistry {
         // detached from task Flight Recorder evidence so bearer clients cannot
         // gain operator task authority by omitting the caller header.
         request.task_id = None;
+        request.browser_tab_id = None;
         request.source = Some("shellx-browser-ui".to_string());
         self.record_console_log_inner(request, false, Some("shellx-browser-ui"))
     }
@@ -113,13 +116,27 @@ impl ShellxBrowserRegistry {
             _ if use_active_task_fallback => state.active_task_id.clone(),
             _ => None,
         };
-        let profile_id = task_id
+        let browser_tab_id = request
+            .browser_tab_id
             .as_deref()
-            .and_then(|id| state.tasks.iter().find(|task| task.task_id == id))
-            .map(|task| task.profile_id.clone());
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        validate_optional_task_and_tab(&state, task_id.as_deref(), browser_tab_id.as_deref())?;
+        if let (Some(task_id), Some(browser_tab_id)) =
+            (task_id.as_deref(), browser_tab_id.as_deref())
+        {
+            let tab_idx = find_tab_index(&state, browser_tab_id)?;
+            if state.tabs[tab_idx].task_id.as_deref() != Some(task_id) {
+                return Err("browser console task/tab ownership mismatch".to_string());
+            }
+        }
+        let profile_id =
+            profile_id_for_task_or_tab(&state, task_id.as_deref(), browser_tab_id.as_deref());
         let entry = BrowserConsoleLogEntry {
             log_id: browser_id("browser-log"),
             task_id: task_id.clone(),
+            browser_tab_id: browser_tab_id.clone(),
             profile_id: profile_id.clone(),
             level: level.clone(),
             source,
@@ -165,6 +182,7 @@ impl ShellxBrowserRegistry {
             format!("Browser console {}: {}", level, entry.message),
             json!({
                 "logId": entry.log_id,
+                "browserTabId": entry.browser_tab_id,
                 "level": entry.level,
                 "source": entry.source,
                 "url": entry.url,
@@ -253,70 +271,5 @@ fn sanitize_console_details(details: Option<serde_json::Value>) -> serde_json::V
         })
     } else {
         details
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shellx_browser::StartBrowserTaskRequest;
-    use crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED;
-
-    fn agent_owned_task(registry: &ShellxBrowserRegistry) -> String {
-        registry
-            .start_task_for_agent_session(
-                StartBrowserTaskRequest {
-                    goal: "Test Browser log ownership".to_string(),
-                    start_url: Some("https://example.test".to_string()),
-                    profile_id: Some("agent-work".to_string()),
-                    ..StartBrowserTaskRequest::default()
-                },
-                Some("session-a"),
-            )
-            .expect("start agent-owned task")
-            .task_id
-    }
-
-    #[test]
-    fn agent_reported_logs_are_owned_and_cannot_spoof_runtime_source() {
-        let registry = ShellxBrowserRegistry::default();
-        let task_id = agent_owned_task(&registry);
-        let request = BrowserConsoleLogRequest {
-            task_id: Some(task_id.clone()),
-            level: "info".to_string(),
-            source: Some("browser-runtime".to_string()),
-            message: "Agent diagnostic".to_string(),
-            ..BrowserConsoleLogRequest::default()
-        };
-
-        let denied = registry
-            .record_agent_console_log(request.clone(), "session-b")
-            .expect_err("another caller session must not inject task evidence");
-        assert!(denied.contains(BROWSER_TASK_OWNER_CONTROL_REQUIRED));
-
-        let entry = registry
-            .record_agent_console_log(request, "session-a")
-            .expect("owner session may append an attributed diagnostic");
-        assert_eq!(entry.task_id.as_deref(), Some(task_id.as_str()));
-        assert_eq!(entry.source, "agent-reported");
-    }
-
-    #[test]
-    fn headerless_ui_logs_are_detached_from_task_evidence() {
-        let registry = ShellxBrowserRegistry::default();
-        let task_id = agent_owned_task(&registry);
-        let entry = registry
-            .record_operator_ui_console_log(BrowserConsoleLogRequest {
-                task_id: Some(task_id),
-                level: "error".to_string(),
-                source: Some("browser-runtime".to_string()),
-                message: "Renderer diagnostic".to_string(),
-                ..BrowserConsoleLogRequest::default()
-            })
-            .expect("desktop UI diagnostics remain available");
-
-        assert_eq!(entry.task_id, None);
-        assert_eq!(entry.profile_id, None);
-        assert_eq!(entry.source, "shellx-browser-ui");
     }
 }

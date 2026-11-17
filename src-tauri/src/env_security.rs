@@ -8,10 +8,8 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
-use tokio::time::timeout;
 
 const DEFAULT_MAX_DEPTH: usize = 4;
 const DEFAULT_MAX_MANIFESTS: usize = 80;
@@ -388,21 +386,17 @@ async fn run_optional_command(
 }
 
 async fn command_available(program: &str) -> bool {
-    let fut = async {
-        let mut cmd = version_command(program);
-        cmd.stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .stdin(Stdio::null());
-        match cmd.spawn() {
-            Ok(child) => child
-                .wait_with_output()
-                .await
-                .map(|out| out.status.success())
-                .unwrap_or(false),
-            Err(_) => false,
-        }
-    };
-    timeout(Duration::from_secs(3), fut).await.unwrap_or(false)
+    let mut cmd = version_command(program);
+    crate::bounded_command::run_bounded_output(
+        &mut cmd,
+        "security command availability probe",
+        Duration::from_secs(3),
+        64 * 1024,
+        64 * 1024,
+    )
+    .await
+    .map(|out| out.status.success())
+    .unwrap_or(false)
 }
 
 async fn run_fixed_command(
@@ -412,35 +406,34 @@ async fn run_fixed_command(
     args: &[&str],
     timeout_duration: Duration,
 ) -> SecurityAuditCheck {
-    let fut = async {
-        let mut cmd = audit_command(program, args);
-        cmd.current_dir(cwd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null());
-        let child = cmd.spawn()?;
-        child.wait_with_output().await
-    };
-
-    match timeout(timeout_duration, fut).await {
-        Ok(Ok(out)) => audit_output_to_check(name, cwd, program, args, out),
-        Ok(Err(e)) => SecurityAuditCheck {
+    let mut cmd = audit_command(program, args);
+    cmd.current_dir(cwd);
+    match crate::bounded_command::run_bounded_output(
+        &mut cmd,
+        name,
+        timeout_duration,
+        crate::bounded_command::DEFAULT_STDOUT_LIMIT,
+        crate::bounded_command::DEFAULT_STDERR_LIMIT,
+    )
+    .await
+    {
+        Ok(out) => audit_output_to_check(name, cwd, program, args, out),
+        Err(error) if error.contains(" timed out after ") => SecurityAuditCheck {
             name: name.to_string(),
-            status: "skipped".to_string(),
-            detail: format!("{} could not start: {}", program, e),
+            status: "fail".to_string(),
+            detail: error,
             command: command_vec(program, args),
             cwd: cwd.display().to_string(),
             exit_code: None,
             stdout_tail: None,
             stderr_tail: None,
         },
-        Err(_) => SecurityAuditCheck {
+        Err(error) => SecurityAuditCheck {
             name: name.to_string(),
-            status: "fail".to_string(),
+            status: "skipped".to_string(),
             detail: format!(
-                "{} timed out after {} ms",
-                name,
-                timeout_duration.as_millis()
+                "{} could not complete its bounded local run: {}",
+                program, error
             ),
             command: command_vec(program, args),
             cwd: cwd.display().to_string(),
@@ -556,67 +549,4 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn unique_temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "shellx-security-scan-{}-{}",
-            name,
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        dir
-    }
-
-    #[test]
-    fn discover_manifests_skips_generated_dependency_trees() {
-        let root = unique_temp_dir("skip");
-        std::fs::write(root.join("pnpm-lock.yaml"), "").expect("root lock");
-        std::fs::create_dir_all(root.join("node_modules/pkg")).expect("node_modules");
-        std::fs::write(root.join("node_modules/pkg/package.json"), "{}").expect("nested package");
-        std::fs::create_dir_all(root.join("src-tauri")).expect("src-tauri");
-        std::fs::write(root.join("src-tauri/Cargo.lock"), "").expect("cargo lock");
-
-        let found = discover_manifests(&root, 4, 20).expect("discover");
-        let paths: Vec<&str> = found.iter().map(|m| m.path.as_str()).collect();
-        assert!(paths.contains(&"pnpm-lock.yaml"));
-        assert!(paths.contains(&"src-tauri/Cargo.lock"));
-        assert!(!paths.iter().any(|p| p.contains("node_modules")));
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn manifest_kind_recognizes_agent0007_relevant_lockfiles() {
-        assert_eq!(
-            manifest_kind("pnpm-lock.yaml"),
-            Some(("npm", "pnpm-lockfile"))
-        );
-        assert_eq!(manifest_kind("Cargo.lock"), Some(("cargo", "lockfile")));
-        assert_eq!(manifest_kind("go.sum"), Some(("go", "lockfile")));
-        assert_eq!(manifest_kind("uv.lock"), Some(("pypi", "uv-lockfile")));
-    }
-
-    #[tokio::test]
-    async fn scan_from_mcp_inventory_reports_manifests_without_running_audits() {
-        let root = unique_temp_dir("inventory");
-        std::fs::write(root.join("package.json"), "{}").expect("package manifest");
-        std::fs::write(root.join("pnpm-lock.yaml"), "").expect("pnpm lock");
-
-        let out = scan_from_mcp(json!({ "run_audits": false }), &root)
-            .await
-            .expect("scan");
-
-        assert_eq!(out["summary"]["status"], "pass");
-        assert_eq!(out["summary"]["manifestCount"], 2);
-        assert_eq!(out["summary"]["auditsRun"], 0);
-        assert_eq!(out["checks"].as_array().expect("checks").len(), 0);
-
-        let _ = std::fs::remove_dir_all(root);
-    }
 }

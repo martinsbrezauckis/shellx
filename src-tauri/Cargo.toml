@@ -2,23 +2,24 @@
 #
 # Rust backend for the ShellX Tauri app.
 #
-# Architecture: hand-rolled JSON-RPC over `grok agent stdio` child process.
-# We don't use the `agent-client-protocol` crate yet — the wire format is
-# small enough that hand-rolling stays simple and gives us full visibility
-# (every frame is logged + emitted, not abstracted away).
+# Architecture: ShellX hosts Grok Build, Claude Code, Codex CLI, and
+# ACP-speaking agents through bounded native adapters. Its local JSON-RPC
+# framing stays explicit where an adapter requires it, so protocol boundaries
+# remain inspectable.
 #
 # The default `debug-api` feature enables the loopback axum HTTP/WS surface
-# used by ShellX-launched agents, diagnostics, and release verification.
+# used by ShellX-launched agents and trusted diagnostics.
 
 [package]
 name = "shellx"
-version = "0.3.61"
+version = "0.3.62"
 description = "shellX — cross-platform desktop host for Grok Build, Claude Code, Codex CLI, and ACP-speaking agents"
 authors = ["Martins Brezauckis <martins.brezauckis@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/martinsbrezauckis/shellx"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.89"
+autoexamples = false
 
 [lib]
 name = "app_lib"
@@ -29,18 +30,20 @@ tauri-build = { version = "2.6.3", features = [] }
 cc = "1"
 
 [dependencies]
-tauri = { version = "2.11.5", features = ["protocol-asset", "unstable"] }
+tauri = { version = "=2.11.5", features = ["protocol-asset", "unstable"] }
+# Keep Tauri's WebView runtime on the same Wry minor as ShellX's download patch.
+tauri-runtime-wry = { version = "=2.11.4", default-features = false }
 tauri-plugin-log = "2.9"
-# P-UX-Impl §10.1: file picker dialog for Attach + workspace-folder
-# picker. Loaded unconditionally — same low cost as plugin-log.
+# Native dialog integration for attachment and workspace-folder selection.
 tauri-plugin-dialog = "2"
 
 # JSON-RPC frames + general (de)serialization
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["raw_value"] }
+tempfile = "3"
 url = "2"
 
-# Async runtime for spawning grok + piping stdio
+# Async runtime for spawning agent processes and piping stdio.
 tokio = { version = "1", features = ["full"] }
 
 # Structured logs (info!/warn!/error!) used inside acp.rs
@@ -64,7 +67,7 @@ axum = { version = "0.7", features = ["ws", "json"], optional = true }
 # already allow in origin_allowed().
 tower-http = { version = "0.5", features = ["cors", "catch-panic", "fs"], optional = true }
 
-# Native host tools (Phase Native-MCP):
+# Native host tools:
 #   notify       — filesystem watcher backing the fs_watch host tool.
 #   sysinfo      — cross-platform cpu/rss/vsz/threads for process_stats.
 #   nix (Unix)   — Unix signal sending (SIGTERM/SIGINT/SIGKILL/SIGHUP/SIGUSR1)
@@ -72,7 +75,7 @@ tower-http = { version = "0.5", features = ["cors", "catch-panic", "fs"], option
 notify = "6"
 sysinfo = "0.30"
 
-# P-Vault deps (added 2026-05-17):
+# Vault storage and identity dependencies:
 #   keyring               — cross-platform OS-keyring master-key store.
 #                           Linux uses secret-service; macOS Keychain;
 #                           Windows Credential Manager. Single source of
@@ -88,7 +91,7 @@ sysinfo = "0.30"
 #                           the JSON envelope.
 #   rand                  — CSPRNG for nonces (OsRng under the hood).
 #   zeroize               — clear transient key/plaintext buffers after use.
-#   uuid                  — stable connection-preset ids (P-Transport-1).
+#   uuid                  — stable connection-preset identifiers.
 keyring = "2"
 chacha20poly1305 = "0.10"
 base64 = "0.22"
@@ -103,11 +106,11 @@ vault-server = { path = "../vendor/shellx-vault/crates/vault-server" }
 vault-broker = { path = "../vendor/shellx-vault/crates/vault-broker" }
 blake3 = "1"
 hex = "0.4"
-tauri-plugin-updater = "2"
+tauri-plugin-updater = "=2.10.1"
 minisign-verify = "0.2.5"
 tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
-# Single-instance guard (#311): ensures only ONE shellX runs. Second-
+# Single-instance guard: ensures only one ShellX instance runs. A second
 # launch (clicking shortcut while window is open, or upgrade-time
 # race where installer launches new instance before old fully exits)
 # focuses the existing window instead of spawning a second app.exe.
@@ -119,16 +122,14 @@ tauri-plugin-notification = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-deep-link = "2.4.9"
 
-# P-Voice (#75, 2026-05-18): xAI Grok STT REST API client. multipart for
-# the audio file upload, rustls-tls for a TLS implementation that
-# cross-compiles cleanly via cargo-xwin (avoids the system OpenSSL
-# dependency that breaks Windows builds). gzip stays off — STT
-# responses are small JSON.
+# Voice transcription HTTP client. `multipart` supports audio uploads;
+# `rustls-tls` cross-compiles without a system OpenSSL dependency. Gzip stays
+# off because transcription responses are small JSON.
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"], default-features = false }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
-# P-Terminal-A (2026-05-18): wezterm's cross-platform PTY library. Single
+# Cross-platform PTY library. A single
 # `native_pty_system()` API returns a Unix-PTY implementation on Linux/macOS
 # and a ConPTY implementation on Windows — no per-platform forks here.
 # MIT-licensed, production-hardened (wezterm + zellij both ship it).
@@ -136,16 +137,14 @@ futures-util = "0.3"
 # Unix and `winapi` on Windows; both work under cargo-xwin without extra
 # lib.exe gymnastics, so the Windows build path remains green.
 portable-pty = "0.8"
-# Phase A: read PTY output into 8 KiB chunks before fanning out to xterm.js.
+# PTY output is read into 8 KiB chunks before fanning out to xterm.js.
 # `bytes::Bytes` cheap-clones the buffer for the broadcast subscribers and
 # avoids per-chunk allocations on the hot path.
 bytes = "1"
 
-# Tooling manifest (#107): SHA-256 for host_skill_status's
-# body_hash field. Settings UI uses the hash to detect when the on-disk
-# manifest drifts from the binary-bundled body (e.g. user-edited file)
-# without having to read + diff the full ~6 KB body every poll. RustCrypto
-# implementation; pulled in nowhere else today.
+# SHA-256 for `host_skill_status` body-hash drift detection. Settings compares
+# the on-disk manifest against the bundled body without reading and diffing it
+# on every poll.
 sha2 = "0.10"
 
 # SQLite backend for the cross-tab durable kv store
@@ -155,7 +154,7 @@ sha2 = "0.10"
 # not native-tls). The whole rusqlite surface we use is synchronous; the
 # host_mem module parks every call inside `tokio::task::spawn_blocking`
 # so the MCP dispatcher never holds a Connection across an .await point.
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 # net_fetch allow-list parser for `~/.shellx/net_allow.toml`,
 # the host-allow list that gates which URLs the `net_fetch` MCP tool may
@@ -180,7 +179,7 @@ chrono-tz = "0.10"
 # declaring it directly makes this runtime dependency intentional.
 iana-time-zone = "0.1"
 
-# Host MCP `fs_grep` regex-over-files tool (#171). The
+# Host MCP `fs_grep` regex-over-files tool. The
 # `ignore` crate is ripgrep's workhorse — respects .gitignore, hidden-
 # file rules, parallel walk if we ever want it. `regex` for the pattern
 # itself. Together ~2 MB of binary growth which is acceptable since we
@@ -190,24 +189,24 @@ iana-time-zone = "0.1"
 ignore = "0.4"
 regex = "1.11"
 
-# "Download all artifacts" (#207) packages cwd + grok's
+# Session artifact download packages the workspace and agent
 # session scratch dir into one zip. `zip` v2.x supports both writing
 # and reading; we only need the writer. `deflate` is the standard
 # compression — keeps the dep tree slim by skipping bzip2/zstd/lzma
 # features. `walkdir` recurses the cwd; the `ignore` crate would also
 # work but its .gitignore semantics aren't appropriate for a "give me
 # every byte" archive.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 walkdir = "2"
 
-# Phase 13 (#221, shellXagent screenshot endpoint): captures the shellX
-# native window as PNG. `xcap` 0.1.1 still builds cleanly on Linux and
-# Windows without extra PipeWire dev packages. macOS needs 0.9.x because
+# Native window screenshot capture. `xcap` 0.1.1 builds cleanly on Linux and
+# Windows without extra PipeWire development packages. macOS needs 0.9.x because
 # 0.1.1 fails to compile on current Apple Rust toolchains.
 [target.'cfg(target_os = "macos")'.dependencies]
 xcap = "0.9.5"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSWindow", "NSView"] }
+wry = { version = "=0.55.1", default-features = false }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xcap = "0.1.1"
@@ -217,14 +216,13 @@ nix = { version = "0.27", features = ["signal"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 x11rb = "0.13"
+raw-window-handle = "0.6"
 webkit2gtk = "2.0.2"
+gtk = "0.18"
 cairo-rs = { version = "0.18.5", features = ["png"] }
 
-# Tauri-HWND screenshot capture (#262). xcap's
-# Window::all() does NOT enumerate shellX's window on Windows
-# (verified via startup.log: 9 windows reported, none
-# is shellX, title='' for every entry that could be ours). The fix
-# is to ask Tauri for the main window's HWND directly and call
+# Windows screenshot capture. xcap does not reliably enumerate the
+# ShellX WebView window on Windows, so this uses Tauri's main-window HWND and
 # PrintWindow against it. PW_RENDERFULLCONTENT (flag 0x2) is the
 # critical flag — without it WebView2 renders blank to the bitmap
 # DC because the modern compositor draws to its own surface.
@@ -233,6 +231,9 @@ cairo-rs = { version = "0.18.5", features = ["png"] }
 # the transitive dep tree (see Cargo.lock — 12 instances) so adding
 # it here costs ~0 KB of additional binary footprint.
 [target.'cfg(windows)'.dependencies]
+# The stage-keyed WebView2 download adapter observer uses this exact patched
+# Wry crate; it does not change the resolved package or enable default features.
+wry = { version = "=0.55.1", default-features = false }
 webview2-com = "0.38.2"
 windows = "0.61"
 windows-sys = { version = "0.61", features = [
@@ -241,7 +242,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_Storage_Xps",
     "Win32_UI_WindowsAndMessaging",
-    # #297 (2026-05-20): kill-on-close Job Object so grok.exe / wsl.exe /
+    # Kill-on-close Job Object so Grok, WSL, and
     # ssh.exe children are reaped when shellX itself dies (crash, taskkill,
     # logoff). Without this, an installer-killed shellX leaves orphans on
     # Windows. Pairs with PR_SET_PDEATHSIG on Unix (via nix crate).
@@ -250,37 +251,24 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_SystemInformation",
     "Win32_System_DataExchange",
     "Win32_Security",
-    # #365: dynamic LoadLibraryW + GetProcAddress to resolve
+    # Dynamic LoadLibraryW + GetProcAddress resolves
     # NtSuspendProcess / NtResumeProcess from ntdll for proper
     # Windows pause/resume (parity with Unix SIGSTOP/SIGCONT).
     "Win32_System_LibraryLoader",
 ] }
 
 [features]
-# Black-screen-crash investigation:
-# debug-api MUST be in every shipped binary, otherwise search /
-# /sessions/history / /vault and the external-agent surfaces are dark
-# on Windows. The cause of the "Failed to fetch" regression and the
-# missing port 5757 binding: the binary was being compiled without
-# --features debug-api, so the axum router code was never linked in
-# (the only references to `start_debug_server` and `Router::new()`
-# live behind `#[cfg(feature = "debug-api")]` gates in lib.rs and
-# debug_api.rs). Promote to default so `pnpm tauri build` always
-# ships the agent-first surface. Opt out with `--no-default-features`
-# only for a hand-rolled minimal binary.
+# The Debug API is part of ShellX's shipped agent and diagnostic surface.
+# It remains a default feature; `--no-default-features` is the explicit
+# minimal-build opt-out.
 default = ["debug-api"]
 debug-api = ["dep:axum", "dep:tower-http"]
-# Test-only Windows linker support. CI and native Windows acceptance commands
-# enable this explicitly; production builds must not need or select it.
-windows-test-manifest = []
 
-[dev-dependencies]
-tempfile = "3"
-
-# notify-rust 4.18 still constrains the Windows toast wrapper to 0.7.x, whose
-# published manifest constrains quick-xml to the vulnerable 0.37 line. Keep
-# the exact 0.7.2 source/API and patch only that dependency requirement until
-# notify-rust adopts tauri-winrt-notification 0.8 or later upstream.
+# notify-rust 4.18 uses the 0.7.x Windows toast wrapper API; retain the
+# compatible patched source for that dependency interface.
 [patch.crates-io]
+tao = { path = "../vendor/tao-0.35.2" }
+wry = { path = "../vendor/wry-0.55.1" }
+tauri-plugin-updater = { path = "../vendor/tauri-plugin-updater-2.10.1" }
 glib = { path = "../vendor/glib" }
 tauri-winrt-notification = { path = "../vendor/tauri-winrt-notification" }

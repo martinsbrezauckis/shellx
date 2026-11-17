@@ -17,14 +17,6 @@ import type { ConnectionPreset, ConnectionProviderScanEntry } from "./Connection
 import { useModalFocus } from "../lib/useModalFocus";
 import { inTauri } from "../lib/tauri-bridge";
 
-export interface AgentCliSetupFixture {
-  state: AgentCliSetupState;
-  confirmation?: AgentCliInstallConfirmation | null;
-  allowOwnedClipboard?: boolean;
-  allowOwnedExternal?: boolean;
-  allowOwnedInstall?: boolean;
-}
-
 export function AgentCliSetupAssistant({
   preset,
   initialProviderId,
@@ -32,7 +24,6 @@ export function AgentCliSetupAssistant({
   onClose,
   embedded = false,
   missingOnly = false,
-  fixture,
 }: {
   preset: ConnectionPreset | null;
   initialProviderId?: AgentId | string | null;
@@ -40,23 +31,20 @@ export function AgentCliSetupAssistant({
   onClose?: () => void;
   embedded?: boolean;
   missingOnly?: boolean;
-  fixture?: AgentCliSetupFixture;
 }): JSX.Element | null {
-  const [state, setState] = useState<AgentCliSetupState | null>(() => fixture?.state ?? null);
+  const [state, setState] = useState<AgentCliSetupState | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyProviderId, setBusyProviderId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirmation, setConfirmation] = useState<AgentCliInstallConfirmation | null>(
-    () => fixture?.confirmation ?? null,
-  );
+  const [confirmation, setConfirmation] = useState<AgentCliInstallConfirmation | null>(null);
   const [installResult, setInstallResult] = useState<AgentCliInstallResult | null>(null);
   const confirmationRef = useRef<HTMLDivElement | null>(null);
   const closeConfirmationFromKeyboard = useCallback(() => {
-    if (!confirmation || fixture) return;
+    if (!confirmation) return;
     const confirmationId = confirmation.confirmationId;
     setConfirmation(null);
     void cancelAgentCliInstall(confirmationId).catch(() => { /* expiry cleanup remains as fallback */ });
-  }, [confirmation, fixture]);
+  }, [confirmation]);
   useModalFocus(Boolean(confirmation), confirmationRef, closeConfirmationFromKeyboard);
   const presetKey = useMemo(
     () => preset ? `${preset.id}|${preset.label}|${JSON.stringify(preset.transport)}` : "",
@@ -67,15 +55,6 @@ export function AgentCliSetupAssistant({
     if (!preset) {
       setState(null);
       setError(null);
-      return;
-    }
-    if (fixture) {
-      setState(fixture.state);
-      setConfirmation(fixture.confirmation ?? null);
-      setLoading(false);
-      setBusyProviderId(null);
-      setError(null);
-      setInstallResult(null);
       return;
     }
     if (!inTauri()) {
@@ -105,15 +84,15 @@ export function AgentCliSetupAssistant({
     return () => {
       cancelled = true;
     };
-  }, [fixture, presetKey]);
+  }, [presetKey]);
 
   useEffect(() => {
     const confirmationId = confirmation?.confirmationId;
-    if (!confirmationId || fixture?.confirmation?.confirmationId === confirmationId) return;
+    if (!confirmationId) return;
     return () => {
       void cancelAgentCliInstall(confirmationId).catch(() => { /* expiry cleanup remains as fallback */ });
     };
-  }, [confirmation?.confirmationId, fixture?.confirmation?.confirmationId]);
+  }, [confirmation?.confirmationId]);
 
   const providers = useMemo(() => {
     const all = state?.providers ?? [];
@@ -166,7 +145,7 @@ export function AgentCliSetupAssistant({
       const result = await confirmAgentCliInstall(confirmation.confirmationId);
       setInstallResult(result);
       setConfirmation(null);
-      if (fixture?.allowOwnedInstall !== true) await refresh();
+      await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -217,13 +196,13 @@ export function AgentCliSetupAssistant({
               ? `${state.target.label} · commands run on ${state.target.commandRunsOn}`
               : loading
                 ? "Checking setup…"
-                : inTauri() || fixture
+                : inTauri()
                   ? "Ready to check agent CLI setup"
                   : "ShellX desktop required"}
           </span>
         </div>
         <div className="agent-cli-setup-header-actions">
-          <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void refresh()} disabled={loading || Boolean(fixture) || !inTauri()}>
+          <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void refresh()} disabled={loading || !inTauri()}>
             Recheck
           </button>
           {onClose && (
@@ -237,11 +216,7 @@ export function AgentCliSetupAssistant({
       {error && <div className="agent-cli-setup-error">{error}</div>}
       {installResult && (
         <div className={installResult.success ? "agent-cli-setup-result ok" : "agent-cli-setup-result warn"}>
-          {installResult.success
-            ? fixture?.allowOwnedInstall === true
-              ? "Owned installer fixture finished."
-              : "Installer finished. Recheck completed."
-            : "Installer exited with an error."}
+          {installResult.success ? "Installer finished. Recheck completed." : "Installer exited with an error."}
           {installResult.stderrTail && <pre>{installResult.stderrTail}</pre>}
         </div>
       )}
@@ -266,7 +241,7 @@ export function AgentCliSetupAssistant({
                 </div>
               </div>
               <div className="agent-cli-setup-card-actions">
-                <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => openExternal(provider.docsUrl)} disabled={Boolean(fixture) && fixture?.allowOwnedExternal !== true}>
+                <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => openExternal(provider.docsUrl)}>
                   Open docs
                 </button>
                 {command && (
@@ -274,7 +249,6 @@ export function AgentCliSetupAssistant({
                     type="button"
                     className="mp-action-btn mp-action-btn-secondary"
                     onClick={() => void copyCommand(command)}
-                    disabled={Boolean(fixture) && fixture?.allowOwnedClipboard !== true}
                   >
                     Copy command
                   </button>
@@ -284,7 +258,7 @@ export function AgentCliSetupAssistant({
                     type="button"
                     className="mp-action-btn"
                     onClick={() => void prepareInstall(provider)}
-                    disabled={(Boolean(fixture) && fixture?.allowOwnedInstall !== true) || busyProviderId === provider.providerId}
+                    disabled={busyProviderId === provider.providerId}
                   >
                     {busyProviderId === provider.providerId ? "Preparing…" : "Install"}
                   </button>
@@ -295,7 +269,7 @@ export function AgentCliSetupAssistant({
         })}
         {!loading && providers.length === 0 && (
           <div className="agent-cli-setup-empty">
-            {inTauri() || fixture
+            {inTauri()
               ? "No setup cards are available for this target."
               : "Agent CLI discovery is available in the ShellX desktop app."}
           </div>
@@ -326,18 +300,18 @@ export function AgentCliSetupAssistant({
             )}
             <pre className="agent-cli-setup-command">{confirmation.command}</pre>
             <div className="agent-cli-setup-confirm-links">
-              <button type="button" onClick={() => openExternal(confirmation.docsUrl)} disabled={Boolean(fixture) && fixture?.allowOwnedExternal !== true}>
+              <button type="button" onClick={() => openExternal(confirmation.docsUrl)}>
                 Open docs
               </button>
-              <button type="button" onClick={() => void copyCommand(confirmation.command)} disabled={Boolean(fixture) && fixture?.allowOwnedClipboard !== true}>
+              <button type="button" onClick={() => void copyCommand(confirmation.command)}>
                 Copy command
               </button>
             </div>
             <div className="agent-cli-setup-confirm-actions">
-              <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void cancelPreparedInstall()} disabled={(Boolean(fixture) && fixture?.allowOwnedInstall !== true) || busyProviderId === confirmation.providerId} data-dialog-initial-focus="true">
+              <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void cancelPreparedInstall()} disabled={busyProviderId === confirmation.providerId} data-dialog-initial-focus="true">
                 Cancel
               </button>
-              <button data-debug-id="surface-components-agentclisetupassistant-9" type="button" className="mp-action-btn" onClick={() => void runConfirmedInstall()} disabled={(Boolean(fixture) && fixture?.allowOwnedInstall !== true) || busyProviderId === confirmation.providerId}>
+              <button data-debug-id="surface-components-agentclisetupassistant-9" type="button" className="mp-action-btn" onClick={() => void runConfirmedInstall()} disabled={busyProviderId === confirmation.providerId}>
                 {busyProviderId === confirmation.providerId ? "Installing…" : "Run installer"}
               </button>
             </div>
@@ -364,14 +338,12 @@ export function AgentCliSetupDialog({
   onSetupChanged,
   onClose,
   missingOnly,
-  fixture,
 }: {
   preset: ConnectionPreset | null;
   initialProviderId?: AgentId | string | null;
   onSetupChanged?: (providers: ConnectionProviderScanEntry[]) => void;
   onClose: () => void;
   missingOnly?: boolean;
-  fixture?: AgentCliSetupFixture;
 }): JSX.Element | null {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useModalFocus(Boolean(preset), dialogRef, onClose);
@@ -389,7 +361,6 @@ export function AgentCliSetupDialog({
           onSetupChanged={onSetupChanged}
           onClose={onClose}
           missingOnly={missingOnly}
-          fixture={fixture}
         />
       </div>
     </div>

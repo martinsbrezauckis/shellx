@@ -171,6 +171,7 @@ pub(super) async fn plan_write(
 /// reachable from the HTTP surface so headless drivers (and the /// verification agents) can flip goal mode without touching the desktop
 /// UI.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct GoalStartBody {
     #[serde(rename = "tabId")]
     tab_id: Option<String>,
@@ -178,12 +179,7 @@ pub(super) struct GoalStartBody {
     /// Optional cwd override. Defaults to the session's cwd; if the
     /// session has none yet, defaults to env::current_dir.
     cwd: Option<String>,
-    /// Isolated release-driver fixture state. This is deliberately part of
-    /// the existing authenticated Goal route so the installed UI can prove
-    /// its real lifecycle controls without adding a shipping command surface.
-    /// It fails closed unless ShellX is running as an isolated test instance.
-    #[serde(rename = "releaseTestState", default)]
-    release_test_state: Option<String>,
+
 }
 
 pub(super) async fn goal_start_http(
@@ -199,28 +195,8 @@ pub(super) async fn goal_start_http(
     if body.objective.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "objective: must be non-empty").into_response();
     }
-    let release_test_state = match body.release_test_state.as_deref() {
-        None => None,
-        Some("awaiting-review") => Some("awaiting-review"),
-        Some("active-approved") => Some("active-approved"),
-        Some(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "releaseTestState: expected awaiting-review or active-approved",
-            )
-                .into_response()
-        }
-    };
-    if release_test_state.is_some() && !crate::isolated_test_instance_requested() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "release_test_route_unavailable",
-                "message": "release-test Goal fixture state is unavailable outside an isolated test instance",
-            })),
-        )
-            .into_response();
-    }
+
+
     // Resolve cwd: explicit body > existing session cwd > process cwd.
     // This is a read-only lookup: starting Goal mode for an unopened tab must
     // not materialize an empty SessionRegistry slot.
@@ -253,13 +229,7 @@ pub(super) async fn goal_start_http(
             None => ("local".to_string(), None),
         }
     };
-    if release_test_state.is_some() && transport_kind != "local" {
-        return (
-            StatusCode::BAD_REQUEST,
-            "releaseTestState: only an isolated local Goal fixture is supported",
-        )
-            .into_response();
-    }
+
     orch.set_mode_with_transport_context(
         &tab_id,
         true,
@@ -269,30 +239,16 @@ pub(super) async fn goal_start_http(
         ssh_config,
     )
     .await;
-    if let Some(target) = release_test_state {
-        if let Err(error) = prepare_release_test_goal_state(&orch, &tab_id, target).await {
-            orch.release_test_forget_slot(&tab_id).await;
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "release_test_goal_fixture_failed",
-                    "message": error,
-                })),
-            )
-                .into_response();
-        }
-    }
+
     let state = orch.get_state(&tab_id).await;
-    let mut response = serde_json::json!({
+    let response = serde_json::json!({
         "ok": true,
         "tabId": tab_id,
         "objective": body.objective,
         "scratchboardPath": state.as_ref().map(|s| s.scratchboard_path.display().to_string()),
         "cwd": cwd.display().to_string(),
     });
-    if let Some(target) = release_test_state {
-        response["releaseTestState"] = serde_json::Value::String(target.to_string());
-    }
+
     Json(response).into_response()
 }
 
@@ -311,50 +267,10 @@ async fn goal_start_cwd(
     }
 }
 
-async fn prepare_release_test_goal_state(
-    orch: &crate::goal_orchestrator::GoalOrchestrator,
-    tab_id: &str,
-    target: &str,
-) -> Result<(), String> {
-    let state = orch
-        .get_state(tab_id)
-        .await
-        .ok_or_else(|| "isolated Goal fixture state was not created".to_string())?;
-    let text = format!(
-        "# Goal: {}\n\nStatus: AWAITING_APPROVAL\n\n## Phase 1 — Verify lifecycle\n- [ ] Exercise the owned RightRail control\n- [ ] Restore the exact isolated baseline\n",
-        state.objective.trim()
-    );
-    crate::goal_orchestrator::write_scratchboard_text_for_transport(
-        &state.scratchboard_path,
-        &text,
-        &state.transport_kind,
-        state.ssh_config.as_ref(),
-    )
-    .await?;
 
-    // While awaiting approval, a continuable prompt-complete only marks the
-    // plan turn ready; it cannot inject a continuation. This reproduces the
-    // exact state that exposes Review plan without contacting a provider.
-    let continuation = orch.consider_continue(tab_id, "end_turn").await;
-    if continuation.is_some() {
-        return Err("isolated awaiting-review fixture unexpectedly produced a continuation".into());
-    }
-    let approval = orch
-        .approval_status(tab_id)
-        .await
-        .ok_or_else(|| "isolated Goal fixture omitted approval status".to_string())?;
-    if !approval.ready {
-        return Err(approval
-            .reason
-            .unwrap_or_else(|| "isolated Goal fixture did not become reviewable".to_string()));
-    }
-    if target == "active-approved" && !orch.approve_plan(tab_id).await? {
-        return Err("isolated Goal fixture did not enter its approved active state".into());
-    }
-    Ok(())
-}
 
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(super) struct GoalTabBody {
     #[serde(rename = "tabId")]
     tab_id: Option<String>,
@@ -366,11 +282,7 @@ pub(super) struct GoalTabBody {
     /// behavior.
     #[serde(default)]
     comment: Option<String>,
-    /// Exact release-fixture cleanup. Unlike normal stop, this removes both
-    /// the owned state and its in-memory tombstone so the isolated baseline
-    /// can be proven byte-for-byte absent after the UI exercise.
-    #[serde(rename = "releaseTestClearState", default)]
-    release_test_clear_state: bool,
+
 }
 
 pub(super) async fn goal_stop_http(
@@ -389,39 +301,7 @@ pub(super) async fn goal_stop_http(
         .state::<std::sync::Arc<crate::goal_orchestrator::GoalOrchestrator>>()
         .inner()
         .clone();
-    if body.release_test_clear_state {
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test Goal cleanup is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-        if matches!(
-            tab_id.as_str(),
-            "release-goal-plan-approve" | "release-goal-plan-replan"
-        ) {
-            let provider_registry = s
-                .app
-                .state::<std::sync::Arc<crate::provider_sessions::ProviderSessionRegistry>>()
-                .inner()
-                .clone();
-            if let Err(error) = provider_registry.release_test_forget_completed_tab(&tab_id) {
-                return (StatusCode::CONFLICT, error).into_response();
-            }
-        }
-        orch.release_test_forget_slot(&tab_id).await;
-        return Json(serde_json::json!({
-            "ok": true,
-            "tabId": tab_id,
-            "active": false,
-            "releaseTestCleared": true,
-        }))
-        .into_response();
-    }
+
     let cwd = std::env::current_dir().unwrap_or_default();
     // set_mode(_, false, _, _) clears the slot — cwd is unused on the off path.
     // Off path: transport_kind is irrelevant (no stub-write fires).
@@ -455,25 +335,13 @@ pub(super) async fn goal_complete_http(
     let mut scratchboard_patched = false;
     let mut scratchboard_error: Option<String> = None;
     if let Some(st) = prior.as_ref() {
-        match crate::goal_orchestrator::read_scratchboard_text_for_transport(
-            &st.scratchboard_path,
-            &st.transport_kind,
-            st.ssh_config.as_ref(),
-        )
-        .await
-        {
+        match crate::goal_orchestrator::read_scratchboard_text_for_state(st).await {
             Ok(text) => {
                 let patched = crate::host_mcp::patch_goal_complete_status(&text);
                 if patched == text {
                     scratchboard_patched = true;
                 } else if let Err(e) =
-                    crate::goal_orchestrator::write_scratchboard_text_for_transport(
-                        &st.scratchboard_path,
-                        &patched,
-                        &st.transport_kind,
-                        st.ssh_config.as_ref(),
-                    )
-                    .await
+                    crate::goal_orchestrator::write_scratchboard_text_for_state(st, &patched).await
                 {
                     scratchboard_error =
                         Some(format!("write {}: {}", st.scratchboard_path.display(), e));
@@ -774,19 +642,4 @@ pub(super) async fn goal_state_http(
         "lastClear": last_clear,
     }))
     .into_response()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn goal_start_cwd_for_missing_tab_does_not_create_session() {
-        let registry = crate::acp::SessionRegistry::new();
-
-        let cwd = goal_start_cwd(&registry, "missing-goal-tab").await;
-
-        assert_eq!(cwd, std::env::current_dir().unwrap_or_default());
-        assert!(registry.get_existing("missing-goal-tab").await.is_none());
-    }
 }

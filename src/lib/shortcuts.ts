@@ -119,7 +119,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     group: "Sessions",
     keys: "⌘W",
     desc: "Close current session tab",
-    match: (e) => isCmd(e) && e.key.toLowerCase() === "w",
+    match: (e) => isCmd(e) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "w",
     skipInInput: false,
   },
 

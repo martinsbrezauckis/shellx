@@ -93,36 +93,6 @@ function emailAddressesForVaultFill(value?: string | null): string[] {
 interface BrowserVaultOriginContext {
   origin: string;
   host: string;
-  domainMarkers: string[];
-  providerMarkers: string[];
-}
-
-const VAULT_FILL_PROVIDER_HOSTS: Array<{ host: RegExp; markers: string[] }> = [
-  { host: /(^|\.)google\.[a-z.]+$/, markers: ["google", "gmail", "accounts", "gemini"] },
-  { host: /(^|\.)(microsoft|office|outlook|live)\.[a-z.]+$/, markers: ["microsoft", "office", "outlook", "live", "azure"] },
-  ...[
-    "github", "gitlab", "notion", "slack", "stripe", "firecrawl", "openai", "anthropic",
-    "cloudflare", "linear", "figma", "airtable", "todoist", "dropbox", "trello", "atlassian",
-  ].map((provider) => ({
-    host: new RegExp(`(^|\\.)${provider}\\.[a-z.]+$`),
-    markers: [provider],
-  })),
-];
-
-const VAULT_FILL_COMMON_SECOND_LEVEL_SUFFIXES = new Set([
-  "ac", "co", "com", "edu", "gov", "mil", "net", "org", "sch",
-]);
-
-function browserVaultSiteDomain(labels: string[]): string | null {
-  if (labels.length < 3) return null;
-  const topLevel = labels.at(-1) ?? "";
-  const secondLevel = labels.at(-2) ?? "";
-  const suffixDepth = topLevel.length === 2 && VAULT_FILL_COMMON_SECOND_LEVEL_SUFFIXES.has(secondLevel)
-    ? 2
-    : 1;
-  return labels.length > suffixDepth
-    ? labels.slice(-(suffixDepth + 1)).join(".")
-    : null;
 }
 
 function browserVaultOriginContext(rawUrl?: string | null): BrowserVaultOriginContext | null {
@@ -131,23 +101,11 @@ function browserVaultOriginContext(rawUrl?: string | null): BrowserVaultOriginCo
   try {
     const parsed = new URL(raw.includes("://") ? raw : `https://${raw}`);
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
-    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    const host = parsed.hostname.toLowerCase();
     if (!host) return null;
-    const labels = host.split(".").filter(Boolean);
-    const domainMarkers = new Set([host]);
-    const siteDomain = !/^\d+$/.test(labels.at(-1) ?? "")
-      ? browserVaultSiteDomain(labels)
-      : null;
-    if (siteDomain) domainMarkers.add(siteDomain);
-    const providerMarkers = new Set<string>();
-    for (const provider of VAULT_FILL_PROVIDER_HOSTS) {
-      if (provider.host.test(host)) provider.markers.forEach((marker) => providerMarkers.add(marker));
-    }
     return {
       origin: parsed.origin.toLowerCase(),
       host,
-      domainMarkers: [...domainMarkers],
-      providerMarkers: [...providerMarkers],
     };
   } catch {
     return null;
@@ -160,10 +118,7 @@ function vaultFillMetadataContainsMarker(haystack: string, marker: string): bool
 }
 
 function vaultFillOriginScore(context: BrowserVaultOriginContext, haystack: string): number {
-  for (const [index, marker] of context.domainMarkers.entries()) {
-    if (vaultFillMetadataContainsMarker(haystack, marker)) return index === 0 ? 30 : 24;
-  }
-  return context.providerMarkers.some((marker) => vaultFillMetadataContainsMarker(haystack, marker)) ? 18 : 0;
+  return vaultFillMetadataContainsMarker(haystack, context.host) ? 30 : 0;
 }
 
 function pageEmailsForVaultFill(observation: BrowserObservationLike | null): string[] {

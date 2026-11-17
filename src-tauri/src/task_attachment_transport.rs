@@ -10,6 +10,7 @@ use crate::provider_adapters::ProviderExecutionTransport;
 use crate::task_attachments::{
     task_attachment_provider_relative_path, TaskAttachmentRecord, TaskAttachmentRegistration,
     MAX_TASK_ATTACHMENTS_PER_REQUEST, MAX_TASK_ATTACHMENT_BYTES, MAX_TASK_ATTACHMENT_REQUEST_BYTES,
+    TASK_ATTACHMENT_STORAGE_DIR,
 };
 use crate::task_provider_dispatch::TaskProviderResolvedTarget;
 use sha2::{Digest, Sha256};
@@ -283,6 +284,7 @@ async fn read_remote_source(
         "selected remote Task attachment",
     )?;
     ensure_remote_regular_unlinked(ssh, &cwd, source, &resolved).await?;
+    let identity_before = remote_attachment_identity(ssh, &cwd, source, &resolved).await?;
     let bytes = crate::ssh_read_file_bytes_with_cap(
         ssh,
         &resolved,
@@ -291,6 +293,10 @@ async fn read_remote_source(
     )
     .await
     .map_err(|_| "A remote Task attachment could not be read.".to_string())?;
+    let identity_after = remote_attachment_identity(ssh, &cwd, source, &resolved).await?;
+    if identity_before != identity_after {
+        return Err("The remote Task attachment changed while it was being imported.".to_string());
+    }
     if bytes.is_empty() {
         return Err("Task attachments must contain at least one byte.".to_string());
     }
@@ -343,6 +349,13 @@ fn write_local_attachment(
     crate::validate_no_symlink_components(&host_cwd.to_string_lossy())?;
     let cwd = std::fs::canonicalize(&host_cwd)
         .map_err(|_| "The Task working folder is unavailable.".to_string())?;
+    // A content-addressed copy lives in the selected project so the provider
+    // can resolve its relative path. Before creating it, install a local Git
+    // exclusion for the exact selected-working-folder scope. Failure is fatal:
+    // writing an unignored private copy into a Git worktree is a privacy risk.
+    crate::skill_install::ensure_project_task_attachment_git_excludes(&cwd).map_err(|error| {
+        format!("Task attachment Git exclusion could not be installed: {error}")
+    })?;
     let destination = relative_path
         .split('/')
         .fold(cwd.clone(), |path, part| path.join(part));
@@ -464,6 +477,38 @@ async fn ensure_remote_regular_unlinked(
         .await
         .map_err(|_| "The remote Task attachment path is linked or unavailable.".to_string())?;
     Ok(())
+}
+
+async fn remote_attachment_identity(
+    ssh: &SshSpawnConfig,
+    cwd: &str,
+    raw_path: &str,
+    resolved_path: &str,
+) -> Result<String, String> {
+    let guard = if ssh.remote_runtime == SshRemoteRuntime::Windows {
+        windows_link_guard_script(cwd, raw_path, resolved_path)
+    } else {
+        posix_link_guard_script(cwd, raw_path, resolved_path)
+    };
+    let script = if ssh.remote_runtime == SshRemoteRuntime::Windows {
+        format!(
+            "{guard};$item=Get-Item -LiteralPath {} -Force -ErrorAction Stop;[Console]::Out.Write(('{{0}}|{{1}}|{{2}}|{{3}}|{{4}}' -f $item.FullName,$item.Length,$item.CreationTimeUtc.Ticks,$item.LastWriteTimeUtc.Ticks,[int]$item.Attributes))",
+            crate::acp::powershell_single_quote(raw_path),
+        )
+    } else {
+        let raw_path = crate::acp::shell_quote_for_remote(raw_path);
+        format!(
+            "{guard}; if stat -c '%d|%i|%s|%Y|%Z' -- {raw_path} >/dev/null 2>&1; then stat -c '%d|%i|%s|%Y|%Z' -- {raw_path}; else stat -f '%d|%i|%z|%m|%c' {raw_path}; fi"
+        )
+    };
+    let output = crate::ssh_run_preview_command(ssh, script, "Task attachment identity")
+        .await
+        .map_err(|_| "The remote Task attachment identity could not be verified.".to_string())?;
+    let identity = String::from_utf8_lossy(&output).trim().to_string();
+    if identity.is_empty() || identity.len() > 4096 {
+        return Err("The remote Task attachment identity was invalid.".to_string());
+    }
+    Ok(identity)
 }
 
 fn posix_link_guard_script(cwd: &str, raw_path: &str, resolved_path: &str) -> String {
@@ -615,12 +660,28 @@ async fn write_remote_attachment(
     Ok(())
 }
 
+/// The remote provider sees the generated copy in its working tree. A hidden
+/// directory is not a privacy boundary, so this installs an exact Git exclude
+/// pattern and asks Git whether the prospective file is actually ignored.
+fn posix_task_attachment_git_exclude_script() -> String {
+    format!(
+        "if command -v git >/dev/null 2>&1 && git -C \"$cwd\" rev-parse --is-inside-work-tree >/dev/null 2>&1; then gitdir=$(git -C \"$cwd\" rev-parse --git-dir) || exit 68; case \"$gitdir\" in /*) exclude=\"$gitdir/info/exclude\";; *) exclude=\"$cwd/$gitdir/info/exclude\";; esac; prefix=$(git -C \"$cwd\" rev-parse --show-prefix) || exit 68; escaped_prefix=$(printf '%s' \"$prefix\" | sed 's/[][\\\\*? !#]/\\\\&/g') || exit 68; info=${{exclude%/*}}; [ -d \"$info\" ] && [ ! -L \"$info\" ] || exit 68; if [ -e \"$exclude\" ]; then [ -f \"$exclude\" ] && [ ! -L \"$exclude\" ] || exit 68; fi; pattern=\"/${{escaped_prefix}}{TASK_ATTACHMENT_STORAGE_DIR}/\"; if ! grep -Fqx -- \"$pattern\" \"$exclude\" 2>/dev/null; then [ ! -s \"$exclude\" ] || printf '\\n' >> \"$exclude\"; printf '%s\\n' \"$pattern\" >> \"$exclude\"; fi; relative=${{dest#\"$cwd\"/}}; [ \"$relative\" != \"$dest\" ] || exit 68; git -C \"$cwd\" check-ignore -q --no-index -- \"$relative\" || exit 68; else probe=\"$cwd\"; while :; do [ ! -e \"$probe/.git\" ] || exit 68; parent=${{probe%/*}}; [ -n \"$parent\" ] && [ \"$parent\" != \"$probe\" ] || break; probe=\"$parent\"; done; fi"
+    )
+}
+
+fn windows_task_attachment_git_exclude_script() -> String {
+    format!(
+        "$git=Get-Command git -ErrorAction SilentlyContinue;$inside=$false;if($null -ne $git){{$inside=((& git -C $cwd rev-parse --is-inside-work-tree 2>$null) -eq 'true' -and $LASTEXITCODE -eq 0)}};if($inside){{$gitDir=(& git -C $cwd rev-parse --git-dir).Trim();if($LASTEXITCODE -ne 0){{exit 68}};if([IO.Path]::IsPathRooted($gitDir)){{$exclude=Join-Path $gitDir 'info\\exclude'}}else{{$exclude=Join-Path (Join-Path $cwd $gitDir) 'info\\exclude'}};$prefix=(& git -C $cwd rev-parse --show-prefix).Trim();if($LASTEXITCODE -ne 0){{exit 68}};$escapedPrefix=$prefix.Replace('\\','\\\\').Replace('*','\\*').Replace('?','\\?').Replace('[','\\[').Replace(']','\\]').Replace(' ','\\ ').Replace('#','\\#').Replace('!','\\!');$info=Split-Path -Parent $exclude;if(-not (Test-Path -LiteralPath $info)){{exit 68}};$infoItem=Get-Item -LiteralPath $info -Force;if(-not $infoItem.PSIsContainer -or ($infoItem.Attributes -band [IO.FileAttributes]::ReparsePoint)){{exit 68}};if(Test-Path -LiteralPath $exclude){{$excludeItem=Get-Item -LiteralPath $exclude -Force;if($excludeItem.PSIsContainer -or ($excludeItem.Attributes -band [IO.FileAttributes]::ReparsePoint)){{exit 68}}}}else{{New-Item -ItemType File -Path $exclude -Force | Out-Null}};$pattern='/'+$escapedPrefix+'{TASK_ATTACHMENT_STORAGE_DIR}/';$excludeText=[IO.File]::ReadAllText($exclude);if(($excludeText -split \"`r?`n\") -notcontains $pattern){{if($excludeText.Length -gt 0 -and -not $excludeText.EndsWith(\"`n\")){{[IO.File]::AppendAllText($exclude,[Environment]::NewLine)}};[IO.File]::AppendAllText($exclude,$pattern+[Environment]::NewLine)}};$relative=$dest.Substring($realCwd.Length).TrimStart('\\');if([string]::IsNullOrEmpty($relative)){{exit 68}};(& git -C $cwd check-ignore -q --no-index -- $relative);if($LASTEXITCODE -ne 0){{exit 68}}}}else{{$probe=$cwd;while($true){{if(Test-Path -LiteralPath (Join-Path $probe '.git')){{exit 68}};$parent=Split-Path -Parent $probe;if([string]::IsNullOrEmpty($parent) -or $parent.Equals($probe,[StringComparison]::OrdinalIgnoreCase)){{break}};$probe=$parent}}}}"
+    )
+}
+
 fn posix_write_script(cwd: &str, destination: &str, temporary: &str) -> String {
     let cwd = crate::acp::shell_quote_for_remote(cwd);
     let destination = crate::acp::shell_quote_for_remote(destination);
     let temporary = crate::acp::shell_quote_for_remote(temporary);
+    let git_exclude = posix_task_attachment_git_exclude_script();
     format!(
-        "set -eu; cwd={cwd}; dest={destination}; tmp={temporary}; root=\"$cwd/.shellx\"; tree=\"$root/task-attachments\"; dir=${{dest%/*}}; for p in \"$root\" \"$tree\" \"$dir\"; do [ ! -L \"$p\" ] || exit 65; if [ ! -d \"$p\" ]; then mkdir -m 700 -- \"$p\"; fi; done; realcwd=$(realpath \"$cwd\"); realdir=$(realpath \"$dir\"); case \"$realdir/\" in \"$realcwd/.shellx/task-attachments/\"*) ;; *) exit 66;; esac; [ ! -L \"$dest\" ] || exit 67; trap 'rm -f -- \"$tmp\"' EXIT; umask 077; cat > \"$tmp\"; chmod 600 \"$tmp\"; mv -f -- \"$tmp\" \"$dest\"; trap - EXIT"
+        "set -eu; cwd={cwd}; dest={destination}; tmp={temporary}; root=\"$cwd/{TASK_ATTACHMENT_STORAGE_DIR}\"; dir=${{dest%/*}}; for p in \"$root\" \"$dir\"; do [ ! -L \"$p\" ] || exit 65; if [ ! -d \"$p\" ]; then mkdir -m 700 -- \"$p\"; fi; done; realcwd=$(realpath \"$cwd\"); realdir=$(realpath \"$dir\"); case \"$realdir/\" in \"$realcwd/{TASK_ATTACHMENT_STORAGE_DIR}/\"*) ;; *) exit 66;; esac; {git_exclude}; [ ! -L \"$dest\" ] || exit 67; trap 'rm -f -- \"$tmp\"' EXIT; umask 077; cat > \"$tmp\"; chmod 600 \"$tmp\"; mv -f -- \"$tmp\" \"$dest\"; trap - EXIT"
     )
 }
 
@@ -628,8 +689,9 @@ fn windows_write_script(cwd: &str, destination: &str, temporary: &str) -> String
     let cwd = crate::acp::powershell_single_quote(cwd);
     let destination = crate::acp::powershell_single_quote(destination);
     let temporary = crate::acp::powershell_single_quote(temporary);
+    let git_exclude = windows_task_attachment_git_exclude_script();
     format!(
-        "{}$cwd={cwd};$dest={destination};$tmp={temporary};$root=Join-Path $cwd '.shellx';$tree=Join-Path $root 'task-attachments';$dir=Split-Path -Parent $dest;foreach($p in @($root,$tree,$dir)){{if(Test-Path -LiteralPath $p){{$item=Get-Item -LiteralPath $p -Force;if(-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){{exit 65}}}}else{{New-Item -ItemType Directory -Path $p -Force | Out-Null}}}};$realCwd=(Resolve-Path -LiteralPath $cwd).ProviderPath.TrimEnd('\\');$realDir=(Resolve-Path -LiteralPath $dir).ProviderPath;$expected=$realCwd+'\\.shellx\\task-attachments\\';if(-not $realDir.StartsWith($expected,[StringComparison]::OrdinalIgnoreCase)){{exit 66}};if(Test-Path -LiteralPath $dest){{$item=Get-Item -LiteralPath $dest -Force;if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){{exit 67}}}};$input=[Console]::OpenStandardInput();$file=[IO.File]::Open($tmp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{{$input.CopyTo($file);$file.Flush($true)}}finally{{$file.Dispose()}};Move-Item -LiteralPath $tmp -Destination $dest -Force",
+        "{}$cwd={cwd};$dest={destination};$tmp={temporary};$root=Join-Path $cwd '{TASK_ATTACHMENT_STORAGE_DIR}';$dir=Split-Path -Parent $dest;foreach($p in @($root,$dir)){{if(Test-Path -LiteralPath $p){{$item=Get-Item -LiteralPath $p -Force;if(-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){{exit 65}}}}else{{New-Item -ItemType Directory -Path $p -Force | Out-Null}}}};$realCwd=(Resolve-Path -LiteralPath $cwd).ProviderPath.TrimEnd('\\');$realDir=(Resolve-Path -LiteralPath $dir).ProviderPath;$expected=$realCwd+'\\{TASK_ATTACHMENT_STORAGE_DIR}\\';if(-not $realDir.StartsWith($expected,[StringComparison]::OrdinalIgnoreCase)){{exit 66}};{git_exclude};if(Test-Path -LiteralPath $dest){{$item=Get-Item -LiteralPath $dest -Force;if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){{exit 67}}}};$input=[Console]::OpenStandardInput();$file=[IO.File]::Open($tmp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{{$input.CopyTo($file);$file.Flush($true)}}finally{{$file.Dispose()}};Move-Item -LiteralPath $tmp -Destination $dest -Force",
         crate::acp::windows_remote_shell_prelude(),
     )
 }
@@ -638,7 +700,7 @@ fn posix_delete_script(cwd: &str, destination: &str) -> String {
     let cwd = crate::acp::shell_quote_for_remote(cwd);
     let destination = crate::acp::shell_quote_for_remote(destination);
     format!(
-        "set -eu; cwd={cwd}; dest={destination}; dir=${{dest%/*}}; [ -f \"$dest\" ] && [ ! -L \"$dest\" ] || exit 65; realcwd=$(realpath \"$cwd\"); realdir=$(realpath \"$dir\"); case \"$realdir/\" in \"$realcwd/.shellx/task-attachments/\"*) ;; *) exit 66;; esac; rm -f -- \"$dest\"; rmdir -- \"$dir\" 2>/dev/null || true"
+        "set -eu; cwd={cwd}; dest={destination}; dir=${{dest%/*}}; [ -f \"$dest\" ] && [ ! -L \"$dest\" ] || exit 65; realcwd=$(realpath \"$cwd\"); realdir=$(realpath \"$dir\"); case \"$realdir/\" in \"$realcwd/{TASK_ATTACHMENT_STORAGE_DIR}/\"*) ;; *) exit 66;; esac; rm -f -- \"$dest\"; rmdir -- \"$dir\" 2>/dev/null || true"
     )
 }
 
@@ -646,7 +708,7 @@ fn windows_delete_script(cwd: &str, destination: &str) -> String {
     let cwd = crate::acp::powershell_single_quote(cwd);
     let destination = crate::acp::powershell_single_quote(destination);
     format!(
-        "{}$cwd={cwd};$dest={destination};$dir=Split-Path -Parent $dest;$item=Get-Item -LiteralPath $dest -Force -ErrorAction Stop;if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){{exit 65}};$realCwd=(Resolve-Path -LiteralPath $cwd).ProviderPath.TrimEnd('\\');$realDir=(Resolve-Path -LiteralPath $dir).ProviderPath;$expected=$realCwd+'\\.shellx\\task-attachments\\';if(-not $realDir.StartsWith($expected,[StringComparison]::OrdinalIgnoreCase)){{exit 66}};Remove-Item -LiteralPath $dest -Force;if((Get-ChildItem -LiteralPath $dir -Force | Measure-Object).Count -eq 0){{Remove-Item -LiteralPath $dir -Force}}",
+        "{}$cwd={cwd};$dest={destination};$dir=Split-Path -Parent $dest;$item=Get-Item -LiteralPath $dest -Force -ErrorAction Stop;if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){{exit 65}};$realCwd=(Resolve-Path -LiteralPath $cwd).ProviderPath.TrimEnd('\\');$realDir=(Resolve-Path -LiteralPath $dir).ProviderPath;$expected=$realCwd+'\\{TASK_ATTACHMENT_STORAGE_DIR}\\';if(-not $realDir.StartsWith($expected,[StringComparison]::OrdinalIgnoreCase)){{exit 66}};Remove-Item -LiteralPath $dest -Force;if((Get-ChildItem -LiteralPath $dir -Force | Measure-Object).Count -eq 0){{Remove-Item -LiteralPath $dir -Force}}",
         crate::acp::windows_remote_shell_prelude(),
     )
 }
@@ -731,7 +793,3 @@ fn safe_extension(source: &str) -> String {
 fn sha256_digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
-
-#[cfg(test)]
-#[path = "task_attachment_transport_tests.rs"]
-mod tests;

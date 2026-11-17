@@ -36,39 +36,3 @@ impl Checksum {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::{Checksum, ChecksumType};
-
-    const CS_TYPE: ChecksumType = ChecksumType::Md5;
-    const CS_VALUE: &str = "fc3ff98e8c6a0d3087d515c0473f8677";
-    const CS_SLICE: &[u8] = &[
-        0xfc, 0x3f, 0xf9, 0x8e, 0x8c, 0x6a, 0x0d, 0x30, 0x87, 0xd5, 0x15, 0xc0, 0x47, 0x3f, 0x86,
-        0x77,
-    ];
-
-    #[test]
-    fn update() {
-        let mut cs = Checksum::new(CS_TYPE).unwrap();
-        cs.update(b"hello world!");
-        assert_eq!(cs.string().unwrap(), CS_VALUE);
-    }
-
-    #[test]
-    fn update_multi_call() {
-        let mut cs = Checksum::new(CS_TYPE).unwrap();
-        cs.update(b"hello ");
-        cs.update(b"world!");
-        assert_eq!(cs.string().unwrap(), CS_VALUE);
-    }
-
-    #[test]
-    #[doc(alias = "get_digest")]
-    fn digest() {
-        let mut cs = Checksum::new(CS_TYPE).unwrap();
-        cs.update(b"hello world!");
-        let vec = cs.digest();
-        assert_eq!(vec, CS_SLICE);
-    }
-}

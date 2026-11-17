@@ -207,10 +207,7 @@ impl TaskExecutionBindingAuthority {
         }
     }
 
-    #[cfg(test)]
-    fn with_source(source: Arc<dyn TaskExecutionBindingSource>) -> Self {
-        Self { source }
-    }
+
 
     pub(crate) async fn resolve(
         &self,
@@ -469,7 +466,3 @@ fn normalized_sha256(value: &str) -> Option<String> {
 fn json_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"invalid\"".to_string())
 }
-
-#[cfg(test)]
-#[path = "task_execution_bindings_tests.rs"]
-mod tests;

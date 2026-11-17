@@ -2,9 +2,9 @@
 
 # ShellX Manual
 
-Version: 0.3.61
+Version: 0.3.62
 
-Updated: 2026-08-24
+Updated: 2026-11-17
 
 ShellX is a desktop workspace for local and remote coding agents. It keeps conversations, project files, Browser tasks, Vault approvals, previews, Git state, and test evidence visible in one operator-controlled shell.
 
@@ -43,7 +43,7 @@ Choose a project folder, connection, agent, and permission mode before sending t
 
 <a id="shellx.start.health"></a>
 
-The Tools and Environment surfaces distinguish an installed CLI, a connected session, healthy host tooling, and a finished task.
+The Tools surface, including its Environment section, distinguishes an installed CLI, a connected session, healthy host tooling, and a finished task.
 
 1. Scan agent CLIs for the selected environment.
 2. Open Tools to inspect provider, MCP, Preview, and environment readiness.
@@ -105,7 +105,7 @@ Ask the current agent to create, schedule, or create and run a task. ShellX fill
 The header Tasks button opens a concise review panel for saved definitions, schedules, ordered agents, run history, and attention.
 
 1. Use the Tasks header button from any session.
-2. Filter definitions by attention, scheduled, paused, or recent state and select one row to review What, When, Agents, Where, Run time limit, permissions, notifications, and receipts.
+2. Filter definitions by attention, scheduled, running, paused, or recent state and select one row to review What, When, Agents, Where, Run time limit, permissions, notifications, and receipts.
 3. Use Run now, Pause or Resume, Duplicate, Delete, Open run, and Cancel run only when the selected state enables that exact action.
 4. Select Edit details when you need the full schedule, environment, or agent editor; otherwise the saved Task stays read-only.
 
@@ -139,9 +139,10 @@ Choose manual, once, daily, weekdays, weekly, or monthly execution with a simple
 
 Every occurrence keeps a compact timeline for provider preflight, selected route, start, progress, terminal result, evidence, and any attention that needs an operator decision.
 
-1. Open a run to return to its normal private ShellX conversation when the Trace receipt says the archive is reviewable.
-2. Compare the saved definition snapshot with the fresh execution scan before trusting a provider or target claim.
-3. Acknowledge an attention item only after reviewing its exact occurrence and receipt-backed reason.
+1. Open a run to return to its normal private ShellX conversation only when Trace shows a reviewable archive. An incomplete archive can remain openable when it identifies its actual conversation session.
+2. Trace explains an incomplete archive with concise categories such as missing or invalid evidence, an identity mismatch, a missing terminal record, or incomplete capture. If it does not identify a conversation session, no reviewable archive is available. The notice keeps uncertainty visible; it does not prove that no action occurred.
+3. Compare the saved definition snapshot with the fresh execution scan before trusting a provider or target claim.
+4. Acknowledge an attention item only after reviewing its exact occurrence and receipt-backed reason.
 
 ### Create a task from Browser Teach
 
@@ -280,6 +281,18 @@ Open chats lists live tabs for quick focus, rename, move, or deletion without co
 <a id="shellx.interface.left.past_chats"></a>
 
 Past chats lists closed on-disk sessions. Reopening restores conversation history but does not guarantee that the old connection or provider is still available.
+
+### Chat: Full session history
+
+<a id="shellx.interface.session_history"></a>
+
+The always-visible Full history control opens a read-only, paged view of the durable conversation after the chat has been saved.
+
+1. Select Full history above the transcript after the chat is saved. The control remains disabled until durable history exists.
+2. Read the grouped messages in the Full session history dialog. Reviewing history does not repeat an action or change the active connection.
+3. Use Older page and Newer page to move through readable conversation pages. Select Reload history when a notice says that newer history is outside the retained window.
+4. For a delimiter-free legacy log, ShellX shows safe preparation progress before it displays the page. It does not show partial records or page-omission warnings while that preparation is running.
+5. If ShellX says the log changed, reload history before trusting another page. An unreadable-history notice means affected stored records are not shown; a page-boundary notice means streamed messages or tool status can continue on an adjacent page.
 
 ### Right rail: Tasks
 
@@ -590,7 +603,7 @@ Active grants lists current mediated permissions and lets the operator inspect o
 
 <a id="shellx.interface.vault.workspace.setup"></a>
 
-Setup configures the shared Vault backend, unlock and recovery state, remembered-device behavior, and standalone Vault connection details.
+Setup configures the shared Vault backend, unlock and setup-confirmation state, remembered-device behavior, and standalone Vault connection details.
 
 ### Vault resource: Password/key
 
@@ -892,13 +905,13 @@ Chooses the inactivity period before personal Browser tabs lock.
 
 <a id="shellx.browser.options.personal_lock_auth"></a>
 
-Chooses device authentication when available or a ShellX session PIN.
+Chooses operator confirmation in ShellX or a session PIN. Operator confirmation does not request operating-system authentication.
 
 ### Browser settings: Personal lock PIN
 
 <a id="shellx.browser.options.personal_lock_pin"></a>
 
-Sets or updates the session PIN used when PIN unlock is selected or device authentication is unavailable.
+Sets or updates the session PIN used only when Session PIN is selected.
 
 ### Browser settings: Cover locked personal tabs
 
@@ -964,7 +977,7 @@ Receipts expands or collapses the recent bounded Browser action receipts used to
 
 <a id="shellx.browser.panel.evidence"></a>
 
-Records a bounded, redacted attempt for the current Browser task and reviews Flight Recorder identities, hashes, completeness, and comparisons. Developer Inspection summarizes the live task; after completion, Teach workflow selects the most recent complete attempt for review, approval, and zero-action rehearsal. Private artifact paths and page content stay out of the panel.
+Records a bounded Browser-task attempt and shows its identity, hashes, completeness, and comparisons. Each redaction marker explains why a value was hidden; policy exclusions and capture gaps remain distinct. Developer Inspection summarizes the live task; after completion, Teach workflow selects the most recent complete attempt for review, approval, and zero-action rehearsal. Private artifact paths and page content stay out of the panel.
 
 ### Browser right panel: Errors
 
@@ -1018,7 +1031,7 @@ Shows and changes the default download folder before future transfers are accept
 
 <a id="shellx.browser.sidecar.download_list"></a>
 
-Shows pending, completed, and failed Browser transfers with truthful destination and status information.
+Shows waiting, active, Saved, Declined, Failed, and Cleanup needed Browser transfers. A recovery notice gives the known interrupted native-stage count that needs cleanup and does not automatically resume, or says when cleanup needs inspection before new native downloads can start.
 
 ## Agents and host tools
 
@@ -1096,17 +1109,15 @@ Antigravity 1.1.8+ streams typed text, tool, subagent, conversation, and usage e
 
 1. Install and sign in to Antigravity in the selected environment.
 2. ShellX attaches a unique private additional workspace and named agent only to this launched session; direct Antigravity sessions do not inherit ShellX activation.
-3. Prefer native Antigravity tools, including generate_image when available. ShellX host MCP is disabled because 1.1.8 through 1.1.11 print-mode canaries never produced a real MCP tools/call; return to ShellX for host Vault, evidence, or handoff work.
-
-> Boundary: The 1.1.11 CLI discovered the exact canary schema, but its execution backend rejected four attempted invocation spellings as unknown tools; the MCP server received no tools/call. The tiny failed probe consumed about 71k tokens, so ShellX does not advertise this as working functionality.
+3. Prefer native Antigravity tools, including generate_image when available. ShellX host MCP is currently disabled for Antigravity; return to ShellX for host Vault, evidence, or handoff work.
 
 ### Session-scoped ShellX host activation
 
 <a id="shellx.agents.host_skill"></a>
 
-ShellX host guidance and tools are injected only into agents launched by ShellX; direct CLI sessions do not inherit a global skill, MCP server, or instruction block.
+ShellX-launched sessions receive compact host guidance and, when enabled, session-scoped host tools; direct CLI sessions do not inherit a global skill, MCP server, or instruction block.
 
-1. ShellX passes compact runtime rules and a tab-bound, session-scoped host MCP configuration when it launches a provider.
+1. ShellX passes compact runtime rules and, when host tooling is enabled, a tab-bound session-scoped host MCP configuration when it launches a provider.
 2. The full reference remains in ShellX-owned agent docs and the authenticated Debug API, outside global provider skill discovery.
 3. Upgrades remove exact legacy global ShellX skill leaves and ShellX-marked Grok config or AGENTS blocks while preserving unrelated user content.
 
@@ -1131,8 +1142,9 @@ Confirmed ShellX sessions can receive tab-bound host tools for status, Browser, 
 3. ShellX Cut is advertised through cut_read for bounded typed status/search/schema discovery and cut_act for permission-gated use of one exact video-editing verb; Cut's generated catalog stays out of the default prompt, and status checks never open the editor.
 4. When ShellX tooling exposure is enabled, WSL and SSH agents use the WSL relay or SSH reverse tunnel to reach the parent desktop host for ShellX tools, including Cut.
 5. Browser observations default to a 3,000-byte structured-response budget and expose their serialized byte and approximate token counts; use extraction or an explicit larger/full request only when necessary.
-6. Prefer provider-native file tools for the selected remote cwd; ShellX host file tools address the parent host filesystem.
-7. Use mutating host tools only when the ShellX UI and active tab make the authority visible.
+6. For a workflow or Trace export requested by an agent, use that caller's task and Browser tab. ShellX refuses an unbound, foreign, or mismatched target.
+7. Keep the current remote-cwd and parent-host distinction in mind: provider-native file tools operate in the selected target, while ShellX host tools operate on the desktop host under ShellX policy.
+8. Use mutating host tools only when the ShellX UI and active tab make the authority visible.
 
 ## Integrated Browser
 
@@ -1192,11 +1204,12 @@ Browser fills use an approved Vault grant so durable secret values stay out of t
 
 <a id="shellx.browser.workflows"></a>
 
-Downloads expose final paths, reusable workflows keep scope metadata, and failed actions retain truthful step results.
+Browser downloads wait for review, reusable workflows keep scope metadata, and failed actions retain truthful step results.
 
-1. Review download path and completion state before consuming an artifact.
-2. Save a workflow only when its replay steps, domain scope, and permission assumptions are clear.
-3. On failure, inspect the stopped step, recovery evidence, page state, and receipt instead of treating continued execution as success.
+1. Open Downloads to review a pending request, its selected destination, and its task context. Choose Approve download only after reviewing that request; Decline download is available only while a native download is waiting for approval and releases it before transfer begins.
+2. After approval, check whether the transfer is Saved or remains failed or Cleanup needed before consuming an artifact. A recovery notice either gives the known interrupted native-stage count, which needs cleanup and does not automatically resume, or says cleanup needs inspection before new native downloads can start. It is not a completed transfer, retry, or resume control.
+3. Save a workflow only when its replay steps, domain scope, and permission assumptions are clear.
+4. On failure, inspect the stopped step, recovery evidence, page state, and receipt instead of treating continued execution as success.
 
 ## Integrated Vault client
 
@@ -1210,17 +1223,17 @@ ShellX resolves the canonical Vault profile, migrates legacy profile locations, 
 
 1. Open Settings → Vault or the Vault header entry.
 2. Create a local Vault or connect to the intended existing profile.
-3. Save recovery material and verify the selected profile before importing secrets.
+3. Verify the selected profile before importing secrets. ShellX has no recovery words or restore flow; keep the master passphrase and required encrypted Vault data available.
 
-### Lock, unlock, and recovery
+### Lock and unlock
 
 <a id="shellx.vault.lock_recovery"></a>
 
-Vault data is encrypted at rest; remembered-device unlock and recovery behavior belong to the Vault profile, not an agent session.
+Vault data is encrypted at rest; remembered-device unlock belongs to the Vault profile, not an agent session. ShellX has no recovery words or restore flow.
 
 1. Unlock in the operator UI when a grant-backed operation requires it.
 2. Lock manually before leaving the machine or changing operator context.
-3. Test recovery material before depending on the Vault as the only copy of a credential.
+3. Keep the master passphrase, encrypted Vault keyfile/profile, and required Vault data available. Losing any required part may permanently block access; do not make Vault the only copy of a critical credential.
 
 ### Secrets and typed resources
 
@@ -1270,11 +1283,11 @@ An agent can queue one exact absolute executable with selected Vault resources i
 
 The integrated client shares the current broker profile rules and compatibility resource schema with standalone ShellX Vault.
 
-1. Close or lock one client before profile migration or recovery maintenance.
+1. Close or lock one client before profile migration or maintenance.
 2. Use either owner UI for digest-bound executable requests, but approve only after checking that the displayed host path and environment bindings match the intended machine.
 3. Do not run two incompatible versions against the same profile during a migration.
 
-> Boundary: Broker/profile parity includes the owner-approved executable-request flow. Compatibility does not make concurrent profile migration safe; use one current client as the migration owner and retain recovery material until the result is verified.
+> Boundary: Broker/profile parity includes the owner-approved executable-request flow. Compatibility does not make concurrent profile migration safe; use one current client as the migration owner and retain the original encrypted profile and required Vault data until the result is verified.
 
 ## Build, preview, and evidence
 
@@ -1333,7 +1346,7 @@ Use loopback APIs and diagnostics without confusing source structure, app health
 
 The installed app exposes authenticated loopback-only endpoints for sessions, prompts, screenshots, diagnostics, Browser, Vault, previews, and settings.
 
-1. Use ShellX-owned clients or a private process-local credential integration; never hard-code or print bearer values.
+1. Use ShellX-owned clients or a private process-local credential integration; never hard-code or print bearer values. A custom Debug API bearer is trusted operator access, while agent-specific routes retain caller and intent checks.
 2. Use health and bounded summary endpoints before broad state capture.
 3. Keep tokens, raw Browser state, and Vault values out of logs and project folders.
 
@@ -1343,7 +1356,7 @@ The installed app exposes authenticated loopback-only endpoints for sessions, pr
 
 ShellX stores sessions and configuration under the active profile, binds services to loopback, and keeps Vault values encrypted and operator mediated.
 
-1. Back up important project files and Vault recovery materials independently.
+1. Back up important project files independently. Keep the Vault master passphrase, encrypted keyfile/profile, and required Vault data available; ShellX does not provide a Vault backup or restore flow.
 2. Review connection presets, provider permissions, Browser profiles, and pending Vault grants after environment changes.
 3. Do not publish private evidence, tokens, hostnames, or machine paths with the public repository.
 
@@ -1365,4 +1378,4 @@ Check task ownership, tab/profile identity, locks, pending dialogs, grant state,
 
 1. Use a bounded Browser state summary and confirm the intended task/tab.
 2. Resolve operator prompts or unlock Vault rather than retrying the same blocked action.
-3. Clean up only the task, profile, process, or test fixture owned by the current run.
+3. Clean up only the task, profile, or process owned by the current run.

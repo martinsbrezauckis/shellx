@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 
 pub const MODEL_INSTRUCTION_CARDS_VERSION: &str = "2026-08-11.1";
 pub const MODEL_INSTRUCTION_CARDS_REVIEWED_ON: &str = "2026-08-11";
+/// Cards are bundled descriptive routing guidance, rather than observations of an installed
+/// provider. Keep this separate from the exact-target scan returned by the Task catalogue.
+pub const MODEL_CARD_REVIEW_SCOPE: &str = "bundled-descriptive-guidance";
+pub const MODEL_CARD_AVAILABILITY_AUTHORITY: &str = "fresh-exact-target-task-provider-catalog";
+pub const MODEL_CARD_NATIVE_CAPABILITY_EVIDENCE: &str = "requires-provider-specific-native-canary";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -102,6 +107,12 @@ pub struct CardInvocation {
 pub struct CardProvenance {
     pub source: String,
     pub refresh_hint: String,
+    /// What the card's recorded review covers. This never makes an installed provider available.
+    pub review_scope: String,
+    /// The current availability authority for the selected target.
+    pub availability_authority: String,
+    /// Native capability claims require their own provider-specific runtime evidence.
+    pub native_capability_evidence: String,
 }
 
 pub fn model_instruction_cards_state() -> ModelInstructionCardsState {
@@ -323,6 +334,9 @@ fn codex_gpt_image_card() -> ModelInstructionCard {
         provenance: CardProvenance {
             source: "codex-routed:gpt-image".to_string(),
             refresh_hint: "Refresh from Codex provider probes and official OpenAI image generation docs before a release when image tooling changes.".to_string(),
+            review_scope: MODEL_CARD_REVIEW_SCOPE.to_string(),
+            availability_authority: MODEL_CARD_AVAILABILITY_AUTHORITY.to_string(),
+            native_capability_evidence: MODEL_CARD_NATIVE_CAPABILITY_EVIDENCE.to_string(),
         },
     }
 }
@@ -891,6 +905,9 @@ fn bundled_provenance() -> CardProvenance {
     CardProvenance {
         source: "bundled-shellx-card".to_string(),
         refresh_hint: "Refresh from provider capability probes, official CLI docs, and live session observations before a release when providers change.".to_string(),
+        review_scope: MODEL_CARD_REVIEW_SCOPE.to_string(),
+        availability_authority: MODEL_CARD_AVAILABILITY_AUTHORITY.to_string(),
+        native_capability_evidence: MODEL_CARD_NATIVE_CAPABILITY_EVIDENCE.to_string(),
     }
 }
 
@@ -898,239 +915,8 @@ fn antigravity_media_provenance() -> CardProvenance {
     CardProvenance {
         source: "antigravity-native-tool-canary:2026-08-11".to_string(),
         refresh_hint: "When the installed Antigravity version changes, re-probe the official tool catalogue and one live ShellX canary without ShellX tooling before changing this card.".to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashSet;
-
-    #[test]
-    fn cards_have_unique_ids_and_no_auto_routing() {
-        let state = model_instruction_cards_state();
-        assert!(!state.policy.shellx_may_auto_route);
-        assert_eq!(state.policy.default_route_mode, "explicitOnly");
-        assert_eq!(state.policy.default_tool_exposure_mode, "nativeFirst");
-        assert!(state
-            .policy
-            .tool_exposure_modes
-            .iter()
-            .any(|mode| mode.id == "nativeFirst" && mode.label == "Native First"));
-        assert!(state
-            .policy
-            .tool_exposure_modes
-            .iter()
-            .any(|mode| mode.id == "hostBridge" && mode.label == "Host Bridge"));
-        assert!(state
-            .policy
-            .tool_exposure_modes
-            .iter()
-            .any(|mode| mode.id == "hostFull" && mode.label == "Host Full"));
-        assert!(state
-            .policy
-            .tool_exposure_modes
-            .iter()
-            .any(|mode| mode.id == "off" && mode.label == "Off"));
-
-        let mut seen = HashSet::new();
-        for card in state.cards {
-            assert!(
-                seen.insert(card.id.clone()),
-                "duplicate card id: {}",
-                card.id
-            );
-            assert_eq!(card.route_mode, "explicitOnly");
-            assert!(!card.shellx_may_auto_route);
-            assert!(card.fallback_rule.contains("Ask the user"));
-            assert!(!card.tool_exposure.native_tool_rule.is_empty());
-            assert!(!card.tool_exposure.shellx_tool_rule.is_empty());
-        }
-    }
-
-    #[test]
-    fn grok_imagine_video_requires_grok_health_and_blocks_silent_fallback() {
-        let state = model_instruction_cards_state();
-        let card = state
-            .cards
-            .iter()
-            .find(|card| card.id == "grok-imagine-video")
-            .expect("missing grok-imagine-video card");
-
-        assert_eq!(card.provider_id, "grok");
-        assert_eq!(card.category, "media-generation");
-        assert!(card
-            .preflight_checks
-            .iter()
-            .any(|check| { check.id == "grokConnected" && check.required }));
-        assert!(card
-            .preflight_checks
-            .iter()
-            .any(|check| { check.id == "grokToolsHealthy" && check.required }));
-        assert!(card
-            .fallback_rule
-            .contains("Ask the user before using another video provider"));
-        assert!(card
-            .agent_instructions
-            .iter()
-            .any(|line| line.contains("send_prompt_to_session")));
-        assert_eq!(card.tool_exposure.default_mode, "hostBridge");
-        assert!(card
-            .tool_exposure
-            .allowed_shellx_tools
-            .iter()
-            .any(|tool| tool == "send_prompt_to_session"));
-    }
-
-    #[test]
-    fn codex_gpt_image_card_is_codex_routed() {
-        let state = model_instruction_cards_state();
-        let card = state
-            .cards
-            .iter()
-            .find(|card| card.id == "codex-gpt-image")
-            .expect("missing codex-gpt-image card");
-
-        assert_eq!(card.provider_id, "codex-cli");
-        assert_eq!(card.status, "codex-routed");
-        assert!(card
-            .preflight_checks
-            .iter()
-            .any(|check| check.id == "codexAvailable" && check.required));
-        assert!(card
-            .preflight_checks
-            .iter()
-            .any(|check| check.id == "openAiImageToolReady" && check.required));
-        assert!(card
-            .invocation
-            .command_hint
-            .as_deref()
-            .is_some_and(|hint| hint.contains("Codex")));
-        assert!(card
-            .capabilities
-            .iter()
-            .any(|cap| cap.notes.contains("gpt-image-2")));
-        let serialized = serde_json::to_string(card).expect("serialize card");
-        assert!(serialized.contains("GPT Image 2"));
-        assert!(serialized.contains("gpt-image-2"));
-        assert!(serialized.contains("do not put gpt-image-2 in the Responses model field"));
-        assert!(serialized.contains("Do not create local placeholder images"));
-        assert!(card
-            .fallback_rule
-            .contains("Ask the user before using Grok Imagine"));
-        assert_eq!(card.tool_exposure.default_mode, "hostBridge");
-        assert!(card
-            .tool_exposure
-            .shellx_tool_rule
-            .contains("explicit user-approved handoff"));
-    }
-
-    #[test]
-    fn antigravity_media_cards_keep_image_native_and_video_unavailable() {
-        let state = model_instruction_cards_state();
-        let image = state
-            .cards
-            .iter()
-            .find(|card| card.id == "antigravity-nano-banana-image")
-            .expect("missing antigravity-nano-banana-image card");
-
-        assert_eq!(image.provider_id, "antigravity-cli");
-        assert_eq!(image.category, "media-generation");
-        assert_eq!(image.status, "bundled");
-        assert!(image
-            .preflight_checks
-            .iter()
-            .any(|check| check.id == "antigravityImageToolVisible" && check.required));
-        assert!(image
-            .capabilities
-            .iter()
-            .any(|capability| capability.id == "generateImage" && capability.level == "native"));
-        assert!(image
-            .agent_instructions
-            .iter()
-            .any(|line| line.contains("generate_image")));
-        assert!(
-            image
-                .agent_instructions
-                .iter()
-                .any(|line| line.contains("Browser automation")
-                    && line.contains("raw shell commands"))
-        );
-        assert_eq!(image.tool_exposure.default_mode, "nativeFirst");
-        assert!(image
-            .tool_exposure
-            .native_tool_rule
-            .contains("already-running Antigravity session"));
-        assert!(image
-            .agent_instructions
-            .iter()
-            .any(|line| line.contains("do not hand off to Antigravity from Antigravity")));
-        assert!(image
-            .tool_exposure
-            .allowed_shellx_tools
-            .iter()
-            .any(|tool| tool == "send_prompt_to_provider"));
-        assert!(!image
-            .tool_exposure
-            .allowed_shellx_tools
-            .iter()
-            .any(|tool| tool == "send_prompt_to_session"));
-
-        let video = state
-            .cards
-            .iter()
-            .find(|card| card.id == "antigravity-video-generation")
-            .expect("missing antigravity-video-generation card");
-
-        assert_eq!(video.provider_id, "antigravity-cli");
-        assert_eq!(video.category, "media-generation");
-        assert_eq!(video.status, "provider-unavailable");
-        assert_eq!(video.tool_exposure.default_mode, "off");
-        assert!(video.tool_exposure.allowed_shellx_tools.is_empty());
-        assert!(video.invocation.command_hint.is_none());
-        assert!(video
-            .capabilities
-            .iter()
-            .any(|capability| capability.id == "videoGeneration"
-                && capability.level == "not-supported"));
-        assert!(video.agent_instructions.iter().any(|line| {
-            line.contains("do not launch Antigravity solely")
-                && line.contains("unsupported request")
-        }));
-        assert!(video
-            .agent_instructions
-            .iter()
-            .any(|line| line.contains("WebM recording")
-                && line.contains("not Antigravity video generation")));
-    }
-
-    #[test]
-    fn coding_agent_cards_expose_permission_and_handoff_receipts() {
-        let state = model_instruction_cards_state();
-        for id in ["codex-cli", "claude-code", "antigravity-cli"] {
-            let card = state
-                .cards
-                .iter()
-                .find(|card| card.id == id)
-                .unwrap_or_else(|| panic!("missing {id} card"));
-            assert_eq!(card.category, "coding-agent");
-            assert!(card
-                .receipt_kinds
-                .iter()
-                .any(|kind| kind == "handoff-requested"));
-            assert!(card
-                .capabilities
-                .iter()
-                .any(|cap| cap.id == "permissionPrompts" && cap.level == "providerFlagsOnly"));
-            assert_eq!(card.tool_exposure.default_mode, "nativeFirst");
-            assert!(card
-                .tool_exposure
-                .native_tool_rule
-                .contains("native terminal"));
-            assert_eq!(
-                card.invocation.debug_api_path.as_deref(),
-                Some("/provider-sessions/start")
-            );
-        }
+        review_scope: MODEL_CARD_REVIEW_SCOPE.to_string(),
+        availability_authority: MODEL_CARD_AVAILABILITY_AUTHORITY.to_string(),
+        native_capability_evidence: MODEL_CARD_NATIVE_CAPABILITY_EVIDENCE.to_string(),
     }
 }

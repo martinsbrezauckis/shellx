@@ -311,7 +311,7 @@ export function storeDismissedVaultDepositIds(ids: ReadonlySet<string>): void {
       JSON.stringify(Array.from(ids).sort()),
     );
   } catch {
-    // localStorage can be disabled in preview/test contexts.
+    // localStorage can be disabled in embedded previews or restricted contexts.
   }
 }
 

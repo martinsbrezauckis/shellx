@@ -240,6 +240,18 @@ impl ShellxBrowserRegistry {
                 receipt: response.receipt,
             });
         }
+        let closing_engine_id = state.tabs[tab_idx].engine_id.clone();
+        let closes_engine = !state
+            .tabs
+            .iter()
+            .enumerate()
+            .any(|(index, tab)| index != tab_idx && tab.engine_id == closing_engine_id);
+        if closes_engine {
+            crate::shellx_browser_transfers::quarantine_native_downloads_for_engine_locked(
+                &mut state,
+                &closing_engine_id,
+            );
+        }
         let mut tab = state.tabs.remove(tab_idx);
         state.tab_observations.remove(&tab.browser_tab_id);
         tab.status = "closed".to_string();
@@ -252,6 +264,10 @@ impl ShellxBrowserRegistry {
             .any(|item| item.engine_id == closed_engine_id)
         {
             state.engine_event_bindings.remove(&closed_engine_id);
+            state
+                .engine_history_visit_admissions
+                .remove(&closed_engine_id);
+            state.engine_event_contexts.remove(&closed_engine_id);
             state
                 .engine_pool
                 .engines

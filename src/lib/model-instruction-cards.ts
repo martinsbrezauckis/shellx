@@ -74,6 +74,12 @@ export interface CardInvocation {
 export interface CardProvenance {
   source: string;
   refreshHint: string;
+  /** Historical scope of the bundled card review; it is not an installed-provider observation. */
+  reviewScope: "bundled-descriptive-guidance";
+  /** Current availability is established only by this target's fresh Task provider catalogue. */
+  availabilityAuthority: "fresh-exact-target-task-provider-catalog";
+  /** A current native capability claim needs a provider-specific runtime canary. */
+  nativeCapabilityEvidence: "requires-provider-specific-native-canary";
 }
 
 export function modelInstructionCardsPath(): string {

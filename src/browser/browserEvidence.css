@@ -114,6 +114,37 @@
   margin-right: 6px;
   color: var(--ink-3);
 }
+.shellx-browser-evidence-sanitization,
+.shellx-browser-evidence-redactions {
+  display: grid;
+  gap: 3px;
+}
+.shellx-browser-evidence-redactions {
+  border-left: 2px solid var(--shellx-browser-info-ink);
+  padding-left: 7px;
+}
+.shellx-browser-evidence-redactions strong,
+.shellx-browser-evidence-redactions span,
+.shellx-browser-evidence-fidelity-loss {
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.shellx-browser-evidence-redactions strong {
+  color: var(--ink);
+}
+.shellx-browser-evidence-row .shellx-browser-evidence-redactions code {
+  color: var(--ink-3);
+  font-size: inherit;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+.shellx-browser-evidence-fidelity-loss {
+  border-left: 2px solid var(--warn);
+  padding-left: 7px;
+}
 .shellx-browser-evidence-row code {
   overflow: hidden;
   color: var(--ink-3);

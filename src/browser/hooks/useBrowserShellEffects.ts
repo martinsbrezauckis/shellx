@@ -1,12 +1,14 @@
-import { useEffect, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import { updateBrowserDownloadFolder, browserApiPostJson } from "../api";
+import { inTauri } from "../../lib/tauri-bridge";
 import {
   persistBrowserColorMode,
   persistBrowserDownloadFolder,
   persistBrowserHomeUrl,
 } from "../browserPreferences";
 import { readSettingsLocal } from "../../lib/settings";
+import { createDownloadFolderWriter } from "../downloadFolderPersistence";
 
 interface BrowserShellEffectsOptions {
   activeTaskId: string | null;
@@ -18,9 +20,11 @@ interface BrowserShellEffectsOptions {
   refresh: () => Promise<void>;
   setAddress: (value: string) => void;
   setDefaultDownloadFolder: Dispatch<SetStateAction<string>>;
+  setDownloadFolderError: (value: string | null) => void;
   setHeaderMenu: (value: null) => void;
   setOpenToolbarFolderId: (value: null) => void;
   setOptionsOpen: (value: boolean) => void;
+  closeOptionsWithFocus: () => void;
 }
 
 export function useBrowserShellEffects(options: BrowserShellEffectsOptions): void {
@@ -34,10 +38,16 @@ export function useBrowserShellEffects(options: BrowserShellEffectsOptions): voi
     refresh,
     setAddress,
     setDefaultDownloadFolder,
+    setDownloadFolderError,
     setHeaderMenu,
     setOpenToolbarFolderId,
     setOptionsOpen,
+    closeOptionsWithFocus,
   } = options;
+  const downloadFolderWriter = useRef<ReturnType<typeof createDownloadFolderWriter> | null>(null);
+  if (!downloadFolderWriter.current) {
+    downloadFolderWriter.current = createDownloadFolderWriter(updateBrowserDownloadFolder, persistBrowserDownloadFolder);
+  }
 
   useEffect(() => {
     persistBrowserColorMode(colorMode);
@@ -48,9 +58,25 @@ export function useBrowserShellEffects(options: BrowserShellEffectsOptions): voi
   }, [homeUrl]);
 
   useEffect(() => {
-    persistBrowserDownloadFolder(defaultDownloadFolder);
-    void updateBrowserDownloadFolder(defaultDownloadFolder).then(() => refresh()).catch(() => undefined);
-  }, [defaultDownloadFolder, refresh]);
+    // The public manual and browser-only development preview have no desktop
+    // registry to update. Avoid presenting their expected IPC refusal as a
+    // user folder-validation error.
+    if (!inTauri()) return;
+    let current = true;
+    setDownloadFolderError(null);
+    const timer = window.setTimeout(() => {
+      void downloadFolderWriter.current!(defaultDownloadFolder, () => current)
+        .then((saved) => {
+          // A refresh failure must not label an accepted folder as invalid.
+          // The existing Browser event/poll subscription also refreshes state.
+          if (saved && current) void refresh().catch(() => undefined);
+        })
+        .catch((error: unknown) => {
+          if (current) setDownloadFolderError(`Download folder update failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }, 300);
+    return () => { current = false; window.clearTimeout(timer); };
+  }, [defaultDownloadFolder, refresh, setDownloadFolderError]);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -79,7 +105,7 @@ export function useBrowserShellEffects(options: BrowserShellEffectsOptions): voi
     const closeWithEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setHeaderMenu(null);
-      setOptionsOpen(false);
+      closeOptionsWithFocus();
       setOpenToolbarFolderId(null);
     };
     window.addEventListener("pointerdown", closeFloatingMenus);
@@ -88,7 +114,7 @@ export function useBrowserShellEffects(options: BrowserShellEffectsOptions): voi
       window.removeEventListener("pointerdown", closeFloatingMenus);
       window.removeEventListener("keydown", closeWithEscape);
     };
-  }, [setHeaderMenu, setOpenToolbarFolderId, setOptionsOpen]);
+  }, [closeOptionsWithFocus, setHeaderMenu, setOpenToolbarFolderId, setOptionsOpen]);
 
   useEffect(() => {
     const recordUiError = (message: string, details: Record<string, unknown>) => {

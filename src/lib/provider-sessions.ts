@@ -255,10 +255,6 @@ export interface ProviderSessionStartRequest {
   sshKeyVaultRef?: string;
   sshRemoteRuntime?: SshRemoteRuntime;
   sshWslDistro?: string;
-  releaseFixture?: {
-    id: "provider-action-lifecycle";
-    action: string;
-  };
 }
 
 export interface ProviderSessionAbortRequest {
@@ -507,7 +503,6 @@ export function providerStartRequestBody(
   if (request.sshWslDistro && request.sshWslDistro.trim()) {
     body.sshWslDistro = request.sshWslDistro.trim();
   }
-  if (request.releaseFixture) body.releaseFixture = { ...request.releaseFixture };
   return body;
 }
 

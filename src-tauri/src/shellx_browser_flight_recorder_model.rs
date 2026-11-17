@@ -45,6 +45,10 @@ pub struct BrowserFlightRecorderArtifact {
     pub gap_count: usize,
     #[serde(rename = "sanitizerLossCount")]
     pub sanitizer_loss_count: usize,
+    #[serde(rename = "sanitizerFidelityLossCount")]
+    pub sanitizer_fidelity_loss_count: usize,
+    #[serde(rename = "redactionCount")]
+    pub redaction_count: usize,
     #[serde(rename = "evidenceComplete")]
     pub evidence_complete: bool,
     #[serde(rename = "firstSourceSequence", default)]

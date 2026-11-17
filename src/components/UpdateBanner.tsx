@@ -9,26 +9,23 @@
  * `plugins.updater`. The Rust side verifies signatures; this component
  * just drives the UI flow.
  *
- * Backend pipeline (out of scope for this file):
- * 1. CI/build hosts create Windows, enabled Linux, and signed macOS artifacts.
- * 2. Artifacts include the Tauri updater signature.
- * 3. Maintainers upload release assets plus latest.json to GitHub Releases.
- * 4. App polls the manifest URL; sees new version; this banner appears.
- *
- * If a development build has no published update manifest yet, `check`
- * can return a quiet 404; the catch path no-ops so the UI stays clean.
+ * The updater check creates a resource from the release manifest. Package
+ * signature verification happens during download and installation.
+ * If no usable manifest is available, `check` can return a quiet 404; the
+ * catch path keeps the UI clean.
  */
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
 import { updateErrorIsQuiet } from "../lib/update-diagnostics";
 import {
-  DEBUG_UPDATE_FIXTURE,
-  DEBUG_UPDATE_INSTALL_RECEIPT,
-  cleanUpdateNotes,
-  firstUpdateNotesUrl,
-  type DebugUpdateFixtureMode,
-} from "../lib/update-notes";
+  MANUAL_UPDATE_DOWNLOAD_URL,
+  resolveUpdateInstallMethod,
+  type UpdateInstallMethod,
+} from "../lib/update-install-policy";
+import { cleanUpdateNotes, firstUpdateNotesUrl } from "../lib/update-notes";
+import { UpdateOffer, checkOfferAfterLoad } from "../lib/update-offer";
 
 interface UpdateState {
   available: boolean;
@@ -37,6 +34,7 @@ interface UpdateState {
   downloading: boolean;
   progress: number; // 0..1
   error: string | null;
+  installMethod: UpdateInstallMethod;
 }
 
 const INITIAL: UpdateState = {
@@ -44,6 +42,7 @@ const INITIAL: UpdateState = {
   downloading: false,
   progress: 0,
   error: null,
+  installMethod: "automatic",
 };
 
 function openExternal(url: string): void {
@@ -53,54 +52,47 @@ function openExternal(url: string): void {
     });
 }
 
-export function UpdateBanner({
-  debugFixture = "live",
-}: {
-  debugFixture?: DebugUpdateFixtureMode;
-} = {}): JSX.Element | null {
+export function UpdateBanner(): JSX.Element | null {
   const [state, setState] = useState<UpdateState>(INITIAL);
   const [releaseReceipt, setReleaseReceipt] = useState<string | null>(null);
+  const offerRef = useRef<UpdateOffer<Update> | null>(null);
+  const displayedOfferRef = useRef<Update | null>(null);
+  if (!offerRef.current) offerRef.current = new UpdateOffer<Update>();
 
   useEffect(() => {
-    if (debugFixture === "owned-available") {
-      setReleaseReceipt(null);
-      setState({
-        available: true,
-        version: DEBUG_UPDATE_FIXTURE.version,
-        body: DEBUG_UPDATE_FIXTURE.body,
-        downloading: false,
-        progress: 0,
-        error: null,
-      });
-      return;
-    }
-    if (debugFixture === "owned-cleared") {
-      setReleaseReceipt(null);
-      setState(INITIAL);
-      return;
-    }
-    if (debugFixture === "owned-check") {
-      setReleaseReceipt(null);
-      setState(INITIAL);
-      return;
-    }
     if (!inTauri()) return; // browser-only preview: no updater plugin
     let cancelled = false;
+    const offer = offerRef.current!;
 
     async function checkOnce(): Promise<void> {
       try {
  // Lazy import — the updater module only works inside Tauri.
-        const { check } = await import("@tauri-apps/plugin-updater");
-        const update = await check();
-        if (cancelled || !update) return;
+        const result = await checkOfferAfterLoad(
+          offer,
+          async () => (await import("@tauri-apps/plugin-updater")).check,
+          () => !cancelled,
+        );
+        if (cancelled || result.kind === "stale") return;
+        if (result.kind === "error") throw result.error;
+        if (result.kind === "none") {
+          displayedOfferRef.current = null;
+          setState(INITIAL);
+          return;
+        }
+        const update = result.update;
+        const installMethod = await resolveUpdateInstallMethod();
+        if (cancelled || offer.offered !== update) return;
+        displayedOfferRef.current = update;
         setState((prev) => ({
           ...prev,
           available: true,
           version: update.version,
           body: cleanUpdateNotes(update.body),
           error: null,
+          installMethod,
         }));
       } catch (err: unknown) {
+        if (cancelled) return;
  // swallow "no release yet"
  // failures into a silent no-op. The plugin's typical wording is
  // "Could not fetch a valid release JSON from the remote" when
@@ -115,7 +107,11 @@ export function UpdateBanner({
  // strings (`signature`, `verification`, `corrupt`) don't match
  // the swallow regex so they reach the error banner.
         const msg = err instanceof Error ? err.message : String(err);
-        if (!updateErrorIsQuiet(msg)) {
+        if (updateErrorIsQuiet(msg)) {
+          offer.clear();
+          displayedOfferRef.current = null;
+          if (!cancelled) setState(INITIAL);
+        } else if (!cancelled) {
           setState((prev) => ({ ...prev, error: msg }));
         }
       }
@@ -123,26 +119,30 @@ export function UpdateBanner({
 
     void checkOnce();
     const id = window.setInterval(() => void checkOnce(), 30 * 60 * 1000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [debugFixture]);
+    return () => { cancelled = true; clearInterval(id); displayedOfferRef.current = null; offer.clear(); };
+  }, []);
 
   async function install(): Promise<void> {
-    if (debugFixture === "owned-available") {
-      setReleaseReceipt(DEBUG_UPDATE_INSTALL_RECEIPT);
-      setState((prev) => ({ ...prev, downloading: true, progress: 1 }));
+    const displayedOffer = displayedOfferRef.current;
+    const installMethod = await resolveUpdateInstallMethod();
+    if (!displayedOffer || offerRef.current?.offered !== displayedOffer) {
+      setState((prev) => ({ ...prev, available: false, error: "The offered update changed. Check again." }));
+      return;
+    }
+    if (installMethod === "manual") {
+      openExternal(MANUAL_UPDATE_DOWNLOAD_URL);
+      setReleaseReceipt("Manual package update opened in the browser.");
+      setState((prev) => ({ ...prev, downloading: false, progress: 0, error: null, installMethod }));
       return;
     }
     setState((prev) => ({ ...prev, downloading: true, progress: 0, error: null }));
     try {
-      const [{ check }, { relaunch }] = await Promise.all([
-        import("@tauri-apps/plugin-updater"),
-        import("@tauri-apps/plugin-process"),
-      ]);
-      const update = await check();
+      const update = offerRef.current?.beginInstall(displayedOffer);
       if (!update) {
         setState((prev) => ({ ...prev, downloading: false, error: "update vanished mid-flight" }));
         return;
       }
+      const { relaunch } = await import("@tauri-apps/plugin-process");
       let total = 0;
       let downloaded = 0;
       await update.downloadAndInstall((evt) => {
@@ -157,6 +157,8 @@ export function UpdateBanner({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setState((prev) => ({ ...prev, downloading: false, error: msg }));
+    } finally {
+      offerRef.current?.finishInstall();
     }
   }
 
@@ -191,6 +193,9 @@ export function UpdateBanner({
           <span>
             <strong style={{ color: "var(--ink)" }}>Update v{state.version}</strong> available.
           </span>
+          {state.installMethod === "manual" && (
+            <span>Installed Linux packages update through their package manager.</span>
+          )}
           {releaseNotesUrl && (
             <button
               type="button"
@@ -219,6 +224,7 @@ export function UpdateBanner({
           ) : (
             <button
               type="button"
+              data-debug-id="update-banner-install"
               data-release-update-control="banner-install"
               onClick={() => void install()}
               style={{
@@ -233,7 +239,7 @@ export function UpdateBanner({
                 fontWeight: 500,
               }}
             >
-              Install &amp; restart
+              {state.installMethod === "manual" ? "Download update" : "Install & restart"}
             </button>
           )}
         </>

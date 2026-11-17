@@ -28,7 +28,7 @@ agents can reach host-side tools (filesystem, vault, vision, subagents).
 - **xcap + windows-sys PrintWindow** — window screenshot capture
   for `/screenshot`.
 - **ShellX Vault broker + chacha20poly1305/keyring-rs** — encrypted local or
-  connected Vault resources, recovery material, grants, safe-folder contracts,
+  connected Vault resources, setup confirmation, grants, safe-folder contracts,
   and remembered-device custody.
 
 ## Process model
@@ -47,10 +47,10 @@ agents can reach host-side tools (filesystem, vault, vision, subagents).
 |       |                        |                        |     |
 +-------|------------------------|------------------------|-----+
         |                        |                        |
-       external agents          remote agents             local agents
-       (agent drivers,          (WSL / SSH via             (stdio/CLI child)
-       Playwright,              dynamic `-R` tunnel
-       curl, CI)                where needed)
+       local clients            remote agents             local agents
+       (ShellX-owned tools,     (WSL / SSH via             (stdio/CLI child)
+       integrations, curl)      dynamic `-R` tunnel
+                                where needed)
 ```
 
 - One Tauri app process. Grok tabs spawn a Grok ACP child via stdio
@@ -64,7 +64,7 @@ agents can reach host-side tools (filesystem, vault, vision, subagents).
   Antigravity CLI as noninteractive provider processes. Codex and Claude can
   receive ShellX host MCP tooling. Antigravity 1.1.8+ emits structured NDJSON
   for text, tool, subagent, conversation, and usage events, but its ShellX host
-  MCP bridge remains fail-closed until a live print-mode tool-call canary passes.
+  MCP bridge remains disabled until tool execution is verified.
 - All servers bind `127.0.0.1` only — never exposed to LAN.
 - Single-instance enforced via `tauri-plugin-single-instance`: second
   launch focuses the existing window.
@@ -77,8 +77,8 @@ the system. Each has explicit defense layers; we don't rely on
 
 ### 1. shellXagent HTTP+WS on `127.0.0.1:<bound-debug-port>` (`debug_api.rs`)
 
-The orchestration API. Drive any UI surface from external agents,
-Playwright, CI, etc.
+The orchestration API for authenticated local clients and ShellX-owned
+integrations.
 
 **Who calls it:** any process on the host with the bearer token.
 
@@ -203,12 +203,8 @@ private additional workspace under `~/.shellx/provider-mcp/` containing a
 uniquely named main-agent definition. ShellX selects that agent and adds only
 that private workspace for the launched process, so Antigravity keeps its
 native file, command, Browser, search, image, and subagent tools without making
-ShellX guidance globally discoverable. Antigravity host MCP stays disabled:
-1.1.8 through 1.1.11 print-mode conformance tests discovered a workspace server
-schema, but none produced a real MCP `tools/call` through ShellX's custom-agent
-session shape. The 1.1.11 execution backend rejected the wrapper, leaf, and
-server-qualified tool names as unknown, which is not accepted as tool-execution
-proof even though the process reported success.
+ShellX guidance globally discoverable. Antigravity host MCP stays disabled
+until ShellX verifies tool execution through this session shape.
 Codex receives the same compact ShellX rule through a per-process config
 override and Claude through `--append-system-prompt`; direct provider launches
 do not inherit these rules.
@@ -268,6 +264,14 @@ provider, saves a definition, or enables a schedule. Task Manager projects only
 active all-agent mediated Vault grant metadata for the user to bind.
 Separately, an agent launched inside ShellX can create a plain Task from explicit
 natural-language authorization through the write-class `task_manage` Host tool.
+The renderer registers only the exact current operator-authored composer turn
+in an app-owned, volatile registry. The authority is tab-bound, single-use,
+expires after 20 minutes, and is cleared by an ordinary follow-up or failed
+provider delivery. Only a direct create, schedule, save, reminder, or
+create-and-run request mints it; quoted or explanatory mentions do not. The
+backend consumes it immediately before persistence and refuses create-and-run
+when the message authorized create only; the provider-supplied `userApproved`
+boolean cannot mint or extend authority.
 The authenticated caller tab, not agent-supplied target data, selects the saved
 connection, working folder, permissions and tool exposure. A fresh target-bound
 provider scan authorizes the ordered workers before the definition is written.
@@ -291,7 +295,10 @@ Task Manager nor triggers a duplicate export.
 Each claimed Task attempt also owns a deterministic `task-run-*` runtime tab
 and matching private ShellX session JSONL. The app writes the reviewed
 instruction before dispatch and routes only that tab's ordinary provider events
-through a bounded dedicated writer. This preserves a review surface without
+through a bounded dedicated writer. Before append it scrubs structured secrets
+and credential-shaped text. A 64 MiB cumulative archive budget reserves room
+for one typed truncation marker, then drops later provider events instead of
+growing until disk exhaustion. This preserves a review surface without
 placing provider output in the Task store. After the terminal occurrence, a
 detached `shellx.task-trace-evidence.v1` receipt binds the archive's full-file
 digest, bounded counts, terminal marker, format/drop state, recovery state, and
@@ -372,8 +379,12 @@ with `.and_then`/`.unwrap_or`).
   PTY is ever spawned in response to a provider request. This is the
   load-bearing safety property; a regression here would let a provider run
   arbitrary shell. See `acp.rs::reject_provider_terminal_method`.
-- **Cwd/paths.** Every path arriving over ACP goes through
-  `validate_fs_path` on the way to `fs_*` tools.
+- **Cwd/paths.** Local ACP paths go through `validate_fs_path`. SSH ACP native
+  file reads and writes are additionally confined to the selected project,
+  reject link/reparse components and non-regular targets, and operate on the
+  resolved project path. Remote capture is time- and byte-bounded before the
+  result enters memory. Writes require an existing verified parent; creating
+  folders remains a supervised terminal action.
 
 **Trust we DO give the operator:** SSH host/port/key_vault_ref/
 remote_grok_path come from `connections.json`, written by the user
@@ -422,12 +433,13 @@ module sizes. `host_mcp.rs` is now a thin MCP wire and dispatch root whose domai
 behavior lives under `host_mcp/`. `debug_api.rs` keeps the authenticated server,
 shared state model, and route composition while domain handlers live in focused
 `debug_api_*.rs` modules. Browser and Vault domain code is organized in focused
-module families; the private engineering rules define contribution placement
-and source-size maintenance policy.
+module families.
 The vendored Vault boundary carries `vendor/shellx-vault/PROVENANCE.json`, which
 binds the full standalone upstream Git revision to deterministic SHA-256 source
-digests for each included crate. Public CI recalculates those digests from the
-checkout, so provenance verification does not depend on a sibling Vault clone.
+digests for each imported crate and its workspace inputs. The public export
+manifest identifies the exported bytes after developer material is removed.
+The nested Vault lockfile records that upstream snapshot; ShellX resolves its
+application dependencies from `src-tauri/Cargo.lock`.
 The Linux GTK3 boundary resolves `glib 0.18.5` through `vendor/glib` because the
 current Tauri/WebKitGTK graph still requires the gtk-rs 0.18 API. `UPSTREAM`
 records the published crate digest and the reviewed gtk-rs `VariantStrIter`
@@ -446,7 +458,6 @@ soundness backport.
 | `shellx_browser_tab_handoff.rs` | ~0.3k | Backend-validated Browser page/profile/ownership/task review binding and atomic handoff |
 | `shellx_browser_flight_recorder.rs` / `shellx_browser_flight_recorder_sanitization.rs` | ~1.2k | Flight Recorder selection/artifact orchestration plus its bounded redaction and loss-accounting boundary |
 | `shellx_browser_state_helpers.rs` / `shellx_browser_network_receipts.rs` | ~0.7k | State synchronization plus bounded network/receipt mutation |
-| `shellx_browser_tests/` | ~3.0k | Browser registry behavior tests split by action, engine, tab/pool, and dialog ownership |
 | `shellx_browser_model.rs` | ~0.9k | Browser data model, receipts, transfers, policies, serialized state shapes |
 | `shellx_browser_actions.rs` / `shellx_browser_action_results.rs` | ~2.5k | Engine action execution, actionability, step summaries, redaction-safe result shaping |
 | `shellx_browser_prompt_guard.rs` | ~0.8k | Fixed-vocabulary pre-action prompt-injection classification, sanitized receipts, unavailable fail-closed policy, and one-shot operator override binding |
@@ -455,7 +466,7 @@ soundness backport.
 | `shellx_browser_bookmarks.rs` | ~830 | Bookmark/folder tree, toolbar, workflow bookmark metadata |
 | `shellx_browser_*` smaller modules | varies | Shields, personal lock, developer mode, scripts, engine runtime/state, transfers, tabs, tasks, Vault, session grants |
 | `shellx_vault/backend.rs` | ~3.6k | ShellX Vault setup/unlock/resources, legacy import, broker adapter, UI/Debug API bridge |
-| `shellx_vault/grants.rs` / `recovery.rs` | small | ShellX grant/recovery helpers around the shared broker |
+| `shellx_vault/grants.rs` / `recovery.rs` | small | ShellX grant helpers and setup-confirmation challenge around the shared broker; no recovery-word restore |
 | `vendor/shellx-vault/crates/vault-broker/` | varies | Shared Vault broker resources, grants, receipts, project capsules, safe folders, backups, sync sets |
 | `mcp_http.rs` | ~2.3k | Streamable HTTP MCP server, origin allow-list, token and tab-bound-token gates |
 | `skill_install.rs` | ~1.8k | Bundled `shellx-host` install to Grok/Codex/Claude and ShellX-owned agent-doc paths |

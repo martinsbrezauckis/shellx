@@ -42,18 +42,14 @@ import { invoke } from "@tauri-apps/api/core";
 import type { PermissionGroup } from "../lib/grouping";
 import { ShellIcon } from "./icons";
 import { isTrustedShellxUserEvent } from "../lib/trusted-user-event";
-import {
-  DEBUG_PERMISSION_DECISION_FIXTURE,
-  DEBUG_PERMISSION_FIXTURE_META_KEY,
-  type DebugPermissionDecisionFixture,
-} from "../lib/debug-permission-decision-fixture";
 
 interface Props {
   g: PermissionGroup;
  /** Active tab id so the synthetic event carries `_meta.tabId` and
  * routes to the correct chat view in multi-tab installs. */
   tabId?: string;
-  debugFixture?: DebugPermissionDecisionFixture | null;
+ /** Durable history may show a request, but can never act on it. */
+  readOnly?: boolean;
 }
 
 /** Post a synthetic event into the events ring. App.tsx subscribes to
@@ -75,7 +71,7 @@ function dispatchSynthetic(
   );
 }
 
-export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.Element {
+export function PermissionPill({ g, tabId, readOnly = false }: Props): JSX.Element {
  /* Optimistic local state — set as soon as the user clicks, even
  * before the synthetic-event round-trip mutates the group. Without
  * this the button row would linger for one render frame after a
@@ -92,31 +88,20 @@ export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.El
       if (!isTrustedShellxUserEvent(event)) {
         return;
       }
-      if (
-        debugFixture
-        && (
-          debugFixture.requestId !== g.requestId
-          || debugFixture.expectedDecision !== decision
-        )
-      ) {
-        return;
-      }
       setOptimistic(decision);
       const allow = decision === "allow" || decision === "allow_always";
-      if (!debugFixture) {
-        try {
-          await invoke<boolean>("resolve_permission_request", {
-            requestId: g.requestId,
-            allow,
-            decision,
-          });
-        } catch (err) {
+      try {
+        await invoke<boolean>("resolve_permission_request", {
+          requestId: g.requestId,
+          allow,
+          decision,
+        });
+      } catch (err) {
  // Logged but non-fatal — the Rust side times out at 60s and
  // treats as Deny. We still flip the pill to its visual
  // resolved state so the user gets feedback.
  // eslint-disable-next-line no-console
-          console.warn("[PermissionPill] resolve invoke failed:", err);
-        }
+        console.warn("[PermissionPill] resolve invoke failed:", err);
       }
       dispatchSynthetic(
         "permission-resolved",
@@ -124,16 +109,11 @@ export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.El
           requestId: g.requestId,
           decision,
           decisionAt: Date.now(),
-          ...(debugFixture ? {
-            _meta: {
-              [DEBUG_PERMISSION_FIXTURE_META_KEY]: DEBUG_PERMISSION_DECISION_FIXTURE,
-            },
-          } : {}),
         },
         tabId,
       );
     },
-    [debugFixture, g.requestId, tabId],
+    [g.requestId, tabId],
   );
 
  /* Effective pill state. `pending` is the source-of-truth flag set by
@@ -141,6 +121,25 @@ export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.El
  * resolve micro-interaction. */
   const decision = optimistic ?? g.decision ?? null;
   const isPending = g.pending && optimistic === null;
+
+  if (isPending && readOnly) {
+    return (
+      <div
+        className="row-pill perm-pill perm-pill-pending"
+        data-request-id={g.requestId}
+        role="group"
+        aria-label={`Recorded permission request for ${g.toolName}`}
+      >
+        <span className="perm-pill-icon" aria-hidden>
+          <ShellIcon name="shield-alert" size={15} />
+        </span>
+        <span className="perm-pill-resolved-label">
+          Recorded permission request: <strong>{g.toolName}</strong>
+        </span>
+        <span className="perm-pill-args">Actions are unavailable in session history.</span>
+      </div>
+    );
+  }
 
   if (isPending) {
     return (
@@ -173,7 +172,6 @@ export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.El
           <button data-debug-id="surface-components-permissionpill-1"
             type="button"
             className="perm-pill-btn perm-pill-allow"
-            disabled={Boolean(debugFixture && debugFixture.expectedDecision !== "allow")}
             onClick={(event) => void respond("allow", event)}
           >
             <ShellIcon name="check" size={13} />
@@ -183,7 +181,6 @@ export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.El
             type="button"
             className="perm-pill-btn perm-pill-allow-always"
             data-shellx-release-control="permission-pill-always"
-            disabled={Boolean(debugFixture && debugFixture.expectedDecision !== "allow_always")}
             onClick={(event) => void respond("allow_always", event)}
             title="Allow this tool every time without asking"
           >
@@ -193,7 +190,6 @@ export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.El
           <button data-debug-id="surface-components-permissionpill-3"
             type="button"
             className="perm-pill-btn perm-pill-deny"
-            disabled={Boolean(debugFixture && debugFixture.expectedDecision !== "deny")}
             onClick={(event) => void respond("deny", event)}
           >
             <ShellIcon name="circle-x" size={13} />
@@ -222,12 +218,6 @@ export function PermissionPill({ g, tabId, debugFixture = null }: Props): JSX.El
     <div
       className={`row-pill perm-pill ${isAllowed ? "perm-pill-allowed" : "perm-pill-denied"}`}
       data-request-id={g.requestId}
-      data-shellx-release-control={debugFixture ? "permission-decision-receipt" : undefined}
-      data-shellx-release-observe={debugFixture ? "title" : undefined}
-      data-permission-decision={debugFixture ? decision ?? undefined : undefined}
-      title={debugFixture && decision
-        ? "Permission decision receipt — " + debugFixture.action + " — " + decision
-        : undefined}
       role="group"
       aria-label={`${verb} ${g.toolName}`}
     >

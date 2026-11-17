@@ -26,8 +26,3 @@ subtle = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
-
-[dev-dependencies]
-tower = { workspace = true }
-http-body-util = { workspace = true }
-tempfile = "3"

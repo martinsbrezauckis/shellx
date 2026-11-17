@@ -98,6 +98,12 @@ interface StoredTabRef {
   title?: string | null;
 }
 
+interface ConnectorVaultStatus {
+  mode?: "unconfigured" | "legacyLimited" | "local" | "external";
+  unlocked?: boolean;
+  recoveryConfirmed?: boolean;
+}
+
 type Toast = { kind: "ok" | "err"; text: string } | null;
 
 interface FormState {
@@ -128,60 +134,10 @@ const DEFAULT_TELEGRAM_KEY = "telegram/bot-token";
 const DEFAULT_DISCORD_KEY = "discord/bot-token";
 const PROVIDER_TABS: ProviderKind[] = ["telegram", "discord"];
 
-export type ConnectorsDebugFixture = "owned-safe";
-
-const DEBUG_OWNED_CONNECTORS: OutsideConnector[] = [
-  {
-    id: "release-owned-connector-telegram",
-    label: "Release owned Telegram",
-    enabled: false,
-    provider: {
-      kind: "telegram",
-      botTokenVaultKey: "release-owned/telegram-token-ref",
-      allowedChatIds: ["release-owned-chat"],
-    },
-    target: { mode: "activeTab" },
-    dispatchMode: "inbox",
-    requireApproval: true,
-    createdMs: 1_750_000_000_000,
-    updatedMs: 1_750_000_000_000,
-    lastTestMs: null,
-    lastError: null,
-  },
-  {
-    id: "release-owned-connector-discord",
-    label: "Release owned Discord",
-    enabled: false,
-    provider: {
-      kind: "discord",
-      botTokenVaultKey: "release-owned/discord-token-ref",
-      allowedTargetIds: ["release-owned-user"],
-    },
-    target: { mode: "activeTab" },
-    dispatchMode: "inbox",
-    requireApproval: true,
-    createdMs: 1_750_000_000_001,
-    updatedMs: 1_750_000_000_001,
-    lastTestMs: null,
-    lastError: null,
-  },
-];
-
-const DEBUG_OWNED_SESSIONS: LiveSession[] = [{
-  tabId: "release-owned-connector-tab",
-  title: "Release owned connector session",
-  sessionId: null,
-  cwd: null,
-  hasActiveChild: false,
-  isSsh: false,
-  isWsl: false,
-  sshHost: null,
-  wslDistro: null,
-}];
-
-export function ConnectorsTab({ debugFixture = null }: { debugFixture?: ConnectorsDebugFixture | null } = {}): JSX.Element {
+export function ConnectorsTab(): JSX.Element {
   const [connectors, setConnectors] = useState<OutsideConnector[]>([]);
   const [vaultKeys, setVaultKeys] = useState<string[]>([]);
+  const [vaultStatus, setVaultStatus] = useState<ConnectorVaultStatus | null>(null);
   const [sessions, setSessions] = useState<LiveSession[]>([]);
   const [draftOpen, setDraftOpen] = useState(false);
   const [form, setForm] = useState<FormState>(() => emptyForm("telegram"));
@@ -198,38 +154,49 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
   const [simulating, setSimulating] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
   const desktopConnectorsAvailable = inTauri();
-  const debugFixtureActive = debugFixture === "owned-safe";
-  const visibleConnectors = debugFixtureActive ? DEBUG_OWNED_CONNECTORS : connectors;
-  const visibleSessions = debugFixtureActive ? DEBUG_OWNED_SESSIONS : sessions;
+  const visibleConnectors = connectors;
+  const visibleSessions = sessions;
 
   const refresh = useCallback(async () => {
-    if (!desktopConnectorsAvailable || debugFixtureActive) return;
+    if (!desktopConnectorsAvailable) return;
     setBusy(true);
     try {
-      const [list, keys, liveSessions] = await Promise.all([
+      const [listResult, vaultResult, sessionsResult] = await Promise.allSettled([
         invoke<OutsideConnector[]>("outside_connectors_list"),
-        invoke<string[]>("vault_list_keys", { prefix: null }),
+        (async () => {
+          const status = await invoke<ConnectorVaultStatus>("vault_status");
+          setVaultStatus(status);
+          return status.unlocked === true
+            ? invoke<string[]>("vault_list_keys", { prefix: null })
+            : [];
+        })(),
         apiGet<LiveSessionsResponse>("/state/sessions")
-          .then((r) => normalizeLiveSessions(r.tabs ?? [], readStoredTabOrder()))
-          .catch(() => []),
+          .then((r) => normalizeLiveSessions(r.tabs ?? [], readStoredTabOrder())),
       ]);
-      setConnectors([...list].sort((a, b) => a.label.localeCompare(b.label)));
-      setVaultKeys([...keys].sort((a, b) => a.localeCompare(b)));
-      setSessions(liveSessions);
+      if (listResult.status === "fulfilled") {
+        setConnectors([...listResult.value].sort((a, b) => a.label.localeCompare(b.label)));
+      }
+      setVaultKeys(vaultResult.status === "fulfilled"
+        ? [...vaultResult.value].sort((a, b) => a.localeCompare(b))
+        : []);
+      if (vaultResult.status === "rejected") setVaultStatus(null);
+      setSessions(sessionsResult.status === "fulfilled" ? sessionsResult.value : []);
+      if (listResult.status === "rejected") throw listResult.reason;
+      if (vaultResult.status === "rejected") throw vaultResult.reason;
     } catch (e) {
       setToast({ kind: "err", text: formatErr(e) });
     } finally {
       setBusy(false);
     }
-  }, [debugFixtureActive, desktopConnectorsAvailable]);
+  }, [desktopConnectorsAvailable]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
-    if (!desktopConnectorsAvailable || debugFixtureActive) return;
+    if (!desktopConnectorsAvailable) return;
     const t = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(t);
-  }, [debugFixtureActive, desktopConnectorsAvailable, refresh]);
+  }, [desktopConnectorsAvailable, refresh]);
 
   useEffect(() => {
     if (simForm.connectorId || visibleConnectors.length === 0) return;
@@ -251,13 +218,12 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
     () => visibleConnectors.find((connector) => connector.id === simForm.connectorId) ?? null,
     [simForm.connectorId, visibleConnectors],
   );
-  const canSave = !debugFixtureActive
-    && desktopConnectorsAvailable
+  const canSave = desktopConnectorsAvailable
     && form.vaultKey.trim().length > 0
     && (form.targetMode !== "fixedTab" || form.fixedTabId.trim().length > 0)
+    && (!form.secretValue.trim() || vaultStatus?.unlocked === true)
     && !saving;
-  const canSimulate = !debugFixtureActive
-    && desktopConnectorsAvailable
+  const canSimulate = desktopConnectorsAvailable
     && Boolean(selectedSimConnector)
     && simForm.senderId.trim().length > 0
     && simForm.text.trim().length > 0
@@ -307,7 +273,6 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
   }
 
   async function handleTest(connector: OutsideConnector): Promise<void> {
-    if (debugFixtureActive) return;
     setTestingId(connector.id);
     try {
       const result = await invoke<ConnectorTestResult>("outside_connectors_test", { id: connector.id });
@@ -328,7 +293,6 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
   }
 
   async function handleDelete(connector: OutsideConnector): Promise<void> {
-    if (debugFixtureActive) return;
     if (!window.confirm(`Delete connector "${connector.label}"?`)) return;
     try {
       await invoke("outside_connectors_delete", { id: connector.id });
@@ -395,8 +359,6 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
   return (
     <div
       className="settings-tab-body connectors-tab"
-      data-connectors-debug-fixture={debugFixtureActive ? "owned-safe" : undefined}
-      data-shellx-release-mounted={debugFixtureActive ? "true" : "false"}
       data-shellx-release-observe="mounted"
     >
       <div className="connectors-header">
@@ -404,7 +366,7 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
           Outside channels connect people to shellX. Keep new
           connectors in Inbox mode until you trust the source and routing.
         </p>
-        <button data-debug-id="surface-components-settings-connectorstab-1" type="button" className="settings-pill" onClick={() => void refresh()} disabled={busy || !desktopConnectorsAvailable || debugFixtureActive}>
+        <button data-debug-id="surface-components-settings-connectorstab-1" type="button" className="settings-pill" onClick={() => void refresh()} disabled={busy || !desktopConnectorsAvailable}>
           {busy ? "…" : "Refresh"}
         </button>
       </div>
@@ -563,6 +525,17 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
           <span className="settings-suffix">write only</span>
         </div>
 
+        {vaultStatus?.unlocked !== true && (
+          <p className="settings-tab-hint" role="status">
+            {!vaultStatus
+              ? "Vault access could not be checked. Refresh before saving a bot token."
+              : vaultStatus.mode === "unconfigured" || vaultStatus.mode === "legacyLimited" || vaultStatus.recoveryConfirmed === false
+                ? "Set up Vault in Settings → Vault → Setup before saving a bot token."
+                : "Unlock Vault in Settings → Vault → Setup before saving a bot token."}
+            {" "}Existing connector settings can still be saved without entering a token.
+          </p>
+        )}
+
         <div className="settings-row">
           <label className="settings-label" htmlFor="connector-allowed">
             {allowedLabel(form.providerKind)}
@@ -646,7 +619,6 @@ export function ConnectorsTab({ debugFixture = null }: { debugFixture?: Connecto
               connector={connector}
               sessions={visibleSessions}
               testing={testingId === connector.id}
-              fixtureLocked={debugFixtureActive}
               onEdit={() => {
                 setForm(formFromConnector(connector));
                 setDraftOpen(true);
@@ -731,7 +703,6 @@ function ConnectorRow({
   connector,
   sessions,
   testing,
-  fixtureLocked,
   onEdit,
   onTest,
   onDelete,
@@ -739,7 +710,6 @@ function ConnectorRow({
   connector: OutsideConnector;
   sessions: LiveSession[];
   testing: boolean;
-  fixtureLocked: boolean;
   onEdit: () => void;
   onTest: () => void;
   onDelete: () => void;
@@ -775,11 +745,11 @@ function ConnectorRow({
           {provider}
         </span>
         <span className="connection-last-used">test {lastTest}</span>
-        <button data-debug-id="surface-components-settings-connectorstab-18" data-shellx-release-observe="disabled" type="button" className="settings-pill" onClick={onTest} disabled={testing || fixtureLocked}>
+        <button data-debug-id="surface-components-settings-connectorstab-18" data-shellx-release-observe="disabled" type="button" className="settings-pill" onClick={onTest} disabled={testing}>
           {testing ? "…" : "Test"}
         </button>
         <button type="button" className="settings-pill" onClick={onEdit}>Edit</button>
-        <button type="button" className="settings-pill settings-pill-danger" data-shellx-release-observe="disabled" onClick={onDelete} disabled={fixtureLocked}>
+        <button type="button" className="settings-pill settings-pill-danger" data-shellx-release-observe="disabled" onClick={onDelete}>
           Delete
         </button>
       </div>

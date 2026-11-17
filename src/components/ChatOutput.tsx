@@ -3,20 +3,26 @@
  *
  * Renders the UiGroup[] produced by `groupEvents` in
  * `src/lib/grouping.ts`. ChatOutput is a pure presentation layer; it
- * does NOT regroup events — that pipeline is locked (tests against
- * real evidence/*.jsonl).
+ * does NOT regroup events — `grouping.ts` is the sole grouping pipeline.
  *
  * Auto-scrolls on new events with sticky-bottom behavior. File-link
  * chips inside assistant messages call onPreviewFile, which opens the
  * FilePreviewModal at App level.
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { onMouseUpAutoCopy } from "../lib/auto-copy-selection";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { linkifyPreviewableFileRefs, SafeMarkdownLink } from "../lib/markdown-links";
+import { groupEvents } from "../lib/grouping";
+import {
+  sessionHistoryPageMayContinueAcrossBoundary,
+  type LoadedSessionHistoryPage,
+} from "../lib/session-history-page";
 import { SafeImg, SafeVideo } from "./MediaPreview";
 import { ShellIcon, type ShellIconName } from "./icons";
+import { LazySurface } from "./LazySurface";
+import { useModalFocus } from "../lib/useModalFocus";
 import type {
   DoomLoopGroup,
   HostMcpUnreachableGroup,
@@ -31,22 +37,25 @@ import type {
   UiTextGroup,
 } from "../lib/grouping";
 import { PermissionPill } from "./PermissionPill";
-import type { DebugPermissionDecisionFixture } from "../lib/debug-permission-decision-fixture";
 
 function ChatOutputView({
   groups,
   onPreviewFile,
   tabId,
+  sessionId,
+  readOnly = false,
   assistantFallbackLabel = "Agent",
-  debugPermissionFixture = null,
 }: {
   groups: UiGroup[];
   onPreviewFile: (path: string) => void;
  /** Session identity for attachment and generated-media previews. */
   tabId?: string;
+  /** Durable JSONL identity used only by the full-history viewer. */
+  sessionId?: string;
+ /** Durable history is evidence only; it must not resolve live permissions. */
+  readOnly?: boolean;
   /** Label for ACP assistant groups that predate provider speaker metadata. */
   assistantFallbackLabel?: string;
-  debugPermissionFixture?: DebugPermissionDecisionFixture | null;
 }): JSX.Element {
   const endRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -71,6 +80,7 @@ function ChatOutputView({
  // - everything in between → leave state alone (content-add bounce
  // doesn't trip the pill).
   const [pinnedBottom, setPinnedBottom] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const userScrolledUpRef = useRef(false);
 
  // Wheel / keyboard / touch listeners drive the "user intent" signal.
@@ -140,17 +150,35 @@ function ChatOutputView({
 
   if (groups.length === 0) {
     return (
-      <div className="output">
-        <div className="output-empty">
-          No events yet. Use the prompt input below — events render here as
-          chat bubbles + tool cards.
-          <div className="output-empty-tips">
-            <span className="oe-tip"><kbd>Ctrl</kbd>+<kbd>K</kbd> palette</span>
-            <span className="oe-tip"><kbd>/</kbd> commands</span>
-            <span className="oe-tip"><kbd>@</kbd> attach</span>
+      <>
+        <div className="output">
+          {!readOnly ? (
+            <SessionHistoryButton
+              available={Boolean(sessionId)}
+              onOpen={() => setHistoryOpen(true)}
+            />
+          ) : null}
+          <div className="output-empty">
+            No events yet. Use the prompt input below — events render here as
+            chat bubbles + tool cards.
+            <div className="output-empty-tips">
+              <span className="oe-tip"><kbd>Ctrl</kbd>+<kbd>K</kbd> palette</span>
+              <span className="oe-tip"><kbd>/</kbd> commands</span>
+              <span className="oe-tip"><kbd>@</kbd> attach</span>
+            </div>
           </div>
         </div>
-      </div>
+        {!readOnly ? (
+          <SessionHistoryDialog
+            open={historyOpen}
+            sessionId={sessionId}
+            tabId={tabId}
+            assistantFallbackLabel={assistantFallbackLabel}
+            onPreviewFile={onPreviewFile}
+            onClose={() => setHistoryOpen(false)}
+          />
+        ) : null}
+      </>
     );
   }
 
@@ -195,15 +223,22 @@ function ChatOutputView({
   }
 
   return (
-    <div
-      className="output"
-      ref={containerRef}
-      tabIndex={0}
-      role="region"
-      aria-label="Chat transcript"
-      onScroll={onScroll}
-      onMouseUp={onMouseUpAutoCopy}
-    >
+    <>
+      <div
+        className="output"
+        ref={containerRef}
+        tabIndex={0}
+        role="region"
+        aria-label="Chat transcript"
+        onScroll={onScroll}
+        onMouseUp={onMouseUpAutoCopy}
+      >
+      {!readOnly ? (
+        <SessionHistoryButton
+          available={Boolean(sessionId)}
+          onOpen={() => setHistoryOpen(true)}
+        />
+      ) : null}
       {groups.map((g) => (
         <Row
           key={g.id}
@@ -212,7 +247,7 @@ function ChatOutputView({
           tabId={ttabId}
           duplicateMedia={duplicates.get(g.id)}
           assistantFallbackLabel={assistantFallbackLabel}
-          debugPermissionFixture={debugPermissionFixture}
+          readOnly={readOnly}
         />
       ))}
       <div ref={endRef} />
@@ -268,6 +303,176 @@ function ChatOutputView({
           focus a hunk · <kbd>j</kbd>/<kbd>k</kbd> next/prev · <kbd>y</kbd>/<kbd>n</kbd> accept/reject · <kbd>e</kbd> editor
         </div>
       )}
+      </div>
+      {!readOnly ? (
+        <SessionHistoryDialog
+          open={historyOpen}
+          sessionId={sessionId}
+          tabId={tabId}
+          assistantFallbackLabel={assistantFallbackLabel}
+          onPreviewFile={onPreviewFile}
+          onClose={() => setHistoryOpen(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function SessionHistoryButton({
+  available,
+  onOpen,
+}: {
+  available: boolean;
+  onOpen: () => void;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      data-debug-id="session-history-open"
+      data-shellx-release-observe="focused"
+      className="session-history-open"
+      onClick={(event) => {
+        // Native pointer activation does not focus buttons on every platform.
+        // Give both the lazy fallback and loaded dialog the real return target.
+        event.currentTarget.focus({ preventScroll: true });
+        onOpen();
+      }}
+      disabled={!available}
+      title={available ? "Open full session history" : "Full history is available after this chat has been saved"}
+      aria-label={available ? "Open full session history" : "Full session history is unavailable until this chat is saved"}
+    >
+      <ShellIcon name="history" size={14} />
+      <span>Full history</span>
+    </button>
+  );
+}
+
+export function SessionHistoryPageContent({
+  page,
+  tabId,
+  assistantFallbackLabel,
+  onPreviewFile,
+}: {
+  page: LoadedSessionHistoryPage | null;
+  tabId?: string;
+  assistantFallbackLabel: string;
+  onPreviewFile: (path: string) => void;
+}): JSX.Element {
+  const groups = useMemo(() => page ? groupEvents(page.parsed.frames) : [], [page]);
+  const mayContinueAcrossBoundary = page
+    ? sessionHistoryPageMayContinueAcrossBoundary(page.parsed.frames)
+    : false;
+  if (!page) {
+    return <p className="session-history-empty">No history page is loaded.</p>;
+  }
+  if (groups.length === 0) {
+    return (
+      <div className="session-history-content" aria-label="Session history messages">
+        {mayContinueAcrossBoundary ? (
+          <p className="session-history-warning" role="note">
+            Page boundary: streamed messages and tool status can continue on an adjacent page. Inspect adjacent pages before treating this page as a complete message or tool result.
+          </p>
+        ) : null}
+        <div className="session-history-empty" role="status">
+          This page contains no readable conversation messages.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="session-history-content" aria-label="Session history messages">
+      {mayContinueAcrossBoundary ? (
+        <p className="session-history-warning" role="note">
+          Page boundary: streamed messages and tool status can continue on an adjacent page. Inspect adjacent pages before treating this page as a complete message or tool result.
+        </p>
+      ) : null}
+      <ChatOutput
+        groups={groups}
+        onPreviewFile={onPreviewFile}
+        tabId={tabId}
+        readOnly
+        assistantFallbackLabel={assistantFallbackLabel}
+      />
+    </div>
+  );
+}
+
+function SessionHistoryDialog({
+  open,
+  sessionId,
+  tabId,
+  assistantFallbackLabel,
+  onPreviewFile,
+  onClose,
+}: {
+  open: boolean;
+  sessionId?: string;
+  tabId?: string;
+  assistantFallbackLabel: string;
+  onPreviewFile: (path: string) => void;
+  onClose: () => void;
+}): JSX.Element | null {
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const LazySessionHistoryViewer = useMemo(
+    () => lazy(() => import("./SessionHistoryViewer")),
+    [loadAttempt],
+  );
+  useEffect(() => {
+    if (!open) setLoadAttempt((attempt) => attempt + 1);
+  }, [open]);
+  if (!open) return null;
+  return (
+    <LazySurface
+      label="Full session history"
+      onDismiss={onClose}
+      onRetry={() => setLoadAttempt((attempt) => attempt + 1)}
+      loadingFallback={<SessionHistoryLoadingFallback onClose={onClose} />}
+    >
+      <LazySessionHistoryViewer
+        sessionId={sessionId}
+        onPreviewFile={onPreviewFile}
+        onClose={onClose}
+        renderPage={(page, previewFromHistory) => (
+          <SessionHistoryPageContent
+            page={page}
+            tabId={tabId}
+            assistantFallbackLabel={assistantFallbackLabel}
+            onPreviewFile={previewFromHistory}
+          />
+        )}
+      />
+    </LazySurface>
+  );
+}
+
+export function SessionHistoryLoadingFallback({ onClose }: { onClose: () => void }): JSX.Element {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeModal = useCallback(() => onClose(), [onClose]);
+  useModalFocus(true, dialogRef, closeModal);
+  return (
+    <div className="session-history-backdrop" data-debug-id="session-history-backdrop" onClick={onClose}>
+      <div
+        ref={dialogRef}
+        className="session-history-modal session-history-loading-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Opening full session history"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="session-history-status" role="status" aria-live="polite">
+          Loading full session history…
+        </div>
+        <button
+          type="button"
+          className="session-history-close"
+          data-dialog-initial-focus="true"
+          onClick={onClose}
+          aria-label="Cancel opening full session history"
+        >
+          <ShellIcon name="close" size={16} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -318,13 +523,13 @@ function Row({
   tabId,
   duplicateMedia,
   assistantFallbackLabel,
-  debugPermissionFixture,
+  readOnly,
 }: {
   group: UiGroup;
   onPreviewFile: (path: string) => void;
   tabId: string;
   assistantFallbackLabel: string;
-  debugPermissionFixture: DebugPermissionDecisionFixture | null;
+  readOnly: boolean;
  /** When set, this tool group's image/video matches an earlier
  * group's path — render a "duplicate" pill instead of the actual
  * <SafeImg>/<SafeVideo>. */
@@ -368,9 +573,7 @@ function Row({
         <PermissionPill
           g={group}
           tabId={tabId}
-          debugFixture={debugPermissionFixture?.requestId === group.requestId
-            ? debugPermissionFixture
-            : null}
+          readOnly={readOnly}
         />
       );
   }

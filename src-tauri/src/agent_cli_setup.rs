@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+
 use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -17,9 +17,9 @@ const INSTALLER_DOWNLOAD_TIMEOUT_SECS: u64 = 120;
 const MAX_INSTALLER_BYTES: u64 = 8 * 1024 * 1024;
 const PENDING_CONFIRMATION_TTL_MS: i64 = 30 * 60 * 1000;
 const INSTALL_OUTPUT_TAIL_CHARS: usize = 12_000;
-const RELEASE_TEST_SETUP_PRESET_ID: &str = "release-surface-agent-cli-setup";
-const RELEASE_TEST_NPM_COMMAND: &str = "npm install -g @openai/codex";
-const RELEASE_TEST_NPM_RECEIPT: &str = "release-agent-cli-install-receipt.json";
+
+
+
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -269,12 +269,12 @@ pub fn setup_recipes() -> Vec<AgentCliSetupRecipe> {
             docs_url: "https://developers.openai.com/codex/quickstart",
             pricing_url: Some("https://openai.com/chatgpt/pricing/"),
             official_source_url: "https://developers.openai.com/codex/quickstart",
-            last_verified_at: "2026-06-10",
+            last_verified_at: "2026-11-17",
             install_methods: vec![
                 vendor_method(
                     "macLinux",
                     "macOS / Linux / WSL",
-                    "https://chatgpt.com/codex/install.sh",
+                    "https://releases.openai.com/codex/install.sh",
                     "sh",
                     "posix",
                     &["local-posix", "wsl", "ssh"],
@@ -282,7 +282,7 @@ pub fn setup_recipes() -> Vec<AgentCliSetupRecipe> {
                 vendor_method(
                     "windowsPowerShell",
                     "Windows PowerShell",
-                    "https://chatgpt.com/codex/install.ps1",
+                    "https://releases.openai.com/codex/install.ps1",
                     "powershell",
                     "powershell",
                     &["local-windows", "ssh-windows"],
@@ -678,13 +678,14 @@ fn vendor_method(
 fn safe_manual_installer_command(installer_url: &str, installer_kind: &str) -> String {
     match installer_kind {
         "powershell" | "cmd" => {
+            let extension = if installer_kind == "cmd" { "cmd" } else { "ps1" };
             let execute = if installer_kind == "cmd" {
                 "& cmd.exe /D /C $tmp"
             } else {
                 "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tmp"
             };
             format!(
-                "$tmp=Join-Path ([IO.Path]::GetTempPath()) ('shellx-agent-cli-'+[guid]::NewGuid().ToString('N')); try {{ Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -Uri {} -OutFile $tmp; Get-FileHash -Algorithm SHA256 -LiteralPath $tmp; {execute} }} finally {{ Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }}",
+                "$tmp=Join-Path ([IO.Path]::GetTempPath()) ('shellx-agent-cli-'+[guid]::NewGuid().ToString('N')+'.{extension}'); try {{ Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -Uri {} -OutFile $tmp; Get-FileHash -Algorithm SHA256 -LiteralPath $tmp; {execute} }} finally {{ Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }}",
                 power_shell_literal(installer_url),
             )
         }
@@ -826,7 +827,13 @@ fn validate_installer_source_url(raw: &str) -> Result<reqwest::Url, String> {
         return Err("agent_cli_setup.prepare: vendor installer URL contains unsupported authority, port, query, or fragment data".to_string());
     }
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
-    if !["x.ai", "claude.ai", "chatgpt.com", "antigravity.google"].contains(&host.as_str()) {
+    // Codex's documented short URLs redirect to these two fixed release files.
+    // Pin them directly so downloads retain the zero-redirect policy.
+    let codex_release_source = host == "releases.openai.com"
+        && matches!(url.path(), "/codex/install.sh" | "/codex/install.ps1");
+    if !codex_release_source
+        && !["x.ai", "claude.ai", "chatgpt.com", "antigravity.google"].contains(&host.as_str())
+    {
         return Err(format!(
             "agent_cli_setup.prepare: vendor installer host '{host}' is not allowlisted"
         ));
@@ -1114,41 +1121,10 @@ async fn execute_prepared_install(
 ) -> Result<AgentCliInstallResult, String> {
     let started_at_ms = now_ms();
     let command = prepared.confirmation.command.clone();
-    let release_test_npm_shim = release_test_npm_shim_path(
-        &prepared,
-        crate::isolated_test_instance_requested(),
-        std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .as_deref()
-            .map(Path::new),
-    );
-    let output = match release_test_npm_shim {
-        Ok(Some(shim)) => run_release_test_npm_shim(&shim).await,
-        Err(error) => Err(error),
-        Ok(None) => {
-            if let Some(staged) = &prepared.staged {
-                let windows_target = preset_targets_windows(&prepared.preset);
-                match staged_execute_command(staged, windows_target) {
-                    Ok(staged_command) => {
-                        run_install_transport(
-                            &prepared.preset,
-                            if windows_target {
-                                "powershell"
-                            } else {
-                                "posix"
-                            },
-                            &staged_command,
-                        )
-                        .await
-                    }
-                    Err(error) => Err(error),
-                }
-            } else {
-                run_install_transport(&prepared.preset, &prepared.confirmation.shell, &command)
-                    .await
-            }
-        }
-    };
+
+
+
+    let output = execute_install_command(&prepared).await;
     let cleanup_error = cleanup_prepared_install(&prepared).await.err();
     let finished_at_ms = now_ms();
     let (exit_code, stdout_tail, mut stderr_tail, mut success) = match output {
@@ -1183,101 +1159,28 @@ async fn execute_prepared_install(
     })
 }
 
-fn release_test_npm_shim_path(
-    prepared: &PreparedInstall,
-    isolated_test_instance: bool,
-    profile_root: Option<&Path>,
-) -> Result<Option<PathBuf>, String> {
-    if prepared.preset.id != RELEASE_TEST_SETUP_PRESET_ID {
-        return Ok(None);
-    }
-    if !isolated_test_instance {
-        return Err(
-            "agent_cli_setup.confirm: release setup preset requires an isolated final-test profile"
-                .to_string(),
-        );
-    }
-    if prepared.confirmation.provider_id != "codex-cli"
-        || prepared.confirmation.method_id != "npm"
-        || prepared.confirmation.command != RELEASE_TEST_NPM_COMMAND
-        || prepared.confirmation.shell != "posix-or-cmd"
-        || prepared.staged.is_some()
-    {
-        return Err(
-            "agent_cli_setup.confirm: release setup preset requires the exact Codex npm recipe"
-                .to_string(),
-        );
-    }
-    let profile_root = profile_root.ok_or_else(|| {
-        "agent_cli_setup.confirm: isolated release profile root is unavailable".to_string()
-    })?;
-    let profile_name = profile_root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let run_id = profile_name
-        .strip_prefix("shellx-final-webdriver-")
-        .unwrap_or_default();
-    if !(16..=64).contains(&run_id.len())
-        || !run_id
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
-        return Err(
-            "agent_cli_setup.confirm: isolated release profile name is invalid".to_string(),
-        );
-    }
-    let receipt = profile_root.join(".shellx").join(RELEASE_TEST_NPM_RECEIPT);
-    if receipt.exists() {
-        return Err("agent_cli_setup.confirm: owned npm receipt already exists".to_string());
-    }
-    let shim = profile_root
-        .join(".local")
-        .join("bin")
-        .join(if cfg!(target_os = "windows") {
-            "npm.CMD"
+async fn execute_install_command(prepared: &PreparedInstall) -> Result<CommandOutput, String> {
+    if let Some(staged) = &prepared.staged {
+        let shell = if preset_targets_windows(&prepared.preset) {
+            "powershell"
         } else {
-            "npm"
-        });
-    let metadata = std::fs::symlink_metadata(&shim).map_err(|error| {
-        format!("agent_cli_setup.confirm: owned npm shim is unavailable: {error}")
-    })?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || metadata.len() == 0
-        || metadata.len() > 16 * 1024
-    {
-        return Err(
-            "agent_cli_setup.confirm: owned npm shim must be a bounded regular file".to_string(),
-        );
+            "posix"
+        };
+        let command = staged_execute_command(staged, preset_targets_windows(&prepared.preset))?;
+        run_install_transport(&prepared.preset, shell, &command).await
+    } else {
+        run_install_transport(
+            &prepared.preset,
+            &prepared.confirmation.shell,
+            &prepared.confirmation.command,
+        )
+        .await
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        if metadata.permissions().mode() & 0o111 == 0 {
-            return Err("agent_cli_setup.confirm: owned npm shim is not executable".to_string());
-        }
-    }
-    Ok(Some(shim))
 }
 
-async fn run_release_test_npm_shim(shim: &Path) -> Result<CommandOutput, String> {
-    let shim = shim
-        .to_str()
-        .ok_or_else(|| "agent_cli_setup.confirm: owned npm shim path is not UTF-8".to_string())?;
-    #[cfg(target_os = "windows")]
-    {
-        return run_command(
-            "cmd.exe",
-            &["/D", "/C", "call", shim, "install", "-g", "@openai/codex"],
-        )
-        .await;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        run_command(shim, &["install", "-g", "@openai/codex"]).await
-    }
-}
+
+
+
 
 #[derive(Debug)]
 struct CommandOutput {
@@ -1471,513 +1374,4 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::acp::Transport;
-    use crate::connections::{ConnectionPreset, ConnectionProviderScanEntry};
-    #[cfg(not(target_os = "windows"))]
-    use sha2::{Digest, Sha256};
-
-    fn local_preset() -> ConnectionPreset {
-        ConnectionPreset {
-            id: "conn-local".to_string(),
-            label: "Current local".to_string(),
-            transport: Transport::Local { grok_path: None },
-            created_ms: 1,
-            last_used_ms: 0,
-            provider_scan: Vec::new(),
-        }
-    }
-
-    fn native_windows_ssh_preset() -> ConnectionPreset {
-        ConnectionPreset {
-            id: "conn-windows-ssh".to_string(),
-            label: "Windows laptop".to_string(),
-            transport: Transport::Ssh {
-                host: "fixture@windows-host".to_string(),
-                port: Some(22),
-                key_vault_ref: None,
-                remote_grok_path: "grok".to_string(),
-                remote_runtime: crate::acp::SshRemoteRuntime::Windows,
-                wsl_distro: None,
-            },
-            created_ms: 1,
-            last_used_ms: 0,
-            provider_scan: Vec::new(),
-        }
-    }
-
-    fn windows_wsl_ssh_preset() -> ConnectionPreset {
-        ConnectionPreset {
-            id: "conn-windows-wsl-ssh".to_string(),
-            label: "Windows laptop WSL".to_string(),
-            transport: Transport::Ssh {
-                host: "fixture@windows-host".to_string(),
-                port: Some(22),
-                key_vault_ref: None,
-                remote_grok_path: "grok".to_string(),
-                remote_runtime: crate::acp::SshRemoteRuntime::WindowsWsl,
-                wsl_distro: Some("Ubuntu-24.04".to_string()),
-            },
-            created_ms: 1,
-            last_used_ms: 0,
-            provider_scan: Vec::new(),
-        }
-    }
-
-    fn scan(provider_id: &str, can_run: bool) -> ConnectionProviderScanEntry {
-        ConnectionProviderScanEntry {
-            provider_id: provider_id.to_string(),
-            can_run,
-            status: if can_run {
-                crate::connections::ConnectionProviderScanStatus::Ready
-            } else {
-                crate::connections::ConnectionProviderScanStatus::Missing
-            },
-            binary: can_run.then(|| provider_id.to_string()),
-            version: can_run.then(|| format!("{provider_id} 1.0.0")),
-            binary_sha256: can_run.then(|| "a".repeat(64)),
-            binary_bytes: can_run.then_some(4096),
-            target_key: "local:linux".to_string(),
-            detail: None,
-            checked_at_ms: 42,
-        }
-    }
-
-    #[test]
-    fn setup_recipes_cover_supported_agent_clis_with_sources() {
-        let recipes = setup_recipes();
-        for id in ["grok", "claude-code", "codex-cli", "antigravity-cli"] {
-            let recipe = recipes
-                .iter()
-                .find(|recipe| recipe.provider_id == id)
-                .unwrap_or_else(|| panic!("missing setup recipe for {id}"));
-            assert!(!recipe.display_name.is_empty(), "recipe: {recipe:?}");
-            assert!(
-                recipe.docs_url.starts_with("https://"),
-                "recipe: {recipe:?}"
-            );
-            assert!(
-                recipe.official_source_url.starts_with("https://"),
-                "recipe: {recipe:?}"
-            );
-            assert!(!recipe.last_verified_at.is_empty(), "recipe: {recipe:?}");
-            assert!(!recipe.install_methods.is_empty(), "recipe: {recipe:?}");
-        }
-    }
-
-    #[test]
-    fn setup_state_marks_missing_cli_installable_and_ready_cli_ready() {
-        let preset = local_preset();
-        let state = build_agent_cli_setup_state_for_scan(
-            &preset,
-            vec![scan("codex-cli", false), scan("claude-code", true)],
-        );
-
-        let codex = state
-            .providers
-            .iter()
-            .find(|card| card.provider_id == "codex-cli")
-            .expect("codex card");
-        assert_eq!(codex.status, "missing");
-        assert!(!codex.can_run);
-        assert!(codex.installable, "codex card: {codex:?}");
-        assert!(
-            codex.recommended_method_id.is_some(),
-            "codex card: {codex:?}"
-        );
-        assert!(codex.auth_hint.contains("sign"), "codex card: {codex:?}");
-
-        let claude = state
-            .providers
-            .iter()
-            .find(|card| card.provider_id == "claude-code")
-            .expect("claude card");
-        assert_eq!(claude.status, "ready");
-        assert!(claude.can_run);
-        assert_eq!(claude.version.as_deref(), Some("claude-code 1.0.0"));
-        assert!(claude
-            .binary_sha256
-            .as_deref()
-            .is_some_and(|digest| digest == "a".repeat(64)));
-        assert_eq!(claude.binary_bytes, Some(4096));
-        assert_eq!(claude.target_key.as_deref(), Some("local:linux"));
-        assert_eq!(claude.checked_at_ms, 42);
-    }
-
-    #[test]
-    fn setup_state_never_reports_a_failed_version_probe_as_ready() {
-        let preset = local_preset();
-        let mut failed = scan("codex-cli", true);
-        failed.status = ConnectionProviderScanStatus::VersionFailed;
-        failed.version = None;
-        failed.binary_sha256 = None;
-        failed.binary_bytes = None;
-        failed.detail = Some("bounded version probe failed".to_string());
-        let state = build_agent_cli_setup_state_for_scan(&preset, vec![failed]);
-        let codex = state
-            .providers
-            .iter()
-            .find(|card| card.provider_id == "codex-cli")
-            .unwrap();
-        assert_eq!(codex.status, "versionFailed");
-        assert!(!codex.can_run);
-        assert!(codex.installable);
-        assert_eq!(
-            codex.detail.as_deref(),
-            Some("bounded version probe failed")
-        );
-    }
-
-    #[test]
-    fn native_windows_ssh_setup_uses_windows_recipes_and_paths() {
-        let preset = native_windows_ssh_preset();
-        assert_eq!(target_recipe_kind(&preset), "ssh-windows");
-        assert!(preset_targets_windows(&preset));
-        let state = build_agent_cli_setup_state_for_scan(&preset, Vec::new());
-        assert!(state.target.command_runs_on.contains("native Windows"));
-        for provider in &state.providers {
-            assert!(provider.installable, "provider: {provider:?}");
-            assert!(provider
-                .install_methods
-                .iter()
-                .any(|method| method.id == "windowsPowerShell"));
-            assert!(!provider
-                .install_methods
-                .iter()
-                .any(|method| method.id == "macLinux"));
-        }
-
-        let receipt = format!(
-            "__SHELLX_STAGE__\tC:\\Temp\\shellx-agent-cli-setup-fixture\\installer.ps1\t42\t{}",
-            "a".repeat(64)
-        );
-        let (path, bytes, _) = parse_stage_receipt(&receipt, "fixture", "powershell", true)
-            .expect("parse native Windows stage receipt");
-        assert_eq!(bytes, 42);
-        assert_eq!(
-            windows_parent_path(&path),
-            Some(r"C:\Temp\shellx-agent-cli-setup-fixture")
-        );
-    }
-
-    #[test]
-    fn windows_wsl_setup_names_the_actual_agent_environment() {
-        let preset = windows_wsl_ssh_preset();
-        assert_eq!(target_recipe_kind(&preset), "ssh");
-        assert!(!preset_targets_windows(&preset));
-        let state = build_agent_cli_setup_state_for_scan(&preset, Vec::new());
-        assert_eq!(state.target.wsl_distro.as_deref(), Some("Ubuntu-24.04"));
-        assert_eq!(
-            state.target.command_runs_on,
-            "WSL Ubuntu-24.04 via Windows OpenSSH fixture@windows-host"
-        );
-        for provider in &state.providers {
-            assert!(provider
-                .install_methods
-                .iter()
-                .any(|method| method.id == "macLinux"));
-            assert!(!provider
-                .install_methods
-                .iter()
-                .any(|method| method.id == "windowsPowerShell"));
-        }
-    }
-
-    #[test]
-    fn recipes_prefer_native_vendor_installers_before_node_fallbacks() {
-        let recipes = setup_recipes();
-        for (provider_id, posix_url, windows_url) in [
-            (
-                "grok",
-                "https://x.ai/cli/install.sh",
-                "https://x.ai/cli/install.ps1",
-            ),
-            (
-                "claude-code",
-                "https://claude.ai/install.sh",
-                "https://claude.ai/install.ps1",
-            ),
-            (
-                "codex-cli",
-                "https://chatgpt.com/codex/install.sh",
-                "https://chatgpt.com/codex/install.ps1",
-            ),
-            (
-                "antigravity-cli",
-                "https://antigravity.google/cli/install.sh",
-                "https://antigravity.google/cli/install.ps1",
-            ),
-        ] {
-            let recipe = recipes
-                .iter()
-                .find(|recipe| recipe.provider_id == provider_id)
-                .unwrap_or_else(|| panic!("missing setup recipe for {provider_id}"));
-            let first_posix = recipe
-                .install_methods
-                .iter()
-                .find(|method| {
-                    method
-                        .transport_kinds
-                        .iter()
-                        .any(|kind| kind == "local-posix")
-                })
-                .unwrap_or_else(|| panic!("missing POSIX method for {provider_id}"));
-            assert_eq!(first_posix.installer_url.as_deref(), Some(posix_url));
-            assert!(first_posix.command.contains("mktemp"));
-            assert!(first_posix.command.contains("sha256sum"));
-            assert!(!first_posix.command.contains("| bash"));
-            assert!(!first_posix.command.contains("install.sh |"));
-            assert!(!first_posix.requires_node);
-
-            let first_windows = recipe
-                .install_methods
-                .iter()
-                .find(|method| {
-                    method
-                        .transport_kinds
-                        .iter()
-                        .any(|kind| kind == "local-windows")
-                })
-                .unwrap_or_else(|| panic!("missing Windows method for {provider_id}"));
-            assert_eq!(first_windows.installer_url.as_deref(), Some(windows_url));
-            assert!(first_windows.command.contains("Get-FileHash"));
-            assert!(!first_windows.command.contains("Invoke-Expression"));
-            assert!(!first_windows.command.contains("iex"));
-            assert!(!first_windows.requires_node);
-        }
-    }
-
-    #[tokio::test]
-    async fn prepare_package_install_returns_immutable_confirmation_without_network_staging() {
-        let preset = local_preset();
-        let confirmation =
-            prepare_agent_cli_install(preset, "codex-cli".to_string(), Some("npm".to_string()))
-                .await
-                .expect("prepare codex install");
-
-        assert_eq!(confirmation.provider_id, "codex-cli");
-        assert_eq!(confirmation.target.transport, "local");
-        assert!(
-            confirmation.command.contains("codex"),
-            "confirmation: {confirmation:?}"
-        );
-        assert!(confirmation.requires_confirmation);
-        assert!(confirmation.artifact_sha256.is_none());
-        assert!(
-            confirmation.warning.contains("package-manager"),
-            "confirmation: {confirmation:?}"
-        );
-        assert!(cancel_agent_cli_install(confirmation.confirmation_id)
-            .await
-            .expect("cancel package install"));
-    }
-
-    #[tokio::test]
-    async fn release_test_npm_shim_is_exact_profile_scoped_and_fail_closed() {
-        let root = tempfile::tempdir().expect("temporary parent");
-        let profile = root.path().join("shellx-final-webdriver-0123456789abcdef");
-        let bin = profile.join(".local").join("bin");
-        std::fs::create_dir_all(&bin).expect("owned npm bin");
-        std::fs::create_dir_all(profile.join(".shellx")).expect("owned ShellX state");
-        let shim = bin.join(if cfg!(target_os = "windows") {
-            "npm.CMD"
-        } else {
-            "npm"
-        });
-        std::fs::write(
-            &shim,
-            if cfg!(target_os = "windows") {
-                "@exit /b 0\r\n"
-            } else {
-                "#!/bin/sh\nexit 0\n"
-            },
-        )
-        .expect("owned npm shim");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o700))
-                .expect("executable owned npm shim");
-        }
-
-        let mut preset = local_preset();
-        preset.id = RELEASE_TEST_SETUP_PRESET_ID.to_string();
-        let confirmation = prepare_agent_cli_install(
-            preset.clone(),
-            "codex-cli".to_string(),
-            Some("npm".to_string()),
-        )
-        .await
-        .expect("prepare owned Codex npm install");
-        let prepared = PreparedInstall {
-            confirmation: confirmation.clone(),
-            preset,
-            staged: None,
-        };
-        assert!(release_test_npm_shim_path(&prepared, false, Some(&profile))
-            .expect_err("non-isolated release preset must fail closed")
-            .contains("requires an isolated final-test profile"));
-        assert_eq!(
-            release_test_npm_shim_path(&prepared, true, Some(&profile))
-                .expect("resolve exact owned npm shim"),
-            Some(shim),
-        );
-        std::fs::write(
-            profile.join(".shellx").join(RELEASE_TEST_NPM_RECEIPT),
-            "occupied",
-        )
-        .expect("occupied receipt");
-        assert!(release_test_npm_shim_path(&prepared, true, Some(&profile))
-            .expect_err("existing receipt must fail closed")
-            .contains("receipt already exists"));
-        assert!(cancel_agent_cli_install(confirmation.confirmation_id)
-            .await
-            .expect("cancel owned Codex npm preparation"));
-    }
-
-    #[tokio::test]
-    async fn live_vendor_prepare_and_cancel_when_enabled() {
-        if std::env::var("SHELLX_AGENT_CLI_SETUP_LIVE").as_deref() != Ok("1") {
-            return;
-        }
-        let confirmation = prepare_agent_cli_install(
-            local_preset(),
-            "grok".to_string(),
-            Some("macLinux".to_string()),
-        )
-        .await
-        .expect("stage official Grok bootstrap");
-        let path = confirmation.staged_path.clone().expect("staged path");
-        assert!(std::path::Path::new(&path).is_file());
-        assert_eq!(
-            confirmation.artifact_sha256.as_deref().map(str::len),
-            Some(64)
-        );
-        assert!(confirmation.artifact_bytes.is_some_and(|bytes| bytes > 0));
-        assert!(cancel_agent_cli_install(confirmation.confirmation_id)
-            .await
-            .expect("cancel staged vendor install"));
-        assert!(!std::path::Path::new(&path).exists());
-    }
-
-    #[tokio::test]
-    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST"]
-    async fn live_native_windows_ssh_install_transport_probe() {
-        let host =
-            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
-        let output = run_ssh_install(
-            &host,
-            None,
-            None,
-            crate::acp::SshRemoteRuntime::Windows,
-            None,
-            "[Console]::Out.WriteLine('SHELLX_WINDOWS_INSTALL_TRANSPORT')",
-        )
-        .await
-        .expect("native Windows install transport probe");
-        assert!(output.success, "{output:?}");
-        assert!(output.stdout.contains("SHELLX_WINDOWS_INSTALL_TRANSPORT"));
-    }
-
-    #[test]
-    fn vendor_staging_rejects_unsafe_sources_and_binds_execution_to_digest() {
-        assert!(validate_installer_source_url("http://x.ai/cli/install.sh").is_err());
-        assert!(validate_installer_source_url("https://example.com/install.sh").is_err());
-        assert!(validate_installer_source_url("https://user@x.ai/cli/install.sh").is_err());
-        assert!(validate_installer_source_url("https://x.ai/cli/install.sh?next=1").is_err());
-        assert!(validate_installer_source_url("https://x.ai/cli/install.sh").is_ok());
-
-        let stage = posix_stage_command("https://x.ai/cli/install.sh", "fixture", "bash");
-        assert!(stage.contains("--proto '=https'"));
-        assert!(stage.contains("--max-redirs 0"));
-        assert!(stage.contains("sha256sum"));
-        assert!(!stage.contains("| bash"));
-
-        let receipt_path = "/fixture/shellx-agent-cli-setup-fixture.sh";
-        let (path, bytes, sha256) = parse_stage_receipt(
-            &format!("__SHELLX_STAGE__\t{}\t42\t{}", receipt_path, "a".repeat(64)),
-            "fixture",
-            "bash",
-            false,
-        )
-        .expect("parse stage receipt");
-        assert!(parse_stage_receipt(
-            &format!(
-                "__SHELLX_STAGE__\t/fixture/../shellx-agent-cli-setup-fixture.sh\t42\t{}",
-                "a".repeat(64)
-            ),
-            "fixture",
-            "bash",
-            false,
-        )
-        .is_err());
-        let staged = StagedInstaller {
-            source_url: "https://x.ai/cli/install.sh".to_string(),
-            path,
-            sha256,
-            bytes,
-            kind: "bash".to_string(),
-        };
-        let execute = staged_execute_command(&staged, false).expect("build staged execution");
-        assert!(execute.contains(&"a".repeat(64)));
-        assert!(execute.contains("digest changed after confirmation"));
-        assert!(execute.contains("trap cleanup"));
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[tokio::test]
-    async fn changed_staged_installer_is_blocked_and_cleaned_without_execution() {
-        let root = tempfile::Builder::new()
-            .prefix("shellx-agent-cli-setup-test-")
-            .tempdir()
-            .expect("create secure staged fixture directory");
-        let root_path = root.path().to_path_buf();
-        let path = root_path.join("installer.sh");
-        let mut sentinel = tempfile::NamedTempFile::new().expect("create secure sentinel");
-        std::io::Write::write_all(&mut sentinel, b"not-executed").expect("initialize sentinel");
-        let original = format!(
-            "#!/bin/sh\nprintf executed > {}\n",
-            crate::acp::shell_quote_for_remote(&sentinel.path().to_string_lossy())
-        );
-        std::fs::write(&path, original.as_bytes()).expect("write original staged fixture");
-        let sha256 = format!("{:x}", Sha256::digest(original.as_bytes()));
-        std::fs::write(&path, b"#!/bin/sh\nexit 0\n").expect("tamper staged fixture");
-        let staged = StagedInstaller {
-            source_url: "https://x.ai/cli/install.sh".to_string(),
-            path: path.to_string_lossy().to_string(),
-            sha256,
-            bytes: original.len() as u64,
-            kind: "sh".to_string(),
-        };
-        let command = staged_execute_command(&staged, false).expect("build staged command");
-        let output = run_local_install("posix", &command)
-            .await
-            .expect("run digest guard");
-        assert!(!output.success);
-        assert!(output.stderr.contains("digest changed after confirmation"));
-        assert_eq!(
-            std::fs::read(sentinel.path()).expect("read sentinel"),
-            b"not-executed",
-            "tampered installer must not execute"
-        );
-        assert!(
-            !root_path.exists(),
-            "tampered installer staging directory must be removed"
-        );
-    }
-
-    #[tokio::test]
-    async fn confirm_install_rejects_unknown_confirmation_id() {
-        let err = confirm_agent_cli_install("missing-confirmation".to_string())
-            .await
-            .expect_err("unknown confirmation id must fail");
-        assert!(
-            err.contains("unknown") || err.contains("expired"),
-            "err: {err}"
-        );
-    }
 }

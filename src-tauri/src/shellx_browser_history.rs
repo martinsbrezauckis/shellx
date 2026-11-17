@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use crate::shellx_browser::{
-    lock_or_recover, push_receipt, BrowserClearHistoryRequest, BrowserReceipt,
-    ShellxBrowserRegistry,
+    lock_or_recover, push_receipt, retain_existing_history_visit_admissions,
+    BrowserClearHistoryRequest, BrowserReceipt, ShellxBrowserRegistry,
 };
 
 impl ShellxBrowserRegistry {
@@ -30,6 +30,7 @@ impl ShellxBrowserRegistry {
         state
             .history
             .retain(|entry| !scope.matches(&entry.profile_id, entry.task_id.as_deref()));
+        retain_existing_history_visit_admissions(&mut state);
         let active_task_id = state.active_task_id.clone();
         let active_profile_id = active_task_id.as_deref().and_then(|task_id| {
             state

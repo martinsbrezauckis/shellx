@@ -84,7 +84,20 @@ pub(crate) fn preserve_corruption(
     Ok(())
 }
 
-pub(crate) fn acquire_store_lock(root: &Path) -> Result<File, TaskStoreError> {
+pub(crate) struct OwnedStoreLock {
+    file: File,
+}
+
+impl Drop for OwnedStoreLock {
+    fn drop(&mut self) {
+        // Release ownership even if another process briefly inherited the
+        // open file description before exec. Closing this descriptor alone
+        // can leave the advisory lock held by that inherited descriptor.
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
+pub(crate) fn acquire_store_lock(root: &Path) -> Result<OwnedStoreLock, TaskStoreError> {
     let lock_path = root.join("tasks-store-v1.lock");
     reject_symlink(&lock_path, "task store lock path")?;
     let lock_file = OpenOptions::new()
@@ -104,8 +117,10 @@ pub(crate) fn acquire_store_lock(root: &Path) -> Result<File, TaskStoreError> {
     lock_file.try_lock_exclusive().map_err(|_| {
         TaskStoreError::Io("task store is already open by another process".to_string())
     })?;
-    Ok(lock_file)
+    Ok(OwnedStoreLock { file: lock_file })
 }
+
+
 
 pub(crate) fn hydrate_terminal_receipt_index(store: &mut PersistedTaskStore) -> Result<(), String> {
     for receipt in &store.receipts.entries {

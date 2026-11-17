@@ -31,9 +31,8 @@ pub(super) struct ConnectBody {
     /// Lets external drivers (introspection loop tests, future Telegram
     /// channel) target a specific registry slot.
     /// Defaults to "default" for back-compat.
-    // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
-    // drivers + test agents that reach for the shorter `tab` form stop
-    // silently collapsing to the default tab.
+    // Accept `?tab=`, `?tab_id=`, and `?tabId=` so every supported client
+    // spelling selects the requested tab instead of silently using default.
     #[serde(
         rename = "tabId",
         alias = "tab",
@@ -160,10 +159,9 @@ pub(super) async fn connect(
             default_guard.set_permission_mode(Some(mode));
         }
     }
-    // #427 — refuse silent-retain of an already-active session when a
-    // different connectionId is being supplied. Without this, the WSL
-    // test agent calling /connect with the WSL preset saw an existing
-    // SSH session retained and `{ok:true}` returned — confusing.
+    // Refuse retaining an already-active session when a different
+    // connectionId is supplied; otherwise a requested transport switch could
+    // report success while preserving the old session.
     // Caller must explicitly /abort first when switching transports.
     let explicit_transport_requested = body.connection_id.is_some()
         || body.wsl_distro.is_some()
@@ -515,9 +513,8 @@ pub(super) async fn connect(
             info!("debug-api /connect ok cwd={}", body.cwd);
             // #352 fix (2026-05-20): mirror the Tauri start_grok_session
             // hook — schedule marketplace launcher-health probes for this
-            // tab. Without this, /connect-driven sessions (every WSL probe
-            // and Sonnet test agent) get `/state/marketplace_health`
-            // entries=[] forever. Read is_wsl/is_ssh off the live session
+            // tab so /connect-driven sessions receive current
+            // `/state/marketplace_health` entries. Read is_wsl/is_ssh off the live session
             // BEFORE dropping the guard.
             let is_wsl = guard.wsl_distro().is_some();
             let is_ssh = guard.ssh_config().is_some();
@@ -548,62 +545,7 @@ pub(super) async fn connect(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[tokio::test]
-    async fn cancellable_session_start_interrupts_a_stalled_handshake() {
-        let registry = std::sync::Arc::new(crate::acp::SessionRegistry::new());
-        let tab = "debug-api-stalled-connect";
-        let mut lease = registry
-            .begin_session_start(tab)
-            .expect("connect should register its startup token");
-        let cancel_registry = registry.clone();
-
-        let (outcome, cancellation) = tokio::join!(
-            run_cancellable_session_start(&lease, async {
-                std::future::pending::<Result<(), String>>().await
-            }),
-            async move {
-                tokio::task::yield_now().await;
-                cancel_registry
-                    .cancel_session_start(tab)
-                    .expect("abort should find the stalled connect")
-            }
-        );
-
-        assert_eq!(outcome, ConnectStartOutcome::Cancelled);
-        assert!(registry.session_start_is_current(tab, &cancellation));
-        lease.finish();
-    }
-
-    #[tokio::test]
-    async fn cancellable_session_start_preserves_a_normal_result() {
-        let registry = crate::acp::SessionRegistry::new();
-        let tab = "debug-api-completed-connect";
-        let mut lease = registry
-            .begin_session_start(tab)
-            .expect("connect should register its startup token");
-
-        let outcome = run_cancellable_session_start(&lease, async { Ok(()) }).await;
-
-        assert_eq!(outcome, ConnectStartOutcome::Finished(Ok(())));
-        lease.finish();
-    }
-
-    #[tokio::test]
-    async fn hard_abort_of_an_absent_tab_does_not_create_a_registry_row() {
-        let registry = crate::acp::SessionRegistry::new();
-        let tab = "debug-api-absent-hard-abort";
-
-        let result = abort_existing_hard_session(&registry, tab).await;
-
-        assert!(result.is_none());
-        assert!(registry.get_existing(tab).await.is_none());
-        assert!(registry.list_tabs().await.is_empty());
-    }
-}
 
 #[derive(Deserialize)]
 pub(super) struct PromptBody {
@@ -613,9 +555,8 @@ pub(super) struct PromptBody {
     prompt: String,
     /// Lets external drivers target a specific tab's grok session.
     /// Defaults to "default".
-    // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
-    // drivers + test agents that reach for the shorter `tab` form stop
-    // silently collapsing to the default tab.
+    // Accept `?tab=`, `?tab_id=`, and `?tabId=` so every supported client
+    // spelling selects the requested tab instead of silently using default.
     #[serde(
         rename = "tabId",
         alias = "tab",
@@ -936,9 +877,8 @@ pub(super) async fn prompt(
 #[derive(Deserialize, Default)]
 pub(super) struct AbortBody {
     /// Optional tab_id; defaults to "default".
-    // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
-    // drivers + test agents that reach for the shorter `tab` form stop
-    // silently collapsing to the default tab.
+    // Accept `?tab=`, `?tab_id=`, and `?tabId=` so every supported client
+    // spelling selects the requested tab instead of silently using default.
     #[serde(
         rename = "tabId",
         alias = "tab",

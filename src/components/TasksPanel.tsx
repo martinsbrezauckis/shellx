@@ -5,9 +5,7 @@
  * Role
  * A right-rail tab that surfaces ALL in-flight subprocesses the
  * ShellX host has spawned: provider subprocesses (one per tab), operator
- * terminals from the bottom-panel Terminal, and host-Agent children. Future spawn
- * sources (host_mcp children, debug-api spawns) appear here
- * automatically once they land their own registry rows.
+ * terminals from the bottom-panel Terminal, and host-Agent children.
  *
  * Data flow
  * Polls the Rust `list_background_tasks` command every 500ms while
@@ -36,6 +34,7 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "../lib/tauri-bridge";
+import { isPublicManualPreview } from "../lib/public-manual-mode";
 import { AgentRunsMonitor } from "./AgentRunsMonitor";
 import { ShellIcon } from "./icons";
 
@@ -52,20 +51,6 @@ export interface TaskSnapshot {
   tabId: string | null;
 }
 
-export const OWNED_CLIPBOARD_TASK_OUTPUT = "owned clipboard task output";
-export const OWNED_CLIPBOARD_TASK: TaskSnapshot = {
-  taskId: "release-owned-clipboard-task",
-  origin: "user_term",
-  commandDisplay: "owned clipboard fixture",
-  pid: 35035,
-  cpuPct: 0,
-  rssMb: 1,
-  status: "running",
-  startedAtMs: 0,
-  recentOutputTail: OWNED_CLIPBOARD_TASK_OUTPUT,
-  tabId: null,
-};
-
 const POLL_MS = 500;
 const SHOW_COMPLETED_KEY = "tasks-panel-show-completed";
 const SHOW_ALL_TABS_KEY = "tasks-panel-show-all-tabs";
@@ -74,7 +59,6 @@ export function TasksPanel({
   activeTabId,
   activeAgentId,
   onAskAgent,
-  debugClipboardFixture = null,
 }: {
  /** when set, the panel filters out rows
  * whose tabId does NOT match. Current host_mcp children carry the
@@ -85,7 +69,6 @@ export function TasksPanel({
  /** Optional bridge back into the active Grok tab. Used for "inspect
  * this task/output" without forcing the user to copy logs manually. */
   onAskAgent?: (prompt: string) => void;
-  debugClipboardFixture?: "owned-safe" | null;
 } = {}): JSX.Element {
   const [tasks, setTasks] = useState<TaskSnapshot[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -133,21 +116,13 @@ export function TasksPanel({
   }, []);
   const cancelledRef = useRef(false);
 
-  useEffect(() => {
-    if (debugClipboardFixture !== "owned-safe") return;
-    setFilter("");
-    setShowCompleted(false);
-    setShowAllTabs(false);
-    setExpanded(new Set());
-  }, [debugClipboardFixture]);
-
   const refresh = useCallback(async (): Promise<boolean> => {
-    if (debugClipboardFixture === "owned-safe") {
-      setTasks([{ ...OWNED_CLIPBOARD_TASK }]);
-      setError(null);
-      return true;
-    }
     if (!inTauri()) {
+      if (isPublicManualPreview()) {
+        setTasks([]);
+        setError(null);
+        return true;
+      }
       setError("Background-tasks unavailable outside Tauri (browser preview).");
       return false;
     }
@@ -162,7 +137,7 @@ export function TasksPanel({
       if (!cancelledRef.current) setError(String(e));
       return false;
     }
-  }, [debugClipboardFixture]);
+  }, []);
 
   async function handleManualRefresh(): Promise<void> {
     if (await refresh()) setManualRefreshSequence((value) => value + 1);
@@ -756,6 +731,7 @@ function TaskRow({
         <span
           aria-label={`status ${task.status}`}
           title={task.status}
+          data-shellx-release-observe="title"
           style={{
             display: "inline-block",
             width: 8,

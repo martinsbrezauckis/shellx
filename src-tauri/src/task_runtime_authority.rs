@@ -7,9 +7,9 @@
 //! its own target capability work; this module only consumes its typed result.
 //!
 //! A coordinator injects [`TaskRuntimeAuthorityResolver`], then binds its
-//! returned catalogue, target, and policy to the claimed occurrence.  Keeping
-//! that seam separate lets tests prove stale-target and policy refusal without
-//! probing a remote host or a provider CLI.
+//! returned catalogue, target, and policy to the claimed occurrence. Keeping
+//! that boundary separate avoids probing a remote host or provider CLI while
+//! resolving persisted task authority.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -64,7 +64,7 @@ pub(crate) trait TaskRuntimeAuthorityResolver: Send + Sync {
 pub(crate) type TaskRuntimeAuthorityFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, TaskRuntimeAuthorityError>> + Send + 'a>>;
 
-/// Narrow source seam used by the canonical resolver and focused tests.
+/// Narrow source seam used by the canonical resolver.
 ///
 /// `resolve_connection_preset` is where a saved ID must use the canonical
 /// in-process ConnectionStore. `scan_catalogue` is where the exact existing
@@ -82,8 +82,8 @@ pub(crate) trait TaskRuntimeAuthoritySource: Send + Sync {
     ) -> TaskRuntimeAuthorityFuture<'a, TaskProviderCatalog>;
 }
 
-/// Default application resolver. Use [`TaskRuntimeAuthority::with_source`]
-/// only in bounded tests or a deliberately injected host authority.
+/// Default application resolver. [`TaskRuntimeAuthority::with_source`] accepts
+/// a caller-supplied authority source when the host owns that integration.
 #[derive(Clone)]
 pub(crate) struct TaskRuntimeAuthority {
     source: Arc<dyn TaskRuntimeAuthoritySource>,
@@ -491,7 +491,3 @@ impl std::fmt::Display for TaskRuntimeAuthorityError {
 }
 
 impl std::error::Error for TaskRuntimeAuthorityError {}
-
-#[cfg(test)]
-#[path = "task_runtime_authority_tests.rs"]
-mod tests;

@@ -61,5 +61,5 @@ where the UI or docs hide that mode, where Full Auto reaches a broader
 filesystem/environment than the selected project, or where secrets are
 logged while auto tools are running.
 
-Last reviewed: 2026-08-01. Review this policy with each stable release and
+Last reviewed: 2026-08-25. Review this policy with each stable release and
 whenever the Browser, Vault, updater, or host-MCP trust boundary changes.

@@ -15,6 +15,7 @@ interface LazySurfaceProps {
   label: string;
   onDismiss?: () => void;
   onRetry?: () => void;
+  loadingFallback?: ReactNode;
   variant?: LazySurfaceVariant;
 }
 
@@ -117,11 +118,12 @@ export function LazySurface({
   label,
   onDismiss,
   onRetry,
+  loadingFallback,
   variant = "overlay",
 }: LazySurfaceProps): ReactNode {
   return (
     <LazySurfaceErrorBoundary label={label} onDismiss={onDismiss} onRetry={onRetry} variant={variant}>
-      <Suspense fallback={<LazySurfaceLoading label={label} variant={variant} />}>
+      <Suspense fallback={loadingFallback ?? <LazySurfaceLoading label={label} variant={variant} />}>
         {children}
       </Suspense>
     </LazySurfaceErrorBoundary>

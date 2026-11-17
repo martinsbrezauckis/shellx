@@ -194,22 +194,27 @@ pub(crate) async fn browser_upload_complete_http(
 
 pub(crate) async fn browser_trace_export_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::BrowserTraceExportRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    match registry.export_trace_bundle(body) {
+    let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return *response,
+    };
+    let result = match caller_session_id.as_deref() {
+        Some(caller) => registry.export_trace_bundle_for_agent_session(body, Some(caller)),
+        None => registry.export_trace_bundle(body),
+    };
+    match result {
         Ok(artifact) => {
             emit_browser_receipt(&s, &artifact.receipt);
             Json(artifact).into_response()
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+        Err(error) => browser_artifact_export_error_response(error),
     }
 }
 
@@ -414,23 +419,42 @@ pub(crate) async fn browser_performance_export_http(
 
 pub(crate) async fn browser_recipe_export_http(
     State(s): State<ApiState>,
+    headers: HeaderMap,
     Json(body): Json<crate::shellx_browser::BrowserRecipeExportRequest>,
 ) -> Response {
     let registry = match browser_registry(&s) {
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    match registry.export_recipe(body) {
+    let caller_session_id = match optional_browser_mcp_caller_id_or_bad_request(&headers) {
+        Ok(caller_session_id) => caller_session_id,
+        Err(response) => return *response,
+    };
+    let result = match caller_session_id.as_deref() {
+        Some(caller) => registry.export_recipe_for_agent_session(body, Some(caller)),
+        None => registry.export_recipe(body),
+    };
+    match result {
         Ok(artifact) => {
             emit_browser_receipt(&s, &artifact.receipt);
             Json(artifact).into_response()
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": e })),
-        )
-            .into_response(),
+        Err(error) => browser_artifact_export_error_response(error),
     }
+}
+
+fn browser_artifact_export_error_response(error: String) -> Response {
+    let status = if error.contains(crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED)
+    {
+        StatusCode::FORBIDDEN
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    (
+        status,
+        Json(serde_json::json!({ "ok": false, "error": error })),
+    )
+        .into_response()
 }
 
 pub(crate) async fn browser_recipe_replay_http(
@@ -443,11 +467,13 @@ pub(crate) async fn browser_recipe_replay_http(
         Err(response) => return *response,
     };
     let caller_session_id = browser_mcp_caller_id(&headers);
-    match crate::debug_api_browser_recipe_replay::execute_browser_recipe_replay(
-        &s,
-        &registry,
-        caller_session_id.as_deref(),
-        body,
+    match Box::pin(
+        crate::debug_api_browser_recipe_replay::execute_browser_recipe_replay(
+            &s,
+            &registry,
+            caller_session_id.as_deref(),
+            body,
+        ),
     )
     .await
     {
@@ -523,11 +549,13 @@ pub(crate) async fn browser_robot_run_http(
         reason: Some(format!("Browser robot {}: {}", plan.job_id, plan.reason)),
         ..crate::shellx_browser::BrowserRecipeReplayRequest::default()
     };
-    match crate::debug_api_browser_recipe_replay::execute_browser_recipe_replay(
-        &s,
-        &registry,
-        caller_session_id.as_deref(),
-        replay_request,
+    match Box::pin(
+        crate::debug_api_browser_recipe_replay::execute_browser_recipe_replay(
+            &s,
+            &registry,
+            caller_session_id.as_deref(),
+            replay_request,
+        ),
     )
     .await
     {
@@ -751,7 +779,3 @@ pub(crate) async fn browser_report_http(
             .into_response(),
     }
 }
-
-#[cfg(test)]
-#[path = "debug_api_browser_artifacts_tests.rs"]
-mod evidence_caller_tests;

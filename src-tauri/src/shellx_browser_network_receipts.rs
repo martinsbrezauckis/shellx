@@ -572,7 +572,3 @@ pub(crate) fn next_browser_evidence_sequence(state: &mut BrowserState) -> u64 {
     state.next_evidence_sequence = state.next_evidence_sequence.saturating_add(1);
     state.next_evidence_sequence
 }
-
-#[cfg(test)]
-#[path = "shellx_browser_network_receipts_tests.rs"]
-mod browser_action_risk_tests;

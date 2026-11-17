@@ -14,12 +14,10 @@
  * extension.
  *
  * Fallback: if Shiki throws (offline, language unknown), we render
- * a numbered <pre> with the original text. The legacy CodePreview
- * shape is preserved (line-numbered) so a Shiki failure doesn't
- * lose information.
+ * a numbered <pre> with the original text. Line numbers remain visible
+ * so a Shiki failure doesn't lose information.
  *
- * Constraint: this is a NEW component — RightRail.tsx swaps its
- * `<CodePreview>` impl to this one.
+ * RightRail uses this component for syntax-highlighted previews.
  */
 import { useEffect, useState, type JSX } from "react";
 import { shikiLangForPath } from "../lib/file-preview-types";

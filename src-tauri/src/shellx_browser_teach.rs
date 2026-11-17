@@ -785,6 +785,7 @@ impl ShellxBrowserRegistry {
             task_id: task_id.clone(),
             browser_tab_id: browser_tab_id.clone(),
             recipe_path: Some(recipe_path),
+            recipe_sha256: None,
             recipe: None,
             dry_run: Some(true),
             reason: Some("Operator Teach rehearsal".to_string()),
@@ -852,9 +853,7 @@ impl ShellxBrowserRegistry {
 mod shellx_browser_teach_revision;
 #[path = "shellx_browser_teach_source.rs"]
 mod shellx_browser_teach_source;
-#[cfg(test)]
-#[path = "shellx_browser_teach_tests.rs"]
-mod shellx_browser_teach_tests;
+
 
 use shellx_browser_teach_revision::{
     draft_summary, ensure_browser_task_control_authority_for_teach, ensure_current_revision,

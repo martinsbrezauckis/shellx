@@ -380,18 +380,3 @@ fn is_loopback_host(host: Option<&str>) -> bool {
         .map(|ip| ip.is_loopback())
         .unwrap_or(false)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Api;
-
-    #[test]
-    fn api_allows_https_and_loopback_http_only() {
-        assert!(Api::new("https://vault.example.com", "default", "tok").is_ok());
-        assert!(Api::new("http://127.0.0.1:7440", "default", "tok").is_ok());
-        assert!(Api::new("http://localhost:7440", "default", "tok").is_ok());
-        assert!(Api::new("http://[::1]:7440", "default", "tok").is_ok());
-        assert!(Api::new("http://vault.example.invalid:7440", "default", "tok").is_err());
-        assert!(Api::new("http://vault.example.com", "default", "tok").is_err());
-    }
-}

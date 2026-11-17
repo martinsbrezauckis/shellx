@@ -65,31 +65,9 @@ pub async fn apply_beforeunload_dialog_resolution(
         return Ok(None);
     }
     if event.status != "accepted" {
-        let mut state = lock_or_recover(&registry.state);
-        let current_url = state.engine.url.clone();
-        state.engine.pending_url = None;
-        state.engine.load_status = if current_url.is_some() {
-            "loaded".to_string()
-        } else {
-            "mounted".to_string()
-        };
-        state.engine.last_error = None;
-        state.engine.updated_at_ms = now_ms();
-        let engine_status = state.engine.load_status.clone();
-        let engine_updated_at_ms = state.engine.updated_at_ms;
-        if let Some(tab_id) = event.browser_tab_id.as_deref() {
-            let shields = state.shields.clone();
-            if let Some(tab) = state
-                .tabs
-                .iter_mut()
-                .find(|tab| tab.browser_tab_id == tab_id)
-            {
-                update_tab_url(tab, current_url, &shields);
-                tab.status = engine_status;
-                tab.updated_at_ms = engine_updated_at_ms;
-            }
-        }
-        return Ok(Some(state.engine.clone()));
+        return Ok(Some(
+            registry.record_dismissed_beforeunload_dialog_preserving_current_document(event),
+        ));
     }
     let (profile_id, url, bounds) = {
         let mut state = lock_or_recover(&registry.state);
@@ -174,14 +152,47 @@ pub async fn apply_beforeunload_dialog_resolution(
         })?;
         wait_for_browser_engine_label_release(app, &engine_label).await?;
     }
-    let mut request = request;
-    match sync_native_browser_engine(app, registry, &request).await {
-        Ok(Some(current_url)) => request.url = Some(current_url),
-        Ok(None) => {}
+    match sync_and_record_native_browser_engine(app, registry, request).await {
+        Ok(snapshot) => Ok(Some(snapshot)),
         Err(err) => {
             registry.record_engine_error(err.clone());
-            return Err(err);
+            Err(err)
         }
     }
-    Ok(Some(registry.record_engine_sync(request)))
+}
+
+impl ShellxBrowserRegistry {
+    /// Clears a dismissed beforeunload request while retaining the current
+    /// document's state. A new document has not started, so its title and the
+    /// exact history visit admitted for it must remain intact.
+    pub(crate) fn record_dismissed_beforeunload_dialog_preserving_current_document(
+        &self,
+        event: &BrowserDialogEvent,
+    ) -> BrowserEngineSnapshot {
+        let mut state = lock_or_recover(&self.state);
+        let current_url = state.engine.url.clone();
+        state.engine.pending_url = None;
+        state.engine.load_status = if current_url.is_some() {
+            "loaded".to_string()
+        } else {
+            "mounted".to_string()
+        };
+        state.engine.last_error = None;
+        state.engine.updated_at_ms = now_ms();
+        let engine_status = state.engine.load_status.clone();
+        let engine_updated_at_ms = state.engine.updated_at_ms;
+        if let Some(tab_id) = event.browser_tab_id.as_deref() {
+            let shields = state.shields.clone();
+            if let Some(tab) = state
+                .tabs
+                .iter_mut()
+                .find(|tab| tab.browser_tab_id == tab_id)
+            {
+                update_tab_url(tab, current_url, &shields);
+                tab.status = engine_status;
+                tab.updated_at_ms = engine_updated_at_ms;
+            }
+        }
+        state.engine.clone()
+    }
 }

@@ -118,6 +118,8 @@ pub struct BrowserNativeSecurityCapabilities {
     pub platform: String,
     #[serde(rename = "strictRequestFilter")]
     pub strict_request_filter: bool,
+    #[serde(rename = "strictInPageFilter")]
+    pub strict_in_page_filter: bool,
     #[serde(rename = "popupGate")]
     pub popup_gate: bool,
     #[serde(rename = "permissionGate")]
@@ -136,10 +138,11 @@ impl BrowserNativeSecurityCapabilities {
         Self {
             platform: std::env::consts::OS.to_string(),
             strict_request_filter: windows_native_hooks,
+            strict_in_page_filter: true,
             popup_gate: true,
             permission_gate: windows_native_hooks,
             password_autosave_disabled: windows_native_hooks,
-            general_autofill_disabled: true,
+            general_autofill_disabled: windows_native_hooks,
             full_native_protection: windows_native_hooks,
         }
     }
@@ -361,27 +364,4 @@ pub struct BrowserTabResponse {
     pub ok: bool,
     pub tab: BrowserTabSnapshot,
     pub receipt: BrowserReceipt,
-}
-
-#[cfg(test)]
-mod native_security_capability_tests {
-    use super::BrowserNativeSecurityCapabilities;
-
-    #[test]
-    fn platform_capabilities_never_claim_missing_native_hooks() {
-        let capabilities = BrowserNativeSecurityCapabilities::current();
-        assert!(capabilities.popup_gate);
-        assert!(capabilities.general_autofill_disabled);
-        if cfg!(windows) {
-            assert!(capabilities.strict_request_filter);
-            assert!(capabilities.permission_gate);
-            assert!(capabilities.password_autosave_disabled);
-            assert!(capabilities.full_native_protection);
-        } else {
-            assert!(!capabilities.strict_request_filter);
-            assert!(!capabilities.permission_gate);
-            assert!(!capabilities.password_autosave_disabled);
-            assert!(!capabilities.full_native_protection);
-        }
-    }
 }

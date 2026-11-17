@@ -7,7 +7,11 @@ use crate::shellx_browser::{
     BrowserHarExportRequest, BrowserPerformanceArtifact, BrowserPerformanceExportRequest,
     BrowserTraceBundleArtifact, BrowserTraceExportRequest, ShellxBrowserRegistry,
 };
+use crate::shellx_browser_caller::{
+    ensure_browser_task_control_authority, BrowserTaskControlAuthority,
+};
 use crate::shellx_browser_tasks::find_task_index;
+use crate::shellx_browser_tasks::BROWSER_TASK_OWNER_CONTROL_REQUIRED;
 
 impl ShellxBrowserRegistry {
     pub fn export_har(
@@ -289,6 +293,31 @@ impl ShellxBrowserRegistry {
         &self,
         request: BrowserTraceExportRequest,
     ) -> Result<BrowserTraceBundleArtifact, String> {
+        self.export_trace_bundle_with_authority(
+            request,
+            BrowserTaskControlAuthority::Operator,
+            None,
+        )
+    }
+
+    pub fn export_trace_bundle_for_agent_session(
+        &self,
+        request: BrowserTraceExportRequest,
+        caller_session_id: Option<&str>,
+    ) -> Result<BrowserTraceBundleArtifact, String> {
+        self.export_trace_bundle_with_authority(
+            request,
+            BrowserTaskControlAuthority::Agent,
+            caller_session_id,
+        )
+    }
+
+    fn export_trace_bundle_with_authority(
+        &self,
+        request: BrowserTraceExportRequest,
+        authority: BrowserTaskControlAuthority,
+        caller_session_id: Option<&str>,
+    ) -> Result<BrowserTraceBundleArtifact, String> {
         let trace_id = browser_id("browser-trace");
         let created_at_ms = now_ms();
         let reason = request
@@ -297,26 +326,11 @@ impl ShellxBrowserRegistry {
             .map(clean_string)
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "Browser trace export requested".to_string());
-        let task_id = request
-            .task_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty());
-        let browser_tab_id = request
-            .browser_tab_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty());
         let (bundle, task_id, browser_tab_id, profile_id) = {
             let state = lock_or_recover(&self.state);
-            let task_id = task_id.or_else(|| state.active_task_id.clone());
-            let browser_tab_id = browser_tab_id.or_else(|| state.active_browser_tab_id.clone());
-            if let Some(task_id) = task_id.as_deref() {
-                find_task_index(&state, task_id)?;
-            }
-            if let Some(browser_tab_id) = browser_tab_id.as_deref() {
-                find_tab_index(&state, browser_tab_id)?;
-            }
+            let (task_id, browser_tab_id) =
+                resolve_trace_export_scope(&state, &request, authority, caller_session_id)?;
+            let caller_scoped = authority == BrowserTaskControlAuthority::Agent;
             let task = task_id
                 .as_deref()
                 .and_then(|task_id| state.tasks.iter().find(|task| task.task_id == task_id))
@@ -342,7 +356,19 @@ impl ShellxBrowserRegistry {
                         "requiresEngine": observation.requires_engine,
                     })
                 });
-            let mut receipts = state.receipts.clone();
+            let mut receipts = state
+                .receipts
+                .iter()
+                .filter(|receipt| {
+                    !caller_scoped
+                        || trace_receipt_matches(
+                            receipt,
+                            task_id.as_deref(),
+                            browser_tab_id.as_deref(),
+                        )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
             receipts.sort_by_key(|receipt| receipt.t);
             receipts.reverse();
             receipts.truncate(120);
@@ -350,7 +376,20 @@ impl ShellxBrowserRegistry {
                 .into_iter()
                 .map(redact_trace_receipt)
                 .collect::<Vec<_>>();
-            let mut console_logs = state.console_logs.clone();
+            let mut console_logs = state
+                .console_logs
+                .iter()
+                .filter(|entry| {
+                    !caller_scoped
+                        || trace_entry_matches(
+                            entry.task_id.as_deref(),
+                            entry.browser_tab_id.as_deref(),
+                            task_id.as_deref(),
+                            browser_tab_id.as_deref(),
+                        )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
             console_logs.sort_by_key(|entry| entry.t);
             console_logs.reverse();
             console_logs.truncate(120);
@@ -365,6 +404,15 @@ impl ShellxBrowserRegistry {
             let network_entries = state
                 .network
                 .iter()
+                .filter(|entry| {
+                    !caller_scoped
+                        || trace_entry_matches(
+                            entry.task_id.as_deref(),
+                            entry.browser_tab_id.as_deref(),
+                            task_id.as_deref(),
+                            browser_tab_id.as_deref(),
+                        )
+                })
                 .rev()
                 .take(120)
                 .cloned()
@@ -372,6 +420,15 @@ impl ShellxBrowserRegistry {
             let dialogs = state
                 .dialogs
                 .iter()
+                .filter(|entry| {
+                    !caller_scoped
+                        || trace_entry_matches(
+                            entry.task_id.as_deref(),
+                            entry.browser_tab_id.as_deref(),
+                            task_id.as_deref(),
+                            browser_tab_id.as_deref(),
+                        )
+                })
                 .rev()
                 .take(50)
                 .cloned()
@@ -379,6 +436,15 @@ impl ShellxBrowserRegistry {
             let popups = state
                 .popups
                 .iter()
+                .filter(|entry| {
+                    !caller_scoped
+                        || trace_entry_matches(
+                            entry.task_id.as_deref(),
+                            entry.browser_tab_id.as_deref(),
+                            task_id.as_deref(),
+                            browser_tab_id.as_deref(),
+                        )
+                })
                 .rev()
                 .take(50)
                 .cloned()
@@ -390,6 +456,8 @@ impl ShellxBrowserRegistry {
                     "errors": console_errors,
                     "warnings": console_warnings,
                     "messagesSanitized": true,
+                    "legacyUnattributedEntriesOmitted": caller_scoped,
+                    "note": if caller_scoped { "Caller-scoped trace exports include only console logs bound to the selected Browser tab; legacy unattributed console entries are omitted." } else { "" },
                 },
                 "network": {
                     "included": true,
@@ -437,7 +505,12 @@ impl ShellxBrowserRegistry {
                     "updatedAtMs": task.updated_at_ms,
                 })),
                 "tab": tab,
-                "engine": state.engine,
+                "engine": if caller_scoped && !trace_entry_matches(
+                    state.engine.task_id.as_deref(),
+                    state.engine.browser_tab_id.as_deref(),
+                    task_id.as_deref(),
+                    browser_tab_id.as_deref(),
+                ) { serde_json::Value::Null } else { json!(state.engine) },
                 "lastObservation": observation_meta,
                 "diagnosticsSections": diagnostics_sections,
                 "receipts": receipts,
@@ -445,9 +518,17 @@ impl ShellxBrowserRegistry {
                 "dialogs": dialogs,
                 "popups": popups,
                 "network": network_entries,
-                "downloads": state.downloads.iter().rev().take(50).cloned().collect::<Vec<_>>(),
-                "uploads": state.uploads.iter().rev().take(50).cloned().collect::<Vec<_>>(),
-                "privacy": state.privacy,
+                "downloads": state.downloads.iter().filter(|entry| {
+                    !caller_scoped || trace_entry_matches(
+                        entry.task_id.as_deref(), entry.browser_tab_id.as_deref(), task_id.as_deref(), browser_tab_id.as_deref(),
+                    )
+                }).rev().take(50).cloned().collect::<Vec<_>>(),
+                "uploads": state.uploads.iter().filter(|entry| {
+                    !caller_scoped || trace_entry_matches(
+                        entry.task_id.as_deref(), entry.browser_tab_id.as_deref(), task_id.as_deref(), browser_tab_id.as_deref(),
+                    )
+                }).rev().take(50).cloned().collect::<Vec<_>>(),
+                "privacy": if caller_scoped { serde_json::Value::Null } else { json!(state.privacy) },
                 "redactionPolicy": {
                     "rawDom": false,
                     "cookies": false,
@@ -506,4 +587,116 @@ impl ShellxBrowserRegistry {
             receipt,
         })
     }
+}
+
+fn resolve_trace_export_scope(
+    state: &crate::shellx_browser::BrowserState,
+    request: &BrowserTraceExportRequest,
+    authority: BrowserTaskControlAuthority,
+    caller_session_id: Option<&str>,
+) -> Result<(Option<String>, Option<String>), String> {
+    let requested_task_id = request
+        .task_id
+        .as_deref()
+        .map(clean_string)
+        .filter(|value| !value.is_empty());
+    let requested_tab_id = request
+        .browser_tab_id
+        .as_deref()
+        .map(clean_string)
+        .filter(|value| !value.is_empty());
+
+    if authority == BrowserTaskControlAuthority::Operator {
+        let task_id = requested_task_id.or_else(|| state.active_task_id.clone());
+        let browser_tab_id = requested_tab_id.or_else(|| state.active_browser_tab_id.clone());
+        if let Some(task_id) = task_id.as_deref() {
+            find_task_index(state, task_id)?;
+        }
+        if let Some(browser_tab_id) = browser_tab_id.as_deref() {
+            find_tab_index(state, browser_tab_id)?;
+        }
+        return Ok((task_id, browser_tab_id));
+    }
+
+    if requested_task_id.is_none() && requested_tab_id.is_none() {
+        return Err(format!(
+            "{BROWSER_TASK_OWNER_CONTROL_REQUIRED}: Browser trace export requires a caller-owned task or browser tab"
+        ));
+    }
+    let tab = requested_tab_id
+        .as_deref()
+        .map(|browser_tab_id| {
+            state
+                .tabs
+                .iter()
+                .find(|tab| tab.browser_tab_id == browser_tab_id)
+                .ok_or_else(|| format!("browser tab not found: {browser_tab_id}"))
+        })
+        .transpose()?;
+    let task_id = requested_task_id.or_else(|| tab.and_then(|tab| tab.task_id.clone()));
+    let task_id = task_id.ok_or_else(|| {
+        format!(
+            "{BROWSER_TASK_OWNER_CONTROL_REQUIRED}: Browser trace export target is not bound to a Browser task"
+        )
+    })?;
+    let task = state
+        .tasks
+        .iter()
+        .find(|task| task.task_id == task_id)
+        .ok_or_else(|| format!("browser task not found: {task_id}"))?;
+    ensure_browser_task_control_authority(task, authority, caller_session_id)?;
+    if let Some(tab) = tab {
+        if tab.task_id.as_deref() != Some(task_id.as_str()) {
+            return Err("Browser trace export task/tab ownership mismatch".to_string());
+        }
+        if tab.profile_id != task.profile_id {
+            return Err("Browser trace export task/tab profile mismatch".to_string());
+        }
+    }
+    let browser_tab_id = requested_tab_id.or_else(|| {
+        state
+            .active_browser_tab_id
+            .as_deref()
+            .and_then(|active_tab_id| {
+                state
+                    .tabs
+                    .iter()
+                    .find(|tab| {
+                        tab.browser_tab_id == active_tab_id
+                            && tab.task_id.as_deref() == Some(task_id.as_str())
+                    })
+                    .map(|tab| tab.browser_tab_id.clone())
+            })
+            .or_else(|| {
+                state
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.task_id.as_deref() == Some(task_id.as_str()))
+                    .map(|tab| tab.browser_tab_id.clone())
+            })
+    });
+    validate_optional_task_and_tab(state, Some(task_id.as_str()), browser_tab_id.as_deref())?;
+    Ok((Some(task_id), browser_tab_id))
+}
+
+fn trace_entry_matches(
+    entry_task_id: Option<&str>,
+    entry_browser_tab_id: Option<&str>,
+    task_id: Option<&str>,
+    browser_tab_id: Option<&str>,
+) -> bool {
+    entry_task_id == task_id && entry_browser_tab_id == browser_tab_id
+}
+
+fn trace_receipt_matches(
+    receipt: &crate::shellx_browser::BrowserReceipt,
+    task_id: Option<&str>,
+    browser_tab_id: Option<&str>,
+) -> bool {
+    receipt.task_id.as_deref() == task_id
+        && receipt
+            .evidence
+            .get("browserTabId")
+            .and_then(|value| value.as_str())
+            == browser_tab_id
 }

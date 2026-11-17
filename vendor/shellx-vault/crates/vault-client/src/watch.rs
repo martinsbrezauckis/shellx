@@ -2,8 +2,8 @@
 //! - [`watch`] keeps the `sbx watch` CLI behavior (stdout, Ctrl-C).
 //! - [`watch_core`] is the embeddable engine: host apps (tauri-plugin-
 //!   vault, shellX) supply an already-unlocked key, a stop signal, and an
-//!   event sink instead of a terminal. One implementation means the CLI
-//!   e2e scenario gates the desktop watcher too.
+//!   event sink instead of a terminal. One implementation keeps desktop and
+//!   CLI watcher behavior aligned.
 //!
 //! Two triggers, both funnel into the same sync pass:
 //! - **Filesystem events** via notify + full debouncer. Events under

@@ -7,9 +7,8 @@ use super::browser_actions_http::debug_ui_build_tab_mutation_rejection;
 /// separate so /state/* endpoints don't grow an irrelevant field.
 #[derive(Deserialize)]
 pub(super) struct AbortQuery {
-    // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
-    // drivers + test agents that reach for the shorter `tab` form stop
-    // silently collapsing to the default tab.
+    // Accept `?tab=`, `?tab_id=`, and `?tabId=` so every supported client
+    // spelling selects the requested tab instead of silently using default.
     #[serde(
         rename = "tabId",
         alias = "tab",
@@ -47,9 +46,8 @@ pub(super) struct AutonomyBody {
     /// by their real tab_id (e.g. "goal-46c"); per-tab permission_mode
     /// lookup during provider permission resolution then finds None instead
     /// of the tab's provider-native Full Auto setting.
-    // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
-    // drivers + test agents that reach for the shorter `tab` form stop
-    // silently collapsing to the default tab.
+    // Accept `?tab=`, `?tab_id=`, and `?tabId=` so every supported client
+    // spelling selects the requested tab instead of silently using default.
     #[serde(rename = "tabId", alias = "tab", alias = "tab_id", default)]
     tab_id: Option<String>,
 }
@@ -134,13 +132,15 @@ pub(super) async fn set_autonomy(
             guard.set_permission_mode(Some(body.mode.clone()));
         }
     }
-    apply_and_broadcast_ui_patch(
+    if let Err(response) = apply_and_broadcast_ui_patch(
         &s,
         UiStatePatch {
             autonomy: Some(body.mode.clone()),
             ..Default::default()
         },
-    );
+    ) {
+        return *response;
+    }
     // If there is a LIVE session for this tab, honestly report that
     // the autonomy change applies to the NEXT spawn — not the running
     // child. grok bakes --always-approve into argv at spawn so we
@@ -172,14 +172,12 @@ pub(super) async fn set_autonomy(
 // with older callers / debug-api scripts.
 #[derive(Deserialize)]
 pub(super) struct StateTabQuery {
-    // #419 fix — accept `?tab=`, `?tab_id=`, AND `?tabId=` so external
-    // drivers + test agents that reach for the shorter `tab` form stop
-    // silently collapsing to the default tab.
+    // Accept `?tab=`, `?tab_id=`, and `?tabId=` so every supported client
+    // spelling selects the requested tab instead of silently using default.
     #[serde(rename = "tabId", alias = "tab", alias = "tab_id", default)]
     pub(super) tab_id: Option<String>,
     /// Optional explicit working directory for read-only diagnostics that
-    /// otherwise inherit the selected tab cwd. Release automation uses this
-    /// only with an owned disposable fixture.
+    /// otherwise inherit the selected tab cwd.
     #[serde(default)]
     pub(super) cwd: Option<String>,
     #[serde(default)]
@@ -414,13 +412,30 @@ pub(super) async fn state_ui(State(s): State<ApiState>) -> impl IntoResponse {
     Json(s.hub().ui_snapshot()).into_response()
 }
 
-pub(super) fn apply_and_broadcast_ui_patch(state: &ApiState, patch: UiStatePatch) -> UiState {
+pub(super) fn apply_and_broadcast_ui_patch(
+    state: &ApiState,
+    patch: UiStatePatch,
+) -> Result<UiState, Box<Response>> {
     let patch_value = serde_json::to_value(&patch).unwrap_or_else(|_| serde_json::json!({}));
-    state.hub().ui_apply(patch);
-    let ui = state.hub().ui_snapshot();
+    let ui = state.hub().ui_apply(patch).map_err(|error| {
+        Box::new(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response(),
+        )
+    })?;
+    // Events are wakeups, not another copy of the command queue. The raw event
+    // channel redacts values; renderers read exact commands through the shared
+    // authenticated snapshot instead of executing a redacted event payload.
+    let mut event_state = serde_json::to_value(&ui).unwrap_or_default();
+    if let Some(fields) = event_state.as_object_mut() {
+        fields.remove("commandStream");
+    }
     let payload = serde_json::json!({
         "patch": patch_value,
-        "state": ui.clone(),
+        "state": event_state,
     });
     state
         .hub()
@@ -428,7 +443,7 @@ pub(super) fn apply_and_broadcast_ui_patch(state: &ApiState, patch: UiStatePatch
     if let Err(error) = state.app.emit("debug-ui-state-patch", payload) {
         warn!("failed to emit native Debug UI patch: {}", error);
     }
-    ui
+    Ok(ui)
 }
 
 pub(super) fn debug_ui_patch_sensitive_selector_denial(patch: &UiStatePatch) -> Option<String> {
@@ -449,84 +464,13 @@ pub(super) fn debug_ui_patch_sensitive_selector_denial(patch: &UiStatePatch) -> 
     None
 }
 
-fn normalize_plugins_e2e_path(value: &str) -> String {
-    value
-        .trim()
-        .replace('\\', "/")
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
-}
 
-fn plugins_e2e_profile_name_is_valid(home: &str) -> bool {
-    let normalized = normalize_plugins_e2e_path(home);
-    let Some(name) = normalized.rsplit('/').next() else {
-        return false;
-    };
-    let Some(run_id) = name.strip_prefix("shellx-final-webdriver-") else {
-        return false;
-    };
-    (16..=64).contains(&run_id.len()) && run_id.chars().all(|ch| ch.is_ascii_hexdigit())
-}
 
-pub(super) fn debug_ui_plugins_production_fixture_denial_for(
-    patch: &UiStatePatch,
-    test_instance: Option<&str>,
-    instance_id: Option<&str>,
-    marketplace_e2e: Option<&str>,
-    vault_e2e: Option<&str>,
-    home: Option<&str>,
-    vault_profile: Option<&str>,
-) -> Option<String> {
-    if patch.debug_plugins_fixture.as_deref() != Some("owned-production") {
-        return None;
-    }
-    if test_instance != Some("1")
-        || marketplace_e2e != Some("1")
-        || vault_e2e != Some("1")
-        || !instance_id.is_some_and(|value| value.starts_with("shellx-final-"))
-    {
-        return Some(
-            "owned-production Plugins fixture requires the isolated final-candidate E2E gates"
-                .to_string(),
-        );
-    }
-    let Some(home) = home.filter(|value| plugins_e2e_profile_name_is_valid(value)) else {
-        return Some(
-            "owned-production Plugins fixture requires a disposable shellx-final-webdriver profile"
-                .to_string(),
-        );
-    };
-    let Some(vault_profile) = vault_profile else {
-        return Some(
-            "owned-production Plugins fixture requires an isolated Vault profile".to_string(),
-        );
-    };
-    let expected_vault = format!("{}/vault-e2e", normalize_plugins_e2e_path(home));
-    if normalize_plugins_e2e_path(vault_profile) != expected_vault {
-        return Some(
-            "owned-production Plugins fixture Vault profile must be inside the disposable candidate"
-                .to_string(),
-        );
-    }
-    None
-}
 
-fn debug_ui_plugins_production_fixture_denial(patch: &UiStatePatch) -> Option<String> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok();
-    let instance_id = std::env::var("SHELLX_TEST_INSTANCE_ID").ok();
-    let vault_profile = std::env::var("SHELLX_VAULT_PROFILE_DIR").ok();
-    debug_ui_plugins_production_fixture_denial_for(
-        patch,
-        std::env::var("SHELLX_TEST_INSTANCE").ok().as_deref(),
-        instance_id.as_deref(),
-        std::env::var("SHELLX_MCP_MARKETPLACE_E2E").ok().as_deref(),
-        std::env::var("SHELLX_VAULT_E2E").ok().as_deref(),
-        home.as_deref(),
-        vault_profile.as_deref(),
-    )
-}
+
+
+
+
 
 pub(super) fn debug_ui_sensitive_value_reason(value: &serde_json::Value) -> Option<&'static str> {
     match value {
@@ -602,268 +546,19 @@ pub(super) fn debug_ui_sensitive_text_reason(text: &str) -> Option<&'static str>
 
 pub(super) async fn set_ui_state(
     State(s): State<ApiState>,
-    Json(mut body): Json<UiStatePatch>,
+    Json(body): Json<UiStatePatch>,
 ) -> Response {
-    if let Some(command) = body.agent_cli_setup_fixture.as_deref() {
-        if !matches!(
-            command,
-            "closed"
-                | "cards"
-                | "confirmation"
-                | "status-card"
-                | "live-status"
-                | "live-setup"
-                | "install-lifecycle"
-                | "clipboard-cards"
-                | "clipboard-confirmation"
-        ) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_agent_cli_setup_fixture",
-                    "message": "agentCliSetupFixture accepts only fixed Agent CLI setup fixture modes",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test Agent CLI setup fixture is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Some(command) = body.debug_agent_picker_fixture.as_deref() {
-        if !matches!(command, "owned-ready" | "clear") {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_debug_agent_picker_fixture",
-                    "message": "debugAgentPickerFixture accepts only owned-ready or clear",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test agent picker fixture is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Some(command) = body.release_test_external_effect_boundary.as_deref() {
-        if !matches!(command, "pr-create" | "artifact-archive" | "clear") {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_release_test_external_effect_boundary",
-                    "message": "releaseTestExternalEffectBoundary accepts only pr-create, artifact-archive, or clear",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test external-effect boundary is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Some(command) = body.debug_update_fixture.as_deref() {
-        if !matches!(command, "owned-check" | "owned-available" | "clear") {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_debug_update_fixture",
-                    "message": "debugUpdateFixture accepts only owned-check, owned-available, or clear",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test updater fixture is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Some(command) = body.debug_cut_tooling_fixture.as_deref() {
-        if !matches!(
-            command,
-            "checking"
-                | "ready"
-                | "installedEditorClosed"
-                | "notInstalled"
-                | "unsupportedTarget"
-                | "unavailableToProvider"
-                | "unavailable"
-                | "clear"
-        ) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_debug_cut_tooling_fixture",
-                    "message": "debugCutToolingFixture accepts only typed Cut states or clear",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test Cut tooling fixture is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Some(command) = body.release_test_voice_capture.as_deref() {
-        if !matches!(command, "recording" | "clear") {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_release_test_voice_capture",
-                    "message": "releaseTestVoiceCapture accepts only recording or clear",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test voice capture is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Some(command) = body.release_test_renderer_crash {
-        if !command {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_release_test_renderer_crash",
-                    "message": "releaseTestRendererCrash accepts only true",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test renderer crash is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Some(command) = body.release_test_lazy_surface.as_deref() {
-        if !matches!(command, "owned-error" | "clear") {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_release_test_lazy_surface",
-                    "message": "releaseTestLazySurface accepts only owned-error or clear",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test LazySurface fixture is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Some(command) = body.release_test_legacy_autonomy.as_deref() {
-        if command != "legacy-default" {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_release_test_legacy_autonomy",
-                    "message": "releaseTestLegacyAutonomy accepts only legacy-default",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test legacy autonomy fixture is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Some(command) = body.release_test_host_mcp_child.take() {
-        if let Err(response) = handle_release_test_host_mcp_child(&s, &command).await {
-            return *response;
-        }
-    }
-    if let Some(command) = body.release_test_reset_browser_personal_lock.take() {
-        if command != "owned-pin-lifecycle" {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_release_test_personal_lock_reset",
-                    "message": "releaseTestResetBrowserPersonalLock accepts only the fixed owned-pin-lifecycle cleanup command",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test Personal Browser Lock cleanup is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-        let registry = match crate::debug_api::browser_registry(&s) {
-            Ok(registry) => registry,
-            Err(response) => return *response,
-        };
-        if let Err(error) = registry.reset_personal_lock_for_isolated_test() {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "release_test_personal_lock_reset_failed",
-                    "message": error,
-                })),
-            )
-                .into_response();
-        }
-    }
+
+
+
+
+
+
+
+
+
+
+
     if let Some(message) = debug_ui_build_tab_mutation_rejection(&s, &body).await {
         return (
             StatusCode::CONFLICT,
@@ -886,190 +581,9 @@ pub(super) async fn set_ui_state(
         )
             .into_response();
     }
-    if let Some(message) = debug_ui_plugins_production_fixture_denial(&body) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "error": "plugins_production_fixture_not_isolated",
-                "message": message,
-                "hint": "Use the disposable final-candidate run profile; operator marketplace and Vault state are never accepted.",
-            })),
-        )
-            .into_response();
-    }
-    let state = apply_and_broadcast_ui_patch(&s, body);
-    Json(state).into_response()
-}
 
-async fn handle_release_test_host_mcp_child(
-    state: &ApiState,
-    command: &str,
-) -> Result<(), Box<Response>> {
-    if command != "spawn-owned" && command != "clear-owned" {
-        return Err(Box::new((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "invalid_release_test_host_mcp_child",
-                "message": "releaseTestHostMcpChild accepts only the fixed spawn-owned or clear-owned commands",
-            })),
-        )
-            .into_response()));
+    match apply_and_broadcast_ui_patch(&s, body) {
+        Ok(state) => Json(state).into_response(),
+        Err(response) => *response,
     }
-    if !crate::isolated_test_instance_requested() {
-        return Err(Box::new((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "release_test_route_unavailable",
-                "message": "release-test Host MCP child setup is unavailable outside an isolated test instance",
-            })),
-        )
-            .into_response()));
-    }
-    let tab_id = state
-        .hub()
-        .ui_snapshot()
-        .active_tab_id
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            Box::new((
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({
-                    "error": "release_test_active_tab_required",
-                    "message": "release-test Host MCP child setup requires one exact active tab",
-                })),
-            )
-                .into_response())
-        })?;
-    let registry = state
-        .app
-        .state::<std::sync::Arc<crate::process_registry::ProcessRegistry>>()
-        .inner()
-        .clone();
-    const RELEASE_OWNED_COMMAND: &str = "ShellX release-owned Host MCP child";
-    if command == "clear-owned" {
-        let owned: Vec<_> = registry
-            .list()
-            .await
-            .into_iter()
-            .filter(|task| {
-                task.source == crate::process_registry::ProcessSource::HostMcp
-                    && task.tab_id.as_deref() == Some(tab_id.as_str())
-                    && task.cmd == RELEASE_OWNED_COMMAND
-            })
-            .collect();
-        for task in owned {
-            if task.status == crate::process_registry::ProcessStatus::Running {
-                registry
-                    .signal_tree(&task.task_id, "SIGKILL")
-                    .await
-                    .map_err(|error| {
-                        Box::new(
-                            (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(serde_json::json!({
-                                    "error": "release_test_host_mcp_child_cleanup_failed",
-                                    "message": error,
-                                })),
-                            )
-                                .into_response(),
-                        )
-                    })?;
-                registry
-                    .mark_exited(
-                        &task.task_id,
-                        None,
-                        crate::process_registry::ProcessStatus::Killed,
-                    )
-                    .await;
-            }
-            registry
-                .release_test_forget_owned_host_mcp(&task.task_id, &tab_id, RELEASE_OWNED_COMMAND)
-                .await
-                .map_err(|error| {
-                    Box::new(
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({
-                                "error": "release_test_host_mcp_child_forget_failed",
-                                "message": error,
-                            })),
-                        )
-                            .into_response(),
-                    )
-                })?;
-        }
-        return Ok(());
-    }
-    if !registry
-        .running_task_ids_for_tab_source(&tab_id, crate::process_registry::ProcessSource::HostMcp)
-        .await
-        .is_empty()
-    {
-        return Err(Box::new(
-            (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({
-                    "error": "release_test_host_mcp_child_collision",
-                    "message": "the active tab already owns a live Host MCP child",
-                })),
-            )
-                .into_response(),
-        ));
-    }
-
-    #[cfg(target_os = "windows")]
-    let mut child_command = {
-        let mut command = tokio::process::Command::new("cmd.exe");
-        command.args(["/D", "/S", "/C", "ping 127.0.0.1 -n 301 >NUL"]);
-        command
-    };
-    #[cfg(not(target_os = "windows"))]
-    let mut child_command = {
-        let mut command = tokio::process::Command::new("/bin/sleep");
-        command.arg("300");
-        command
-    };
-    use crate::winproc::NoWindowExt as _;
-    child_command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .no_window();
-    crate::winproc::apply_pdeathsig_preexec(&mut child_command);
-    crate::winproc::apply_new_session_preexec(&mut child_command);
-    let mut child = child_command.spawn().map_err(|error| {
-        Box::new(
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "release_test_host_mcp_child_spawn_failed",
-                    "message": error.to_string(),
-                })),
-            )
-                .into_response(),
-        )
-    })?;
-    let Some(pid) = child.id() else {
-        let _ = child.start_kill();
-        return Err(Box::new(
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "release_test_host_mcp_child_pid_missing",
-                    "message": "the owned Host MCP child did not expose a process id",
-                })),
-            )
-                .into_response(),
-        ));
-    };
-    crate::winproc::tie_to_parent_lifetime(pid);
-    let task_id = registry
-        .register(
-            RELEASE_OWNED_COMMAND,
-            crate::process_registry::ProcessSource::HostMcp,
-            Some(pid),
-        )
-        .await;
-    registry.set_tab_id(&task_id, tab_id).await;
-    Ok(())
 }

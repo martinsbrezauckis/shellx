@@ -10,6 +10,7 @@ import {
   type BrowserEvidenceSummary,
   type BrowserFlightRecorderResult,
 } from "../browserEvidence";
+import { isPublicManualPreview } from "../../lib/public-manual-mode";
 
 export function useBrowserEvidence(enabled: boolean): {
   summary: BrowserEvidenceSummary | null;
@@ -35,6 +36,12 @@ export function useBrowserEvidence(enabled: boolean): {
     requestRef.current = request;
     setLoading(true);
     setError(null);
+    if ((import.meta.env.SHELLX_PUBLIC_MANUAL_BUILD || import.meta.env.DEV) && isPublicManualPreview()) {
+      const { PUBLIC_MANUAL_EVIDENCE } = await import("../publicManualEvidenceFixture");
+      setSummary(PUBLIC_MANUAL_EVIDENCE);
+      setLoading(false);
+      return true;
+    }
     try {
       const response = await loadBrowserEvidenceForOperator(20);
       const next = normalizeBrowserEvidenceSummary(response);

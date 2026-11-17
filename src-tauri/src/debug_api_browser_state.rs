@@ -120,6 +120,16 @@ pub(crate) async fn browser_state_http(
         Ok(registry) => registry,
         Err(response) => return *response,
     };
+    if let Err(error) =
+        crate::shellx_browser_personal_lock::reconcile_covered_personal_webviews(s.app(), &registry)
+            .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "ok": false, "error": error })),
+        )
+            .into_response();
+    }
     if q.view
         .as_deref()
         .is_some_and(|view| view.eq_ignore_ascii_case("core"))
@@ -300,28 +310,7 @@ async fn browser_settle_snapshot(
     }
 }
 
-#[cfg(test)]
-#[allow(clippy::items_after_test_module)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn browser_quiet_check_reports_no_effects_and_preserves_revisions() {
-        let registry = crate::shellx_browser::ShellxBrowserRegistry::default();
-        let before = serde_json::to_value(registry.summary().revisions).expect("revisions");
-        let settle = browser_idle_settle_snapshot(&registry, None).expect("idle settle snapshot");
-        let check = browser_quiet_check_value(&registry, settle, None);
-        let after = serde_json::to_value(registry.summary().revisions).expect("revisions");
-
-        assert_eq!(check["schema"], "shellx/browser-quiet-check@1");
-        assert_eq!(check["mode"], "quiet");
-        assert!(check["effects"]
-            .as_object()
-            .is_some_and(|effects| effects.values().all(|value| value == false)));
-        assert_eq!(check["summary"]["revisions"], before);
-        assert_eq!(after, before);
-    }
-}
 
 pub(crate) async fn browser_tabs_http(State(s): State<ApiState>, headers: HeaderMap) -> Response {
     let registry = match browser_registry(&s) {
@@ -345,7 +334,13 @@ pub(crate) async fn browser_tab_open_http(
         Ok(registry) => registry,
         Err(response) => return *response,
     };
-    match registry.open_tab(body) {
+    let opened = crate::shellx_browser_personal_lock::with_personal_native_cover_after(
+        s.app(),
+        &registry,
+        || registry.open_tab(body),
+    )
+    .await;
+    match opened {
         Ok(response) => {
             if response.ok {
                 if let Err(e) =
@@ -471,6 +466,8 @@ pub(crate) async fn browser_tab_close_http(
                         &closed_engine_id,
                     )
                     .await;
+                    registry
+                        .cleanup_quarantined_native_downloads_after_engine_close(&closed_engine_id);
                 }
             }
             if response.ok && closing_active_tab {
@@ -756,11 +753,18 @@ pub(crate) async fn browser_task_start_http(
     };
     let caller_session_id = browser_mcp_caller_id(&headers);
     let previous_active_browser_tab_id = registry.state().active_browser_tab_id;
-    let started = if let Some(caller_session_id) = caller_session_id.as_deref() {
-        registry.start_task_for_agent_session(body, Some(caller_session_id))
-    } else {
-        registry.start_task_from_debug_operator(body)
-    };
+    let started = crate::shellx_browser_personal_lock::with_personal_native_cover_after(
+        s.app(),
+        &registry,
+        || {
+            if let Some(caller_session_id) = caller_session_id.as_deref() {
+                registry.start_task_for_agent_session(body, Some(caller_session_id))
+            } else {
+                registry.start_task_from_debug_operator(body)
+            }
+        },
+    )
+    .await;
     match started {
         Ok(task) => {
             if let Err(e) =

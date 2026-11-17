@@ -172,6 +172,8 @@ pub struct BrowserRecipeReplayRequest {
     pub browser_tab_id: Option<String>,
     #[serde(rename = "recipePath", alias = "recipe_path", default)]
     pub recipe_path: Option<String>,
+    #[serde(rename = "recipeSha256", alias = "recipe_sha256", default)]
+    pub recipe_sha256: Option<String>,
     #[serde(default)]
     pub recipe: Option<serde_json::Value>,
     #[serde(rename = "dryRun", alias = "dry_run", default)]

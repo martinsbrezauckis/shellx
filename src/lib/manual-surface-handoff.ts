@@ -76,7 +76,7 @@ export async function focusManualSurfaceDebugId(focusId: string): Promise<boolea
       `[data-debug-id="${focusId}"], [data-manual-focus-id="${focusId}"]`,
     );
     if (!target) continue;
-    target.focus({ preventScroll: false });
+    target.focus({ preventScroll: true });
     return document.activeElement === target;
   }
   return false;

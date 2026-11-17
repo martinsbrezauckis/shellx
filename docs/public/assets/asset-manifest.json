@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "shellx.public-marketing-assets@1",
+  "assets": [
+    {
+      "file": "shellx-desktop-0.3.61.png",
+      "sha256": "1bae1cb4f2b1979a8e48af120ef1ca4737af6e1d81514a7f10ba00f74a2cee11",
+      "purpose": "ShellX workspace preview."
+    },
+    {
+      "file": "shellx-browser-0.3.61.png",
+      "sha256": "66a3134e68c4eea44593ebefb78d5ab22dad3c1b37b5c3ebb9e2524a7d2da6c4",
+      "purpose": "ShellX Browser preview."
+    },
+    {
+      "file": "shellx-vault-0.3.61.png",
+      "sha256": "cc1c7b5d8be80ecdc12068bf15501987a4863e14bc8238ab03297556f8cd72cf",
+      "purpose": "ShellX Vault preview."
+    }
+  ]
+}

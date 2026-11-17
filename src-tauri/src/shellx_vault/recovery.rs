@@ -28,16 +28,12 @@ impl Default for RecoveryState {
 
 pub fn generate_recovery_kit() -> RecoveryKit {
     let confirmation_id = hex::encode(vault_core::random_bytes::<16>());
-    let raw = hex::encode(vault_core::random_bytes::<32>());
-    let words = raw
-        .as_bytes()
-        .chunks(4)
-        .map(|chunk| String::from_utf8_lossy(chunk).to_string())
-        .collect::<Vec<_>>();
     RecoveryKit {
         confirmation_id,
-        words,
-        warning: "Save this recovery kit. ShellX cannot recover the vault without it.".into(),
+        // Keep the response field for existing clients. It is intentionally
+        // empty: setup has no words-based key derivation or restore route.
+        words: Vec::new(),
+        warning: "ShellX has no recovery words or restore flow. Losing your master passphrase, encrypted Vault keyfile/profile, or required Vault data may permanently lose access. ShellX does not export a recovery file.".into(),
     }
 }
 

@@ -60,6 +60,22 @@ export function currentPageUrlForSave(
   );
 }
 
+export function currentBrowserAddressUrl(
+  state: BrowserState | null,
+  activeTask: BrowserTask | null,
+  activeTab: BrowserTab | null,
+  tabCount: number,
+): string {
+  if (tabCount === 0) return "";
+  return (
+    state?.engine?.url?.trim() ||
+    activeTab?.url?.trim() ||
+    activeTask?.currentUrl?.trim() ||
+    state?.pendingStartUrl?.trim() ||
+    ""
+  );
+}
+
 function pageSaveSlugPart(value: string): string {
   return value
     .trim()
@@ -107,6 +123,10 @@ export function safeBrowserStatusUrl(rawUrl?: string | null): string {
   } catch {
     return raw.split(/[?#]/)[0] ?? "";
   }
+}
+
+export function isTerminalBrowserTransferStatus(status: string): boolean {
+  return status === "completed" || status === "declined" || status === "failed";
 }
 
 function boundedBrowserExplainExcerpt(observation: BrowserObservationLike | null): string {

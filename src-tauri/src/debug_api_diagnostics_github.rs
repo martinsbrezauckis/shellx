@@ -1,8 +1,6 @@
 use super::*;
 
-use super::screenshot_http::{
-    xcap_window_app_name, xcap_window_height, xcap_window_title, xcap_window_width,
-};
+use super::screenshot_http::capture_window_label_png;
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -21,11 +19,9 @@ pub(super) struct DiagnosticsBody {
 ///
 /// This v1 covers ONLY structural / "is the surface healthy" checks
 /// (token file present, MCP HTTP port reachable, sessions dir writable,
-/// etc.) — no grok-side orchestration. Future work: grok-driven checks
-/// (image_gen end-to-end, host MCP tool round-trip, transport-aware fs
-/// probe).
+/// etc.) — no grok-side orchestration or host-tool invocation.
 pub(super) async fn diagnostics_run(
-    State(_s): State<ApiState>,
+    State(s): State<ApiState>,
     body: Option<Json<DiagnosticsBody>>,
 ) -> Response {
     let started_ms = std::time::Instant::now();
@@ -122,70 +118,26 @@ pub(super) async fn diagnostics_run(
         );
     }
 
-    // screenshot — endpoint responds with image/png
+    // Use the same exact-window path as /screenshot. A desktop image cannot
+    // make the app-window diagnostic pass.
     if want("screenshot") {
-        let r = tokio::task::spawn_blocking(|| -> Result<Vec<u8>, String> {
-            let windows = xcap::Window::all().unwrap_or_default();
-            let big = windows
-                .into_iter()
-                .filter(|w| {
-                    let app = xcap_window_app_name(w).to_ascii_lowercase();
-                    let title = xcap_window_title(w);
-                    let app_is_shellx =
-                        app == "shellx.exe" || app == "shellx" || app == "app.exe" || app == "app";
-                    let title_is_shellx_exact = title.eq_ignore_ascii_case("shellX");
-                    (app_is_shellx || title_is_shellx_exact)
-                        && xcap_window_height(w) > 100
-                        && xcap_window_width(w) > 200
-                })
-                .max_by_key(|w| (xcap_window_width(w) as u64) * (xcap_window_height(w) as u64));
-            let img = if let Some(win) = big {
-                win.capture_image().map_err(|e| format!("window: {}", e))?
-            } else {
-                let monitors = xcap::Monitor::all().map_err(|e| format!("monitors: {}", e))?;
-                let primary = monitors
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| "no monitor".to_string())?;
-                primary
-                    .capture_image()
-                    .map_err(|e| format!("monitor: {}", e))?
-            };
-            let mut bytes: Vec<u8> = Vec::new();
-            img.write_to(
-                &mut std::io::Cursor::new(&mut bytes),
-                xcap::image::ImageFormat::Png,
-            )
-            .map_err(|e| format!("encode: {}", e))?;
-            Ok(bytes)
-        })
-        .await;
-        match r {
-            Ok(Ok(bytes)) => record(
+        match capture_window_label_png(&s.app, "main").await {
+            Ok(bytes) => record(
                 &mut checks,
                 &mut pass,
                 &mut fail,
                 "screenshot",
                 bytes.len() > 1000,
-                format!("captured {} bytes", bytes.len()),
+                format!("captured {} bytes from the exact main window", bytes.len()),
                 Some(serde_json::json!({"bytes": bytes.len()})),
             ),
-            Ok(Err(e)) => record(
+            Err(error) => record(
                 &mut checks,
                 &mut pass,
                 &mut fail,
                 "screenshot",
                 false,
-                e,
-                None,
-            ),
-            Err(e) => record(
-                &mut checks,
-                &mut pass,
-                &mut fail,
-                "screenshot",
-                false,
-                format!("task join error: {}", e),
+                error,
                 None,
             ),
         }
@@ -322,6 +274,8 @@ pub(super) async fn diagnostics_run(
     .into_response()
 }
 
+
+
 pub(super) fn diagnostics_settings_status(settings_path: &std::path::Path) -> (bool, String) {
     if !settings_path.exists() {
         return (true, "settings.json missing; defaults active".to_string());
@@ -340,8 +294,8 @@ pub(super) fn diagnostics_settings_status(settings_path: &std::path::Path) -> (b
 /// then locates up to `cap` matches of `needle` and returns each as a
 /// ≤500-char excerpt with the match wrapped in `<mark>…</mark>`.
 ///
-/// Separated from the handler so unit tests can feed it a fake JSONL
-/// reader without spinning the whole axum stack.
+/// Kept separate from the handler so request validation and response
+/// construction remain independent from bounded JSONL parsing.
 ///
 /// Returns serde_json::Value array — caller wraps it in the response
 /// envelope.
@@ -531,6 +485,7 @@ pub(super) async fn state_github_items(
 // ─────────── GitHub PR create via gh CLI ───────────
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct PrCreateBody {
     base: String,
     title: String,
@@ -555,10 +510,7 @@ pub(super) struct PrCreateBody {
         default
     )]
     pub(super) confirm_remote_create: bool,
-    /// Fixed isolated-candidate boundary used to prove the approved UI submit
-    /// path without invoking gh or contacting GitHub.
-    #[serde(rename = "releaseTestBoundary", default)]
-    pub(super) release_test_boundary: Option<String>,
+
 }
 
 pub(super) async fn github_pr_create(
@@ -575,46 +527,7 @@ pub(super) async fn github_pr_create(
         )
             .into_response();
     }
-    if let Some(boundary) = body.release_test_boundary.as_deref() {
-        if boundary != "stop-before-remote" {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "invalid_release_test_boundary",
-                    "hint": "releaseTestBoundary accepts only stop-before-remote",
-                })),
-            )
-                .into_response();
-        }
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "hint": "The PR create boundary is unavailable outside an isolated test instance.",
-                })),
-            )
-                .into_response();
-        }
-        if body.base.trim().is_empty() || body.title.trim().is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": "release_test_pr_draft_invalid",
-                    "hint": "The isolated PR boundary requires non-empty base and title fields.",
-                })),
-            )
-                .into_response();
-        }
-        return (
-            StatusCode::PRECONDITION_FAILED,
-            Json(serde_json::json!({
-                "error": "release_test_remote_mutation_blocked",
-                "receipt": "release fixture PR create stopped before remote mutation",
-            })),
-        )
-            .into_response();
-    }
+
     let cwd = {
         let registry = s.app.state::<std::sync::Arc<crate::acp::SessionRegistry>>();
         let tab_key = crate::acp::tab_id_or_default(body.tab_id.clone());

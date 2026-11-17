@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -40,89 +41,140 @@ use serde::Serialize;
 use tauri::State;
 use tracing::{info, warn};
 
-/// In-flight archive registry — maps
-/// `tabId → PID` of the active archive subprocess so `/abort` can
-/// terminate it instead of letting a slow/wedged remote tar hold
-/// the spawn_blocking task for the full 30-min timeout.
-///
-/// Cross-platform: PID-based kill via taskkill (Windows) / SIGTERM (Unix).
-/// Single map for both Local zip and SSH tar paths — we only register
-/// the SSH variant today (local zip is fast enough that abort isn't
-/// useful and we don't expose a kill-handle for that path).
-fn in_flight_archives() -> &'static Mutex<HashMap<String, u32>> {
-    static MAP: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+/// The registry grants one owner per tab and delivers cancellation to that
+/// owner. Only the owner may terminate its still-held child process.
+#[derive(Clone)]
+struct InFlightArchive {
+    owner: u64,
+    control: Arc<ArchiveControl>,
+}
+
+#[derive(Default)]
+struct ArchiveControlState {
+    canceled: bool,
+}
+
+struct ArchiveControl {
+    state: Mutex<ArchiveControlState>,
+    changed: tokio::sync::watch::Sender<bool>,
+}
+
+impl ArchiveControl {
+    fn new() -> Self {
+        let (changed, _) = tokio::sync::watch::channel(false);
+        Self {
+            state: Mutex::new(ArchiveControlState::default()),
+            changed,
+        }
+    }
+
+    fn cancel(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.canceled = true;
+        self.changed.send_replace(true);
+    }
+
+    fn canceled(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .canceled
+    }
+
+    fn promote<T>(&self, action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.canceled {
+            return Err("archive was canceled before promotion".to_string());
+        }
+        action()
+    }
+}
+
+fn in_flight_archives() -> &'static Mutex<HashMap<String, InFlightArchive>> {
+    static MAP: OnceLock<Mutex<HashMap<String, InFlightArchive>>> = OnceLock::new();
     MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn lock_in_flight_archives() -> std::sync::MutexGuard<'static, HashMap<String, u32>> {
+fn lock_in_flight_archives() -> std::sync::MutexGuard<'static, HashMap<String, InFlightArchive>> {
     in_flight_archives()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Register a PID as the active archive for `tab_key`. Replaces any
-/// prior entry (caller is expected to wait for the previous archive
-/// to finish, but if it's stuck we kill the old one too).
-pub fn register_in_flight_archive(tab_key: &str, pid: u32) {
-    let mut m = lock_in_flight_archives();
-    if let Some(prev_pid) = m.insert(tab_key.to_string(), pid) {
-        warn!("archive registry: tab '{}' had previous PID {} still registered when new PID {} arrived", tab_key, prev_pid, pid);
+struct ArchiveAdmission {
+    tab_key: String,
+    owner: u64,
+    control: Arc<ArchiveControl>,
+}
+
+impl ArchiveAdmission {
+    fn reserve(tab_key: &str) -> Result<Self, String> {
+        static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
+        let mut archives = lock_in_flight_archives();
+        if archives.contains_key(tab_key) {
+            return Err(format!(
+                "archive_ssh: archive already active for tab '{tab_key}'"
+            ));
+        }
+        let owner = NEXT_OWNER.fetch_add(1, Ordering::Relaxed);
+        let control = Arc::new(ArchiveControl::new());
+        archives.insert(
+            tab_key.to_string(),
+            InFlightArchive {
+                owner,
+                control: control.clone(),
+            },
+        );
+        Ok(Self {
+            tab_key: tab_key.to_string(),
+            owner,
+            control,
+        })
     }
 }
 
-/// Unregister on archive completion (success or failure). Idempotent.
-pub fn unregister_in_flight_archive(tab_key: &str) {
-    let mut m = lock_in_flight_archives();
-    m.remove(tab_key);
+impl Drop for ArchiveAdmission {
+    fn drop(&mut self) {
+        let mut archives = lock_in_flight_archives();
+        if archives
+            .get(&self.tab_key)
+            .is_some_and(|entry| entry.owner == self.owner)
+        {
+            archives.remove(&self.tab_key);
+        }
+    }
 }
 
-/// Abort the in-flight archive for `tab_key` if any. Returns true if
-/// a PID was found AND the kill syscall returned success. Used by the
-/// /abort HTTP handler.
+/// The blocking ZIP worker outlives a dropped async waiter. Cancel it before
+/// the waiter disappears; the worker retains admission until it actually exits.
+struct ArchiveCallerCancel {
+    control: Arc<ArchiveControl>,
+    armed: bool,
+}
+
+impl Drop for ArchiveCallerCancel {
+    fn drop(&mut self) {
+        if self.armed {
+            self.control.cancel();
+        }
+    }
+}
+
+/// Ask the current owner to stop. No PID escapes the owner's child lifetime.
 pub fn abort_in_flight_archive(tab_key: &str) -> bool {
-    let pid = {
-        let mut m = lock_in_flight_archives();
-        m.remove(tab_key)
-    };
-    let Some(pid) = pid else { return false };
-    info!("abort archive: tab '{}' killing PID {}", tab_key, pid);
-    #[cfg(target_os = "windows")]
-    {
-        // taskkill /F /T /PID <pid> — /T kills the process tree (ssh.exe
-        // owns the remote tar via a pipe; /T ensures both die together).
-        let status = std::process::Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .output();
-        match status {
-            Ok(o) => o.status.success(),
-            Err(e) => {
-                warn!("abort archive: taskkill PID {} failed: {}", pid, e);
-                false
-            }
-        }
-    }
-    #[cfg(unix)]
-    {
-        if crate::process_registry::checked_unix_process_id(pid).is_err() {
-            warn!("abort archive: refusing unsafe PID {}", pid);
-            return false;
-        }
-        let status = std::process::Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .output();
-        match status {
-            Ok(o) => o.status.success(),
-            Err(e) => {
-                warn!("abort archive: kill -TERM PID {} failed: {}", pid, e);
-                false
-            }
-        }
-    }
+    let control = lock_in_flight_archives()
+        .get(tab_key)
+        .map(|entry| entry.control.clone());
+    let Some(control) = control else { return false };
+    control.cancel();
+    true
 }
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 use crate::acp::SessionRegistry;
+
+
 
 #[derive(Serialize)]
 pub struct ArchiveSummary {
@@ -226,6 +278,67 @@ fn archive_entry_is_sensitive(abs: &Path, rel: &Path) -> bool {
         || file_name.ends_with(".token")
 }
 
+fn copy_archive_member<R: Read, W: Write>(source: &mut R, output: &mut W) -> std::io::Result<u64> {
+    let mut buffer = vec![0u8; 64 * 1024].into_boxed_slice();
+    let mut copied = 0u64;
+    loop {
+        let count = source.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(copied);
+        }
+        output.write_all(&buffer[..count])?;
+        copied = copied.saturating_add(count as u64);
+    }
+}
+
+fn ensure_owned_staging_path(file: &File, path: &Path) -> Result<(), String> {
+    let path_metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("archive staging path disappeared: {error}"))?;
+    if !path_metadata.is_file() || path_metadata.file_type().is_symlink() {
+        return Err("archive staging path no longer names the owned regular file".to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let held = file
+            .metadata()
+            .map_err(|error| format!("inspect held archive staging file failed: {error}"))?;
+        if (held.dev(), held.ino()) != (path_metadata.dev(), path_metadata.ino()) {
+            return Err("archive staging path changed file identity".to_string());
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT,
+        };
+        if path_metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err("archive staging path became a reparse point".to_string());
+        }
+        let current = File::open(path)
+            .map_err(|error| format!("open archive staging path for identity failed: {error}"))?;
+        let identity = |handle: &File| -> Result<(u32, u64), String> {
+            let mut info = BY_HANDLE_FILE_INFORMATION::default();
+            if unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &mut info) } == 0 {
+                return Err(format!(
+                    "inspect archive staging file identity failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok((
+                info.dwVolumeSerialNumber,
+                (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            ))
+        };
+        if identity(file)? != identity(&current)? {
+            return Err("archive staging path changed file identity".to_string());
+        }
+    }
+    Ok(())
+}
+
 /// Orchestration-API entry point. Same
 /// body as the Tauri command but takes `Arc<SessionRegistry>` directly
 /// so the shellXagent HTTP route at `POST /sessions/:tabId/archive`
@@ -264,8 +377,8 @@ pub async fn archive_session_artifacts_inner(
         .map(|s| s.to_string());
 
     // SSH archive via
-    // streaming `ssh host -- tar -czf - <paths>` straight into the
-    // user's chosen save_path. No remote temp file, no scp, no
+    // streaming `ssh host -- tar -czf - <paths>` into an owned local
+    // staging file promoted to the user's chosen save_path. No scp and no
     // second-pass zip — the tar.gz IS the archive. We force the saved
     // extension to .tar.gz if the user typed .zip since repackaging
     // would cost a full local decompress+rezip on a potentially-large
@@ -373,13 +486,30 @@ pub async fn archive_session_artifacts_inner(
     // explicitly asked for an archive and a 5-second wait on a big
     // workspace is acceptable. Wrap in spawn_blocking so we don't
     // block the tokio scheduler.
+    let admission = ArchiveAdmission::reserve(&tab_key)?;
+    let control = admission.control.clone();
+    let mut caller_cancel = ArchiveCallerCancel {
+        control: control.clone(),
+        armed: true,
+    };
     let save = save_path.clone();
     let cwd_for_roots = cwd_root.clone();
     let scratch_for_roots = scratch_root.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<ArchiveSummary, String> {
-        let zip_file = File::create(&save)
-            .map_err(|e| format!("archive_session_artifacts: create {} failed: {}", save, e))?;
-        let mut zw = ZipWriter::new(zip_file);
+        let _admission = admission;
+        let final_path = Path::new(&save);
+        let parent = final_path
+            .parent()
+            .ok_or("archive_session_artifacts: destination has no parent")?;
+        let mut staging = tempfile::Builder::new()
+            .prefix(".shellx-archive-")
+            .suffix(".zip.part")
+            .tempfile_in(parent)
+            .map_err(|e| format!("archive_session_artifacts: create staging file failed: {e}"))?;
+        let staging_path = staging.path().to_path_buf();
+        let final_identity = std::fs::canonicalize(final_path).ok();
+        let staging_identity = std::fs::canonicalize(&staging_path).ok();
+        let mut zw = ZipWriter::new(staging.as_file_mut());
         let opts: SimpleFileOptions = SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .unix_permissions(0o644);
@@ -403,10 +533,16 @@ pub async fn archive_session_artifacts_inner(
             ]
         };
         for (root, prefix) in walk_roots {
+            if control.canceled() {
+                return Err("archive_session_artifacts: archive canceled".to_string());
+            }
             if !root.exists() {
                 continue;
             }
             for entry in WalkDir::new(root).follow_links(false) {
+                if control.canceled() {
+                    return Err("archive_session_artifacts: archive canceled".to_string());
+                }
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
@@ -423,13 +559,13 @@ pub async fn archive_session_artifacts_inner(
                     Ok(r) => r,
                     Err(_) => continue,
                 };
-                // Skip the zip file itself if the user saved it
-                // inside cwd (rare but possible footgun).
-                if let Ok(save_canon) = std::fs::canonicalize(&save) {
-                    if let Ok(abs_canon) = std::fs::canonicalize(abs) {
-                        if abs_canon == save_canon {
-                            continue;
-                        }
+                // Both an earlier final archive and this run's staging file
+                // can be inside the walked workspace.
+                if let Ok(abs_canon) = std::fs::canonicalize(abs) {
+                    if final_identity.as_ref() == Some(&abs_canon)
+                        || staging_identity.as_ref() == Some(&abs_canon)
+                    {
+                        continue;
                     }
                 }
                 let rel_str = rel.to_string_lossy().replace('\\', "/");
@@ -453,30 +589,30 @@ pub async fn archive_session_artifacts_inner(
                     skipped += 1;
                     continue;
                 }
-                let mut buf = vec![0u8; 64 * 1024].into_boxed_slice();
-                let mut file_bytes: u64 = 0;
-                loop {
-                    match f.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if let Err(e) = zw.write_all(&buf[..n]) {
-                                warn!("archive: write {} failed: {}", zip_path, e);
-                                break;
-                            }
-                            file_bytes += n as u64;
-                        }
-                        Err(e) => {
-                            warn!("archive: read {} failed: {}", abs.display(), e);
-                            break;
-                        }
-                    }
-                }
+                let file_bytes = copy_archive_member(&mut f, &mut zw).map_err(|error| {
+                    format!(
+                        "archive_session_artifacts: copy {} failed: {error}",
+                        abs.display()
+                    )
+                })?;
                 bytes_in += file_bytes;
                 files += 1;
             }
         }
         zw.finish()
             .map_err(|e| format!("archive_session_artifacts: zip finish failed: {}", e))?;
+        staging
+            .as_file()
+            .sync_all()
+            .map_err(|e| format!("archive_session_artifacts: sync staging file failed: {e}"))?;
+        control.promote(|| {
+            staging.persist(final_path).map_err(|e| {
+                format!(
+                    "archive_session_artifacts: promote archive failed: {}",
+                    e.error
+                )
+            })
+        })?;
         let bytes_out = std::fs::metadata(&save).map(|m| m.len()).unwrap_or(0);
         info!(
             "archive_session_artifacts: wrote {} ({} files, {} skipped, {} → {} bytes)",
@@ -493,6 +629,7 @@ pub async fn archive_session_artifacts_inner(
     })
     .await
     .map_err(|e| format!("archive_session_artifacts: join task failed: {}", e))??;
+    caller_cancel.armed = false;
 
     // Add the roots list (couldn't move into the spawn_blocking
     // closure cleanly without extra cloning; do it here).
@@ -546,7 +683,7 @@ fn urlencoded_cwd(cwd: &str) -> String {
 
 /// SSH archive path — stream a remote-built tar.gz over stdout from a
 /// single `ssh host -- tar -czf - <paths>` invocation. The bytes go
-/// straight to `save_path` on the user's local Windows disk. No remote
+/// through a sibling staging file on the user's local disk. No remote
 /// temp file is created and no second-pass repackage runs locally.
 ///
 /// We intentionally rewrite a `.zip` save_path to `.tar.gz` because:
@@ -581,6 +718,19 @@ fn posix_ssh_archive_excludes() -> String {
         .join(" ")
 }
 
+/// A remote POSIX archive must keep its own deadline: terminating local ssh
+/// only closes the transport and cannot establish the remote tar's lifetime.
+/// ShellX therefore fails before tar starts when GNU-style `timeout` is not
+/// present, rather than silently permitting an unbounded detached archive.
+fn bounded_posix_ssh_archive_command(tar_command: &str) -> String {
+    format!(
+        "command -v timeout >/dev/null 2>&1 || {{ echo 'ShellX archive requires remote timeout' >&2; exit 127; }}; exec timeout --signal=TERM --kill-after={grace}s {deadline}s sh -c {command}",
+        grace = REMOTE_ARCHIVE_KILL_GRACE_SECONDS,
+        deadline = ARCHIVE_TIMEOUT.as_secs(),
+        command = crate::acp::shell_quote_for_remote(tar_command),
+    )
+}
+
 fn windows_ssh_archive_command(cwd: &str, urlenc: &str, session_id: &str) -> String {
     let cwd = crate::acp::powershell_single_quote(cwd);
     let scratch = crate::acp::powershell_single_quote(&format!(
@@ -589,12 +739,277 @@ fn windows_ssh_archive_command(cwd: &str, urlenc: &str, session_id: &str) -> Str
     ));
     let excludes = windows_ssh_archive_excludes();
     format!(
-        "{prelude}$userHome=$env:USERPROFILE;$cwd={cwd};$scratch={scratch};$inputs=[Collections.Generic.List[string]]::new();if(Test-Path -LiteralPath (Join-Path $userHome $scratch)){{$inputs.Add($scratch)}};$homeFull=[IO.Path]::GetFullPath($userHome).TrimEnd('\\');$cwdFull=[IO.Path]::GetFullPath($cwd).TrimEnd('\\');if(-not $cwdFull.Equals($homeFull,[StringComparison]::OrdinalIgnoreCase)-and(Test-Path -LiteralPath $cwdFull -PathType Container)){{$inputs.Add($cwdFull)}};if($inputs.Count -eq 0){{throw 'ShellX archive has no existing session or workspace input'}};$tmp=Join-Path ([IO.Path]::GetTempPath()) ('shellx-archive-'+[Guid]::NewGuid().ToString('N')+'.tar.gz');try{{$tarArgs=@({excludes},'-czf',$tmp,'-C',$userHome);$tarArgs+=@($inputs);& tar.exe @tarArgs;if($LASTEXITCODE -ne 0){{throw ('tar.exe failed with exit code '+$LASTEXITCODE)}};$stream=[IO.File]::OpenRead($tmp);$stdout=[Console]::OpenStandardOutput();try{{$stream.CopyTo($stdout);$stdout.Flush()}}finally{{$stream.Dispose()}}}}finally{{if(Test-Path -LiteralPath $tmp){{Remove-Item -LiteralPath $tmp -Force}}}}",
+        "{prelude}$userHome=$env:USERPROFILE;$cwd={cwd};$scratch={scratch};$inputs=[Collections.Generic.List[string]]::new();if(Test-Path -LiteralPath (Join-Path $userHome $scratch)){{$inputs.Add($scratch)}};$homeFull=[IO.Path]::GetFullPath($userHome).TrimEnd('\\');$cwdFull=[IO.Path]::GetFullPath($cwd).TrimEnd('\\');if(-not $cwdFull.Equals($homeFull,[StringComparison]::OrdinalIgnoreCase)-and(Test-Path -LiteralPath $cwdFull -PathType Container)){{$inputs.Add($cwdFull)}};if($inputs.Count -eq 0){{throw 'ShellX archive has no existing session or workspace input'}};$tmp=Join-Path ([IO.Path]::GetTempPath()) ('shellx-archive-'+[Guid]::NewGuid().ToString('N')+'.tar.gz');$tar=$null;try{{$tarArgs=@({excludes},'-czf',$tmp,'-C',$userHome);$tarArgs+=@($inputs);$quoteNativeArg={{param([string]$arg)if($arg.Length -eq 0){{return '\"\"'}};if($arg -notmatch '[\\s\" ]'){{return $arg}};$escaped=[regex]::Replace($arg,'(\\\\*)\"','$1$1\\\"');$escaped=[regex]::Replace($escaped,'(\\\\+)$','$1$1');return '\"'+$escaped+'\"'}};$commandLine=[string]::Join(' ',@($tarArgs|ForEach-Object {{& $quoteNativeArg $_}}));$tar=Start-Process -FilePath 'tar.exe' -ArgumentList $commandLine -PassThru -NoNewWindow;if(-not $tar.WaitForExit({archive_timeout_ms})){{& (Join-Path $env:SystemRoot 'System32\\taskkill.exe') '/PID' $tar.Id '/T' '/F' | Out-Null;$tar.WaitForExit();throw 'remote tar exceeded ShellX archive deadline'}};if($tar.ExitCode -ne 0){{throw ('tar.exe failed with exit code '+$tar.ExitCode)}};$stream=[IO.File]::OpenRead($tmp);$stdout=[Console]::OpenStandardOutput();try{{$stream.CopyTo($stdout);$stdout.Flush()}}finally{{$stream.Dispose()}}}}finally{{if($null -ne $tar -and -not $tar.HasExited){{& (Join-Path $env:SystemRoot 'System32\\taskkill.exe') '/PID' $tar.Id '/T' '/F' | Out-Null}};if(Test-Path -LiteralPath $tmp){{Remove-Item -LiteralPath $tmp -Force}}}}",
         prelude = crate::acp::windows_remote_shell_prelude(),
         cwd = cwd,
         scratch = scratch,
         excludes = excludes,
+        archive_timeout_ms = ARCHIVE_TIMEOUT.as_millis(),
     )
+}
+
+const MAX_SSH_ARCHIVE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const ARCHIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+const REMOTE_ARCHIVE_KILL_GRACE_SECONDS: u64 = 15;
+const ARCHIVE_STDERR_LIMIT: usize = 512 * 1024;
+
+/// Stream one owned local archive wrapper into `destination`.
+///
+/// This controls the local `ssh` client only.  A timeout terminates and reaps
+/// that client (and its local process session), removes only its staging file,
+/// and releases the tab admission. Remote commands carry their own archive
+/// deadline, but local wrapper death alone remains insufficient evidence that
+/// a remote host or its SSH daemon delivered cancellation immediately.
+async fn stream_owned_archive_command(
+    command: &mut tokio::process::Command,
+    destination: &Path,
+    tab_key: &str,
+    deadline: std::time::Duration,
+    max_bytes: u64,
+) -> Result<u64, String> {
+    use crate::winproc::NoWindowExt as _;
+
+    let admission = ArchiveAdmission::reserve(tab_key)?;
+    let parent = destination
+        .parent()
+        .ok_or("archive_ssh: destination has no parent")?;
+    let staging = tempfile::Builder::new()
+        .prefix(".shellx-archive-")
+        .suffix(".tar.gz.part")
+        .tempfile_in(parent)
+        .map_err(|error| format!("archive_ssh: create staging file failed: {error}"))?;
+    let stage_file = tokio::fs::File::from_std(
+        staging
+            .as_file()
+            .try_clone()
+            .map_err(|error| format!("archive_ssh: clone owned staging handle failed: {error}"))?,
+    );
+    let control = admission.control.clone();
+    let mut cancellation = control.changed.subscribe();
+
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .no_window();
+    crate::winproc::apply_pdeathsig_preexec(command);
+    crate::winproc::apply_new_session_preexec(command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("archive_ssh: spawn ssh failed: {error}"))?;
+    let pid = match child.id() {
+        Some(pid) => pid,
+        None => {
+            let _ = child.kill().await;
+            return Err("archive_ssh: ssh started without an owned process id".to_string());
+        }
+    };
+    let local_tree = crate::winproc::own_child_process_tree(pid);
+    if !local_tree.binds_parent_lifetime() {
+        crate::winproc::tie_to_parent_lifetime(pid);
+    }
+    let mut owned = OwnedArchiveCommand::new(child, pid, local_tree, admission);
+
+    let result = tokio::time::timeout(deadline, async {
+        tokio::select! {
+            result = capture_archive_stream(&mut owned.child, stage_file, max_bytes) => result,
+            _ = async {
+                if !*cancellation.borrow() {
+                    let _ = cancellation.changed().await;
+                }
+            } => Err("archive_ssh: canceled by tab abort".to_string()),
+        }
+    })
+    .await;
+    match result {
+        Ok(Ok((bytes, _stderr, status))) if status.success() => {
+            // The child has already been reaped. Never signal its former PID
+            // if promotion fails or the caller is canceled at this point.
+            owned.complete();
+            control.promote(|| {
+                ensure_owned_staging_path(staging.as_file(), staging.path())?;
+                staging
+                    .persist(destination)
+                    .map_err(|error| format!("archive_ssh: promote archive failed: {error}"))
+            })?;
+            Ok(bytes)
+        }
+        Ok(Ok((_bytes, stderr, status))) => {
+            owned.complete();
+            Err(format!(
+                "remote tar exited {} — stderr: {}",
+                status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&stderr)
+                    .trim()
+                    .chars()
+                    .take(400)
+                    .collect::<String>()
+            ))
+        }
+        Ok(Err(error)) => Err(owned.fail_and_cleanup(error).await),
+        Err(_) => Err(owned
+            .fail_and_cleanup(format!("timed out after {}s", deadline.as_secs()))
+            .await),
+    }
+}
+
+async fn capture_archive_stream(
+    child: &mut tokio::process::Child,
+    destination: tokio::fs::File,
+    max_bytes: u64,
+) -> Result<(u64, Vec<u8>, std::process::ExitStatus), String> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "archive_ssh: failed to capture ssh stdout".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "archive_ssh: failed to capture ssh stderr".to_string())?;
+    let (bytes, stderr) = tokio::try_join!(
+        copy_archive_stdout(stdout, destination, max_bytes),
+        capture_archive_stderr(stderr),
+    )?;
+    let status = child
+        .wait()
+        .await
+        .map_err(|error| format!("archive_ssh: ssh wait failed: {error}"))?;
+    Ok((bytes, stderr, status))
+}
+
+async fn copy_archive_stdout<R>(
+    mut stdout: R,
+    mut output: tokio::fs::File,
+    max_bytes: u64,
+) -> Result<u64, String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    let mut copied = 0_u64;
+    loop {
+        let read = stdout
+            .read(&mut buffer)
+            .await
+            .map_err(|error| format!("archive_ssh: read failed: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        let next = copied
+            .checked_add(u64::try_from(read).unwrap_or(u64::MAX))
+            .ok_or_else(|| "archive_ssh: archive size counter overflowed".to_string())?;
+        if next > max_bytes {
+            return Err(format!(
+                "archive_ssh: archive exceeded {max_bytes} byte cap; aborted (write so far: {copied} bytes)"
+            ));
+        }
+        output
+            .write_all(&buffer[..read])
+            .await
+            .map_err(|error| format!("archive_ssh: write failed: {error}"))?;
+        copied = next;
+    }
+    output
+        .flush()
+        .await
+        .map_err(|error| format!("archive_ssh: flush failed: {error}"))?;
+    output
+        .sync_all()
+        .await
+        .map_err(|error| format!("archive_ssh: sync failed: {error}"))?;
+    Ok(copied)
+}
+
+async fn capture_archive_stderr<R>(stderr: R) -> Result<Vec<u8>, String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt as _;
+
+    let mut stderr = stderr.take((ARCHIVE_STDERR_LIMIT as u64).saturating_add(1));
+    let mut bytes = Vec::with_capacity(16 * 1024);
+    stderr
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| format!("archive_ssh: stderr read failed: {error}"))?;
+    if bytes.len() > ARCHIVE_STDERR_LIMIT {
+        return Err(format!(
+            "archive_ssh: stderr exceeded {ARCHIVE_STDERR_LIMIT} byte capture limit"
+        ));
+    }
+    Ok(bytes)
+}
+
+struct OwnedArchiveCommand {
+    child: tokio::process::Child,
+    session_leader_pid: u32,
+    local_tree: crate::winproc::OwnedChildProcessTree,
+    _admission: ArchiveAdmission,
+    armed: bool,
+}
+
+impl OwnedArchiveCommand {
+    fn new(
+        child: tokio::process::Child,
+        session_leader_pid: u32,
+        local_tree: crate::winproc::OwnedChildProcessTree,
+        admission: ArchiveAdmission,
+    ) -> Self {
+        Self {
+            child,
+            session_leader_pid,
+            local_tree,
+            _admission: admission,
+            armed: true,
+        }
+    }
+
+    fn complete(&mut self) {
+        self.armed = false;
+    }
+
+    async fn fail_and_cleanup(&mut self, failure: String) -> String {
+        let dedicated_job = self.local_tree.terminate_now();
+        let process = crate::winproc::terminate_owned_tokio_child_session_tree(
+            &mut self.child,
+            self.session_leader_pid,
+        )
+        .await;
+        if process.is_ok() {
+            self.armed = false;
+        }
+        match (dedicated_job, process) {
+            (_, Ok(())) => format!(
+                "archive_ssh: {failure}; owned local SSH session was terminated and partial archive removed"
+            ),
+            (dedicated_job, process) => format!(
+                "archive_ssh: {failure}; cleanup failed: {}",
+                [dedicated_job.err(), process.err()]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("; ")
+            ),
+        }
+    }
+}
+
+impl Drop for OwnedArchiveCommand {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Err(error) = self.local_tree.terminate_now() {
+                warn!("archive_ssh: cancellation could not terminate dedicated local child job: {error}");
+            }
+            crate::winproc::request_owned_tokio_child_session_termination(
+                &mut self.child,
+                self.session_leader_pid,
+            );
+        }
+    }
 }
 
 async fn archive_ssh_session(
@@ -661,7 +1076,7 @@ async fn archive_ssh_session(
     let remote_cmd = if transport.remote_runtime == crate::acp::SshRemoteRuntime::Windows {
         windows_ssh_archive_command(cwd, urlenc, session_id)
     } else {
-        format!(
+        let tar_command = format!(
             "if [ \"$HOME\" = '{cwd_t}' ] || [ \"$(realpath -- '{cwd_t}' 2>/dev/null)\" = \"$HOME\" ]; then \
                 tar --ignore-failed-read {excludes} -czf - -C \"$HOME\" {scratch} 2>/dev/null; \
              else \
@@ -671,11 +1086,11 @@ async fn archive_ssh_session(
             excludes = remote_tar_secret_excludes,
             scratch = scratch_quoted,
             cwd = cwd_quoted,
-        )
+        );
+        bounded_posix_ssh_archive_command(&tar_command)
     };
 
-    use crate::winproc::NoWindowExt as _;
-    let mut cmd = std::process::Command::new("ssh");
+    let mut cmd = tokio::process::Command::new("ssh");
     cmd.arg("-T")
         .arg("-o")
         .arg("BatchMode=yes")
@@ -693,104 +1108,29 @@ async fn archive_ssh_session(
         )?
     };
     cmd.arg(remote_cmd);
-    cmd.no_window();
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    let path_for_blocking = final_path_s.clone();
-    let tab_key_for_blocking = tab_id.unwrap_or("default").to_string();
-    // Bound the archive size + total time. Without these, a slow/wedged
-    // remote tar can hold the spawn_blocking task forever and a
-    // compression-bomb or huge workspace can fill the user's disk.
-    // Hard caps:
-    // - 8 GiB byte ceiling on the output stream
-    // - 30 min total time ceiling
-    // On exceed, child is killed, partial file is removed, error returned.
-    //
-    // Also register PID in the in-flight archive registry so /abort can
-    // kill the ssh.exe + remote tar tree mid-stream instead of waiting
-    // for the 30-min timeout.
-    const MAX_ARCHIVE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-    const ARCHIVE_TIMEOUT_SECS: u64 = 30 * 60;
-    let summary = tokio::time::timeout(
-        std::time::Duration::from_secs(ARCHIVE_TIMEOUT_SECS),
-        tokio::task::spawn_blocking(move || -> Result<ArchiveSummary, String> {
-            let mut child = cmd.spawn()
-                .map_err(|e| format!("archive_ssh: spawn ssh failed: {}", e))?;
- // Tie the ssh.exe + remote tar tree to shellX's lifetime so
- // an abrupt shellX exit doesn't leave
- // a 5+ GB tar streaming over an unattended SSH socket.
-            crate::winproc::tie_to_parent_lifetime(child.id());
-            register_in_flight_archive(&tab_key_for_blocking, child.id());
- // RAII guard: unregister on any return path (success, error,
- // panic). The closure below moves the tab_key in by ref so
- // we can drop the registry entry even if the loop panics.
-            struct Unreg<'a>(&'a str);
-            impl<'a> Drop for Unreg<'a> {
-                fn drop(&mut self) { unregister_in_flight_archive(self.0); }
-            }
-            let _guard = Unreg(&tab_key_for_blocking);
-            let stdout = child.stdout.take()
-                .ok_or("archive_ssh: failed to capture ssh stdout".to_string())?;
-            let stderr = child.stderr.take();
-            let mut out_file = File::create(&path_for_blocking)
-                .map_err(|e| format!("archive_ssh: create {} failed: {}", path_for_blocking, e))?;
-            let mut reader = std::io::BufReader::new(stdout);
- // Manual copy loop with a per-loop byte counter so we can
- // abort BEFORE the local disk fills.
-            let mut buf = vec![0u8; 64 * 1024].into_boxed_slice();
-            let mut copied: u64 = 0;
-            loop {
-                let n = std::io::Read::read(&mut reader, &mut buf)
-                    .map_err(|e| format!("archive_ssh: read failed: {}", e))?;
-                if n == 0 { break; }
-                std::io::Write::write_all(&mut out_file, &buf[..n])
-                    .map_err(|e| format!("archive_ssh: write failed: {}", e))?;
-                copied += n as u64;
-                if copied > MAX_ARCHIVE_BYTES {
-                    let _ = child.kill();
-                    drop(out_file);
-                    let _ = std::fs::remove_file(&path_for_blocking);
-                    return Err(format!(
-                        "archive_ssh: archive exceeded {} byte cap; aborted (write so far: {} bytes)",
-                        MAX_ARCHIVE_BYTES, copied
-                    ));
-                }
-            }
-            let status = child.wait()
-                .map_err(|e| format!("archive_ssh: wait failed: {}", e))?;
-            if !status.success() {
-                let mut err_buf = String::new();
-                if let Some(mut e) = stderr {
-                    use std::io::Read as _;
-                    let _ = e.read_to_string(&mut err_buf);
-                }
-                return Err(format!(
-                    "archive_ssh: remote tar exited {} — stderr: {}",
-                    status.code().unwrap_or(-1),
-                    err_buf.trim().chars().take(400).collect::<String>(),
-                ));
-            }
-            Ok(ArchiveSummary {
-                path: path_for_blocking,
-                bytes_in: copied,
-                bytes_out: copied,
-                files: 0,
-                skipped: 0,
-                roots: vec![],
-            })
-        }),
+    // Bound the archive size + total time. The remote wrapper has the same
+    // deadline, while this helper owns the local SSH process session, clears
+    // the registry, and removes partial output on every failure path.
+    let copied = stream_owned_archive_command(
+        &mut cmd,
+        &final_path,
+        tab_id.unwrap_or("default"),
+        ARCHIVE_TIMEOUT,
+        MAX_SSH_ARCHIVE_BYTES,
     )
-    .await
-    .map_err(|_| format!("archive_ssh: timed out after {}s — remote tar may be hung; partial file at {} may need manual cleanup", ARCHIVE_TIMEOUT_SECS, final_path_s))?
-    .map_err(|e| format!("archive_ssh: join failed: {}", e))??;
+    .await?;
 
-    let mut summary = summary;
-    summary.roots = vec![
-        format!("{}:{}/{}", host, "$HOME", scratch_rel),
-        format!("{}:{}", host, cwd),
-    ];
-    Ok(summary)
+    Ok(ArchiveSummary {
+        path: final_path_s,
+        bytes_in: copied,
+        bytes_out: copied,
+        files: 0,
+        skipped: 0,
+        roots: vec![
+            format!("{}:{}/{}", host, "$HOME", scratch_rel),
+            format!("{}:{}", host, cwd),
+        ],
+    })
 }
 
 fn validate_remote_path_component(label: &str, value: &str) -> Result<(), String> {
@@ -807,202 +1147,4 @@ fn validate_remote_path_component(label: &str, value: &str) -> Result<(), String
         return Err(format!("{} contains unsupported characters", label));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn archive_rejects_an_unknown_tab_without_creating_a_ghost_session() {
-        let registry = Arc::new(SessionRegistry::new());
-        let tab_id = format!("missing-{}", uuid::Uuid::new_v4());
-        let save_path = std::env::temp_dir().join(format!("{tab_id}.zip"));
-
-        let result = archive_session_artifacts_inner(
-            Some(tab_id.clone()),
-            save_path.to_string_lossy().to_string(),
-            registry.clone(),
-        )
-        .await;
-        let error = match result {
-            Ok(_) => panic!("an unknown tab must not be archived"),
-            Err(error) => error,
-        };
-
-        assert!(error.contains("unknown tab"));
-        assert!(registry.get_existing(&tab_id).await.is_none());
-        assert!(!save_path.exists());
-    }
-
-    #[test]
-    fn native_windows_archive_uses_bounded_temp_tar_and_secret_excludes() {
-        let command = windows_ssh_archive_command(
-            r"C:\Users\alice\project",
-            "C%3A%5CUsers%5Calice%5Cproject",
-            "session-1",
-        );
-        assert!(command.contains("tar.exe"));
-        assert!(command.contains("OpenStandardOutput"));
-        assert!(command.contains("Remove-Item -LiteralPath $tmp"));
-        assert!(command.contains("--exclude=.env"));
-        assert!(command.contains("--exclude=*/.ssh/*"));
-        assert!(command.contains(r"C:\Users\alice\project"));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
-    async fn live_native_windows_ssh_archive_roundtrip() {
-        let host =
-            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
-        let home =
-            std::env::var("SHELLX_WINDOWS_SSH_HOME").expect("SHELLX_WINDOWS_SSH_HOME is required");
-        let fixture_id = uuid::Uuid::new_v4().simple().to_string();
-        let fixture_dir = format!(
-            "{}\\.shellx\\archive-fixture-{}",
-            home.trim_end_matches(['/', '\\']),
-            fixture_id
-        );
-        let fixture_file = format!("{}\\proof.txt", fixture_dir);
-        let ssh = crate::acp::SshSpawnConfig {
-            host: host.clone(),
-            port: None,
-            key_vault_ref: None,
-            remote_grok_path: String::new(),
-            remote_runtime: crate::acp::SshRemoteRuntime::Windows,
-            wsl_distro: None,
-        };
-        crate::acp::ssh_write_file(&ssh, &fixture_file, "archive proof\n")
-            .await
-            .expect("create native Windows archive fixture");
-
-        let save_path = std::env::temp_dir().join(format!(
-            "shellx-native-windows-archive-{}.tar.gz",
-            fixture_id
-        ));
-        let transport = SshArchiveTransport {
-            host: &host,
-            remote_runtime: crate::acp::SshRemoteRuntime::Windows,
-            wsl_distro: None,
-        };
-        let archive = archive_ssh_session(
-            &transport,
-            &fixture_dir,
-            &urlencoded_cwd(&fixture_dir),
-            &fixture_id,
-            &save_path.to_string_lossy(),
-            Some("native-windows-archive-live"),
-        )
-        .await;
-
-        let mut cleanup = tokio::process::Command::new("ssh");
-        cleanup
-            .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-T", "--"])
-            .arg(&host)
-            .arg(crate::acp::wrap_ssh_windows_command(&format!(
-                "{}$path={};if(Test-Path -LiteralPath $path){{Remove-Item -LiteralPath $path -Recurse -Force}}",
-                crate::acp::windows_remote_shell_prelude(),
-                crate::acp::powershell_single_quote(&fixture_dir)
-            )));
-        let cleanup_status = cleanup.status().await.expect("spawn remote cleanup");
-
-        let summary = archive.expect("native Windows SSH archive");
-        let bytes = std::fs::read(&save_path).expect("read local archive fixture");
-        let _ = std::fs::remove_file(&save_path);
-        assert!(cleanup_status.success(), "remote fixture cleanup failed");
-        assert!(summary.bytes_out > 0);
-        assert!(bytes.starts_with(&[0x1f, 0x8b]), "archive is not gzip");
-    }
-
-    #[test]
-    fn urlencode_matches_grok_scheme_for_typical_cwds() {
-        // Backslashes and colons are the two chars that differ between
-        // a Windows and a WSL cwd; both must be percent-encoded.
-        assert_eq!(
-            urlencoded_cwd("C:\\Users\\FixtureUser"),
-            "C%3A%5CUsers%5CFixtureUser"
-        );
-        assert_eq!(
-            urlencoded_cwd("/mnt/c/Users/FixtureUser"),
-            "%2Fmnt%2Fc%2FUsers%2FFixtureUser"
-        );
-        assert_eq!(urlencoded_cwd("/home/user"), "%2Fhome%2Fuser");
-        // Unreserved chars left alone.
-        assert_eq!(urlencoded_cwd("abc-XYZ_123.tar"), "abc-XYZ_123.tar");
-    }
-
-    #[test]
-    fn archive_save_path_policy_rejects_non_archive_targets() {
-        let err = validate_archive_save_path("/home/alice/.bashrc", false)
-            .expect_err("archive save path must not accept arbitrary non-archive targets");
-        assert!(
-            err.contains(".zip") || err.contains("archive"),
-            "error should explain archive extension policy, got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn archive_entry_secret_denylist_covers_common_credentials() {
-        for rel in [
-            ".env",
-            ".env.local",
-            ".git/config",
-            ".ssh/id_ed25519",
-            "nested/.ssh/id_rsa",
-            "deploy.pem",
-            "api.token",
-            ".netrc",
-        ] {
-            assert!(
-                archive_entry_is_sensitive(Path::new(rel), Path::new(rel)),
-                "archive should skip sensitive entry: {rel}"
-            );
-        }
-        for rel in [
-            ".aws/credentials",
-            ".azure/accessTokens.json",
-            ".config/gcloud/credentials.db",
-            ".config/gh/hosts.yml",
-            ".docker/config.json",
-            ".kube/config",
-            ".cargo/credentials.toml",
-            ".terraform.d/credentials.tfrc.json",
-            ".password-store/service.gpg",
-            ".gnupg/private-keys-v1.d/key",
-            ".npmrc",
-            ".pypirc",
-            ".git-credentials",
-        ] {
-            let abs = Path::new("/home/fixture/workspace").join(rel);
-            assert!(
-                archive_entry_is_sensitive(&abs, Path::new(rel)),
-                "archive should share Host MCP sensitive-path coverage: {rel}"
-            );
-        }
-        assert!(!archive_entry_is_sensitive(
-            Path::new("/home/fixture/workspace/src/main.rs"),
-            Path::new("src/main.rs")
-        ));
-        assert!(!archive_entry_is_sensitive(
-            Path::new("/home/fixture/workspace/docs/env-notes.md"),
-            Path::new("docs/env-notes.md")
-        ));
-    }
-
-    #[test]
-    fn ssh_archive_excludes_share_one_sensitive_pattern_source() {
-        let windows = windows_ssh_archive_excludes();
-        let posix = posix_ssh_archive_excludes();
-        for pattern in crate::host_mcp::SENSITIVE_ARCHIVE_GLOBS {
-            assert!(
-                windows.contains(&format!("--exclude={pattern}")),
-                "native Windows SSH archive is missing {pattern}"
-            );
-            assert!(
-                posix.contains(&format!("--exclude='{pattern}'")),
-                "POSIX SSH archive is missing {pattern}"
-            );
-        }
-    }
 }

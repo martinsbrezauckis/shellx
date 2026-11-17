@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 
 import { ShellIcon } from "../../components/icons";
-import type { BrowserEvidenceRow } from "../browserEvidence";
+import type { BrowserEvidenceIdentity, BrowserEvidenceRow } from "../browserEvidence";
 import { BrowserDeveloperInspection } from "./BrowserDeveloperInspection";
 import { selectBrowserTeachSource } from "../browserTeach";
 import { useBrowserEvidence } from "../hooks/useBrowserEvidence";
@@ -23,19 +23,56 @@ function shortId(value: string): string {
   return value.length > 30 ? `${value.slice(0, 18)}…${value.slice(-8)}` : value;
 }
 
+function countLabel(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+function BrowserEvidenceRedactionLabels({ identity }: { identity: BrowserEvidenceIdentity }): JSX.Element | null {
+  const redactionCount = identity.redactionCount ?? identity.redactionMarkers?.length ?? 0;
+  const fidelityLossCount = identity.sanitizerFidelityLossCount ?? identity.sanitizerLossCount ?? 0;
+  if (redactionCount === 0 && fidelityLossCount === 0) return null;
+  return (
+    <div className="shellx-browser-evidence-sanitization">
+      {redactionCount > 0 && (
+        <div className="shellx-browser-evidence-redactions">
+          <strong>Intentional policy {countLabel(redactionCount, "redaction")}</strong>
+          {identity.redactionMarkers?.map((marker, index) => (
+            <span key={`${marker.scope}:${marker.ruleId ?? marker.replacement}:${index}`}>
+              <code>{marker.scope}</code> {marker.replacement}
+              {marker.reason && <> · reason: {marker.reason}</>}
+              {marker.ruleId && <> · rule: <code>{marker.ruleId}</code></>}
+              {` · ${marker.originalBytes} B hidden`}
+            </span>
+          ))}
+        </div>
+      )}
+      {fidelityLossCount > 0 && (
+        <span className="shellx-browser-evidence-fidelity-loss">
+          {countLabel(fidelityLossCount, "sanitization fidelity loss")}; {identity.evidenceComplete === true
+            ? "capture complete, not full fidelity."
+            : "fidelity loss is separate from capture gaps."}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function BrowserEvidenceReceipt({ row }: { row: BrowserEvidenceRow }): JSX.Element {
   const evaluation = row.kind === "browserEvaluationReportWritten";
   const identityId = row.identity.reportId ?? row.identity.attemptId ?? row.receiptId;
-  const completeness = evaluation
-    ? row.identity.evidenceComplete === true ? "Complete" : "Incomplete"
+  const captureStatus = evaluation
+    ? row.identity.evidenceComplete === true ? "Capture complete" : "Capture incomplete"
     : row.identity.evidenceComplete === true
-      ? "Complete"
-      : row.identity.evidenceComplete === false ? "Gapped" : "Recorded";
+      ? "Capture complete"
+      : row.identity.evidenceComplete === false ? "Capture gapped" : "Capture recorded";
+  const captureStatusClass = captureStatus === "Capture complete"
+    ? "complete"
+    : captureStatus === "Capture recorded" ? "recorded" : "incomplete";
   const detail = evaluation
     ? `${row.identity.baselineAttempts ?? 0} baseline · ${row.identity.candidateAttempts ?? 0} candidate`
     : `${row.identity.events ?? 0} events · ${row.identity.receipts ?? 0} receipts`
       + `${row.identity.gapCount ? ` · ${row.identity.gapCount} gap${row.identity.gapCount === 1 ? "" : "s"}` : ""}`
-      + `${row.identity.sanitizerLossCount ? ` · ${row.identity.sanitizerLossCount} bounded value${row.identity.sanitizerLossCount === 1 ? "" : "s"}` : ""}`;
+      + `${row.identity.redactionCount ? ` · ${countLabel(row.identity.redactionCount, "policy redaction")}` : ""}`;
   return (
     <article className={`shellx-browser-evidence-row ${evaluation ? "evaluation" : "attempt"}`}>
       <div className="shellx-browser-evidence-row-head">
@@ -43,7 +80,7 @@ function BrowserEvidenceReceipt({ row }: { row: BrowserEvidenceRow }): JSX.Eleme
           <ShellIcon name={evaluation ? "activity" : "history"} size={13} />
           {evaluation ? "Evaluation" : "Attempt"}
         </span>
-        <span className={`shellx-browser-evidence-status ${completeness === "Gapped" ? "incomplete" : completeness.toLowerCase()}`}>{completeness}</span>
+        <span className={`shellx-browser-evidence-status ${captureStatusClass}`}>{captureStatus}</span>
       </div>
       <strong title={identityId}>{shortId(identityId)}</strong>
       <div className="shellx-browser-evidence-metrics">
@@ -51,6 +88,7 @@ function BrowserEvidenceReceipt({ row }: { row: BrowserEvidenceRow }): JSX.Eleme
         <span>{detail}</span>
         <span>{formatBytes(row.identity.bytes)}</span>
       </div>
+      <BrowserEvidenceRedactionLabels identity={row.identity} />
       <code title={row.identity.sha256}>sha256 {row.identity.sha256.slice(0, 16)}…</code>
       <small>{formatRecordedAt(row.recordedAtMs)}</small>
     </article>
@@ -174,7 +212,9 @@ export function BrowserEvidencePanel({
           <strong>{evidence.recordedAttempt.evidenceComplete ? "Attempt recorded" : "Attempt recorded with evidence gaps"}</strong>
           <span>
             {shortId(evidence.recordedAttempt.attemptId)} · {evidence.recordedAttempt.events} events · {evidence.recordedAttempt.gapCount} gaps
-            {evidence.recordedAttempt.sanitizerLossCount ? ` · ${evidence.recordedAttempt.sanitizerLossCount} bounded values` : ""}
+            {evidence.recordedAttempt.sanitizerLossCount
+              ? ` · ${countLabel(evidence.recordedAttempt.sanitizerLossCount, "sanitization fidelity loss")}`
+              : ""}
           </span>
         </div>
       )}

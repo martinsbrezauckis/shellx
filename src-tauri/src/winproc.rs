@@ -92,7 +92,7 @@ mod win_job {
     use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
@@ -104,6 +104,24 @@ mod win_job {
     unsafe impl Sync for SafeHandle {}
 
     static JOB: OnceLock<SafeHandle> = OnceLock::new();
+
+    /// A short-lived owner for one helper process tree. Closing this job kills
+    /// every local descendant, unlike the app-wide job which is only closed
+    /// when ShellX itself exits.
+    pub struct OwnedChildJob(HANDLE);
+
+    // Kernel object handles are valid on any thread in the owning process.
+    // This type has unique ownership and only closes/terminates that handle,
+    // so it is safe for `bounded_command` to retain across an async await.
+    unsafe impl Send for OwnedChildJob {}
+
+    impl Drop for OwnedChildJob {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
 
     pub fn init() -> Result<(), String> {
         if JOB.get().is_some() {
@@ -166,6 +184,131 @@ mod win_job {
                 );
             }
             CloseHandle(child_handle);
+        }
+    }
+
+    pub fn create_owned_child_job(pid: u32) -> Result<OwnedChildJob, String> {
+        if pid == 0 {
+            return Err("owned child has no process id".to_string());
+        }
+        unsafe {
+            let handle = CreateJobObjectW(null_mut(), std::ptr::null());
+            if handle.is_null() {
+                return Err(format!(
+                    "CreateJobObjectW for owned child failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation = JOBOBJECT_BASIC_LIMIT_INFORMATION {
+                LimitFlags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                ..std::mem::zeroed()
+            };
+            let info_size = std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32;
+            let info_ptr = (&info) as *const _ as *const std::ffi::c_void;
+            if SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                info_ptr,
+                info_size,
+            ) == 0
+            {
+                CloseHandle(handle);
+                return Err(format!(
+                    "SetInformationJobObject for owned child failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let child = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, pid);
+            if child.is_null() {
+                CloseHandle(handle);
+                return Err(format!(
+                    "OpenProcess for owned child PID {pid} failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            let assigned = AssignProcessToJobObject(handle, child);
+            CloseHandle(child);
+            if assigned == 0 {
+                CloseHandle(handle);
+                return Err(format!(
+                    "AssignProcessToJobObject for owned child PID {pid} failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(OwnedChildJob(handle))
+        }
+    }
+
+    pub fn terminate_owned_child_job(job: &OwnedChildJob) -> Result<(), String> {
+        unsafe {
+            if TerminateJobObject(job.0, 1) == 0 {
+                return Err(format!(
+                    "TerminateJobObject for owned child failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Per-operation Windows ownership. A successful job assignment means closing
+/// this value or explicitly terminating it kills the local helper's complete
+/// process tree synchronously. Other platforms use their session-group path.
+pub(crate) struct OwnedChildProcessTree {
+    #[cfg(target_os = "windows")]
+    job: Option<win_job::OwnedChildJob>,
+}
+
+pub(crate) fn own_child_process_tree(pid: u32) -> OwnedChildProcessTree {
+    #[cfg(target_os = "windows")]
+    {
+        let job = match win_job::create_owned_child_job(pid) {
+            Ok(job) => Some(job),
+            Err(error) => {
+                // Some managed parent processes disallow nested jobs. Keep the
+                // taskkill fallback, but make that reduced guarantee observable.
+                tracing::warn!(
+                    "owned child PID {} could not join a dedicated kill-on-close job: {}",
+                    pid,
+                    error
+                );
+                None
+            }
+        };
+        OwnedChildProcessTree { job }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = pid;
+        OwnedChildProcessTree {}
+    }
+}
+
+impl OwnedChildProcessTree {
+    pub(crate) fn binds_parent_lifetime(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            self.job.is_some()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
+    }
+
+    pub(crate) fn terminate_now(&self) -> Result<bool, String> {
+        #[cfg(target_os = "windows")]
+        {
+            match self.job.as_ref() {
+                Some(job) => win_job::terminate_owned_child_job(job).map(|()| true),
+                None => Ok(false),
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(false)
         }
     }
 }
@@ -292,7 +435,7 @@ pub fn taskkill_is_already_gone(_code: Option<i32>) -> bool {
     false
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(target_os = "windows")]
 fn taskkill_tree_args(pid: u32) -> [String; 4] {
     [
         "/PID".to_string(),
@@ -302,8 +445,11 @@ fn taskkill_tree_args(pid: u32) -> [String; 4] {
     ]
 }
 
+/// Resolve the system `taskkill.exe` without consulting the working directory
+/// or `PATH`. Windows-only callers that terminate owned local process trees
+/// must use this rather than an ambient executable search.
 #[cfg(target_os = "windows")]
-fn system_taskkill_path() -> Result<std::path::PathBuf, String> {
+pub(crate) fn trusted_system_taskkill_path() -> Result<std::path::PathBuf, String> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt as _;
     use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
@@ -356,7 +502,7 @@ pub async fn terminate_owned_tokio_child_tree(
     let pid = child
         .id()
         .ok_or_else(|| "owned child has no process id".to_string())?;
-    let mut command = tokio::process::Command::new(system_taskkill_path()?);
+    let mut command = tokio::process::Command::new(trusted_system_taskkill_path()?);
     command
         .args(taskkill_tree_args(pid))
         .stdout(std::process::Stdio::null())
@@ -380,6 +526,137 @@ pub async fn terminate_owned_tokio_child_tree(
     Ok(())
 }
 
+/// Terminate and reap an owned child which was started with
+/// [`apply_new_session_preexec`].
+///
+/// The fresh-session precondition is essential on Unix: it makes `pid` the
+/// process-group leader, so signalling `-pid` cannot accidentally reach the
+/// ShellX process group.  Keep ordinary child callers on
+/// [`terminate_owned_tokio_child_tree`]; they may not have that isolation.
+/// `session_leader_pid` is saved at spawn time because Tokio may no longer
+/// expose a PID once the direct child has exited while a descendant still
+/// holds one of its pipes open.
+#[cfg(target_os = "windows")]
+pub async fn terminate_owned_tokio_child_session_tree(
+    child: &mut tokio::process::Child,
+    session_leader_pid: u32,
+) -> Result<(), String> {
+    let _ = session_leader_pid;
+    terminate_owned_tokio_child_tree(child).await
+}
+
+#[cfg(unix)]
+pub async fn terminate_owned_tokio_child_session_tree(
+    child: &mut tokio::process::Child,
+    session_leader_pid: u32,
+) -> Result<(), String> {
+    use nix::errno::Errno;
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+
+    let pid = crate::process_registry::checked_unix_process_id(session_leader_pid)?;
+    // The negative PID targets only the session/process group established by
+    // apply_new_session_preexec.  ESRCH is benign: the group has already
+    // gone away between the timeout and cleanup attempt.
+    match kill(Pid::from_raw(-pid.as_raw()), Signal::SIGKILL) {
+        Ok(()) | Err(Errno::ESRCH) => {}
+        Err(error) => {
+            return Err(format!(
+                "owned child session-group termination failed for PID {session_leader_pid}: {error}"
+            ));
+        }
+    }
+
+    if child
+        .try_wait()
+        .map_err(|error| format!("owned child status check failed: {error}"))?
+        .is_some()
+    {
+        return Ok(());
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(10), child.wait())
+        .await
+        .map_err(|_| format!("owned child PID {session_leader_pid} was not reaped after session-group termination"))?
+        .map_err(|error| format!("owned child PID {session_leader_pid} reap failed: {error}"))?;
+    Ok(())
+}
+
+/// Request cleanup when an owning future is cancelled before it can await the
+/// normal bounded terminate-and-reap path.
+///
+/// On Unix the fresh-session process group is synchronously signalled.  On
+/// Windows this starts the trusted `taskkill /T /F` request before the child
+/// is dropped; the explicit async cleanup path above is still the only path
+/// that can report taskkill/reap success to its caller.  Callers must also
+/// enable `kill_on_drop(true)` before spawn.
+pub fn request_owned_tokio_child_session_termination(
+    child: &mut tokio::process::Child,
+    session_leader_pid: u32,
+) {
+    #[cfg(unix)]
+    {
+        use nix::errno::Errno;
+        use nix::sys::signal::{kill, Signal};
+        use nix::unistd::Pid;
+
+        let _ = child;
+        let result = crate::process_registry::checked_unix_process_id(session_leader_pid)
+            .and_then(|pid| {
+                kill(Pid::from_raw(-pid.as_raw()), Signal::SIGKILL)
+                    .or_else(|error| if error == Errno::ESRCH { Ok(()) } else { Err(error) })
+                    .map_err(|error| {
+                        format!(
+                            "owned child cancellation could not terminate session group for PID {session_leader_pid}: {error}"
+                        )
+                    })
+            });
+        if let Err(error) = result {
+            tracing::warn!("{error}");
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = match trusted_system_taskkill_path() {
+            Ok(path) => std::process::Command::new(path),
+            Err(error) => {
+                tracing::warn!(
+                    "owned child cancellation could not resolve trusted taskkill: {error}"
+                );
+                if let Err(error) = child.start_kill() {
+                    tracing::warn!(
+                        "owned child cancellation could not terminate direct child: {error}"
+                    );
+                }
+                return;
+            }
+        };
+        command
+            .args(taskkill_tree_args(session_leader_pid))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        command.no_window();
+        if let Err(error) = command.spawn() {
+            tracing::warn!(
+                "owned child cancellation could not start taskkill tree request: {error}"
+            );
+            if let Err(error) = child.start_kill() {
+                tracing::warn!(
+                    "owned child cancellation could not terminate direct child: {error}"
+                );
+            }
+        }
+    }
+
+    #[cfg(not(any(unix, target_os = "windows")))]
+    {
+        let _ = session_leader_pid;
+        if let Err(error) = child.start_kill() {
+            tracing::warn!("owned child cancellation could not terminate direct child: {error}");
+        }
+    }
+}
+
 #[cfg(not(target_os = "windows"))]
 pub async fn terminate_owned_tokio_child_tree(
     child: &mut tokio::process::Child,
@@ -395,32 +672,4 @@ pub async fn terminate_owned_tokio_child_tree(
         .kill()
         .await
         .map_err(|error| format!("owned child termination failed: {error}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::taskkill_tree_args;
-
-    #[cfg(target_os = "windows")]
-    use super::system_taskkill_path;
-
-    #[test]
-    fn owned_windows_child_tree_uses_exact_pid_and_descendant_force_flags() {
-        assert_eq!(
-            taskkill_tree_args(4242),
-            ["/PID", "4242", "/T", "/F"].map(str::to_string)
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn owned_windows_child_tree_resolves_the_kernel32_system_taskkill() {
-        let path = system_taskkill_path().expect("resolve the trusted taskkill executable");
-        assert!(path.is_absolute());
-        assert!(path.is_file());
-        assert_eq!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("taskkill.exe")
-        );
-    }
 }

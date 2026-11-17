@@ -199,6 +199,7 @@ export interface BrowserReceipt {
 export interface BrowserConsoleLog {
   logId: string;
   taskId?: string | null;
+  browserTabId?: string | null;
   level: string;
   source: string;
   message: string;
@@ -250,6 +251,8 @@ export interface BrowserTransferEntry {
   destination?: string | null;
   retentionReason?: string | null;
   approvalId?: string | null;
+  requiresApproval?: boolean;
+  canDeclineNativeDownload?: boolean;
   destinationOrigin?: string | null;
   refId?: string | null;
   reason: string;
@@ -330,6 +333,7 @@ export interface BrowserEnginePoolSnapshot {
 export interface BrowserNativeSecurityCapabilities {
   platform: string;
   strictRequestFilter: boolean;
+  strictInPageFilter: boolean;
   popupGate: boolean;
   permissionGate: boolean;
   passwordAutosaveDisabled: boolean;
@@ -359,6 +363,8 @@ export interface BrowserState {
   vaultDeposits: BrowserVaultDeposit[];
   downloads: BrowserTransferEntry[];
   uploads: BrowserTransferEntry[];
+  interruptedNativeDownloadStageCount?: number;
+  nativeDownloadCleanupStateUnknown?: boolean;
   consoleLogs: BrowserConsoleLog[];
   receipts: BrowserReceipt[];
 }

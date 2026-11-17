@@ -5,6 +5,7 @@ import type {
   TaskProviderReceiptReason,
   TaskProviderReceiptVerdict,
   TaskRunHistoryEntry,
+  TaskRunTraceEvidenceIncompleteReason,
   TaskRunHistoryState,
   TaskRunTimelineEntry,
 } from "./task-manager-contract";
@@ -177,7 +178,7 @@ export function taskResultEvidencePresentation(
 
 /** Fixed-copy summary of the output-free private conversation receipt. */
 export function taskTraceEvidencePresentation(
-  run: Pick<TaskRunHistoryEntry, "traceEvidence">,
+  run: Pick<TaskRunHistoryEntry, "conversationSessionId" | "traceEvidence">,
 ): TaskTraceEvidencePresentation | undefined {
   const evidence = run.traceEvidence;
   if (!evidence) return undefined;
@@ -190,11 +191,10 @@ export function taskTraceEvidencePresentation(
     };
   }
   if (evidence.state === "incomplete") {
+    const reviewableArchive = Boolean(run.conversationSessionId?.trim());
     return {
-      label: "Task conversation has gaps",
-      detail: evidence.recoveredAfterRestart
-        ? "A reviewable private archive was recovered after restart; stream completeness is intentionally unclaimed."
-        : "The private archive remains reviewable where available, with dropped or unverified stream records disclosed.",
+      label: reviewableArchive ? "Task conversation has gaps" : "Task conversation unavailable",
+      detail: incompleteTraceEvidenceDetail(evidence.incompleteReasons, reviewableArchive),
       occurredAtMs,
     };
   }
@@ -204,6 +204,35 @@ export function taskTraceEvidencePresentation(
     detail: `${eventCount} provider event${eventCount === 1 ? "" : "s"} bound to this exact run.`,
     occurredAtMs,
   };
+}
+
+/** Uses only the bounded receipt enum: no backend diagnostics become rendered text. */
+function incompleteTraceEvidenceDetail(
+  reasons: readonly TaskRunTraceEvidenceIncompleteReason[] | undefined,
+  reviewableArchive: boolean,
+): string {
+  const availability = reviewableArchive
+    ? "This incomplete task conversation archive can be opened for review; stream completeness is intentionally unclaimed."
+    : "No reviewable task conversation archive is available for this run.";
+  const fixedReasons = [...new Set((reasons ?? []).slice(0, 10))]
+    .map(incompleteTraceEvidenceReasonDetail)
+    .filter((detail): detail is string => Boolean(detail));
+  return fixedReasons.length > 0 ? `${availability} ${fixedReasons.join(" ")}` : availability;
+}
+
+function incompleteTraceEvidenceReasonDetail(reason: TaskRunTraceEvidenceIncompleteReason): string | undefined {
+  switch (reason) {
+    case "missingArchive": return "No archive was retained for this run.";
+    case "missingDurableFlushProof": return "The archive has no durable flush proof.";
+    case "invalidArchiveContext": return "The archive context could not be verified.";
+    case "invalidArchiveFormat": return "The archive format could not be verified.";
+    case "durableProofIdentityMismatch": return "The durable flush proof did not match this run.";
+    case "missingTerminalMarker": return "The archive has no terminal marker.";
+    case "droppedProviderEvents": return "Some provider events were not retained in the archive.";
+    case "archiveWriteFailed": return "The task conversation archive could not be written.";
+    case "providerEventCounterMismatch": return "The archive provider event count did not match its receipt.";
+    case "flushSummaryMismatch": return "The archive flush summary did not match its receipt.";
+  }
 }
 
 function boundedCount(value: number): number {

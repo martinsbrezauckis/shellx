@@ -1,29 +1,24 @@
 use super::*;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct BuildStartBody {
     #[serde(rename = "tabId")]
     tab_id: Option<String>,
     objective: String,
     cwd: Option<String>,
-    /// Guarded installed-release fixture state. This creates a real local
-    /// Build run and scratchboard inside one disposable ShellX-home child;
-    /// it is unavailable on normal app instances.
-    #[serde(rename = "releaseTestState", default)]
-    release_test_state: Option<String>,
+
 }
 
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(super) struct BuildTabBody {
     #[serde(rename = "tabId")]
     tab_id: Option<String>,
     summary: Option<String>,
     #[serde(default)]
     inject: Option<bool>,
-    /// Remove one exact isolated release-test Build runtime and persisted
-    /// ledger instead of retaining normal product history.
-    #[serde(rename = "releaseTestClearState", default)]
-    release_test_clear_state: bool,
+
 }
 
 #[derive(Deserialize)]
@@ -69,28 +64,8 @@ pub(super) async fn build_start_http(
     if body.objective.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "objective: must be non-empty").into_response();
     }
-    let release_test_state = match body.release_test_state.as_deref() {
-        None => None,
-        Some("awaiting-approval") => Some("awaiting-approval"),
-        Some("active") => Some("active"),
-        Some("paused") => Some("paused"),
-        Some("blocked-recheckable") => Some("blocked-recheckable"),
-        Some(_) => return (
-            StatusCode::BAD_REQUEST,
-            "releaseTestState: expected awaiting-approval, active, paused, or blocked-recheckable",
-        )
-            .into_response(),
-    };
-    if release_test_state.is_some() && !crate::isolated_test_instance_requested() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": "release_test_route_unavailable",
-                "message": "release-test Build fixture state is unavailable outside an isolated test instance",
-            })),
-        )
-            .into_response();
-    }
+
+
     let registry = s
         .app
         .state::<std::sync::Arc<crate::acp::SessionRegistry>>()
@@ -107,11 +82,7 @@ pub(super) async fn build_start_http(
     } else {
         std::env::current_dir().unwrap_or_default()
     };
-    if release_test_state.is_some() {
-        if let Err(error) = validate_release_test_build_namespace(&tab_id, &cwd) {
-            return (StatusCode::BAD_REQUEST, error).into_response();
-        }
-    }
+
     let (transport_kind, ssh_config) = if let Some(arc) = registry.get_existing(&tab_id).await {
         let guard = arc.lock().await;
         (
@@ -136,36 +107,22 @@ pub(super) async fn build_start_http(
         )
         .await
     {
-        Ok(mut state) => {
-            if let Some(target) = release_test_state {
-                match prepare_release_test_build_state(&orch, &tab_id, target).await {
-                    Ok(prepared) => state = prepared,
-                    Err(error) => {
-                        let _ = orch.release_test_clear_tab(&tab_id).await;
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({
-                                "error": "release_test_build_fixture_failed",
-                                "message": error,
-                            })),
-                        )
-                            .into_response();
-                    }
-                }
-            }
+        Ok(state) => {
+
             let kickoff_prompt =
                 crate::build_orchestrator::BuildOrchestrator::plan_kickoff_text_for_path(
                     &body.objective,
                     &state.scratchboard_path,
                 );
-            Json(serde_json::json!({
+
+
+            let response = serde_json::json!({
                 "ok": true,
                 "tabId": tab_id,
                 "state": state,
                 "kickoffPrompt": kickoff_prompt,
-                "releaseTestState": release_test_state,
-            }))
-            .into_response()
+            });
+            Json(response).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
@@ -187,44 +144,7 @@ pub(super) async fn build_stop_http(
         .state::<std::sync::Arc<crate::build_orchestrator::BuildOrchestrator>>()
         .inner()
         .clone();
-    if body.release_test_clear_state {
-        if !crate::isolated_test_instance_requested() {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": "release_test_route_unavailable",
-                    "message": "release-test Build cleanup is unavailable outside an isolated test instance",
-                })),
-            )
-                .into_response();
-        }
-        if !release_test_build_tab(&tab_id) {
-            return (
-                StatusCode::BAD_REQUEST,
-                "releaseTestClearState: tabId must name an owned release Build fixture",
-            )
-                .into_response();
-        }
-        let provider_registry = s
-            .app
-            .state::<std::sync::Arc<crate::provider_sessions::ProviderSessionRegistry>>()
-            .inner()
-            .clone();
-        if let Err(error) = provider_registry.release_test_forget_completed_tab(&tab_id) {
-            return (StatusCode::CONFLICT, error).into_response();
-        }
-        return match orch.release_test_clear_tab(&tab_id).await {
-            Ok(()) => Json(serde_json::json!({
-                "ok": true,
-                "tabId": tab_id,
-                "stopped": true,
-                "active": false,
-                "releaseTestCleared": true,
-            }))
-            .into_response(),
-            Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
-        };
-    }
+
     let summary = body
         .summary
         .unwrap_or_else(|| "Stopped via debug API".to_string());
@@ -338,135 +258,11 @@ pub(super) async fn build_stop_http(
     }
 }
 
-fn release_test_build_tab(tab_id: &str) -> bool {
-    tab_id.starts_with("release-build-run-")
-        && tab_id.len() <= 96
-        && tab_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-}
 
-fn validate_release_test_build_namespace(
-    tab_id: &str,
-    cwd: &std::path::Path,
-) -> Result<(), String> {
-    if !release_test_build_tab(tab_id) {
-        return Err("releaseTestState: tabId must name an owned release Build fixture".into());
-    }
-    let name = cwd
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| "release Build cwd has no valid final component".to_string())?;
-    if !name.starts_with(&format!("{tab_id}-"))
-        || name.len() > 128
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        return Err("release Build cwd is outside its owned namespace".into());
-    }
-    let metadata = std::fs::symlink_metadata(cwd)
-        .map_err(|error| format!("read release Build cwd: {error}"))?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err("release Build cwd must be a real directory".into());
-    }
-    let shellx_home = std::fs::canonicalize(shellx_home()?)
-        .map_err(|error| format!("resolve ShellX home: {error}"))?;
-    let cwd = std::fs::canonicalize(cwd)
-        .map_err(|error| format!("resolve release Build cwd: {error}"))?;
-    if cwd.parent() != Some(shellx_home.as_path()) {
-        return Err("release Build cwd must be a direct ShellX-home child".into());
-    }
-    Ok(())
-}
 
-async fn prepare_release_test_build_state(
-    orch: &crate::build_orchestrator::BuildOrchestrator,
-    tab_id: &str,
-    target: &str,
-) -> Result<crate::build_types::BuildRunState, String> {
-    let state = orch
-        .get_state(tab_id)
-        .await
-        .ok_or_else(|| "isolated Build fixture state was not created".to_string())?;
-    let plan = format!(
-        "# Build: {}\n\nStatus: AWAITING_APPROVAL\n\n## Phase 1 - Exercise lifecycle\n- [ ] Invoke the owned Build Run Cockpit control\n\n## Phase 2 - Review\n- [ ] Reviewer must run an AI slop / wiring audit: unwired UI controls, placeholder/mock code, fake success paths, missing frontend/backend bridges, config/schema drift, and release-debug leaks\n",
-        state.objective.trim()
-    );
-    crate::goal_orchestrator::write_scratchboard_text_for_transport(
-        std::path::Path::new(&state.scratchboard_path),
-        &plan,
-        &state.transport_kind,
-        None,
-    )
-    .await?;
-    let awaiting = orch
-        .get_state(tab_id)
-        .await
-        .ok_or_else(|| "isolated Build fixture disappeared after plan write".to_string())?;
-    if awaiting.status != crate::build_types::BuildRunStatus::AwaitingApproval {
-        return Err("isolated Build fixture did not become approval-ready".into());
-    }
-    if target == "awaiting-approval" {
-        return Ok(awaiting);
-    }
-    if !orch.approve_plan(tab_id).await? {
-        return Err("isolated Build fixture did not enter its approved active state".into());
-    }
-    if target == "paused" && !orch.pause(tab_id).await? {
-        return Err("isolated Build fixture did not enter its paused state".into());
-    }
-    if target == "blocked-recheckable" {
-        let active = orch
-            .get_state(tab_id)
-            .await
-            .ok_or_else(|| "isolated Build fixture disappeared before blocker setup".to_string())?;
-        orch.append_receipt(crate::build_types::BuildReceipt {
-            receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
-            run_id: active.run_id.clone(),
-            tab_id: tab_id.to_string(),
-            kind: crate::build_types::BuildReceiptKind::BlockerOpened,
-            created_at_ms: now_ms() as u64,
-            actor: "shellx-release-fixture".into(),
-            summary: "Review gate receipt is pending for the isolated fixture".into(),
-            confidence: crate::build_types::BuildReceiptConfidence::TrustedHost,
-            data: serde_json::json!({ "fixtureOnly": true }),
-        })
-        .await?;
-        orch.append_receipt(crate::build_types::BuildReceipt {
-            receipt_id: format!("br-{}", uuid::Uuid::new_v4()),
-            run_id: active.run_id,
-            tab_id: tab_id.to_string(),
-            kind: crate::build_types::BuildReceiptKind::ReviewCompleted,
-            created_at_ms: now_ms() as u64,
-            actor: "shellx-release-fixture".into(),
-            summary: "Owned review evidence is now complete".into(),
-            confidence: crate::build_types::BuildReceiptConfidence::TrustedHost,
-            data: serde_json::json!({
-                "fixtureOnly": true,
-                "gateEvidence": { "accepted": true },
-            }),
-        })
-        .await?;
-    }
-    let prepared = orch
-        .get_state(tab_id)
-        .await
-        .ok_or_else(|| "isolated Build fixture disappeared after state preparation".to_string())?;
-    let expected = match target {
-        "active" => crate::build_types::BuildRunStatus::Active,
-        "paused" => crate::build_types::BuildRunStatus::Paused,
-        "blocked-recheckable" => crate::build_types::BuildRunStatus::Blocked,
-        _ => return Err("unsupported isolated Build fixture target".into()),
-    };
-    if prepared.status != expected {
-        return Err(format!(
-            "isolated Build fixture reached {:?}, expected {:?}",
-            prepared.status, expected
-        ));
-    }
-    Ok(prepared)
-}
+
+
+
 
 pub(super) async fn build_pause_http(
     State(s): State<ApiState>,
@@ -840,15 +636,25 @@ pub(super) async fn build_receipt_http(
         confidence,
         data: body.data,
     };
-    match orch.append_receipt(receipt.clone()).await {
-        Ok(()) => Json(serde_json::json!({
-            "ok": true,
-            "tabId": tab_id,
-            "receipt": receipt,
-        }))
-        .into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    match orch.append_normalized_receipt(receipt).await {
+        Ok(receipt) => Json(build_receipt_http_success_payload(&tab_id, receipt)).into_response(),
+        Err(error) => build_receipt_http_error_response(error),
     }
+}
+
+pub(super) fn build_receipt_http_success_payload(
+    tab_id: &str,
+    receipt: Option<crate::build_types::BuildReceipt>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "tabId": tab_id,
+        "receipt": receipt,
+    })
+}
+
+pub(super) fn build_receipt_http_error_response(error: String) -> Response {
+    (StatusCode::INTERNAL_SERVER_ERROR, error).into_response()
 }
 
 pub(super) fn build_receipt_http_confidence(

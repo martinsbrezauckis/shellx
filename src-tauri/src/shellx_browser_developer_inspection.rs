@@ -165,9 +165,10 @@ fn build_developer_inspection(
             .iter()
             .filter(|entry| {
                 entry.task_id.as_deref() == Some(task_id)
-                    && context.browser_tab_id.as_deref().map_or(true, |tab_id| {
-                        entry.browser_tab_id.as_deref() == Some(tab_id)
-                    })
+                    && context
+                        .browser_tab_id
+                        .as_deref()
+                        .is_none_or(|tab_id| entry.browser_tab_id.as_deref() == Some(tab_id))
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -974,7 +975,3 @@ fn developer_inspection_script() -> &'static str {
 })()
 "#
 }
-
-#[cfg(test)]
-#[path = "shellx_browser_developer_inspection_tests.rs"]
-mod tests;

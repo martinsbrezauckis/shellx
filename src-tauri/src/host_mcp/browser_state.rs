@@ -180,7 +180,7 @@ pub(super) fn browser_rendered_check_body(args: &Value) -> Result<Value, String>
                 domain
                     .as_str()
                     .map(str::trim)
-                    .map_or(true, |domain| domain.is_empty() || domain.len() > 253)
+                    .is_none_or(|domain| domain.is_empty() || domain.len() > 253)
             })
         {
             return Err(

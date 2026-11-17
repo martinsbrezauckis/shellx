@@ -1,5 +1,5 @@
 /**
- * src/components/HelpModal.tsx — `?` help overlay (§15).
+ * src/components/HelpModal.tsx — keyboard shortcut overlay.
  *
  * Listed-bindings reference — sourced from `src/lib/shortcuts.ts` so it
  * never drifts from what App.tsx actually wires. Esc closes. Backdrop

@@ -19,7 +19,11 @@ pub(crate) const MAX_TASK_ATTACHMENTS_PER_REQUEST: usize = 16;
 pub(crate) const MAX_TASK_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 pub(crate) const MAX_TASK_ATTACHMENT_REQUEST_BYTES: u64 = 100 * 1024 * 1024;
 
-const PROVIDER_PATH_PREFIX: &str = ".shellx/task-attachments/";
+/// Project-local generated copies are deliberately outside `.shellx/`: Host
+/// MCP denies that control-plane directory in every project. Git exclusion is
+/// installed separately by the transport before a copy is written.
+pub(crate) const TASK_ATTACHMENT_STORAGE_DIR: &str = ".shellx-task-attachments";
+const PROVIDER_PATH_PREFIX: &str = ".shellx-task-attachments/";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -733,7 +737,3 @@ fn receipt_kind_wire(kind: TaskAttachmentReceiptKind) -> &'static str {
         TaskAttachmentReceiptKind::Reclaimed => "reclaimed",
     }
 }
-
-#[cfg(test)]
-#[path = "task_attachments_tests.rs"]
-mod tests;

@@ -121,26 +121,34 @@ pub(crate) async fn execute_browser_recipe_replay(
             .await
             {
                 Ok(Some(response)) => response,
-                Ok(None) => match registry.apply_action(action) {
-                    Ok(response) => response,
-                    Err(_) => {
-                        plan.skipped_steps.push(
-                            crate::shellx_browser::BrowserRecipeReplaySkippedStep {
-                                index: replay_action.index,
-                                action: Some(requested_action.clone()),
-                                reason: "actionApplyFailed".to_string(),
-                            },
-                        );
-                        step_results.push(
+                Ok(None) => {
+                    match crate::shellx_browser_personal_lock::with_personal_native_cover_after(
+                        state.app(),
+                        registry,
+                        || registry.apply_action(action),
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(_) => {
+                            plan.skipped_steps.push(
+                                crate::shellx_browser::BrowserRecipeReplaySkippedStep {
+                                    index: replay_action.index,
+                                    action: Some(requested_action.clone()),
+                                    reason: "actionApplyFailed".to_string(),
+                                },
+                            );
+                            step_results.push(
                             crate::shellx_browser_recipes::browser_recipe_replay_failed_step_result(
                                 replay_action.index,
                                 requested_action,
                                 "actionApplyFailed",
                             ),
                         );
-                        continue;
+                            continue;
+                        }
                     }
-                },
+                }
                 Err(_) => {
                     plan.skipped_steps.push(
                         crate::shellx_browser::BrowserRecipeReplaySkippedStep {
@@ -256,7 +264,13 @@ async fn guard_recipe_replay_action(
             .await
             {
                 Ok(Some(response)) => Some(response),
-                Ok(None) => registry.apply_action(observe_request).ok(),
+                Ok(None) => crate::shellx_browser_personal_lock::with_personal_native_cover_after(
+                    state.app(),
+                    registry,
+                    || registry.apply_action(observe_request),
+                )
+                .await
+                .ok(),
                 Err(_) => None,
             };
             if let Some(refreshed) = refreshed {

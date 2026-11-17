@@ -1,281 +1,246 @@
 (() => {
-  const manualHandoffSchema = "shellx.manual-handoff.v1";
-  const search = document.querySelector("[data-manual-search]");
-  const status = document.querySelector("[data-search-status]");
-  const empty = document.querySelector("[data-empty-state]");
-  const links = Array.from(document.querySelectorAll("[data-feature-link]"));
-  const features = Array.from(document.querySelectorAll("[data-feature-id]"));
-  const sections = Array.from(document.querySelectorAll("[data-manual-section]"));
-  const featuresById = new Map(features.map((feature) => [feature.dataset.featureId, feature]));
-  const navToggle = document.querySelector("[data-manual-nav-toggle]");
-  const nav = document.querySelector("[data-manual-nav]");
-  const navSymbol = document.querySelector("[data-manual-nav-symbol]");
-  const interfaceMap = document.querySelector("[data-interface-map]");
-  const interfaceMapImage = document.querySelector("[data-interface-map-image]");
-  const interfaceMapDataNode = document.querySelector("[data-interface-map-data]");
-  const interfaceMapData = parseInterfaceMapData(interfaceMapDataNode?.textContent);
-  const highlight = document.querySelector("[data-manual-highlight]");
-  const mapControlsList = document.querySelector("[data-map-controls-list]");
-  const mapControlsCount = document.querySelector("[data-map-controls-count]");
-  const hotspotLayer = document.querySelector("[data-map-hotspot-layer]");
+  const previewSchema = "shellx.public-manual-preview.v1";
+  const featurePattern = /^shellx\.[a-z0-9_.-]{1,180}$/;
+  const interfaceRoot = document.querySelector("[data-interface-map]");
+  const dataNode = document.querySelector("[data-interface-map-data]");
+  const frame = document.querySelector("[data-manual-preview]");
+  const guide = document.querySelector("[data-manual-guide]");
+  const guideToggle = document.querySelector("[data-manual-guide-toggle]");
+  const guideClose = document.querySelector("[data-manual-guide-close]");
+  const status = document.querySelector("[data-manual-preview-status]");
   const detailTitle = document.querySelector("[data-detail-title]");
   const detailDescription = document.querySelector("[data-detail-description]");
-  const detailView = document.querySelector("[data-detail-view]");
+  const detailState = document.querySelector("[data-detail-state]");
   const detailSection = document.querySelector("[data-detail-section]");
-  const detailId = document.querySelector("[data-detail-id]");
   const detailSteps = document.querySelector("[data-detail-steps]");
   const detailNote = document.querySelector("[data-detail-note]");
   const detailNoteText = document.querySelector("[data-detail-note-text]");
-  const detailOpenImage = document.querySelector("[data-detail-open-image]");
   const detailArticleLink = document.querySelector("[data-detail-article-link]");
   const detailHandoff = document.querySelector("[data-detail-handoff]");
+  const search = document.querySelector("[data-manual-search]");
+  const searchStatus = document.querySelector("[data-search-status]");
+  const searchEmpty = document.querySelector("[data-manual-search-empty]");
+  const emptyState = document.querySelector("[data-empty-state]");
+  const treeLinks = Array.from(document.querySelectorAll("[data-feature-link]"));
+  const articles = Array.from(document.querySelectorAll("[data-feature-id]"));
+  const sections = Array.from(document.querySelectorAll("[data-manual-section]"));
+  const features = parseFeatures(dataNode?.textContent);
+  const featureByDebugId = new Map();
+  let selectedFeatureId = interfaceRoot?.dataset.defaultFeature || "shellx.interface.header.find";
+  let previewKind = "shellx";
+  let selectionDelivery = 0;
+  const compactGuide = window.matchMedia("(max-width: 760px)");
 
-  function parseInterfaceMapData(text) {
-    if (!text) return {};
+  for (const item of Object.values(features)) {
+    if (item?.previewFocusId && !featureByDebugId.has(item.previewFocusId)) {
+      featureByDebugId.set(item.previewFocusId, item.id);
+    }
+  }
+
+  function parseFeatures(text) {
     try {
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(text || "{}");
       return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
     } catch {
       return {};
     }
   }
 
-  function captureAssetHref(feature) {
-    const file = feature?.capture?.file;
-    return typeof file === "string" && /^assets\/[A-Za-z0-9][A-Za-z0-9._-]*\.png$/.test(file)
-      ? `./${file}`
-      : null;
-  }
-
-  function featureFragmentHref(featureId) {
-    return typeof featureId === "string" && /^[a-z0-9][a-z0-9._-]*$/.test(featureId)
-      ? `#${featureId}`
-      : null;
-  }
-
-  function isHandoff(handoff) {
-    if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return false;
-    if (handoff.schema !== manualHandoffSchema) return false;
-    if (!["supported", "conditional", "not-routable"].includes(handoff.availability)) return false;
-    if (handoff.availability === "not-routable") return typeof handoff.unavailableReason === "string" && handoff.unavailableReason.length > 0;
-    return (handoff.window === "main" || handoff.window === "browser")
-      && handoff.intent && typeof handoff.intent === "object" && !Array.isArray(handoff.intent)
-      && (handoff.availability !== "conditional" || (typeof handoff.condition === "string" && handoff.condition.length > 0));
-  }
-
-  function manualLaunchHref(feature) {
-    if (!featureFragmentHref(feature?.id) || !isHandoff(feature.handoff)) return null;
-    if (feature.handoff.availability !== "supported" && feature.handoff.availability !== "conditional") return null;
-    return `shellx-app://manual/open?feature=${encodeURIComponent(feature.id)}&v=1`;
-  }
-
-  function setNavOpen(open) {
-    nav?.classList.toggle("is-open", open);
-    navToggle?.setAttribute("aria-expanded", String(open));
-    if (navSymbol) navSymbol.textContent = open ? "−" : "+";
-  }
-
-  navToggle?.addEventListener("click", () => {
-    setNavOpen(navToggle.getAttribute("aria-expanded") !== "true");
-  });
-
-  function captureFeatures(captureId) {
-    return Object.values(interfaceMapData).filter((feature) => feature?.capture?.id === captureId);
-  }
-
-  function createMapControl(feature, selectedFeatureId) {
-    const button = document.createElement("button");
-    button.className = "manual-map-control";
-    button.type = "button";
-    button.dataset.manualMapControl = feature.id;
-    button.setAttribute("aria-pressed", String(feature.id === selectedFeatureId));
-    button.textContent = feature.label;
-    return button;
-  }
-
-  function createHotspot(feature, selectedFeatureId) {
-    const button = document.createElement("button");
-    const [left, top, width, height] = feature.focus;
-    button.className = "manual-hotspot";
-    button.type = "button";
-    button.dataset.manualHotspot = feature.id;
-    button.setAttribute("aria-label", `Select ${feature.label} in ${feature.capture.label}`);
-    button.setAttribute("aria-pressed", String(feature.id === selectedFeatureId));
-    button.style.left = `${left}%`;
-    button.style.top = `${top}%`;
-    button.style.width = `${width}%`;
-    button.style.height = `${height}%`;
-    const label = document.createElement("span");
-    label.textContent = feature.label;
-    button.append(label);
-    return button;
-  }
-
-  function updateMapControls(feature) {
-    const captureMembers = captureFeatures(feature.capture.id);
-    if (mapControlsList) {
-      mapControlsList.replaceChildren(...captureMembers.map((item) => createMapControl(item, feature.id)));
-    }
-    if (mapControlsCount) {
-      mapControlsCount.textContent = `${captureMembers.length} control${captureMembers.length === 1 ? "" : "s"}`;
-    }
-    if (hotspotLayer) {
-      const children = captureMembers.map((item) => createHotspot(item, feature.id));
-      if (highlight) children.push(highlight);
-      hotspotLayer.replaceChildren(...children);
+  function setGuideOpen(open, { focusSearch = false } = {}) {
+    const nextOpen = compactGuide.matches ? open : true;
+    guide?.classList.toggle("is-open", nextOpen);
+    guide?.setAttribute("aria-hidden", String(!nextOpen));
+    guideToggle?.setAttribute("aria-expanded", String(nextOpen));
+    if (nextOpen && (compactGuide.matches || focusSearch)) {
+      window.requestAnimationFrame(() => search?.focus({ preventScroll: true }));
     }
   }
 
-  function updateHandoffAction(feature) {
-    if (!detailHandoff || !isHandoff(feature.handoff)) return;
-    const href = manualLaunchHref(feature);
-    const action = document.createElement(href ? "a" : "button");
-    action.className = "manual-show-in-app";
-    action.dataset.showInShellx = "";
-    const helper = document.createElement("p");
-    helper.dataset.detailHandoffStatus = "";
-    if (href) {
-      action.textContent = "Show in ShellX";
-      action.setAttribute("href", href);
-      action.addEventListener("click", () => {
-        window.setTimeout(() => {
-          helper.dataset.state = "launch-requested";
-          helper.textContent = "Launch requested — continue in ShellX if it is installed.";
-        }, 0);
-      });
-      helper.dataset.state = feature.handoff.availability;
-      helper.textContent = feature.handoff.availability === "conditional"
-        ? feature.handoff.condition
-        : "Opens this surface in the installed ShellX desktop app.";
-    } else {
-      action.textContent = "Not available in app";
-      action.setAttribute("type", "button");
-      action.setAttribute("disabled", "");
-      action.setAttribute("aria-disabled", "true");
-      helper.dataset.state = "not-routable";
-      helper.textContent = feature.handoff.unavailableReason;
-    }
-    detailHandoff.replaceChildren(action, helper);
+  function previewForState(stateId) {
+    return stateId.startsWith("browser-") ? "browser" : "shellx";
   }
 
-  function updateInterfaceMap(featureId) {
-    if (!Object.hasOwn(interfaceMapData, featureId)) return false;
-    const feature = interfaceMapData[featureId];
-    const imagePath = captureAssetHref(feature);
-    const articleHref = featureFragmentHref(feature?.id);
-    const focus = feature?.focus;
-    if (
-      !imagePath ||
-      !articleHref ||
-      typeof feature.label !== "string" ||
-      typeof feature.summary !== "string" ||
-      typeof feature.section !== "string" ||
-      !Array.isArray(feature.steps) ||
-      !Array.isArray(focus) ||
-      focus.length !== 4 ||
-      !focus.every(Number.isFinite) ||
-      !Number.isFinite(feature.capture.width) ||
-      !Number.isFinite(feature.capture.height) ||
-      !isHandoff(feature.handoff)
-    ) return false;
-    if (interfaceMapImage) {
-      interfaceMapImage.setAttribute("src", imagePath);
-      interfaceMapImage.width = feature.capture.width;
-      interfaceMapImage.height = feature.capture.height;
-      interfaceMapImage.alt = `ShellX interface showing ${feature.label}`;
-    }
-    updateMapControls(feature);
-    if (highlight) {
-      const [left, top, width, height] = focus;
-      highlight.style.left = `${left}%`;
-      highlight.style.top = `${top}%`;
-      highlight.style.width = `${width}%`;
-      highlight.style.height = `${height}%`;
-      highlight.dataset.label = feature.label;
-      highlight.dataset.labelSide = top > 74 ? "above" : "below";
-      highlight.dataset.labelAlign = left > 68 ? "end" : "start";
-    }
-    if (detailTitle) detailTitle.textContent = feature.label;
-    if (detailDescription) detailDescription.textContent = feature.summary;
-    if (detailView) detailView.textContent = feature.capture.label;
-    if (detailSection) detailSection.textContent = feature.section;
-    if (detailId) detailId.textContent = feature.id;
-    if (detailSteps) {
-      detailSteps.replaceChildren(...feature.steps.map((step) => {
-        const item = document.createElement("li");
-        item.textContent = step;
-        return item;
-      }));
-      detailSteps.hidden = feature.steps.length === 0;
-    }
-    const note = feature.note || feature.visualNote;
-    if (detailNote && detailNoteText) {
-      detailNoteText.textContent = note;
-      detailNote.hidden = !note;
-    }
-    if (detailOpenImage) detailOpenImage.setAttribute("href", imagePath);
-    if (detailArticleLink) detailArticleLink.setAttribute("href", articleHref);
-    updateHandoffAction(feature);
-    if (interfaceMap) interfaceMap.dataset.selectedFeature = featureId;
-    return true;
+  function previewUrl(kind) {
+    return kind === "browser" ? "./app/manual-browser.html" : "./app/manual-shellx.html";
   }
 
-  function selectFeature(featureId, options = {}) {
-    const target = featuresById.get(featureId);
-    if (!target) return false;
-    const mapped = updateInterfaceMap(featureId);
-    for (const feature of features) feature.classList.toggle("highlighted", feature === target);
-    for (const link of links) link.classList.toggle("active", link.dataset.featureLink === featureId);
-    if (options.updateUrl !== false) {
+  function highlightColor(item) {
+    if (item.state.id.startsWith("browser-")) return "blue";
+    if (item.state.id.startsWith("settings-")) return "magenta";
+    if (item.state.id.startsWith("task-manager-") || item.section === "Tasks") return "orange";
+    if (item.section.includes("Vault") || item.state.id === "header-requests") return "yellow";
+    if (item.section.includes("Build") || item.state.id.startsWith("bottom-trace")) return "green";
+    return "cyan";
+  }
+
+  function postSelection(item) {
+    if (!frame?.contentWindow) return;
+    frame.contentWindow.postMessage({
+      schema: previewSchema,
+      kind: "show-state",
+      featureId: item.id,
+      stateId: item.state.id,
+      ...(item.previewFocusId ? { focusDebugId: item.previewFocusId } : {}),
+      highlightLabel: item.label.slice(0, 80),
+      highlightColor: highlightColor(item),
+    }, window.location.origin);
+  }
+
+  function scheduleSelection(item) {
+    const delivery = ++selectionDelivery;
+    for (const delay of [0, 80, 220, 500, 900]) {
+      window.setTimeout(() => {
+        if (delivery !== selectionDelivery || selectedFeatureId !== item.id) return;
+        postSelection(item);
+      }, delay);
+    }
+  }
+
+  function renderSteps(steps) {
+    if (!detailSteps) return;
+    detailSteps.replaceChildren();
+    for (const step of steps || []) {
+      const li = document.createElement("li");
+      li.textContent = step;
+      detailSteps.append(li);
+    }
+    detailSteps.hidden = detailSteps.childElementCount === 0;
+  }
+
+  function renderHandoff(item) {
+    if (!detailHandoff) return;
+    detailHandoff.replaceChildren();
+    detailHandoff.hidden = true;
+    const localManual = window.location.protocol === "file:"
+      || ["localhost", "127.0.0.1"].includes(window.location.hostname);
+    if (!localManual || item.handoff?.availability !== "supported") return;
+    const link = document.createElement("a");
+    link.href = `shellx-app://manual/open?feature=${encodeURIComponent(item.id)}&v=1`;
+    link.textContent = "Show in my ShellX";
+    detailHandoff.append(link);
+    detailHandoff.hidden = false;
+  }
+
+  function setSelectedFeature(featureId, { openGuide = true, updateUrl = true } = {}) {
+    if (!featurePattern.test(featureId) || !Object.hasOwn(features, featureId)) return;
+    const item = features[featureId];
+    selectedFeatureId = featureId;
+    detailTitle && (detailTitle.textContent = item.label);
+    detailDescription && (detailDescription.textContent = item.summary);
+    detailState && (detailState.textContent = item.state.label);
+    detailSection && (detailSection.textContent = item.section);
+    if (detailArticleLink) detailArticleLink.href = `#${item.id}`;
+    renderSteps(item.steps);
+    const note = item.note || item.visualNote || "";
+    if (detailNoteText) detailNoteText.textContent = note;
+    if (detailNote) detailNote.hidden = !note;
+    renderHandoff(item);
+
+    for (const link of treeLinks) {
+      const selected = link.dataset.featureLink === featureId;
+      link.classList.toggle("is-active", selected);
+      if (selected) {
+        link.setAttribute("aria-current", "true");
+        link.closest("details")?.setAttribute("open", "");
+      } else {
+        link.removeAttribute("aria-current");
+      }
+    }
+
+    const nextKind = previewForState(item.state.id);
+    if (nextKind !== previewKind) {
+      previewKind = nextKind;
+      frame.src = previewUrl(nextKind);
+    }
+    scheduleSelection(item);
+    if (status) status.textContent = `${item.state.label} · ${item.label}`;
+    if (openGuide) setGuideOpen(true);
+    if (compactGuide.matches && guide?.classList.contains("is-open")) {
+      guide.scrollTop = 0;
+      window.scrollTo(0, 0);
+    }
+    if (updateUrl) {
       const url = new URL(window.location.href);
       url.searchParams.set("feature", featureId);
-      window.history.replaceState({}, "", url);
+      history.replaceState(null, "", url);
     }
-    if (window.matchMedia("(max-width: 900px)").matches) setNavOpen(false);
-    if (options.scroll !== false) (mapped ? interfaceMap : target)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    return true;
   }
 
-  for (const link of links) {
-    link.addEventListener("click", () => selectFeature(link.dataset.featureLink));
-  }
-
-  interfaceMap?.addEventListener("click", (event) => {
-    const control = event.target instanceof Element
-      ? event.target.closest("[data-manual-map-control], [data-manual-hotspot]")
-      : null;
-    if (!(control instanceof HTMLElement) || !interfaceMap.contains(control)) return;
-    selectFeature(control.dataset.manualMapControl || control.dataset.manualHotspot);
+  guideToggle?.addEventListener("click", () => {
+    const open = !guide?.classList.contains("is-open");
+    setGuideOpen(open, { focusSearch: open });
+  });
+  guideClose?.addEventListener("click", () => setGuideOpen(false));
+  compactGuide.addEventListener("change", () => setGuideOpen(!compactGuide.matches));
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && guide?.classList.contains("is-open")) setGuideOpen(false);
   });
 
-  function applySearch() {
-    const query = (search?.value || "").trim().toLowerCase();
+  for (const link of treeLinks) {
+    link.addEventListener("click", () => setSelectedFeature(link.dataset.featureLink || ""));
+  }
+
+  frame?.addEventListener("load", () => {
+    const item = features[selectedFeatureId];
+    if (item) scheduleSelection(item);
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== frame?.contentWindow || event.origin !== window.location.origin) return;
+    const value = event.data;
+    if (!value || typeof value !== "object" || value.schema !== previewSchema) return;
+    if (value.kind === "ready") {
+      const item = features[selectedFeatureId];
+      if (item) scheduleSelection(item);
+      return;
+    }
+    if (value.kind !== "control") return;
+    const featureId = featureByDebugId.get(value.debugId);
+    if (featureId) setSelectedFeature(featureId, { openGuide: true });
+  });
+
+  search?.addEventListener("input", () => {
+    const query = search.value.trim().toLowerCase();
     let visible = 0;
-    for (const feature of features) {
-      const match = !query || feature.dataset.searchText.includes(query);
-      feature.hidden = !match;
+    for (const link of treeLinks) {
+      const item = features[link.dataset.featureLink || ""];
+      const haystack = `${item?.label || ""} ${item?.summary || ""} ${item?.section || ""}`.toLowerCase();
+      const match = !query || haystack.includes(query);
+      link.hidden = !match;
+      if (match) {
+        visible += 1;
+        link.closest("details")?.setAttribute("open", "");
+      }
+    }
+    if (searchStatus) {
+      searchStatus.textContent = query
+        ? (visible ? `${visible} matching features` : "No matching features")
+        : `${treeLinks.length} documented features`;
+    }
+    if (searchEmpty) searchEmpty.hidden = visible !== 0;
+    filterReference(query);
+  });
+
+  function filterReference(query) {
+    let visible = 0;
+    for (const article of articles) {
+      const match = !query || (article.dataset.searchText || "").includes(query);
+      article.hidden = !match;
       if (match) visible += 1;
     }
-    for (const link of links) {
-      const target = featuresById.get(link.dataset.featureLink);
-      link.hidden = Boolean(target?.hidden);
-    }
     for (const section of sections) {
-      section.hidden = !Array.from(section.querySelectorAll("[data-feature-id]")).some((feature) => !feature.hidden);
+      section.hidden = !Array.from(section.querySelectorAll("[data-feature-id]")).some((article) => !article.hidden);
     }
-    if (status) status.textContent = query ? `${visible} matching surface${visible === 1 ? "" : "s"}` : "";
-    if (empty) empty.hidden = visible !== 0;
+    if (emptyState) emptyState.hidden = visible !== 0;
   }
 
-  search?.addEventListener("input", applySearch);
-
-  const requested = new URL(window.location.href).searchParams.get("feature") || window.location.hash.slice(1);
-  if (requested) {
-    window.requestAnimationFrame(() => selectFeature(requested, { updateUrl: false }));
+  const initial = new URLSearchParams(window.location.search).get("feature");
+  if (initial && Object.hasOwn(features, initial)) {
+    setSelectedFeature(initial, { openGuide: true, updateUrl: false });
   } else {
-    const firstMappedFeature = interfaceMap?.dataset.defaultFeature || features
-      .map((feature) => feature.dataset.featureId)
-      .find((featureId) => featureId && Object.hasOwn(interfaceMapData, featureId));
-    if (firstMappedFeature) selectFeature(firstMappedFeature, { updateUrl: false, scroll: false });
+    setSelectedFeature(selectedFeatureId, { openGuide: false, updateUrl: false });
+    setGuideOpen(!compactGuide.matches);
   }
+  filterReference("");
+  if (searchStatus) searchStatus.textContent = `${treeLinks.length} documented features`;
 })();

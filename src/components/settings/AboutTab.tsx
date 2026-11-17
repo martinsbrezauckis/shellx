@@ -20,26 +20,26 @@
  * (set up in App.tsx) so in-repo docs render in the FilePreviewModal
  * instead of an external browser tab.
  */
-import { lazy, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import pkg from "../../../package.json";
-import cargoToml from "../../../src-tauri/Cargo.toml?raw";
+import { version as PACKAGE_VERSION } from "../../../package.json";
 import { AUTHOR_EMAIL } from "../../lib/about";
-import tauriConfRaw from "../../../src-tauri/tauri.conf.json?raw";
 import { SafeMarkdownLink } from "../../lib/markdown-links";
 import { updateErrorIsQuiet } from "../../lib/update-diagnostics";
+import { UpdateOffer, checkOfferAfterLoad } from "../../lib/update-offer";
+import {
+  MANUAL_UPDATE_DOWNLOAD_URL,
+  resolveUpdateInstallMethod,
+  type UpdateInstallMethod,
+} from "../../lib/update-install-policy";
 import {
   cleanUpdateNotes,
-  DEBUG_UPDATE_CHECK_RECEIPT,
-  DEBUG_UPDATE_FIXTURE,
-  DEBUG_UPDATE_INSTALL_RECEIPT,
-  type DebugUpdateFixtureMode,
 } from "../../lib/update-notes";
 import { ShellIcon } from "../icons";
-import { LazySurface } from "../LazySurface";
 
 /**
  * Open `url` in the user's external default browser via the Tauri
@@ -57,24 +57,8 @@ function openExternal(url: string): void {
     });
 }
 
-const VERSION = (pkg as { version?: string }).version ?? "0.0.0";
-const CARGO_VERSION = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1] ?? VERSION;
-const TAURI_VERSION = (() => {
-  try {
-    return (JSON.parse(tauriConfRaw) as { version?: string }).version ?? VERSION;
-  } catch {
-    return VERSION;
-  }
-})();
+const VERSION = PACKAGE_VERSION;
 const MANUAL_URL = "https://docs.theshellx.com/manual/shellx/";
-const RELEASE_INTERNAL_TOOLS = import.meta.env.VITE_SHELLX_INTERNAL_TOOLS;
-const SHOW_RELEASE_READINESS =
-  import.meta.env.DEV ||
-  RELEASE_INTERNAL_TOOLS === "1" ||
-  RELEASE_INTERNAL_TOOLS === "true";
-const ReleaseReadinessPanel = SHOW_RELEASE_READINESS
-  ? lazy(() => import("./ReleaseReadinessPanel"))
-  : null;
 
 interface UpdateState {
   kind: "idle" | "checking" | "available" | "current" | "installing" | "error";
@@ -88,15 +72,28 @@ interface BoundPorts {
   mcpHttp: number | null;
 }
 
-export function AboutTab({
-  debugFixture = "live",
-}: {
-  debugFixture?: DebugUpdateFixtureMode;
-} = {}): JSX.Element {
+export function AboutTab(): JSX.Element {
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: "idle" });
   const [releaseReceipt, setReleaseReceipt] = useState<string | null>(null);
+  const [installMethod, setInstallMethod] = useState<UpdateInstallMethod>("automatic");
   const [ports, setPorts] = useState<BoundPorts | null>(null);
   const [emailCopied, setEmailCopied] = useState(false);
+  const offerRef = useRef<UpdateOffer<Update> | null>(null);
+  const displayedOfferRef = useRef<Update | null>(null);
+  const mountedRef = useRef(false);
+  const lifecycleRef = useRef(0);
+  if (!offerRef.current) offerRef.current = new UpdateOffer<Update>();
+
+  useEffect(() => {
+    mountedRef.current = true;
+    ++lifecycleRef.current;
+    return () => {
+      mountedRef.current = false;
+      ++lifecycleRef.current;
+      displayedOfferRef.current = null;
+      offerRef.current?.clear();
+    };
+  }, []);
 
  // #333: read the actually-bound ports from the Rust backend. With the
  // #311 orphan-socket fallback the running ports may differ from the
@@ -109,48 +106,41 @@ export function AboutTab({
       .catch(() => { /* command absent on older shellX builds */ });
   }, []);
 
-  useEffect(() => {
-    setReleaseReceipt(null);
-    if (debugFixture === "owned-available") {
-      setUpdateState({
-        kind: "available",
-        remoteVersion: DEBUG_UPDATE_FIXTURE.version,
-        message: cleanUpdateNotes(DEBUG_UPDATE_FIXTURE.body),
-      });
-    } else if (debugFixture === "owned-check" || debugFixture === "owned-cleared") {
-      setUpdateState({ kind: "idle" });
-    }
-  }, [debugFixture]);
-
   async function checkForUpdates(): Promise<void> {
-    if (debugFixture === "owned-check" || debugFixture === "owned-available") {
-      setUpdateState({
-        kind: "available",
-        remoteVersion: DEBUG_UPDATE_FIXTURE.version,
-        message: cleanUpdateNotes(DEBUG_UPDATE_FIXTURE.body),
-      });
-      setReleaseReceipt(DEBUG_UPDATE_CHECK_RECEIPT);
-      return;
-    }
+    const lifecycle = lifecycleRef.current;
     setUpdateState({ kind: "checking" });
     try {
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
-      if (update) {
+      const result = await checkOfferAfterLoad(
+        offerRef.current!,
+        async () => (await import("@tauri-apps/plugin-updater")).check,
+        () => mountedRef.current && lifecycleRef.current === lifecycle,
+      );
+      if (result.kind === "stale") return;
+      if (result.kind === "error") throw result.error;
+      if (result.kind === "available") {
+        const update = result.update;
+        const nextInstallMethod = await resolveUpdateInstallMethod();
+        if (offerRef.current?.offered !== update) return;
+        displayedOfferRef.current = update;
+        setInstallMethod(nextInstallMethod);
         setUpdateState({
           kind: "available",
           remoteVersion: update.version,
           message: cleanUpdateNotes(update.body) || `Update v${update.version} is available.`,
         });
       } else {
+        displayedOfferRef.current = null;
         setUpdateState({
           kind: "current",
           message: "You're on the latest release.",
         });
       }
     } catch (e) {
+      if (!mountedRef.current || lifecycleRef.current !== lifecycle) return;
       const message = e instanceof Error ? e.message : String(e);
       if (updateErrorIsQuiet(message)) {
+        offerRef.current?.clear();
+        displayedOfferRef.current = null;
         setUpdateState({
           kind: "current",
           message: "No update is available for this platform yet.",
@@ -165,22 +155,31 @@ export function AboutTab({
   }
 
   async function installUpdate(): Promise<void> {
-    if (debugFixture === "owned-available") {
-      setUpdateState({ kind: "current", message: "Release fixture stopped before download and relaunch." });
-      setReleaseReceipt(DEBUG_UPDATE_INSTALL_RECEIPT);
+    const displayedOffer = displayedOfferRef.current;
+    const nextInstallMethod = await resolveUpdateInstallMethod();
+    if (!displayedOffer || offerRef.current?.offered !== displayedOffer) {
+      setUpdateState({ kind: "error", message: "The offered update changed. Check again." });
+      return;
+    }
+    setInstallMethod(nextInstallMethod);
+    if (nextInstallMethod === "manual") {
+      openExternal(MANUAL_UPDATE_DOWNLOAD_URL);
+      setUpdateState((prev) => ({
+        ...prev,
+        kind: "available",
+        message: "This Linux package updates through its package manager. Download the current release to continue.",
+      }));
+      setReleaseReceipt("Manual package update opened in the browser.");
       return;
     }
     setUpdateState((prev) => ({ ...prev, kind: "installing", progress: 0 }));
     try {
-      const [{ check }, { relaunch }] = await Promise.all([
-        import("@tauri-apps/plugin-updater"),
-        import("@tauri-apps/plugin-process"),
-      ]);
-      const update = await check();
+      const update = offerRef.current?.beginInstall(displayedOffer);
       if (!update) {
-        setUpdateState({ kind: "current", message: "You're on the latest release." });
+        setUpdateState({ kind: "error", message: "The offered update is no longer available. Check again." });
         return;
       }
+      const { relaunch } = await import("@tauri-apps/plugin-process");
       let total = 0;
       let downloaded = 0;
       await update.downloadAndInstall((evt) => {
@@ -202,6 +201,8 @@ export function AboutTab({
         kind: "error",
         message: `Update install failed: ${e instanceof Error ? e.message : String(e)}`,
       });
+    } finally {
+      offerRef.current?.finishInstall();
     }
   }
 
@@ -256,12 +257,13 @@ export function AboutTab({
           {updateState.kind === "available" && (
             <button
               type="button"
+              data-debug-id="settings-about-install-update"
               data-release-update-control="about-install"
               className="settings-pill"
               onClick={() => void installUpdate()}
               style={{ marginLeft: 8 }}
             >
-              Install &amp; restart
+              {installMethod === "manual" ? "Download update" : "Install & restart"}
             </button>
           )}
           {updateState.message && (
@@ -288,6 +290,11 @@ export function AboutTab({
                   {updateState.message}
                 </ReactMarkdown>
               ) : updateState.message}
+            </div>
+          )}
+          {updateState.kind === "available" && installMethod === "manual" && (
+            <div className="settings-tab-hint" style={{ margin: "4px 0 0" }}>
+              Installed Linux packages update through their package manager.
             </div>
           )}
         </dd>
@@ -414,16 +421,6 @@ export function AboutTab({
           <span>Changelog</span>
         </button>
       </div>
-
-      {ReleaseReadinessPanel ? (
-        <LazySurface label="Release readiness" variant="inline">
-          <ReleaseReadinessPanel
-            version={VERSION}
-            cargoVersion={CARGO_VERSION}
-            tauriVersion={TAURI_VERSION}
-          />
-        </LazySurface>
-      ) : null}
 
       <p className="about-fineprint" style={{ marginTop: 16 }}>
         Settings and secrets are stored at <code>~/.shellx/</code> (Linux/macOS) or{" "}

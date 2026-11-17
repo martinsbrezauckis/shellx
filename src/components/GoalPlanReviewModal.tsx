@@ -29,19 +29,10 @@ export interface GoalState {
   approvalStatus?: { ready: boolean; reason?: string | null };
 }
 
-export interface GoalPlanReviewFixture {
-  tabId: string;
-  goal: GoalState;
-  planText: string;
-  editing?: boolean;
-  editComment?: string;
-}
-
 interface GoalPlanReviewModalProps {
   activeTabId?: string | null;
   eventsLen: number;
   openRequestSeq?: number;
-  fixture?: GoalPlanReviewFixture;
   onPreviewFile: (path: string) => void;
   onAccepted: () => void;
   onReviewLater: () => void;
@@ -106,27 +97,26 @@ export function GoalPlanReviewModal({
   activeTabId,
   eventsLen,
   openRequestSeq,
-  fixture,
   onPreviewFile,
   onAccepted,
   onReviewLater,
 }: GoalPlanReviewModalProps): JSX.Element | null {
-  const [goal, setGoal] = useState<GoalState | null>(() => fixture?.goal ?? null);
-  const [planText, setPlanText] = useState(() => fixture?.planText ?? "");
+  const [goal, setGoal] = useState<GoalState | null>(null);
+  const [planText, setPlanText] = useState("");
   const [readError, setReadError] = useState<string | null>(null);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [rejectArmed, setRejectArmed] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [editing, setEditing] = useState(() => Boolean(fixture?.editing));
-  const [editComment, setEditComment] = useState(() => fixture?.editComment ?? "");
+  const [editing, setEditing] = useState(false);
+  const [editComment, setEditComment] = useState("");
   const [replanning, setReplanning] = useState(false);
   const editRef = useRef<HTMLTextAreaElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const effectiveTabId = fixture?.tabId ?? activeTabId;
+  const effectiveTabId = activeTabId;
 
-  const goalPollingEnabled = !fixture && Boolean(effectiveTabId) && inTauri();
+  const goalPollingEnabled = Boolean(effectiveTabId) && inTauri();
   const refreshGoal = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
     if (!effectiveTabId) return;
     try {
@@ -151,15 +141,11 @@ export function GoalPlanReviewModal({
   });
 
   useEffect(() => {
-    if (fixture) {
-      setGoal(fixture.goal);
-      return;
-    }
     if (!goalPollingEnabled) setGoal(null);
-  }, [fixture, goalPollingEnabled]);
+  }, [goalPollingEnabled]);
 
   const scratchboardPath = goal?.scratchboardPath ?? "";
-  const planReadEnabled = !fixture && Boolean(effectiveTabId && scratchboardPath && goal?.awaitingApproval);
+  const planReadEnabled = Boolean(effectiveTabId && scratchboardPath && goal?.awaitingApproval);
   const refreshPlanText = useCallback(async (isCurrent: PollCurrent): Promise<void> => {
     if (!effectiveTabId || !scratchboardPath) return;
     try {
@@ -186,28 +172,11 @@ export function GoalPlanReviewModal({
   });
 
   useEffect(() => {
-    if (fixture) {
-      setReadError(null);
-      setPlanText(fixture.planText);
-      return;
-    }
     if (!planReadEnabled) {
       setPlanText("");
       setReadError(null);
     }
-  }, [fixture, planReadEnabled]);
-
-  useEffect(() => {
-    if (!fixture) return;
-    setEditing(Boolean(fixture.editing));
-    setEditComment(fixture.editComment ?? "");
-    setApproving(false);
-    setRejecting(false);
-    setRejectArmed(false);
-    setActionMessage(null);
-    setReplanning(false);
-    setDismissedKey(null);
-  }, [fixture]);
+  }, [planReadEnabled]);
 
   useEffect(() => {
     if (!goal?.awaitingApproval) {
@@ -274,7 +243,7 @@ export function GoalPlanReviewModal({
   };
 
   const approve = (): void => {
-    if (fixture || approving || rejecting || !inTauri()) return;
+    if (approving || rejecting || !inTauri()) return;
     setRejectArmed(false);
     setActionMessage(null);
     setApproving(true);
@@ -297,7 +266,7 @@ export function GoalPlanReviewModal({
 
   const requestEdit = (): void => {
     const comment = editComment.trim();
-    if (fixture || !comment || replanning || !inTauri()) return;
+    if (!comment || replanning || !inTauri()) return;
     setRejectArmed(false);
     setActionMessage(null);
     setReplanning(true);
@@ -321,7 +290,7 @@ export function GoalPlanReviewModal({
   };
 
   const reject = (): void => {
-    if (fixture || rejecting || !inTauri()) return;
+    if (rejecting || !inTauri()) return;
     if (!rejectArmed) {
       setRejectArmed(true);
       setActionMessage("Click Confirm reject to clear this Goal and its proposed plan.");
@@ -374,7 +343,7 @@ export function GoalPlanReviewModal({
           </div>
           <div
             className="preview-body preview-body-markdown plan-review-body"
-            onMouseUp={fixture ? undefined : onMouseUpAutoCopy}
+            onMouseUp={onMouseUpAutoCopy}
           >
             {readError ? (
               <div className="preview-err">{readError}</div>
@@ -432,7 +401,7 @@ export function GoalPlanReviewModal({
                 <button data-debug-id="surface-components-goalplanreviewmodal-4"
                   type="button"
                   className="pact plan-action plan-action-primary"
-                  disabled={Boolean(fixture) || !editComment.trim() || replanning}
+                  disabled={!editComment.trim() || replanning}
                   onClick={requestEdit}
                 >
                   {replanning ? "Sending…" : "Send feedback"}
@@ -472,7 +441,7 @@ export function GoalPlanReviewModal({
               title={rejectArmed
                 ? "Confirm rejection and clear this Goal plan"
                 : "Reject this Goal plan"}
-              disabled={Boolean(fixture) || approving || rejecting || replanning}
+              disabled={approving || rejecting || replanning}
               onClick={reject}
             >
               {rejecting ? "Rejecting…" : rejectArmed ? "Confirm reject" : "Reject"}
@@ -492,7 +461,7 @@ export function GoalPlanReviewModal({
             <button data-debug-id="surface-components-goalplanreviewmodal-9"
               type="button"
               className="pact plan-action plan-action-primary"
-              disabled={Boolean(fixture) || approving || rejecting || replanning}
+              disabled={approving || rejecting || replanning}
               onClick={approve}
             >
               {approving ? "Approving…" : "Accept plan"}

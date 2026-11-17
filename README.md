@@ -1,4 +1,4 @@
-# shellX
+# ShellX
 
 Desktop client that hosts xAI's **Grok Build**, Claude Code, Codex
 CLI, Antigravity CLI, or any agent speaking the Agent Client Protocol.
@@ -51,11 +51,11 @@ the exact installed page bounds.
   when your account exposes Imagine features. Antigravity sessions can use
   their native Gemini image tool and return the generated result to ShellX.
 - **Attachment and media board.** File picker, paste, drag/drop,
-  screenshots, and Send to shellX create composer chips; Assets keeps
+  screenshots, and Send to ShellX create composer chips; Assets keeps
   pending files and generated media in one place.
-- **Send files to shellX.** On Windows, Settings -> Desktop can add a
+- **Send files to ShellX.** On Windows, Settings -> Desktop can add a
   right-click menu item and SendTo shortcut so selected files open in
-  the active shellX composer.
+  the active ShellX composer.
 - **Host MCP tools.** Vault, filesystem, network fetch, screenshots,
   vision, memory, process controls, and subagent tools are available to
   the connected agent.
@@ -64,11 +64,12 @@ the exact installed page bounds.
   interactive without exposing an agent-originated ACP shell surface.
 - **ShellX Vault.** Keep API keys, passwords, profile cards, inbox
   resources, and agent-wallet references in the local or connected Vault.
-  Setup includes recovery-kit creation, remembered-device unlock, manual
+  Setup includes explicit acknowledgment that ShellX has no recovery words or
+  restore flow, remembered-device unlock, manual
   lock, password generation, hidden copy/reveal controls, descriptions,
   user-only visibility, and scoped agent grants through the Vault Request
   Center. The app uses the shared Vault broker for resource schemas,
-  grant receipts, recovery, and future standalone Vault parity.
+  grant receipts, setup confirmation, and future standalone Vault parity.
 - **Persistent sessions.** Each chat saved as JSONL. Full-content
   search across history.
 - **Traceable agent work.** Review file searches, reads, writes,
@@ -76,7 +77,7 @@ the exact installed page bounds.
   session when the connected agent exposes enough log detail.
 - **Git workflow surface.** Inspect dirty state and diffs, create local
   checkpoints, and create worktrees from the active session without
-  leaving shellX.
+  leaving ShellX.
 - **Tools health.** See MCP health, environment diagnostics,
   search capability status, trace availability, and Preview setup for
   the active tab.
@@ -92,7 +93,7 @@ the exact installed page bounds.
   Direct CLI agents do not inherit a global ShellX skill, MCP server, or
   account-wide instruction block.
 - **Light and dark appearance.** Settings offers Black, Black + warm, and
-  Bright themes and persists the selected shellX UI appearance.
+  Bright themes and persists the selected ShellX UI appearance.
 - **Build Mode.** `/build "<objective>"` writes a scoped scratchboard,
   lets the agent plan + work across multiple turns, records host
   receipts for checkpoints/review/verification, and uses Preview Doctor
@@ -109,8 +110,7 @@ the exact installed page bounds.
   the captured reply back; Review first remains available before auto-dispatch.
 - **shellXagent HTTP API.** Authenticated loopback orchestration covers
   sessions, providers, Browser, Vault, preview, Git, settings, diagnostics,
-  and release evidence. Native keyboard, palette, and OS-picker behavior is
-  exercised through the installed-app WebDriver/native-input drivers.
+  and receipts.
 - **ShellX Browser.** Open a ShellX-owned browser runtime with tabs,
   bookmarks, history, privacy/ad-block modes, HTTPS/security feedback,
   Vault-backed fills, profile-card and email-code helpers, Downloads
@@ -184,12 +184,12 @@ SHA256SUMS` (or compare the listed SHA-256 in PowerShell with
 `Get-FileHash -Algorithm SHA256`). OS signing/notarization checks remain
 separate and should also pass where the platform provides them.
 
-Requires Node 22+, pnpm, Rust 1.80+, and the
+Requires Node 22+, pnpm 10.33.0, Rust 1.89+, and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ## Quick start
 
-1. Launch shellX.
+1. Launch ShellX.
 2. **Settings → Connections** — add a connection preset (Local,
    WSL distro, or SSH host).
 3. Sign in to the agent CLI you want to use in that environment. For Grok,
@@ -198,8 +198,9 @@ Requires Node 22+, pnpm, Rust 1.80+, and the
    normal secrets, for example `xai/api-key` when you intentionally want to
    use an xAI API key instead of OAuth.
 4. Open **Vault** from the header or Settings before storing secrets. Create
-   or connect a Vault, save the recovery material, and leave remembered-device
-   unlock enabled unless you want passphrase entry every time.
+   or connect a Vault, acknowledge the loss-of-access risk, and keep your master
+   passphrase and required encrypted Vault data available. Remembered-device
+   unlock is optional and does not provide recovery.
 5. **New tab -> 📁 pill** -> pick a working folder, then choose the
    environment and agent for the tab.
 6. For Grok tabs, press **Connect** or send the first prompt. For Codex,
@@ -231,15 +232,16 @@ tunnel on Windows localhost.
 
 Beta note: ShellX is development-stage software. Features can change,
 break, or be overhauled between versions, so keep backups of important
-projects and credentials. ShellX Vault keeps secrets under your control;
-save your recovery materials and review sensitive browser or agent actions
+projects and credentials. ShellX Vault has no recovery words or restore flow;
+keep the master passphrase and required encrypted Vault data available. Review sensitive browser or agent actions
 such as sign-ins, purchases, account changes, data submission, and secret use.
 
 For full quick-start, open **Settings → About → Quick start**.
 
 The synchronized source manual is [docs/public/SHELLX_MANUAL.md](docs/public/SHELLX_MANUAL.md).
-Its structured source is `docs/public/manual/shellx/content.json`; run
-`pnpm docs:build` after changing it and `pnpm docs:check` before committing.
+Its structured source is `docs/public/manual/shellx/content.json`. The
+canonical source workflow regenerates the checked-in manual; the public export
+contains the generated documentation rather than its private build commands.
 The web-manual destination is
 [docs.theshellx.com/manual/shellx](https://docs.theshellx.com/manual/shellx/).
 Synchronizing the local website source does not publish it; deployment remains
@@ -249,13 +251,14 @@ a separate release operation.
 
 The HTTP API covers orchestration and observable application state. Native
 keyboard, palette, drag/drop, and OS-picker interactions remain native UI
-surfaces and are tested through installed-app drivers rather than synthetic
-HTTP equivalents.
+surfaces; the Debug API does not provide synthetic equivalents for them.
 
 - **Authentication:** ShellX-owned clients resolve the per-user loopback
   credential internally. Custom clients use `Authorization: Bearer <token>`
   and must receive that value through a private process-local integration
   without printing or persisting it.
+- **Authority:** A custom Debug API bearer is trusted local operator access.
+  Agent-specific routes retain their own caller and intent checks.
 - **Port discovery:** ShellX-owned clients resolve the live Debug API and
   host-MCP endpoints from the active profile instead of hard-coding ports.
 - **Agent docs:** installer launches keep the bundled `shellx-host`
@@ -295,6 +298,6 @@ MIT — see [LICENSE](LICENSE).
 
 ## Credits
 
-Created by Martins Brezauckis. shellX connects to Grok through ACP, can run
+Created by Martins Brezauckis. ShellX connects to Grok through ACP, can run
 provider CLIs such as Claude Code and Codex, and can be driven by external
 automation through shellXagent.

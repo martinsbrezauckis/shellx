@@ -2,7 +2,7 @@
 
 ShellX exposes an authenticated Debug API and Host MCP service on the local
 desktop host. This is a reference for routes registered in the shipped app,
-not a roadmap or a release-test runbook.
+not a roadmap or an operational runbook.
 
 The Debug API binds to `127.0.0.1` on a port chosen at startup. Its preferred
 port is `5757` (`SHELLX_DEBUG_PORT` overrides it; the legacy
@@ -13,30 +13,46 @@ separate Host MCP HTTP port is published at `~/.shellx/mcp-http.port`.
 
 ## Current Implementation Inventory
 
-The router below is the exact current route inventory refreshed 2026-08-14.
+Vault setup compatibility: `POST /vault/setup/begin` returns a `recoveryKit`
+object with `confirmationId`, `words`, and `warning`. The `words` array is
+empty because ShellX has no recovery-word or restore flow. The ID is a pending
+setup confirmation challenge, not a backup key. `POST
+/vault/setup/confirm-recovery` retains its existing route and ID field for
+older clients; confirmation means the user accepted the stated loss risk, not
+that recoverable material was created. Unlock still requires the master
+passphrase and an available encrypted keyfile/profile and Vault data. Losing
+required material can permanently lose access; ShellX does not export a
+recovery file.
+
+The router below is the current public runtime route inventory refreshed 2026-09-09.
 Except for `GET
 /health`, all Debug API routes require the per-user bearer and a local origin.
-`/release-test/*` registrations are disabled in ordinary profiles. They are
-listed only so capability checkers can compare their local router exactly; they
-are not a public automation feature.
 
 | Method | Registered paths |
 | --- | --- |
-| GET | `/health`, `/shellxagent.json`, `/.well-known/shellxagent.json`, `/agent-doc`, `/agent-doc/manifest`, `/agent-doc/skills/shellx-host/SKILL.md`, `/agent-doc/shellx-host/SKILL.md`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/files`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/tabs/report`, `/state/agent_runs`, `/state/session_assets`, `/state/marketplace_health`, `/state/session_tooling`, `/state/environment`, `/state/grok_environment`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/state/model_instruction_cards`, `/state/agent_cli_setup`, `/panels`, `/preview`, `/preview/work/state`, `/preview/work/logs`, `/preview/work/diagnose`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/provider-adapters/state`, `/provider-sessions/state`, `/vault/status`, `/vault/grants`, `/vault/agent-requests`, `/vault/keys`, `/vault/resources`, `/vault/e2e/audit`, `/connections`, `/tasks`, `/tasks/states`, `/tasks/:task_id`, `/tasks/:task_id/state`, `/tasks/:task_id/attention`, `/tasks/:task_id/receipts`, `/outside-connectors`, `/outside-connectors/capabilities`, `/outside-connectors/events`, `/browser/check`, `/browser/summary`, `/browser/state`, `/browser/settle`, `/browser/tabs`, `/browser/profiles`, `/browser/tasks`, `/browser/history`, `/browser/requests`, `/browser/bookmarks`, `/browser/receipts`, `/browser/evidence`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/developer-mode`, `/browser/teach/drafts`, `/browser/downloads`, `/browser/uploads`, `/browser/logs`, `/browser/storage-state`, `/browser/dialogs`, `/browser/permissions`, `/browser/popups`, `/browser/network`, `/browser/robots`, `/release-test/tauri-invokes/:id` |
-| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/preview/work/start`, `/preview/work/stop`, `/preview/work/restart`, `/preview/work/diagnose`, `/state/environment/trace_export`, `/state/grok_environment/trace_export`, `/state/session_git/checkpoint`, `/state/session_git/worktree`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/recheck_blocker`, `/build/operator_note`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/provider-adapters/run`, `/provider-sessions/start`, `/provider-sessions/abort`, `/agent_cli_setup/install/prepare`, `/agent_cli_setup/install/confirm`, `/agent_cli_setup/install/cancel`, `/agent_cli_setup/recheck`, `/diagnostics`, `/github/pr/create`, `/vault/lock`, `/vault/setup/begin`, `/vault/setup/confirm-recovery`, `/vault/remember-device`, `/vault/grants`, `/vault/grants/:grant_id/revoke`, `/vault/agent-requests`, `/vault/agent-requests/:request_id/cancel`, `/vault/get`, `/vault/set`, `/vault/delete`, `/vault/open-panel`, `/vault/e2e/reset`, `/vault/e2e/seed-secret`, `/vault/e2e/probe-use`, `/vault/e2e/approve-grant`, `/vault/e2e/deny-grant`, `/vault/e2e/revoke-grant`, `/vault/e2e/expire-grant`, `/connections`, `/connections/provider-scan`, `/connections/:id/test`, `/tasks`, `/tasks/agent`, `/tasks/provider-catalog`, `/tasks/:task_id/revise`, `/tasks/:task_id/pause`, `/tasks/:task_id/resume`, `/tasks/:task_id/run`, `/tasks/runs/:occurrence_id/cancel`, `/tasks/:task_id/attention/:attention_id/resolve`, `/tasks/:task_id/attention/overflow/resolve`, `/outside-connectors`, `/outside-connectors/:id/test`, `/outside-connectors/:id/simulate`, `/browser/open`, `/browser/tabs/open`, `/browser/tabs/focus`, `/browser/tabs/reorder`, `/browser/tabs/close`, `/browser/tabs/lock`, `/browser/tabs/heartbeat`, `/browser/tabs/unlock`, `/browser/task/start`, `/browser/task/autonomy`, `/browser/task/control`, `/browser/task/finish`, `/browser/action`, `/browser/bookmarks`, `/browser/bookmarks/reorder`, `/browser/rendered-check`, `/browser/logs`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/shields/site`, `/browser/developer-mode`, `/browser/developer-mode/approval`, `/browser/developer/inspect`, `/browser/teach/prepare`, `/browser/teach/revise`, `/browser/downloads/request`, `/browser/downloads/complete`, `/browser/uploads/request`, `/browser/uploads/complete`, `/browser/cdp/execute`, `/browser/trace/export`, `/browser/flight-recorder/export`, `/browser/evaluations`, `/browser/har/export`, `/browser/performance/export`, `/browser/recipes/export`, `/browser/recipes/replay`, `/browser/robots/schedule`, `/browser/robots/run`, `/browser/robots/cancel`, `/browser/storage-state/export`, `/browser/dialogs`, `/browser/dialogs/resolve`, `/browser/permissions`, `/browser/permissions/resolve`, `/browser/popups`, `/browser/session-grants/request`, `/browser/session-grants/resolve`, `/browser/session-grants/apply`, `/browser/vault-deposits`, `/browser/vault/fill-receipt`, `/browser/vault/generate-receipt`, `/browser/report`, `/release-test/clipboard`, `/release-test/browser/trusted-vault-fixture`, `/release-test/tauri-invokes`, `/release-test/tauri-invokes/:id/claim`, `/release-test/tauri-invokes/:id/complete` |
-| DELETE | `/tools/fs_watch/:watchId`, `/connections/:id`, `/tasks/:task_id`, `/outside-connectors/:id`, `/browser/bookmarks/:bookmark_id`, `/browser/shields/site/:host`, `/release-test/tauri-invokes/:id` |
-| GET | `/release-test/native-picker` |
-| POST | `/release-test/native-picker` |
-| DELETE | `/release-test/native-picker` |
+| GET | `/health`, `/shellxagent.json`, `/.well-known/shellxagent.json`, `/agent-doc`, `/agent-doc/manifest`, `/agent-doc/skills/shellx-host/SKILL.md`, `/agent-doc/shellx-host/SKILL.md`, `/events/recent`, `/events`, `/state/header`, `/state/footer`, `/state/subagents`, `/state/ui`, `/state/files`, `/state/skills`, `/state/github`, `/state/github/items`, `/state/sessions`, `/state/background-tasks`, `/state/tabs/report`, `/state/agent_runs`, `/state/session_assets`, `/state/marketplace_health`, `/state/session_tooling`, `/state/environment`, `/state/grok_environment`, `/state/session_activity`, `/state/session_git`, `/state/session_git/diff`, `/state/model_instruction_cards`, `/state/agent_cli_setup`, `/panels`, `/preview`, `/preview/work/state`, `/preview/work/logs`, `/preview/work/diagnose`, `/screenshot`, `/settings`, `/sessions/history`, `/sessions/search`, `/sessions/history/:id`, `/sessions/:id/snippet`, `/goal/state`, `/build/state`, `/build/receipts`, `/provider-adapters/state`, `/provider-sessions/state`, `/vault/status`, `/vault/grants`, `/vault/agent-requests`, `/vault/keys`, `/vault/resources`, `/connections`, `/tasks`, `/tasks/states`, `/tasks/:task_id`, `/tasks/:task_id/state`, `/tasks/:task_id/attention`, `/tasks/:task_id/receipts`, `/outside-connectors`, `/outside-connectors/capabilities`, `/outside-connectors/events`, `/browser/check`, `/browser/summary`, `/browser/state`, `/browser/settle`, `/browser/tabs`, `/browser/profiles`, `/browser/tasks`, `/browser/history`, `/browser/requests`, `/browser/bookmarks`, `/browser/receipts`, `/browser/evidence`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/developer-mode`, `/browser/teach/drafts`, `/browser/downloads`, `/browser/uploads`, `/browser/logs`, `/browser/storage-state`, `/browser/dialogs`, `/browser/permissions`, `/browser/popups`, `/browser/network`, `/browser/robots` |
+| POST | `/connect`, `/prompt`, `/abort`, `/disconnect`, `/autonomy`, `/state/ui`, `/panels`, `/preview`, `/preview/work/start`, `/preview/work/stop`, `/preview/work/restart`, `/preview/work/diagnose`, `/state/environment/trace_export`, `/state/grok_environment/trace_export`, `/state/session_git/checkpoint`, `/state/session_git/worktree`, `/tools/fs_watch`, `/tools/process_list`, `/tools/process_signal`, `/tools/process_stats`, `/tools/process_attach_stdout`, `/tools/secret_get`, `/settings`, `/sessions/:id/archive`, `/tabs/:id/archive`, `/plan`, `/goal/start`, `/goal/stop`, `/goal/complete`, `/goal/pause`, `/goal/resume`, `/goal/approve`, `/goal/reject`, `/build/start`, `/build/stop`, `/build/complete`, `/build/receipt`, `/build/pause`, `/build/resume`, `/build/recheck_blocker`, `/build/operator_note`, `/build/approve`, `/build/reject`, `/permissions/:reqId/respond`, `/provider-adapters/run`, `/provider-sessions/start`, `/provider-sessions/abort`, `/agent_cli_setup/install/prepare`, `/agent_cli_setup/install/confirm`, `/agent_cli_setup/install/cancel`, `/agent_cli_setup/recheck`, `/diagnostics`, `/github/pr/create`, `/vault/lock`, `/vault/setup/begin`, `/vault/setup/confirm-recovery`, `/vault/remember-device`, `/vault/grants`, `/vault/grants/:grant_id/revoke`, `/vault/agent-requests`, `/vault/agent-requests/:request_id/cancel`, `/vault/get`, `/vault/set`, `/vault/delete`, `/vault/open-panel`, `/connections`, `/connections/provider-scan`, `/connections/:id/test`, `/tasks`, `/tasks/agent`, `/tasks/provider-catalog`, `/tasks/:task_id/revise`, `/tasks/:task_id/pause`, `/tasks/:task_id/resume`, `/tasks/:task_id/run`, `/tasks/runs/:occurrence_id/cancel`, `/tasks/:task_id/attention/:attention_id/resolve`, `/tasks/:task_id/attention/overflow/resolve`, `/outside-connectors`, `/outside-connectors/:id/test`, `/outside-connectors/:id/simulate`, `/browser/open`, `/browser/tabs/open`, `/browser/tabs/focus`, `/browser/tabs/reorder`, `/browser/tabs/close`, `/browser/tabs/lock`, `/browser/tabs/heartbeat`, `/browser/tabs/unlock`, `/browser/task/start`, `/browser/task/autonomy`, `/browser/task/control`, `/browser/task/finish`, `/browser/action`, `/browser/bookmarks`, `/browser/bookmarks/reorder`, `/browser/rendered-check`, `/browser/logs`, `/browser/privacy`, `/browser/personal-lock`, `/browser/engine-pool`, `/browser/shields`, `/browser/shields/site`, `/browser/developer-mode`, `/browser/developer-mode/approval`, `/browser/developer/inspect`, `/browser/teach/prepare`, `/browser/teach/revise`, `/browser/downloads/request`, `/browser/downloads/complete`, `/browser/uploads/request`, `/browser/uploads/complete`, `/browser/cdp/execute`, `/browser/trace/export`, `/browser/flight-recorder/export`, `/browser/evaluations`, `/browser/har/export`, `/browser/performance/export`, `/browser/recipes/export`, `/browser/recipes/replay`, `/browser/robots/schedule`, `/browser/robots/run`, `/browser/robots/cancel`, `/browser/storage-state/export`, `/browser/dialogs`, `/browser/dialogs/resolve`, `/browser/permissions`, `/browser/permissions/resolve`, `/browser/popups`, `/browser/session-grants/request`, `/browser/session-grants/resolve`, `/browser/session-grants/apply`, `/browser/vault-deposits`, `/browser/vault/fill-receipt`, `/browser/vault/generate-receipt`, `/browser/report` |
+| DELETE | `/tools/fs_watch/:watchId`, `/connections/:id`, `/tasks/:task_id`, `/outside-connectors/:id`, `/browser/bookmarks/:bookmark_id`, `/browser/shields/site/:host` |
 
 ## Authentication, discovery, and events
+
+UI highlights submitted through `POST /state/ui` report the portion of a
+matched element inside the viewport and its clipping containers as
+`visibleRect`. A highlight can also request `hitTest: { xFraction, yFraction }`,
+with each fraction between 0 and 1. Its result reports `{ x, y, matches }` in
+viewport coordinates; `matches` is true only when that point reaches the
+element or its descendant. This observation neither scrolls nor activates the
+control. Input clients should reject missing or negative hit-test results and
+verify the resulting UI state after acting.
 
 ShellX uses loopback binding plus a bearer token. Its process-owned token
 authority is generated per user; ShellX-owned clients resolve it internally.
 Custom integrations must obtain authority through a private process-local
 integration, pass `Authorization: Bearer <token>`, and never print or persist
 the token. The served `GET /shellxagent.json` and
-`GET /.well-known/shellxagent.json` discovery records omit token values.
+`GET /.well-known/shellxagent.json` discovery records omit token values. The
+bearer is trusted local operator authority, not an agent-isolation boundary;
+agent-specific routes retain their own caller and intent checks.
 
 `GET /health` is the unauthenticated liveness endpoint. It returns build,
 Browser protocol, schema-revision, and feature-flag metadata. All other routes,
@@ -53,10 +69,12 @@ machine-readable code plus a short message.
 
 Desktop-bundled session documentation is available through `GET /agent-doc`,
 `GET /agent-doc/manifest`, and `GET /agent-doc/skills/shellx-host/SKILL.md`.
-The product-owned copy is written to
-`~/.shellx/agent-docs/shellx-host/SKILL.md`. It is activated only for
-ShellX-launched sessions, so direct CLI sessions stay unchanged; ShellX does
-not install a global host skill for Codex, Claude, Grok, or Antigravity.
+The product-owned full reference is written to
+`~/.shellx/agent-docs/shellx-host/SKILL.md`; it is not globally installed into
+provider skill paths. ShellX-launched sessions receive compact runtime rules
+and, when enabled, session-scoped ShellX host-MCP exposure. The result is that
+direct CLI sessions stay unchanged: ShellX does not install a global skill, MCP
+server, or runtime instruction block for them.
 
 The private on-disk discovery descriptor is named `shellxagent.json` and is
 written atomically for ShellX-owned local clients. Authenticated clients can
@@ -171,6 +189,11 @@ defaults, and `shellx_browser_update_site_shields` for a per-site override.
 `fillFromVaultGrant`, and `capturePageSecretToVault`. The native request filter
 applies the selected strict Browser policy before page traffic is admitted.
 
+On Linux, exact application-window capture requires an X11/Xwayland native
+window handle. A native Wayland handle returns an explicit unavailable error;
+setting `DISPLAY` alone does not select that capture backend, and an Xwayland
+capture does not establish native-Wayland coverage.
+
 ### HTTP Debug API Browser flow for outside drivers
 
 Agents running inside ShellX use Host MCP names. Outside drivers should prefer
@@ -196,11 +219,6 @@ For visual-only controls and current-origin recovery, the direct fallbacks are
 `pnpm shellx-browser click-at`, `pnpm shellx-browser type-text`, and
 `pnpm shellx-browser clear-site-data`.
 
-Before a release, `test:shellx-browser-batch-timing` exercises the live MCP
-path and records `browser_run_steps timing` against equivalent sequential
-calls. This is a performance/contract check, not a substitute for installed
-Browser acceptance.
-
 ## Vault and mediated secrets
 
 ShellX Vault is the default secret authority for ShellX sessions. `GET
@@ -211,8 +229,8 @@ requests in the Vault Request Center.
 | Method | Path | Current behavior |
 | --- | --- | --- |
 | POST | `/vault/lock` | Locks the local Vault session without revealing a value. |
-| POST | `/vault/setup/begin` | Starts local or external setup and returns recovery/setup metadata. |
-| POST | `/vault/setup/confirm-recovery` | Confirms recovery material and activates the selected Vault. |
+| POST | `/vault/setup/begin` | Starts local or external setup and returns a confirmation ID; the legacy `recoveryKit.words` field is empty. |
+| POST | `/vault/setup/confirm-recovery` | Confirms the pending setup ID and activates the selected Vault; this does not verify recovery material. |
 | GET / POST | `/vault/grants` | Lists grant metadata or queues a scoped mediated-use grant. |
 | GET / POST | `/vault/agent-requests` | Lists redacted executable-request state or queues an operator-reviewed request. |
 
@@ -225,20 +243,25 @@ fill/injection routes instead. Use mediated fill/injection only through a
 reviewed Vault grant. `POST /vault/get` similarly denies raw reveal
 with `raw_secret_reveal_denied`.
 
-`/vault/e2e/*` and mutable `vault` Debug API test paths are available only in a
-separately gated disposable test profile. They are not a normal Vault API.
 
 ## Tasks, providers, connections, and sessions
 
 ### First-class Tasks and provider catalogue
 
 `GET /tasks`, `GET /tasks/:task_id`, `GET /tasks/:task_id/state`, receipts,
-and attention endpoints project stored task state. `POST /tasks` and
-`POST /tasks/agent` create a draft through the same review boundary as the UI;
-ordinary discussion does not authorize persistence or execution. A queued
-response proves durable acceptance only. `POST /tasks/:task_id/run` starts one
-reviewed occurrence and `POST /tasks/runs/:occurrence_id/cancel` cancels that
-exact attempt.
+and attention endpoints project stored task state. `POST /tasks` is the direct
+trusted-operator draft route: an authenticated bearer holder may create the
+supplied draft and it does not consume conversation Task intent. The
+conversation-aware `POST /tasks/agent` route is available only to an
+authenticated ShellX conversation and consumes one short-lived, tab-bound intent
+registered from the current operator-authored composer message. The provider's
+`userApproved` field is a compatibility assertion, not authority;
+ordinary discussion cannot mint, retain, reuse, or escalate Task authority. A
+create-only request cannot become create-and-run, and failed prompt delivery
+clears the pending authority. A queued response proves durable acceptance
+only. `POST /tasks/:task_id/run` starts one reviewed
+occurrence and `POST /tasks/runs/:occurrence_id/cancel` cancels that exact
+attempt.
 
 For a terminal Task revision bound to a reviewed Browser workflow, ShellX can
 attach a path-free result-evidence identity to the occurrence. It contains only
@@ -247,18 +270,27 @@ completeness, and the source terminal-receipt identity; it does not expose the
 private artifact path, page content, provider output, prompt, or credentials.
 
 `POST /tasks/provider-catalog` reports safe provider availability and an
-exactly one isolated ASCII semantic-version token when one is available. It
+exactly one isolated ASCII semantic-version token when one is available. Its
+`guidanceProvenance` records the bundled card revision separately from the
+fresh target scan identified by `snapshotId`; neither the recorded card review
+date nor a CLI version establishes a current native capability. That requires
+a provider-specific native canary bound to the selected installed target. It
 does not expose binary paths, binary hashes and sizes, raw probe diagnostics,
-or credentials. The `task_manage` Host tool follows the same receipt-first
-boundary. `tasks_persist_attachments`, `tasks_reclaim_attachments`, and
+or credentials. The `task_manage` Host tool follows the same receipt-first and
+current-composer-intent boundary. `tasks_persist_attachments`, `tasks_reclaim_attachments`, and
 `tasks_maintain_attachments` are operator-only Tauri actions. There is no Debug API or Host MCP equivalent for durable Task attachment maintenance.
 
 `POST /provider-sessions/start` launches a selected provider in the selected
 ShellX context and streams normalized `provider-session-event` frames.
 `GET /provider-sessions/state` exposes bounded run status and
 `POST /provider-sessions/abort` ends the active run. ShellX does not silently route work to another provider: explicit handoff uses `send_prompt_to_provider`.
-`GET /state/model_instruction_cards` returns the current capability cards used
-to explain each selectable provider, including their native media boundaries.
+`GET /state/model_instruction_cards` returns bundled descriptive capability
+cards and their recorded `lastReviewed` metadata for each selectable provider.
+They explain intended native-media boundaries but do not establish current
+installed-provider availability or native capability. Use `POST
+/tasks/provider-catalog` or session preflight for availability on the selected
+target, then record a provider-specific native canary for a current capability
+claim.
 
 For `providerId: "antigravity-cli"`, the current native Antigravity CLI has no video-generation tool. ShellX must
 not launch Antigravity solely to attempt an unavailable video action; a media handoff never hands off to itself. Providers
@@ -284,6 +316,23 @@ for renderer-safe inspection. Current UI patches can request
 warning-level mode because permitted agent actions can proceed without a
 per-action prompt.
 
+UI snapshots describe reported state; they are not instructions to restore that
+state. The main desktop and Browser renderers consume explicit operator patches from the
+snapshot's `commandStream`, independently of `uiRevision`. Its backend-lifetime
+`epoch` and command `sequence` prevent duplicate delivery across transports and
+renderer reloads. Renderer reports do not enqueue commands. The in-memory stream
+retains at most 64 commands and 128 KiB of patch data; an individual command over
+64 KiB is rejected before its UI-state mutation. If commands expire before the
+renderer reads them, it reports a failed `uiCommandDelivery` action and refuses
+the remaining batch; reissue the intended commands. Stream acceptance is not
+proof that a UI action completed: inspect its action results and rendered state.
+Set `debugSurface` to `"app"` or `"browser"` to select the receiving renderer.
+Without an explicit surface, source labels containing `browser` target Browser;
+other operator commands target the main app.
+Within `activeTab`, omitted fields keep the named tab's existing context. Set
+`connectionId: null` explicitly to clear its saved connection; omitting
+`connectionId` does not switch the tab away from that connection.
+
 The bounded diagnostic UI patch also accepts a pointer-drag request. These
 fields relay a transient renderer action and are not persisted as application
 preferences:
@@ -307,6 +356,13 @@ type DebugUiPatch = {
   debugSurface?: "app" | "browser";
 };
 ```
+
+`GET /state/background-tasks` returns a bounded live process projection with
+`schema: "shellx/background-tasks@1"`, aggregate `count`, `truncated`, and
+`tasks` rows containing only `taskId`, `origin`, `status`, `pid`, and `tabId`.
+`truncated: true` means the result is incomplete; clients must reject it rather
+than treating it as proof. Command, output, cwd, timing, and resource fields
+are intentionally absent.
 
 `GET /state/agent_runs` reports background provider activity. Provider-run metrics are derived from normalized event metadata. `GET /state/tabs/report`
 provides the active-tab report for QA agents. `/state/environment`,

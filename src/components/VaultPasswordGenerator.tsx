@@ -8,7 +8,6 @@ import {
   ensureVaultPasswordPocket,
   getVaultPasswordPocket,
   normalizeVaultPasswordOptions,
-  OWNED_DEBUG_VAULT_PASSWORD,
   regenerateVaultPasswordPocket,
   subscribeVaultPasswordPocket,
   VAULT_PASSWORD_POCKET_TTL_MS,
@@ -24,7 +23,6 @@ export function VaultPasswordGenerator({
   onSavePassword,
   savePasswordLabel = "Save secret",
   savePasswordDisabled = false,
-  debugFixture = null,
 }: {
   title?: string;
   onClose?: () => void;
@@ -33,14 +31,10 @@ export function VaultPasswordGenerator({
   onSavePassword?: (password: string, event?: MouseEvent<HTMLButtonElement>) => void;
   savePasswordLabel?: string;
   savePasswordDisabled?: boolean;
-  debugFixture?: "vault-password" | null;
 }): JSX.Element {
-  const [options, setOptions] = useState<VaultPasswordGeneratorOptions>(() => debugFixture === "vault-password"
-    ? DEFAULT_VAULT_PASSWORD_OPTIONS
-    : getVaultPasswordPocket()?.options ?? DEFAULT_VAULT_PASSWORD_OPTIONS);
-  const [pocket, setPocket] = useState<VaultPasswordPocket>(() => debugFixture === "vault-password"
-    ? ownedDebugPocket()
-    : ensureVaultPasswordPocket(options));
+  const [options, setOptions] = useState<VaultPasswordGeneratorOptions>(() =>
+    getVaultPasswordPocket()?.options ?? DEFAULT_VAULT_PASSWORD_OPTIONS);
+  const [pocket, setPocket] = useState<VaultPasswordPocket>(() => ensureVaultPasswordPocket(options));
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [lengthInput, setLengthInput] = useState(() => String(options.length));
   const [revealed, setRevealed] = useState(false);
@@ -57,10 +51,6 @@ export function VaultPasswordGenerator({
   }, [options.length]);
 
   useEffect(() => {
-    if (debugFixture === "vault-password") {
-      setPocket(ownedDebugPocket());
-      return () => {};
-    }
     const sync = () => {
       const next = getVaultPasswordPocket();
       if (next) {
@@ -70,10 +60,9 @@ export function VaultPasswordGenerator({
       }
     };
     return subscribeVaultPasswordPocket(sync);
-  }, [debugFixture]);
+  }, []);
 
   useEffect(() => {
-    if (debugFixture === "vault-password") return () => {};
     const timer = window.setInterval(() => {
       const next = getVaultPasswordPocket();
       if (next) {
@@ -83,7 +72,7 @@ export function VaultPasswordGenerator({
       }
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [debugFixture, options]);
+  }, [options]);
 
   const remainingLabel = useMemo(() => {
     const remainingMs = Math.max(0, pocket.expiresAtMs - nowMs);
@@ -98,7 +87,7 @@ export function VaultPasswordGenerator({
   }
 
   function regenerate(): void {
-    setPocket(debugFixture === "vault-password" ? ownedDebugPocket() : regenerateVaultPasswordPocket(options));
+    setPocket(regenerateVaultPasswordPocket(options));
     setNowMs(Date.now());
     setCopied(false);
     setCopyFailed(false);
@@ -127,13 +116,6 @@ export function VaultPasswordGenerator({
   }
 
   function clear(): void {
-    if (debugFixture === "vault-password") {
-      setPocket(ownedDebugPocket());
-      setRevealed(false);
-      setCopied(false);
-      setCopyFailed(false);
-      return;
-    }
     clearVaultPasswordPocket();
     const next = regenerateVaultPasswordPocket(options);
     setPocket(next);
@@ -286,15 +268,6 @@ export function VaultPasswordGenerator({
       </p>
     </section>
   );
-}
-
-function ownedDebugPocket(now = Date.now()): VaultPasswordPocket {
-  return {
-    value: OWNED_DEBUG_VAULT_PASSWORD,
-    createdAtMs: now,
-    expiresAtMs: now + VAULT_PASSWORD_POCKET_TTL_MS,
-    options: DEFAULT_VAULT_PASSWORD_OPTIONS,
-  };
 }
 
 function PasswordOption({

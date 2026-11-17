@@ -5,7 +5,6 @@ import { WorkPreviewStage } from "./WorkPreviewPanel";
 import { ShellIcon } from "./icons";
 import type { PreviewCenterView } from "../lib/preview-center";
 import type { WorkPreviewState } from "../lib/work-preview";
-import type { DebugProviderAction } from "../lib/debug-provider-action-fixture";
 import { useModalFocus } from "../lib/useModalFocus";
 
 function basename(path: string | null): string {
@@ -29,7 +28,6 @@ export function PreviewCenter({
   onPreviewFile,
   onRunWorkPreview,
   onAskGrokToFix,
-  debugProviderAction,
 }: {
   open: boolean;
   view: PreviewCenterView;
@@ -42,7 +40,6 @@ export function PreviewCenter({
   onPreviewFile: (path: string) => void;
   onRunWorkPreview: (path: string) => void;
   onAskGrokToFix?: (state: WorkPreviewState) => void;
-  debugProviderAction?: DebugProviderAction | null;
 }): JSX.Element | null {
   const workAvailable = hasWorkPreview(workState);
   const fileLabel = basename(filePath);
@@ -130,7 +127,6 @@ export function PreviewCenter({
             <WorkPreviewStage
               state={workState}
               onAskGrokToFix={onAskGrokToFix}
-              debugProviderAction={debugProviderAction}
             />
           )}
         </div>

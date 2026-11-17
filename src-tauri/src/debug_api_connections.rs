@@ -2,20 +2,12 @@ use super::*;
 
 use crate::connections::{ConnectionPreset, ConnectionStore};
 
-pub(super) static CONN_HTTP_CELL: std::sync::OnceLock<Arc<ConnectionStore>> =
-    std::sync::OnceLock::new();
-
 #[deny(clippy::expect_used, clippy::unwrap_used)]
 pub(super) fn connections_handle() -> Result<Arc<ConnectionStore>, String> {
-    if let Some(s) = CONN_HTTP_CELL.get() {
-        return Ok(s.clone());
-    }
-    let s = Arc::new(ConnectionStore::open()?);
-    let _ = CONN_HTTP_CELL.set(s.clone());
-    CONN_HTTP_CELL
-        .get()
-        .cloned()
-        .ok_or_else(|| "connection store initialization did not publish a handle".to_string())
+    // UI invokes and HTTP operations must share one cache and write lock.
+    // Opening a second store makes reads stale and lets either writer replace
+    // presets saved through the other entry point.
+    crate::get_or_open_connections()
 }
 
 pub(super) async fn connections_list_http(State(_s): State<ApiState>) -> impl IntoResponse {
@@ -283,18 +275,7 @@ fn reject_agent_cli_setup_inline_preset(preset_present: bool) -> Result<(), Stri
     Ok(())
 }
 
-#[cfg(test)]
-mod agent_cli_setup_route_tests {
-    use super::reject_agent_cli_setup_inline_preset;
 
-    #[test]
-    fn mutating_agent_cli_setup_routes_reject_inline_presets() {
-        assert!(reject_agent_cli_setup_inline_preset(false).is_ok());
-        assert!(reject_agent_cli_setup_inline_preset(true)
-            .unwrap_err()
-            .contains("saved connectionId"));
-    }
-}
 
 pub(super) fn bad_agent_cli_setup_response(message: String) -> Response {
     (

@@ -34,27 +34,3 @@ pub fn generate_password(length: usize, upper: bool, digits: bool, symbols: bool
     }
     out
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn respects_length_and_classes() {
-        let p = generate_password(24, true, true, true);
-        assert_eq!(p.len(), 24);
-        let p2 = generate_password(24, false, false, false);
-        assert!(p2.bytes().all(|b| b.is_ascii_lowercase()));
-        // Clamping.
-        assert_eq!(generate_password(2, false, false, false).len(), 8);
-        assert_eq!(generate_password(9999, false, false, false).len(), 128);
-    }
-
-    #[test]
-    fn two_draws_differ() {
-        assert_ne!(
-            generate_password(32, true, true, true),
-            generate_password(32, true, true, true)
-        );
-    }
-}

@@ -1,0 +1,37 @@
+/* The public manual demonstrates a desktop workspace. At phone widths retain
+ * the real control sizes and expose an intentional horizontal canvas instead
+ * of squeezing three product panes into an unreadable 390px layout. */
+.manual-phone-preview-notice {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  html[data-shellx-public-manual-preview="true"],
+  html[data-shellx-public-manual-preview="true"] body {
+    min-width: 0;
+    overflow: auto;
+  }
+
+  .manual-phone-preview-notice {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 10000;
+    box-sizing: border-box;
+    width: 100vw;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--hairline);
+    background: var(--surface-2);
+    color: var(--ink-2);
+    font: 500 var(--fs-ui-sm)/1.45 var(--sans);
+  }
+
+  #root {
+    min-width: 1040px;
+  }
+
+  .shell {
+    min-width: 1040px;
+    min-height: 760px;
+  }
+}

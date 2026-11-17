@@ -12,7 +12,5 @@ Backport patch: https://github.com/gtk-rs/gtk-rs-core/pull/2009.patch
 
 All runtime library files other than src/variant_iter.rs are from the
 checksum-verified crates.io package. The license text has only its trailing
-blank line normalized for the repository whitespace gate. ShellX's release gate
-builds a temporary optimized consumer that executes every advisory-listed
-iterator method against this path dependency. The package keeps name glib and
-version 0.18.5 for GTK3/Tauri dependency compatibility.
+blank line normalized for the repository whitespace gate. The package keeps
+name glib and version 0.18.5 for GTK3/Tauri dependency compatibility.

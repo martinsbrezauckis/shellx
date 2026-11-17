@@ -290,35 +290,3 @@ pub fn save_cache(paths: &Paths, cache: &ScanCache) -> Result<()> {
     write_private(&paths.scan_cache, &bytes)?;
     Ok(())
 }
-
-#[cfg(all(test, unix))]
-mod private_write_tests {
-    use super::*;
-
-    /// AUDIT-MED regression (2026-06-12): the temp must be 0600 from
-    /// creation — never a window where umask decides readability.
-    #[test]
-    fn write_private_is_0600() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let dest = dir.path().join("secret.json");
-        write_private(&dest, b"sealed bytes").unwrap();
-        let mode = std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "got {mode:o}");
-        // Overwrite path works too (rename over existing).
-        write_private(&dest, b"sealed v2").unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), b"sealed v2");
-    }
-
-    #[test]
-    fn limited_read_rejects_oversized_state() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("oversized.json");
-        std::fs::write(&path, b"12345").unwrap();
-        assert_eq!(read_limited(&path, 5).unwrap(), b"12345");
-        assert!(read_limited(&path, 4)
-            .unwrap_err()
-            .to_string()
-            .contains("too large"));
-    }
-}

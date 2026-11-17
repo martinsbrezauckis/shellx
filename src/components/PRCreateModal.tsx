@@ -29,7 +29,6 @@ export function PRCreateModal({
   transcriptAppendix,
   activeTabId,
   onCreated,
-  releaseTestBoundary = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -40,7 +39,6 @@ export function PRCreateModal({
   transcriptAppendix: string;
   activeTabId?: string | null;
   onCreated: (url: string) => void;
-  releaseTestBoundary?: boolean;
 }): JSX.Element | null {
   const [base, setBase] = useState(defaultBase);
   const [title, setTitle] = useState(defaultTitle);
@@ -74,8 +72,7 @@ export function PRCreateModal({
       ? `${body}\n\n---\n\n### Session transcript\n\n${transcriptAppendix}`
       : body;
     try {
- // C-NEW-1: route through api wrapper which auto-adds the
- // bearer-token header. Body shape unchanged.
+ // The API wrapper adds the bearer-token header. Body shape is unchanged.
       const r = await api("/github/pr/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -86,26 +83,10 @@ export function PRCreateModal({
           draft,
           tabId: activeTabId ?? null,
           confirmRemoteCreate,
-          ...(releaseTestBoundary ? { releaseTestBoundary: "stop-before-remote" } : {}),
         }),
       });
       if (!r.ok) {
         const text = await r.text();
-        if (releaseTestBoundary && r.status === 412) {
-          let receipt = "";
-          let errorCode = "";
-          try {
-            const parsed = JSON.parse(text) as { error?: unknown; receipt?: unknown };
-            errorCode = typeof parsed.error === "string" ? parsed.error : "";
-            receipt = typeof parsed.receipt === "string" ? parsed.receipt : "";
-          } catch {
-            // The exact release boundary below remains fail-closed.
-          }
-          if (errorCode === "release_test_remote_mutation_blocked"
-            && receipt === "release fixture PR create stopped before remote mutation") {
-            throw new Error(receipt);
-          }
-        }
         throw new Error(`HTTP ${r.status}: ${text}`);
       }
       const j = await r.json();
@@ -137,7 +118,7 @@ export function PRCreateModal({
             className="settings-input"
             type="text"
             data-debug-id="pr-base-input"
-            data-shellx-release-observe="value"
+            data-shellx-release-observe="value disabled"
             value={base}
             onChange={(e) => setBase(e.target.value)}
           />
@@ -149,7 +130,7 @@ export function PRCreateModal({
             className="settings-input"
             type="text"
             data-debug-id="pr-title-input"
-            data-shellx-release-observe="value"
+            data-shellx-release-observe="value disabled"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Concise title (less than 70 chars)"
@@ -161,7 +142,7 @@ export function PRCreateModal({
           <textarea
             className="settings-input"
             data-debug-id="pr-body-input"
-            data-shellx-release-observe="value"
+            data-shellx-release-observe="value disabled"
             rows={8}
             value={body}
             onChange={(e) => setBody(e.target.value)}

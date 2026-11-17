@@ -30,10 +30,6 @@ import { inTauri } from "../../lib/tauri-bridge";
  * bound. The actually-bound port may differ (env override or
  * orphan-socket fallback to 5759/5761/5763/5765). */
 const DEFAULT_DEBUG_API_PORT = 5757;
-export const OWNED_DEBUG_TOKEN = "03503503503503503503503503503503";
-
-export type ShellxagentDebugFixture = "owned-safe" | "owned-clipboard" | null;
-
 async function invokeCmd<T>(cmd: string): Promise<T> {
   if (!inTauri()) {
     throw new Error("Tauri context required");
@@ -53,11 +49,7 @@ interface BoundPorts {
   mcpHttp: number | null;
 }
 
-export function ShellxagentTab({
-  debugFixture = null,
-}: {
-  debugFixture?: ShellxagentDebugFixture;
-}): JSX.Element {
+export function ShellxagentTab(): JSX.Element {
   const [token, setToken] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -68,20 +60,9 @@ export function ShellxagentTab({
  // 5757 default when env-overridden or when an orphan socket forced
  // a fallback step (5759/5761/5763/5765).
   const [boundPort, setBoundPort] = useState<number | null>(null);
-  const fixtureActive = debugFixture === "owned-safe" || debugFixture === "owned-clipboard";
-  const clipboardFixtureActive = debugFixture === "owned-clipboard";
-  const desktopAgentAvailable = fixtureActive || inTauri();
+  const desktopAgentAvailable = inTauri();
 
   useEffect(() => {
-    if (fixtureActive) {
-      setToken(OWNED_DEBUG_TOKEN);
-      setBoundPort(DEFAULT_DEBUG_API_PORT);
-      setRevealed(false);
-      setJustRotated(false);
-      setCopied(false);
-      setError(null);
-      return;
-    }
     if (!desktopAgentAvailable) return;
     let cancelled = false;
     void (async () => {
@@ -107,7 +88,7 @@ export function ShellxagentTab({
     return () => {
       cancelled = true;
     };
-  }, [desktopAgentAvailable, fixtureActive]);
+  }, [desktopAgentAvailable]);
 
  // auto-mask the token after 60 s of Reveal mode.
  // Without this, an idle Settings → shellXagent panel exposes the
@@ -121,7 +102,7 @@ export function ShellxagentTab({
   }, [revealed]);
 
   async function regenerate() {
-    if (loading || fixtureActive) return;
+    if (loading) return;
     setLoading(true);
     setError(null);
     try {
@@ -140,7 +121,7 @@ export function ShellxagentTab({
   }
 
   async function copyToClipboard() {
-    if (!token || (fixtureActive && !clipboardFixtureActive)) return;
+    if (!token) return;
     try {
       await navigator.clipboard.writeText(token);
       setCopied(true);
@@ -233,7 +214,7 @@ export function ShellxagentTab({
             type="button"
             className="settings-pill"
             onClick={copyToClipboard}
-            disabled={!token || (fixtureActive && !clipboardFixtureActive)}
+            disabled={!token}
             data-shellx-release-observe="disabled"
           >
             {copied ? "Copied" : "Copy"}
@@ -257,7 +238,7 @@ export function ShellxagentTab({
           type="button"
           className="settings-pill"
           onClick={regenerate}
-          disabled={loading || !desktopAgentAvailable || fixtureActive}
+          disabled={loading || !desktopAgentAvailable}
           data-shellx-release-observe="disabled"
           style={{
             borderColor: "var(--fg-error)",

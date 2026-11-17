@@ -46,7 +46,7 @@ pub(super) async fn tool_send_prompt_to_provider(
     }
 
     let target = resolve_provider_cli_handoff_target(&args, tab_id).await?;
-    let permission_mode = infer_provider_handoff_permission_mode(&target.tab_id).await;
+    let permission_mode = infer_provider_handoff_permission_mode(&target.tab_id).await?;
     let timeout_ms = provider_handoff_timeout_ms(&args, &prompt);
     let persist_session =
         mcp_arg_bool(&args, "persistSession") || mcp_arg_bool(&args, "persist_session");
@@ -572,10 +572,27 @@ pub(super) fn provider_cli_handoff_local_target(
     }
 }
 
-pub(super) async fn infer_provider_handoff_permission_mode(tab_id: &str) -> String {
+/// Resolve the existing tab's consent mode before starting another provider.
+/// The handoff must not invent `bypassPermissions` merely because its state
+/// lookup is unavailable or stale.
+pub(super) async fn infer_provider_handoff_permission_mode(tab_id: &str) -> Result<String, String> {
     let ui_state = debug_api_get_json("/state/ui", 10).await.ok();
+    let header = debug_api_get_json(
+        &format!("/state/header?tabId={}", encode_query_component(tab_id)),
+        10,
+    )
+    .await
+    .ok();
+    infer_provider_handoff_permission_mode_from_state(tab_id, ui_state.as_ref(), header.as_ref())
+        .map(str::to_string)
+}
+
+pub(super) fn infer_provider_handoff_permission_mode_from_state(
+    tab_id: &str,
+    ui_state: Option<&Value>,
+    header: Option<&Value>,
+) -> Result<&'static str, String> {
     if let Some(mode) = ui_state
-        .as_ref()
         .and_then(|ui| {
             let active_tab = ui.get("activeTab")?;
             let active_tab_id = json_string(Some(active_tab), "tabId")
@@ -586,17 +603,10 @@ pub(super) async fn infer_provider_handoff_permission_mode(tab_id: &str) -> Stri
         })
         .and_then(|mode| normalize_provider_handoff_permission_mode(&mode))
     {
-        return mode.to_string();
+        return Ok(mode);
     }
 
-    let header = debug_api_get_json(
-        &format!("/state/header?tabId={}", encode_query_component(tab_id)),
-        10,
-    )
-    .await
-    .ok();
     if let Some(mode) = header
-        .as_ref()
         .and_then(|value| {
             value
                 .pointer("/session/permissionMode")
@@ -605,10 +615,12 @@ pub(super) async fn infer_provider_handoff_permission_mode(tab_id: &str) -> Stri
         })
         .and_then(normalize_provider_handoff_permission_mode)
     {
-        return mode.to_string();
+        return Ok(mode);
     }
 
-    "bypassPermissions".to_string()
+    Err(format!(
+        "send_prompt_to_provider: unable to verify permission mode for tab {tab_id}; refusing provider handoff"
+    ))
 }
 
 pub(super) fn normalize_provider_handoff_permission_mode(mode: &str) -> Option<&'static str> {

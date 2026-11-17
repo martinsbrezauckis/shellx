@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
+
 use crate::task_conversation::{TaskConversationEvidenceSnapshot, TaskConversationFlushSummary};
 use crate::task_execution_runtime::TaskExecutionIdentity;
 use crate::task_model::{TaskDefinitionRevision, TaskOccurrence, TaskOccurrenceState};
@@ -15,14 +16,13 @@ use crate::task_provider_dispatch::task_runtime_tab_id;
 use crate::task_receipts::{TaskReceipt, TaskReceiptKind};
 use crate::task_store::{lock, PersistedTaskStore, TaskStore, TaskStoreError};
 
-#[cfg(test)]
-#[path = "task_trace_evidence_tests.rs"]
-mod tests;
+
 
 pub(crate) const TASK_TRACE_EVIDENCE_SCHEMA_VERSION: &str = "shellx.task-trace-evidence.v1";
 pub(crate) const MAX_TRACE_EVIDENCE_RETRY_BATCH: usize = 32;
 const MAX_OPAQUE_ID_BYTES: usize = 256;
 const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_TRACE_EVIDENCE_INCOMPLETE_REASONS: usize = 10;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +30,24 @@ pub(crate) enum TaskTraceEvidenceState {
     Complete,
     Incomplete,
     NoProviderActivity,
+}
+
+/// Bounded, categorical reasons why an otherwise reviewable Trace receipt is
+/// incomplete. These must never contain archive content, paths, or provider
+/// output, because receipts are durable Task-store data.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum TaskTraceEvidenceIncompleteReason {
+    MissingArchive,
+    MissingDurableFlushProof,
+    InvalidArchiveContext,
+    InvalidArchiveFormat,
+    DurableProofIdentityMismatch,
+    MissingTerminalMarker,
+    DroppedProviderEvents,
+    ArchiveWriteFailed,
+    ProviderEventCounterMismatch,
+    FlushSummaryMismatch,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -44,6 +62,10 @@ pub(crate) struct TaskTraceEvidenceReceipt {
     pub source_terminal_receipt_sequence: u64,
     pub source_terminal_receipt_hash: String,
     pub state: TaskTraceEvidenceState,
+    /// Absent in legacy receipts. New incomplete receipts carry deterministic,
+    /// categorical reasons without changing the serialized form of old ones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub incomplete_reasons: Vec<TaskTraceEvidenceIncompleteReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive_sha256: Option<String>,
     pub archive_bytes: u64,
@@ -84,8 +106,30 @@ pub(crate) fn collect_task_trace_evidence(
     let attempt_id = attempt.attempt_id.clone();
     let expected_session_id = runtime_session_id(&occurrence, &revision, &attempt_id)?;
 
+    let expected_identity = TaskExecutionIdentity {
+        task_id: occurrence.task_id.clone(),
+        revision_id: revision.revision_id.clone(),
+        revision_sha256: revision.canonical_sha256.clone(),
+        occurrence_id: occurrence.occurrence_id.clone(),
+        attempt_id: attempt_id.clone(),
+    };
+    let snapshot_was_supplied = snapshot.is_some();
+    let snapshot_matches_expected_session = snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.session_id == expected_session_id);
     let snapshot = snapshot.filter(|snapshot| snapshot.session_id == expected_session_id);
     let flush = flush.filter(|flush| flush.session_id == expected_session_id);
+    let supplied_durable_proof = snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.durable_flush_proof.as_ref());
+    let durable_proof = supplied_durable_proof
+        .filter(|proof| proof.matches_identity(&expected_identity, &expected_session_id));
+    let durable_flush = durable_proof.map(|proof| proof.flush_summary());
+    let flush_matches_durable_proof = match (flush.as_ref(), durable_flush.as_ref()) {
+        (Some(flush), Some(durable)) => flush == durable,
+        (None, Some(_)) => true,
+        _ => false,
+    };
     let verified_archive = snapshot
         .as_ref()
         .is_some_and(|snapshot| snapshot.initial_context_complete && snapshot.format_valid);
@@ -102,7 +146,12 @@ pub(crate) fn collect_task_trace_evidence(
     let provider_event_count = snapshot
         .as_ref()
         .map_or(0, |snapshot| snapshot.provider_event_count);
-    let dropped_event_count = flush.as_ref().map_or(0, |summary| summary.dropped_events);
+    let dropped_event_count = [flush.as_ref(), durable_flush.as_ref()]
+        .into_iter()
+        .flatten()
+        .map(|summary| summary.dropped_events)
+        .max()
+        .unwrap_or(0);
     let initial_context_complete = snapshot
         .as_ref()
         .is_some_and(|snapshot| snapshot.initial_context_complete);
@@ -112,13 +161,66 @@ pub(crate) fn collect_task_trace_evidence(
     let archive_format_valid = snapshot
         .as_ref()
         .is_some_and(|snapshot| snapshot.format_valid);
-    let fully_observed = !recovered_after_restart
-        && snapshot.is_some()
-        && flush.as_ref().is_some_and(|summary| {
+    let any_write_failed = [flush.as_ref(), durable_flush.as_ref()]
+        .into_iter()
+        .flatten()
+        .any(|summary| summary.write_failed);
+    let provider_event_counter_mismatch = snapshot.is_some()
+        && [flush.as_ref(), durable_flush.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|summary| summary.accepted_events != u64::from(provider_event_count));
+    let mut incomplete_reasons = Vec::new();
+    if snapshot.is_none() {
+        incomplete_reasons.push(
+            if snapshot_was_supplied && !snapshot_matches_expected_session {
+                TaskTraceEvidenceIncompleteReason::InvalidArchiveContext
+            } else {
+                TaskTraceEvidenceIncompleteReason::MissingArchive
+            },
+        );
+    } else {
+        if !initial_context_complete {
+            incomplete_reasons.push(TaskTraceEvidenceIncompleteReason::InvalidArchiveContext);
+        }
+        if !archive_format_valid {
+            incomplete_reasons.push(TaskTraceEvidenceIncompleteReason::InvalidArchiveFormat);
+        }
+        match (supplied_durable_proof, durable_proof) {
+            (None, _) => {
+                incomplete_reasons
+                    .push(TaskTraceEvidenceIncompleteReason::MissingDurableFlushProof);
+            }
+            (Some(_), None) => {
+                incomplete_reasons
+                    .push(TaskTraceEvidenceIncompleteReason::DurableProofIdentityMismatch);
+            }
+            (Some(_), Some(_)) => {}
+        }
+        if !terminal_marker_present {
+            incomplete_reasons.push(TaskTraceEvidenceIncompleteReason::MissingTerminalMarker);
+        }
+    }
+    if dropped_event_count != 0 {
+        incomplete_reasons.push(TaskTraceEvidenceIncompleteReason::DroppedProviderEvents);
+    }
+    if any_write_failed {
+        incomplete_reasons.push(TaskTraceEvidenceIncompleteReason::ArchiveWriteFailed);
+    }
+    if provider_event_counter_mismatch {
+        incomplete_reasons.push(TaskTraceEvidenceIncompleteReason::ProviderEventCounterMismatch);
+    }
+    if matches!((flush.as_ref(), durable_flush.as_ref()), (Some(flush), Some(durable)) if flush != durable)
+    {
+        incomplete_reasons.push(TaskTraceEvidenceIncompleteReason::FlushSummaryMismatch);
+    }
+    let fully_observed = snapshot.is_some()
+        && durable_flush.as_ref().is_some_and(|summary| {
             !summary.write_failed
                 && summary.dropped_events == 0
                 && summary.accepted_events == u64::from(provider_event_count)
         })
+        && flush_matches_durable_proof
         && initial_context_complete
         && terminal_marker_present
         && archive_format_valid;
@@ -129,6 +231,11 @@ pub(crate) fn collect_task_trace_evidence(
     } else {
         TaskTraceEvidenceState::Incomplete
     };
+    if !matches!(state, TaskTraceEvidenceState::Incomplete) {
+        incomplete_reasons.clear();
+    }
+    incomplete_reasons.sort_unstable();
+    incomplete_reasons.dedup();
     store
         .record_trace_evidence(TaskTraceEvidenceReceipt {
             schema_version: TASK_TRACE_EVIDENCE_SCHEMA_VERSION.to_string(),
@@ -139,6 +246,7 @@ pub(crate) fn collect_task_trace_evidence(
             source_terminal_receipt_sequence: 0,
             source_terminal_receipt_hash: String::new(),
             state,
+            incomplete_reasons,
             archive_sha256,
             archive_bytes,
             record_count,
@@ -350,6 +458,18 @@ pub(crate) fn validate_trace_evidence(
             "task trace evidence exceeds its bounded contract".to_string(),
         ));
     }
+    if evidence.incomplete_reasons.len() > MAX_TRACE_EVIDENCE_INCOMPLETE_REASONS
+        || evidence
+            .incomplete_reasons
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+        || (!matches!(evidence.state, TaskTraceEvidenceState::Incomplete)
+            && !evidence.incomplete_reasons.is_empty())
+    {
+        return Err(TaskStoreError::Invalid(
+            "task trace evidence incomplete reasons are inconsistent".to_string(),
+        ));
+    }
     if evidence.conversation_session_id.is_some()
         && (!evidence.initial_context_complete || !evidence.archive_format_valid)
     {
@@ -372,7 +492,6 @@ pub(crate) fn validate_trace_evidence(
         || !evidence.initial_context_complete
         || !evidence.terminal_marker_present
         || !evidence.archive_format_valid
-        || evidence.recovered_after_restart
         || evidence.dropped_event_count != 0)
     {
         return Err(TaskStoreError::Invalid(

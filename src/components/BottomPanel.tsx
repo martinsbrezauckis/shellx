@@ -10,7 +10,7 @@
  * events[]. Prompt wiring: parent passes onSend(text); Enter sends,
  * Shift+Enter newline, ⌘U opens the file picker.
  */
-import { lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from "react";
+import { lazy, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import type { RawEventFrame } from "../types/acp";
 import type { UiGroup } from "../lib/grouping";
@@ -129,7 +129,7 @@ function findOpenVoiceOwner(
  // Legacy pre-tab key must never turn a later tab on by accident.
     localStorage.removeItem(VOICE_LEGACY_KEY);
   } catch {
- /* localStorage can be unavailable in preview/test shells */
+ /* localStorage can be unavailable in embedded previews or restricted contexts. */
   }
   return null;
 }
@@ -308,7 +308,6 @@ export function BottomPanel({
   voiceSessionTabs = [],
   debugOpenMenu,
   debugOpenMenuSeq,
-  releaseTestVoiceRecording = false,
 }: {
   prompt: string;
   onPromptChange: (s: string) => void;
@@ -373,8 +372,6 @@ export function BottomPanel({
   voiceSessionTabs?: VoiceSessionTab[];
   debugOpenMenu?: ComposerDebugMenu | null;
   debugOpenMenuSeq?: number;
-  /** Isolated release fixture forwarded to the voice-chat MicButton. */
-  releaseTestVoiceRecording?: boolean;
 }): JSX.Element {
   const [localTab, setLocalTab] = useState<BottomTab>(readPersistedBottomTab);
   const tab = controlledTab ?? localTab;
@@ -573,7 +570,6 @@ export function BottomPanel({
             voiceSessionTabs={voiceSessionTabs}
             debugOpenMenu={debugOpenMenu}
             debugOpenMenuSeq={debugOpenMenuSeq}
-            releaseTestVoiceRecording={releaseTestVoiceRecording}
           />
         )}
  {/* Terminal MUST stay mounted
@@ -769,7 +765,6 @@ function PromptComposer({
   voiceSessionTabs = [],
   debugOpenMenu,
   debugOpenMenuSeq,
-  releaseTestVoiceRecording = false,
 }: {
   prompt: string;
   onPromptChange: (s: string) => void;
@@ -808,14 +803,12 @@ function PromptComposer({
   onPickProject?: () => void;
  /** locks the connection pill in read-only state. */
   connectionLocked?: boolean;
- /** audit fix — keys per-tab voiceChatMode storage so toggling
+ /** Keys per-tab voiceChatMode storage so toggling
  * 🎧 in tab A doesn't bleed into tab B's mic loop. */
   activeTabId?: string | null;
   voiceSessionTabs?: VoiceSessionTab[];
   debugOpenMenu?: ComposerDebugMenu | null;
   debugOpenMenuSeq?: number;
-  /** Isolated release fixture forwarded to the real voice-chat MicButton. */
-  releaseTestVoiceRecording?: boolean;
 }): JSX.Element {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
  // imperative handle to MicButton so the Send button
@@ -1639,13 +1632,10 @@ function PromptComposer({
             debugId="composer-voice-chat"
             label={voiceChatMode ? "Voice chat · ON" : "Voice chat"}
             onBeforeStart={guardVoiceStart}
-            releaseTestRecording={releaseTestVoiceRecording}
             onRecordingChange={(rec) => {
               setVoiceChatRecording(rec);
  // Pressing the voice-chat mic flips the session-wide
- // mode on. (User can turn it off by restarting the tab
- // or stopping the current orchestrated run; a future build adds an explicit
- // toggle.) The mode persists across prompts so a
+ // mode on. The adjacent Voice chat off control turns it off. The mode persists across prompts so a
  // conversation feels continuous.
               if (rec) writeVoiceChatMode(true);
             }}
@@ -1734,13 +1724,7 @@ function PromptComposer({
           </button>
         </div>
 
- {/* SCOPE row reordered to
- * connection · folder · branch — pick the location first
- * (Windows / WSL / SSH), then the folder. Mental model: you
- * decide where the session lives before you decide which
- * folder it operates against. (B will add the
- * full "folder browse disabled until remote is connected"
- * enforcement; this is the visual reorder only.) */}
+ {/* Scope order is connection · folder · branch, so users pick a location before its folder. */}
         <div className="composer-scope">
           <div style={{ position: "relative" }}>
             <button
@@ -1748,6 +1732,9 @@ function PromptComposer({
               className={`scope-pill ${connectionLocked ? "locked" : ""}`}
               data-picker-anchor="connection"
               data-debug-id="composer-connection"
+              aria-haspopup="dialog"
+              aria-expanded={connectionPickerOpen}
+              aria-controls="connection-picker-popover"
               title={connectionLocked
                 ? "Connection locked after first message. Open a new tab (+) to use a different transport."
                 : "Pick connection — Local / WSL / SSH"}
@@ -1821,11 +1808,7 @@ function PromptComposer({
               <ShellIcon name={agentLocked ? "lock" : "chevron-down"} size={12} />
             </span>
           </button>
- {/* folder pill moved AFTER
- * the connection pill so users pick location → folder in
- * the natural left-to-right reading order. The full
- * "disabled until remote is connected" enforcement is
- * B work (#207). */}
+ {/* The folder follows the connection in the natural left-to-right reading order. */}
           <button
             type="button"
             className="scope-pill"
@@ -1844,6 +1827,9 @@ function PromptComposer({
               className="scope-pill"
               data-picker-anchor="branch"
               data-debug-id="composer-branch"
+              aria-haspopup="listbox"
+              aria-expanded={branchPickerOpen}
+              aria-controls="branch-picker-popover"
               title="Pick branch for this tab"
               onClick={() => setBranchPickerOpen((v) => !v)}
             >
@@ -2110,6 +2096,7 @@ function HintPill(): JSX.Element {
   const pillRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
+  const tooltipId = useId();
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
   const C = isMac ? "⌘" : "Ctrl+";
 
@@ -2143,18 +2130,27 @@ function HintPill(): JSX.Element {
         ref={pillRef}
         type="button"
         className="hint-pill"
+        data-debug-id="composer-help"
         aria-label="Keyboard shortcuts"
+        aria-describedby={open ? tooltipId : undefined}
         title="Keyboard shortcuts"
-        tabIndex={-1}
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
+        onClick={() => setOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setOpen(false);
+          }
+        }}
       >
         ?
       </button>
       {open && coords && createPortal(
         <div
+          id={tooltipId}
           className="hint-popover-portal"
           role="tooltip"
           style={{

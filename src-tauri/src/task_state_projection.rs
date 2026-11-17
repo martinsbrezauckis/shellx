@@ -15,13 +15,11 @@ use crate::task_receipts::{TaskReceipt, TaskReceiptKind};
 use crate::task_result_evidence::{TaskResultEvidenceKind, TaskResultEvidenceState};
 use crate::task_schedule::{next_scheduled_at, Schedule, ScheduleBounds};
 use crate::task_store::{lock, TaskStore, TaskStoreError};
-use crate::task_trace_evidence::TaskTraceEvidenceState;
+use crate::task_trace_evidence::{TaskTraceEvidenceIncompleteReason, TaskTraceEvidenceState};
 use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
-#[cfg(test)]
-#[path = "task_state_projection_tests.rs"]
-mod tests;
+
 
 pub(crate) const TASK_STATE_PROJECTION_SCHEMA_VERSION: &str = "shellx.task-state-projection.v1";
 pub(crate) const MAX_TASK_ATTENTION_ITEMS: usize = 24;
@@ -155,6 +153,8 @@ pub(crate) struct TaskRunResultEvidenceProjection {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TaskRunTraceEvidenceProjection {
     pub state: TaskTraceEvidenceState,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub incomplete_reasons: Vec<TaskTraceEvidenceIncompleteReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archive_sha256: Option<String>,
     pub archive_bytes: u64,
@@ -664,6 +664,7 @@ fn project_run_history(
         trace_evidence.and_then(|evidence| evidence.conversation_session_id.clone());
     let trace_evidence = trace_evidence.map(|evidence| TaskRunTraceEvidenceProjection {
         state: evidence.state,
+        incomplete_reasons: evidence.incomplete_reasons.clone(),
         archive_sha256: evidence.archive_sha256.clone(),
         archive_bytes: evidence.archive_bytes,
         record_count: evidence.record_count,

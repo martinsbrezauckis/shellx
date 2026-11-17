@@ -1,4 +1,4 @@
-import { lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type JSX } from "react";
 
 import { inTauri } from "../lib/tauri-bridge";
 import {
@@ -22,17 +22,14 @@ import {
   type BrowserHistoryScope as BrowserHistoryClearScope,
 } from "../browser/historyScope";
 import { EngineViewport } from "../browser/components/EngineViewport";
+import { closeBrowserOptionsWithFocus } from "../browser/browserOptionsFocus";
 import {
   BrowserAdFilterMenu,
   BrowserOptionsMenu,
   BrowserPageSaveMenu,
   type BrowserColorMode,
 } from "../browser/components/BrowserMenus";
-import {
-  buildVaultApprovalPrompts,
-  vaultPromptSummaryText,
-  type VaultApprovalPrompt,
-} from "../lib/vault-approval-prompts";
+import { buildVaultApprovalPrompts, vaultPromptSummaryText, type VaultApprovalPrompt } from "../lib/vault-approval-prompts";
 import { isTrustedShellxUserEvent, type ShellxUserEventLike } from "../lib/trusted-user-event";
 import {
   browserVisibleAdMode,
@@ -41,11 +38,7 @@ import {
   type BrowserTabShieldState,
   type BrowserVisibleAdMode,
 } from "../browser/types";
-import {
-  runBrowserDebugClickSelector,
-  runBrowserDebugDragSelector,
-  runBrowserDebugInputSelector,
-} from "../browser/debugBridge";
+import { runBrowserDebugClickSelector, runBrowserDebugDragSelector, runBrowserDebugInputSelector } from "../browser/debugBridge";
 import { useBrowserState, type BrowserRightPanelPatch } from "../browser/hooks/useBrowserState";
 import { useBrowserCowork } from "../browser/hooks/useBrowserCowork";
 import { useBrowserBookmarks } from "../browser/hooks/useBrowserBookmarks";
@@ -57,11 +50,9 @@ import { selectBrowserHandoffTask, useBrowserTabLeases, useBrowserTabs } from ".
 import { useBrowserTasks } from "../browser/hooks/useBrowserTasks";
 import { useBrowserVaultFill } from "../browser/hooks/useBrowserVaultFill";
 import { useNativeEngineSync } from "../browser/hooks/useNativeEngineSync";
-import {
-  vaultPromptDebugSuffix,
-  vaultPromptEntityId,
-  vaultPromptIcon,
-} from "../browser/vaultPromptPresentation";
+import { usePublicManualBrowserState, type BrowserHeaderMenuId, type BrowserRightPanelId } from "../browser/hooks/usePublicManualBrowserState";
+import * as BrowserSurfaces from "../browser/lazyBrowserSurfaces";
+import { vaultPromptDebugSuffix, vaultPromptEntityId, vaultPromptIcon } from "../browser/vaultPromptPresentation";
 import type { RawEventFrame } from "../types/acp";
 import { DebugHighlightOverlay } from "./DebugHighlightOverlay";
 import { LazySurface } from "./LazySurface";
@@ -88,27 +79,16 @@ import {
   browserTrustIcon,
   browserTrustLabel,
   currentPageUrlForSave,
+  currentBrowserAddressUrl,
   defaultPersonalLockSettings,
   formatHistoryTime,
   formatLogLocation,
   formatReceiptTime,
+  isTerminalBrowserTransferStatus,
   safeBrowserStatusUrl,
 } from "../browser/browserPresentation";
 
 type BrowserSectionId = "tasks" | "console" | "receipts";
-type BrowserHeaderMenuId = "history" | "save" | "ads" | "shields" | "downloads" | "vaultFill";
-
-const BookmarkSidecar = lazy(() => import("../browser/components/BookmarkSidecar"));
-const BrowserHistorySidecar = lazy(() => import("../browser/components/BrowserHistorySidecar")
-  .then((module) => ({ default: module.BrowserHistorySidecar })));
-const DownloadSidecar = lazy(() => import("../browser/components/DownloadSidecar")
-  .then((module) => ({ default: module.DownloadSidecar })));
-const BrowserShieldsPanel = lazy(() => import("../browser/components/BrowserShieldsPanel")
-  .then((module) => ({ default: module.BrowserShieldsPanel })));
-const BrowserVaultFillPanel = lazy(() => import("../browser/components/BrowserVaultFillPanel")
-  .then((module) => ({ default: module.BrowserVaultFillPanel })));
-const BrowserTabHandoffConfirmation = lazy(() => import("../browser/components/BrowserTabHandoffConfirmation").then((module) => ({ default: module.BrowserTabHandoffConfirmation })));
-type BrowserRightPanelId = "chat" | "requests" | "actions" | "evidence" | "errors";
 
 export function ShellxBrowserApp(): JSX.Element {
   const engineSlotRef = useRef<HTMLDivElement | null>(null);
@@ -122,6 +102,7 @@ export function ShellxBrowserApp(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [taskControlBusy, setTaskControlBusy] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const closeOptionsWithFocus = useCallback(() => closeBrowserOptionsWithFocus(setOptionsOpen), []);
   const [headerMenu, setHeaderMenu] = useState<BrowserHeaderMenuId | null>(null);
   const [historyScope, setHistoryScope] = useState<BrowserHistoryScope>("user");
   const [historySearch, setHistorySearch] = useState("");
@@ -131,6 +112,7 @@ export function ShellxBrowserApp(): JSX.Element {
   const [addressCopied, setAddressCopied] = useState(false);
   const [colorMode, setColorMode] = useState<BrowserColorMode>(initialColorMode);
   const [defaultDownloadFolder, setDefaultDownloadFolder] = useState(initialDownloadFolder);
+  const [downloadFolderError, setDownloadFolderError] = useState<string | null>(null);
   const [showRightSidebar, setShowRightSidebar] = useState(true);
   const [rightSidebarWidth, setRightSidebarWidth] = useState(360);
   const { startRightSidebarResize, resizeRightSidebarFromKeyboard } =
@@ -247,6 +229,7 @@ export function ShellxBrowserApp(): JSX.Element {
   });
   const personalTabLocked =
     personalLock.enabled && personalLock.locked && activeBrowserTab?.profileId === USER_DEFAULT_PROFILE_ID;
+  const personalTabCovered = personalTabLocked && personalLock.blurLockedTabs;
   const headerProfileId = activeBrowserTab?.profileId ?? profileId;
   const headerProfile = useMemo(() => {
     return (state?.profiles ?? []).find((profile) => profile.profileId === headerProfileId) ?? null;
@@ -257,16 +240,7 @@ export function ShellxBrowserApp(): JSX.Element {
     : activeBrowserTab
       ? (activeBrowserTab.url?.trim() || "about:blank")
       : activeTask?.currentUrl?.trim() || address.trim() || state?.pendingStartUrl?.trim() || "";
-  const addressSourceUrl = useMemo(() => {
-    if (tabs.length === 0) return "";
-    return (
-      state?.engine?.url?.trim() ||
-      activeBrowserTab?.url?.trim() ||
-      activeTask?.currentUrl?.trim() ||
-      state?.pendingStartUrl?.trim() ||
-      ""
-    );
-  }, [activeBrowserTab?.url, activeTask?.currentUrl, state?.engine?.url, state?.pendingStartUrl, tabs.length]);
+  const addressSourceUrl = currentBrowserAddressUrl(state, activeTask, activeBrowserTab, tabs.length);
   const activeSecurityState = useMemo(() => {
     return activeBrowserTab?.securityState ?? browserPageSecurityFromUrl(currentPageUrlForSave(state, activeTask, activeBrowserTab, address));
   }, [activeBrowserTab, activeTask, address, state]);
@@ -324,7 +298,7 @@ export function ShellxBrowserApp(): JSX.Element {
   const downloads = state?.downloads ?? [];
   const uploads = state?.uploads ?? [];
   const transfers = useMemo(() => [...downloads, ...uploads], [downloads, uploads]);
-  const activeTransferCount = transfers.filter((entry) => entry.status !== "completed" && entry.status !== "failed").length;
+  const activeTransferCount = transfers.filter((entry) => !isTerminalBrowserTransferStatus(entry.status)).length;
   const selectedAdMode = useMemo<BrowserVisibleAdMode>(() => {
     const privacy = state?.privacy;
     if (!privacy) return "balanced";
@@ -365,6 +339,15 @@ export function ShellxBrowserApp(): JSX.Element {
     runBusy: (action) => withBusy(action),
     setError,
   });
+  const setBookmarkManageMode = browserBookmarks.setBookmarkManageMode;
+  usePublicManualBrowserState({
+    setBookmarkManageMode,
+    setBookmarkManagerOpen,
+    setHeaderMenu,
+    setOptionsOpen,
+    setRightPanelTab,
+    setShowRightSidebar,
+  });
   useBrowserShellEffects({
     activeTaskId: activeTask?.taskId ?? null,
     addressEditing,
@@ -375,9 +358,11 @@ export function ShellxBrowserApp(): JSX.Element {
     refresh,
     setAddress,
     setDefaultDownloadFolder,
+    setDownloadFolderError,
     setHeaderMenu,
     setOpenToolbarFolderId,
     setOptionsOpen,
+    closeOptionsWithFocus,
   });
 
   useNativeEngineSync({
@@ -388,6 +373,7 @@ export function ShellxBrowserApp(): JSX.Element {
     profileId: engineProfileId,
     url: engineUrl || null,
     dependencies: [
+      personalTabCovered,
       browserBookmarks.bookmarkManageMode,
       bookmarkManagerOpen,
       bookmarks.length,
@@ -547,7 +533,13 @@ export function ShellxBrowserApp(): JSX.Element {
   };
 
 
-  const { chooseDefaultDownloadFolder, requestChatExplainPage, requestPageSave } = useBrowserPageActions({
+  const {
+    approveNativeDownload,
+    chooseDefaultDownloadFolder,
+    declineNativeDownload,
+    requestChatExplainPage,
+    requestPageSave,
+  } = useBrowserPageActions({
     actionContext: browserTabs.actionContext,
     activeBrowserTabId: activeBrowserTab?.browserTabId ?? null,
     activeTaskId: activeTaskForActiveTab?.taskId ?? null,
@@ -566,6 +558,7 @@ export function ShellxBrowserApp(): JSX.Element {
       setShowRightSidebar(true);
       setRightPanelTab(CHAT_PANEL);
     },
+    onNativeDownloadDecision: refresh,
     onSaveComplete: () => {
       setBookmarkManagerOpen(false);
       setOptionsOpen(false);
@@ -671,7 +664,7 @@ export function ShellxBrowserApp(): JSX.Element {
     if (headerMenu === "shields") {
       return (
         <LazySurface label="Browser shields" onDismiss={() => setHeaderMenu(null)} variant={INLINE_SURFACE}>
-          <BrowserShieldsPanel
+          <BrowserSurfaces.BrowserShieldsPanel
             busy={busy}
             globalShields={state?.shields}
             activeShieldState={activeShieldState}
@@ -708,7 +701,7 @@ export function ShellxBrowserApp(): JSX.Element {
     if (headerMenu === VAULT_FILL_MENU) {
       return (
         <LazySurface label="Browser vault fill" onDismiss={() => setHeaderMenu(null)} variant={INLINE_SURFACE}>
-          <BrowserVaultFillPanel
+          <BrowserSurfaces.BrowserVaultFillPanel
             busy={busy}
             candidates={browserVaultFill.candidates}
             error={browserVaultFill.error}
@@ -788,7 +781,7 @@ export function ShellxBrowserApp(): JSX.Element {
         onToggleOptions={toggleOptionsPanel}
       />
 
-      {browserTabs.handoffConfirmation && <LazySurface label="Browser tab handoff" onDismiss={browserTabs.cancelHandOffActiveTab}><BrowserTabHandoffConfirmation busy={busy} confirmation={browserTabs.handoffConfirmation} status={browserTabs.handoffStatus} onCancel={browserTabs.cancelHandOffActiveTab} onConfirm={browserTabs.confirmHandOffActiveTab} /></LazySurface>}
+      {browserTabs.handoffConfirmation && <LazySurface label="Browser tab handoff" onDismiss={browserTabs.cancelHandOffActiveTab}><BrowserSurfaces.BrowserTabHandoffConfirmation busy={busy} confirmation={browserTabs.handoffConfirmation} status={browserTabs.handoffStatus} onCancel={browserTabs.cancelHandOffActiveTab} onConfirm={browserTabs.confirmHandOffActiveTab} /></LazySurface>}
       {error && (
         <div
           className={`shellx-browser-error ${personalLockNoticeVisible ? "shellx-browser-lock-notice" : ""}`}
@@ -841,11 +834,11 @@ export function ShellxBrowserApp(): JSX.Element {
             onPersonalLockPatch={browserPersonalLock.updateSettings}
             onPersonalLockAction={browserPersonalLock.runAction}
             onPersonalLockPinDraftChange={browserPersonalLock.setPinDraft}
-            onClose={() => setOptionsOpen(false)}
+            onClose={closeOptionsWithFocus}
           />
         )}
 
-        {historySidecarOpen && <LazySurface label="Browser history" onDismiss={() => setHeaderMenu(null)} variant={INLINE_SURFACE}><BrowserHistorySidecar
+        {historySidecarOpen && <LazySurface label="Browser history" onDismiss={() => setHeaderMenu(null)} variant={INLINE_SURFACE}><BrowserSurfaces.BrowserHistorySidecar
           open
           busy={busy}
           historyScope={historyScope}
@@ -867,18 +860,23 @@ export function ShellxBrowserApp(): JSX.Element {
           onClose={() => setHeaderMenu(null)}
         /></LazySurface>}
 
-        {downloadsSidecarOpen && <LazySurface label="Browser downloads" onDismiss={() => setHeaderMenu(null)} variant={INLINE_SURFACE}><DownloadSidecar
+        {downloadsSidecarOpen && <LazySurface label="Browser downloads" onDismiss={() => setHeaderMenu(null)} variant={INLINE_SURFACE}><BrowserSurfaces.DownloadSidecar
           open
           busy={busy}
           downloads={downloads}
           uploads={uploads}
+          interruptedNativeDownloadStageCount={state?.interruptedNativeDownloadStageCount ?? 0}
+          nativeDownloadCleanupStateUnknown={state?.nativeDownloadCleanupStateUnknown === true}
           defaultDownloadFolder={defaultDownloadFolder}
+          downloadFolderError={downloadFolderError}
           onDefaultDownloadFolderChange={setDefaultDownloadFolder}
           onChooseDefaultDownloadFolder={chooseDefaultDownloadFolder}
+          onApproveDownload={approveNativeDownload}
+          onDeclineDownload={declineNativeDownload}
           onClose={() => setHeaderMenu(null)}
         /></LazySurface>}
 
-        {bookmarkManagerOpen && <LazySurface label="Browser bookmarks" onDismiss={() => setBookmarkManagerOpen(false)} variant={INLINE_SURFACE}><BookmarkSidecar
+        {bookmarkManagerOpen && <LazySurface label="Browser bookmarks" onDismiss={() => setBookmarkManagerOpen(false)} variant={INLINE_SURFACE}><BrowserSurfaces.BookmarkSidecar
           open={bookmarkManagerOpen}
           busy={busy}
           bookmarkManageMode={browserBookmarks.bookmarkManageMode}
@@ -923,6 +921,7 @@ export function ShellxBrowserApp(): JSX.Element {
             title={state?.engine?.title ?? (safeBrowserStatusUrl(activeTask?.currentUrl ?? address.trim()) || "Blank page")}
             loadStatus={state?.engine?.loadStatus ?? "mounting"}
             lastError={state?.engine?.lastError ?? null}
+            manualPreviewUrl={import.meta.env.SHELLX_PUBLIC_MANUAL_BUILD ? "./manual-browser-preview.html" : undefined}
           />
           {personalTabLocked && (
             <div

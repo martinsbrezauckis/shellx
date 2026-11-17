@@ -46,10 +46,8 @@ export interface MicButtonProps {
  * ("Send voice"). Saves the click of "stop recording" — Send now
  * doubles as stop+transcribe+send. */
   onRecordingChange?: (isRecording: boolean) => void;
- /**  voice mode. "talk" = STT-only (default, classic
- * push-to-talk). "voice-chat" = STT + (next phase) TTS-back; for
- * now the parent uses this to inject a per-prompt voice-format
- * hint to grok so it answers conversationally. */
+ /** Voice mode. "talk" is STT-only; "voice-chat" lets the parent add a
+ * per-prompt voice-format hint so replies stay conversational. */
   mode?: "talk" | "voice-chat";
   /** Visible label rendered alongside the icon. Empty = icon-only. */
   label?: string;
@@ -59,9 +57,6 @@ export interface MicButtonProps {
   idleIcon?: string;
  /** Optional start gate. Return false to keep the mic idle. */
   onBeforeStart?: () => boolean;
-  /** Isolated final-candidate fixture: exercises the real cancel state
-   * transition without requesting an operator microphone. */
-  releaseTestRecording?: boolean;
 }
 
 /** imperative handle so BottomPanel's Send can
@@ -78,7 +73,7 @@ export interface MicButtonHandle {
 }
 
 export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function MicButton(
-  { onTranscript, disabled, onRecordingChange, mode = "talk", label, debugId, idleIcon, onBeforeStart, releaseTestRecording = false }: MicButtonProps,
+  { onTranscript, disabled, onRecordingChange, mode = "talk", label, debugId, idleIcon, onBeforeStart }: MicButtonProps,
   ref,
 ): JSX.Element {
   const [state, setState] = useState<MicState>("idle");
@@ -88,11 +83,6 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const tickerRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (releaseTestRecording) setState("recording");
-    else if (recorderRef.current === null) setState("idle");
-  }, [releaseTestRecording]);
-
  // notify parent every time the recording flag flips
  // so the composer can re-label Send while we're hot.
   useEffect(() => {
@@ -198,11 +188,6 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
   function stop(): void {
     const rec = recorderRef.current;
     if (!rec) {
-      // The isolated final-candidate fixture deliberately has no browser
-      // MediaRecorder. Still traverse the production stop boundary so the
-      // native control can prove its recording-to-idle transition without
-      // requesting a device or invoking transcription.
-      if (releaseTestRecording) setState("idle");
       return;
     }
     if (rec.state !== "inactive") rec.stop();

@@ -100,7 +100,7 @@ export interface MessageGroup extends UiGroupBase {
   speakerLabel?: string;
   text: string;
   chunkCount: number;
- /** See ThoughtGroup.chunksById — same shape, same purpose (BUG-D fix). */
+ /** See ThoughtGroup.chunksById — same shape and purpose. */
   chunksById?: Map<number, string>;
 }
 
@@ -158,7 +158,7 @@ export interface SystemGroup extends UiGroupBase {
 /**
  * turn-complete marker. Emitted when the
  * wire delivers `_x.ai/session/prompt_complete` (carries
- * `stopReason: "end_turn"` per the ACP audit §C). Rendered as a small
+ * `stopReason: "end_turn"`). Rendered as a small
  * pill anchored to the END of the most recent prompt's group cluster.
  */
 export interface MarkerGroup extends UiGroupBase {
@@ -458,7 +458,7 @@ export function groupEvents(events: RawEventFrame[]): UiGroup[] {
  * the MarkerGroup for prompt_complete can stamp its elapsedMs.
  * Captured from every event's `_meta.streamStartMs` — first-write-wins
  * per promptId; the wire keeps the same value for every chunk in the
- * turn (per ACP audit §B). */
+ * turn. */
   const streamStartByPromptId = new Map<string, number>();
 
  /* issue #374 — requestId → groups[] index for PermissionGroup so a

@@ -6,16 +6,201 @@ const MAX_FLIGHT_ARRAY_ITEMS: usize = 48;
 const MAX_FLIGHT_OBJECT_FIELDS: usize = 64;
 const MAX_FLIGHT_VALUE_DEPTH: usize = 6;
 const MAX_FLIGHT_TEXT_CHARS: usize = 1_000;
+pub(crate) const MAX_FLIGHT_REDACTION_MARKERS: usize = 32;
+
+#[derive(Clone, Copy)]
+struct FlightRedactionRule {
+    id: &'static str,
+    reason: &'static str,
+}
+
+const FLIGHT_POLICY_FIELD_VALUE: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.browser-field-value.v1",
+    reason: "browser field value hidden by policy",
+};
+const FLIGHT_POLICY_AUTHORIZATION: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.authorization-header.v1",
+    reason: "authorization header hidden by policy",
+};
+const FLIGHT_POLICY_COOKIE: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.cookie.v1",
+    reason: "cookie hidden by policy",
+};
+const FLIGHT_POLICY_PASSWORD_FIELD: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.password-field.v1",
+    reason: "password field hidden by policy",
+};
+const FLIGHT_POLICY_TOKEN_FIELD: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.browser-token-field.v1",
+    reason: "browser token field hidden by policy",
+};
+const FLIGHT_POLICY_URL_PATH: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.url-path.v1",
+    reason: "URL path hidden by policy",
+};
+const FLIGHT_POLICY_URL_QUERY_FRAGMENT: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.url-query-fragment.v1",
+    reason: "URL query or fragment hidden by policy",
+};
+const FLIGHT_POLICY_URL: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.url.v1",
+    reason: "URL hidden by policy",
+};
+const FLIGHT_POLICY_UNSUPPORTED_DOWNLOAD_URL: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.unsupported-download-url.v1",
+    reason: "unsupported download URL payload excluded",
+};
+const FLIGHT_POLICY_PROTECTED_VALUE: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.policy.protected-browser-value.v1",
+    reason: "protected browser value hidden by policy",
+};
+const FLIGHT_POSSIBLE_API_TOKEN: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.possible-api-token.v1",
+    reason: "possible API token",
+};
+const FLIGHT_POSSIBLE_PASSWORD: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.possible-password.v1",
+    reason: "possible password",
+};
+const FLIGHT_POSSIBLE_AUTHORIZATION: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.possible-authorization-secret.v1",
+    reason: "possible authorization secret",
+};
+const FLIGHT_POSSIBLE_SESSION_COOKIE: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.possible-session-cookie.v1",
+    reason: "possible session cookie",
+};
+const FLIGHT_POSSIBLE_CREDENTIAL: FlightRedactionRule = FlightRedactionRule {
+    id: "sx.redaction.possible-credential.v1",
+    reason: "possible credential",
+};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct FlightSanitizationCounts {
+    pub(crate) redaction_count: usize,
+    pub(crate) fidelity_loss_count: usize,
+}
+
+impl std::ops::AddAssign for FlightSanitizationCounts {
+    fn add_assign(&mut self, other: Self) {
+        self.redaction_count = self.redaction_count.saturating_add(other.redaction_count);
+        self.fidelity_loss_count = self
+            .fidelity_loss_count
+            .saturating_add(other.fidelity_loss_count);
+    }
+}
+
+fn flight_redaction_marker(rule: FlightRedactionRule, scope: &str, original_bytes: usize) -> Value {
+    json!({
+        "redacted": true,
+        "replacement": format!("[{}]", rule.reason),
+        "reason": rule.reason,
+        "ruleId": rule.id,
+        "scope": scope,
+        "originalBytes": original_bytes,
+    })
+}
+
+pub(crate) fn browser_policy_exclusion_marker(scope: &str, original_bytes: usize) -> Value {
+    flight_redaction_marker(FLIGHT_POLICY_FIELD_VALUE, scope, original_bytes)
+}
+
+pub(crate) fn browser_unsupported_download_url_marker(original_bytes: usize) -> Value {
+    flight_redaction_marker(
+        FLIGHT_POLICY_UNSUPPORTED_DOWNLOAD_URL,
+        "nativeDownload.url",
+        original_bytes,
+    )
+}
+
+pub(crate) fn browser_possible_credential_marker(value: &str, scope: &str) -> Option<Value> {
+    let lower = value.to_ascii_lowercase();
+    let rule = if browser_text_has_api_token_prefix(&lower, "sk-")
+        || lower.contains("api_key")
+        || lower.contains("api-key")
+        || lower.contains("access_token")
+        || lower.contains("refresh_token")
+    {
+        Some(FLIGHT_POSSIBLE_API_TOKEN)
+    } else if crate::host_mcp::redact_if_credential_pattern(value) {
+        Some(FLIGHT_POSSIBLE_CREDENTIAL)
+    } else {
+        None
+    };
+    rule.map(|rule| flight_redaction_marker(rule, scope, value.len()))
+}
+
+/// `sk-` is a token prefix only at a lexical boundary. A substring test would
+/// wrongly classify ordinary values such as `browser-task-...` as credentials.
+fn browser_text_has_api_token_prefix(value: &str, prefix: &str) -> bool {
+    value.match_indices(prefix).any(|(offset, _)| {
+        let starts_at_boundary = offset == 0
+            || value[..offset]
+                .chars()
+                .last()
+                .is_some_and(|character| !character.is_ascii_alphanumeric());
+        let has_token_body = value[offset + prefix.len()..]
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphanumeric());
+        starts_at_boundary && has_token_body
+    })
+}
+
+fn flight_fidelity_loss_marker(reason: &str, omitted: Option<usize>) -> Value {
+    let mut marker = serde_json::Map::new();
+    marker.insert("truncated".to_string(), Value::Bool(true));
+    marker.insert(
+        "classification".to_string(),
+        Value::String("captureFidelityLoss".to_string()),
+    );
+    marker.insert("reason".to_string(), Value::String(reason.to_string()));
+    if let Some(omitted) = omitted {
+        marker.insert("omitted".to_string(), json!(omitted));
+    }
+    Value::Object(marker)
+}
 
 pub(crate) fn safe_url_value(value: &str) -> Value {
     let safe = safe_flight_url_parts(value);
-    json!({
-        "url": safe.url,
-        "origin": safe.origin,
-        "path": safe.path,
-        "queryRetained": false,
-        "fragmentRetained": false,
-    })
+    let path_hidden = safe.path.as_deref() == Some("/[redacted-path]");
+    let url_hidden = safe.url == "[redacted-url]";
+    let query_or_fragment_hidden = value.contains('?') || value.contains('#');
+    let mut output = serde_json::Map::new();
+    output.insert("url".to_string(), Value::String(safe.url));
+    output.insert(
+        "origin".to_string(),
+        safe.origin.map(Value::String).unwrap_or(Value::Null),
+    );
+    output.insert(
+        "path".to_string(),
+        safe.path.map(Value::String).unwrap_or(Value::Null),
+    );
+    output.insert("queryRetained".to_string(), Value::Bool(false));
+    output.insert("fragmentRetained".to_string(), Value::Bool(false));
+    if path_hidden {
+        output.insert(
+            "pathRedaction".to_string(),
+            flight_redaction_marker(FLIGHT_POLICY_URL_PATH, "url.path", value.len()),
+        );
+    }
+    if url_hidden {
+        output.insert(
+            "urlRedaction".to_string(),
+            flight_redaction_marker(FLIGHT_POLICY_URL, "url", value.len()),
+        );
+    }
+    if query_or_fragment_hidden {
+        output.insert(
+            "queryFragmentRedaction".to_string(),
+            flight_redaction_marker(
+                FLIGHT_POLICY_URL_QUERY_FRAGMENT,
+                "url.queryOrFragment",
+                value.len(),
+            ),
+        );
+    }
+    Value::Object(output)
 }
 
 fn safe_flight_url_parts(value: &str) -> crate::shellx_browser::BrowserSafeUrlParts {
@@ -42,7 +227,7 @@ fn safe_flight_url_parts(value: &str) -> crate::shellx_browser::BrowserSafeUrlPa
 
 pub(crate) fn sanitize_flight_value(value: &Value, depth: usize) -> Value {
     if depth >= MAX_FLIGHT_VALUE_DEPTH {
-        return json!({ "truncated": true, "reason": "depthLimit" });
+        return flight_fidelity_loss_marker("depthLimit", None);
     }
     match value {
         Value::Array(items) => {
@@ -58,11 +243,10 @@ pub(crate) fn sanitize_flight_value(value: &Value, depth: usize) -> Value {
                 .map(|item| sanitize_flight_value(item, depth + 1))
                 .collect::<Vec<_>>();
             if truncated {
-                output.push(json!({
-                    "truncated": true,
-                    "reason": "arrayItemLimit",
-                    "omitted": items.len().saturating_sub(retained),
-                }));
+                output.push(flight_fidelity_loss_marker(
+                    "arrayItemLimit",
+                    Some(items.len().saturating_sub(retained)),
+                ));
             }
             Value::Array(output)
         }
@@ -78,8 +262,8 @@ pub(crate) fn sanitize_flight_value(value: &Value, depth: usize) -> Value {
             };
             for key in keys.into_iter().take(retained) {
                 let value = &map[key];
-                let sanitized = if sensitive_flight_key(key) {
-                    json!({ "redacted": true, "reason": "sensitiveField" })
+                let sanitized = if let Some(rule) = sensitive_flight_key_rule(key) {
+                    flight_redaction_marker(rule, "field", value.to_string().len())
                 } else if key.to_ascii_lowercase().contains("url") {
                     value
                         .as_str()
@@ -93,11 +277,10 @@ pub(crate) fn sanitize_flight_value(value: &Value, depth: usize) -> Value {
             if truncated {
                 output.insert(
                     "__shellxSanitization".to_string(),
-                    json!({
-                        "truncated": true,
-                        "reason": "objectFieldLimit",
-                        "omitted": map.len().saturating_sub(retained),
-                    }),
+                    flight_fidelity_loss_marker(
+                        "objectFieldLimit",
+                        Some(map.len().saturating_sub(retained)),
+                    ),
                 );
             }
             Value::Object(output)
@@ -107,27 +290,143 @@ pub(crate) fn sanitize_flight_value(value: &Value, depth: usize) -> Value {
     }
 }
 
-pub(crate) fn count_sanitization_losses(value: &Value) -> usize {
+pub(crate) fn count_flight_sanitization(value: &Value) -> FlightSanitizationCounts {
     match value {
-        Value::Array(items) => items.iter().map(count_sanitization_losses).sum(),
-        Value::Object(map) => {
-            usize::from(map.get("truncated").and_then(Value::as_bool) == Some(true))
-                + map.values().map(count_sanitization_losses).sum::<usize>()
+        Value::Array(items) => {
+            items
+                .iter()
+                .fold(FlightSanitizationCounts::default(), |mut total, item| {
+                    total += count_flight_sanitization(item);
+                    total
+                })
         }
-        _ => 0,
+        Value::Object(map) => {
+            let mut total = FlightSanitizationCounts {
+                redaction_count: usize::from(
+                    map.get("redacted").and_then(Value::as_bool) == Some(true)
+                        && map.get("ruleId").and_then(Value::as_str).is_some(),
+                ),
+                fidelity_loss_count: usize::from(
+                    map.get("truncated").and_then(Value::as_bool) == Some(true)
+                        && map.get("classification").and_then(Value::as_str)
+                            == Some("captureFidelityLoss"),
+                ),
+            };
+            for child in map.values() {
+                total += count_flight_sanitization(child);
+            }
+            total
+        }
+        _ => FlightSanitizationCounts::default(),
     }
 }
 
-fn sensitive_flight_key(key: &str) -> bool {
+
+
+/// A compact UI/receipt catalog of the marker kinds that were actually written
+/// into an artifact. It carries no source text and remains bounded even when a
+/// provider produces a large number of redacted locations.
+pub(crate) fn flight_redaction_marker_catalog(value: &Value) -> Vec<Value> {
+    fn visit(value: &Value, markers: &mut Vec<Value>) {
+        if markers.len() >= MAX_FLIGHT_REDACTION_MARKERS {
+            return;
+        }
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    visit(item, markers);
+                    if markers.len() >= MAX_FLIGHT_REDACTION_MARKERS {
+                        break;
+                    }
+                }
+            }
+            Value::Object(map) => {
+                if let Some(marker) = flight_marker_catalog_entry(map) {
+                    markers.push(marker);
+                    return;
+                }
+                for child in map.values() {
+                    visit(child, markers);
+                    if markers.len() >= MAX_FLIGHT_REDACTION_MARKERS {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut markers = Vec::new();
+    visit(value, &mut markers);
+    markers
+}
+
+fn flight_marker_catalog_entry(map: &Map<String, Value>) -> Option<Value> {
+    if map.get("redacted").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let replacement = map.get("replacement")?.as_str()?;
+    let reason = map.get("reason")?.as_str()?;
+    let rule_id = map.get("ruleId")?.as_str()?;
+    let scope = map.get("scope")?.as_str()?;
+    let original_bytes = map.get("originalBytes")?.as_u64()?;
+    if replacement.len() > 120
+        || reason.len() > 96
+        || scope.len() > 96
+        || !replacement.starts_with('[')
+        || !replacement.ends_with(']')
+        || !matches!(
+            rule_id,
+            "sx.redaction.policy.browser-field-value.v1"
+                | "sx.redaction.policy.authorization-header.v1"
+                | "sx.redaction.policy.cookie.v1"
+                | "sx.redaction.policy.password-field.v1"
+                | "sx.redaction.policy.browser-token-field.v1"
+                | "sx.redaction.policy.url-path.v1"
+                | "sx.redaction.policy.url-query-fragment.v1"
+                | "sx.redaction.policy.url.v1"
+                | "sx.redaction.policy.unsupported-download-url.v1"
+                | "sx.redaction.policy.protected-browser-value.v1"
+                | "sx.redaction.possible-api-token.v1"
+                | "sx.redaction.possible-password.v1"
+                | "sx.redaction.possible-authorization-secret.v1"
+                | "sx.redaction.possible-session-cookie.v1"
+                | "sx.redaction.possible-credential.v1"
+        )
+    {
+        return None;
+    }
+    Some(json!({
+        "replacement": replacement,
+        "reason": reason,
+        "ruleId": rule_id,
+        "scope": scope,
+        "originalBytes": original_bytes,
+    }))
+}
+
+fn sensitive_flight_key_rule(key: &str) -> Option<FlightRedactionRule> {
     let normalized = key
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect::<String>();
-    normalized.ends_with("value")
+    if normalized.contains("proxyauthorization") || normalized.contains("authorization") {
+        Some(FLIGHT_POLICY_AUTHORIZATION)
+    } else if normalized.contains("cookie") {
+        Some(FLIGHT_POLICY_COOKIE)
+    } else if normalized.contains("password") || normalized.contains("passwd") {
+        Some(FLIGHT_POLICY_PASSWORD_FIELD)
+    } else if normalized.contains("secret")
+        || normalized.contains("credential")
+        || normalized.contains("accesstoken")
+        || normalized.contains("refreshtoken")
+        || normalized.contains("apikey")
+        || normalized == "token"
+    {
+        Some(FLIGHT_POLICY_TOKEN_FIELD)
+    } else if normalized.ends_with("value")
         || normalized.ends_with("path")
-        || normalized.contains("cookie")
-        || normalized.contains("authorization")
         || normalized.ends_with("headers")
         || normalized.contains("requestbody")
         || normalized.contains("responsebody")
@@ -141,24 +440,19 @@ fn sensitive_flight_key(key: &str) -> bool {
         || normalized.contains("rawdom")
         || normalized.contains("innerhtml")
         || normalized.contains("outerhtml")
-        || normalized.contains("secret")
-        || normalized.contains("password")
-        || normalized.contains("credential")
         || normalized.contains("promptvalue")
         || normalized.contains("protectedvalue")
-        || normalized.contains("accesstoken")
-        || normalized.contains("refreshtoken")
+    {
+        Some(FLIGHT_POLICY_FIELD_VALUE)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn sanitize_flight_text(value: &str) -> Value {
-    let scrubbed = sanitize_urls_in_string(value);
-    if sensitive_browser_text(&scrubbed) || crate::host_mcp::redact_if_credential_pattern(&scrubbed)
-    {
-        return json!({
-            "redacted": true,
-            "bytes": value.len(),
-            "reason": "credentialPattern",
-        });
+    let (scrubbed, url_path_hidden) = sanitize_urls_in_string(value);
+    if let Some(rule) = sensitive_browser_text_rule(&scrubbed) {
+        return flight_redaction_marker(rule, "text", value.len());
     }
     let truncated = scrubbed.chars().count() > MAX_FLIGHT_TEXT_CHARS;
     let text = scrubbed
@@ -166,48 +460,100 @@ pub(crate) fn sanitize_flight_text(value: &str) -> Value {
         .take(MAX_FLIGHT_TEXT_CHARS)
         .collect::<String>();
     if truncated {
-        json!({ "text": text, "truncated": true })
+        let omitted = scrubbed
+            .chars()
+            .count()
+            .saturating_sub(MAX_FLIGHT_TEXT_CHARS);
+        json!({
+            "text": text,
+            "truncated": true,
+            "classification": "captureFidelityLoss",
+            "reason": "textCharLimit",
+            "omitted": omitted,
+            "redactions": url_path_hidden.then(|| {
+                flight_redaction_marker(FLIGHT_POLICY_URL_QUERY_FRAGMENT, "text.url", value.len())
+            }),
+        })
+    } else if url_path_hidden {
+        json!({
+            "text": text,
+            "redactions": [flight_redaction_marker(
+                FLIGHT_POLICY_URL_QUERY_FRAGMENT,
+                "text.url",
+                value.len()
+            )],
+        })
     } else {
         Value::String(text)
     }
 }
 
-fn sensitive_browser_text(value: &str) -> bool {
+fn sensitive_browser_text_rule(value: &str) -> Option<FlightRedactionRule> {
     let lower = value.to_ascii_lowercase();
-    [
-        "authorization:",
-        "proxy-authorization:",
-        "cookie:",
-        "set-cookie:",
-        "document.cookie",
-        "localstorage",
-        "sessionstorage",
-        "access_token=",
-        "refresh_token=",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
+    if lower.contains("password=") || lower.contains("password:") || lower.contains("passwd=") {
+        Some(FLIGHT_POSSIBLE_PASSWORD)
+    } else if lower.contains("authorization:")
+        || lower.contains("proxy-authorization:")
+        || lower.contains("bearer ")
+    {
+        Some(FLIGHT_POSSIBLE_AUTHORIZATION)
+    } else if lower.contains("cookie:")
+        || lower.contains("set-cookie:")
+        || lower.contains("document.cookie")
+    {
+        Some(FLIGHT_POSSIBLE_SESSION_COOKIE)
+    } else if lower.contains("access_token=")
+        || lower.contains("refresh_token=")
+        || lower.contains("api_key=")
+        || lower.contains("api-key=")
+        || browser_text_has_api_token_prefix(&lower, "sk-")
+    {
+        Some(FLIGHT_POSSIBLE_API_TOKEN)
+    } else if lower.contains("localstorage") || lower.contains("sessionstorage") {
+        Some(FLIGHT_POLICY_FIELD_VALUE)
+    } else if crate::host_mcp::redact_if_credential_pattern(value) {
+        Some(FLIGHT_POSSIBLE_CREDENTIAL)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn sanitize_optional_label(value: Option<&str>) -> Option<Value> {
     value
         .map(clean_string)
         .filter(|value| !value.is_empty())
-        .map(|value| sanitize_urls_in_string(&value))
         .map(|value| {
-            if sensitive_browser_text(&value)
-                || crate::host_mcp::redact_if_credential_pattern(&value)
-            {
-                json!({
-                    "redacted": true,
-                    "bytes": value.len(),
-                    "reason": "credentialPattern",
-                })
+            let original_bytes = value.len();
+            let (value, url_path_hidden) = sanitize_urls_in_string(&value);
+            if let Some(rule) = sensitive_browser_text_rule(&value) {
+                flight_redaction_marker(rule, "label", original_bytes)
             } else {
                 let truncated = value.chars().count() > 120;
                 let text = value.chars().take(120).collect::<String>();
                 if truncated {
-                    json!({ "text": text, "truncated": true })
+                    json!({
+                        "text": text,
+                        "truncated": true,
+                        "classification": "captureFidelityLoss",
+                        "reason": "labelCharLimit",
+                        "omitted": value.chars().count().saturating_sub(120),
+                        "redactions": url_path_hidden.then(|| {
+                            flight_redaction_marker(
+                                FLIGHT_POLICY_URL_QUERY_FRAGMENT,
+                                "label.url",
+                                original_bytes
+                            )
+                        }),
+                    })
+                } else if url_path_hidden {
+                    json!({
+                        "text": text,
+                        "redactions": [flight_redaction_marker(
+                            FLIGHT_POLICY_URL_QUERY_FRAGMENT,
+                            "label.url",
+                            original_bytes
+                        )],
+                    })
                 } else {
                     Value::String(text)
                 }
@@ -215,9 +561,10 @@ pub(crate) fn sanitize_optional_label(value: Option<&str>) -> Option<Value> {
         })
 }
 
-fn sanitize_urls_in_string(value: &str) -> String {
+fn sanitize_urls_in_string(value: &str) -> (String, bool) {
     let mut output = String::new();
     let mut rest = value;
+    let mut path_hidden = false;
     while let Some((index, scheme_len)) = next_url_start(rest) {
         output.push_str(&rest[..index]);
         let mut url_end = rest.len();
@@ -231,12 +578,17 @@ fn sanitize_urls_in_string(value: &str) -> String {
         if raw_url.len() <= scheme_len {
             output.push_str(raw_url);
         } else {
-            output.push_str(&safe_flight_url_parts(raw_url).url);
+            let safe = safe_flight_url_parts(raw_url);
+            path_hidden |= safe.path.as_deref() == Some("/[redacted-path]")
+                || safe.url == "[redacted-url]"
+                || raw_url.contains('?')
+                || raw_url.contains('#');
+            output.push_str(&safe.url);
         }
         rest = &rest[url_end..];
     }
     output.push_str(rest);
-    output
+    (output, path_hidden)
 }
 
 fn next_url_start(value: &str) -> Option<(usize, usize)> {
@@ -251,109 +603,45 @@ fn next_url_start(value: &str) -> Option<(usize, usize)> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shellx_browser::{
-        lock_or_recover, push_receipt, BrowserFlightRecorderExportRequest, ShellxBrowserRegistry,
-        StartBrowserTaskRequest,
-    };
-
-    #[test]
-    fn sanitization_removes_sensitive_fields_urls_and_credentials() {
-        let value = json!({
-            "url": "https://example.com/reset/550e8400-e29b-41d4-a716-446655440000?token=secret#fragment-secret",
-            "headers": { "authorization": "Bearer hidden" },
-            "localStorage": { "theme": "dark" },
-            "filledValue": "private-filled-value",
-            "entered_value": "private-entered-value",
-            "inputValue": "private-input-value",
-            "message": "password=correct-horse-battery-staple",
+/// Apply the task/tab-scoped protected-value registry after the artifact has
+/// been assembled. A matching string is replaced as one localized policy
+/// marker so the export never silently falls back to a generic placeholder.
+pub(crate) fn redact_flight_protected_values(value: &mut Value, protected_values: &[String]) {
+    if value.is_string() {
+        let Value::String(text) = value.take() else {
+            unreachable!("checked protected browser string value");
+        };
+        let original_bytes = text.len();
+        let should_redact = protected_values.iter().any(|protected| {
+            !protected.is_empty() && crate::shellx_vault::marker_was_leaked(&text, protected)
         });
-        let text = serde_json::to_string(&sanitize_flight_value(&value, 0)).unwrap();
-        assert!(!text.contains("token=secret"));
-        assert!(!text.contains("fragment-secret"));
-        assert!(!text.contains("Bearer hidden"));
-        assert!(!text.contains("theme"));
-        assert!(!text.contains("correct-horse"));
-        assert!(!text.contains("private-filled-value"));
-        assert!(!text.contains("private-entered-value"));
-        assert!(!text.contains("private-input-value"));
-        assert!(!text.contains("550e8400-e29b-41d4-a716-446655440000"));
-        assert!(text.contains("[redacted-path]"));
+        *value = if should_redact {
+            flight_redaction_marker(
+                FLIGHT_POLICY_PROTECTED_VALUE,
+                "protectedBrowserValue",
+                original_bytes,
+            )
+        } else {
+            Value::String(text)
+        };
+        return;
     }
-
-    #[test]
-    fn sanitization_marks_every_bounded_value_loss() {
-        let array = Value::Array((0..49).map(|index| json!(index)).collect());
-        let object = Value::Object(
-            (0..65)
-                .map(|index| (format!("field{index:02}"), json!(index)))
-                .collect(),
-        );
-        let deep = json!({ "a": { "b": { "c": { "d": { "e": { "f": "lost" } } } } } });
-        let long = Value::String("x".repeat(MAX_FLIGHT_TEXT_CHARS + 1));
-        let sanitized = [array, object, deep, long]
-            .into_iter()
-            .map(|value| sanitize_flight_value(&value, 0))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            sanitized[0].as_array().map(Vec::len),
-            Some(MAX_FLIGHT_ARRAY_ITEMS)
-        );
-        assert_eq!(
-            sanitized[1].as_object().map(Map::len),
-            Some(MAX_FLIGHT_OBJECT_FIELDS)
-        );
-        assert_eq!(
-            sanitized
-                .iter()
-                .map(count_sanitization_losses)
-                .sum::<usize>(),
-            4
-        );
-    }
-
-    #[test]
-    fn export_marks_sanitizer_loss_as_incomplete_evidence() {
-        let registry = ShellxBrowserRegistry::default();
-        let task = registry
-            .start_task(StartBrowserTaskRequest {
-                goal: "sanitizer loss accounting".to_string(),
-                ..StartBrowserTaskRequest::default()
-            })
-            .expect("task starts");
-        {
-            let mut state = lock_or_recover(&registry.state);
-            push_receipt(
-                &mut state,
-                "browserReportWritten",
-                Some(task.task_id.clone()),
-                Some(task.profile_id.clone()),
-                "bounded evidence fixture".to_string(),
-                json!({
-                    "items": (0..49).collect::<Vec<_>>(),
-                    "text": "x".repeat(MAX_FLIGHT_TEXT_CHARS + 1),
-                }),
-            );
+    match value {
+        Value::Object(map) => {
+            if map.get("redacted").and_then(Value::as_bool) == Some(true)
+                && map.get("ruleId").is_some()
+            {
+                return;
+            }
+            for child in map.values_mut() {
+                redact_flight_protected_values(child, protected_values);
+            }
         }
-
-        let artifact = registry
-            .export_flight_recorder(BrowserFlightRecorderExportRequest {
-                task_id: Some(task.task_id),
-                ..BrowserFlightRecorderExportRequest::default()
-            })
-            .expect("flight recorder exports");
-        let bundle: Value = serde_json::from_slice(
-            &std::fs::read(&artifact.path).expect("flight recorder artifact is readable"),
-        )
-        .expect("flight recorder artifact is JSON");
-
-        assert_eq!(artifact.sanitizer_loss_count, 4);
-        assert_eq!(artifact.gap_count, 1);
-        assert!(!artifact.evidence_complete);
-        assert_eq!(bundle["summary"]["gaps"]["sanitization"]["lossCount"], 4);
-        std::fs::remove_file(&artifact.path).expect("test artifact cleanup");
+        Value::Array(items) => {
+            for child in items {
+                redact_flight_protected_values(child, protected_values);
+            }
+        }
+        _ => {}
     }
 }

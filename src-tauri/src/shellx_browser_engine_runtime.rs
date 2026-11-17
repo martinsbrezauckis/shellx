@@ -1,8 +1,6 @@
-#[cfg(test)]
-use base64::Engine as _;
-use serde_json::json;
+
 use std::sync::Arc;
-use tauri::webview::{DownloadEvent, NewWindowResponse};
+use tauri::webview::NewWindowResponse;
 use tauri::{
     AppHandle, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Url, WebviewUrl,
 };
@@ -10,9 +8,8 @@ use tauri::{
 #[cfg(windows)]
 use crate::shellx_browser::BrowserAdMode;
 use crate::shellx_browser::{
-    clean_string, file_name_from_url, lock_or_recover, BrowserConsoleLogRequest,
-    BrowserDownloadRequest, BrowserEngineBounds, BrowserEngineSyncRequest,
-    BrowserNetworkRecordRequest, BrowserState, ShellxBrowserRegistry, BROWSER_WINDOW_LABEL,
+    clean_string, lock_or_recover, BrowserEngineBounds, BrowserEngineSyncRequest, BrowserState,
+    ShellxBrowserRegistry, BROWSER_WINDOW_LABEL,
 };
 use crate::shellx_browser_engine::{
     browser_background_engine_bounds, browser_engine_bounds_are_background,
@@ -23,13 +20,17 @@ use crate::shellx_browser_engine_lifecycle::{
     cleanup_unmounted_disposable_mount_failure, close_and_cleanup_failed_browser_engine_mount,
     handle_disposable_engine_recreation_failure,
 };
-use crate::shellx_browser_engine_webview_config::{
-    browser_engine_webview_builder, install_browser_native_credential_controls,
-};
+use crate::shellx_browser_engine_state::BrowserEngineEventContext;
+use crate::shellx_browser_engine_webview_config::browser_engine_webview_builder;
+#[cfg(windows)]
+use crate::shellx_browser_engine_webview_config::install_browser_native_credential_controls;
 use crate::shellx_browser_ephemeral_roots::{
     cleanup_disposable_root_owner_after_engine_close, cleanup_disposable_roots_after_engine_close,
 };
 use crate::shellx_browser_initialization::browser_page_context_menu_initialization_script;
+use crate::shellx_browser_personal_lock::{
+    hide_personal_webview_or_browser_window, personal_content_requires_native_cover_now,
+};
 use crate::shellx_browser_profiles::browser_profile_storage_root;
 use crate::shellx_browser_security::{
     browser_host_matches_blocked_domains, browser_host_matches_expected_domains,
@@ -44,6 +45,25 @@ use crate::shellx_browser_webview_runtime::navigate_browser_webview;
 #[cfg(windows)]
 use crate::shellx_browser_webview_runtime::with_windows_browser_webview;
 use crate::shellx_browser_window_open_runtime::ensure_browser_window_for_engine;
+
+#[path = "shellx_browser_engine_sync.rs"]
+mod engine_sync;
+pub(crate) use engine_sync::sync_and_record_native_browser_engine;
+
+#[cfg(target_os = "linux")]
+#[path = "shellx_browser_native_download_linux.rs"]
+mod native_download_linux;
+#[cfg(target_os = "linux")]
+#[path = "shellx_browser_native_layout_linux.rs"]
+mod native_layout_linux;
+#[cfg(target_os = "linux")]
+use native_layout_linux::set_linux_browser_engine_bounds;
+#[path = "shellx_browser_native_download_runtime.rs"]
+mod native_download_runtime;
+#[cfg(target_os = "linux")]
+use native_download_linux::install_linux_native_browser_download_handler;
+#[cfg(not(target_os = "linux"))]
+use native_download_runtime::handle_wry_native_browser_download_event;
 
 #[cfg(windows)]
 async fn install_strict_browser_request_filter<R: tauri::Runtime>(
@@ -125,17 +145,6 @@ async fn install_strict_browser_request_filter<R: tauri::Runtime>(
         },
     )
     .await
-}
-
-#[cfg(not(windows))]
-async fn install_strict_browser_request_filter<R: tauri::Runtime>(
-    _webview: &tauri::Webview<R>,
-    _registry: Arc<ShellxBrowserRegistry>,
-    _engine_id: String,
-    _event_binding: String,
-    _profile_id: String,
-) -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(windows)]
@@ -329,13 +338,22 @@ fn browser_webview_should_navigate(
         && !pending_url.is_some_and(|pending| browser_runtime_urls_match(pending, target_url))
 }
 
-pub(crate) async fn sync_native_browser_engine(
+#[cfg(windows)]
+fn browser_strict_native_filter_is_available() -> bool {
+    cfg!(windows)
+}
+
+async fn sync_native_browser_engine_locked(
     app: &AppHandle,
     registry: &Arc<ShellxBrowserRegistry>,
     request: &BrowserEngineSyncRequest,
+    event_context: BrowserEngineEventContext,
 ) -> Result<Option<String>, String> {
-    let _engine_sync_guard = registry.engine_sync_lock.lock().await;
-    ensure_browser_window_for_engine(app, !browser_engine_bounds_are_background(request.bounds))?;
+    ensure_browser_window_for_engine(
+        app,
+        registry,
+        !browser_engine_bounds_are_background(request.bounds),
+    )?;
     let window = app
         .get_window(BROWSER_WINDOW_LABEL)
         .ok_or_else(|| "ShellX Browser chrome window is not available".to_string())?;
@@ -349,8 +367,25 @@ pub(crate) async fn sync_native_browser_engine(
     let engine_label = browser_engine_webview_label(&engine_id);
     let target_url = parse_engine_url(request.url.as_deref(), registry, &profile_id)?;
     let rect = engine_bounds_rect(request.bounds)?;
+    #[cfg(target_os = "macos")]
+    let rect = {
+        // The chrome document excludes AppKit's unobscured-content inset;
+        // child WKWebView bounds are relative to the enclosing native view.
+        let offset = macos_browser_content_offset(&window).await?;
+        Rect {
+            position: LogicalPosition::new(
+                request.bounds.x + offset.x,
+                request.bounds.y + offset.y,
+            )
+            .into(),
+            ..rect
+        }
+    };
+    let privacy_mode =
+        registry.effective_ad_mode_for_profile_id(Some(&profile_id), Some(target_url.as_str()));
+    let strict_native_filter = browser_requires_native_request_filter(&privacy_mode);
     if !browser_engine_bounds_are_background(request.bounds) {
-        park_inactive_browser_engine_webviews(app, registry, &engine_id)?;
+        park_inactive_browser_engine_webviews(app, registry, &engine_id).await?;
     }
     let disposable_root_binding = if profile_id == "task-disposable" {
         Some(
@@ -365,10 +400,6 @@ pub(crate) async fn sync_native_browser_engine(
         .map(|binding| binding.root.clone())
         .unwrap_or_else(|| std::path::PathBuf::from(browser_profile_storage_root(&profile_id)));
     crate::session_git::ensure_strict_private_dir(&storage_root, "Browser profile storage")?;
-    let privacy_mode =
-        registry.effective_ad_mode_for_profile_id(Some(&profile_id), Some(target_url.as_str()));
-    let strict_native_filter = browser_requires_native_request_filter(&privacy_mode);
-
     if let Some(webview) = app.get_webview(&engine_label) {
         let state_snapshot = registry.state();
         let current_engine = state_snapshot
@@ -405,6 +436,7 @@ pub(crate) async fn sync_native_browser_engine(
             || current_native_filter != strict_native_filter
             || root_identity_changed
         {
+            registry.quarantine_native_downloads_for_engine(&engine_id);
             if let Err(error) = webview.close() {
                 handle_disposable_engine_recreation_failure(
                     registry,
@@ -429,6 +461,7 @@ pub(crate) async fn sync_native_browser_engine(
                 .await;
                 return Err(error);
             }
+            registry.cleanup_quarantined_native_downloads_after_engine_close(&engine_id);
             if let Some(previous_owner) = active_disposable_root_owner.as_deref() {
                 cleanup_disposable_root_owner_after_engine_close(
                     registry,
@@ -442,11 +475,16 @@ pub(crate) async fn sync_native_browser_engine(
                 registry.record_disposable_engine_closed(&engine_id);
             }
         } else {
-            if !browser_engine_bounds_are_background(request.bounds) {
+            if personal_content_requires_native_cover_now(registry, &profile_id) {
+                hide_personal_webview_or_browser_window(app, &webview, &engine_label)?;
+            } else if !browser_engine_bounds_are_background(request.bounds) {
                 webview
                     .show()
                     .map_err(|e| format!("failed to show Browser engine: {}", e))?;
             }
+            #[cfg(target_os = "linux")]
+            set_linux_browser_engine_bounds(&webview, request.bounds).await?;
+            #[cfg(not(target_os = "linux"))]
             webview
                 .set_bounds(rect)
                 .map_err(|e| format!("failed to resize Browser engine: {}", e))?;
@@ -480,19 +518,23 @@ pub(crate) async fn sync_native_browser_engine(
     }
 
     for attempt in 0..2 {
-        let event_binding = registry.begin_engine_event_binding(&engine_id);
+        let event_binding =
+            registry.begin_engine_event_binding_for_context(&engine_id, event_context.clone());
         let event_binding_for_navigation = event_binding.clone();
         let event_binding_for_load = event_binding.clone();
         let event_binding_for_title = event_binding.clone();
         let event_binding_for_popup = event_binding.clone();
+        #[cfg(not(target_os = "linux"))]
         let event_binding_for_download = event_binding.clone();
         let engine_id_for_navigation = engine_id.clone();
         let engine_id_for_load = engine_id.clone();
         let engine_id_for_title = engine_id.clone();
+        #[cfg(not(target_os = "linux"))]
         let engine_id_for_download = engine_id.clone();
         let navigation_registry = Arc::clone(registry);
         let page_load_registry = Arc::clone(registry);
         let title_registry = Arc::clone(registry);
+        #[cfg(not(target_os = "linux"))]
         let download_registry = Arc::clone(registry);
         let popup_registry = Arc::clone(registry);
         let engine_id_for_popup = engine_id.clone();
@@ -575,59 +617,36 @@ pub(crate) async fn sync_native_browser_engine(
                         &event_binding_for_title,
                         title,
                     );
-                })
-                .on_download(move |_webview, event| match event {
-                    DownloadEvent::Requested { url, .. } => {
-                        if !download_registry.engine_event_binding_is_current(
-                            &engine_id_for_download,
-                            &event_binding_for_download,
-                        ) {
-                            return false;
-                        }
-                        let _ = download_registry.request_download_intent(BrowserDownloadRequest {
-                            task_id: None,
-                            browser_tab_id: None,
-                            url: url.to_string(),
-                            file_name: file_name_from_url(url.as_str()),
-                            destination_dir: None,
-                            reason: "Native WebView download blocked pending explicit approval"
-                                .to_string(),
-                        });
-                        let _ = download_registry.record_network_observed(
-                            BrowserNetworkRecordRequest {
-                                task_id: None,
-                                browser_tab_id: None,
-                                profile_id: None,
-                                method: "GET".to_string(),
-                                url: url.to_string(),
-                                resource_type: "download".to_string(),
-                                load_status: Some("downloadRequested".to_string()),
-                                blocked: true,
-                                ..BrowserNetworkRecordRequest::default()
-                            },
-                        );
-                        let _ = download_registry.record_console_log(BrowserConsoleLogRequest {
-                            task_id: None,
-                            level: "warn".to_string(),
-                            source: Some("browser-engine".to_string()),
-                            message: format!("Download blocked until explicit approval: {}", url),
-                            url: Some(url.to_string()),
-                            line: None,
-                            column: None,
-                            details: Some(json!({ "requiresApproval": "downloadApproval" })),
-                        });
-                        false
-                    }
-                    _ => true,
                 });
 
-        match window.add_child(
-            webview_builder,
-            LogicalPosition::new(request.bounds.x, request.bounds.y),
-            LogicalSize::new(request.bounds.width, request.bounds.height),
-        ) {
+        #[cfg(not(target_os = "linux"))]
+        let webview_builder = webview_builder.on_download(move |webview, event| {
+            handle_wry_native_browser_download_event(
+                &webview,
+                &download_registry,
+                &engine_id_for_download,
+                &event_binding_for_download,
+                event,
+            )
+        });
+
+        match window.add_child(webview_builder, rect.position, rect.size) {
             Ok(webview) => {
                 let initialization: Result<(), String> = async {
+                    if personal_content_requires_native_cover_now(registry, &profile_id) {
+                        hide_personal_webview_or_browser_window(app, &webview, &engine_label)?;
+                    }
+                    #[cfg(target_os = "linux")]
+                    set_linux_browser_engine_bounds(&webview, request.bounds).await?;
+                    #[cfg(target_os = "linux")]
+                    install_linux_native_browser_download_handler(
+                        &webview,
+                        Arc::clone(registry),
+                        engine_id.clone(),
+                        event_binding.clone(),
+                    )
+                    .await?;
+                    #[cfg(windows)]
                     install_browser_native_credential_controls(&webview).await?;
                     install_browser_permission_gate(
                         &webview,
@@ -636,7 +655,8 @@ pub(crate) async fn sync_native_browser_engine(
                         event_binding.clone(),
                     )
                     .await?;
-                    if strict_native_filter {
+                    #[cfg(windows)]
+                    if strict_native_filter && browser_strict_native_filter_is_available() {
                         install_strict_browser_request_filter(
                             &webview,
                             Arc::clone(registry),
@@ -647,7 +667,9 @@ pub(crate) async fn sync_native_browser_engine(
                         .await?;
                     }
                     navigate_browser_webview(&webview, target_url.clone()).await?;
-                    if browser_engine_bounds_are_background(request.bounds) {
+                    if personal_content_requires_native_cover_now(registry, &profile_id) {
+                        hide_personal_webview_or_browser_window(app, &webview, &engine_label)?;
+                    } else if browser_engine_bounds_are_background(request.bounds) {
                         webview.hide().map_err(|e| {
                             format!("failed to hide background Browser engine: {}", e)
                         })?;
@@ -732,11 +754,12 @@ pub(crate) async fn sync_native_browser_engine(
     Ok(None)
 }
 
-fn park_inactive_browser_engine_webviews(
+async fn park_inactive_browser_engine_webviews(
     app: &AppHandle,
     registry: &Arc<ShellxBrowserRegistry>,
     active_engine_id: &str,
 ) -> Result<(), String> {
+    #[cfg(not(target_os = "linux"))]
     let background_rect = engine_bounds_rect(browser_background_engine_bounds())?;
     let engines = registry.state().engine_pool.engines;
     for engine in engines {
@@ -750,6 +773,9 @@ fn park_inactive_browser_engine_webviews(
                     engine.engine_id, e
                 )
             })?;
+            #[cfg(target_os = "linux")]
+            set_linux_browser_engine_bounds(&webview, browser_background_engine_bounds()).await?;
+            #[cfg(not(target_os = "linux"))]
             webview.set_bounds(background_rect).map_err(|e| {
                 format!(
                     "failed to park inactive Browser engine '{}': {}",
@@ -835,7 +861,11 @@ fn browser_engine_url_allowed_for_registry_engine(
                 return false;
             }
             if browser_url_uses_private_network(url) {
-                return matches_expected;
+                return matches_expected
+                    || (profile_id == "personal"
+                        && tab.profile_id == "personal"
+                        && engine.task_id.is_none()
+                        && tab.task_id.is_none());
             }
             return true;
         }
@@ -884,6 +914,48 @@ pub(crate) fn browser_engine_url_allowed_for_state(
     profile_id == "personal"
 }
 
+#[cfg(target_os = "macos")]
+async fn macos_browser_content_offset(
+    window: &tauri::Window,
+) -> Result<LogicalPosition<f64>, String> {
+    let native_window = window.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    window
+        .run_on_main_thread(move || {
+            let result = (|| {
+                let pointer = native_window
+                    .ns_window()
+                    .map_err(|e| format!("failed to access Browser native window: {}", e))?;
+                if pointer.is_null() {
+                    return Err("Browser native window is unavailable".to_string());
+                }
+                // AppKit access is confined to the window's main-thread callback.
+                let window = unsafe { &*pointer.cast::<objc2_app_kit::NSWindow>() };
+                let view = window
+                    .contentView()
+                    .ok_or_else(|| "Browser native content view is unavailable".to_string())?;
+                let bounds = view.bounds();
+                let layout = view.convertRect_fromView(window.contentLayoutRect(), None);
+                let x = layout.origin.x - bounds.origin.x;
+                let y = if view.isFlipped() {
+                    layout.origin.y - bounds.origin.y
+                } else {
+                    bounds.origin.y + bounds.size.height - layout.origin.y - layout.size.height
+                };
+                if !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 {
+                    return Err("Browser native content inset is invalid".to_string());
+                }
+                Ok(LogicalPosition::new(x, y))
+            })();
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("failed to schedule Browser content-layout read: {}", e))?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+        .await
+        .map_err(|_| "Browser content-layout read timed out".to_string())?
+        .map_err(|_| "Browser content-layout read channel closed".to_string())?
+}
+
 pub(crate) fn engine_bounds_rect(bounds: BrowserEngineBounds) -> Result<Rect, String> {
     if !bounds.x.is_finite()
         || !bounds.y.is_finite()
@@ -899,67 +971,4 @@ pub(crate) fn engine_bounds_rect(bounds: BrowserEngineBounds) -> Result<Rect, St
         position: Position::Logical(LogicalPosition::new(bounds.x, bounds.y)),
         size: Size::Logical(LogicalSize::new(bounds.width, bounds.height)),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pending_navigation_is_not_reissued_during_layout_sync() {
-        let target = Url::parse("https://example.com/pending?step=1").expect("target parses");
-
-        assert!(!browser_webview_should_navigate(
-            false,
-            Some("about:blank"),
-            Some("https://example.com/pending?step=1"),
-            &target,
-        ));
-        assert!(!browser_webview_should_navigate(
-            false,
-            Some("https://example.com/pending?step=1"),
-            None,
-            &target,
-        ));
-        assert!(!browser_webview_should_navigate(
-            true,
-            Some("https://example.com/previous"),
-            None,
-            &target,
-        ));
-        assert!(browser_webview_should_navigate(
-            false,
-            Some("https://example.com/previous"),
-            Some("https://example.com/previous"),
-            &target,
-        ));
-    }
-
-    #[test]
-    fn new_window_google_redirect_targets_destination_url() {
-        let target = "https://app.abstractapi.com/users/email/confirm?uid=abc&token=one-time-token";
-        let wrapped = "https://www.google.com/url?q=https%3A%2F%2Fapp.abstractapi.com%2Fusers%2Femail%2Fconfirm%3Fuid%3Dabc%26token%3Done-time-token&source=gmail";
-
-        assert_eq!(normalize_browser_new_window_target_url(wrapped), target);
-        assert_eq!(
-            normalize_browser_new_window_target_url("https://example.com/path?q=value"),
-            "https://example.com/path?q=value"
-        );
-        assert_eq!(
-            normalize_browser_new_window_target_url(
-                "https://www.google.com/url?q=javascript:alert(1)"
-            ),
-            "https://www.google.com/url?q=javascript:alert(1)"
-        );
-    }
-
-    #[test]
-    fn new_window_customerio_redirect_targets_embedded_href() {
-        let target = "https://app.abstractapi.com/users/email/confirm?uid=abc&token=one-time-token";
-        let payload = serde_json::json!({ "href": target, "link_id": 96 }).to_string();
-        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload);
-        let wrapped = format!("https://e.customeriomail.com/e/c/{encoded}/tracking-id");
-
-        assert_eq!(normalize_browser_new_window_target_url(&wrapped), target);
-    }
 }

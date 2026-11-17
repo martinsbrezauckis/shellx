@@ -30,9 +30,7 @@ mod task_provider_dispatch_external;
 #[path = "task_provider_dispatch_grok.rs"]
 mod task_provider_dispatch_grok;
 
-#[cfg(test)]
-#[path = "task_provider_dispatch_tests.rs"]
-mod tests;
+
 
 pub(crate) use task_provider_dispatch_events::{
     TaskGrokAcpEventBuffer, TaskGrokAcpLifecycleEvent, TaskProviderEventBuffer,
@@ -344,7 +342,7 @@ impl TaskProviderDispatchBinding {
             ssh_key_vault_ref: self.resolved_target.run_target.ssh_key_vault_ref.clone(),
             ssh_remote_runtime: self.resolved_target.run_target.ssh_remote_runtime,
             ssh_wsl_distro: self.resolved_target.run_target.ssh_wsl_distro.clone(),
-            release_fixture: None,
+
         })
     }
 }

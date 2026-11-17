@@ -2,10 +2,42 @@
 
 All notable public changes to shellX are documented here.
 
-Policy: keep this user-facing. Release notes should describe what users
-can see or rely on. Internal hardening, private audit notes, and
-implementation-only cleanup stay out unless they close a public issue or
-explain a visible behavior change.
+## [0.3.62] - 2026-11-17
+
+### Added
+
+- Full session history opens as a read-only, paged view once a chat has durable
+  history. It can safely prepare delimiter-free legacy history before showing
+  an older page.
+- The desktop bundles the `shellx-host` reference in ShellX-owned agent docs.
+  Sessions ShellX launches receive compact rules and, when enabled,
+  session-scoped Host MCP access; direct CLI sessions remain unchanged.
+
+### Improved
+
+- Native Browser download requests wait for explicit operator approval. ShellX
+  retries only supported URL-addressable requests for the current task and tab,
+  and keeps waiting, saved, failed, and cleanup-needed transfer state visible.
+- Task Trace can recover a completed run after restart only when its durable
+  archive record verifies. Otherwise Trace remains incomplete rather than
+  treating a missing or partial archive as proof that nothing happened.
+- Flight Recorder distinguishes intentional policy redactions from capture or
+  retention gaps, and shows a reason for each retained redaction marker.
+- Agent-requested Browser workflow and Trace exports stay tied to the
+  caller-owned task and tab. Task attachments remain bound to their selected
+  project in a managed Git-ignored location.
+- Provider availability reports distinguish bundled guidance from a fresh
+  target scan. A recorded card review date or CLI version does not claim a
+  current native capability.
+- Vault setup explains its access requirements and asks users to acknowledge
+  the risk of permanent access loss. Recovery words and a restore flow are
+  not available.
+
+### Fixed
+
+- Codex CLI detection on Windows with npm shell wrappers, and the Codex
+  installer download source ([#11](https://github.com/martinsbrezauckis/shellx/issues/11)).
+- Bugfixes.
 
 ## [0.3.61] - 2026-08-24
 

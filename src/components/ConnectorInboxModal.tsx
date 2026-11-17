@@ -197,7 +197,7 @@ export function ConnectorInboxModal({
               <input
                 className="settings-input connector-inbox-search-input"
                 data-debug-id="connector-inbox-search-input"
-                data-shellx-release-observe="value"
+                data-shellx-release-observe="value disabled"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search messages, sender, target"
@@ -207,7 +207,7 @@ export function ConnectorInboxModal({
               className="settings-input connector-inbox-date"
               type="date"
               data-debug-id="connector-inbox-date-input"
-              data-shellx-release-observe="value"
+              data-shellx-release-observe="value disabled"
               value={localDate}
               onChange={(e) => setLocalDate(e.target.value)}
               aria-label="Filter connector inbox by date"

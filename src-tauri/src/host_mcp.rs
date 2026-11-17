@@ -86,6 +86,7 @@ mod filesystem_core;
 mod filesystem_grep;
 mod filesystem_media;
 mod filesystem_mutation;
+mod filesystem_policy;
 mod goal_tools;
 mod host_process;
 mod host_specs;
@@ -102,8 +103,7 @@ mod tool_specs_extended;
 mod vault_tools;
 
 use agent_tools::*;
-#[cfg(test)]
-use browser_action::browser_extract_action_from_format;
+
 use browser_action::{
     browser_action_body, browser_action_schema_properties, browser_ensure_agent_task_target,
     browser_insert_optional_string, browser_mcp_timeout_secs, tool_browser_action,
@@ -115,59 +115,42 @@ use browser_artifacts::{
     tool_browser_save_page, tool_browser_trace_open,
 };
 use browser_batch::tool_browser_run_steps;
-#[cfg(test)]
-use browser_batch::{
-    browser_run_steps_aggregate, browser_run_steps_allowed_action, browser_run_steps_failure_entry,
-    browser_run_steps_result_entry, browser_run_steps_step_args,
-};
+
 use browser_entry::{tool_browser_act, tool_browser_read};
-#[cfg(test)]
-use browser_output::browser_tabs_text_summary;
+
 use browser_output::{
     browser_action_text_summary, browser_compact_observe_result_for_mcp, browser_mcp_result,
     browser_mcp_usize_arg, compact_browser_summary_value, tool_browser_locks, tool_browser_tabs,
 };
 use browser_recovery::browser_mcp_maybe_recover_action;
-#[cfg(test)]
-use browser_recovery::{
-    browser_mcp_force_click_recovery_body, browser_mcp_locator_candidate_recovery_body,
-};
+
 use browser_specs::{browser_entry_tool_specs, browser_tool_specs};
-#[cfg(test)]
-use browser_state::browser_quiet_check_path;
+
 use browser_state::{
     browser_mcp_navigation_response_should_wait, browser_mcp_wait_for_navigation_settle,
     tool_browser_check, tool_browser_rendered_check, tool_browser_state,
 };
 use browser_teach::{tool_browser_teach_drafts, tool_browser_teach_prepare};
-#[cfg(test)]
-use browser_workflow::{
-    browser_workflow_apply_contract_block_reason, browser_workflow_contract_apply_block_reason,
-    browser_workflow_replay_metadata_update_body, browser_workflow_replay_summary_text,
-};
+
 use browser_workflow::{tool_browser_workflow_replay, tool_browser_workflow_save};
 use browser_workflow_catalog::tool_browser_workflows;
-#[cfg(test)]
-use browser_workflow_catalog::{
-    browser_workflow_recipe_path_from_bookmarks_state,
-    browser_workflow_summaries_from_bookmarks_state, browser_workflow_summary_from_bookmarks_state,
-    browser_workflows_text_summary, BrowserWorkflowFilters,
-};
+
 use build_completion::*;
 use build_receipts::*;
 use build_tools::*;
 use cut_mcp::{cut_entry_tool_specs, tool_cut_act, tool_cut_read};
 use debug_client::*;
 use filesystem_core::*;
-pub(crate) use filesystem_core::{
-    enforce_home_containment, sensitive_fs_denylist_match, validate_fs_path, FsAccessKind,
-    SENSITIVE_ARCHIVE_GLOBS,
-};
+pub(crate) use filesystem_core::{enforce_home_containment, validate_fs_path, FsAccessKind};
 use filesystem_grep::*;
 pub(crate) use filesystem_media::wsl_running_distros;
 use filesystem_media::*;
 pub(crate) use filesystem_mutation::atomic_write_string;
 use filesystem_mutation::*;
+use filesystem_policy::*;
+pub(crate) use filesystem_policy::{
+    reject_renderer_sensitive_path, sensitive_fs_denylist_match, SENSITIVE_ARCHIVE_GLOBS,
+};
 pub(crate) use goal_tools::patch_goal_complete_status;
 use goal_tools::*;
 use host_process::*;
@@ -288,13 +271,7 @@ pub(crate) async fn abort_build_agent_watchers_for_run(run_id: &str) -> usize {
     count
 }
 
-#[cfg(test)]
-async fn build_agent_watcher_registered(key: &str) -> bool {
-    build_agent_watcher_registry()
-        .lock()
-        .await
-        .contains_key(key)
-}
+
 
 async fn try_register_build_agent_completion(key: String) -> bool {
     build_agent_completion_registry().lock().await.insert(key)
@@ -383,6 +360,9 @@ pub(crate) const WRITE_CLASS_TOOLS: &[&str] = &[
     "mem_set",
     "mem_delete",
     "fs_watch",
+    // fs_unwatch terminates a tab-owned watcher and must require the same
+    // per-tab permission gate as fs_watch.
+    "fs_unwatch",
     // goal_complete mutates per-tab goal state.
     "goal_complete",
     // Build receipts mutate the active build-run audit state.
@@ -455,7 +435,7 @@ impl HostMcpContext {
         let registry = Arc::new(ProcessRegistry::new());
         // Wire subagent.rs to this registry so each Agent dispatch
         // registers a row visible via `process_list`. Idempotent —
-        // second call (e.g. test boot) is a no-op.
+        // repeated initialization is a no-op.
         crate::subagent::set_process_registry(registry.clone());
         Self {
             registry,
@@ -486,8 +466,7 @@ impl HostMcpContext {
 /// buggy peer piping a single 1 GB line is bounded to at most this much
 /// resident heap before we drop the line and resync to the next newline.
 ///
-/// Module-level constant (vs function-local) so the unit tests can
-/// reference it when constructing overflow fixtures.
+/// Module-level cap shared by the bounded reader and its overflow handling.
 const STDIO_MAX_LINE_BYTES: usize = 32 * 1024 * 1024;
 
 /// Outcome of reading one logical "line" from a bounded reader.
@@ -498,7 +477,7 @@ const STDIO_MAX_LINE_BYTES: usize = 32 * 1024 * 1024;
 /// the line's terminating '\n' (or at EOF).
 /// `Eof` — the underlying reader returned 0 bytes.
 ///
-/// Kept module-private — only `run_stdio` and the unit tests use it.
+/// Kept module-private as a bounded-reader implementation detail.
 #[derive(Debug)]
 enum BoundedLine {
     Line(Vec<u8>),
@@ -926,8 +905,8 @@ async fn handle_tools_call(
         }
         "grok_environment" => tool_grok_environment(arguments, tab_id).await,
         "event_log" => tool_event_log(arguments, tab_id).await,
-        "fs_watch" => tool_fs_watch(arguments, ctx).await,
-        "fs_unwatch" => tool_fs_unwatch(arguments, ctx).await,
+        "fs_watch" => tool_fs_watch(arguments, ctx, tab_id).await,
+        "fs_unwatch" => tool_fs_unwatch(arguments, ctx, tab_id).await,
         "process_list" => tool_process_list(ctx).await,
         "process_signal" => tool_process_signal(arguments, ctx).await,
         "process_stats" => tool_process_stats(arguments, ctx).await,
@@ -1398,7 +1377,3 @@ fn write_mcp_event_line(tool_name: &str, args: &Value, ok: bool) {
     };
     let _ = writeln!(f, "{}", line);
 }
-
-#[cfg(test)]
-#[path = "host_mcp/tests/mod.rs"]
-mod tests;

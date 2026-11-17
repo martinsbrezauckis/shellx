@@ -61,6 +61,15 @@ export interface TaskProviderCatalogueProvider {
 /** A target-bound projection of the authoritative connection provider scan. */
 export interface TaskProviderCatalogue {
   schemaVersion: "shellx.task-provider-catalog.v1";
+  /** Historical card metadata, kept distinct from this catalogue's fresh target scan. */
+  guidanceProvenance: {
+    source: "bundled-model-instruction-cards" | "legacy-unqualified";
+    cardsVersion: string;
+    cardsLastReviewed: string;
+    reviewScope: "bundled-descriptive-guidance" | "legacy-unqualified";
+    availabilityAuthority: "fresh-exact-target-task-provider-catalog";
+    nativeCapabilityEvidence: "requires-provider-specific-native-canary" | "unqualified";
+  };
   /** Renderer-owned preset identity used to request this exact target scan. */
   environmentKey: string;
   /** `sha256:<64hex>` identity of the exact target-bound provider scan projection. */
@@ -247,6 +256,18 @@ export interface TaskRunEnvironmentEvidence {
 
 export type TaskRunResultEvidenceState = "complete" | "incomplete" | "noBrowserActivity";
 export type TaskRunResultEvidenceKind = "browserFlightRecorder" | "browserEvaluation";
+/** Fixed, renderer-safe reasons why a Trace archive is incomplete. */
+export type TaskRunTraceEvidenceIncompleteReason =
+  | "missingArchive"
+  | "missingDurableFlushProof"
+  | "invalidArchiveContext"
+  | "invalidArchiveFormat"
+  | "durableProofIdentityMismatch"
+  | "missingTerminalMarker"
+  | "droppedProviderEvents"
+  | "archiveWriteFailed"
+  | "providerEventCounterMismatch"
+  | "flushSummaryMismatch";
 
 export interface TaskRunResultEvidenceIdentity {
   kind: TaskRunResultEvidenceKind;
@@ -271,6 +292,8 @@ export interface TaskRunResultEvidence {
 
 export interface TaskRunTraceEvidence {
   state: "complete" | "incomplete" | "noProviderActivity";
+  /** Omitted by older receipts and by complete/no-activity evidence. */
+  incompleteReasons?: TaskRunTraceEvidenceIncompleteReason[];
   archiveSha256?: string;
   archiveBytes: number;
   recordCount: number;

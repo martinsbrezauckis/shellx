@@ -11,8 +11,6 @@ import {
   providerScanStatus,
   scanConnectionProviderCapabilities,
 } from "../lib/connection-provider-capabilities";
-import type { AgentCliSetupFixture } from "./AgentCliSetupAssistant";
-import { setupStateToProviderScan } from "../lib/agent-cli-setup";
 import type {
   ConnectionPreset,
   ConnectionProviderCapabilitySnapshot,
@@ -51,7 +49,6 @@ export function AgentCliStatusCard({
   connectionTransport,
   connectionPreset,
   onProviderScanUpdated,
-  fixture,
 }: {
   activeTabId: string | null;
   sessionInfo: AgentCliSessionInfo | null;
@@ -59,7 +56,6 @@ export function AgentCliStatusCard({
   connectionTransport: string;
   connectionPreset: ConnectionPreset | null;
   onProviderScanUpdated?: (preset: ConnectionPreset, providers: ConnectionProviderScanEntry[]) => void;
-  fixture?: AgentCliSetupFixture;
 }): JSX.Element {
   const [inventory, setInventory] = useState<AgentCliLiveInventory | null>(null);
   const [loadingRequestKey, setLoadingRequestKey] = useState<string | null>(null);
@@ -84,12 +80,11 @@ export function AgentCliStatusCard({
   currentRequestKeyRef.current = scanRequestKey;
   const onProviderScanUpdatedRef = useRef(onProviderScanUpdated);
   onProviderScanUpdatedRef.current = onProviderScanUpdated;
-  const fixtureProviders = fixture ? setupStateToProviderScan(fixture.state) : null;
   const inventoryMatchesTarget = Boolean(scanRequestKey && inventory?.requestKey === scanRequestKey);
-  const agentScan = fixtureProviders ?? (inventoryMatchesTarget ? inventory?.providers ?? [] : []);
-  const capabilitySnapshot = fixture ? null : inventoryMatchesTarget ? inventory?.capability ?? null : null;
-  const message = fixture ? null : scanRequestKey && scanError?.requestKey === scanRequestKey ? scanError.message : null;
-  const loading = !fixture && Boolean(
+  const agentScan = inventoryMatchesTarget ? inventory?.providers ?? [] : [];
+  const capabilitySnapshot = inventoryMatchesTarget ? inventory?.capability ?? null : null;
+  const message = scanRequestKey && scanError?.requestKey === scanRequestKey ? scanError.message : null;
+  const loading = Boolean(
     activeTabId && (
       waitingForSavedPreset || (
         scanRequestKey && (
@@ -100,7 +95,6 @@ export function AgentCliStatusCard({
   );
 
   const refreshProviderEnvironment = useCallback(async (): Promise<void> => {
-    if (fixture) return;
     const preset = currentPresetRef.current;
     const requestKey = currentRequestKeyRef.current;
     if (!activeTabId || !preset || !requestKey) {
@@ -136,10 +130,9 @@ export function AgentCliStatusCard({
         currentRequestKeyRef.current === requestKey
       ) setLoadingRequestKey(null);
     }
-  }, [activeTabId, fixture, scanRequestKey]);
+  }, [activeTabId, scanRequestKey]);
 
   useEffect(() => {
-    if (fixture) return;
     if (!activeTabId || !scanRequestKey) return;
     void refreshProviderEnvironment();
     const refreshWhenVisibleAndStale = () => {
@@ -158,13 +151,12 @@ export function AgentCliStatusCard({
       window.removeEventListener("focus", refreshWhenVisibleAndStale);
       document.removeEventListener("visibilitychange", refreshWhenVisibleAndStale);
     };
-  }, [activeTabId, fixture, refreshProviderEnvironment, scanRequestKey]);
+  }, [activeTabId, refreshProviderEnvironment, scanRequestKey]);
 
   useEffect(() => {
-    if (fixture) return;
     setSetupDialogOpen(false);
     setSetupProviderId(null);
-  }, [fixture]);
+  }, [scanRequestKey]);
 
   const readyCount = AGENT_CLI_IDS.filter((id) => {
     const scan = agentScan.find((item) => item.providerId === id);
@@ -260,7 +252,6 @@ export function AgentCliStatusCard({
               preset={setupPreset}
               initialProviderId={setupProviderId ?? undefined}
               missingOnly={!setupProviderId}
-              fixture={fixture}
               onClose={() => {
                 setSetupDialogOpen(false);
                 setSetupProviderId(null);

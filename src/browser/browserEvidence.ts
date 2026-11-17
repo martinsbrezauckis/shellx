@@ -2,6 +2,14 @@ type JsonObject = Record<string, unknown>;
 
 export type BrowserEvidenceKind = "browserFlightRecorderExported" | "browserEvaluationReportWritten";
 
+export interface BrowserEvidenceRedactionMarker {
+  replacement: string;
+  reason?: string;
+  ruleId?: string;
+  scope: string;
+  originalBytes: number;
+}
+
 export interface BrowserEvidenceIdentity {
   attemptId?: string;
   reportId?: string;
@@ -14,7 +22,11 @@ export interface BrowserEvidenceIdentity {
   droppedReceipts?: number;
   retentionDroppedEvents?: number;
   retentionDroppedReceipts?: number;
+  /** Legacy alias for sanitizerFidelityLossCount. */
   sanitizerLossCount?: number;
+  sanitizerFidelityLossCount?: number;
+  redactionCount?: number;
+  redactionMarkers?: BrowserEvidenceRedactionMarker[];
   gapCount?: number;
   baselineAttempts?: number;
   candidateAttempts?: number;
@@ -94,6 +106,12 @@ function optionalNumber(value: JsonObject, key: string, label: string): number |
   return result;
 }
 
+function optionalCount(value: JsonObject, key: string, label: string): number | undefined {
+  const result = optionalNumber(value, key, label);
+  if (result !== undefined && !Number.isSafeInteger(result)) throw new Error(`${label}.${key} is invalid.`);
+  return result;
+}
+
 function optionalBoolean(value: JsonObject, key: string, label: string): boolean | undefined {
   const result = value[key];
   if (result === undefined || result === null) return undefined;
@@ -112,14 +130,48 @@ function evidenceKind(value: unknown, label: string): BrowserEvidenceKind {
   throw new Error(`${label}.kind is not a supported recorder receipt.`);
 }
 
+function optionalRedactionMarkers(value: JsonObject, label: string): BrowserEvidenceRedactionMarker[] | undefined {
+  const markers = value.redactionMarkers;
+  if (markers === undefined || markers === null) return undefined;
+  if (!Array.isArray(markers) || markers.length > 32) throw new Error(`${label}.redactionMarkers is invalid.`);
+  return markers.map((marker, index) => {
+    const markerLabel = `${label}.redactionMarkers[${index}]`;
+    const record = objectValue(marker, markerLabel);
+    return {
+      replacement: stringValue(record, "replacement", markerLabel),
+      reason: optionalString(record, "reason", markerLabel),
+      ruleId: optionalString(record, "ruleId", markerLabel),
+      scope: stringValue(record, "scope", markerLabel),
+      originalBytes: numberValue(record, "originalBytes", markerLabel),
+    };
+  });
+}
+
 function normalizeIdentity(value: unknown, kind: BrowserEvidenceKind, label: string): BrowserEvidenceIdentity {
   const identity = objectValue(value, `${label}.evidence`);
   const sha256 = stringValue(identity, "sha256", `${label}.evidence`).toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error(`${label}.evidence.sha256 is invalid.`);
   const attemptId = optionalString(identity, "attemptId", `${label}.evidence`);
   const reportId = optionalString(identity, "reportId", `${label}.evidence`);
+  const redactionCount = optionalCount(identity, "redactionCount", `${label}.evidence`);
+  const redactionMarkers = optionalRedactionMarkers(identity, `${label}.evidence`);
+  const sanitizerLossCount = optionalCount(identity, "sanitizerLossCount", `${label}.evidence`);
+  const sanitizerFidelityLossCount = optionalCount(identity, "sanitizerFidelityLossCount", `${label}.evidence`);
   if (kind === "browserFlightRecorderExported" && !attemptId) throw new Error(`${label} has no attempt identity.`);
   if (kind === "browserEvaluationReportWritten" && !reportId) throw new Error(`${label} has no report identity.`);
+  if (redactionMarkers && redactionCount === undefined) {
+    throw new Error(`${label}.evidence.redactionCount is required with redaction markers.`);
+  }
+  if (redactionCount !== undefined && redactionMarkers && redactionCount < redactionMarkers.length) {
+    throw new Error(`${label}.evidence.redactionCount is smaller than its marker catalog.`);
+  }
+  if (
+    sanitizerLossCount !== undefined
+    && sanitizerFidelityLossCount !== undefined
+    && sanitizerLossCount !== sanitizerFidelityLossCount
+  ) {
+    throw new Error(`${label}.evidence sanitizer fidelity aliases disagree.`);
+  }
   return {
     attemptId,
     reportId,
@@ -132,7 +184,10 @@ function normalizeIdentity(value: unknown, kind: BrowserEvidenceKind, label: str
     droppedReceipts: optionalNumber(identity, "droppedReceipts", `${label}.evidence`),
     retentionDroppedEvents: optionalNumber(identity, "retentionDroppedEvents", `${label}.evidence`),
     retentionDroppedReceipts: optionalNumber(identity, "retentionDroppedReceipts", `${label}.evidence`),
-    sanitizerLossCount: optionalNumber(identity, "sanitizerLossCount", `${label}.evidence`),
+    sanitizerLossCount,
+    sanitizerFidelityLossCount,
+    redactionCount,
+    redactionMarkers,
     gapCount: optionalNumber(identity, "gapCount", `${label}.evidence`),
     baselineAttempts: optionalNumber(identity, "baselineAttempts", `${label}.evidence`),
     candidateAttempts: optionalNumber(identity, "candidateAttempts", `${label}.evidence`),

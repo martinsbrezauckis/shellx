@@ -46,7 +46,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ShellIcon } from "../icons";
 import { VaultPasswordGenerator } from "../VaultPasswordGenerator";
 import { VaultGrantsPanel, type GrantOperation, type GrantSummary } from "./VaultGrantsPanel";
-import { OWNED_DEBUG_VAULT_RECOVERY_WORDS, VaultSetupPanel } from "./VaultSetupPanel";
+import { VaultSetupPanel } from "./VaultSetupPanel";
 import "./VaultTab.css";
 import "./vaultFields.css";
 import { isTrustedShellxUserEvent, type ShellxUserEventLike } from "../../lib/trusted-user-event";
@@ -74,10 +74,6 @@ import {
 } from "../../lib/vault-resource-model";
 import type { VaultPanelIntent } from "../../lib/vault-ui";
 import { inTauri } from "../../lib/tauri-bridge";
-import {
-  OWNED_DEBUG_VAULT_SECRET_KEY,
-  OWNED_DEBUG_VAULT_SECRET_VALUE,
-} from "../../lib/debug-vault-clipboard-fixture";
 
 /** Mirrors shellx_vault::ShellxVaultStatus on the Rust side. camelCase wire. */
 interface VaultStatus {
@@ -160,14 +156,12 @@ export function VaultTab({
   externalStatus,
   statusRefreshSeq = 0,
   onStatusChange,
-  debugClipboardFixture = null,
 }: {
   intent?: VaultPanelIntent;
   intentSeq?: number;
   externalStatus?: VaultStatus | null;
   statusRefreshSeq?: number;
   onStatusChange?: (status: VaultStatus) => void;
-  debugClipboardFixture?: "owned-safe" | null;
 } = {}): JSX.Element {
   const [entries, setEntries] = useState<VaultKeyMeta[]>([]);
   const [grants, setGrants] = useState<GrantSummary[]>([]);
@@ -219,50 +213,38 @@ export function VaultTab({
   const [secretGeneratorOpen, setSecretGeneratorOpen] = useState(false);
  // Per-row inline UI state, keyed by secret name.
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
-  const clipboardFixtureActive = debugClipboardFixture === "owned-safe";
-  const desktopVaultAvailable = clipboardFixtureActive || inTauri();
+  const desktopVaultAvailable = inTauri();
 
- /** Load both the key list and the status badge in parallel. */
+  /** Status remains available when a locked Vault cannot list its secrets. */
   const refresh = useCallback(async () => {
     if (!desktopVaultAvailable) return;
-    if (clipboardFixtureActive) {
-      setEntries([{
-        key: OWNED_DEBUG_VAULT_SECRET_KEY,
-        description: "Synthetic release clipboard fixture",
-        userOnly: true,
-        resourceKind: "secret",
-      }]);
-      setGrants([]);
-      setStatus({
-        mode: "local",
-        unlocked: true,
-        recoveryConfirmed: true,
-        initialized: true,
-        keyCount: 1,
-        lastError: "Synthetic release fixture: canonical and legacy Vault profiles differ.",
-      });
-      setBusy(false);
-      setToast(null);
-      return;
-    }
     setBusy(true);
     try {
-      const [k, s, g] = await Promise.all([
-        invoke<VaultKeyMeta[]>("vault_list_keys_with_meta"),
-        invoke<VaultStatus>("vault_status"),
-        invoke<GrantSummary[]>("shellx_vault_list_grants"),
-      ]);
- // Sort alphabetically — same shape the user expects from `pass(1)`.
-      setEntries([...k].sort((a, b) => a.key.localeCompare(b.key)));
+      const s = await invoke<VaultStatus>("vault_status").catch((error: unknown) => {
+        setStatus(null);
+        setEntries([]);
+        throw error;
+      });
       setStatus(s);
       onStatusChange?.(s);
-      setGrants(g);
+      const [keysResult, grantsResult] = await Promise.allSettled([
+        s.unlocked === true
+          ? invoke<VaultKeyMeta[]>("vault_list_keys_with_meta")
+          : Promise.resolve([] as VaultKeyMeta[]),
+        invoke<GrantSummary[]>("shellx_vault_list_grants"),
+      ]);
+      setEntries(keysResult.status === "fulfilled"
+        ? [...keysResult.value].sort((a, b) => a.key.localeCompare(b.key))
+        : []);
+      setGrants(grantsResult.status === "fulfilled" ? grantsResult.value : []);
+      if (keysResult.status === "rejected") throw keysResult.reason;
+      if (grantsResult.status === "rejected") throw grantsResult.reason;
     } catch (e) {
       setToast({ kind: "err", text: formatErr(e) });
     } finally {
       setBusy(false);
     }
-  }, [clipboardFixtureActive, desktopVaultAvailable, onStatusChange]);
+  }, [desktopVaultAvailable, onStatusChange]);
 
   useEffect(() => {
     void refresh();
@@ -347,7 +329,7 @@ export function VaultTab({
   }, []);
 
   useEffect(() => {
-    if (status?.unlocked !== false) return;
+    if (status?.unlocked === true) return;
     for (const timer of revealTimers.current.values()) window.clearTimeout(timer);
     revealTimers.current.clear();
     setRowState((previous) => Object.fromEntries(
@@ -546,9 +528,6 @@ export function VaultTab({
       setToast({ kind: "err", text: "Secret reveal requires a direct user click." });
       return null;
     }
-    if (clipboardFixtureActive && key === OWNED_DEBUG_VAULT_SECRET_KEY) {
-      return OWNED_DEBUG_VAULT_SECRET_VALUE;
-    }
     try {
       const value = await invoke<string | null>("vault_get", { key });
       if (value === null || value === undefined) {
@@ -725,7 +704,13 @@ export function VaultTab({
     }
   }
 
-  const canAdd = addKey.trim().length > 0 && addValue.length > 0 && !adding;
+  const vaultReady = status?.unlocked === true;
+  const vaultAccessMessage = !status
+    ? "Vault status is unavailable. Refresh to check access."
+    : status.mode === "unconfigured" || status.mode === "legacyLimited" || status.recoveryConfirmed === false
+      ? "Finish Vault setup before saving passwords, keys, or other items."
+      : "Unlock Vault to view or change encrypted items.";
+  const canAdd = vaultReady && addKey.trim().length > 0 && addValue.length > 0 && !adding;
   const activeGrantCount = countActiveGrants(grants);
 
   if (!desktopVaultAvailable) {
@@ -848,6 +833,15 @@ export function VaultTab({
           role="tabpanel"
           aria-labelledby="vault-tab-secrets"
         >
+          {!vaultReady && (
+            <div className="vault-empty" role="status">
+              {vaultAccessMessage}{" "}
+              <button type="button" className="settings-pill" onClick={() => setWorkspaceTab("setup")}>
+                Open Vault setup
+              </button>
+            </div>
+          )}
+          <fieldset disabled={!vaultReady} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
           <div className="vault-filter-row">
             <input
               type="text"
@@ -947,7 +941,9 @@ export function VaultTab({
           <div className="vault-list" role="list">
             {filtered.length === 0 ? (
               <div className="vault-empty">
-                {keys.length === 0
+                {!vaultReady
+                  ? "Unlock a configured Vault to load its items."
+                  : keys.length === 0
                   ? "Vault is empty. Add your first password or key above."
                   : "No matches."}
               </div>
@@ -977,6 +973,7 @@ export function VaultTab({
               </>
             )}
           </div>
+          </fieldset>
         </div>
       )}
 
@@ -1001,11 +998,7 @@ export function VaultTab({
           role="tabpanel"
           aria-labelledby="vault-tab-setup"
         >
-          <VaultSetupPanel
-            status={status}
-            onRefresh={() => void refresh()}
-            debugRecoveryWords={clipboardFixtureActive ? OWNED_DEBUG_VAULT_RECOVERY_WORDS : null}
-          />
+          <VaultSetupPanel status={status} onRefresh={() => void refresh()} />
         </div>
       )}
     </div>

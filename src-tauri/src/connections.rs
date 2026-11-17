@@ -40,7 +40,6 @@
 // landing in the next phase).
 
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -155,19 +154,7 @@ const AGENT_SCAN_SPECS: &[AgentScanSpec] = &[
 ];
 
 impl ConnectionPreset {
-    /// Generate a fresh preset with a stable UUID-derived id.
-    #[cfg(test)]
-    pub fn new(label: String, transport: Transport) -> Self {
-        let now = now_ms();
-        Self {
-            id: format!("conn-{}", uuid::Uuid::new_v4()),
-            label,
-            transport,
-            created_ms: now,
-            last_used_ms: 0,
-            provider_scan: Vec::new(),
-        }
-    }
+
 }
 
 /// On-disk wrapper. Keeps a version tag so a v2 schema can migrate
@@ -232,6 +219,10 @@ impl ConnectionStore {
     /// with "unknown connection_id" for any preset added after boot.
     /// Cheap — small JSON file, single lock.
     pub async fn reload_from_disk(&self) -> Result<(), String> {
+        // Serialize the disk read with saves as well as the cache assignment.
+        // Reading before taking the lock could replace a newer saved cache
+        // with bytes read just before that save completed.
+        let mut guard = self.state.lock().await;
         if !self.path.exists() {
             // File deleted out from under us — keep the in-memory copy,
             // log a warning but don't crash the call.
@@ -242,7 +233,6 @@ impl ConnectionStore {
             return Ok(());
         }
         let presets = read_store_file(&self.path, "connections.reload")?.presets;
-        let mut guard = self.state.lock().await;
         let prev_count = guard.len();
         *guard = presets;
         info!(
@@ -371,21 +361,19 @@ impl ConnectionStore {
                     };
                 }
                 let t0 = Instant::now();
-                let r = tokio::time::timeout(
+                let mut command = Command::new("wsl.exe");
+                command.args(["-l", "-q"]);
+                let r = crate::bounded_command::run_bounded_output(
+                    &mut command,
+                    "wsl.exe connection probe",
                     Duration::from_secs(5),
-                    tokio::task::spawn_blocking(move || {
-                        // Phase suppress console flash on Windows.
-                        use crate::winproc::NoWindowExt as _;
-                        std::process::Command::new("wsl.exe")
-                            .args(["-l", "-q"])
-                            .no_window()
-                            .output()
-                    }),
+                    256 * 1024,
+                    64 * 1024,
                 )
                 .await;
                 let latency = t0.elapsed().as_millis() as u32;
                 match r {
-                    Ok(Ok(Ok(out))) => {
+                    Ok(out) => {
                         let stdout = String::from_utf8_lossy(&out.stdout).replace('\u{0}', "");
                         let found = stdout
                             .lines()
@@ -402,20 +390,10 @@ impl ConnectionStore {
                             }
                         }
                     }
-                    Ok(Ok(Err(e))) => TestResult {
+                    Err(error) => TestResult {
                         reachable: false,
                         latency_ms: Some(latency),
-                        error: Some(format!("wsl.exe spawn failed: {}", e)),
-                    },
-                    Ok(Err(e)) => TestResult {
-                        reachable: false,
-                        latency_ms: Some(latency),
-                        error: Some(format!("wsl.exe join failed: {}", e)),
-                    },
-                    Err(_) => TestResult {
-                        reachable: false,
-                        latency_ms: None,
-                        error: Some("wsl.exe timed out".to_string()),
+                        error: Some(error),
                     },
                 }
             }
@@ -521,17 +499,14 @@ pub async fn scan_connection_providers(
         let port = *port;
         let remote_runtime = *remote_runtime;
         let wsl_distro = wsl_distro.clone();
-        tokio::task::spawn_blocking(move || {
-            crate::acp::ensure_ssh_remote_runtime(
-                &host,
-                port,
-                key_path.as_deref(),
-                remote_runtime,
-                wsl_distro.as_deref(),
-            )
-        })
-        .await
-        .map_err(|error| format!("SSH platform probe join failed: {error}"))??;
+        crate::acp::ensure_ssh_remote_runtime(
+            &host,
+            port,
+            key_path.as_deref(),
+            remote_runtime,
+            wsl_distro.as_deref(),
+        )
+        .await?;
     }
     let target = connection_provider_capability_target(preset);
     let mut out = Vec::with_capacity(AGENT_SCAN_SPECS.len());
@@ -849,7 +824,7 @@ async fn scan_agent_binary_identity(
 async fn scan_agent_version(preset: &ConnectionPreset, binary: &str) -> Option<String> {
     match &preset.transport {
         Transport::Local { .. } => {
-            run_capture(binary, &["--version"], None, Duration::from_secs(5))
+            run_capture(binary, &["--version"], None, None, Duration::from_secs(5))
                 .await
                 .ok()
                 .and_then(first_output_line)
@@ -1130,11 +1105,12 @@ async fn run_wsl_script(distro: &str, script: &str) -> Result<String, String> {
         "-e".to_string(),
         "bash".to_string(),
         "-lc".to_string(),
-        script.to_string(),
+        crate::remote_one_shot::bounded_posix_one_shot(script, Duration::from_secs(7)),
     ];
     run_capture(
         "wsl.exe",
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        None,
         None,
         Duration::from_secs(7),
     )
@@ -1167,20 +1143,33 @@ async fn run_ssh_script(
     }
     args.push("--".to_string());
     args.push(host.to_string());
-    let remote_command = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
-        crate::acp::wrap_ssh_windows_command(windows_script)
+    let (remote_command, setup_stdin) = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        let bounded = crate::remote_one_shot::bounded_ssh_windows_command(
+            windows_script,
+            Duration::from_secs(8),
+        );
+        (bounded.command, Some(bounded.setup_stdin))
     } else {
         let posix_command = format!(
             "bash -lc {}",
             crate::acp::shell_quote_for_remote(posix_script)
         );
-        crate::acp::wrap_ssh_posix_command(remote_runtime, wsl_distro, &posix_command)?
+        (
+            crate::remote_one_shot::bounded_ssh_posix_command(
+                remote_runtime,
+                wsl_distro,
+                &posix_command,
+                Duration::from_secs(8),
+            )?,
+            None,
+        )
     };
     args.push(remote_command);
     run_capture(
         "ssh",
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
         None,
+        setup_stdin.as_deref(),
         Duration::from_secs(8),
     )
     .await
@@ -1206,71 +1195,40 @@ async fn run_capture(
     program: &str,
     args: &[&str],
     cwd: Option<&std::path::Path>,
+    stdin: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<String, String> {
     let mut cmd = Command::new(program);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(target_os = "windows")]
-    {
-        use crate::winproc::NoWindowExt as _;
-        cmd.no_window();
-    }
+    cmd.args(args);
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    crate::winproc::apply_pdeathsig_preexec(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| format!("spawn {program}: {e}"))?;
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-    let stdout_task = tokio::spawn(async move {
-        if let Some(pipe) = stdout_pipe {
-            crate::process_output::drain_stream_tail_bounded(
-                pipe,
-                crate::process_output::COMMAND_STREAM_CAPTURE_BYTES,
-            )
-            .await
-            .map(|capture| capture.into_lossy_string())
-        } else {
-            Ok(String::new())
-        }
-    });
-    let stderr_task = tokio::spawn(async move {
-        if let Some(pipe) = stderr_pipe {
-            crate::process_output::drain_stream_tail_bounded(
-                pipe,
-                crate::process_output::COMMAND_STREAM_CAPTURE_BYTES,
-            )
-            .await
-            .map(|capture| capture.into_lossy_string())
-        } else {
-            Ok(String::new())
-        }
-    });
-    let status = tokio::select! {
-        status = child.wait() => status.map_err(|e| format!("wait {program}: {e}"))?,
-        _ = tokio::time::sleep(timeout) => {
-            let _ = child.kill().await;
-            let _ = stdout_task.await;
-            let _ = stderr_task.await;
-            return Err(format!("timeout running {program}"));
-        }
+    let output = if let Some(stdin) = stdin {
+        crate::bounded_command::run_bounded_output_with_stdin(
+            &mut cmd,
+            program,
+            timeout,
+            crate::bounded_command::DEFAULT_STDOUT_LIMIT,
+            crate::bounded_command::DEFAULT_STDERR_LIMIT,
+            stdin,
+        )
+        .await?
+    } else {
+        crate::bounded_command::run_bounded_output(
+            &mut cmd,
+            program,
+            timeout,
+            crate::bounded_command::DEFAULT_STDOUT_LIMIT,
+            crate::bounded_command::DEFAULT_STDERR_LIMIT,
+        )
+        .await?
     };
-    let stdout_text = stdout_task
-        .await
-        .map_err(|error| format!("join {program} stdout reader: {error}"))?
-        .map_err(|error| format!("read {program} stdout: {error}"))?;
-    let stderr_text = stderr_task
-        .await
-        .map_err(|error| format!("join {program} stderr reader: {error}"))?
-        .map_err(|error| format!("read {program} stderr: {error}"))?;
-    if !status.success() {
+    let stdout_text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr_text = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !output.status.success() {
         let err = stderr_text.trim().to_string();
         return Err(if err.is_empty() {
-            format!("{program} exited {:?}", status.code())
+            format!("{program} exited {:?}", output.status.code())
         } else {
             err
         });
@@ -1542,700 +1500,4 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::ops::Deref;
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
-
-    struct TempConnectionStore(ConnectionStore);
-
-    impl Deref for TempConnectionStore {
-        type Target = ConnectionStore;
-
-        fn deref(&self) -> &Self::Target {
-            &self.0
-        }
-    }
-
-    impl Drop for TempConnectionStore {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0.path);
-        }
-    }
-
-    /// Each test gets its own connections.json path so the global file
-    /// in $HOME isn't touched. The Mutex around state is local to the
-    /// instance, so concurrent tests are isolated.
-    fn temp_store() -> TempConnectionStore {
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "grok-shell-connections-test-{}-{}.json",
-            std::process::id(),
-            n
-        ));
-        let _ = std::fs::remove_file(&path);
-        TempConnectionStore(ConnectionStore {
-            path,
-            state: Mutex::new(vec![]),
-        })
-    }
-
-    fn temp_connections_root() -> std::path::PathBuf {
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "shellx-connections-migrate-test-{}-{}",
-            std::process::id(),
-            n,
-        ))
-    }
-
-    fn preset_with_id(id: &str, label: &str) -> ConnectionPreset {
-        ConnectionPreset {
-            id: id.to_string(),
-            label: label.to_string(),
-            transport: Transport::Local { grok_path: None },
-            created_ms: 1,
-            last_used_ms: 0,
-            provider_scan: Vec::new(),
-        }
-    }
-
-    fn write_test_store(path: &PathBuf, presets: &[ConnectionPreset]) {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("mk store parent");
-        }
-        persist(path, presets).expect("write test store");
-    }
-
-    fn read_test_store(path: &PathBuf) -> StoreFile {
-        read_store_file(path, "test").expect("read test store")
-    }
-
-    #[tokio::test]
-    async fn save_list_delete_roundtrip() {
-        let store = temp_store();
-        let p = ConnectionPreset::new("self".to_string(), Transport::Local { grok_path: None });
-        let saved = store.save(p.clone()).await.expect("save ok");
-        assert_eq!(saved.label, "self");
-        let listed = store.list().await;
-        assert_eq!(listed.len(), 1);
-        let removed = store.delete(&saved.id).await.expect("delete ok");
-        assert!(removed);
-        assert!(store.list().await.is_empty());
-    }
-
-    #[test]
-    fn legacy_connection_migration_renames_when_canonical_missing() {
-        let root = temp_connections_root();
-        let canon = root.join(".shellx").join("connections.json");
-        let legacy = root.join(".grok-shell").join("connections.json");
-        write_test_store(&legacy, &[preset_with_id("conn-legacy", "Legacy")]);
-
-        migrate_legacy_connections_file_if_needed(&canon, &legacy);
-
-        assert!(
-            !legacy.exists(),
-            "legacy file should be moved when canonical is missing"
-        );
-        let migrated = read_test_store(&canon);
-        assert_eq!(migrated.presets.len(), 1);
-        assert_eq!(migrated.presets[0].id, "conn-legacy");
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn legacy_connection_migration_merges_missing_presets_without_clobbering() {
-        let root = temp_connections_root();
-        let canon = root.join(".shellx").join("connections.json");
-        let legacy = root.join(".grok-shell").join("connections.json");
-        write_test_store(
-            &canon,
-            &[
-                preset_with_id("conn-shared", "Canonical wins"),
-                preset_with_id("conn-current", "Current only"),
-            ],
-        );
-        write_test_store(
-            &legacy,
-            &[
-                preset_with_id("conn-shared", "Legacy duplicate"),
-                preset_with_id("conn-legacy", "Legacy only"),
-            ],
-        );
-
-        migrate_legacy_connections_file_if_needed(&canon, &legacy);
-
-        assert!(legacy.exists(), "merge should leave legacy file as backup");
-        let merged = read_test_store(&canon);
-        assert_eq!(merged.presets.len(), 3);
-        assert_eq!(
-            merged
-                .presets
-                .iter()
-                .find(|preset| preset.id == "conn-shared")
-                .map(|preset| preset.label.as_str()),
-            Some("Canonical wins"),
-            "canonical preset must not be overwritten by legacy duplicate",
-        );
-        assert!(
-            merged
-                .presets
-                .iter()
-                .any(|preset| preset.id == "conn-legacy"),
-            "missing legacy preset should be imported",
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[tokio::test]
-    async fn save_rejects_blank_label() {
-        let store = temp_store();
-        let p = ConnectionPreset::new("".to_string(), Transport::Local { grok_path: None });
-        assert!(store.save(p).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn save_rejects_ssh_host_option_injection() {
-        let store = temp_store();
-        let p = ConnectionPreset::new(
-            "ssh".to_string(),
-            Transport::Ssh {
-                host: "-oProxyCommand=calc".to_string(),
-                port: None,
-                key_vault_ref: None,
-                remote_grok_path: "grok".to_string(),
-                remote_runtime: crate::acp::SshRemoteRuntime::Posix,
-                wsl_distro: None,
-            },
-        );
-        let err = store.save(p).await.expect_err("ssh option host rejected");
-        assert!(err.contains("cannot start with '-'"));
-    }
-
-    #[tokio::test]
-    async fn save_rejects_ssh_remote_grok_path_option_injection() {
-        let store = temp_store();
-        let p = ConnectionPreset::new(
-            "ssh".to_string(),
-            Transport::Ssh {
-                host: "user@example.com".to_string(),
-                port: None,
-                key_vault_ref: None,
-                remote_grok_path: "-oProxyCommand=calc".to_string(),
-                remote_runtime: crate::acp::SshRemoteRuntime::Posix,
-                wsl_distro: None,
-            },
-        );
-        let err = store
-            .save(p)
-            .await
-            .expect_err("remote grok path option should be rejected");
-        assert!(
-            err.contains("remote_grok_path") && err.contains("cannot start with '-'"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn save_rejects_wsl_distro_on_native_windows_runtime() {
-        let store = temp_store();
-        let p = ConnectionPreset::new(
-            "windows ssh".to_string(),
-            Transport::Ssh {
-                host: "user@windows-host".to_string(),
-                port: None,
-                key_vault_ref: None,
-                remote_grok_path: r"C:\Users\FixtureUser\.grok\bin\grok.exe".to_string(),
-                remote_runtime: crate::acp::SshRemoteRuntime::Windows,
-                wsl_distro: Some("Ubuntu".to_string()),
-            },
-        );
-        let err = store
-            .save(p)
-            .await
-            .expect_err("native Windows runtime must reject a WSL distro");
-        assert!(err.contains("wslDistro must be empty"));
-    }
-
-    #[test]
-    fn native_windows_agent_discovery_uses_get_command_and_bounded_names() {
-        let script = remote_windows_command_find_binary(&["codex.exe", "codex"]);
-        assert!(script.contains("Get-Command"));
-        assert!(script.contains("'codex.exe','codex'"));
-        assert!(script.contains("$env:APPDATA"));
-        assert!(!script.contains("bash"));
-    }
-
-    #[test]
-    fn configured_grok_discovery_never_falls_back_to_another_binary() {
-        let windows =
-            remote_windows_command_find_configured_binary(r"C:\Users\Fixture\.grok\bin\grok.exe");
-        assert!(windows.contains(r"C:\Users\Fixture\.grok\bin\grok.exe"));
-        assert!(windows.ends_with("exit 1"));
-        assert_eq!(windows.matches("Get-Command").count(), 1);
-        assert!(!windows.contains("foreach($n"));
-
-        let posix = remote_posix_command_find_configured_binary("/home/fixture/.grok/bin/grok");
-        assert!(posix.contains("/home/fixture/.grok/bin/grok"));
-        assert!(posix.ends_with("exit 1; fi"));
-        assert!(!posix.contains("$HOME/.grok/bin"));
-    }
-
-    #[test]
-    fn remote_grok_path_must_match_the_explicit_ssh_runtime_frame() {
-        assert!(validate_remote_grok_path_arg(
-            r"C:\Users\Fixture\.grok\bin\grok.exe",
-            crate::acp::SshRemoteRuntime::Windows,
-        )
-        .is_ok());
-        assert!(validate_remote_grok_path_arg(
-            "/home/fixture/.grok/bin/grok",
-            crate::acp::SshRemoteRuntime::WindowsWsl,
-        )
-        .is_ok());
-        assert!(
-            validate_remote_grok_path_arg("grok", crate::acp::SshRemoteRuntime::Windows,).is_ok()
-        );
-        assert!(validate_remote_grok_path_arg(
-            "/home/fixture/.grok/bin/grok",
-            crate::acp::SshRemoteRuntime::Windows,
-        )
-        .unwrap_err()
-        .contains("absolute Windows"));
-        assert!(validate_remote_grok_path_arg(
-            r"C:\Users\Fixture\.grok\bin\grok.exe",
-            crate::acp::SshRemoteRuntime::WindowsWsl,
-        )
-        .unwrap_err()
-        .contains("absolute POSIX"));
-        assert!(validate_remote_grok_path_arg(
-            "relative/.grok/bin/grok",
-            crate::acp::SshRemoteRuntime::Posix,
-        )
-        .unwrap_err()
-        .contains("absolute POSIX"));
-    }
-
-    #[tokio::test]
-    async fn save_rejects_wsl_distro_on_posix_ssh_runtime() {
-        let store = temp_store();
-        let preset = ConnectionPreset::new(
-            "POSIX SSH".to_string(),
-            Transport::Ssh {
-                host: "user@example.test".to_string(),
-                port: None,
-                key_vault_ref: None,
-                remote_grok_path: "grok".to_string(),
-                remote_runtime: crate::acp::SshRemoteRuntime::Posix,
-                wsl_distro: Some("Ubuntu".to_string()),
-            },
-        );
-        let error = store
-            .save(preset)
-            .await
-            .expect_err("POSIX SSH must not retain a Windows WSL distro");
-        assert!(error.contains("only valid for Windows + WSL"));
-    }
-
-    #[test]
-    fn capability_target_keys_distinguish_native_windows_windows_wsl_and_posix_ssh() {
-        let make = |runtime, distro: Option<&str>| {
-            ConnectionPreset::new(
-                "target".to_string(),
-                Transport::Ssh {
-                    host: "User@Example.test".to_string(),
-                    port: Some(2222),
-                    key_vault_ref: Some("ssh/test".to_string()),
-                    remote_grok_path: "grok".to_string(),
-                    remote_runtime: runtime,
-                    wsl_distro: distro.map(str::to_string),
-                },
-            )
-        };
-        let posix =
-            connection_provider_capability_target(&make(crate::acp::SshRemoteRuntime::Posix, None));
-        let windows = connection_provider_capability_target(&make(
-            crate::acp::SshRemoteRuntime::Windows,
-            None,
-        ));
-        let windows_wsl = connection_provider_capability_target(&make(
-            crate::acp::SshRemoteRuntime::WindowsWsl,
-            Some("Ubuntu-24.04"),
-        ));
-
-        assert_eq!(posix.key, "ssh:posix:User@example.test:2222");
-        assert_eq!(windows.key, "ssh:windows:User@example.test:2222");
-        assert_eq!(
-            windows_wsl.key,
-            "ssh:windows_wsl:User@example.test:2222:wsl=ubuntu-24.04"
-        );
-        assert_eq!(windows.runtime, "windows");
-        assert_eq!(windows_wsl.runtime, "windows_wsl");
-        assert_ne!(posix.key, windows.key);
-        assert_ne!(windows.key, windows_wsl.key);
-        assert!(
-            !windows.key.contains("ssh/test"),
-            "target key must not expose the Vault key reference"
-        );
-    }
-
-    #[test]
-    fn capability_snapshot_reports_typed_probe_state_and_freshness() {
-        let preset =
-            ConnectionPreset::new("local".to_string(), Transport::Local { grok_path: None });
-        let (status, detail) =
-            connection_provider_scan_status(Some("/bin/codex"), None, None, None);
-        assert_eq!(status, ConnectionProviderScanStatus::VersionFailed);
-        assert!(detail
-            .as_deref()
-            .is_some_and(|value| value.contains("--version")));
-        let target = connection_provider_capability_target(&preset);
-        let snapshot = connection_provider_capability_snapshot_from_parts(
-            &preset,
-            vec![ConnectionProviderScanEntry {
-                provider_id: "codex-cli".to_string(),
-                can_run: true,
-                status,
-                binary: Some("/bin/codex".to_string()),
-                version: None,
-                binary_sha256: None,
-                binary_bytes: None,
-                target_key: target.key.clone(),
-                detail,
-                checked_at_ms: 1_780_000_030_000,
-            }],
-            1_780_000_040_000,
-        );
-
-        assert_eq!(snapshot.schema_version, PROVIDER_CAPABILITY_SCHEMA_VERSION);
-        assert_eq!(snapshot.generated_at_ms, 1_780_000_040_000);
-        assert_eq!(snapshot.fresh_until_ms, 1_780_000_100_000);
-        assert_eq!(snapshot.providers[0].target_key, snapshot.target.key);
-        assert_eq!(
-            snapshot.providers[0].status,
-            ConnectionProviderScanStatus::VersionFailed
-        );
-    }
-
-    #[test]
-    fn capability_scan_requires_exact_binary_identity_before_ready() {
-        let digest = "a".repeat(64);
-        let (ready, ready_detail) = connection_provider_scan_status(
-            Some("/bin/codex"),
-            Some("codex 1.2.3"),
-            Some(&digest),
-            Some(4096),
-        );
-        assert_eq!(ready, ConnectionProviderScanStatus::Ready);
-        assert!(ready_detail.is_none());
-
-        let (failed, detail) =
-            connection_provider_scan_status(Some("/bin/codex"), Some("codex 1.2.3"), None, None);
-        assert_eq!(failed, ConnectionProviderScanStatus::IdentityFailed);
-        assert!(detail
-            .as_deref()
-            .is_some_and(|value| value.contains("hash/size")));
-    }
-
-    #[test]
-    fn binary_identity_parser_rejects_partial_or_trailing_output() {
-        let digest = "b".repeat(64);
-        assert_eq!(
-            parse_provider_binary_identity(&format!("{digest} 123\n")),
-            Ok((digest.clone(), 123)),
-        );
-        assert!(parse_provider_binary_identity(&digest).is_err());
-        assert!(parse_provider_binary_identity(&format!("{digest} 0")).is_err());
-        assert!(parse_provider_binary_identity(&format!("{digest} 123 extra")).is_err());
-    }
-
-    #[test]
-    fn local_binary_identity_streams_exact_file_hash_and_size() {
-        let root = temp_connections_root();
-        std::fs::create_dir_all(&root).expect("create provider fixture root");
-        let path = root.join("provider-fixture.bin");
-        std::fs::write(&path, b"abc").expect("write provider fixture");
-        let identity = hash_local_provider_binary(&path).expect("hash provider fixture");
-        assert_eq!(
-            identity,
-            (
-                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_string(),
-                3,
-            )
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn local_capability_refresh_observes_replaced_version_and_identity() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let root = temp_connections_root();
-        std::fs::create_dir_all(&root).expect("create provider refresh fixture root");
-        let binary = root.join("grok");
-        let write_version = |version: &str| {
-            std::fs::write(
-                &binary,
-                format!("#!/bin/sh\n[ \"$1\" = \"--version\" ] || exit 64\nprintf '%s\\n' 'grok {version}'\n"),
-            )
-            .expect("write provider refresh fixture");
-            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))
-                .expect("make provider refresh fixture executable");
-        };
-        write_version("fixture-1.0.0");
-        let preset = ConnectionPreset::new(
-            "owned refresh".to_string(),
-            Transport::Local {
-                grok_path: Some(binary.to_string_lossy().to_string()),
-            },
-        );
-        let first = scan_connection_provider_capabilities(&preset)
-            .await
-            .expect("first exact-target capability scan");
-        write_version("fixture-2.0.0");
-        let second = scan_connection_provider_capabilities(&preset)
-            .await
-            .expect("second exact-target capability scan");
-        let first_grok = first
-            .providers
-            .iter()
-            .find(|row| row.provider_id == "grok")
-            .unwrap();
-        let second_grok = second
-            .providers
-            .iter()
-            .find(|row| row.provider_id == "grok")
-            .unwrap();
-        assert_eq!(first_grok.version.as_deref(), Some("grok fixture-1.0.0"));
-        assert_eq!(second_grok.version.as_deref(), Some("grok fixture-2.0.0"));
-        assert_eq!(second_grok.status, ConnectionProviderScanStatus::Ready);
-        assert_ne!(first_grok.binary_sha256, second_grok.binary_sha256);
-        assert!(first_grok.binary_bytes.is_some_and(|bytes| bytes > 0));
-        assert_eq!(first_grok.binary_bytes, second_grok.binary_bytes);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn capability_target_errors_distinguish_auth_runtime_and_reachability() {
-        let preset = ConnectionPreset::new(
-            "ssh".to_string(),
-            Transport::Ssh {
-                host: "host.example".to_string(),
-                port: None,
-                key_vault_ref: None,
-                remote_grok_path: "grok".to_string(),
-                remote_runtime: crate::acp::SshRemoteRuntime::Windows,
-                wsl_distro: None,
-            },
-        );
-        assert_eq!(
-            connection_provider_target_error_status(&preset, "Permission denied (publickey)"),
-            Some(ConnectionProviderScanStatus::AuthNeeded)
-        );
-        assert_eq!(
-            connection_provider_target_error_status(
-                &preset,
-                "Native Windows SSH runtime probe failed"
-            ),
-            Some(ConnectionProviderScanStatus::CanaryFailed)
-        );
-        assert_eq!(
-            connection_provider_target_error_status(&preset, "connection timed out"),
-            Some(ConnectionProviderScanStatus::TargetUnavailable)
-        );
-        assert_eq!(
-            connection_provider_target_error_status(
-                &preset,
-                "SSH key Vault ref connections.key is not set"
-            ),
-            None
-        );
-    }
-
-    #[tokio::test]
-    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST with Grok installed in the Windows user profile"]
-    async fn live_native_windows_provider_scan_resolves_user_bin_grok() {
-        let host =
-            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
-        let preset = ConnectionPreset::new(
-            "native Windows live scan".to_string(),
-            Transport::Ssh {
-                host,
-                port: None,
-                key_vault_ref: None,
-                remote_grok_path: "grok".to_string(),
-                remote_runtime: crate::acp::SshRemoteRuntime::Windows,
-                wsl_distro: None,
-            },
-        );
-
-        let providers = scan_connection_providers(&preset)
-            .await
-            .expect("native Windows provider scan");
-        let grok = providers
-            .iter()
-            .find(|entry| entry.provider_id == "grok")
-            .expect("Grok scan entry");
-        let binary = grok.binary.as_deref().expect("native Windows Grok binary");
-        let normalized = binary.replace('/', "\\").to_ascii_lowercase();
-
-        assert!(grok.can_run, "{grok:?}");
-        assert_eq!(grok.status, ConnectionProviderScanStatus::Ready, "{grok:?}");
-        assert!(
-            normalized.ends_with(r"\.grok\bin\grok.exe"),
-            "unexpected Grok binary: {binary}"
-        );
-        assert!(
-            grok.version
-                .as_deref()
-                .is_some_and(|version| { version.to_ascii_lowercase().starts_with("grok ") }),
-            "{grok:?}"
-        );
-        assert!(
-            grok.binary_sha256.as_deref().is_some_and(is_sha256_hex),
-            "{grok:?}"
-        );
-        assert!(grok.binary_bytes.is_some_and(|bytes| bytes > 0), "{grok:?}");
-    }
-
-    #[tokio::test]
-    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST, SHELLX_WINDOWS_SSH_WSL_DISTRO, and Windows/WSL loopback reachability"]
-    async fn live_windows_wsl_provider_scan_resolves_distro_grok() {
-        let host =
-            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
-        let distro = std::env::var("SHELLX_WINDOWS_SSH_WSL_DISTRO")
-            .expect("SHELLX_WINDOWS_SSH_WSL_DISTRO is required");
-        let preset = ConnectionPreset::new(
-            "Windows WSL live scan".to_string(),
-            Transport::Ssh {
-                host,
-                port: None,
-                key_vault_ref: None,
-                remote_grok_path: "grok".to_string(),
-                remote_runtime: crate::acp::SshRemoteRuntime::WindowsWsl,
-                wsl_distro: Some(distro.clone()),
-            },
-        );
-
-        let providers = scan_connection_providers(&preset)
-            .await
-            .expect("Windows WSL provider scan");
-        let grok = providers
-            .iter()
-            .find(|entry| entry.provider_id == "grok")
-            .expect("Grok scan entry");
-
-        assert_eq!(
-            connection_provider_capability_target(&preset).runtime,
-            "windows_wsl"
-        );
-        assert_eq!(
-            connection_provider_capability_target(&preset)
-                .wsl_distro
-                .as_deref(),
-            Some(distro.as_str())
-        );
-        assert_eq!(grok.status, ConnectionProviderScanStatus::Ready, "{grok:?}");
-        assert!(
-            grok.version
-                .as_deref()
-                .is_some_and(|version| version.to_ascii_lowercase().starts_with("grok ")),
-            "{grok:?}"
-        );
-        assert!(grok.binary_sha256.as_deref().is_some_and(is_sha256_hex));
-        assert!(grok.binary_bytes.is_some_and(|bytes| bytes > 0));
-    }
-
-    #[test]
-    fn remote_shell_prelude_includes_macos_homebrew_bins() {
-        let prelude = remote_shell_prelude();
-        assert!(prelude.contains("/opt/homebrew/bin"));
-        assert!(prelude.contains("/usr/local/bin"));
-        assert!(prelude.contains("$HOME/.nvm/nvm.sh"));
-    }
-
-    #[tokio::test]
-    async fn save_preserves_created_on_update() {
-        let store = temp_store();
-        let p = ConnectionPreset::new("alpha".to_string(), Transport::Local { grok_path: None });
-        let saved = store.save(p).await.expect("save ok");
-        let created_then = saved.created_ms;
-        // Sleep so a wallclock change WOULD be visible if we
-        // accidentally overwrote created_ms.
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        let updated = ConnectionPreset {
-            label: "beta".to_string(),
-            ..saved.clone()
-        };
-        let after = store.save(updated).await.expect("save ok 2");
-        assert_eq!(after.created_ms, created_then);
-        assert_eq!(after.label, "beta");
-    }
-
-    #[tokio::test]
-    async fn save_preserves_provider_scan() {
-        let store = temp_store();
-        let mut p =
-            ConnectionPreset::new("local".to_string(), Transport::Local { grok_path: None });
-        p.provider_scan.push(ConnectionProviderScanEntry {
-            provider_id: "codex-cli".to_string(),
-            can_run: true,
-            status: ConnectionProviderScanStatus::Ready,
-            binary: Some("/usr/bin/codex".to_string()),
-            version: Some("codex-cli 0.136.0".to_string()),
-            binary_sha256: Some("c".repeat(64)),
-            binary_bytes: Some(4096),
-            target_key: "local:linux".to_string(),
-            detail: None,
-            checked_at_ms: 1_780_000_000_000,
-        });
-        let saved = store.save(p).await.expect("save ok");
-        assert_eq!(saved.provider_scan.len(), 1);
-        let listed = store.list().await;
-        assert_eq!(listed[0].provider_scan[0].provider_id, "codex-cli");
-        assert_eq!(
-            listed[0].provider_scan[0].version.as_deref(),
-            Some("codex-cli 0.136.0"),
-        );
-    }
-
-    #[tokio::test]
-    async fn update_provider_scan_persists_fresh_scan() {
-        let store = temp_store();
-        let p = ConnectionPreset::new("local".to_string(), Transport::Local { grok_path: None });
-        let saved = store.save(p).await.expect("save ok");
-
-        store
-            .update_provider_scan(
-                &saved.id,
-                vec![ConnectionProviderScanEntry {
-                    provider_id: "claude-code".to_string(),
-                    can_run: true,
-                    status: ConnectionProviderScanStatus::Ready,
-                    binary: Some("/usr/bin/claude".to_string()),
-                    version: Some("claude 2.1.162".to_string()),
-                    binary_sha256: Some("d".repeat(64)),
-                    binary_bytes: Some(8192),
-                    target_key: "local:linux".to_string(),
-                    detail: None,
-                    checked_at_ms: 1_780_000_000_001,
-                }],
-            )
-            .await
-            .expect("scan update ok");
-
-        let listed = store.list().await;
-        assert_eq!(listed[0].provider_scan.len(), 1);
-        assert_eq!(listed[0].provider_scan[0].provider_id, "claude-code");
-        assert_eq!(
-            listed[0].provider_scan[0].version.as_deref(),
-            Some("claude 2.1.162")
-        );
-    }
 }

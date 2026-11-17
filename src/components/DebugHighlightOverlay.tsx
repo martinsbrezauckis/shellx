@@ -1,6 +1,8 @@
-import { useLayoutEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from "react";
 
 import { apiPost } from "../lib/debug-api";
+import { scheduleDebugHighlightPaintAcknowledgement } from "../lib/debug-highlight-paint-ack";
+import { visibleElementRect, hitTestElement, type ElementHitTest, type ElementHitResult } from "../lib/debug-element-geometry";
 import {
   normalizeDebugElementObservationFields,
   observeDebugElement,
@@ -16,6 +18,7 @@ export interface DebugHighlightRequest {
   index?: number | null;
   text?: string | null;
   observe?: DebugElementObservationField[] | null;
+  hitTest?: ElementHitTest | null;
 }
 
 export interface DebugHighlightRect {
@@ -39,6 +42,7 @@ export interface DebugHighlightResult {
   viewportWidth?: number;
   viewportHeight?: number;
   observation?: DebugElementObservation | null;
+  hitTest?: ElementHitResult | null;
 }
 
 interface RenderedHighlight extends Omit<DebugHighlightResult, "rect" | "visibleRect"> {
@@ -66,7 +70,6 @@ const COLOR_MAP: Record<string, string> = {
   white: "#f5f7fb",
 };
 const DEFAULT_HIGHLIGHT_COLOR = "#1e88e5";
-const VIEWPORT_EDGE = 0;
 const VIEWPORT_PADDING = 4;
 const LABEL_WIDTH = 280;
 const LABEL_HEIGHT = 28;
@@ -98,29 +101,6 @@ function roundRect(rect: DOMRect): DebugHighlightRect {
     width: Math.round(rect.width * 10) / 10,
     height: Math.round(rect.height * 10) / 10,
   };
-}
-
-function roundPlainRect(rect: DebugHighlightRect): DebugHighlightRect {
-  return {
-    left: Math.round(rect.left * 10) / 10,
-    top: Math.round(rect.top * 10) / 10,
-    width: Math.round(rect.width * 10) / 10,
-    height: Math.round(rect.height * 10) / 10,
-  };
-}
-
-function visibleViewportRect(rect: DebugHighlightRect): DebugHighlightRect | null {
-  const left = Math.max(rect.left, VIEWPORT_EDGE);
-  const top = Math.max(rect.top, VIEWPORT_EDGE);
-  const right = Math.min(rect.left + rect.width, window.innerWidth - VIEWPORT_EDGE);
-  const bottom = Math.min(rect.top + rect.height, window.innerHeight - VIEWPORT_EDGE);
-  if (right <= left || bottom <= top) return null;
-  return roundPlainRect({
-    left,
-    top,
-    width: right - left,
-    height: bottom - top,
-  });
 }
 
 function isClipped(rect: DebugHighlightRect, visibleRect: DebugHighlightRect): boolean {
@@ -213,7 +193,7 @@ function measureHighlights(highlights: DebugHighlightRequest[]): {
       return;
     }
     const observationFields = normalizeDebugElementObservationFields(item.observe);
-    const visibleRect = visibleViewportRect(rect);
+    const visibleRect = visibleElementRect(element);
     if (!visibleRect) {
       const observation = element instanceof HTMLAnchorElement && observationFields.includes("href")
         ? observeDebugElement(element, ["href"])
@@ -236,6 +216,7 @@ function measureHighlights(highlights: DebugHighlightRequest[]): {
     const observation = observationFields.length > 0
       ? observeDebugElement(element, observationFields)
       : undefined;
+    const hitTest = item.hitTest ? hitTestElement(element, visibleRect, item.hitTest) : undefined;
     const clipped = isClipped(rect, visibleRect);
     const contentClipped = element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight;
     const aboveTop = visibleRect.top - LABEL_HEIGHT;
@@ -256,6 +237,7 @@ function measureHighlights(highlights: DebugHighlightRequest[]): {
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       observation,
+      hitTest,
       labelText,
       labelLeft,
       labelTop,
@@ -275,6 +257,7 @@ function measureHighlights(highlights: DebugHighlightRequest[]): {
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       observation,
+      hitTest,
     });
   });
   return { rendered, results };
@@ -329,17 +312,20 @@ export function DebugHighlightOverlay({ highlights, surface = "app" }: DebugHigh
     };
   }, [highlightsKey, highlights]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (measuredHighlightsKey !== highlightsKey) return;
     const key = `${surface}:${highlightsKey}:${JSON.stringify(results)}`;
     if (lastReportRef.current === key) return;
-    lastReportRef.current = key;
-    void apiPost("/state/ui", {
-      debugSurface: surface,
-      debugHighlightResults: results,
-      source: "renderer",
-    }).catch(() => {
-      /* debug API may be disabled while running browser-only previews */
+    return scheduleDebugHighlightPaintAcknowledgement(() => {
+      if (lastReportRef.current === key) return;
+      lastReportRef.current = key;
+      void apiPost("/state/ui", {
+        debugSurface: surface,
+        debugHighlightResults: results,
+        source: "renderer",
+      }).catch(() => {
+        /* debug API may be disabled while running browser-only previews */
+      });
     });
   }, [highlightsKey, measuredHighlightsKey, results, surface]);
 

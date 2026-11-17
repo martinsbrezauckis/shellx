@@ -382,9 +382,12 @@ pub(super) async fn tool_browser_trace_open(
         &["browserTabId", "browser_tab_id", "browserTab"],
     );
     browser_insert_optional_string(&mut body, &args, "reason", &["reason"]);
+    let mut body = Value::Object(body);
+    browser_ensure_agent_task_target("traceExport", &mut body, timeout_secs, caller_session_id)
+        .await?;
     let data = debug_api_post_json_for_caller(
         "/browser/trace/export",
-        &Value::Object(body),
+        &body,
         timeout_secs,
         caller_session_id,
     )

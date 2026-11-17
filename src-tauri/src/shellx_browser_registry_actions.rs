@@ -100,7 +100,13 @@ impl ShellxBrowserRegistry {
                     }
                     state.active_task_id = None;
                     set_active_tab(&mut state, &browser_tab_id);
-                    record_history_visit(&mut state, None, profile_id.clone(), url.clone(), None);
+                    let _ = record_history_visit(
+                        &mut state,
+                        None,
+                        profile_id.clone(),
+                        url.clone(),
+                        None,
+                    );
                     push_network_entry(
                         &mut state,
                         BrowserNetworkRecordRequest {
@@ -304,7 +310,7 @@ impl ShellxBrowserRegistry {
                 state.tasks[idx].updated_at_ms = now_ms();
                 let task_id = state.tasks[idx].task_id.clone();
                 let profile_id = state.tasks[idx].profile_id.clone();
-                record_history_visit(
+                let _ = record_history_visit(
                     &mut state,
                     Some(task_id.clone()),
                     profile_id.clone(),

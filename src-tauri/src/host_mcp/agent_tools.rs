@@ -37,7 +37,7 @@ pub(super) async fn tool_agent_spawn(
     // Falls back to local when:
     // - no tab_id (stdio MCP path with no SHELLX_HOST_MCP_TAB_ID env)
     // - registry lookup misses (tab closed between call and resolve)
-    // - app_handle missing (standalone test mode)
+    // - app_handle missing (standalone MCP process)
     let parent_transport: crate::subagent::SubagentTransport =
         resolve_parent_transport_for_subagent(ctx, tab_id).await;
     let parent_is_wsl = matches!(
@@ -530,7 +530,7 @@ pub(super) async fn resolve_default_agent_cwd(
 /// AGENT-B3 helper: pull the parent tab's transport from the
 /// SessionRegistry so subagent spawn lands in the right runtime. Falls
 /// back to Local in the absence of a tab id (stdio mode without
-/// SHELLX_HOST_MCP_TAB_ID, standalone tests, fresh boot before any
+/// SHELLX_HOST_MCP_TAB_ID, standalone MCP process, or fresh boot before any
 /// /connect).
 pub(super) async fn resolve_parent_transport_for_subagent(
     ctx: &Arc<HostMcpContext>,

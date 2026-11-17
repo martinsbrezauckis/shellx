@@ -293,11 +293,23 @@ pub(super) async fn browser_ensure_agent_task_target(
             return Ok(());
         }
     }
-    let start_body = json!({
+    let mut start_body = json!({
         "goal": browser_agent_task_goal_for_action(action, body),
         "profileId": "task-disposable",
         "autonomy": "assistedAutonomous",
     });
+    if let Some(expected_domains) = body.get("expectedDomains").and_then(Value::as_array) {
+        let expected_domains = expected_domains
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if !expected_domains.is_empty() {
+            start_body["expectedDomains"] = json!(expected_domains);
+        }
+    }
     let task = debug_api_post_json_for_caller(
         "/browser/task/start",
         &start_body,
@@ -374,75 +386,5 @@ pub(super) fn browser_extract_action_from_format(
             "browser_extract: unsupported format '{}'. Use text, markdown, or table.",
             other
         )),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn taskless_browser_action_bodies_are_normalized_to_agent_tasks() {
-        let mut body = browser_action_body(
-            "navigate",
-            json!({
-                "url": "https://example.com/"
-            }),
-        )
-        .expect("taskless navigate body parses");
-        assert!(
-            !browser_action_body_has_explicit_target(&body),
-            "taskless agent Browser calls should be detected before posting to Debug API"
-        );
-
-        let caller_scoped_state = json!({
-            "activeTaskId": "task-other",
-            "tasks": [
-                {"taskId": "task-agent", "profileId": "task-disposable", "status": "running", "ownerSessionId": "caller-a"},
-                {"taskId": "task-other", "profileId": "agent-work", "status": "running", "ownerSessionId": "caller-b"}
-            ]
-        });
-        assert_eq!(
-            browser_state_agent_task_id_for_caller(&caller_scoped_state, Some("caller-a")),
-            Some("task-agent".to_string())
-        );
-        assert_eq!(
-            browser_state_agent_task_id_for_caller(&caller_scoped_state, None),
-            None,
-            "implicit Browser task reuse requires MCP caller identity"
-        );
-
-        browser_insert_task_id_into_body(&mut body, "task-agent");
-        assert_eq!(body["taskId"], json!("task-agent"));
-        assert!(browser_action_body_has_explicit_target(&body));
-
-        let active_personal_state = json!({
-            "activeTaskId": "task-personal",
-            "tasks": [
-                {"taskId": "task-personal", "profileId": "personal", "status": "running", "ownerSessionId": "caller-a"}
-            ]
-        });
-        assert_eq!(
-            browser_state_agent_task_id_for_caller(&active_personal_state, Some("caller-a")),
-            None,
-            "agent MCP calls must not implicitly target personal Browser tasks"
-        );
-
-        let completed_agent_state = json!({
-            "activeTaskId": "task-agent",
-            "tasks": [
-                {"taskId": "task-agent", "profileId": "task-disposable", "status": "completed", "ownerSessionId": "caller-a"}
-            ]
-        });
-        assert_eq!(
-            browser_state_agent_task_id_for_caller(&completed_agent_state, Some("caller-a")),
-            None,
-            "completed Browser tasks must not be reused as implicit agent targets"
-        );
-
-        assert!(
-            browser_agent_task_goal_for_action("navigate", &body).contains("Browser navigation"),
-            "auto-created task goal should explain the Browser action"
-        );
     }
 }

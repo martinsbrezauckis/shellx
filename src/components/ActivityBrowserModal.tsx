@@ -431,7 +431,7 @@ export function ActivityBrowserModal({
             <input
               type="search"
               data-debug-id="activity-search"
-              data-shellx-release-observe="value"
+              data-shellx-release-observe="value disabled"
               value={activityQuery}
               placeholder="Search trace"
               disabled={actions.length === 0}

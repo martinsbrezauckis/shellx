@@ -101,8 +101,8 @@ pub(super) async fn tool_goal_complete(
     // GOAL_COMPLETE` to the file directly. The main-process orchestrator
     // (which DOES run consider_continue with disk-read scratchboard parse)
     // sees GOAL_COMPLETE on next prompt-complete and stops auto-continuing.
-    // This makes the gate work end-to-end on Local Windows where the host
-    // MCP runs via stdio and has no Tauri AppHandle access.
+    // This preserves the completion gate for Local Windows host MCP processes
+    // that run through stdio without Tauri AppHandle access.
     if ctx.app_handle.is_none() {
         let cwd = std::env::current_dir()
             .map_err(|e| format!("goal_complete: cwd unavailable: {}", e))?;
@@ -159,110 +159,6 @@ pub(super) async fn tool_goal_complete(
         })?;
     let orch = orch_state.inner().clone();
 
-    // SSH transport: the authoritative scratchboard lives on the
-    // remote machine where grok is executing. The in-process
-    // orchestrator's normal reader can see local paths and WSL UNC
-    // paths, but it cannot read `/home/<remote>/...` directly from the
-    // Windows host. Validate and patch the remote file through the
-    // tab's SSH config, then mark the in-process goal complete.
-    let ssh_cfg =
-        if let Some(reg_state) = app_handle.try_state::<Arc<crate::acp::SessionRegistry>>() {
-            let reg = reg_state.inner().clone();
-            if let Some(sess_arc) = reg.get_existing(&tab).await {
-                let guard = sess_arc.lock().await;
-                guard.ssh_config().cloned()
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-    if let Some(ssh) = ssh_cfg {
-        let Some(state) = orch.get_state(&tab).await else {
-            return Ok(json!({
-                "content": [{
-                    "type": "text",
-                    "text": "goal_complete: no /goal active for this tab",
-                }],
-                "isError": true
-            }));
-        };
-        if !state.active {
-            return Ok(json!({
-                "content": [{
-                    "type": "text",
-                    "text": "goal_complete: goal mode is not active for this tab",
-                }],
-                "isError": true
-            }));
-        }
-        let remote_path = state.scratchboard_path.to_string_lossy().to_string();
-        let text = match crate::acp::ssh_read_file(&ssh, &remote_path).await {
-            Ok(t) => t,
-            Err(e) => {
-                return Ok(json!({
-                    "content": [{
-                        "type": "text",
-                        "text": format!("goal_complete: could not read SSH scratchboard at {}: {}", remote_path, e),
-                    }],
-                    "isError": true
-                }));
-            }
-        };
-        match crate::goal_orchestrator::validate_board_text(&text) {
-            Ok(()) => {
-                let patched = patch_goal_complete_status(&text);
-                if let Err(e) = crate::acp::ssh_write_file(&ssh, &remote_path, &patched).await {
-                    return Ok(json!({
-                        "content": [{
-                            "type": "text",
-                            "text": format!("goal_complete: SSH scratchboard validated but patch write failed at {}: {}", remote_path, e),
-                        }],
-                        "isError": true
-                    }));
-                }
-                orch.mark_complete(&tab).await;
-                let payload = serde_json::json!({
-                    "kind": "goal_complete",
-                    "tabId": tab,
-                    "summary": summary,
-                    "transport": "ssh",
-                });
-                let _ = tauri::Emitter::emit(app_handle, "goal-event", payload);
-                return Ok(json!({
-                    "content": [{
-                        "type": "text",
-                        "text": format!(
-                            "goal_complete accepted over SSH. Summary: {}\n\nRemote scratchboard at {} validated and patched to status: GOAL_COMPLETE. Auto-continuations are now OFF for this tab.",
-                            summary, remote_path
-                        ),
-                    }],
-                    "isError": false
-                }));
-            }
-            Err(reason) => {
-                if crate::goal_orchestrator::goal_complete_refusal_requires_halt(&reason) {
-                    orch.halt_for_system_reason(&tab, &reason).await;
-                    let payload = serde_json::json!({
-                        "kind": "goal_halted",
-                        "tabId": tab,
-                        "reason": reason,
-                        "source": "goal_complete",
-                        "transport": "ssh",
-                    });
-                    let _ = tauri::Emitter::emit(app_handle, "goal-event", payload);
-                }
-                return Ok(json!({
-                    "content": [{
-                        "type": "text",
-                        "text": reason,
-                    }],
-                    "isError": true
-                }));
-            }
-        }
-    }
-
     match orch.validate_scratchboard_complete(&tab).await {
         Ok(()) => {
             let Some(state) = orch.get_state(&tab).await else {
@@ -274,12 +170,8 @@ pub(super) async fn tool_goal_complete(
                     "isError": true
                 }));
             };
-            let text = match crate::goal_orchestrator::read_scratchboard_text_for_transport(
-                &state.scratchboard_path,
-                &state.transport_kind,
-                state.ssh_config.as_ref(),
-            )
-            .await
+            let text = match crate::goal_orchestrator::read_scratchboard_text_for_state(&state)
+                .await
             {
                 Ok(t) => t,
                 Err(e) => {
@@ -293,13 +185,8 @@ pub(super) async fn tool_goal_complete(
                 }
             };
             let patched = patch_goal_complete_status(&text);
-            if let Err(e) = crate::goal_orchestrator::write_scratchboard_text_for_transport(
-                &state.scratchboard_path,
-                &patched,
-                &state.transport_kind,
-                state.ssh_config.as_ref(),
-            )
-            .await
+            if let Err(e) =
+                crate::goal_orchestrator::write_scratchboard_text_for_state(&state, &patched).await
             {
                 return Ok(json!({
                     "content": [{

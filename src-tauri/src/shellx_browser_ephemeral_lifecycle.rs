@@ -140,6 +140,8 @@ impl ShellxBrowserRegistry {
     pub(crate) fn record_disposable_engine_closed(&self, engine_id: &str) {
         let mut state = lock_or_recover(&self.state);
         state.engine_event_bindings.remove(engine_id);
+        state.engine_history_visit_admissions.remove(engine_id);
+        state.engine_event_contexts.remove(engine_id);
         for engine in &mut state.engine_pool.engines {
             if engine.engine_id == engine_id {
                 engine.mounted = false;
@@ -406,8 +408,12 @@ pub(crate) async fn close_disposable_task_webviews_and_cleanup(
 ) -> Result<(), String> {
     let mut close_errors = Vec::new();
     for engine_id in registry.disposable_engine_ids_for_task(task_id) {
+        registry.quarantine_native_downloads_for_engine(&engine_id);
         match crate::shellx_browser::close_browser_engine_webview(app, &engine_id).await {
-            Ok(()) => cleanup_disposable_roots_after_engine_close(registry, &engine_id).await,
+            Ok(()) => {
+                cleanup_disposable_roots_after_engine_close(registry, &engine_id).await;
+                registry.cleanup_quarantined_native_downloads_after_engine_close(&engine_id);
+            }
             Err(error) => {
                 registry.record_disposable_cleanup_deferred_for_engine(
                     &engine_id,

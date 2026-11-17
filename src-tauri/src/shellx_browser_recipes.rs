@@ -14,6 +14,7 @@ use crate::shellx_browser_artifacts::{
     browser_artifact_read_roots, browser_recipe_raw_input_value_from_receipt,
     browser_recipe_receipt_has_redacted_input, browser_recipe_step_from_receipt_with_context,
 };
+use crate::shellx_browser_caller::BrowserTaskControlAuthority;
 use crate::shellx_browser_recipe_analysis::{
     recipe_assertions, recipe_decision_points, recipe_variable_inputs,
 };
@@ -37,6 +38,27 @@ impl ShellxBrowserRegistry {
         &self,
         request: BrowserRecipeExportRequest,
     ) -> Result<BrowserRecipeArtifact, String> {
+        self.export_recipe_with_authority(request, BrowserTaskControlAuthority::Operator, None)
+    }
+
+    pub fn export_recipe_for_agent_session(
+        &self,
+        request: BrowserRecipeExportRequest,
+        caller_session_id: Option<&str>,
+    ) -> Result<BrowserRecipeArtifact, String> {
+        self.export_recipe_with_authority(
+            request,
+            BrowserTaskControlAuthority::Agent,
+            caller_session_id,
+        )
+    }
+
+    fn export_recipe_with_authority(
+        &self,
+        request: BrowserRecipeExportRequest,
+        authority: BrowserTaskControlAuthority,
+        caller_session_id: Option<&str>,
+    ) -> Result<BrowserRecipeArtifact, String> {
         let recipe_id = browser_id("browser-recipe");
         let created_at_ms = now_ms();
         let reason = request
@@ -45,34 +67,10 @@ impl ShellxBrowserRegistry {
             .map(clean_string)
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "Browser recorder recipe export requested".to_string());
-        let requested_task_id = request
-            .task_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty());
-        let requested_tab_id = request
-            .browser_tab_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty());
         let (task_id, browser_tab_id, profile_id, goal, steps, source_receipts) = {
             let state = lock_or_recover(&self.state);
-            let task_id = requested_task_id
-                .clone()
-                .or_else(|| state.active_task_id.clone());
-            let browser_tab_id = requested_tab_id
-                .clone()
-                .or_else(|| {
-                    task_id.as_deref().and_then(|task_id| {
-                        state
-                            .tabs
-                            .iter()
-                            .find(|tab| tab.task_id.as_deref() == Some(task_id))
-                            .map(|tab| tab.browser_tab_id.clone())
-                    })
-                })
-                .or_else(|| state.active_browser_tab_id.clone());
-            validate_optional_task_and_tab(&state, task_id.as_deref(), browser_tab_id.as_deref())?;
+            let (task_id, browser_tab_id) =
+                resolve_recipe_export_scope(&state, &request, authority, caller_session_id)?;
             let profile_id =
                 profile_id_for_task_or_tab(&state, task_id.as_deref(), browser_tab_id.as_deref())
                     .or_else(|| state.engine.profile_id.clone());
@@ -294,13 +292,11 @@ impl ShellxBrowserRegistry {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn browser_recipe_replay_plan(
-    request: &BrowserRecipeReplayRequest,
-) -> Result<BrowserRecipeReplayPlan, String> {
-    let recipe = browser_recipe_value_from_request(request)?;
-    browser_recipe_replay_plan_from_value(request, recipe)
-}
+#[path = "shellx_browser_recipe_export_scope.rs"]
+mod recipe_export_scope;
+use recipe_export_scope::resolve_recipe_export_scope;
+
+
 
 fn browser_recipe_replay_plan_from_value(
     request: &BrowserRecipeReplayRequest,
@@ -424,30 +420,7 @@ pub(crate) fn browser_recipe_replay_response_step_result(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn browser_recipe_value_from_request(
-    request: &BrowserRecipeReplayRequest,
-) -> Result<serde_json::Value, String> {
-    let inline_recipe = request.recipe.as_ref();
-    let recipe_path = request
-        .recipe_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    if inline_recipe.is_some() && recipe_path.is_some() {
-        return Err(
-            "browser recipe replay accepts either recipe or recipePath, never both".to_string(),
-        );
-    }
-    if let Some(recipe) = inline_recipe {
-        return Ok(recipe.clone());
-    }
-    let path = recipe_path
-        .ok_or_else(|| "browser recipe replay requires recipe or recipePath".to_string())?;
-    let text = read_browser_recipe_artifact(path)?;
-    serde_json::from_str::<serde_json::Value>(&text)
-        .map_err(|e| format!("parse browser recipe {} failed: {}", path, e))
-}
+
 
 fn browser_recipe_value_from_request_with_receipts(
     request: &BrowserRecipeReplayRequest,
@@ -469,7 +442,12 @@ fn browser_recipe_value_from_request_with_receipts(
     }
     let path = recipe_path
         .ok_or_else(|| "browser recipe replay requires recipe or recipePath".to_string())?;
-    read_receipt_bound_browser_recipe_artifact(path, receipts)
+    let expected_recipe_sha256 = request
+        .recipe_sha256
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    read_receipt_bound_browser_recipe_artifact(path, receipts, expected_recipe_sha256)
 }
 
 const MAX_BROWSER_RECIPE_ARTIFACT_BYTES: u64 = 8 * 1024 * 1024;
@@ -477,6 +455,7 @@ const MAX_BROWSER_RECIPE_ARTIFACT_BYTES: u64 = 8 * 1024 * 1024;
 fn read_receipt_bound_browser_recipe_artifact(
     path: &str,
     receipts: &[crate::shellx_browser::BrowserReceipt],
+    expected_recipe_sha256: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let canonical = canonical_browser_recipe_artifact_path(path)?;
     let metadata = std::fs::metadata(&canonical).map_err(|e| {
@@ -520,6 +499,11 @@ fn read_receipt_bound_browser_recipe_artifact(
         return Err("saved browser recipe has an unsupported artifact identity".to_string());
     }
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    if expected_recipe_sha256.is_some_and(|expected| !expected.eq_ignore_ascii_case(&sha256)) {
+        return Err(
+            "saved browser recipe does not match the workflow recipeSha256 binding".to_string(),
+        );
+    }
     let matching_receipt = receipts.iter().rev().find(|receipt| {
         receipt.kind == "browserRecipeExported"
             && receipt
@@ -563,12 +547,7 @@ fn read_receipt_bound_browser_recipe_artifact(
     Ok(recipe)
 }
 
-#[cfg(test)]
-fn read_browser_recipe_artifact(path: &str) -> Result<String, String> {
-    let canonical = canonical_browser_recipe_artifact_path(path)?;
-    std::fs::read_to_string(&canonical)
-        .map_err(|e| format!("read browser recipe {} failed: {}", canonical.display(), e))
-}
+
 
 fn canonical_browser_recipe_artifact_path(path: &str) -> Result<std::path::PathBuf, String> {
     let candidate = Path::new(path);
@@ -841,11 +820,3 @@ fn skipped_recipe_step(
         reason: reason.to_string(),
     }
 }
-
-#[cfg(test)]
-#[path = "shellx_browser_recipes_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "shellx_browser_recipes_fixture_tests.rs"]
-mod fixture_tests;

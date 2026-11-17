@@ -1,5 +1,6 @@
 import type { DebugHighlightRequest } from "../components/DebugHighlightOverlay";
 import { normalizeDebugElementObservationFields } from "./debug-element-observation";
+import { validElementHitTest } from "./debug-element-geometry";
 
 export function normalizeDebugHighlightRequests(value: unknown): DebugHighlightRequest[] | null {
   if (!Array.isArray(value)) return null;
@@ -10,6 +11,10 @@ export function normalizeDebugHighlightRequests(value: unknown): DebugHighlightR
       const selector = typeof body.selector === "string" ? body.selector.trim() : "";
       if (!selector) return null;
       const normalized: DebugHighlightRequest = { selector };
+      if (body.hitTest !== undefined && body.hitTest !== null) {
+        if (!validElementHitTest(body.hitTest)) return null;
+        normalized.hitTest = { ...body.hitTest };
+      }
       if (typeof body.id === "string" && body.id.trim()) normalized.id = body.id.trim();
       if (typeof body.label === "string" && body.label.trim()) normalized.label = body.label.trim();
       if (typeof body.color === "string" && body.color.trim()) normalized.color = body.color.trim();

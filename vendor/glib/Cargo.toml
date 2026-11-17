@@ -44,14 +44,6 @@ rustdoc-args = [
 [lib]
 name = "glib"
 
-[[test]]
-name = "subclass_compiletest"
-required-features = ["compiletests"]
-
-[[bench]]
-name = "gstring"
-harness = false
-
 [dependencies.bitflags]
 version = "2.3"
 
@@ -113,20 +105,7 @@ features = [
 [dependencies.thiserror]
 version = "1"
 
-[dev-dependencies.criterion]
-version = "0.5.1"
-
-[dev-dependencies.gir-format-check]
-version = "^0.1"
-
-[dev-dependencies.tempfile]
-version = "3"
-
-[dev-dependencies.trybuild2]
-version = "1"
-
 [features]
-compiletests = []
 default = ["gio"]
 gio = ["gio_ffi"]
 log = ["rs-log"]

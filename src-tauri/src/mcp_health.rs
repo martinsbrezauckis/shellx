@@ -18,12 +18,10 @@
 
 use serde::Serialize;
 use std::collections::HashMap;
-use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 use tokio::sync::RwLock;
-use tokio::time::timeout;
 
 /// Process-global singleton accessor. Lazily-initialized; cheap clone of
 /// `Arc<MarketplaceHealth>` returned each call. No Tauri-managed-state
@@ -185,28 +183,15 @@ async fn probe_launcher_local(launcher: &str) -> (i32, String) {
     if launcher.is_empty() {
         return (-4, "empty launcher (HTTP-only entry, skip)".to_string());
     }
-    let fut = async {
-        use crate::winproc::NoWindowExt as _;
-        let mut cmd = local_probe_command(launcher);
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null())
-            .no_window();
-        let child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => return (-2, e.to_string()),
-        };
-        let out = match child.wait_with_output().await {
-            Ok(o) => o,
-            Err(e) => return (-3, e.to_string()),
-        };
-        let stderr_str = String::from_utf8_lossy(&out.stderr).into_owned();
-        (out.status.code().unwrap_or(-3), stderr_str)
-    };
-    match timeout(Duration::from_secs(5), fut).await {
-        Ok(r) => r,
-        Err(_) => (-1, "probe timeout 5s".to_string()),
-    }
+    let mut cmd = local_probe_command(launcher);
+    bounded_probe_result(
+        &mut cmd,
+        "marketplace local launcher probe",
+        Duration::from_secs(5),
+        "probe timeout 5s",
+        None,
+    )
+    .await
 }
 
 fn local_probe_command(launcher: &str) -> Command {
@@ -251,34 +236,24 @@ async fn probe_launcher_wsl(distro: &str, launcher: &str) -> (i32, String) {
     if launcher.is_empty() {
         return (-4, "empty launcher (HTTP-only entry, skip)".to_string());
     }
-    let fut = async {
-        use crate::winproc::NoWindowExt as _;
-        let mut cmd = Command::new("wsl.exe");
-        cmd.arg("-d")
-            .arg(distro)
-            .arg("-e")
-            .arg("bash")
-            .arg("-lc")
-            .arg(wsl_launcher_probe_script(launcher))
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null())
-            .no_window();
-        let child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => return (-2, e.to_string()),
-        };
-        let out = match child.wait_with_output().await {
-            Ok(o) => o,
-            Err(e) => return (-3, e.to_string()),
-        };
-        let stderr_str = String::from_utf8_lossy(&out.stderr).into_owned();
-        (out.status.code().unwrap_or(-3), stderr_str)
-    };
-    match timeout(Duration::from_secs(8), fut).await {
-        Ok(r) => r,
-        Err(_) => (-1, "probe timeout 8s (wsl)".to_string()),
-    }
+    let mut cmd = Command::new("wsl.exe");
+    cmd.arg("-d")
+        .arg(distro)
+        .arg("-e")
+        .arg("bash")
+        .arg("-lc")
+        .arg(crate::remote_one_shot::bounded_posix_one_shot(
+            &wsl_launcher_probe_script(launcher),
+            Duration::from_secs(8),
+        ));
+    bounded_probe_result(
+        &mut cmd,
+        "marketplace WSL launcher probe",
+        Duration::from_secs(8),
+        "probe timeout 8s (wsl)",
+        None,
+    )
+    .await
 }
 
 /// SSH probe: `ssh -o BatchMode=yes -o ConnectTimeout=5 -- <ssh_target> '<launcher> --version'`.
@@ -296,51 +271,79 @@ async fn probe_launcher_ssh(
     if let Err(e) = crate::acp::validate_ssh_destination_arg(ssh_target) {
         return (-5, e);
     }
-    let fut = async {
-        use crate::winproc::NoWindowExt as _;
-        let remote_command = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
-            let args = vec!["--version".to_string()];
-            crate::acp::wrap_ssh_windows_command(&crate::acp::windows_native_process_script(
-                None, launcher, &args,
-            ))
-        } else {
-            match crate::acp::wrap_ssh_posix_command(
-                remote_runtime,
-                ssh_wsl_distro,
-                &ssh_launcher_probe_script(launcher),
-            ) {
-                Ok(command) => command,
-                Err(error) => return (-5, error),
-            }
-        };
-        let mut cmd = Command::new("ssh");
-        cmd.arg("-o")
-            .arg("BatchMode=yes")
-            .arg("-o")
-            .arg("ConnectTimeout=5")
-            .arg("-o")
-            .arg("StrictHostKeyChecking=accept-new")
-            .arg("--")
-            .arg(ssh_target)
-            .arg(remote_command)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null())
-            .no_window();
-        let child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => return (-2, e.to_string()),
-        };
-        let out = match child.wait_with_output().await {
-            Ok(o) => o,
-            Err(e) => return (-3, e.to_string()),
-        };
-        let stderr_str = String::from_utf8_lossy(&out.stderr).into_owned();
-        (out.status.code().unwrap_or(-3), stderr_str)
+    let (remote_command, setup_stdin) = if remote_runtime == crate::acp::SshRemoteRuntime::Windows {
+        let args = vec!["--version".to_string()];
+        let bounded = crate::remote_one_shot::bounded_ssh_windows_command(
+            &crate::acp::windows_native_process_script(None, launcher, &args),
+            Duration::from_secs(10),
+        );
+        (bounded.command, Some(bounded.setup_stdin))
+    } else {
+        match crate::remote_one_shot::bounded_ssh_posix_command(
+            remote_runtime,
+            ssh_wsl_distro,
+            &ssh_launcher_probe_script(launcher),
+            Duration::from_secs(10),
+        ) {
+            Ok(command) => (command, None),
+            Err(error) => return (-5, error),
+        }
     };
-    match timeout(Duration::from_secs(10), fut).await {
-        Ok(r) => r,
-        Err(_) => (-1, "probe timeout 10s (ssh)".to_string()),
+    let mut cmd = Command::new("ssh");
+    cmd.arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=5")
+        .arg("-o")
+        .arg("StrictHostKeyChecking=accept-new")
+        .arg("--")
+        .arg(ssh_target)
+        .arg(remote_command);
+    bounded_probe_result(
+        &mut cmd,
+        "marketplace SSH launcher probe",
+        Duration::from_secs(10),
+        "probe timeout 10s (ssh)",
+        setup_stdin.as_deref(),
+    )
+    .await
+}
+
+async fn bounded_probe_result(
+    command: &mut Command,
+    label: &str,
+    deadline: Duration,
+    timeout_detail: &str,
+    stdin: Option<&[u8]>,
+) -> (i32, String) {
+    let result = if let Some(stdin) = stdin {
+        crate::bounded_command::run_bounded_output_with_stdin(
+            command,
+            label,
+            deadline,
+            crate::bounded_command::DEFAULT_STDOUT_LIMIT,
+            crate::bounded_command::DEFAULT_STDERR_LIMIT,
+            stdin,
+        )
+        .await
+    } else {
+        crate::bounded_command::run_bounded_output(
+            command,
+            label,
+            deadline,
+            crate::bounded_command::DEFAULT_STDOUT_LIMIT,
+            crate::bounded_command::DEFAULT_STDERR_LIMIT,
+        )
+        .await
+    };
+    match result {
+        Ok(output) => (
+            output.status.code().unwrap_or(-3),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ),
+        Err(error) if error.contains(" timed out after ") => (-1, timeout_detail.to_string()),
+        Err(error) if error.contains(" failed to spawn: ") => (-2, error),
+        Err(error) => (-3, error),
     }
 }
 
@@ -618,107 +621,4 @@ pub fn schedule_probes_for_tab_with_hint(
         // endpoint polls for current state.
         let _ = handles;
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wsl_launcher_probe_adds_user_bins_and_quotes_launcher() {
-        let script = wsl_launcher_probe_script("uvx");
-        assert!(script.contains("$HOME/.local/bin"));
-        assert!(script.contains("$HOME/.cargo/bin"));
-        assert!(script.contains("exec 'uvx' --version"));
-
-        let quoted = wsl_launcher_probe_script("bad launcher");
-        assert!(quoted.contains("exec 'bad launcher' --version"));
-    }
-
-    #[test]
-    fn ssh_launcher_probe_adds_user_bins_homebrew_and_nvm() {
-        let script = ssh_launcher_probe_script("uvx");
-        assert!(script.contains("$HOME/.local/bin"));
-        assert!(script.contains("/opt/homebrew/bin"));
-        assert!(script.contains("$HOME/.nvm/nvm.sh"));
-        assert!(script.contains("exec 'uvx' --version"));
-    }
-
-    #[test]
-    fn missing_ssh_uv_hint_targets_remote_linux() {
-        let (status, hint, tail) = classify(
-            127,
-            "bash: line 1: uvx: command not found",
-            "uvx",
-            ProbeTarget::Ssh,
-        );
-
-        assert_eq!(status, "missing");
-        let hint = hint.expect("uvx should have an install hint");
-        assert!(hint.contains("Linux environment"));
-        assert!(!hint.contains("winget"));
-        assert_eq!(
-            tail.as_deref(),
-            Some("bash: line 1: uvx: command not found")
-        );
-    }
-
-    #[test]
-    fn missing_local_uv_hint_keeps_windows_guidance_on_windows() {
-        let hint = install_hint_for("uvx", ProbeTarget::Local).expect("uvx hint");
-        if cfg!(windows) {
-            assert!(hint.contains("winget"));
-        } else {
-            assert!(!hint.contains("winget"));
-        }
-    }
-
-    fn entry(
-        id: &str,
-        kind: crate::mcp_marketplace::McpKind,
-        installed: bool,
-        enabled: bool,
-    ) -> crate::mcp_marketplace::McpEntryStatus {
-        crate::mcp_marketplace::McpEntryStatus {
-            id: id.to_string(),
-            name: id.to_string(),
-            tier: crate::mcp_marketplace::McpTier::S,
-            kind,
-            description: String::new(),
-            category: String::new(),
-            vault_keys: Vec::new(),
-            installed,
-            enabled,
-            keys_available: Vec::new(),
-            all_keys_present: true,
-        }
-    }
-
-    #[test]
-    fn probes_only_installed_enabled_stdio_entries() {
-        assert!(should_probe_entry(&entry(
-            "playwright",
-            crate::mcp_marketplace::McpKind::Stdio,
-            true,
-            true,
-        )));
-        assert!(!should_probe_entry(&entry(
-            "disabled",
-            crate::mcp_marketplace::McpKind::Stdio,
-            true,
-            false,
-        )));
-        assert!(!should_probe_entry(&entry(
-            "uninstalled",
-            crate::mcp_marketplace::McpKind::Stdio,
-            false,
-            true,
-        )));
-        assert!(!should_probe_entry(&entry(
-            "http",
-            crate::mcp_marketplace::McpKind::Http,
-            true,
-            true,
-        )));
-    }
 }

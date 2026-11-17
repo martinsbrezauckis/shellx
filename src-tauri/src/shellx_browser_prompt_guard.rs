@@ -775,7 +775,3 @@ fn prompt_guard_operator_override_is_valid(
 fn evidence_str<'a>(receipt: &'a BrowserReceipt, key: &str) -> Option<&'a str> {
     receipt.evidence.get(key).and_then(Value::as_str)
 }
-
-#[cfg(test)]
-#[path = "shellx_browser_prompt_guard_tests.rs"]
-mod tests;

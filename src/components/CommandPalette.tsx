@@ -1,5 +1,5 @@
 /**
- * src/components/CommandPalette.tsx — ⌘K command palette (§15.1).
+ * src/components/CommandPalette.tsx — ⌘K command palette.
  *
  * Opens from anywhere (including inside the prompt input — ⌘K is a
  * universal binding). Lists:

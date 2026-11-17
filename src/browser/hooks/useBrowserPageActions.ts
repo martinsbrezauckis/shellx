@@ -3,6 +3,7 @@ import type { MouseEvent } from "react";
 import {
   browserApiPostJson,
   copyBrowserLocalArtifact,
+  declineBrowserNativeDownload,
   grantBrowserTransfer,
   writeBrowserTextArtifact,
 } from "../api";
@@ -52,6 +53,7 @@ interface BrowserPageActionsOptions {
   setError: (message: string | null) => void;
   startBrowserTaskWithGoal: (goal: string, startUrl?: string | null) => Promise<void>;
   onExplainStart: () => void;
+  onNativeDownloadDecision: () => Promise<void>;
   onSaveComplete: () => void;
   onSaveStart: () => void;
 }
@@ -69,6 +71,7 @@ export function useBrowserPageActions(options: BrowserPageActionsOptions) {
     setError,
     startBrowserTaskWithGoal,
     onExplainStart,
+    onNativeDownloadDecision,
     onSaveComplete,
     onSaveStart,
   } = options;
@@ -337,7 +340,62 @@ export function useBrowserPageActions(options: BrowserPageActionsOptions) {
     });
   };
 
+  const approveNativeDownload = (
+    transfer: BrowserTransferEntry,
+    event: MouseEvent<HTMLButtonElement>,
+  ) => {
+    if (!isTrustedShellxUserEvent(event)) {
+      setError("Approving a Browser download requires a direct user click.");
+      return;
+    }
+    if (
+      transfer.direction !== "download"
+      || transfer.status !== "requested"
+      || transfer.requiresApproval !== true
+      || !transfer.url
+    ) {
+      setError("This Browser download is no longer awaiting approval.");
+      return;
+    }
+    void runBusy(async () => {
+      await grantBrowserTransfer({
+        transferId: transfer.transferId,
+        direction: "download",
+        origin: transfer.url,
+        ttlSeconds: 300,
+      });
+      await onNativeDownloadDecision();
+      onSaveComplete();
+    });
+  };
+
+  const declineNativeDownload = (
+    transfer: BrowserTransferEntry,
+    event: MouseEvent<HTMLButtonElement>,
+  ) => {
+    if (!isTrustedShellxUserEvent(event)) {
+      setError("Declining a Browser download requires a direct user click.");
+      return;
+    }
+    if (
+      transfer.direction !== "download"
+      || transfer.status !== "requested"
+      || transfer.requiresApproval !== true
+      || transfer.canDeclineNativeDownload !== true
+    ) {
+      setError("This Browser download is no longer awaiting a decision.");
+      return;
+    }
+    void runBusy(async () => {
+      await declineBrowserNativeDownload({ transferId: transfer.transferId });
+      await onNativeDownloadDecision();
+      onSaveComplete();
+    });
+  };
+
   return {
+    approveNativeDownload,
+    declineNativeDownload,
     chooseDefaultDownloadFolder,
     requestChatExplainPage,
     requestPageSave,

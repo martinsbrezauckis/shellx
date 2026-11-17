@@ -19,8 +19,7 @@ pub use agent_requests::{
 };
 pub use backend::{
     compat_key_to_item_id, SetupRequest, SetupTarget, ShellxVaultBackend, ShellxVaultKeyMeta,
-    ShellxVaultMode, ShellxVaultStatus, UnlockRequest, VaultDebugAuditRecord,
-    VaultDebugProbeResponse, VaultProfile, VaultResourceKind,
+    ShellxVaultMode, ShellxVaultStatus, UnlockRequest, VaultProfile, VaultResourceKind,
 };
 pub use grants::{
     GrantActorContext, GrantDecision, GrantOperation, GrantRequest, GrantScope, GrantSummary,

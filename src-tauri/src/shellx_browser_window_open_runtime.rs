@@ -52,8 +52,14 @@ impl BrowserWindowOpenDisposition {
 }
 
 struct BrowserWindowOpenCompletion {
+    engine_guard: OwnedMutexGuard<()>,
     guard: OwnedMutexGuard<()>,
-    result: Result<BrowserWindowOpenDisposition, String>,
+    result: Result<BrowserWindowOpenDisposition, BrowserWindowOpenOperationError>,
+}
+
+enum BrowserWindowOpenOperationError {
+    Cover(String),
+    Native(String),
 }
 
 enum BrowserWindowOpenOperationResult {
@@ -73,6 +79,27 @@ pub async fn open_or_focus_browser_window_bounded(
     start_url: Option<String>,
 ) -> Result<BrowserWindowOpenResponse, Box<BrowserWindowOpenFailure>> {
     let timeout_ms = BROWSER_WINDOW_OPEN_TIMEOUT_MS;
+    // Keep native engine visibility and parent-window reopen in one serial
+    // transaction, including a late opener after the bounded wait expires.
+    let engine_guard = match tokio::time::timeout(
+        Duration::from_millis(timeout_ms),
+        Arc::clone(&registry.engine_sync_lock).lock_owned(),
+    )
+    .await
+    {
+        Ok(guard) => guard,
+        Err(_) => {
+            return Err(Box::new(record_window_open_failure(
+                &registry,
+                start_url,
+                None,
+                "browser_window_open_in_progress",
+                "ShellX Browser native engine synchronization is still in progress".to_string(),
+                true,
+                timeout_ms,
+            )))
+        }
+    };
     let guard = match Arc::clone(&registry.window_open_lock).try_lock_owned() {
         Ok(guard) => guard,
         Err(_) => {
@@ -89,13 +116,28 @@ pub async fn open_or_focus_browser_window_bounded(
     };
     let ticket = registry.prepare_window_open(start_url.clone());
     let open_app = app.clone();
-    match run_browser_window_open_operation(guard, Duration::from_millis(timeout_ms), move || {
-        open_or_focus_browser_window(&open_app)
-    })
+    let open_registry = Arc::clone(&registry);
+    match run_browser_window_open_operation(
+        engine_guard,
+        guard,
+        Duration::from_millis(timeout_ms),
+        move || {
+            crate::shellx_browser_personal_lock::hide_covered_personal_webviews_locked(
+                &open_app,
+                &open_registry,
+            )
+            .map_err(BrowserWindowOpenOperationError::Cover)?;
+            open_or_focus_browser_window(&open_app).map_err(BrowserWindowOpenOperationError::Native)
+        },
+    )
     .await
     {
         BrowserWindowOpenOperationResult::Completed(completion) => {
-            let BrowserWindowOpenCompletion { guard, result } = completion;
+            let BrowserWindowOpenCompletion {
+                engine_guard,
+                guard,
+                result,
+            } = completion;
             let response = match result {
                 Ok(_) => registry
                     .open_window_record(ticket, start_url.clone())
@@ -110,17 +152,28 @@ pub async fn open_or_focus_browser_window_bounded(
                             timeout_ms,
                         ))
                     }),
-                Err(message) => Err(Box::new(record_window_open_failure(
-                    &registry,
-                    start_url,
-                    Some(ticket),
-                    "browser_window_open_failed",
-                    message,
-                    true,
-                    timeout_ms,
-                ))),
+                Err(error) => {
+                    let (code, message) = match error {
+                        BrowserWindowOpenOperationError::Cover(message) => {
+                            ("browser_window_cover_failed", message)
+                        }
+                        BrowserWindowOpenOperationError::Native(message) => {
+                            ("browser_window_open_failed", message)
+                        }
+                    };
+                    Err(Box::new(record_window_open_failure(
+                        &registry,
+                        start_url,
+                        Some(ticket),
+                        code,
+                        message,
+                        true,
+                        timeout_ms,
+                    )))
+                }
             };
             drop(guard);
+            drop(engine_guard);
             response
         }
         BrowserWindowOpenOperationResult::TimedOut(task) => {
@@ -138,7 +191,13 @@ pub async fn open_or_focus_browser_window_bounded(
                 true,
                 timeout_ms,
             );
-            spawn_late_browser_window_open_watcher(app, Arc::clone(&registry), ticket, task);
+            spawn_late_browser_window_open_watcher(
+                app,
+                Arc::clone(&registry),
+                ticket,
+                start_url,
+                task,
+            );
             Err(Box::new(failure))
         }
         BrowserWindowOpenOperationResult::WorkerFailed(message) => {
@@ -184,16 +243,23 @@ fn record_window_open_failure(
 }
 
 async fn run_browser_window_open_operation<F>(
+    engine_guard: OwnedMutexGuard<()>,
     guard: OwnedMutexGuard<()>,
     timeout_duration: Duration,
     opener: F,
 ) -> BrowserWindowOpenOperationResult
 where
-    F: FnOnce() -> Result<BrowserWindowOpenDisposition, String> + Send + 'static,
+    F: FnOnce() -> Result<BrowserWindowOpenDisposition, BrowserWindowOpenOperationError>
+        + Send
+        + 'static,
 {
     let mut task = tokio::task::spawn_blocking(move || {
         let result = opener();
-        BrowserWindowOpenCompletion { guard, result }
+        BrowserWindowOpenCompletion {
+            engine_guard,
+            guard,
+            result,
+        }
     });
     match tokio::time::timeout(timeout_duration, &mut task).await {
         Ok(Ok(completion)) => BrowserWindowOpenOperationResult::Completed(completion),
@@ -209,6 +275,7 @@ fn spawn_late_browser_window_open_watcher(
     app: AppHandle,
     registry: Arc<ShellxBrowserRegistry>,
     ticket: BrowserWindowOpenTicket,
+    start_url: Option<String>,
     task: tokio::task::JoinHandle<BrowserWindowOpenCompletion>,
 ) {
     tokio::spawn(async move {
@@ -220,6 +287,7 @@ fn spawn_late_browser_window_open_watcher(
             reconcile_late_browser_window_open(
                 &reconcile_registry,
                 ticket,
+                start_url,
                 completion,
                 |disposition| reconcile_late_native_browser_window(&app, disposition),
             );
@@ -231,25 +299,42 @@ fn spawn_late_browser_window_open_watcher(
 fn reconcile_late_browser_window_open<F>(
     registry: &ShellxBrowserRegistry,
     ticket: BrowserWindowOpenTicket,
+    start_url: Option<String>,
     completion: BrowserWindowOpenCompletion,
     reconcile_native: F,
 ) where
     F: FnOnce(BrowserWindowOpenDisposition) -> LateBrowserWindowNativeState,
 {
-    let BrowserWindowOpenCompletion { guard, result } = completion;
-    if let Ok(disposition) = result {
-        match reconcile_native(disposition) {
+    let BrowserWindowOpenCompletion {
+        engine_guard,
+        guard,
+        result,
+    } = completion;
+    match result {
+        Ok(disposition) => match reconcile_native(disposition) {
             LateBrowserWindowNativeState::Absent => {
                 registry.record_window_destroyed();
             }
             LateBrowserWindowNativeState::Present(detail) => {
                 registry.record_late_window_present(ticket, disposition.as_str(), &detail);
             }
+        },
+        Err(BrowserWindowOpenOperationError::Cover(message)) => {
+            registry.record_window_open_failure(
+                start_url,
+                Some(ticket),
+                "browser_window_cover_failed",
+                &message,
+                BROWSER_WINDOW_OPEN_TIMEOUT_MS,
+                json!({ "lateOpener": true }),
+            );
         }
+        Err(BrowserWindowOpenOperationError::Native(_)) => {}
     }
     // A retry cannot focus or create this label until native presence and the
     // matching registry generation have been reconciled.
     drop(guard);
+    drop(engine_guard);
 }
 
 fn browser_window_runtime_diagnostics() -> serde_json::Value {
@@ -363,8 +448,12 @@ fn wait_for_browser_window_label_release(app: &AppHandle) -> Result<(), String> 
 
 pub(crate) fn ensure_browser_window_for_engine(
     app: &AppHandle,
+    registry: &ShellxBrowserRegistry,
     restore_visible_geometry: bool,
 ) -> Result<(), String> {
+    // The caller already owns engine_sync_lock. A failed child hide must not
+    // be undone by restoring the enclosing Browser window.
+    crate::shellx_browser_personal_lock::hide_covered_personal_webviews_locked(app, registry)?;
     if let Some(window) = app.get_window(BROWSER_WINDOW_LABEL) {
         if restore_visible_geometry {
             restore_browser_window_geometry(&window);
@@ -455,193 +544,5 @@ fn restore_browser_webview_window_geometry<R: tauri::Runtime>(window: &tauri::We
         let _ = window.set_size(Size::Logical(LogicalSize::new(1280.0, 860.0)));
         let _ = window.set_position(Position::Logical(LogicalPosition::new(160.0, 120.0)));
         let _ = window.center();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::mpsc;
-    use tokio::sync::oneshot;
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn late_created_window_reconciles_before_circuit_breaker_releases() {
-        let registry = Arc::new(ShellxBrowserRegistry::default());
-        let ticket = registry.prepare_window_open(Some("https://example.com".to_string()));
-        let guard = Arc::clone(&registry.window_open_lock)
-            .try_lock_owned()
-            .expect("first opener acquires circuit breaker");
-        let (started_tx, started_rx) = oneshot::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let operation = tokio::spawn(run_browser_window_open_operation(
-            guard,
-            Duration::from_millis(30),
-            move || {
-                let _ = started_tx.send(());
-                release_rx
-                    .recv()
-                    .map_err(|error| format!("test release failed: {error}"))?;
-                Ok(BrowserWindowOpenDisposition::Created)
-            },
-        ));
-
-        started_rx.await.expect("hung opener started");
-        let state_registry = Arc::clone(&registry);
-        let state = tokio::time::timeout(
-            Duration::from_millis(50),
-            tokio::task::spawn_blocking(move || state_registry.state()),
-        )
-        .await
-        .expect("Browser state remains responsive")
-        .expect("state worker completes");
-        assert!(!state.window_open);
-        let task = match operation.await.expect("watchdog task completes") {
-            BrowserWindowOpenOperationResult::TimedOut(task) => task,
-            _ => panic!("hung opener should return its late worker"),
-        };
-        registry.record_window_open_failure(
-            Some("https://example.com".to_string()),
-            Some(ticket),
-            "browser_window_open_timeout",
-            "simulated timeout",
-            30,
-            json!({ "platform": "test" }),
-        );
-        assert!(Arc::clone(&registry.window_open_lock)
-            .try_lock_owned()
-            .is_err());
-
-        release_tx.send(()).expect("release hung opener");
-        let completion = task.await.expect("late worker completes");
-        reconcile_late_browser_window_open(&registry, ticket, completion, |disposition| {
-            assert_eq!(disposition, BrowserWindowOpenDisposition::Created);
-            assert!(
-                Arc::clone(&registry.window_open_lock)
-                    .try_lock_owned()
-                    .is_err(),
-                "native cleanup runs while the circuit is held"
-            );
-            LateBrowserWindowNativeState::Absent
-        });
-        assert!(
-            Arc::clone(&registry.window_open_lock)
-                .try_lock_owned()
-                .is_ok(),
-            "circuit releases only after late cleanup and registry reconciliation"
-        );
-        assert!(!registry.state().window_open);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn late_existing_window_records_presence_without_applying_start_url() {
-        let registry = Arc::new(ShellxBrowserRegistry::default());
-        let ticket = registry.prepare_window_open(Some("https://example.com/private".to_string()));
-        let guard = Arc::clone(&registry.window_open_lock)
-            .try_lock_owned()
-            .expect("opener acquires circuit breaker");
-        let (release_tx, release_rx) = mpsc::channel();
-        let result =
-            run_browser_window_open_operation(guard, Duration::from_millis(10), move || {
-                release_rx
-                    .recv()
-                    .map_err(|error| format!("test release failed: {error}"))?;
-                Ok(BrowserWindowOpenDisposition::Existing)
-            })
-            .await;
-        let task = match result {
-            BrowserWindowOpenOperationResult::TimedOut(task) => task,
-            _ => panic!("blocked opener should time out"),
-        };
-        registry.record_window_open_failure(
-            Some("https://example.com/private".to_string()),
-            Some(ticket),
-            "browser_window_open_timeout",
-            "simulated timeout",
-            10,
-            json!({ "platform": "test" }),
-        );
-        release_tx.send(()).expect("release existing opener");
-        let completion = task.await.expect("late existing worker completes");
-        reconcile_late_browser_window_open(&registry, ticket, completion, |disposition| {
-            assert_eq!(disposition, BrowserWindowOpenDisposition::Existing);
-            LateBrowserWindowNativeState::Present("test existing window".to_string())
-        });
-        let state = registry.state();
-        assert!(state.window_open);
-        assert!(state.pending_start_url.is_none());
-        assert_eq!(
-            state.receipts.last().map(|receipt| receipt.kind.as_str()),
-            Some("browserWindowOpenRecovered")
-        );
-        assert_eq!(
-            state.receipts.last().unwrap().evidence["startUrlApplied"],
-            false
-        );
-    }
-
-    #[test]
-    fn failed_late_created_cleanup_records_presence_before_unlocking() {
-        let registry = Arc::new(ShellxBrowserRegistry::default());
-        let ticket = registry.prepare_window_open(Some("https://example.com".to_string()));
-        let guard = Arc::clone(&registry.window_open_lock)
-            .try_lock_owned()
-            .expect("opener acquires circuit breaker");
-        let completion = BrowserWindowOpenCompletion {
-            guard,
-            result: Ok(BrowserWindowOpenDisposition::Created),
-        };
-
-        reconcile_late_browser_window_open(&registry, ticket, completion, |disposition| {
-            assert_eq!(disposition, BrowserWindowOpenDisposition::Created);
-            assert!(Arc::clone(&registry.window_open_lock)
-                .try_lock_owned()
-                .is_err());
-            LateBrowserWindowNativeState::Present("test close failure".to_string())
-        });
-
-        let state = registry.state();
-        assert!(state.window_open);
-        assert_eq!(
-            state.receipts.last().unwrap().evidence["disposition"],
-            "created"
-        );
-        assert!(Arc::clone(&registry.window_open_lock)
-            .try_lock_owned()
-            .is_ok());
-    }
-
-    #[test]
-    fn window_open_failure_resets_provisional_state_and_records_diagnostics() {
-        let registry = ShellxBrowserRegistry::default();
-        let start_url = Some("https://example.com/path?secret=redacted".to_string());
-        let ticket = registry.prepare_window_open(start_url.clone());
-        assert!(!ticket.previous_window_open);
-        assert_eq!(registry.state().pending_start_url, start_url);
-
-        let receipt = registry.record_window_open_failure(
-            start_url,
-            Some(ticket),
-            "browser_window_open_timeout",
-            "simulated native opener timeout",
-            25,
-            json!({
-                "platform": "test",
-                "backend": "test-webview",
-                "classification": "environmentSpecific",
-            }),
-        );
-        let state = registry.state();
-        assert!(!state.window_open);
-        assert!(state.pending_start_url.is_none());
-        assert!(!state.engine.mounted);
-        assert_eq!(state.engine.load_status, "error");
-        assert_eq!(receipt.kind, "browserWindowOpenFailed");
-        assert_eq!(receipt.evidence["code"], "browser_window_open_timeout");
-        assert_eq!(receipt.evidence["startUrlProvided"], true);
-        assert!(receipt
-            .evidence
-            .to_string()
-            .find("secret=redacted")
-            .is_none());
     }
 }

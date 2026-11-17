@@ -1,1 +1,1 @@
-//! Debug and E2E probe foundation for the standalone Vault debug API.
+//! Diagnostics foundation for the standalone Vault debug API.

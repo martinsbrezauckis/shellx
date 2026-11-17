@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type JSX, type PointerEvent } fro
 import { invoke } from "@tauri-apps/api/core";
 import {
   clearWorkPreviewBrowserEvents,
-  buildOwnedClipboardPreviewDiagnostic,
   emptyWorkPreviewState,
   diagnoseWorkPreview,
   formatPreviewDoctorReport,
@@ -23,7 +22,6 @@ import {
 } from "../lib/work-preview";
 import { inTauri } from "../lib/tauri-bridge";
 import { ShellIcon } from "./icons";
-import type { DebugProviderAction } from "../lib/debug-provider-action-fixture";
 
 const START_OPTIONS: Array<{ id: WorkPreviewStartKind; label: string; help: string }> = [
   { id: "auto", label: "Auto", help: "Detect Expo, package dev scripts, or static HTML." },
@@ -60,7 +58,6 @@ export function WorkPreviewPanel({
   onStateChange,
   onOpenPreview,
   onAskGrokToFix,
-  debugClipboardFixture = null,
 }: {
   activeTabId: string | null;
   cwd: string;
@@ -68,7 +65,6 @@ export function WorkPreviewPanel({
   onStateChange?: (state: WorkPreviewState) => void;
   onOpenPreview?: (state: WorkPreviewState) => void;
   onAskGrokToFix?: (state: WorkPreviewState) => void;
-  debugClipboardFixture?: "owned-safe" | null;
 }): JSX.Element {
   const tabId = activeTabId || "default";
   const [state, setState] = useState<WorkPreviewState>(() => (
@@ -189,11 +185,6 @@ export function WorkPreviewPanel({
 
   async function runDoctor(): Promise<void> {
     if (!inTauri() || diagnosing) return;
-    if (debugClipboardFixture === "owned-safe") {
-      setDiagnostic(buildOwnedClipboardPreviewDiagnostic(state));
-      setError(null);
-      return;
-    }
     setDiagnosing(true);
     setError(null);
     try {
@@ -528,11 +519,9 @@ export function WorkPreviewPanel({
 export function WorkPreviewStage({
   state,
   onAskGrokToFix,
-  debugProviderAction,
 }: {
   state: WorkPreviewState | null;
   onAskGrokToFix?: (state: WorkPreviewState) => void;
-  debugProviderAction?: DebugProviderAction | null;
 }): JSX.Element {
   const effective = state ?? emptyWorkPreviewState("default");
   const hasUrl = Boolean(effective.url);
@@ -557,23 +546,13 @@ export function WorkPreviewStage({
   }, [effective.url, frameRevision]);
 
   useEffect(() => {
-    if (debugProviderAction === "work-preview-browser-issue-fix") {
-      setBrowserIssueCount(1);
-      setLastBrowserIssue({
-        t: effective.startedAtMs ?? effective.updatedAtMs,
-        level: "error",
-        message: "SHELLX_RELEASE_PROVIDER_ACTION_BROWSER_ISSUE_035",
-        source: effective.url ?? undefined,
-      });
-      return;
-    }
     const issues = getWorkPreviewBrowserEvents(effective.tabId, {
       url: effective.url,
       sinceMs: effective.startedAtMs,
     }).filter(isPreviewBrowserIssue);
     setBrowserIssueCount(issues.length);
     setLastBrowserIssue(issues[issues.length - 1] ?? null);
-  }, [debugProviderAction, effective.tabId, effective.url, frameRevision]);
+  }, [effective.tabId, effective.url, frameRevision]);
 
   useEffect(() => {
     if (!effective.url) return;

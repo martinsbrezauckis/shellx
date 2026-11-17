@@ -1,14 +1,11 @@
-//! Embeds the web SPA (web/dist) into the binary via memory-serve.
-//! Release builds carry the assets inside the executable (single-binary
-//! deploy); debug builds read the directory at request time (dev velocity).
-//! BUILD ORDER: `pnpm run build` in web/ BEFORE `cargo build --release`,
-//! or the embedded UI is stale/empty — scripts/build-all.sh does both.
+//! Embeds optional standalone Vault web assets via memory-serve.
+//! ShellX uses its own desktop Vault interface and does not bundle the
+//! standalone web app. An empty asset directory keeps this embedded server
+//! buildable when those optional assets are absent.
 
 fn main() {
     let dist = std::path::Path::new("../../web/dist");
-    // Keep plain `cargo test`/`cargo build` working on a fresh checkout
-    // where the web app was never built: embed an empty dir instead of
-    // failing the whole workspace build.
+    // Keep a source build working when the optional web app is absent.
     if !dist.exists() {
         std::fs::create_dir_all(dist).expect("create web/dist placeholder");
     }

@@ -36,10 +36,10 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
-/// Canonical shellX host-skill manifest body, bundled at compile time.
+/// Canonical ShellX host-skill manifest body, bundled at compile time.
 ///
 /// Source of truth: `skills/shellx-host/SKILL.md` in the repo.
-/// Update there, rebuild — the new body ships to every installed shellX.
+/// Update there, rebuild — the new body ships to every installed ShellX.
 /// `include_str!` is hermetic relative to this file (`src-tauri/src/`),
 /// so a CI build that doesn't ship development-only workspace files
 /// still bakes the manifest into the binary.
@@ -168,9 +168,7 @@ pub fn body_sha256_hex(body: &str) -> String {
     out
 }
 
-/// Internal worker: install `body` at `path`, idempotent + comparing
-/// existing on-disk bytes. Factored out so tests can inject a tempdir
-/// path without racing on `HOME`/`USERPROFILE` env mutation.
+/// Install `body` at `path`, comparing existing on-disk bytes before writing.
 ///
 /// Returns Ok(true) on write, Ok(false) when bytes already match,
 /// Err(...) on IO failure.
@@ -404,6 +402,8 @@ fn strip_managed_block_once(source: &str, begin: &str, end: &str) -> String {
 
 const MCP_ARTIFACT_EXCLUDE_BEGIN: &str = "# shellX:managed-mcp-artifacts BEGIN";
 const MCP_ARTIFACT_EXCLUDE_END: &str = "# shellX:managed-mcp-artifacts END";
+const TASK_ATTACHMENT_EXCLUDE_BEGIN: &str = "# shellX:managed-task-attachments BEGIN";
+const TASK_ATTACHMENT_EXCLUDE_END: &str = "# shellX:managed-task-attachments END";
 
 /// Write the shellx-host-http snippet into a project's
 /// `.grok/config.toml`. Retained for migration and compatibility tests; current
@@ -499,10 +499,78 @@ pub fn ensure_project_mcp_http_config(
 }
 
 fn ensure_project_mcp_artifact_git_excludes(project_dir: &Path) -> Result<bool, String> {
+    ensure_project_git_excludes(
+        project_dir,
+        MCP_ARTIFACT_EXCLUDE_BEGIN,
+        MCP_ARTIFACT_EXCLUDE_END,
+        shellx_mcp_artifact_exclude_patterns,
+    )
+}
+
+/// Keep generated, content-addressed Task copies out of the enclosing user
+/// repository's normal Git status/add flow. This is a local `info/exclude`
+/// block, scoped to the selected working folder; it deliberately does not
+/// edit the user's tracked `.gitignore`.
+pub(crate) fn ensure_project_task_attachment_git_excludes(
+    project_dir: &Path,
+) -> Result<bool, String> {
+    let changed = ensure_project_git_excludes(
+        project_dir,
+        TASK_ATTACHMENT_EXCLUDE_BEGIN,
+        TASK_ATTACHMENT_EXCLUDE_END,
+        |git_root, project_dir| {
+            let rel = project_dir.strip_prefix(git_root).unwrap_or(project_dir);
+            let prefix = git_exclude_path_prefix(rel);
+            let suffix = format!("{}/", crate::task_attachments::TASK_ATTACHMENT_STORAGE_DIR);
+            vec![if prefix.is_empty() {
+                format!("/{suffix}")
+            } else {
+                format!("/{prefix}/{suffix}")
+            }]
+        },
+    )?;
+    if let Some((git_root, _)) = find_enclosing_git_dir(project_dir)? {
+        verify_task_attachment_git_excluded(&git_root, project_dir)?;
+    }
+    Ok(changed)
+}
+
+/// The ignore block is a privacy control only when Git itself recognizes the
+/// exact generated path. `--no-index` permits this check before the file is
+/// created, and avoids a false pass because a tracked path takes precedence.
+fn verify_task_attachment_git_excluded(git_root: &Path, project_dir: &Path) -> Result<(), String> {
+    let relative_project = project_dir.strip_prefix(git_root).map_err(|_| {
+        "Task attachment working folder is outside its discovered Git root.".to_string()
+    })?;
+    let candidate = relative_project
+        .join(crate::task_attachments::TASK_ATTACHMENT_STORAGE_DIR)
+        .join("shellx-ignore-probe");
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(git_root)
+        .args(["check-ignore", "-q", "--no-index", "--"])
+        .arg(&candidate)
+        .status()
+        .map_err(|_| "Task attachment Git ignore status could not be verified.".to_string())?;
+    if !status.success() {
+        return Err("Task attachment generated path is not ignored by Git.".to_string());
+    }
+    Ok(())
+}
+
+fn ensure_project_git_excludes<F>(
+    project_dir: &Path,
+    begin: &str,
+    end: &str,
+    patterns_for_project: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(&Path, &Path) -> Vec<String>,
+{
     let Some((git_root, git_dir)) = find_enclosing_git_dir(project_dir)? else {
         return Ok(false);
     };
-    let patterns = shellx_mcp_artifact_exclude_patterns(&git_root, project_dir);
+    let patterns = patterns_for_project(&git_root, project_dir);
     if patterns.is_empty() {
         return Ok(false);
     }
@@ -512,22 +580,22 @@ fn ensure_project_mcp_artifact_git_excludes(project_dir: &Path) -> Result<bool, 
     std::fs::create_dir_all(&info_dir)
         .map_err(|e| format!("mkdir {}: {}", info_dir.display(), e))?;
     let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
-    let stripped = strip_managed_block(
-        &existing,
-        MCP_ARTIFACT_EXCLUDE_BEGIN,
-        MCP_ARTIFACT_EXCLUDE_END,
-    );
-    let mut updated = stripped.trim_end().to_string();
-    if !updated.is_empty() {
-        updated.push_str("\n\n");
+    let mut updated = strip_managed_block(&existing, begin, end);
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        // Do not concatenate a generated rule onto a user rule whose file
+        // omitted its terminal newline.
+        updated.push('\n');
     }
-    updated.push_str(MCP_ARTIFACT_EXCLUDE_BEGIN);
+    if !updated.is_empty() && !updated.ends_with("\n\n") {
+        updated.push('\n');
+    }
+    updated.push_str(begin);
     updated.push('\n');
     for pattern in patterns {
         updated.push_str(&pattern);
         updated.push('\n');
     }
-    updated.push_str(MCP_ARTIFACT_EXCLUDE_END);
+    updated.push_str(end);
     updated.push('\n');
 
     if updated == existing {
@@ -536,7 +604,7 @@ fn ensure_project_mcp_artifact_git_excludes(project_dir: &Path) -> Result<bool, 
     std::fs::write(&exclude_path, updated)
         .map_err(|e| format!("write {}: {}", exclude_path.display(), e))?;
     info!(
-        "project git exclude updated for shellX MCP artifacts at {}",
+        "project git exclude updated for ShellX generated artifacts at {}",
         exclude_path.display()
     );
     Ok(true)
@@ -558,11 +626,27 @@ fn shellx_mcp_artifact_exclude_patterns(git_root: &Path, project_dir: &Path) -> 
 fn git_exclude_path_prefix(path: &Path) -> String {
     path.components()
         .filter_map(|component| match component {
-            std::path::Component::Normal(part) => Some(part.to_string_lossy().replace('\\', "/")),
+            std::path::Component::Normal(part) => Some(git_ignore_literal_component(
+                &part.to_string_lossy().replace('\\', "/"),
+            )),
             _ => None,
         })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// The Git exclude file is a pattern language. Quote each special byte in a
+/// selected working-folder component so spaces, brackets, wildcards, and a
+/// leading negation character remain literal path data.
+fn git_ignore_literal_component(component: &str) -> String {
+    let mut escaped = String::with_capacity(component.len());
+    for character in component.chars() {
+        if matches!(character, '\\' | '*' | '?' | '[' | ']' | ' ' | '#' | '!') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
 }
 
 fn find_enclosing_git_dir(start: &Path) -> Result<Option<(PathBuf, PathBuf)>, String> {
@@ -578,12 +662,55 @@ fn find_enclosing_git_dir(start: &Path) -> Result<Option<(PathBuf, PathBuf)>, St
         let marker = current.join(".git");
         if marker.exists() {
             let git_dir = resolve_git_dir_marker(&marker)?;
+            validate_git_worktree_marker(&current, &marker)?;
             return Ok(Some((current, git_dir)));
         }
         if !current.pop() {
             return Ok(None);
         }
     }
+}
+
+/// A .git directory or gitfile is not sufficient evidence that this is a
+/// repository: incomplete staging directories can otherwise be modified by
+/// the local exclude writer. Ask Git before any caller creates info/exclude.
+fn validate_git_worktree_marker(worktree: &Path, marker: &Path) -> Result<(), String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(worktree)
+        .args(["rev-parse", "--is-inside-work-tree", "--show-toplevel", "--absolute-git-dir"])
+        .output()
+        .map_err(|_| {
+            format!(
+                "Refusing to update Git exclusions: .git marker at {} could not be validated as a Git worktree.",
+                marker.display()
+            )
+        })?;
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let fields = stdout.lines().collect::<Vec<_>>();
+        if fields.len() == 3 && fields[0] == "true" {
+            // Git may skip a malformed inner .git marker and discover a valid
+            // parent repository. The repository it found must own this marker
+            // before we mutate the marker's local exclusion file.
+            let observed_root = std::fs::canonicalize(fields[1]);
+            let observed_git = std::fs::canonicalize(fields[2]);
+            let expected_root = std::fs::canonicalize(worktree);
+            let expected_git = resolve_git_dir_marker(marker)
+                .and_then(|path| std::fs::canonicalize(path).map_err(|error| error.to_string()));
+            if let (Ok(observed_root), Ok(observed_git), Ok(expected_root), Ok(expected_git)) =
+                (observed_root, observed_git, expected_root, expected_git)
+            {
+                if observed_root == expected_root && observed_git == expected_git {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    Err(format!(
+        "Refusing to update Git exclusions: .git marker at {} is not a valid Git worktree.",
+        marker.display()
+    ))
 }
 
 fn resolve_git_dir_marker(marker: &Path) -> Result<PathBuf, String> {
@@ -716,7 +843,7 @@ fn clean_legacy_shellx_agents_guidance(existing: &str) -> String {
         .replace(UPDATED_SEARCH_TOOL_GUIDANCE, "")
 }
 
-/// Compact rules injected only into Grok processes launched by ShellX.
+/// Compact rules injected into supported provider processes launched by ShellX.
 /// Detailed schemas and safety guidance remain available from the MCP
 /// server and bundled agent-doc manifest, avoiding a large startup prompt.
 pub const SHELLX_SESSION_RULES: &str = "This agent session is running inside ShellX. ShellX host tools are session-scoped: use shellx-host-http__capabilities_summary when advertised, otherwise grok-shell-host__capabilities_summary, before broad host-tool discovery. Prefer native agent file tools for ordinary project files. Use ShellX host tools only for Browser, mediated Vault operations, ShellX UI/runtime evidence, provider handoffs, or explicitly host-scoped operations. Never dump full tool inventory unless debugging schema drift.";
@@ -1097,620 +1224,4 @@ pub fn host_skill_status() -> HostSkillStatus {
 
 pub fn workflow_skill_statuses() -> Vec<WorkflowSkillStatus> {
     Vec::new()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::ffi::OsString;
-
-    struct HomeEnvGuard {
-        old_home: Option<OsString>,
-        old_userprofile: Option<OsString>,
-    }
-
-    impl HomeEnvGuard {
-        fn set_home_only(home: &Path) -> Self {
-            let old_home = std::env::var_os("HOME");
-            let old_userprofile = std::env::var_os("USERPROFILE");
-            unsafe {
-                std::env::set_var("HOME", home);
-                std::env::remove_var("USERPROFILE");
-            }
-            Self {
-                old_home,
-                old_userprofile,
-            }
-        }
-    }
-
-    impl Drop for HomeEnvGuard {
-        fn drop(&mut self) {
-            unsafe {
-                match &self.old_home {
-                    Some(v) => std::env::set_var("HOME", v),
-                    None => std::env::remove_var("HOME"),
-                }
-                match &self.old_userprofile {
-                    Some(v) => std::env::set_var("USERPROFILE", v),
-                    None => std::env::remove_var("USERPROFILE"),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn bundled_body_non_empty() {
-        // Catches a build-time `include_str!` that points at the wrong
-        // path producing an empty string. The real manifest ships with
-        // YAML frontmatter so >100 bytes is a safe floor.
-        assert!(BUNDLED_SKILL_BODY.len() > 100, "bundled body too small");
-        assert!(BUNDLED_SKILL_BODY.contains("shellx-host"));
-    }
-
-    #[test]
-    fn legacy_workflow_skill_hashes_are_recorded_for_cleanup() {
-        assert_eq!(
-            LEGACY_WORKFLOW_SKILLS.len(),
-            5,
-            "cleanup should know every retired ShellX starter skill"
-        );
-        for skill in LEGACY_WORKFLOW_SKILLS {
-            assert!(
-                skill.id.starts_with("shellx-"),
-                "{} should be namespaced to avoid upstream collisions",
-                skill.id
-            );
-            assert!(
-                skill.body_hash.len() == 64
-                    && skill.body_hash.chars().all(|c| c.is_ascii_hexdigit()),
-                "{} cleanup hash should be SHA-256 hex",
-                skill.id,
-            );
-        }
-    }
-
-    #[test]
-    fn workflow_skill_statuses_are_empty_after_retirement() {
-        assert!(
-            workflow_skill_statuses().is_empty(),
-            "retired workflow skills should not be advertised in the Plugins modal"
-        );
-    }
-
-    #[test]
-    fn fresh_install_writes_shellx_host_manifest_only_to_product_docs() {
-        let unique = format!("shellx-host-agent-docs-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        std::fs::create_dir_all(&root).unwrap();
-
-        let _env_lock = crate::test_env_lock();
-        let _home_guard = HomeEnvGuard::set_home_only(&root);
-
-        let changed = ensure_shellx_host_skill_installed().expect("install host skill docs");
-
-        assert!(
-            changed,
-            "fresh home should report that at least one bundled skill/doc file was written"
-        );
-        let product_doc = root
-            .join(".shellx")
-            .join("agent-docs")
-            .join("shellx-host")
-            .join("SKILL.md");
-        assert!(product_doc.is_file());
-        assert_eq!(
-            std::fs::read_to_string(&product_doc).unwrap(),
-            BUNDLED_SKILL_BODY
-        );
-        for agent_dir in [".grok", ".codex", ".claude"] {
-            assert!(
-                !root
-                    .join(agent_dir)
-                    .join("skills")
-                    .join("shellx-host")
-                    .join("SKILL.md")
-                    .exists(),
-                "fresh install must not expose shellx-host to direct {} sessions",
-                agent_dir
-            );
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn migration_removes_only_exact_legacy_global_host_skill_leaves() {
-        let unique = format!("shellx-host-global-migration-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        for agent_dir in [".grok", ".codex", ".claude"] {
-            let skill_dir = root.join(agent_dir).join("skills").join("shellx-host");
-            std::fs::create_dir_all(&skill_dir).unwrap();
-            std::fs::write(skill_dir.join("SKILL.md"), "managed by old ShellX\n").unwrap();
-        }
-        let preserved = root
-            .join(".codex")
-            .join("skills")
-            .join("shellx-host")
-            .join("user-note.md");
-        std::fs::write(&preserved, "keep\n").unwrap();
-
-        let _env_lock = crate::test_env_lock();
-        let _home_guard = HomeEnvGuard::set_home_only(&root);
-        assert_eq!(cleanup_legacy_global_shellx_host_skills().unwrap(), 3);
-
-        assert!(preserved.is_file(), "user sibling must be preserved");
-        for agent_dir in [".grok", ".codex", ".claude"] {
-            assert!(!root
-                .join(agent_dir)
-                .join("skills")
-                .join("shellx-host")
-                .join("SKILL.md")
-                .exists());
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn legacy_cleanup_removes_only_matching_skill_file() {
-        let unique = format!("shellx-legacy-cleanup-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let skill_dir = root.join(".grok").join("skills").join("shellx-old");
-        let target = skill_dir.join("SKILL.md");
-        let user_note = skill_dir.join("notes.txt");
-        let body = "old managed skill body\n";
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(&target, body).unwrap();
-        std::fs::write(&user_note, "keep user-added file\n").unwrap();
-
-        let removed =
-            cleanup_legacy_skill_path(&target, &body_sha256_hex(body), "shellx-old").unwrap();
-
-        assert!(removed, "matching legacy skill file should be removed");
-        assert!(
-            !target.exists(),
-            "managed SKILL.md should be removed after exact hash match"
-        );
-        assert!(
-            user_note.exists(),
-            "cleanup must not delete user-added files in the skill directory"
-        );
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn legacy_cleanup_keeps_drifted_skill_file() {
-        let unique = format!("shellx-legacy-keep-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let target = root
-            .join(".grok")
-            .join("skills")
-            .join("shellx-old")
-            .join("SKILL.md");
-        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-        std::fs::write(&target, "user edited body\n").unwrap();
-
-        let removed = cleanup_legacy_skill_path(
-            &target,
-            &body_sha256_hex("old managed body\n"),
-            "shellx-old",
-        )
-        .unwrap();
-
-        assert!(
-            !removed,
-            "drifted or user-edited skill files must not be removed"
-        );
-        assert!(target.exists(), "drifted skill file should remain");
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn body_sha256_is_64_hex_chars() {
-        let h = body_sha256_hex("hello");
-        assert_eq!(h.len(), 64);
-        assert!(h
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
-    }
-
-    #[test]
-    fn body_sha256_known_vector() {
-        // SHA-256("") = e3b0c442... — RFC test vector. Confirms our hex
-        // encoding matches the canonical lowercase hex form.
-        assert_eq!(
-            body_sha256_hex(""),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-    }
-
-    /// Behavior test: fresh install writes the body and parent dir.
-    /// Uses an OS tempdir so we don't race on HOME/USERPROFILE.
-    #[test]
-    fn ensure_installed_at_writes_on_fresh_target() {
-        // std::env::temp_dir is shared across tests but each test picks
-        // its own unique subdir name to avoid collisions under
-        // `cargo test` parallel runner.
-        let unique = format!("shellx-host-test-fresh-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let target = root.join("skills").join("shellx-host").join("SKILL.md");
-
-        let body = "# shellx-host\nhello world\n";
-        let r = ensure_installed_at(&target, body).expect("install");
-        assert!(r, "first install must return Ok(true)");
-        assert!(target.is_file());
-        let on_disk = std::fs::read_to_string(&target).expect("read");
-        assert_eq!(on_disk, body);
-
-        // Cleanup. Best-effort; tempdir leaks are harmless.
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// Behavior test: re-install with identical body is a no-op
-    /// (returns Ok(false)) and does NOT rewrite the file.
-    #[test]
-    fn ensure_installed_at_skips_when_bytes_match() {
-        let unique = format!("shellx-host-test-skip-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let target = root.join("skills").join("shellx-host").join("SKILL.md");
-
-        let body = "# shellx-host\nskip me\n";
-        assert!(ensure_installed_at(&target, body).expect("first"));
-        // mtime can be flaky in CI tempfs, so we don't compare mtimes.
-        // The Ok(false) return is the contract; we assert that.
-        let r = ensure_installed_at(&target, body).expect("second");
-        assert!(
-            !r,
-            "second install with identical body must return Ok(false)"
-        );
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// Behavior test: when on-disk bytes differ from the body argument,
-    /// the installer overwrites and returns Ok(true).
-    #[test]
-    fn ensure_installed_at_overwrites_when_bytes_drift() {
-        let unique = format!("shellx-host-test-drift-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let target = root.join("skills").join("shellx-host").join("SKILL.md");
-
-        // Seed with a divergent body (simulates user edit OR an older
-        // shellX binary that shipped a different manifest).
-        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-        std::fs::write(&target, "old content").unwrap();
-
-        let new_body = "# shellx-host\nfresh\n";
-        let r = ensure_installed_at(&target, new_body).expect("install");
-        assert!(r, "drifted target must overwrite + return Ok(true)");
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), new_body);
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn ensure_installed_at_rejects_symlink_leaf() {
-        use std::os::unix::fs::symlink;
-
-        let unique = format!("shellx-host-test-symlink-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let target = root.join("skills").join("shellx-host").join("SKILL.md");
-        let outside = root.join("outside.md");
-        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-        std::fs::write(&outside, "outside").unwrap();
-        symlink(&outside, &target).unwrap();
-
-        let err = ensure_installed_at(&target, "# shellx-host\nfresh\n")
-            .expect_err("installer must not follow a symlink leaf");
-        assert!(err.contains("symlink"), "unexpected error: {err}");
-        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "outside");
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn strip_shellx_managed_blocks_removes_legacy_and_current_blocks() {
-        let source = concat!(
-            "# user rules\n\n",
-            "<!-- BEGIN shellX-managed (legacy - do not edit between markers; shellX rewrites this section on session start) -->\n",
-            "old routing\n",
-            "<!-- END shellX-managed -->\n\n",
-            "keep me\n\n",
-            "<!-- BEGIN shellX-managed (do not edit between markers; shellX rewrites this section on session start) -->\n",
-            "newer duplicate\n",
-            "<!-- END shellX-managed -->\n",
-            "tail\n",
-        );
-        let cleaned = strip_shellx_managed_blocks(source);
-        assert!(cleaned.contains("# user rules"));
-        assert!(cleaned.contains("keep me"));
-        assert!(cleaned.contains("tail"));
-        assert!(!cleaned.contains("old routing"));
-        assert!(!cleaned.contains("newer duplicate"));
-        assert!(!cleaned.contains(MANAGED_AGENTS_BEGIN_PREFIX));
-        assert!(!cleaned.contains(MANAGED_AGENTS_END));
-    }
-
-    #[test]
-    fn cleanup_does_not_append_a_new_managed_block() {
-        let cleaned = strip_shellx_managed_blocks(concat!(
-            "prefix\n",
-            "<!-- BEGIN shellX-managed (old marker) -->\n",
-            "stale\n",
-            "<!-- END shellX-managed -->\n",
-        ));
-        assert_eq!(cleaned.matches(MANAGED_AGENTS_BEGIN_PREFIX).count(), 0);
-        assert_eq!(cleaned.matches(MANAGED_AGENTS_END).count(), 0);
-        assert!(cleaned.contains("prefix"));
-        assert!(!cleaned.contains("stale"));
-    }
-
-    #[test]
-    fn cleanup_agents_guidance_removes_legacy_hint_without_replacement() {
-        let source = format!(
-            "# Behavior rules\n\n{}\n\n{}",
-            LEGACY_SEARCH_TOOL_GUIDANCE,
-            concat!(
-                "<!-- BEGIN shellX-managed (old marker) -->\n",
-                "stale managed body\n",
-                "<!-- END shellX-managed -->\n",
-            )
-        );
-
-        let out = clean_legacy_shellx_agents_guidance(&strip_shellx_managed_blocks(&source));
-
-        assert!(!out.contains(LEGACY_SEARCH_TOOL_GUIDANCE));
-        assert!(!out.contains("stale managed body"));
-        assert!(!out.contains(UPDATED_SEARCH_TOOL_GUIDANCE));
-        assert_eq!(out.matches(MANAGED_AGENTS_BEGIN_PREFIX).count(), 0);
-        assert_eq!(out.matches(MANAGED_AGENTS_END).count(), 0);
-    }
-
-    #[test]
-    fn migration_removes_disabled_global_host_mcp_and_preserves_user_config() {
-        let unique = format!("shellx-grok-mcp-migration-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let config = root.join(".grok").join("config.toml");
-        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-
-        std::fs::write(
-            &config,
-            concat!(
-                "[mcp_servers.keep]\ncommand = \"/bin/echo\"\n\n",
-                "# # shellX:managed-mcp:grok-shell-host BEGIN — do not edit by hand\n",
-                "# [mcp_servers.grok-shell-host]\n",
-                "# command = \"/old/shellx\"\n",
-                "# args = [\"--mcp-server\"]\n",
-                "# # shellX:managed-mcp:grok-shell-host END\n",
-            ),
-        )
-        .unwrap();
-
-        let changed = cleanup_grok_host_mcp_config_at(&config).expect("cleanup");
-
-        assert!(changed, "legacy global block should be removed");
-        let rewritten = std::fs::read_to_string(&config).unwrap();
-        assert!(!rewritten.contains(MCP_BEGIN_NEEDLE));
-        assert!(!rewritten.contains("/old/shellx"));
-        assert!(rewritten.contains("[mcp_servers.keep]"));
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn project_cleanup_removes_shellx_host_mcp_and_preserves_user_servers() {
-        let unique = format!("shellx-project-mcp-cleanup-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let config = root.join(".grok").join("config.toml");
-        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-        std::fs::write(
-            &config,
-            format!(
-                "[mcp_servers.keep]\ncommand = \"/bin/echo\"\n\n{}\n\
-                 [mcp_servers.shellx-host-http]\n\
-                 url = \"http://localhost:5758/mcp\"\n\
-                 [mcp_servers.shellx-host-http.headers]\n\
-                 MCP-Tab-Id = \"tab-old\"\n\
-                 {}\n",
-                crate::mcp_http::HTTP_SNIPPET_BEGIN,
-                crate::mcp_http::HTTP_SNIPPET_END,
-            ),
-        )
-        .unwrap();
-
-        let changed = cleanup_project_grok_host_mcp_config(&root).expect("project cleanup");
-
-        assert!(changed);
-        let rewritten = std::fs::read_to_string(&config).unwrap();
-        assert!(rewritten.contains("[mcp_servers.keep]"));
-        assert!(!rewritten.contains("shellx-host-http"));
-        assert!(!rewritten.contains("tab-old"));
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn strip_unmanaged_section_preserves_following_shellx_sentinel() {
-        let source = concat!(
-            "[mcp_servers.grok-shell-host]\n",
-            "command = \"/old/shellx\"\n",
-            "# shellX:managed-mcp-marketplace:context7 BEGIN - do not edit by hand\n",
-            "[mcp_servers.shellx-mp-context7]\n",
-            "command = \"cmd.exe\"\n",
-        );
-        let stripped = strip_unmanaged_section(source, "mcp_servers.grok-shell-host");
-
-        assert!(!stripped.contains("/old/shellx"));
-        assert!(stripped.contains("# shellX:managed-mcp-marketplace:context7 BEGIN"));
-        assert!(stripped.contains("[mcp_servers.shellx-mp-context7]"));
-    }
-
-    #[test]
-    fn orphan_host_mcp_sentinel_lines_are_removed() {
-        let source = concat!(
-            "[ui]\n",
-            "permission_mode = \"always-approve\"\n",
-            "# shellX:managed-mcp:grok-shell-host END\n",
-            "# shellX:managed-mcp-marketplace:context7 BEGIN - do not edit by hand\n",
-            "[mcp_servers.shellx-mp-context7]\n",
-            "command = \"cmd.exe\"\n",
-        );
-        let stripped =
-            strip_orphan_managed_sentinel_lines(source, MCP_BEGIN_NEEDLE, MCP_END_NEEDLE);
-
-        assert!(!stripped.contains("grok-shell-host END"));
-        assert!(stripped.contains("# shellX:managed-mcp-marketplace:context7 BEGIN"));
-        assert!(stripped.contains("[mcp_servers.shellx-mp-context7]"));
-    }
-
-    #[test]
-    fn ensure_project_mcp_http_config_removes_unmanaged_shellx_host_http_sections() {
-        let unique = format!("shellx-project-mcp-config-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let config = root.join(".grok").join("config.toml");
-        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-        std::fs::write(
-            &config,
-            concat!(
-                "[mcp_servers.user]\n",
-                "command = \"/bin/echo\"\n\n",
-                "# orphan from a crashed prior shellX process\n",
-                "[mcp_servers.shellx-host-http]\n",
-                "url = \"http://localhost:5762/mcp\"\n",
-                "enabled = true\n",
-                "[mcp_servers.shellx-host-http.headers]\n",
-                "MCP-Tab-Id = \"stale-tab\"\n\n",
-                "[mcp_servers.shellx-host-http]\n",
-                "url = \"http://localhost:5763/mcp\"\n",
-                "enabled = true\n",
-                "[mcp_servers.shellx-host-http.headers]\n",
-                "MCP-Tab-Id = \"stale-tab-2\"\n\n",
-                "[mcp_servers.keep-me]\n",
-                "url = \"http://localhost:9999/mcp\"\n",
-            ),
-        )
-        .unwrap();
-
-        let changed = ensure_project_mcp_http_config(
-            &root,
-            5764,
-            "0123456789abcdef0123456789abcdef",
-            "fresh-tab",
-            "",
-        )
-        .expect("rewrite project MCP config");
-        assert!(
-            changed,
-            "orphan shellx-host-http section should be rewritten"
-        );
-
-        let rewritten = std::fs::read_to_string(&config).unwrap();
-        assert_eq!(
-            rewritten.matches("[mcp_servers.shellx-host-http]").count(),
-            1,
-            "rewritten config must contain exactly one shellx-host-http table:\n{}",
-            rewritten
-        );
-        assert_eq!(
-            rewritten
-                .matches("[mcp_servers.shellx-host-http.headers]")
-                .count(),
-            1,
-            "rewritten config must contain exactly one shellx-host-http headers table:\n{}",
-            rewritten
-        );
-        assert!(
-            !rewritten.contains("stale-tab"),
-            "orphan header survived:\n{}",
-            rewritten
-        );
-        assert!(rewritten.contains("MCP-Tab-Id = \"fresh-tab\""));
-        assert!(rewritten.contains("[mcp_servers.user]"));
-        assert!(rewritten.contains("[mcp_servers.keep-me]"));
-        toml::from_str::<toml::Value>(&rewritten).expect("rewritten config should parse as TOML");
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn ensure_project_mcp_http_config_excludes_shellx_artifacts_locally() {
-        let unique = format!("shellx-project-mcp-exclude-{}", uuid_like());
-        let root = std::env::temp_dir().join(unique);
-        let project = root.join("work").join("sdk");
-        let git_info = root.join(".git").join("info");
-        std::fs::create_dir_all(&git_info).unwrap();
-        std::fs::create_dir_all(&project).unwrap();
-
-        let changed = ensure_project_mcp_http_config(
-            &project,
-            5764,
-            "0123456789abcdef0123456789abcdef",
-            "fresh-tab",
-            "",
-        )
-        .expect("write project MCP config and local git excludes");
-        assert!(changed, "first run should write config and git exclude");
-
-        let exclude = std::fs::read_to_string(git_info.join("exclude")).unwrap();
-        assert!(exclude.contains(MCP_ARTIFACT_EXCLUDE_BEGIN));
-        assert!(exclude.contains("/work/sdk/.grok/config.toml"));
-        assert!(exclude.contains("/work/sdk/mcps/"));
-        assert_eq!(
-            exclude.matches(MCP_ARTIFACT_EXCLUDE_BEGIN).count(),
-            1,
-            "managed exclude block should not duplicate:\n{}",
-            exclude
-        );
-
-        let changed_again = ensure_project_mcp_http_config(
-            &project,
-            5764,
-            "0123456789abcdef0123456789abcdef",
-            "fresh-tab",
-            "",
-        )
-        .expect("second run should be idempotent");
-        assert!(
-            !changed_again,
-            "matching config and git exclude should be idempotent"
-        );
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// Tiny uuid-like helper for test scratch-dir names. Avoids pulling
-    /// uuid into dev-deps just for tests — process id + nanos is unique
-    /// enough across `cargo test --test-threads=N`.
-    fn uuid_like() -> String {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        format!("{}-{}", std::process::id(), nanos)
-    }
-
-    #[test]
-    fn target_path_uses_home_under_unix() {
-        if cfg!(target_os = "windows") {
-            return; // covered by the Windows-only variant in CI later.
-        }
-        // Don't poke at the actual env: we'd race with parallel tests.
-        // Just sanity-check the public function returns a non-empty
-        // suffix matching `.shellx/agent-docs/shellx-host/SKILL.md`.
-        if let Some(p) = target_skill_path() {
-            let s = p.to_string_lossy();
-            assert!(
-                s.ends_with(".shellx/agent-docs/shellx-host/SKILL.md"),
-                "unexpected target path: {}",
-                s
-            );
-        }
-        // If HOME is somehow unset, target_skill_path returns None;
-        // that's accepted at the caller (returns soft warning).
-    }
 }

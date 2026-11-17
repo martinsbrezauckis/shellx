@@ -30,7 +30,6 @@ export function Header({
   vaultRequestCenter,
   vaultRequestCenterOpenSeq = 0,
   vaultRequestCenterCloseSeq = 0,
-  debugClipboardFixture = null,
   onOpenVault,
   onOpenBrowser,
   onOpenTasks,
@@ -55,7 +54,6 @@ export function Header({
   vaultRequestCenter?: HeaderVaultRequestCenterController;
   vaultRequestCenterOpenSeq?: number;
   vaultRequestCenterCloseSeq?: number;
-  debugClipboardFixture?: "vault-password" | null;
  /** Opens the standalone ShellX Vault workspace. */
   onOpenVault?: (intent?: VaultPanelIntent) => void;
  /** Opens the ShellX-owned browser/runtime window. */
@@ -87,7 +85,8 @@ export function Header({
       <button
         type="button"
         className="brand"
-        onClick={() => onOpenAbout?.()}
+        data-debug-id="header-about"
+        onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onOpenAbout?.(); }}
         title="About shellX"
         aria-label="About shellX — version and source"
         style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0 }}
@@ -144,7 +143,7 @@ export function Header({
           <button
             type="button"
             className={`hdr-icon ${taskAttentionCount > 0 ? "attention" : ""}`}
-            onClick={onOpenTasks}
+            onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onOpenTasks(); }}
             title={taskAttentionCount > 0
               ? `${taskAttentionCount} task occurrence${taskAttentionCount === 1 ? "" : "s"} need attention`
               : "Task Manager"}
@@ -167,7 +166,6 @@ export function Header({
             controller={vaultRequestCenter}
             openSeq={vaultRequestCenterOpenSeq}
             closeSeq={vaultRequestCenterCloseSeq}
-            debugClipboardFixture={debugClipboardFixture}
             onOpenVault={onOpenVault}
           />
         )}
@@ -175,7 +173,8 @@ export function Header({
           <button
             type="button"
             className="hdr-icon hdr-inbox-icon"
-            onClick={onOpenConnectorInbox}
+            data-debug-id="header-connector-inbox"
+            onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onOpenConnectorInbox?.(); }}
             title={`${outsideConnectorInbox.label} · connector inbox`}
             aria-label="Open connector inbox"
           >
@@ -190,7 +189,9 @@ export function Header({
           <button
             type="button"
             className="hdr-icon"
-            onClick={onOpenPlugins}
+            data-debug-id="header-plugins"
+            data-shellx-release-observe="focused"
+            onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onOpenPlugins(); }}
             title="Plugins · MCP servers and connectors"
             aria-label="Open plugins"
           >
@@ -215,7 +216,9 @@ export function Header({
           <button
             type="button"
             className="settings-cog"
-            onClick={onOpenSettings}
+            data-debug-id="header-settings"
+            data-shellx-release-observe="focused"
+            onClick={(event) => { event.currentTarget.focus({ preventScroll: true }); onOpenSettings(); }}
             title="Settings (⌘,)"
             aria-label="Open settings"
           >

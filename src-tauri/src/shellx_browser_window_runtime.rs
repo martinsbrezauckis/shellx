@@ -19,16 +19,13 @@ pub async fn shellx_browser_sync_engine(
 ) -> Result<BrowserEngineSnapshot, String> {
     let registry = Arc::clone(&*registry);
     let request = registry.normalize_engine_sync_request(request);
-    let mut request = request;
-    match sync_native_browser_engine(&app, &registry, &request).await {
-        Ok(Some(current_url)) => request.url = Some(current_url),
-        Ok(None) => {}
+    match sync_and_record_native_browser_engine(&app, &registry, request).await {
+        Ok(snapshot) => Ok(snapshot),
         Err(err) => {
             registry.record_engine_error(err.clone());
-            return Err(err);
+            Err(err)
         }
     }
-    Ok(registry.record_engine_sync(request))
 }
 
 #[tauri::command]
@@ -44,8 +41,11 @@ pub async fn shellx_browser_clear_history(
 
 #[tauri::command]
 pub async fn shellx_browser_state(
+    app: AppHandle,
     registry: State<'_, Arc<ShellxBrowserRegistry>>,
 ) -> Result<BrowserStateSnapshot, String> {
+    crate::shellx_browser_personal_lock::reconcile_covered_personal_webviews(&app, &registry)
+        .await?;
     Ok(registry.state())
 }
 
@@ -142,16 +142,13 @@ pub async fn sync_engine_to_task(
         preserve_existing_page: false,
         bounds,
     };
-    let mut request = request;
-    match sync_native_browser_engine(app, registry, &request).await {
-        Ok(Some(current_url)) => request.url = Some(current_url),
-        Ok(None) => {}
+    match sync_and_record_native_browser_engine(app, registry, request).await {
+        Ok(snapshot) => Ok(Some(snapshot)),
         Err(err) => {
             registry.record_engine_error(err.clone());
-            return Err(err);
+            Err(err)
         }
     }
-    Ok(Some(registry.record_engine_sync(request)))
 }
 
 pub async fn rollback_failed_task_engine_sync(
@@ -165,6 +162,7 @@ pub async fn rollback_failed_task_engine_sync(
         registry.rollback_failed_task_start(task_id, previous_active_browser_tab_id, failure)?;
     let mut cleanup_errors = Vec::new();
     for engine_id in &rollback.engine_ids_to_close {
+        registry.quarantine_native_downloads_for_engine(engine_id);
         if let Err(error) = close_browser_engine_webview(app, engine_id).await {
             cleanup_errors.push(error);
         } else {
@@ -172,6 +170,7 @@ pub async fn rollback_failed_task_engine_sync(
                 registry, engine_id,
             )
             .await;
+            registry.cleanup_quarantined_native_downloads_after_engine_close(engine_id);
         }
     }
     if let Some(active_tab_id) = rollback.restored_active_browser_tab_id.as_deref() {
@@ -259,16 +258,13 @@ async fn sync_engine_to_tab_with_preservation(
         preserve_existing_page,
         bounds,
     };
-    let mut request = request;
-    match sync_native_browser_engine(app, registry, &request).await {
-        Ok(Some(current_url)) => request.url = Some(current_url),
-        Ok(None) => {}
+    match sync_and_record_native_browser_engine(app, registry, request).await {
+        Ok(snapshot) => Ok(Some(snapshot)),
         Err(err) => {
             registry.record_engine_error(err.clone());
-            return Err(err);
+            Err(err)
         }
     }
-    Ok(Some(registry.record_engine_sync(request)))
 }
 
 pub async fn reapply_browser_privacy_to_active_engine(
@@ -321,12 +317,11 @@ pub async fn reapply_browser_privacy_to_active_engine(
                 .unwrap_or_else(browser_default_engine_bounds),
         };
         drop(state);
-        close_browser_engine_webview(app, &request.engine_id.clone().unwrap_or_default()).await?;
-        let mut request = request;
-        if let Some(current_url) = sync_native_browser_engine(app, registry, &request).await? {
-            request.url = Some(current_url);
-        }
-        let snapshot = registry.record_engine_sync(request);
+        let engine_id = request.engine_id.clone().unwrap_or_default();
+        registry.quarantine_native_downloads_for_engine(&engine_id);
+        close_browser_engine_webview(app, &engine_id).await?;
+        registry.cleanup_quarantined_native_downloads_after_engine_close(&engine_id);
+        let snapshot = sync_and_record_native_browser_engine(app, registry, request).await?;
         return Ok(Some(json!({
             "ok": true,
             "runtimeApply": "recreated",

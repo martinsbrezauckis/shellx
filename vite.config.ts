@@ -25,6 +25,9 @@ const VITE_PORT = Number(process.env.SHELLX_VITE_PORT ?? process.env.GROK_SHELL_
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    "import.meta.env.SHELLX_PUBLIC_MANUAL_BUILD": "false",
+  },
   clearScreen: false,
   server: {
     port: VITE_PORT,

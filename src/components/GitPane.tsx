@@ -13,7 +13,6 @@ import {
   type GitSessionStatus,
   type GitWorktreeResponse,
 } from "../lib/git-workflows";
-import type { DebugRightRailGitLifecycleFixture } from "../lib/debug-right-rail-git-fixture";
 import { inTauri } from "../lib/tauri-bridge";
 import { ShellIcon, TransportIcon } from "./icons";
 import { ShikiHighlight } from "./ShikiHighlight";
@@ -21,11 +20,9 @@ import { ShikiHighlight } from "./ShikiHighlight";
 export function GitPane({
   activeTabId,
   cwd,
-  debugFixture = null,
 }: {
   activeTabId: string | null;
   cwd: string;
-  debugFixture?: DebugRightRailGitLifecycleFixture | null;
 }): JSX.Element {
   const [status, setStatus] = useState<GitSessionStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -39,13 +36,6 @@ export function GitPane({
   const refresh = async (): Promise<void> => {
     if (!activeTabId) return;
     setLoading(true);
-    if (debugFixture) {
-      setStatus(debugFixture.gitStatus);
-      setError(null);
-      setManualRefreshSequence((sequence) => sequence + 1);
-      setLoading(false);
-      return;
-    }
     if (!inTauri()) { setLoading(false); return; }
     try {
       const next = await invoke<GitSessionStatus>("git_session_status", {
@@ -67,11 +57,6 @@ export function GitPane({
     const scope = normalizeGitDiffScope(scopeInput);
     setDiffScope(scope);
     setDiffLoading(true);
-    if (debugFixture) {
-      setDiff(debugFixture.gitDiffs[scope]);
-      setDiffLoading(false);
-      return;
-    }
     if (!inTauri()) { setDiffLoading(false); return; }
     try {
       const next = await invoke<GitDiffResponse>("git_session_diff", {
@@ -103,11 +88,6 @@ export function GitPane({
     setActionMessage(null);
     setManualRefreshSequence(0);
     if (!activeTabId) return;
-    if (debugFixture) {
-      setStatus(debugFixture.gitStatus);
-      setLoading(false);
-      return;
-    }
     if (!inTauri()) return;
     let cancelled = false;
     const tick = async () => {
@@ -133,10 +113,10 @@ export function GitPane({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [activeTabId, cwd, debugFixture]);
+  }, [activeTabId, cwd]);
 
   async function createCheckpoint(): Promise<void> {
-    if (!activeTabId || debugFixture) return;
+    if (!activeTabId) return;
     setActionMessage("Creating checkpoint...");
     try {
       const res = await invoke<GitCheckpointResponse>("git_session_create_checkpoint", {
@@ -156,7 +136,7 @@ export function GitPane({
   }
 
   async function createWorktree(): Promise<void> {
-    if (!activeTabId || !status?.ok || debugFixture) return;
+    if (!activeTabId || !status?.ok) return;
     const sourceBranch = status.branch || "HEAD";
     const newBranch = branchNameFromSource(sourceBranch);
     setActionMessage(`Creating ${newBranch}...`);
@@ -187,7 +167,7 @@ export function GitPane({
     );
   }
 
-  if (!inTauri() && !debugFixture) {
+  if (!inTauri()) {
     return (
       <div className="rail-empty">
         <div className="rail-empty-line">Git checks need Tauri.</div>
@@ -282,11 +262,11 @@ export function GitPane({
               <ShellIcon name="file" size={12} />
               Review diff
             </button>
-            <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void createCheckpoint()} disabled={loading || Boolean(debugFixture)}>
+            <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void createCheckpoint()} disabled={loading}>
               <ShellIcon name="check" size={12} />
               Checkpoint
             </button>
-            <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void createWorktree()} disabled={Boolean(debugFixture)}>
+            <button type="button" className="mp-action-btn mp-action-btn-secondary" onClick={() => void createWorktree()}>
               <ShellIcon name="git-branch" size={12} />
               Worktree
             </button>
@@ -313,7 +293,7 @@ export function GitPane({
           </div>
           {diffLoading && <div className="rail-empty"><div className="rail-empty-line">Loading diff...</div></div>}
           {diff && !diffLoading && (
-            <div className="git-diff-box" onMouseUp={debugFixture ? undefined : onMouseUpAutoCopy}>
+            <div className="git-diff-box" onMouseUp={onMouseUpAutoCopy}>
               {!diff.ok && <div className="git-action-message bad">{diff.lastError ?? "Diff failed."}</div>}
               {diff.ok && diff.diff.trim().length === 0 && (
                 <div className="rail-empty">

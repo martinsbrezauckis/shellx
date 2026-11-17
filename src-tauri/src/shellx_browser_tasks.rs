@@ -444,7 +444,7 @@ impl ShellxBrowserRegistry {
                     "url": url,
                 }),
             );
-            record_history_visit(
+            let _ = record_history_visit(
                 &mut state,
                 Some(task.task_id.clone()),
                 profile_id.clone(),

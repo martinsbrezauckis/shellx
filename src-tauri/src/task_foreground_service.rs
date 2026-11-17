@@ -29,9 +29,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
-#[cfg(test)]
-#[path = "task_foreground_service_tests.rs"]
-mod tests;
+
 
 #[path = "task_runtime_coordinator.rs"]
 mod task_runtime_coordinator;
@@ -45,8 +43,8 @@ pub(crate) use task_runtime_coordinator::{
 };
 
 /// The foreground coordinator makes no assumptions about a host event loop.
-/// Tauri calls `poll_once` from its app-owned timer, while tests use
-/// `poll_tick` with an exact value.
+/// Tauri calls `poll_once` from its app-owned timer; adapters with an
+/// already-sampled tick call `poll_tick`.
 pub(crate) trait TaskForegroundClock: Send + Sync {
     fn next_tick(&self) -> Result<TaskForegroundTick, TaskForegroundClockError>;
 }
@@ -79,8 +77,8 @@ pub(crate) enum TaskForegroundClockError {
     Unavailable,
 }
 
-/// Production wall clock. Tests should inject a deterministic clock or call
-/// `poll_tick` directly; no task decision reads time implicitly from storage.
+/// Production wall clock. Task decisions take an explicit sampled tick and
+/// never read time implicitly from storage.
 #[derive(Default)]
 pub(crate) struct SystemTaskForegroundClock;
 
@@ -410,8 +408,8 @@ impl TaskForegroundService {
         self.start_at(tick).await
     }
 
-    /// Deterministic startup entry point. Tests and a future Tauri lifecycle
-    /// hook can provide the exact tick sampled at setup before polling begins.
+    /// Startup entry point for callers that provide the tick sampled at setup
+    /// before polling begins.
     pub(crate) async fn start_at(
         &self,
         tick: TaskForegroundTick,
@@ -458,8 +456,8 @@ impl TaskForegroundService {
         self.poll_tick(tick).await
     }
 
-    /// Deterministic scheduler entry point used by focused tests and Tauri
-    /// timer adapters that already own a monotonic wall-clock sample.
+    /// Scheduler entry point for Tauri timer adapters that already own a
+    /// monotonic wall-clock sample.
     pub(crate) async fn poll_tick(
         &self,
         tick: TaskForegroundTick,

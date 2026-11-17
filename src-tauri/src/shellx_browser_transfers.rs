@@ -1,21 +1,37 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use serde::Deserialize;
 use serde_json::json;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
-use crate::host_mcp::{enforce_home_containment, FsAccessKind};
 use crate::shellx_browser::{
     browser_id, clean_string, file_name_from_url, lock_or_recover, now_ms,
     profile_id_for_task_or_tab, push_receipt, safe_url_parts, validate_optional_task_and_tab,
-    BrowserDownloadRequest, BrowserFileTransferEntry, BrowserState, BrowserTransferApproval,
-    BrowserTransferApprovalRequest, BrowserTransferCompleteRequest, BrowserUploadRequest,
+    BrowserDownloadRequest, BrowserFileTransferEntry, BrowserNativeDownloadDeclineRequest,
+    BrowserState, BrowserTransferApproval, BrowserTransferApprovalRequest, BrowserUploadRequest,
     ShellxBrowserRegistry,
 };
-use crate::shellx_browser_transfer_artifacts::{file_artifact_metadata, infer_mime_type_from_path};
+use crate::shellx_browser_engine::browser_engine_webview_label;
 use crate::shellx_browser_transfer_privacy::{
     browser_download_destination_dir, browser_upload_display_name, public_upload_transfer_entry,
 };
+
+#[path = "shellx_browser_transfer_completion.rs"]
+mod transfer_completion;
+
+#[path = "shellx_browser_native_downloads.rs"]
+mod native_downloads;
+#[cfg(not(target_os = "linux"))]
+pub(crate) use native_downloads::BrowserNativeDownloadCancellationAcknowledgement;
+pub(crate) use native_downloads::{
+    native_download_permit_matches_current_engine_context_locked,
+    native_download_replay_failure_reason, quarantine_native_downloads_for_engine_locked,
+    BrowserNativeDownloadPermit, BrowserNativeDownloadRequested, BrowserNativeDownloadResume,
+    NativeDownloadCancellationAcks, NativeDownloadPermitStatus,
+};
+
+const NATIVE_DOWNLOAD_REPLAY_CALLBACK_TIMEOUT: Duration = Duration::from_secs(15);
+const BROWSER_TRANSFER_RETENTION_LIMIT: usize = 200;
 
 pub(crate) const BROWSER_TRANSFER_OPERATOR_ERROR_CODE: &str = "browser_transfer_requires_operator";
 pub(crate) const BROWSER_TRANSFER_OPERATOR_ERROR_MESSAGE: &str =
@@ -49,11 +65,114 @@ pub(crate) fn grant_browser_transfer_from_operator(
 }
 
 #[tauri::command]
-pub fn shellx_browser_grant_transfer(
+pub async fn shellx_browser_grant_transfer(
+    app: AppHandle,
     registry: State<'_, Arc<ShellxBrowserRegistry>>,
     request: BrowserTransferApprovalRequest,
 ) -> Result<BrowserTransferApproval, String> {
-    grant_browser_transfer_from_operator(&registry, request)
+    let _engine_sync_guard = registry.engine_sync_lock.lock().await;
+    let approval = grant_browser_transfer_from_operator(&registry, request)?;
+    let resume = match registry.activate_native_download_approval(&approval) {
+        Ok(resume) => resume,
+        Err(error) => {
+            // Approval reservation and native execution are separate because
+            // replay calls into the platform WebView. If the exact target was
+            // retired after the reservation, terminalize that reservation;
+            // do not leave a non-evictable approved permit behind.
+            registry.fail_native_download_resume(&approval.transfer_id, &error);
+            return Err(error);
+        }
+    };
+    if let Some(resume) = resume {
+        if let Err(error) = resume_native_browser_download_locked(&app, &registry, &resume).await {
+            registry.fail_native_download_resume(&approval.transfer_id, &error);
+            return Err(error);
+        }
+    }
+    schedule_native_download_approval_timeout(&registry, &approval);
+    Ok(approval)
+}
+
+#[tauri::command]
+pub fn shellx_browser_decline_native_download(
+    registry: State<'_, Arc<ShellxBrowserRegistry>>,
+    request: BrowserNativeDownloadDeclineRequest,
+) -> Result<BrowserFileTransferEntry, String> {
+    registry.decline_requested_native_download(request)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) async fn resume_native_browser_download(
+    app: &AppHandle,
+    registry: &Arc<ShellxBrowserRegistry>,
+    resume: &BrowserNativeDownloadResume,
+) -> Result<(), String> {
+    let _engine_sync_guard = registry.engine_sync_lock.lock().await;
+    resume_native_browser_download_locked(app, registry, resume).await
+}
+
+async fn resume_native_browser_download_locked(
+    app: &AppHandle,
+    registry: &Arc<ShellxBrowserRegistry>,
+    resume: &BrowserNativeDownloadResume,
+) -> Result<(), String> {
+    registry.native_download_resume_is_eligible(resume)?;
+    if !registry.native_download_resume_matches_current_engine_context(resume) {
+        return Err(
+            "native Browser download target changed before the approved download could resume"
+                .to_string(),
+        );
+    }
+    let engine_label = browser_engine_webview_label(&resume.engine_id);
+    let webview = app
+        .get_webview(&engine_label)
+        .ok_or_else(|| format!("Browser engine webview '{}' is not mounted", engine_label))?;
+    #[cfg(windows)]
+    {
+        // This is the operator-approved retry, not another page-initiated
+        // automatic download. Keep the exact permit/context checks above and
+        // start navigation through the native host, without granting the page
+        // persistent or unrestricted multiple-download permission.
+        let url = tauri::Url::parse(&resume.source_url).map_err(|error| {
+            format!("parse approved native Browser download URL failed: {error}")
+        })?;
+        crate::shellx_browser_webview_runtime::navigate_browser_webview(&webview, url).await?;
+    }
+    #[cfg(not(windows))]
+    {
+        let url = serde_json::to_string(&resume.source_url).map_err(|error| {
+            format!("encode approved native Browser download URL failed: {error}")
+        })?;
+        webview
+            .eval(format!("window.location.assign({url});"))
+            .map_err(|error| format!("resume approved native Browser download failed: {error}"))?;
+    }
+    Ok(())
+}
+
+fn schedule_native_download_approval_timeout(
+    registry: &Arc<ShellxBrowserRegistry>,
+    approval: &BrowserTransferApproval,
+) {
+    // An approval may still be waiting for Wry to acknowledge cancellation of
+    // the original request. Bound that wait as well as the replay callback.
+    let pending = lock_or_recover(&registry.state)
+        .native_download_permits
+        .get(&approval.transfer_id)
+        .is_some_and(|permit| {
+            permit.status == NativeDownloadPermitStatus::Approved
+                && permit.approval_id.as_deref() == Some(approval.approval_id.as_str())
+        });
+    if !pending {
+        return;
+    }
+    let registry = Arc::clone(registry);
+    let transfer_id = approval.transfer_id.clone();
+    let approval_id = approval.approval_id.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(NATIVE_DOWNLOAD_REPLAY_CALLBACK_TIMEOUT).await;
+        registry.fail_native_download_resume_if_still_approved(&transfer_id, &approval_id);
+    });
 }
 
 #[tauri::command]
@@ -116,11 +235,46 @@ impl ShellxBrowserRegistry {
         if reason.is_empty() {
             return Err("download reason is required".to_string());
         }
+        let native_download = match (
+            request
+                .native_engine_id
+                .as_deref()
+                .map(clean_string)
+                .filter(|value| !value.is_empty()),
+            request
+                .native_event_binding
+                .as_deref()
+                .map(clean_string)
+                .filter(|value| !value.is_empty()),
+        ) {
+            (Some(engine_id), Some(event_binding)) => Some((engine_id, event_binding)),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "native Browser download intent requires both engine and event binding"
+                        .to_string(),
+                )
+            }
+        };
+        let requires_approval = request.requires_operator_approval;
         let mut state = lock_or_recover(&self.state);
         validate_optional_task_and_tab(
             &state,
             request.task_id.as_deref(),
             request.browser_tab_id.as_deref(),
+        )?;
+        // Snapshot only permit identities while holding the state lock. This
+        // keeps an active native lease non-evictable without borrowing the
+        // map across the mutable downloads admission.
+        let native_download_permit_ids = state
+            .native_download_permits
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        reserve_browser_transfer_capacity(
+            &mut state.downloads,
+            "download",
+            Some(&native_download_permit_ids),
         )?;
         let transfer_id = browser_id("browser-transfer");
         let requested_at_ms = now_ms();
@@ -161,7 +315,7 @@ impl ShellxBrowserRegistry {
             status: "requested".to_string(),
             task_id: request.task_id,
             browser_tab_id: request.browser_tab_id,
-            url: Some(url),
+            url: Some(url.clone()),
             file_path: None,
             display_name,
             final_path: None,
@@ -173,6 +327,8 @@ impl ShellxBrowserRegistry {
             destination,
             retention_reason: None,
             approval_id: None,
+            requires_approval,
+            can_decline_native_download: false,
             destination_origin: None,
             ref_id: None,
             reason,
@@ -181,8 +337,26 @@ impl ShellxBrowserRegistry {
             receipt,
         };
         state.downloads.push(entry.clone());
-        state.downloads.truncate(200);
-        Ok(entry)
+        if let Some((engine_id, event_binding)) = native_download {
+            state.native_download_permits.insert(
+                entry.transfer_id.clone(),
+                BrowserNativeDownloadPermit {
+                    engine_id,
+                    event_binding,
+                    source_url: url,
+                    task_id: entry.task_id.clone(),
+                    browser_tab_id: entry.browser_tab_id.clone(),
+                    approval_id: None,
+                    status: NativeDownloadPermitStatus::Requested,
+                    destination_dir: None,
+                    display_name: entry.display_name.clone(),
+                    stage: None,
+                    finalization_claimed: false,
+                    cleanup_in_progress: false,
+                },
+            );
+        }
+        Ok(public_download_transfer_entry(&state, &entry))
     }
 
     pub fn request_upload_intent(
@@ -203,6 +377,7 @@ impl ShellxBrowserRegistry {
             request.task_id.as_deref(),
             request.browser_tab_id.as_deref(),
         )?;
+        reserve_browser_transfer_capacity(&mut state.uploads, "upload", None)?;
         let transfer_id = browser_id("browser-transfer");
         let requested_at_ms = now_ms();
         let display_name = request
@@ -262,6 +437,8 @@ impl ShellxBrowserRegistry {
             destination: None,
             retention_reason: None,
             approval_id: None,
+            requires_approval: false,
+            can_decline_native_download: false,
             destination_origin,
             ref_id,
             reason,
@@ -270,24 +447,8 @@ impl ShellxBrowserRegistry {
             receipt,
         };
         state.uploads.push(entry.clone());
-        state.uploads.truncate(200);
         Ok(public_upload_transfer_entry(entry))
     }
-
-    pub fn complete_download(
-        &self,
-        request: BrowserTransferCompleteRequest,
-    ) -> Result<BrowserFileTransferEntry, String> {
-        self.complete_transfer("download", request)
-    }
-
-    pub fn complete_upload(
-        &self,
-        request: BrowserTransferCompleteRequest,
-    ) -> Result<BrowserFileTransferEntry, String> {
-        self.complete_transfer("upload", request)
-    }
-
     pub fn grant_transfer_for_user(
         &self,
         request: BrowserTransferApprovalRequest,
@@ -337,12 +498,51 @@ impl ShellxBrowserRegistry {
                 .find(|entry| entry.transfer_id == transfer_id),
             _ => None,
         }
-        .ok_or_else(|| format!("unknown browser {} transfer '{}'", direction, transfer_id))?;
+        .ok_or_else(|| format!("unknown browser {} transfer '{}'", direction, transfer_id))?
+        .clone();
         if existing.status == "completed" {
             return Err(format!(
                 "browser {} transfer '{}' is already completed",
                 direction, transfer_id
             ));
+        }
+        if existing.status == "declined" {
+            return Err(format!(
+                "browser {} transfer '{}' was declined before execution",
+                direction, transfer_id
+            ));
+        }
+        let native_permit = state.native_download_permits.get(&transfer_id).cloned();
+        if let Some(permit) = native_permit.as_ref() {
+            if direction != "download"
+                || existing.status != "requested"
+                || !existing.requires_approval
+                || existing.approval_id.is_some()
+                || permit.task_id != existing.task_id
+                || permit.browser_tab_id != existing.browser_tab_id
+                || permit.status != NativeDownloadPermitStatus::Requested
+                || permit.stage.is_some()
+                || permit.finalization_claimed
+                || permit.cleanup_in_progress
+            {
+                return Err("native Browser download is no longer awaiting approval".to_string());
+            }
+            if state
+                .engine_event_bindings
+                .get(&permit.engine_id)
+                .is_none_or(|binding| binding != &permit.event_binding)
+            {
+                return Err("native Browser download target changed before approval".to_string());
+            }
+            if !native_download_permit_matches_current_engine_context_locked(&state, permit) {
+                return Err(
+                    "original Browser tab is no longer current; return to it or decline the download"
+                        .to_string(),
+                );
+            }
+            state
+                .native_download_cancellation_acks
+                .require_safe_for_approval()?;
         }
         let now = now_ms();
         let ttl_seconds = request.ttl_seconds.unwrap_or(900).clamp(30, 3600);
@@ -362,385 +562,159 @@ impl ShellxBrowserRegistry {
             let overflow = state.transfer_approvals.len() - 500;
             state.transfer_approvals.drain(0..overflow);
         }
+        if native_permit.is_some() {
+            let entry = state
+                .downloads
+                .iter_mut()
+                .find(|entry| entry.transfer_id == approval.transfer_id)
+                .expect("native Browser download row was checked while holding the state lock");
+            entry.status = "approved".to_string();
+            entry.approval_id = Some(approval.approval_id.clone());
+            let permit = state
+                .native_download_permits
+                .get_mut(&approval.transfer_id)
+                .expect("native Browser permit was checked while holding the state lock");
+            permit.approval_id = Some(approval.approval_id.clone());
+            permit.status = NativeDownloadPermitStatus::Approved;
+        }
         Ok(approval)
     }
 
-    fn complete_transfer(
+    /// Decline exactly one native WebView request before it has been approved
+    /// or handed a private stage. This transition deliberately does not close
+    /// an engine, replay a URL, or touch a native destination.
+    pub fn decline_requested_native_download(
         &self,
-        direction: &str,
-        request: BrowserTransferCompleteRequest,
+        request: BrowserNativeDownloadDeclineRequest,
     ) -> Result<BrowserFileTransferEntry, String> {
         let transfer_id = clean_string(request.transfer_id);
         if transfer_id.is_empty() {
             return Err("transferId is required".to_string());
         }
-        let approval_id = request
-            .approval_id
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "approvalId is required to complete a browser transfer".to_string())?;
-        let retention_reason = request
-            .retention_reason
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                "retentionReason is required to complete a browser transfer".to_string()
-            })?;
-        let requested_bytes = match request.bytes {
-            Some(value) if value > 0 => Some(value),
-            Some(_) => {
-                return Err("positive bytes is required to complete a browser transfer".to_string())
-            }
-            None => None,
-        };
-        let requested_sha256 = request
-            .sha256
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .map(|value| {
-                if is_sha256_hex(&value) {
-                    Ok(value.to_ascii_lowercase())
-                } else {
-                    Err("sha256 must be a 64-character hex digest".to_string())
-                }
-            })
-            .transpose()?;
-
         let mut state = lock_or_recover(&self.state);
-        let existing = match direction {
-            "download" => state
-                .downloads
-                .iter()
-                .find(|entry| entry.transfer_id == transfer_id)
-                .cloned(),
-            "upload" => state
-                .uploads
-                .iter()
-                .find(|entry| entry.transfer_id == transfer_id)
-                .cloned(),
-            _ => None,
+        let permit = state
+            .native_download_permits
+            .get(&transfer_id)
+            .cloned()
+            .ok_or_else(|| "native Browser download is no longer awaiting review".to_string())?;
+        if permit.status != NativeDownloadPermitStatus::Requested
+            || permit.approval_id.is_some()
+            || permit.stage.is_some()
+            || permit.finalization_claimed
+            || permit.cleanup_in_progress
+        {
+            return Err("native Browser download is no longer awaiting review".to_string());
         }
-        .ok_or_else(|| format!("unknown browser {} transfer '{}'", direction, transfer_id))?;
-        if existing.status == "completed" {
-            return Err(format!(
-                "browser {} transfer '{}' is already completed",
-                direction, transfer_id
-            ));
-        }
-        validate_transfer_approval(
-            &mut state,
-            &approval_id,
-            direction,
-            &transfer_id,
-            requested_sha256.as_deref(),
-            false,
-        )?;
-        let final_path = request
-            .final_path
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .or_else(|| existing.file_path.clone())
-            .ok_or_else(|| "finalPath is required to complete a browser transfer".to_string())?;
-        drop(state);
-        enforce_home_containment(
-            "browser_transfer_complete",
-            std::path::Path::new(&final_path),
-            FsAccessKind::Write,
-        )?;
-        let artifact_metadata = file_artifact_metadata(&final_path)?;
-        let bytes = requested_bytes
-            .or_else(|| artifact_metadata.as_ref().map(|metadata| metadata.0))
-            .ok_or_else(|| {
-                "positive bytes or a readable finalPath is required to complete a browser transfer"
-                    .to_string()
-            })?;
-        let sha256 = requested_sha256
-            .clone()
-            .or_else(|| {
-                artifact_metadata
-                    .as_ref()
-                    .map(|metadata| metadata.1.clone())
-            })
-            .ok_or_else(|| {
-                "sha256 or a readable finalPath is required to complete a browser transfer"
-                    .to_string()
-            })?;
-        if let Some((computed_bytes, computed_sha256)) = artifact_metadata.as_ref() {
-            if requested_bytes.is_some_and(|value| value != *computed_bytes) {
-                return Err("browser transfer bytes do not match finalPath artifact".to_string());
-            }
-            if requested_sha256
-                .as_deref()
-                .is_some_and(|value| !value.eq_ignore_ascii_case(computed_sha256))
-            {
-                return Err("browser transfer sha256 does not match finalPath artifact".to_string());
-            }
-        }
-        let mut state = lock_or_recover(&self.state);
-        let existing = match direction {
-            "download" => state
-                .downloads
-                .iter()
-                .find(|entry| entry.transfer_id == transfer_id)
-                .cloned(),
-            "upload" => state
-                .uploads
-                .iter()
-                .find(|entry| entry.transfer_id == transfer_id)
-                .cloned(),
-            _ => None,
-        }
-        .ok_or_else(|| format!("unknown browser {} transfer '{}'", direction, transfer_id))?;
-        if existing.status == "completed" {
-            return Err(format!(
-                "browser {} transfer '{}' is already completed",
-                direction, transfer_id
-            ));
-        }
-        validate_and_consume_transfer_approval(
-            &mut state,
-            &approval_id,
-            direction,
-            &transfer_id,
-            &sha256,
-        )?;
-        let mime_type = request
-            .mime_type
-            .as_deref()
-            .map(normalize_mime_type)
-            .filter(|value| !value.is_empty())
-            .or_else(|| infer_mime_type_from_path(&final_path));
-        let content_kind = classify_transfer_content(mime_type.as_deref(), &final_path);
-        let source_url = request
-            .source_url
-            .as_deref()
-            .map(safe_url_parts)
-            .map(|parts| parts.url)
-            .or_else(|| {
-                existing
-                    .url
-                    .as_deref()
-                    .map(safe_url_parts)
-                    .map(|parts| parts.url)
-            });
-        let destination = request
-            .destination
-            .as_deref()
-            .map(clean_string)
-            .filter(|value| !value.is_empty())
-            .or_else(|| existing.destination_origin.clone())
-            .or_else(|| {
-                if direction == "download" {
-                    Some("local-downloads".to_string())
-                } else {
-                    None
-                }
-            });
-        let mut completed = existing.clone();
-        completed.status = "completed".to_string();
-        completed.final_path = Some(final_path);
-        completed.mime_type = mime_type;
-        completed.content_kind = Some(content_kind);
-        completed.bytes = Some(bytes);
-        completed.sha256 = Some(sha256);
-        completed.source_url = source_url;
-        completed.destination = destination;
-        completed.retention_reason = Some(retention_reason);
-        completed.approval_id = Some(approval_id);
-        completed.completed_at_ms = Some(now_ms());
-
-        match direction {
-            "download" => {
-                if let Some(entry) = state
-                    .downloads
-                    .iter_mut()
-                    .find(|entry| entry.transfer_id == transfer_id)
-                {
-                    *entry = completed.clone();
-                }
-            }
-            "upload" => {
-                if let Some(entry) = state
-                    .uploads
-                    .iter_mut()
-                    .find(|entry| entry.transfer_id == transfer_id)
-                {
-                    *entry = completed.clone();
-                }
-            }
-            _ => {}
+        let existing = state
+            .downloads
+            .iter()
+            .find(|entry| entry.transfer_id == transfer_id)
+            .cloned()
+            .ok_or_else(|| "native Browser download transfer no longer exists".to_string())?;
+        if existing.direction != "download"
+            || existing.status != "requested"
+            || !existing.requires_approval
+            || existing.approval_id.is_some()
+            || existing.url.as_deref() != Some(permit.source_url.as_str())
+            || existing.task_id != permit.task_id
+            || existing.browser_tab_id != permit.browser_tab_id
+        {
+            return Err("native Browser download is no longer awaiting review".to_string());
         }
         let profile_id = profile_id_for_task_or_tab(
             &state,
-            completed.task_id.as_deref(),
-            completed.browser_tab_id.as_deref(),
+            existing.task_id.as_deref(),
+            existing.browser_tab_id.as_deref(),
         );
-        let receipt_kind = if direction == "download" {
-            "browserDownloadCompleted"
-        } else {
-            "browserUploadCompleted"
-        };
         let receipt = push_receipt(
             &mut state,
-            receipt_kind,
-            completed.task_id.clone(),
+            "browserNativeDownloadDeclined",
+            existing.task_id.clone(),
             profile_id,
-            format!("Browser {} transfer completed", direction),
+            "Native Browser download declined before execution".to_string(),
             json!({
-                "transferId": completed.transfer_id,
-                "browserTabId": completed.browser_tab_id,
-                "direction": completed.direction,
-                "finalPath": if direction == "upload" { completed.display_name.clone() } else { completed.final_path.clone() },
-                "mimeType": completed.mime_type,
-                "contentKind": completed.content_kind,
-                "bytes": completed.bytes,
-                "sha256": completed.sha256,
-                "sourceUrl": completed.source_url,
-                "destination": completed.destination,
-                "retentionReason": completed.retention_reason,
-                "approvalId": completed.approval_id,
+                "transferId": existing.transfer_id,
+                "browserTabId": existing.browser_tab_id,
+                "state": "declined",
+                "reason": "operatorDeclinedBeforeExecution",
             }),
         );
-        match direction {
-            "download" => {
-                if let Some(entry) = state
-                    .downloads
-                    .iter_mut()
-                    .find(|entry| entry.transfer_id == transfer_id)
-                {
-                    entry.receipt = receipt.clone();
-                    completed = entry.clone();
-                }
-            }
-            "upload" => {
-                if let Some(entry) = state
-                    .uploads
-                    .iter_mut()
-                    .find(|entry| entry.transfer_id == transfer_id)
-                {
-                    entry.receipt = receipt.clone();
-                    completed = entry.clone();
-                }
-            }
-            _ => {}
-        }
-        Ok(if direction == "upload" {
-            public_upload_transfer_entry(completed)
-        } else {
-            completed
-        })
+        let entry = state
+            .downloads
+            .iter_mut()
+            .find(|entry| entry.transfer_id == transfer_id)
+            .expect("native Browser download row was checked while holding the state lock");
+        entry.status = "declined".to_string();
+        entry.requires_approval = false;
+        entry.reason = "Native Browser download declined before execution".to_string();
+        entry.completed_at_ms = Some(now_ms());
+        entry.receipt = receipt;
+        let declined = entry.clone();
+        // The precondition excludes any stage or in-flight native download.
+        // Removing this exact Requested permit releases its retained slot.
+        state.native_download_permits.remove(&transfer_id);
+        Ok(declined)
     }
 }
 
-fn is_sha256_hex(value: &str) -> bool {
-    value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
-}
-
-fn normalize_mime_type(value: &str) -> String {
-    value
-        .trim()
-        .to_ascii_lowercase()
-        .chars()
-        .take(120)
-        .collect::<String>()
-}
-
-fn validate_and_consume_transfer_approval(
-    state: &mut BrowserState,
-    approval_id: &str,
+/// Reserve a retained transfer slot before an admission creates any receipt,
+/// transfer id, or native download permit. Native permits are lifecycle-owned:
+/// a terminal-looking download stays retained whenever its permit still exists.
+fn reserve_browser_transfer_capacity(
+    entries: &mut Vec<BrowserFileTransferEntry>,
     direction: &str,
-    transfer_id: &str,
-    sha256: &str,
+    native_download_permit_ids: Option<&std::collections::BTreeSet<String>>,
 ) -> Result<(), String> {
-    validate_transfer_approval(
-        state,
-        approval_id,
-        direction,
-        transfer_id,
-        Some(sha256),
-        true,
-    )
-}
-
-fn validate_transfer_approval(
-    state: &mut BrowserState,
-    approval_id: &str,
-    direction: &str,
-    transfer_id: &str,
-    sha256: Option<&str>,
-    consume: bool,
-) -> Result<(), String> {
-    let now = now_ms();
-    let approval = state
-        .transfer_approvals
-        .iter_mut()
-        .find(|approval| approval.approval_id == approval_id)
-        .ok_or_else(|| {
-            "approvalId must reference a host-granted browser transfer approval".to_string()
-        })?;
-    if approval.status != "granted" {
-        return Err(format!(
-            "browser transfer approval '{}' is {}",
-            approval_id, approval.status
-        ));
-    }
-    if approval.expires_at_ms <= now {
-        approval.status = "expired".to_string();
-        return Err(format!(
-            "browser transfer approval '{}' expired",
-            approval_id
-        ));
-    }
-    if approval.direction != direction || approval.transfer_id != transfer_id {
-        return Err("browser transfer approval does not match this transfer".to_string());
-    }
-    if let (Some(bound_sha256), Some(sha256)) = (approval.sha256.as_deref(), sha256) {
-        if !bound_sha256.eq_ignore_ascii_case(sha256) {
-            return Err("browser transfer approval sha256 does not match".to_string());
-        }
-    }
-    if consume {
-        approval.status = "consumed".to_string();
-        approval.consumed_at_ms = Some(now);
+    while entries.len() >= BROWSER_TRANSFER_RETENTION_LIMIT {
+        let terminal_index = entries.iter().position(|entry| {
+            browser_transfer_entry_is_terminal(entry)
+                && native_download_permit_ids
+                    .is_none_or(|permit_ids| !permit_ids.contains(&entry.transfer_id))
+        });
+        let Some(terminal_index) = terminal_index else {
+            return Err(format!(
+                "Browser {direction} transfer capacity is full with {BROWSER_TRANSFER_RETENTION_LIMIT} active transfers; wait for a transfer to finish"
+            ));
+        };
+        entries.remove(terminal_index);
     }
     Ok(())
 }
 
-fn classify_transfer_content(mime_type: Option<&str>, path: &str) -> String {
-    let mime = mime_type.unwrap_or_default().to_ascii_lowercase();
-    if mime.starts_with("image/") {
-        "image".to_string()
-    } else if mime.starts_with("video/") {
-        "video".to_string()
-    } else if mime.starts_with("audio/") {
-        "audio".to_string()
-    } else if mime.starts_with("text/") {
-        "text".to_string()
-    } else if matches!(
-        mime.as_str(),
-        "application/pdf"
-            | "application/msword"
-            | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ) {
-        "document".to_string()
-    } else if matches!(
-        mime.as_str(),
-        "application/json" | "application/xml" | "application/vnd.ms-excel"
-    ) || mime.contains("spreadsheet")
-    {
-        "data".to_string()
-    } else if matches!(
-        mime.as_str(),
-        "application/zip" | "application/gzip" | "application/x-tar"
-    ) {
-        "archive".to_string()
-    } else {
-        infer_mime_type_from_path(path)
-            .map(|inferred| classify_transfer_content(Some(&inferred), path))
-            .unwrap_or_else(|| "binary".to_string())
-    }
+fn browser_transfer_entry_is_terminal(entry: &BrowserFileTransferEntry) -> bool {
+    matches!(entry.status.as_str(), "completed" | "declined" | "failed")
+}
+
+pub(crate) fn public_download_transfer_entry(
+    state: &BrowserState,
+    entry: &BrowserFileTransferEntry,
+) -> BrowserFileTransferEntry {
+    let mut public = entry.clone();
+    public.can_decline_native_download = native_download_decline_is_eligible(state, entry);
+    public
+}
+
+fn native_download_decline_is_eligible(
+    state: &BrowserState,
+    entry: &BrowserFileTransferEntry,
+) -> bool {
+    let Some(permit) = state.native_download_permits.get(&entry.transfer_id) else {
+        return false;
+    };
+    entry.direction == "download"
+        && entry.status == "requested"
+        && entry.requires_approval
+        && entry.approval_id.is_none()
+        && entry.url.as_deref() == Some(permit.source_url.as_str())
+        && entry.task_id == permit.task_id
+        && entry.browser_tab_id == permit.browser_tab_id
+        && permit.status == NativeDownloadPermitStatus::Requested
+        && permit.approval_id.is_none()
+        && permit.stage.is_none()
+        && !permit.finalization_claimed
+        && !permit.cleanup_in_progress
+}
+
+pub(super) fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }

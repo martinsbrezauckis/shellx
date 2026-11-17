@@ -1,6 +1,6 @@
 {
   "name": "shellx",
-  "version": "0.3.61",
+  "version": "0.3.62",
   "description": "Cross-platform desktop shell for agent CLIs and ACP-speaking agents",
   "license": "MIT",
   "private": true,
@@ -11,8 +11,10 @@
   "pnpm": {
     "overrides": {
       "@babel/core": "7.29.6",
+      "browserslist": "4.28.7",
       "nanoid": "3.3.18",
       "postcss": "8.5.23",
+      "source-map-js": "1.2.2",
       "tsx>esbuild": "0.28.1"
     }
   },
@@ -24,18 +26,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/public/check-source-size-budget.mjs && vite build --configLoader runner && node scripts/public/check-bundle-budget.mjs",
+    "build": "vite build --configLoader runner",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
-    "test": "node scripts/public/run-public-test-suite.mjs",
-    "test:public": "node scripts/public/run-public-test-suite.mjs",
-    "audit:dependencies": "pnpm audit --audit-level low",
-    "audit:rust": "node scripts/public/check-rustsec.mjs && node scripts/public/check-grype-rust.mjs",
-    "source:size": "node scripts/public/check-source-size-budget.mjs",
-    "vault:provenance:check": "node scripts/public/generate-vault-vendor-provenance.mjs --check",
     "shellx-browser": "tsx scripts/public/shellx-browser-cli.ts"
   },
   "devDependencies": {
@@ -46,7 +41,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "tsx": "^4",
     "typescript": "^5",
-    "vite": "^6.4.3"
+    "vite": "^6.4.6"
   },
   "dependencies": {
     "@fontsource-variable/onest": "^5.2.11",

@@ -7,15 +7,15 @@
   "crates": {
     "vault-broker": {
       "path": "crates/vault-broker",
-      "sourceDigestSha256": "2854af854171c0b518c1ddafa02613d7402f2777e704328db6ba20b17773aa8c",
+      "sourceDigestSha256": "8bd135638e303958b0164938685e69ee1b60bad90cf5461834bcf51f0862b4b2",
       "fileCount": 38,
-      "byteCount": 289623
+      "byteCount": 289615
     },
     "vault-client": {
       "path": "crates/vault-client",
-      "sourceDigestSha256": "38e2b848019de8d1975836701932f3833c6310b57a4629b2a516d9fd7e17f6e2",
+      "sourceDigestSha256": "47cc1192ded1c5fc06f69add84c23059a194d7af54290854a16741830d585881",
       "fileCount": 10,
-      "byteCount": 143418
+      "byteCount": 143284
     },
     "vault-core": {
       "path": "crates/vault-core",
@@ -25,15 +25,15 @@
     },
     "vault-server": {
       "path": "crates/vault-server",
-      "sourceDigestSha256": "b0184e4f61f0bf7df84d3da22e8a4d048700867550561a55290f1266833e6aa9",
+      "sourceDigestSha256": "c23f39be8556c6704401cdab36c6045928e1a52d760d1cbd579ba79a22116d6d",
       "fileCount": 7,
-      "byteCount": 143927
+      "byteCount": 143713
     }
   },
   "rootFiles": {
     "Cargo.lock": {
-      "sha256": "8db0229753d891f1c73eef464672368a8ec2e0c6dc5de4dcafacc3621d757640",
-      "byteCount": 80207
+      "sha256": "8ae1a718fe47f20280c6799f18006c4f3b9b5101729383998256d34510373ca1",
+      "byteCount": 80417
     },
     "Cargo.toml": {
       "sha256": "a2e32c3dc433e1b9dbc31f03f07b1cf22750a706b13ac243546a169a77edd3d5",

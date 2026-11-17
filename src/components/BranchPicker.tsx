@@ -10,9 +10,10 @@
  *
  * Keyboard: Esc closes, Arrow/Home/End moves selection, Enter picks.
  */
-import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { inTauri } from "../lib/tauri-bridge";
 import { ShellIcon } from "./icons";
 
 export function BranchPicker({
@@ -43,6 +44,12 @@ export function BranchPicker({
     let cancelled = false;
     setLoading(true);
     setError(null);
+    if (!inTauri()) {
+      setBranches([]);
+      setError("Branch selection is available in the desktop app.");
+      setLoading(false);
+      return;
+    }
     (async () => {
       try {
         const res = await invoke<{ branches: { name: string; isCurrent: boolean; isRemote?: boolean; upstream: string | null }[] }>(
@@ -129,23 +136,54 @@ export function BranchPicker({
  // and react-resizable-panels overflow:hidden clips. Anchor the
  // picker's BOTTOM edge at (pill_top - 6px) so it grows upward.
   const [coords, setCoords] = useState<{ left: number; bottom: number; width: number } | null>(null);
-  useEffect(() => {
-    if (!open) { setCoords(null); return; }
-    const anchor = document.querySelector('[data-picker-anchor="branch"]');
+  const recomputeCoords = useCallback(() => {
+    const anchor = document.querySelector<HTMLElement>('[data-picker-anchor="branch"]');
     if (!anchor) return;
+    const width = Math.min(380, Math.max(0, window.innerWidth - 16));
+    if (width === 0) return;
     const r = anchor.getBoundingClientRect();
     setCoords({
-      left: r.left,
-      bottom: window.innerHeight - r.top + 6,
-      width: 380,
+      left: Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - width - 8)),
+      bottom: Math.max(8, window.innerHeight - r.top + 6),
+      width,
     });
-  }, [open]);
+  }, []);
+  useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null);
+      return;
+    }
+    recomputeCoords();
+    let frame = 0;
+    const schedule = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(recomputeCoords);
+    };
+    const anchor = document.querySelector<HTMLElement>('[data-picker-anchor="branch"]');
+    const observer = typeof ResizeObserver === "undefined" || !anchor
+      ? null
+      : new ResizeObserver(schedule);
+    if (observer && anchor) {
+      for (let element: HTMLElement | null = anchor; element && element !== document.body; element = element.parentElement) {
+        observer.observe(element);
+      }
+    }
+    window.addEventListener("scroll", schedule, true);
+    window.addEventListener("resize", schedule);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("scroll", schedule, true);
+      window.removeEventListener("resize", schedule);
+    };
+  }, [open, recomputeCoords]);
 
   if (!open || !coords) return null;
 
   return createPortal(
     <div
       ref={rootRef}
+      id="branch-picker-popover"
       className="branch-picker branch-picker--portal"
       role="listbox"
       style={{

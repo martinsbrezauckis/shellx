@@ -5,6 +5,64 @@
 /* override older text-tab widths now that right rail navigation is icon-only */
 .right-tabs .tab { flex: 1 1 0; min-width: 0; }
 
+.manual-right-rail-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 14px;
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--accent) 10%, transparent), transparent 42%),
+    var(--bg);
+}
+.manual-right-rail-kicker {
+  color: var(--accent);
+  font: 700 10px/1.2 var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.manual-right-rail-preview h2 {
+  margin: 8px 0 6px;
+  color: var(--ink);
+  font-size: 18px;
+  letter-spacing: -.02em;
+}
+.manual-right-rail-preview > p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-ui-sm);
+  line-height: 1.55;
+}
+.manual-right-rail-rows {
+  display: grid;
+  gap: 7px;
+  margin: 18px 0 14px;
+}
+.manual-right-rail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--fs-ui-sm);
+}
+.manual-right-rail-row strong {
+  color: var(--ink);
+  font-size: var(--fs-ui-xs);
+  font-weight: 600;
+  text-align: right;
+}
+.manual-right-rail-preview > small {
+  display: block;
+  color: var(--ink-3);
+  font-size: var(--fs-ui-xs);
+  line-height: 1.5;
+}
+
 /* Session-scoped Tools tab. Global Plugins owns desired connector
  * state; this pane only reports whether the active tab environment can
  * actually use those connectors. */

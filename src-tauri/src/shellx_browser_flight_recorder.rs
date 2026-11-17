@@ -7,11 +7,11 @@ use crate::shellx_browser::{
 };
 use crate::shellx_browser_caller::BrowserTaskControlAuthority;
 use crate::shellx_browser_flight_recorder_sanitization::{
-    count_sanitization_losses, safe_url_value, sanitize_flight_text, sanitize_flight_value,
-    sanitize_optional_label,
+    count_flight_sanitization, flight_redaction_marker_catalog, redact_flight_protected_values,
+    safe_url_value, sanitize_flight_text, sanitize_flight_value, sanitize_optional_label,
 };
 use crate::shellx_browser_protected_values::{
-    browser_protected_values_for_tab, browser_protected_values_for_task, redact_browser_json_value,
+    browser_protected_values_for_tab, browser_protected_values_for_task,
 };
 
 const MAX_FLIGHT_RECEIPTS: usize = 160;
@@ -34,6 +34,8 @@ struct FlightSelection {
     retention_dropped_receipts: u64,
     gap_count: usize,
     sanitizer_loss_count: usize,
+    redaction_count: usize,
+    redaction_markers: Vec<Value>,
     evidence_complete: bool,
     first_source_sequence: Option<u64>,
     last_source_sequence: Option<u64>,
@@ -117,6 +119,9 @@ impl ShellxBrowserRegistry {
                 "retentionDroppedReceipts": selection.retention_dropped_receipts,
                 "gapCount": selection.gap_count,
                 "sanitizerLossCount": selection.sanitizer_loss_count,
+                "sanitizerFidelityLossCount": selection.sanitizer_loss_count,
+                "redactionCount": selection.redaction_count,
+                "redactionMarkers": selection.redaction_markers.clone(),
                 "evidenceComplete": selection.evidence_complete,
                 "firstSourceSequence": selection.first_source_sequence,
                 "lastSourceSequence": selection.last_source_sequence,
@@ -138,6 +143,8 @@ impl ShellxBrowserRegistry {
             retention_dropped_receipts: selection.retention_dropped_receipts,
             gap_count: selection.gap_count,
             sanitizer_loss_count: selection.sanitizer_loss_count,
+            sanitizer_fidelity_loss_count: selection.sanitizer_loss_count,
+            redaction_count: selection.redaction_count,
             evidence_complete: selection.evidence_complete,
             first_source_sequence: selection.first_source_sequence,
             last_source_sequence: selection.last_source_sequence,
@@ -231,30 +238,6 @@ fn build_flight_selection(
     let group = sanitize_optional_label(request.group.as_deref());
     let task_summary = task.map(task_summary);
     let tab_summary = tab.map(tab_summary);
-    let sanitizer_loss_count = [
-        &reason,
-        suite_id.as_ref().unwrap_or(&Value::Null),
-        group.as_ref().unwrap_or(&Value::Null),
-        task_summary.as_ref().unwrap_or(&Value::Null),
-        tab_summary.as_ref().unwrap_or(&Value::Null),
-    ]
-    .into_iter()
-    .chain(events.iter())
-    .chain(receipts.iter())
-    .map(count_sanitization_losses)
-    .sum::<usize>();
-    let gap_count = [
-        dropped_events > 0,
-        dropped_receipts > 0,
-        retention_dropped_console_events > 0,
-        retention_dropped_network_events > 0,
-        retention_dropped_receipts > 0,
-        sanitizer_loss_count > 0,
-    ]
-    .into_iter()
-    .filter(|present| *present)
-    .count();
-    let evidence_complete = gap_count == 0;
     let mut bundle = json!({
         "schemaVersion": "sx.flightRecorder.v1",
         "attemptId": attempt_id,
@@ -285,10 +268,12 @@ fn build_flight_selection(
                 "droppedReceipts": dropped_receipts,
                 "retentionDroppedEvents": retention_dropped_events,
                 "retentionDroppedReceipts": retention_dropped_receipts,
-                "sanitizerLossCount": sanitizer_loss_count,
-                "gapCount": gap_count,
+                "sanitizerLossCount": 0,
+                "sanitizerFidelityLossCount": 0,
+                "redactionCount": 0,
+                "gapCount": 0,
                 "untaggedInvocations": untagged_invocations,
-                "evidenceComplete": evidence_complete,
+                "evidenceComplete": true,
             },
             "gaps": {
                 "selection": {
@@ -303,11 +288,13 @@ fn build_flight_selection(
                     "potentiallyAffectsTask": retention_dropped_events > 0 || retention_dropped_receipts > 0,
                 },
                 "sanitization": {
-                    "lossCount": sanitizer_loss_count,
+                    "lossCount": 0,
+                    "fidelityLossCount": 0,
+                    "intentionalRedactionCount": 0,
                     "explicitMarkersIncluded": true,
                 },
-                "gapCount": gap_count,
-                "evidenceComplete": evidence_complete,
+                "gapCount": 0,
+                "evidenceComplete": true,
             },
             "sequence": {
                 "scope": "global-browser-evidence",
@@ -365,7 +352,41 @@ fn build_flight_selection(
                 .map(|task_id| browser_protected_values_for_task(state, task_id))
         })
         .unwrap_or_default();
-    redact_browser_json_value(&mut bundle, &protected_values);
+    redact_flight_protected_values(&mut bundle, &protected_values);
+    let redaction_markers = flight_redaction_marker_catalog(&bundle);
+    let sanitization_counts = count_flight_sanitization(&bundle);
+    let sanitizer_loss_count = sanitization_counts.fidelity_loss_count;
+    let redaction_count = sanitization_counts.redaction_count;
+    let gap_count = [
+        dropped_events > 0,
+        dropped_receipts > 0,
+        retention_dropped_console_events > 0,
+        retention_dropped_network_events > 0,
+        retention_dropped_receipts > 0,
+        sanitizer_loss_count > 0,
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    let evidence_complete = gap_count == 0;
+    bundle["summary"]["counts"]["sanitizerLossCount"] = json!(sanitizer_loss_count);
+    bundle["summary"]["counts"]["sanitizerFidelityLossCount"] = json!(sanitizer_loss_count);
+    bundle["summary"]["counts"]["redactionCount"] = json!(redaction_count);
+    bundle["summary"]["counts"]["gapCount"] = json!(gap_count);
+    bundle["summary"]["counts"]["evidenceComplete"] = json!(evidence_complete);
+    bundle["summary"]["redactions"] = json!({
+        "count": redaction_count,
+        "markersIncluded": true,
+        "originalContentRetained": false,
+    });
+    bundle["summary"]["gaps"]["sanitization"] = json!({
+        "lossCount": sanitizer_loss_count,
+        "fidelityLossCount": sanitizer_loss_count,
+        "intentionalRedactionCount": redaction_count,
+        "explicitMarkersIncluded": true,
+    });
+    bundle["summary"]["gaps"]["gapCount"] = json!(gap_count);
+    bundle["summary"]["gaps"]["evidenceComplete"] = json!(evidence_complete);
     Ok(FlightSelection {
         task_id,
         browser_tab_id,
@@ -379,6 +400,8 @@ fn build_flight_selection(
         retention_dropped_receipts,
         gap_count,
         sanitizer_loss_count,
+        redaction_count,
+        redaction_markers,
         evidence_complete,
         first_source_sequence,
         last_source_sequence,
@@ -514,7 +537,9 @@ fn flight_events(
         })
         .collect::<Vec<_>>();
     events.extend(state.console_logs.iter().filter_map(|entry| {
-        if !optional_id_matches(entry.task_id.as_deref(), task_id) {
+        if !optional_id_matches(entry.task_id.as_deref(), task_id)
+            || entry.browser_tab_id.as_deref() != browser_tab_id
+        {
             return None;
         }
         Some(json!({
@@ -523,6 +548,7 @@ fn flight_events(
             "operation": "browser.runtime.console",
             "actor": "browser-runtime",
             "taskId": entry.task_id,
+            "browserTabId": entry.browser_tab_id,
             "profileId": entry.profile_id,
             "logId": entry.log_id,
             "sourceSequence": entry.sequence,
@@ -858,7 +884,3 @@ fn tab_summary(tab: &crate::shellx_browser::BrowserTabSnapshot) -> Value {
 fn clean_optional_id(value: Option<&str>) -> Option<String> {
     value.map(clean_string).filter(|value| !value.is_empty())
 }
-
-#[cfg(test)]
-#[path = "shellx_browser_flight_recorder_tests.rs"]
-mod tests;

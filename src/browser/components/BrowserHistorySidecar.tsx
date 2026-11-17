@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type JSX } from "react";
+import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 
 import { ShellIcon } from "../../components/icons";
 import { useModalFocus } from "../../lib/useModalFocus";
@@ -13,9 +13,12 @@ import {
   type BrowserHistoryScope as BrowserHistoryClearScope,
 } from "../historyScope";
 import type { BrowserHistoryEntry } from "../types";
+import { historyMatchesDateFilter, type BrowserHistoryDateFilter } from "../historyDateFilter";
+import { startHistoryDateRollover } from "../historyDateRollover";
+
+export type { BrowserHistoryDateFilter } from "../historyDateFilter";
 
 export type BrowserHistoryScope = BrowserHistoryClass;
-export type BrowserHistoryDateFilter = "all" | "today" | "yesterday" | "last7";
 interface BrowserHistorySidecarProps {
   open: boolean;
   busy: boolean;
@@ -33,17 +36,6 @@ interface BrowserHistorySidecarProps {
   onClearHistory: (scope: BrowserHistoryClearScope) => Promise<boolean>;
   onNavigateToUrl: (url: string) => void;
   onClose: () => void;
-}
-
-function historyMatchesDateFilter(visitedAtMs: number, filter: BrowserHistoryDateFilter): boolean {
-  if (filter === "all") return true;
-  if (!Number.isFinite(visitedAtMs) || visitedAtMs <= 0) return false;
-  const now = new Date();
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startYesterday = startToday - 24 * 60 * 60 * 1000;
-  if (filter === "today") return visitedAtMs >= startToday;
-  if (filter === "yesterday") return visitedAtMs >= startYesterday && visitedAtMs < startToday;
-  return visitedAtMs >= startToday - 6 * 24 * 60 * 60 * 1000;
 }
 
 function historyMatchesSearch(entry: BrowserHistoryEntry, search: string): boolean {
@@ -72,6 +64,7 @@ export function BrowserHistorySidecar({
   onClose,
 }: BrowserHistorySidecarProps): JSX.Element | null {
   const [pendingClearScope, setPendingClearScope] = useState<BrowserHistoryClearScope | null>(null);
+  const [dateClockMs, setDateClockMs] = useState(() => Date.now());
   const confirmationRef = useRef<HTMLDivElement | null>(null);
   const scopedHistory = historyScope === "user" ? userHistory : agentHistory;
   const pendingClearCount = pendingClearScope === null
@@ -84,12 +77,31 @@ export function BrowserHistorySidecar({
       if (!busy) setPendingClearScope(null);
     },
   );
+  useEffect(() => {
+    if (!open || historyDateFilter === "all") return;
+    return startHistoryDateRollover({
+      now: () => new Date(),
+      setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      clearTimeout: (timer) => window.clearTimeout(timer),
+      onResume: (refresh) => {
+        const onVisibilityChange = () => {
+          if (document.visibilityState === "visible") refresh();
+        };
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        window.addEventListener("focus", refresh);
+        return () => {
+          document.removeEventListener("visibilitychange", onVisibilityChange);
+          window.removeEventListener("focus", refresh);
+        };
+      },
+    }, (now) => setDateClockMs(now.getTime()));
+  }, [open, historyDateFilter]);
   const filteredHistory = useMemo(
     () => scopedHistory.filter((entry) =>
       historyMatchesSearch(entry, historySearch) &&
-      historyMatchesDateFilter(entry.visitedAtMs, historyDateFilter),
+      historyMatchesDateFilter(entry.visitedAtMs, historyDateFilter, new Date(dateClockMs)),
     ),
-    [historyDateFilter, historySearch, scopedHistory],
+    [dateClockMs, historyDateFilter, historySearch, scopedHistory],
   );
 
   const confirmClearHistory = async (scope: BrowserHistoryClearScope): Promise<void> => {

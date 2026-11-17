@@ -19,7 +19,7 @@ pub(crate) fn browser_engine_webview_builder<R: tauri::Runtime>(
     }
     #[cfg(not(windows))]
     {
-        WebviewBuilder::new(label, url).general_autofill_enabled(false)
+        WebviewBuilder::new(label, url)
     }
 }
 
@@ -56,11 +56,4 @@ pub(crate) async fn install_browser_native_credential_controls<R: tauri::Runtime
         },
     )
     .await
-}
-
-#[cfg(not(windows))]
-pub(crate) async fn install_browser_native_credential_controls<R: tauri::Runtime>(
-    _webview: &tauri::Webview<R>,
-) -> Result<(), String> {
-    Ok(())
 }

@@ -22,12 +22,44 @@ const LIVE_STATUSES = new Set<ConnectionProviderScanStatus>([
 
 export interface TaskProviderCatalog {
   schemaVersion: "shellx.task-provider-catalog.v1";
+  /** Absent only for a persisted/older host response; normalized at the renderer boundary. */
+  guidanceProvenance?: TaskProviderCatalogGuidanceProvenance;
   snapshotId: string;
   generatedAtMs: number;
   freshUntilMs: number;
   target: ConnectionProviderCapabilityTarget;
   providers: TaskProviderCatalogProvider[];
 }
+
+/**
+ * Distinguishes bundled model-card review metadata from the fresh, target-bound availability
+ * scan identified by `snapshotId`. A provider CLI version is not native capability evidence.
+ */
+export interface TaskProviderCatalogGuidanceProvenance {
+  source: "bundled-model-instruction-cards";
+  cardsVersion: string;
+  cardsLastReviewed: string;
+  reviewScope: "bundled-descriptive-guidance";
+  availabilityAuthority: "fresh-exact-target-task-provider-catalog";
+  nativeCapabilityEvidence: "requires-provider-specific-native-canary";
+}
+
+/**
+ * An older host did not send card provenance. Preserve that absence rather than inventing a
+ * card review date or a native capability claim while the renderer remains compatible.
+ */
+export const LEGACY_TASK_PROVIDER_CATALOG_GUIDANCE_PROVENANCE = {
+  source: "legacy-unqualified",
+  cardsVersion: "unknown",
+  cardsLastReviewed: "unknown",
+  reviewScope: "legacy-unqualified",
+  availabilityAuthority: "fresh-exact-target-task-provider-catalog",
+  nativeCapabilityEvidence: "unqualified",
+} as const;
+
+export type TaskProviderCatalogueGuidanceProvenance =
+  | TaskProviderCatalogGuidanceProvenance
+  | typeof LEGACY_TASK_PROVIDER_CATALOG_GUIDANCE_PROVENANCE;
 
 export interface TaskProviderCatalogProvider {
   providerId: AgentId;
@@ -85,6 +117,9 @@ export function assertTaskProviderCatalog(
   if (!/^sha256:[0-9a-f]{64}$/.test(catalogue.snapshotId)) {
     throw new Error("task provider catalogue snapshot identity is invalid");
   }
+  if (catalogue.guidanceProvenance !== undefined) {
+    assertGuidanceProvenance(catalogue.guidanceProvenance);
+  }
   if (!Number.isFinite(catalogue.generatedAtMs) || !Number.isFinite(catalogue.freshUntilMs)) {
     throw new Error("task provider catalogue timestamps are invalid");
   }
@@ -116,6 +151,20 @@ export function assertTaskProviderCatalog(
   const missing = PROVIDER_IDS.filter((providerId) => !seen.has(providerId));
   if (missing.length > 0) {
     throw new Error(`task provider catalogue omitted ${missing.join(", ")}`);
+  }
+}
+
+function assertGuidanceProvenance(provenance: TaskProviderCatalogGuidanceProvenance): void {
+  if (
+    !provenance
+    || provenance.source !== "bundled-model-instruction-cards"
+    || !/^\d{4}-\d{2}-\d{2}\.\d+$/.test(provenance.cardsVersion)
+    || !/^\d{4}-\d{2}-\d{2}$/.test(provenance.cardsLastReviewed)
+    || provenance.reviewScope !== "bundled-descriptive-guidance"
+    || provenance.availabilityAuthority !== "fresh-exact-target-task-provider-catalog"
+    || provenance.nativeCapabilityEvidence !== "requires-provider-specific-native-canary"
+  ) {
+    throw new Error("task provider catalogue guidance provenance is invalid");
   }
 }
 

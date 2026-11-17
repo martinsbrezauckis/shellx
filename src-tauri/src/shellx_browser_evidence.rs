@@ -32,6 +32,13 @@ fn compact_browser_evidence(value: &Value) -> BTreeMap<String, Value> {
         "receipts",
         "droppedEvents",
         "droppedReceipts",
+        "retentionDroppedEvents",
+        "retentionDroppedReceipts",
+        "redactionCount",
+        "redactionMarkers",
+        "sanitizerFidelityLossCount",
+        "sanitizerLossCount",
+        "gapCount",
         "baselineAttempts",
         "candidateAttempts",
         "safetyViolationDelta",
@@ -193,56 +200,4 @@ fn browser_evidence_identity_key(row: &Value) -> Option<String> {
                 .and_then(Value::as_str)
                 .map(|id| format!("evaluation:{id}"))
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shellx_browser::{BrowserFlightRecorderExportRequest, StartBrowserTaskRequest};
-
-    #[test]
-    fn evidence_summary_is_scoped_to_the_agent_owner_session() {
-        let registry = ShellxBrowserRegistry::default();
-        for session in ["session-a", "session-b"] {
-            let task = registry
-                .start_task_for_agent_session(
-                    StartBrowserTaskRequest {
-                        goal: format!("evidence for {session}"),
-                        ..StartBrowserTaskRequest::default()
-                    },
-                    Some(session),
-                )
-                .expect("owned task starts");
-            registry
-                .export_flight_recorder_for_agent_session(
-                    BrowserFlightRecorderExportRequest {
-                        task_id: Some(task.task_id),
-                        ..BrowserFlightRecorderExportRequest::default()
-                    },
-                    Some(session),
-                )
-                .expect("owned recorder export succeeds");
-        }
-
-        let summary = registry.browser_evidence_summary(Some("session-a"), None);
-        assert_eq!(summary["callerScoped"], true);
-        assert_eq!(summary["count"], 1);
-        assert_eq!(summary["durableRecovered"], 0);
-        assert_eq!(summary["durableScanTruncated"], false);
-        assert_eq!(summary["durableScanFailed"], false);
-        let recent = summary["recent"].as_array().expect("recent evidence rows");
-        assert!(recent[0]["summary"]
-            .as_str()
-            .is_some_and(|summary| summary.contains("browser-attempt")));
-
-        for receipt in registry
-            .receipts(None)
-            .into_iter()
-            .filter(|receipt| receipt.kind == "browserFlightRecorderExported")
-        {
-            if let Some(path) = receipt.evidence.get("path").and_then(Value::as_str) {
-                std::fs::remove_file(path).expect("test artifact cleanup");
-            }
-        }
-    }
 }

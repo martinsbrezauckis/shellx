@@ -37,13 +37,20 @@ Grok ACP for Grok tabs, or the selected provider CLI for provider tabs. It may
 try to read or write outside the declared cwd, escalate via `..` traversal, or
 use POSIX paths on Windows to reach `\\?\C:\Windows\...`.
 
-**Defense**: `host_mcp/filesystem_core.rs::validate_fs_path` is the single chokepoint
-for every `fs_*` tool. Enforces absolute paths, rejects null bytes,
-rejects `..` substrings, rejects POSIX-on-Windows except UNC /
-`/mnt/c` / `/cygdrive`. Write-class tools additionally canonicalize
-HOME and reject anything outside the home tree. A sensitive-path denylist
-blocks credential stores, shell startup files, SSH config, Git config, and
-user persistence locations even when they are inside HOME.
+**Defense**: `host_mcp/filesystem_core.rs::validate_fs_path` is the single
+chokepoint for parent-host `fs_*` tools. It enforces absolute paths, rejects
+null bytes and traversal, constrains paths to HOME, rejects linked escapes, and
+blocks credential stores, shell startup files, SSH/Git config, and persistence
+locations. SSH ACP native file RPCs use a separate selected-project boundary:
+they resolve the project and target, reject link/reparse components and
+non-regular files, and use byte- and time-bounded capture.
+
+**Residual risk**: parent-host Host MCP file authority is HOME-scoped rather
+than selected-project scoped so WSL/SSH sessions can deliberately reach desktop
+files. This is a broad capability, not a project sandbox. Use native provider
+file tools for ordinary project work and expose ShellX host tooling only to
+trusted agents and remotes. A future explicit parent-host grant model should
+replace ambient HOME authority without removing cross-environment handoff.
 
 ### T2. Agent runs arbitrary shell
 A provider-originated `terminal/*` request, if honored, could spawn or control
@@ -79,20 +86,26 @@ web_search result body, or chat output to xAI's logs.
   mediated Browser/Vault fill, injection, or write-only deposit routes.
   Operator/UI reveal remains a separate user-controlled path.
 
-**Residual risk**: the agent can still read files inside the active
-cwd. A user who opens shellX rooted at `~` or `/` exposes everything
-to the agent. Mitigation is **operator hygiene** — pick a project
-folder, not a home root.
+**Residual risk**: provider-native tools retain the provider's own filesystem
+authority and are outside the Host MCP sensitive-path denylist. Parent-host
+Host MCP reads retain the intentional HOME scope described in T1. Because a
+same-user process can read user-readable token files (T6), the Debug API bearer
+is trusted operator authority rather than a provider-isolation boundary.
+Mitigation is operator hygiene: pick a project folder rather than a home root,
+keep host tooling off when it is not needed, and connect only trusted
+environments.
 
 ### T4. Agent lies about completion
 The active agent may claim a tool succeeded when it didn't, or claim a file was
 written when nothing changed.
 
 **Defense**:
-- All tool calls and their results are logged verbatim to
-  `~/.shellx/sessions/<sid>.jsonl`. The session log is the source of
-  truth for what grok actually did, separate from what grok claimed
-  in chat.
+- ShellX session archives record typed tool activity, results, and receipts in
+  `~/.shellx/sessions/<sid>.jsonl`, with sensitive fields and
+  credential-shaped automatic Task output redacted. The session log is the
+  review source for what actually ran, separate from what an agent claimed in
+  chat; truncation and evidence gaps stay explicit rather than being presented
+  as complete history.
 - Build Mode (`build_complete()` MCP gate) validates the
   scratchboard before accepting completion — refuses if any
   phase still has unchecked sub-stages.
@@ -116,6 +129,11 @@ tool response could carry prompt-injection text like
   permission-gated `host_act` alongside orientation/search and the Browser
   and ShellX Cut pairs; exact legacy schemas and Cut's generated verb catalog
   remain targeted-search results instead of always-injected prompt material.
+- The Browser's fixed-vocabulary prompt guard blocks known high-confidence
+  signals and records bounded receipts, but it is defense in depth rather than
+  an authorization oracle. Paraphrases and other languages can evade lexical
+  detection; Vault origin grants, task ownership, action gates, and the chosen
+  autonomy mode remain the effect-authority boundaries.
 
 ### T6. Local-process eavesdropping on shellXagent / host MCP
 Another process running as the same user could connect to
@@ -207,8 +225,9 @@ approval behavior baked into the spawned CLI argv.
 - Users should choose a project folder, not `~`, `/`, or a broad
   downloads/home workspace.
 - Users should connect only to WSL/SSH environments they control.
-- Planning remains available as a ShellX mode; coding-agent execution uses the
-  provider's native Full Auto controls.
+- ShellX retains non-Full-Auto wire values for migration and release diagnostics,
+  but normal user-facing provider execution offers **Full Auto**. A
+  provider-qualified Planning control is not a current ShellX product mode.
 
 **Residual risk**: in Full Auto, the selected provider can run native
 tools and shell/file actions according to that provider's own rules.
@@ -348,6 +367,14 @@ credential-bearing or adversarial web automation. On macOS/Linux, keep work to
 trusted sites and non-sensitive flows unless the missing native controls are
 acceptable for the task.
 
+The cross-platform navigation gate resolves hostnames and rejects known
+loopback, private, link-local, and metadata addresses before navigation. The
+native WebView resolves the hostname again when it connects, so the current
+check is not a connection-bound DNS pin. A hostile hostname that changes from
+a public to a private answer between those operations remains a residual
+DNS-rebinding risk. Treat private-network access as an explicit trust decision;
+connection-bound resolution is a planned defense-in-depth improvement.
+
 ### T15. A same-origin page retargets a granted credential
 An origin-bound Vault grant alone does not prove that the selected field is a
 credential control or that its form submits back to the same site. A malicious
@@ -391,6 +418,35 @@ whole-machine local API posture. Same-user malware can call Cut without going
 through ShellX; preventing that requires a future authenticated Cut transport,
 not another ShellX prompt.
 
+### T17. Agent-created Tasks persist beyond the current conversation
+An injected or compromised provider could claim that the user approved a Task,
+creating durable scheduled execution after the current turn ends. A verbose
+provider could also exhaust storage or retain credential-shaped output in the
+private conversation archive.
+
+**Defense**:
+- Agent Task creation requires an authenticated ShellX caller and consumes one
+  app-owned authority registered from the exact current operator-authored
+  direct composer request. It is tab-bound, single-use, expires after 20
+  minutes, and is cleared by an ordinary follow-up or a failed provider
+  delivery. Provider fields cannot mint authority or escalate create-only
+  intent into an immediate run.
+- Every Task archive frame is scrubbed for structured secrets and
+  credential-shaped text before append. A 64 MiB cumulative cap reserves room
+  for one durable typed truncation marker and then drops later provider output.
+- Definition, occurrence, attempt, fallback, terminal state, and evidence
+  identities remain receipt-backed. Queue acceptance is not reported as start
+  or completion.
+
+The direct Debug API `POST /tasks` route is trusted operator administration and
+does not consume this conversation authority. It is deliberately distinct from
+agent Task creation.
+
+**Residual risk**: natural-language intent classification is deliberately
+conservative but cannot understand every language or phrasing. Ambiguous
+requests should be clarified, and the header Tasks panel remains the visible
+review, pause, cancellation, and results surface.
+
 ## Out-of-scope threats
 
 ### O1. Root / Administrator on the local machine
@@ -399,14 +455,16 @@ they can read process memory, install rootkits, intercept keyring,
 and bypass any shellX defense. shellX is a userspace tool; we trust
 the OS.
 
-### O2. Compromise or loss of Vault recovery material
+### O2. Compromise or loss of Vault access material
 ShellX Vault uses encrypted local or connected resources mediated by
 `shellx_vault/` and the shared Vault broker, with OS-backed remembered-device
-custody where configured and recovery materials under user control. If the
-user's device credential, master passphrase, recovery kit, or connected Vault
-endpoint is compromised, an attacker may gain access to stored secrets. If they
-are lost or damaged, stored secrets may be unrecoverable. ShellX does not claim
-server-side escrow or recovery beyond the saved recovery materials.
+custody where configured. The setup confirmation ID is not a recovery key;
+ShellX has no recovery words or restore flow. A usable master passphrase,
+encrypted keyfile/profile, Vault data, and any required connected endpoint
+access remain necessary. Their compromise can expose stored secrets; their
+loss or damage can permanently lose access. Remembered-device custody does not
+replace those requirements. ShellX does not provide server-side escrow or a
+recovery-file export.
 
 ### O3. Compromise of grok-build's xAI auth
 Grok-build has its own `~/.grok/auth.json` with an xAI session token.
@@ -442,10 +500,10 @@ Same as O1 — out of scope.
 
 | Surface | Threat IDs | Defense location |
 |---|---|---|
-| shellXagent loopback port | T6 | `debug_api.rs::require_auth` |
+| shellXagent loopback port | T6 | `debug_api_auth.rs::require_auth` |
 | Host MCP HTTP loopback port | T6, T7 | `mcp_http.rs` auth/origin gates and `write_class_gate_action` |
 | Host MCP stdio surface | T1, T2, T3, T5 | `host_mcp/filesystem_core.rs::validate_fs_path`, redaction, `net_fetch` allow-list |
-| ACP wire to grok | T2, T4 | `acp.rs::handle_terminal_create` intercept, `sessions/<sid>.jsonl` logging |
+| ACP wire to grok | T1, T2, T4 | `acp.rs` terminal intercept, selected-project file guard, bounded SSH capture, session logging |
 | Vault | T3, O2 | `shellx_vault/*`, `vendor/shellx-vault/crates/vault-broker/*`, legacy `vault.rs` compatibility |
 | SSH/WSL tunnel | T7 | tab-bound host bridge and operator-approved remote targets |
 | Agent CLI setup | T10, O5 | `agent_cli_setup.rs` URL allowlist, staged digest confirmation, fixed interpreter, cleanup |
@@ -455,3 +513,4 @@ Same as O1 — out of scope.
 | Browser Flight Recorder and evaluation artifacts | T12 | `shellx_browser_flight_recorder.rs`, `shellx_browser_evaluations.rs`, authenticated Debug API export route, artifact budgets |
 | Browser Vault fill targets | T15 | `shellx_browser_vault.rs`, current observation and same-origin form-action validation |
 | ShellX Cut compact proxy | T16 | `host_mcp/cut_mcp.rs`, standard install-path resolution, process/output bounds, and `cut_act` write-class gate |
+| Agent-created Tasks | T17 | `task_intent.rs`, `debug_api_task_agent.rs`, `task_conversation.rs`, Task receipts |

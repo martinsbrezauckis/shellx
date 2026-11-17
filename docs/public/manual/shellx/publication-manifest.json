@@ -1,0 +1,447 @@
+{
+  "schema": "shellx.manual-publication-manifest.v1",
+  "version": "0.3.62",
+  "revision": 48,
+  "generatedBy": "ShellX canonical manual source",
+  "manifest": {
+    "sourcePath": "docs/public/manual/shellx/publication-manifest.json",
+    "publicExportPath": "docs/public/manual/shellx/publication-manifest.json",
+    "docsSitePath": "manual/shellx/publication-manifest.json",
+    "selfHash": null,
+    "selfHashReason": "The manifest cannot hash itself; each listed publication artifact is hash-bound."
+  },
+  "markdownDiscovery": {
+    "sourcePath": "docs/public/SHELLX_MANUAL.md",
+    "publicExportPath": "docs/public/SHELLX_MANUAL.md",
+    "docsSitePath": null,
+    "publication": "The Markdown manual is intentionally available in the public-export repository only. The docs site publishes the interactive manual and its JSON discovery files instead."
+  },
+  "artifacts": [
+    {
+      "sourcePath": "docs/public/SHELLX_MANUAL.md",
+      "publicExportPath": "docs/public/SHELLX_MANUAL.md",
+      "docsSitePath": null,
+      "sha256": "2654872ebdd009246c5c387276c03d20208e19f9749be2c92211749102f6be17"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/content.json",
+      "publicExportPath": "docs/public/manual/shellx/content.json",
+      "docsSitePath": "manual/shellx/content.json",
+      "sha256": "893ab0b3c961ebe4a972ef75a00d26a2941283ab975670151d5d1872737b1690"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/index.html",
+      "publicExportPath": "docs/public/manual/shellx/index.html",
+      "docsSitePath": "manual/shellx/index.html",
+      "sha256": "af8242e186fa3ada3894d4076c8ee21ac21025dee8e518263b3c40518b6f36a9"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/interface.json",
+      "publicExportPath": "docs/public/manual/shellx/interface.json",
+      "docsSitePath": "manual/shellx/interface.json",
+      "sha256": "ab5b4915cbbc0ea3297f6c455839e3e41946d9e0daa3d3a7370950ce4adb93d8"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/manual.css",
+      "publicExportPath": "docs/public/manual/shellx/manual.css",
+      "docsSitePath": "manual/shellx/manual.css",
+      "sha256": "3b10fdcb1ed21711ddb8f203f11e0d5a4a48f86cfeaee74f88d859d121bd8531"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/manual.js",
+      "publicExportPath": "docs/public/manual/shellx/manual.js",
+      "docsSitePath": "manual/shellx/manual.js",
+      "sha256": "d38ac010be790ac6a2efb5b2a85b30aaacf1ee6884a0bba9f0b94d9de7e5fd9d"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-fvJ6V4Oz.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-fvJ6V4Oz.js",
+      "docsSitePath": "manual/shellx/app/assets/ActivityBrowserModal-fvJ6V4Oz.js",
+      "sha256": "c4bfbb426084b59f5c9a2bf6e771136308a4fe5c06a85efa3c6284c584f02872"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-gznTo7mf.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/ActivityBrowserModal-gznTo7mf.css",
+      "docsSitePath": "manual/shellx/app/assets/ActivityBrowserModal-gznTo7mf.css",
+      "sha256": "96859cdb3bc834fc182154d45e7a8f58d631edf207dc2402b5220bd494f1f310"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/AgentCliSetupDialog-3hoX7BUB.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/AgentCliSetupDialog-3hoX7BUB.css",
+      "docsSitePath": "manual/shellx/app/assets/AgentCliSetupDialog-3hoX7BUB.css",
+      "sha256": "9bb3a2b691929fbdafebcc646f00b8df1ff297be9bc0797233005a4312050f5c"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/AgentCliSetupDialog.lazy-uIFEKdMM.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/AgentCliSetupDialog.lazy-uIFEKdMM.js",
+      "docsSitePath": "manual/shellx/app/assets/AgentCliSetupDialog.lazy-uIFEKdMM.js",
+      "sha256": "e83e5e771be6ffa5a12c0a5391e970515a01703eab3db0043fd4818e3f9331ba"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/AgentCliStatusCard-DahJ4Cyv.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/AgentCliStatusCard-DahJ4Cyv.js",
+      "docsSitePath": "manual/shellx/app/assets/AgentCliStatusCard-DahJ4Cyv.js",
+      "sha256": "9f20e96f2d4d135bcfd3cb132059d217f4f3f6ae8565195f1c041fec900cdc80"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-CmiwnM2A.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-CmiwnM2A.css",
+      "docsSitePath": "manual/shellx/app/assets/AttachmentMediaBoard-CmiwnM2A.css",
+      "sha256": "a450dbae2b03804ea1c3c50cd551f16a05fcb773b35b8d4a44a5a497504f7036"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-DLSs4Hpb.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/AttachmentMediaBoard-DLSs4Hpb.js",
+      "docsSitePath": "manual/shellx/app/assets/AttachmentMediaBoard-DLSs4Hpb.js",
+      "sha256": "23363ec17bd426702a3618347e1ffaa4fc20ce6f4c53ad8a288b47300dd4c5fe"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BookmarkSidecar-BGp5kbpZ.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BookmarkSidecar-BGp5kbpZ.css",
+      "docsSitePath": "manual/shellx/app/assets/BookmarkSidecar-BGp5kbpZ.css",
+      "sha256": "5ca267699c0f6ebf1ad6fc92edec15aa7aa32871f271284ca1641dc20b3578cd"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BookmarkSidecar-CZ7uhUvl.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BookmarkSidecar-CZ7uhUvl.js",
+      "docsSitePath": "manual/shellx/app/assets/BookmarkSidecar-CZ7uhUvl.js",
+      "sha256": "cd4c1265371047cb307c50699d3d3a08e668e3932566a8b644e7e7caff488f4f"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BrowserEvidencePanel-C_wfUuDt.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BrowserEvidencePanel-C_wfUuDt.js",
+      "docsSitePath": "manual/shellx/app/assets/BrowserEvidencePanel-C_wfUuDt.js",
+      "sha256": "f15a1e5cb26b110f088f7fa019ffe59113f80c7f2308069d8292286ab838906c"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BrowserEvidencePanel-kbRfDijK.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BrowserEvidencePanel-kbRfDijK.css",
+      "docsSitePath": "manual/shellx/app/assets/BrowserEvidencePanel-kbRfDijK.css",
+      "sha256": "d09a514afd4ba64bcef29e5529a189c3a9a6d1a026e8b1fcce99970e9fad8ca4"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BrowserHistorySidecar-CYX5YmjB.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BrowserHistorySidecar-CYX5YmjB.js",
+      "docsSitePath": "manual/shellx/app/assets/BrowserHistorySidecar-CYX5YmjB.js",
+      "sha256": "22fc02038e18a65bd372a4af7a96ed038ebb40fde0786ac2339a891c1cf4e809"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BrowserShieldsPanel-ChBqBPBJ.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BrowserShieldsPanel-ChBqBPBJ.js",
+      "docsSitePath": "manual/shellx/app/assets/BrowserShieldsPanel-ChBqBPBJ.js",
+      "sha256": "47acc883e5e572c205656879b0ec7093c5b7cc398537474aee260613d76e1bb7"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BrowserTabHandoffConfirmation-BfRr2Sj4.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BrowserTabHandoffConfirmation-BfRr2Sj4.css",
+      "docsSitePath": "manual/shellx/app/assets/BrowserTabHandoffConfirmation-BfRr2Sj4.css",
+      "sha256": "67394e9497908687535c9d6d66db872ac5bc96b137cbabacfaf9d096d252bdd5"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BrowserTabHandoffConfirmation-Br7OlIRP.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BrowserTabHandoffConfirmation-Br7OlIRP.js",
+      "docsSitePath": "manual/shellx/app/assets/BrowserTabHandoffConfirmation-Br7OlIRP.js",
+      "sha256": "484b458ea30d94905af2aded211a756b31f4fb3b2012dd828021f58304a0e7de"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BrowserVaultFillPanel-OrwhWqJT.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BrowserVaultFillPanel-OrwhWqJT.js",
+      "docsSitePath": "manual/shellx/app/assets/BrowserVaultFillPanel-OrwhWqJT.js",
+      "sha256": "f2299af3bed7bc6ff23b3fcf8644046d761b6d332277dbfec3763adf3d4d3fb0"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BuildRunCockpit-q0iBGXEo.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BuildRunCockpit-q0iBGXEo.js",
+      "docsSitePath": "manual/shellx/app/assets/BuildRunCockpit-q0iBGXEo.js",
+      "sha256": "719328a9e95903e069f939047aba1fc3d4ce9fce3ca4a8e2722e5049aa7d150a"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/BuiltinDocModal-BacAKr4N.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/BuiltinDocModal-BacAKr4N.js",
+      "docsSitePath": "manual/shellx/app/assets/BuiltinDocModal-BacAKr4N.js",
+      "sha256": "dffd740850799c1045f1e3c86701db65fed2df77c1d927a7baf66a3b1f843db9"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/CommandPalette-Bi6y7NKW.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/CommandPalette-Bi6y7NKW.js",
+      "docsSitePath": "manual/shellx/app/assets/CommandPalette-Bi6y7NKW.js",
+      "sha256": "2dd496a3284141e43787442409d53e05c648a4df80ac3f3724716f29414c5e3b"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/CommandPalette-DQBL0m-7.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/CommandPalette-DQBL0m-7.css",
+      "docsSitePath": "manual/shellx/app/assets/CommandPalette-DQBL0m-7.css",
+      "sha256": "a2a3883d68153aefaab85d8f350ae4b26d53ef1b1430c2e1e9a8e520abbb7f8d"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/ConnectionEditor-BG9aHMBD.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/ConnectionEditor-BG9aHMBD.js",
+      "docsSitePath": "manual/shellx/app/assets/ConnectionEditor-BG9aHMBD.js",
+      "sha256": "a86c28aae81c8d597105a74546e614a77e3ca4a6d9d46bed4ca2b91546f1b6c7"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-Ci3VZzy4.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-Ci3VZzy4.js",
+      "docsSitePath": "manual/shellx/app/assets/ConnectorInboxModal-Ci3VZzy4.js",
+      "sha256": "a1c58aa214e5be62803b08611108a3fe07b9b5763157217929433c0620b7e476"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-nlrUQaI9.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/ConnectorInboxModal-nlrUQaI9.css",
+      "docsSitePath": "manual/shellx/app/assets/ConnectorInboxModal-nlrUQaI9.css",
+      "sha256": "7f3c7e4cc37ffd69a446ca8a8c658743724cc9d08106f24f8f3300c134e268d6"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/DownloadSidecar-SP6ffCVy.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/DownloadSidecar-SP6ffCVy.js",
+      "docsSitePath": "manual/shellx/app/assets/DownloadSidecar-SP6ffCVy.js",
+      "sha256": "25df659a7f109b40558811bd0e23757d1a02df51a3742d3659a4596f258a2748"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/FilesPane-Db173xGt.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/FilesPane-Db173xGt.js",
+      "docsSitePath": "manual/shellx/app/assets/FilesPane-Db173xGt.js",
+      "sha256": "31665bb04e6669fa07c9697d1b43d213872b70dd6fda504aa2db05a979f15697"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/HelpModal-CFLRfH9S.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/HelpModal-CFLRfH9S.js",
+      "docsSitePath": "manual/shellx/app/assets/HelpModal-CFLRfH9S.js",
+      "sha256": "8827b978aef532a892e0c8c22ba17d0ce5cdfa39a81d21acdd719f1183154482"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/LazySurface-CCHXqsEn.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/LazySurface-CCHXqsEn.css",
+      "docsSitePath": "manual/shellx/app/assets/LazySurface-CCHXqsEn.css",
+      "sha256": "4309b2d6f42d5fbe75e6987e46d2a048e79b31317d662efd423fc7f98f8b95dc"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/LazySurface-EcW3B_n5.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/LazySurface-EcW3B_n5.js",
+      "docsSitePath": "manual/shellx/app/assets/LazySurface-EcW3B_n5.js",
+      "sha256": "c5de51b3babdea363fc5c950b5b58c27ec6e9de9f1a09fed19354b425491c40e"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/PRCreateModal-DUb1Go7b.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/PRCreateModal-DUb1Go7b.js",
+      "docsSitePath": "manual/shellx/app/assets/PRCreateModal-DUb1Go7b.js",
+      "sha256": "2e1f767468cc8c4d65473906fd4186f4c68c585ea3c0ff33f51fe683d198916f"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/PluginsModal-DRjGdrPt.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/PluginsModal-DRjGdrPt.css",
+      "docsSitePath": "manual/shellx/app/assets/PluginsModal-DRjGdrPt.css",
+      "sha256": "d48756aa5233f5cb2db2946395b5d2e6b0bb14937d607efb665c4304b6374b49"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/PluginsModal-kXSEpmTB.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/PluginsModal-kXSEpmTB.js",
+      "docsSitePath": "manual/shellx/app/assets/PluginsModal-kXSEpmTB.js",
+      "sha256": "f5ac70f3ead666d7aba98c7b89aec478686c80ec5fffa9f1e96e40d2926ca636"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/SessionHistoryViewer-BZ1Zb4lM.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/SessionHistoryViewer-BZ1Zb4lM.js",
+      "docsSitePath": "manual/shellx/app/assets/SessionHistoryViewer-BZ1Zb4lM.js",
+      "sha256": "145ce8bb9f97d49db53d59a9a0cc93b8923ce3c19792f816e06e1ca22086c164"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/Settings-BW-ibDm1.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/Settings-BW-ibDm1.css",
+      "docsSitePath": "manual/shellx/app/assets/Settings-BW-ibDm1.css",
+      "sha256": "3060a721dd8a6cd35f81489098dbdda59dac71a8d8f3623b1085aa1089acebac"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/Settings-Di5zV34O.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/Settings-Di5zV34O.js",
+      "docsSitePath": "manual/shellx/app/assets/Settings-Di5zV34O.js",
+      "sha256": "fc9b5276c3ff55a241d0d6422a27a352ba016bfd1e4ac0cd410460e95f0e7d84"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/TaskManager-D_bSyQjE.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/TaskManager-D_bSyQjE.css",
+      "docsSitePath": "manual/shellx/app/assets/TaskManager-D_bSyQjE.css",
+      "sha256": "2f77e84f231fb5a8fb2452a5c31d074821b0c7791635f6e72319a11c4081b3bf"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/TaskManager-Df0FzsiF.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/TaskManager-Df0FzsiF.js",
+      "docsSitePath": "manual/shellx/app/assets/TaskManager-Df0FzsiF.js",
+      "sha256": "ad24023f673c658fcfa42df8ef2d829ea1022948b3c923a0769690b6ea84827d"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/TerminalView-CTfzWMEm.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/TerminalView-CTfzWMEm.js",
+      "docsSitePath": "manual/shellx/app/assets/TerminalView-CTfzWMEm.js",
+      "sha256": "6acbd641915c2eadb8f4ea43d4dfd2e581a37e2725403a87fa5d6382355c14b8"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/TerminalView-Dieqgwuu.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/TerminalView-Dieqgwuu.css",
+      "docsSitePath": "manual/shellx/app/assets/TerminalView-Dieqgwuu.css",
+      "sha256": "7e36144c026deb7f9fed746f2308be8fef579d9bbc267d25bd5586c6ae697d58"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/VaultPanel-D5xgAndf.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/VaultPanel-D5xgAndf.js",
+      "docsSitePath": "manual/shellx/app/assets/VaultPanel-D5xgAndf.js",
+      "sha256": "8755378d07b7e5824f4fac11d99f00a6690e2f1e75953898db7c2ee630bac0be"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/VaultPasswordGenerator-Cj-lZ1rD.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/VaultPasswordGenerator-Cj-lZ1rD.js",
+      "docsSitePath": "manual/shellx/app/assets/VaultPasswordGenerator-Cj-lZ1rD.js",
+      "sha256": "2bd8f160067e46562a6929c51d50434723aa0ca14947a592d99d6b9aa5ba5ab1"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/VaultPasswordGenerator-sItlZCP8.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/VaultPasswordGenerator-sItlZCP8.css",
+      "docsSitePath": "manual/shellx/app/assets/VaultPasswordGenerator-sItlZCP8.css",
+      "sha256": "9ed50f378b26da0e6eafea08c6572f51ab7d0ed0ce8c8f33a2c91e5fc1471451"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/VaultTab-DPp33B9n.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/VaultTab-DPp33B9n.js",
+      "docsSitePath": "manual/shellx/app/assets/VaultTab-DPp33B9n.js",
+      "sha256": "c62783b5e5526dd172f34bb2833c621bff90df3de09ffb1de57550396bcf2c07"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/VaultTab-DkfkZ5zG.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/VaultTab-DkfkZ5zG.css",
+      "docsSitePath": "manual/shellx/app/assets/VaultTab-DkfkZ5zG.css",
+      "sha256": "a980326c87523a88b8e316bcaadb5a495812704d111a88316dcde69e647d76f9"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/WorkPreviewPanel-BKtNMu_E.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/WorkPreviewPanel-BKtNMu_E.js",
+      "docsSitePath": "manual/shellx/app/assets/WorkPreviewPanel-BKtNMu_E.js",
+      "sha256": "5df31c8a7af47a6228e3275fab187c6a5576803d5928d512178ea7142157862f"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/brand-shellx-DVYaB5PR.png",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/brand-shellx-DVYaB5PR.png",
+      "docsSitePath": "manual/shellx/app/assets/brand-shellx-DVYaB5PR.png",
+      "sha256": "9e65af5dd16602ea26fb9593b16210975e0a934b6bb623fdf9f723e310629892"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/browser-Br21tG_u.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/browser-Br21tG_u.js",
+      "docsSitePath": "manual/shellx/app/assets/browser-Br21tG_u.js",
+      "sha256": "52dfda2ce9dfd0f676d675cee00718f786962bb3f7df0141f22f18535467f4a4"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/browser-CIpVz7p2.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/browser-CIpVz7p2.css",
+      "docsSitePath": "manual/shellx/app/assets/browser-CIpVz7p2.css",
+      "sha256": "c470b68e94460dcd5b17c8fc5ee7d6bf8d65f016d1f4230d97e55edbd97aedfb"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/browserWorkflowPreview-Bx9wPYDg.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/browserWorkflowPreview-Bx9wPYDg.js",
+      "docsSitePath": "manual/shellx/app/assets/browserWorkflowPreview-Bx9wPYDg.js",
+      "sha256": "1ad6a5fce541f551e5df4baa14608c7d6c3036b542a1fd62214afe534b178c60"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/dist-js-BzvVvsoc.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/dist-js-BzvVvsoc.js",
+      "docsSitePath": "manual/shellx/app/assets/dist-js-BzvVvsoc.js",
+      "sha256": "e0dd7d2ddc8f8da53414f627aa8f7cb80a8317637c83d4736a2614fb6867df68"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/dist-js-Cld__N2d.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/dist-js-Cld__N2d.js",
+      "docsSitePath": "manual/shellx/app/assets/dist-js-Cld__N2d.js",
+      "sha256": "3cabecf5fd14b0fd3a983e33e73a76f833286c131f1f5a877e14352cb4d5bbec"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/geist-mono-bOGSM49p.woff2",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/geist-mono-bOGSM49p.woff2",
+      "docsSitePath": "manual/shellx/app/assets/geist-mono-bOGSM49p.woff2",
+      "sha256": "5bc6413e82be410dc057feccee55160495b999d0fe212b7b6c6499b29b8b1e4a"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/manual-surface-handoff-Cbm8I2DV.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/manual-surface-handoff-Cbm8I2DV.js",
+      "docsSitePath": "manual/shellx/app/assets/manual-surface-handoff-Cbm8I2DV.js",
+      "sha256": "0294e06668542714455b6a5467eab940f077a623b25da6ea53d283ac3f0249be"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/onest-cyrillic-wght-normal-DXI_y_WF.woff2",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/onest-cyrillic-wght-normal-DXI_y_WF.woff2",
+      "docsSitePath": "manual/shellx/app/assets/onest-cyrillic-wght-normal-DXI_y_WF.woff2",
+      "sha256": "37bc16874135c16134679b1db25b87fe80eb9fcd4ef3666af7c531bfde204fe2"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/onest-latin-ext-wght-normal-CnNj8hVb.woff2",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/onest-latin-ext-wght-normal-CnNj8hVb.woff2",
+      "docsSitePath": "manual/shellx/app/assets/onest-latin-ext-wght-normal-CnNj8hVb.woff2",
+      "sha256": "391a9b24b5c46ebff5d21f53cdb2edaa31c3446da3b722f038ab07d75d02a82d"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/onest-latin-wght-normal-CUIqqgP9.woff2",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/onest-latin-wght-normal-CUIqqgP9.woff2",
+      "docsSitePath": "manual/shellx/app/assets/onest-latin-wght-normal-CUIqqgP9.woff2",
+      "sha256": "67849bcc11e02177442da14ad954bfe1cc709553dad137b5003449b303e83fc3"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/publicManualBrowserState-BxBt_bim.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/publicManualBrowserState-BxBt_bim.js",
+      "docsSitePath": "manual/shellx/app/assets/publicManualBrowserState-BxBt_bim.js",
+      "sha256": "6e8d3fe8dda170f6f701e383808e1559843223e9b226481a62d3224246be715f"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/publicManualEvidenceFixture-BDcYlqBG.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/publicManualEvidenceFixture-BDcYlqBG.js",
+      "docsSitePath": "manual/shellx/app/assets/publicManualEvidenceFixture-BDcYlqBG.js",
+      "sha256": "33478e8acb035008f8ff79dfa795f8423d15ff1e81c03c086e9102414cd8dc39"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/shellx-CESBtrKy.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/shellx-CESBtrKy.js",
+      "docsSitePath": "manual/shellx/app/assets/shellx-CESBtrKy.js",
+      "sha256": "58f852c38240785bd6959212dcbb7b0acf7a9027581f04c371ee290a68355d64"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/shellx-CvLnijx1.css",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/shellx-CvLnijx1.css",
+      "docsSitePath": "manual/shellx/app/assets/shellx-CvLnijx1.css",
+      "sha256": "0fc90cd7f360fbc2b95218fe5e68b11fab07eca8cfbb22f9ba3ff7fd515eaed7"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/task-teach-handoff-events-B2JD3vZe.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/task-teach-handoff-events-B2JD3vZe.js",
+      "docsSitePath": "manual/shellx/app/assets/task-teach-handoff-events-B2JD3vZe.js",
+      "sha256": "9851f21c9fd643bbe10fc915be317947f2d6a0c4d59968ddadd19b0381576fe5"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/useModalFocus-BdgPt4s6.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/useModalFocus-BdgPt4s6.js",
+      "docsSitePath": "manual/shellx/app/assets/useModalFocus-BdgPt4s6.js",
+      "sha256": "ccf9138463a265f6fde2de3b8462ac829ac4b24ed32a8d10033281472729d3c1"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/assets/window-CSqJTbwc.js",
+      "publicExportPath": "docs/public/manual/shellx/app/assets/window-CSqJTbwc.js",
+      "docsSitePath": "manual/shellx/app/assets/window-CSqJTbwc.js",
+      "sha256": "e9f37e15b537146e7932854f27fdeff14f1f417bb64e361113d23723d8cb7aa5"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/manual-browser-preview.html",
+      "publicExportPath": "docs/public/manual/shellx/app/manual-browser-preview.html",
+      "docsSitePath": "manual/shellx/app/manual-browser-preview.html",
+      "sha256": "5cdcbe466de067949538da2e40d4b8b79d1cc09c0adebbe731383c9fc8dbaeb8"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/manual-browser.html",
+      "publicExportPath": "docs/public/manual/shellx/app/manual-browser.html",
+      "docsSitePath": "manual/shellx/app/manual-browser.html",
+      "sha256": "23380e213efa06748a45df6d8dcc52f7814a37106fbebd4099c4e269135ceddb"
+    },
+    {
+      "sourcePath": "docs/public/manual/shellx/app/manual-shellx.html",
+      "publicExportPath": "docs/public/manual/shellx/app/manual-shellx.html",
+      "docsSitePath": "manual/shellx/app/manual-shellx.html",
+      "sha256": "9359404d15237742558fe97ba6e4927e30a1d3b02119ea2c40c16d9316850552"
+    }
+  ]
+}

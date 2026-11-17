@@ -6,7 +6,10 @@ pub(crate) use crate::shellx_browser_observation_model::{
 };
 pub use crate::shellx_browser_settings_model::*;
 pub use crate::shellx_browser_task_model::{BrowserTaskSnapshot, BrowserTaskSummary};
+#[path = "shellx_browser_transfer_model.rs"]
+mod transfer_model;
 use serde::{Deserialize, Serialize};
+pub use transfer_model::*;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserBookmarkResponse {
@@ -23,130 +26,6 @@ pub struct BrowserTaskControlResponse {
     pub action: String,
     pub task: BrowserTaskSnapshot,
     pub receipt: BrowserReceipt,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BrowserDownloadRequest {
-    #[serde(rename = "taskId", alias = "task_id", default)]
-    pub task_id: Option<String>,
-    #[serde(rename = "browserTabId", alias = "browser_tab_id", default)]
-    pub browser_tab_id: Option<String>,
-    pub url: String,
-    #[serde(rename = "fileName", alias = "file_name", default)]
-    pub file_name: Option<String>,
-    #[serde(rename = "destinationDir", alias = "destination_dir", default)]
-    pub destination_dir: Option<String>,
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BrowserUploadRequest {
-    #[serde(rename = "taskId", alias = "task_id", default)]
-    pub task_id: Option<String>,
-    #[serde(rename = "browserTabId", alias = "browser_tab_id", default)]
-    pub browser_tab_id: Option<String>,
-    #[serde(rename = "filePath", alias = "file_path")]
-    pub file_path: String,
-    #[serde(rename = "displayName", alias = "display_name", default)]
-    pub display_name: Option<String>,
-    #[serde(rename = "destinationOrigin", alias = "destination_origin", default)]
-    pub destination_origin: Option<String>,
-    #[serde(rename = "refId", alias = "ref_id", default)]
-    pub ref_id: Option<String>,
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BrowserFileTransferEntry {
-    #[serde(rename = "transferId")]
-    pub transfer_id: String,
-    pub direction: String,
-    pub status: String,
-    #[serde(rename = "taskId", default)]
-    pub task_id: Option<String>,
-    #[serde(rename = "browserTabId", default)]
-    pub browser_tab_id: Option<String>,
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(rename = "filePath", default)]
-    pub file_path: Option<String>,
-    #[serde(rename = "displayName", default)]
-    pub display_name: Option<String>,
-    #[serde(rename = "finalPath", default)]
-    pub final_path: Option<String>,
-    #[serde(rename = "mimeType", default)]
-    pub mime_type: Option<String>,
-    #[serde(rename = "contentKind", default)]
-    pub content_kind: Option<String>,
-    #[serde(default)]
-    pub bytes: Option<u64>,
-    #[serde(default)]
-    pub sha256: Option<String>,
-    #[serde(rename = "sourceUrl", default)]
-    pub source_url: Option<String>,
-    #[serde(default)]
-    pub destination: Option<String>,
-    #[serde(rename = "retentionReason", default)]
-    pub retention_reason: Option<String>,
-    #[serde(rename = "approvalId", default)]
-    pub approval_id: Option<String>,
-    #[serde(rename = "destinationOrigin", default)]
-    pub destination_origin: Option<String>,
-    #[serde(rename = "refId", default)]
-    pub ref_id: Option<String>,
-    pub reason: String,
-    #[serde(rename = "requestedAtMs")]
-    pub requested_at_ms: i64,
-    #[serde(rename = "completedAtMs", default)]
-    pub completed_at_ms: Option<i64>,
-    pub receipt: BrowserReceipt,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BrowserTransferCompleteRequest {
-    #[serde(rename = "transferId", alias = "transfer_id")]
-    pub transfer_id: String,
-    #[serde(rename = "finalPath", alias = "final_path", default)]
-    pub final_path: Option<String>,
-    #[serde(rename = "mimeType", alias = "mime_type", default)]
-    pub mime_type: Option<String>,
-    #[serde(default)]
-    pub bytes: Option<u64>,
-    #[serde(default)]
-    pub sha256: Option<String>,
-    #[serde(rename = "sourceUrl", alias = "source_url", default)]
-    pub source_url: Option<String>,
-    #[serde(default)]
-    pub destination: Option<String>,
-    #[serde(rename = "retentionReason", alias = "retention_reason", default)]
-    pub retention_reason: Option<String>,
-    #[serde(rename = "approvalId", alias = "approval_id", default)]
-    pub approval_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BrowserTransferApproval {
-    #[serde(rename = "approvalId")]
-    pub approval_id: String,
-    #[serde(rename = "transferId")]
-    pub transfer_id: String,
-    pub direction: String,
-    #[serde(default)]
-    pub origin: Option<String>,
-    #[serde(default)]
-    pub sha256: Option<String>,
-    pub status: String,
-    #[serde(rename = "createdAtMs")]
-    pub created_at_ms: i64,
-    #[serde(rename = "expiresAtMs")]
-    pub expires_at_ms: i64,
-    #[serde(rename = "consumedAtMs", default)]
-    pub consumed_at_ms: Option<i64>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -337,6 +216,10 @@ pub struct BrowserStateSnapshot {
     pub vault_deposits: Vec<BrowserVaultDepositResponse>,
     pub downloads: Vec<BrowserFileTransferEntry>,
     pub uploads: Vec<BrowserFileTransferEntry>,
+    #[serde(rename = "interruptedNativeDownloadStageCount", default)]
+    pub interrupted_native_download_stage_count: usize,
+    #[serde(rename = "nativeDownloadCleanupStateUnknown", default)]
+    pub native_download_cleanup_state_unknown: bool,
     #[serde(rename = "consoleLogs")]
     pub console_logs: Vec<BrowserConsoleLogEntry>,
     pub dialogs: Vec<BrowserDialogEvent>,
@@ -760,6 +643,8 @@ pub struct BrowserActionRequest {
 pub struct BrowserConsoleLogRequest {
     #[serde(rename = "taskId", alias = "task_id", default)]
     pub task_id: Option<String>,
+    #[serde(rename = "browserTabId", alias = "browser_tab_id", default)]
+    pub browser_tab_id: Option<String>,
     #[serde(default)]
     pub level: String,
     #[serde(default)]
@@ -782,6 +667,8 @@ pub struct BrowserConsoleLogEntry {
     pub log_id: String,
     #[serde(rename = "taskId", default)]
     pub task_id: Option<String>,
+    #[serde(rename = "browserTabId", default)]
+    pub browser_tab_id: Option<String>,
     #[serde(rename = "profileId", default)]
     pub profile_id: Option<String>,
     pub level: String,
@@ -826,22 +713,6 @@ pub struct BrowserPermissionResolveRequest {
     pub action: Option<String>,
     #[serde(rename = "approvalId", alias = "approval_id", default)]
     pub approval_id: Option<String>,
-    #[serde(skip)]
-    pub operator_approved: bool,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BrowserTransferApprovalRequest {
-    #[serde(rename = "transferId", alias = "transfer_id")]
-    pub transfer_id: String,
-    pub direction: String,
-    #[serde(default)]
-    pub origin: Option<String>,
-    #[serde(default)]
-    pub sha256: Option<String>,
-    #[serde(rename = "ttlSeconds", alias = "ttl_seconds", default)]
-    pub ttl_seconds: Option<u64>,
     #[serde(skip)]
     pub operator_approved: bool,
 }

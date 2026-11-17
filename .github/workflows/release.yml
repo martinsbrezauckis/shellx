@@ -67,4 +67,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build unsigned bundles (no publish)
-        run: pnpm tauri build --features debug-api
+        run: >-
+          pnpm tauri build
+          --features debug-api
+          --ci
+          --no-sign
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'

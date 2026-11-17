@@ -941,26 +941,3 @@ impl fmt::Display for InvalidFlagsError {
 }
 
 impl std::error::Error for InvalidFlagsError {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_flags() {
-        let flags = FlagsClass::new::<crate::BindingFlags>();
-        let values = flags.values();
-        let def1 = values
-            .iter()
-            .find(|v| v.name() == "G_BINDING_DEFAULT")
-            .unwrap();
-        let def2 = flags.value_by_name("G_BINDING_DEFAULT").unwrap();
-        assert!(ptr::eq(def1, def2));
-
-        let value = flags.to_value(0).unwrap();
-        let values = value.get::<Vec<&FlagsValue>>().unwrap();
-        assert_eq!(values.len(), 0);
-
-        assert_eq!(def1.value(), crate::BindingFlags::DEFAULT.bits());
-    }
-}

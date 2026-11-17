@@ -30,13 +30,11 @@ export function HeaderVaultRequestCenter({
   controller,
   openSeq = 0,
   closeSeq = 0,
-  debugClipboardFixture = null,
   onOpenVault,
 }: {
   controller: HeaderVaultRequestCenterController;
   openSeq?: number;
   closeSeq?: number;
-  debugClipboardFixture?: "vault-password" | null;
   onOpenVault?: (intent?: VaultPanelIntent) => void;
 }): JSX.Element {
   const requests = controller.requests;
@@ -214,7 +212,6 @@ export function HeaderVaultRequestCenter({
             >
               <VaultPasswordGenerator
                 title="Password generator"
-                debugFixture={debugClipboardFixture}
                 onClose={() => setVaultPasswordGeneratorOpen(false)}
               />
             </LazySurface>

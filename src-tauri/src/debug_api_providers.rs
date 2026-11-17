@@ -90,44 +90,7 @@ pub(super) async fn permission_respond(
     }
 }
 
-#[cfg(test)]
-mod provider_permission_decision_tests {
-    use super::*;
 
-    #[test]
-    fn normal_debug_api_instance_rejects_release_provider_fixture_without_prompt_data() {
-        let error = require_isolated_provider_action_release_fixture(false)
-            .expect_err("normal Debug API instance must reject release provider fixture");
-        assert_eq!(error, PROVIDER_ACTION_RELEASE_FIXTURE_ISOLATION_ERROR);
-        assert!(!error.contains("SHELLX_RELEASE_SECRET_PROMPT"));
-        assert!(require_isolated_provider_action_release_fixture(true).is_ok());
-    }
-
-    #[test]
-    fn preserves_session_scoped_provider_approval_outcomes() {
-        assert_eq!(
-            provider_permission_decision("allow_always"),
-            (
-                true,
-                crate::provider_sessions::ProviderApprovalDecision::AllowForSession
-            )
-        );
-        assert_eq!(
-            provider_permission_decision("acceptForSession"),
-            (
-                true,
-                crate::provider_sessions::ProviderApprovalDecision::AllowForSession
-            )
-        );
-        assert_eq!(
-            provider_permission_decision("deny"),
-            (
-                false,
-                crate::provider_sessions::ProviderApprovalDecision::Deny
-            )
-        );
-    }
-}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ProviderAdaptersStateQuery {
@@ -218,9 +181,9 @@ pub(super) fn provider_adapter_run_health_from_snapshots(
             last_run_at_ms: run.updated_at_ms,
             last_error: run.error.clone(),
         };
-        let replace = latest.get(&run.provider_id).map_or(true, |current| {
-            candidate.last_run_at_ms > current.last_run_at_ms
-        });
+        let replace = latest
+            .get(&run.provider_id)
+            .is_none_or(|current| candidate.last_run_at_ms > current.last_run_at_ms);
         if replace {
             latest.insert(run.provider_id, candidate);
         }
@@ -331,18 +294,7 @@ pub(super) async fn provider_sessions_start_http(
     State(s): State<ApiState>,
     Json(body): Json<crate::provider_sessions::ProviderSessionStartRequest>,
 ) -> Response {
-    if body.release_fixture.is_some() {
-        if let Err(error) = require_isolated_provider_action_release_fixture(
-            crate::isolated_test_instance_requested(),
-        ) {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(serde_json::json!({ "ok": false, "error": error })),
-            )
-                .into_response();
-        }
-        return provider_action_release_fixture_start(s, body).await;
-    }
+
     let tab_id_for_autonomy = body.tab_id.clone().unwrap_or_else(|| "default".to_string());
     let provider_permission_mode = body.permission_mode.clone().unwrap_or_default();
     let shellx_autonomy = provider_permission_mode_to_shellx_autonomy(&provider_permission_mode);
@@ -386,172 +338,18 @@ pub(super) async fn provider_sessions_start_http(
     }
 }
 
-const PROVIDER_ACTION_RELEASE_FIXTURE_ISOLATION_ERROR: &str =
-    "release provider action fixture requires an isolated test instance";
 
-fn require_isolated_provider_action_release_fixture(
-    isolated_test_instance: bool,
-) -> Result<(), &'static str> {
-    if isolated_test_instance {
-        Ok(())
-    } else {
-        Err(PROVIDER_ACTION_RELEASE_FIXTURE_ISOLATION_ERROR)
-    }
-}
 
-const PROVIDER_ACTION_RELEASE_FIXTURE_ID: &str = "provider-action-lifecycle";
-const PROVIDER_ACTION_RELEASE_FIXTURE_ACTIONS: &[&str] = &[
-    "activity-ask-agent",
-    "browser-explain-page",
-    "browser-send",
-    "composer-send",
-    "right-rail-connector-action",
-    "right-rail-environment-ask",
-    "tasks-row-ask",
-    "tasks-visible-ask",
-    "work-preview-ask-fix",
-    "work-preview-browser-issue-fix",
-    "work-preview-palette-ask-fix",
-    "work-preview-stage-ask-fix",
-];
 
-fn validate_provider_action_release_fixture_cwd(cwd: &str) -> Result<String, String> {
-    use std::path::Path;
 
-    let requested = Path::new(cwd);
-    let name = requested
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| "release provider action cwd has no valid final component".to_string())?;
-    if !name.starts_with("release-provider-action-")
-        || name.len() > 96
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        return Err("release provider action cwd is not an owned fixture directory".to_string());
-    }
-    let metadata = std::fs::symlink_metadata(requested)
-        .map_err(|error| format!("read release provider action cwd: {error}"))?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err("release provider action cwd must be a real directory".to_string());
-    }
-    let canonical_home = std::fs::canonicalize(shellx_home()?)
-        .map_err(|error| format!("resolve ShellX home: {error}"))?;
-    let canonical_cwd = std::fs::canonicalize(requested)
-        .map_err(|error| format!("resolve release provider action cwd: {error}"))?;
-    if canonical_cwd.parent() != Some(canonical_home.as_path()) {
-        return Err("release provider action cwd must be a direct ShellX-home child".to_string());
-    }
-    Ok(canonical_cwd.to_string_lossy().to_string())
-}
 
-#[deny(clippy::expect_used, clippy::unwrap_used)]
-fn validate_provider_action_release_fixture_request(
-    body: &crate::provider_sessions::ProviderSessionStartRequest,
-) -> Result<(String, String, String, String), String> {
-    use crate::provider_adapters::{
-        ProviderExecutionTransport, ProviderId, ProviderPermissionMode, ProviderShellxToolExposure,
-    };
 
-    let fixture = body
-        .release_fixture
-        .as_ref()
-        .ok_or_else(|| "missing release provider action fixture".to_string())?;
-    if fixture.id != PROVIDER_ACTION_RELEASE_FIXTURE_ID
-        || !PROVIDER_ACTION_RELEASE_FIXTURE_ACTIONS.contains(&fixture.action.as_str())
-    {
-        return Err("unknown release provider action fixture".to_string());
-    }
-    let expected_tab_id = format!("release-provider-action-{}", fixture.action);
-    let tab_id = body
-        .tab_id
-        .as_deref()
-        .filter(|value| *value == expected_tab_id)
-        .ok_or_else(|| "release provider action fixture tab does not match action".to_string())?;
-    if body.provider_id != ProviderId::CodexCli
-        || !matches!(
-            body.transport,
-            None | Some(ProviderExecutionTransport::Local)
-        )
-        || body.include_mcp_probe != Some(false)
-        || body.include_shellx_tooling != Some(false)
-        || body.shellx_tool_exposure != Some(ProviderShellxToolExposure::Off)
-        || body.persist_session != Some(false)
-        || body.resume != Some(false)
-        || body.resume_last != Some(false)
-        || body.permission_mode != Some(ProviderPermissionMode::ReadOnly)
-        || body.wsl_distro.is_some()
-        || body.ssh_host.is_some()
-        || body.ssh_port.is_some()
-        || body.ssh_key_vault_ref.is_some()
-        || body.ssh_wsl_distro.is_some()
-        || body.mcp_path.is_some()
-        || body.provider_conversation_id.is_some()
-    {
-        return Err(
-            "release provider action fixture rejected non-isolated provider options".to_string(),
-        );
-    }
-    let prompt = body.prompt.trim();
-    if prompt.len() < 12 || prompt.len() > 16_384 || prompt.contains('\0') {
-        return Err(
-            "release provider action fixture prompt is outside the bounded contract".to_string(),
-        );
-    }
-    let cwd = validate_provider_action_release_fixture_cwd(&body.cwd)?;
-    Ok((
-        tab_id.to_string(),
-        cwd,
-        prompt.to_string(),
-        fixture.action.clone(),
-    ))
-}
 
-#[deny(clippy::expect_used, clippy::unwrap_used)]
-async fn provider_action_release_fixture_start(
-    s: ApiState,
-    body: crate::provider_sessions::ProviderSessionStartRequest,
-) -> Response {
-    use sha2::{Digest, Sha256};
 
-    let (tab_id, cwd, prompt, action) =
-        match validate_provider_action_release_fixture_request(&body) {
-            Ok(value) => value,
-            Err(error) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "ok": false, "error": error })),
-                )
-                    .into_response();
-            }
-        };
-    let digest = format!("{:x}", Sha256::digest(prompt.as_bytes()));
-    let registry = s
-        .app
-        .state::<std::sync::Arc<crate::provider_sessions::ProviderSessionRegistry>>()
-        .inner()
-        .clone();
-    let hub = s.hub();
-    let app = s.app.clone();
-    let emit: crate::provider_sessions::ProviderSessionEmit =
-        std::sync::Arc::new(move |kind, payload| {
-            hub.record_raw_event(kind, payload.clone());
-            let _ = tauri::Emitter::emit(&app, kind, payload);
-        });
-    match crate::provider_sessions::start_release_provider_action_fixture(
-        registry, tab_id, cwd, prompt, action, digest, emit,
-    )
-    .await
-    {
-        Ok(run) => Json(serde_json::json!({ "ok": true, "run": run })).into_response(),
-        Err(error) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "error": error })),
-        )
-            .into_response(),
-    }
-}
+
+
+
+
 
 pub(super) async fn commit_provider_autonomy_after_start<T, E>(
     registry: &crate::acp::SessionRegistry,

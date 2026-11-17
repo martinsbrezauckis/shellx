@@ -1,5 +1,8 @@
 import type { ConnectionPreset } from "../components/ConnectionPicker";
-import type { TaskProviderCatalog } from "./task-provider-catalog";
+import {
+  LEGACY_TASK_PROVIDER_CATALOG_GUIDANCE_PROVENANCE,
+  type TaskProviderCatalog,
+} from "./task-provider-catalog";
 import {
   taskScheduleSummary,
   type TaskDefinitionDetail,
@@ -12,6 +15,7 @@ import {
   type TaskProviderReceiptVerdict,
   type TaskProviderCatalogue,
   type TaskRunHistoryEntry,
+  type TaskRunTraceEvidenceIncompleteReason,
   type TaskRunTimelineEntry,
 } from "./task-manager-contract";
 
@@ -163,6 +167,7 @@ export interface TaskStoreReceipt {
     sourceTerminalReceiptSequence: number;
     sourceTerminalReceiptHash: string;
     state: "complete" | "incomplete" | "noProviderActivity";
+    incompleteReasons?: TaskRunTraceEvidenceIncompleteReason[];
     archiveSha256?: string;
     archiveBytes: number;
     recordCount: number;
@@ -221,6 +226,7 @@ export interface TaskStoreStateProjection {
     conversationSessionId?: string;
     traceEvidence?: {
       state: "complete" | "incomplete" | "noProviderActivity";
+      incompleteReasons?: TaskRunTraceEvidenceIncompleteReason[];
       archiveSha256?: string;
       archiveBytes: number;
       recordCount: number;
@@ -353,6 +359,8 @@ export function toTaskProviderCatalogue(
   return {
     ...catalogue,
     environmentKey,
+    guidanceProvenance: catalogue.guidanceProvenance
+      ?? LEGACY_TASK_PROVIDER_CATALOG_GUIDANCE_PROVENANCE,
     providers: catalogue.providers.map((provider) => ({
       ...provider,
       availability: {

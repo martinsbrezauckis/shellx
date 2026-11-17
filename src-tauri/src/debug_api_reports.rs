@@ -84,6 +84,127 @@ pub(super) async fn state_sessions(State(s): State<ApiState>) -> impl IntoRespon
     .into_response()
 }
 
+const BACKGROUND_TASKS_SCHEMA: &str = "shellx/background-tasks@1";
+const MAX_BACKGROUND_TASK_OBSERVATIONS: usize = 256;
+const MAX_BACKGROUND_TASK_ID_BYTES: usize = 256;
+const MAX_BACKGROUND_TASK_ORIGIN_BYTES: usize = 32;
+const MAX_BACKGROUND_TASK_STATUS_BYTES: usize = 32;
+const MAX_BACKGROUND_TASK_TAB_ID_BYTES: usize = 256;
+
+/// Read-only, bounded task projection for local Debug API clients.
+///
+/// This intentionally omits command, output, cwd, timing, and resource data.
+/// A caller must reject `truncated: true`; it means at least one aggregate row
+/// could not be represented without exceeding this route's fixed bounds.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct BackgroundTaskObservation {
+    pub task_id: String,
+    pub origin: String,
+    pub status: String,
+    pub pid: Option<u32>,
+    pub tab_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct BackgroundTasksObservationResponse {
+    pub schema: &'static str,
+    /// Aggregate row count before this route's bounded projection.
+    pub count: u32,
+    pub truncated: bool,
+    pub tasks: Vec<BackgroundTaskObservation>,
+}
+
+fn is_selector_safe_task_key(value: &str, max_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_bytes
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+}
+
+fn is_background_task_origin(value: &str) -> bool {
+    matches!(value, "grok" | "user_term" | "host_mcp")
+        && value.len() <= MAX_BACKGROUND_TASK_ORIGIN_BYTES
+}
+
+fn is_background_task_status(value: &str) -> bool {
+    matches!(value, "running" | "stopped" | "exited" | "killed")
+        && value.len() <= MAX_BACKGROUND_TASK_STATUS_BYTES
+}
+
+fn project_background_task(task: crate::TaskSnapshot) -> Option<BackgroundTaskObservation> {
+    if !is_selector_safe_task_key(&task.task_id, MAX_BACKGROUND_TASK_ID_BYTES)
+        || !is_background_task_origin(&task.origin)
+        || !is_background_task_status(&task.status)
+        || task.tab_id.as_deref().is_some_and(|tab_id| {
+            !is_selector_safe_task_key(tab_id, MAX_BACKGROUND_TASK_TAB_ID_BYTES)
+        })
+    {
+        return None;
+    }
+    Some(BackgroundTaskObservation {
+        task_id: task.task_id,
+        origin: task.origin,
+        status: task.status,
+        pid: task.pid,
+        tab_id: task.tab_id,
+    })
+}
+
+pub(super) fn background_tasks_observation_response(
+    task_rows: Vec<crate::TaskSnapshot>,
+) -> BackgroundTasksObservationResponse {
+    let mut truncated = false;
+    let count = match u32::try_from(task_rows.len()) {
+        Ok(count) => count,
+        Err(_) => {
+            truncated = true;
+            u32::MAX
+        }
+    };
+    let mut tasks = Vec::with_capacity(task_rows.len().min(MAX_BACKGROUND_TASK_OBSERVATIONS));
+    for task in task_rows {
+        if tasks.len() == MAX_BACKGROUND_TASK_OBSERVATIONS {
+            truncated = true;
+            break;
+        }
+        match project_background_task(task) {
+            Some(task) => tasks.push(task),
+            None => truncated = true,
+        }
+    }
+    BackgroundTasksObservationResponse {
+        schema: BACKGROUND_TASKS_SCHEMA,
+        count,
+        truncated,
+        tasks,
+    }
+}
+
+pub(super) async fn state_background_tasks(State(s): State<ApiState>) -> impl IntoResponse {
+    let session_registry = s
+        .app
+        .state::<std::sync::Arc<crate::acp::SessionRegistry>>()
+        .inner()
+        .clone();
+    let terminal_registry = s
+        .app
+        .state::<std::sync::Arc<crate::terminal::TerminalRegistry>>()
+        .inner()
+        .clone();
+    let process_registry = s
+        .app
+        .state::<std::sync::Arc<crate::process_registry::ProcessRegistry>>()
+        .inner()
+        .clone();
+    let task_rows =
+        crate::collect_background_tasks(session_registry, terminal_registry, process_registry)
+            .await;
+    Json(background_tasks_observation_response(task_rows)).into_response()
+}
+
 pub(super) async fn state_tabs_report(State(s): State<ApiState>) -> impl IntoResponse {
     let ui = s.hub().ui_snapshot();
     let session_infos = collect_debug_session_infos(&s).await;

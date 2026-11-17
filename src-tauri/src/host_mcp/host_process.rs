@@ -2,6 +2,12 @@ use super::*;
 
 pub(super) struct FsWatchRegistration {
     handle: tokio::task::JoinHandle<()>,
+    /// Opaque capability returned only to the MCP tab that created it.
+    watch_id: String,
+    /// Canonical target path is retained for same-owner deduplication only;
+    /// it is never accepted as an unwatch capability.
+    canonical_path: String,
+    owner_tab_id: String,
     recursive: bool,
     debounce_ms: u64,
     started_at_ms: i64,
@@ -24,8 +30,15 @@ pub(super) fn cleanup_finished_watchers(map: &mut HashMap<String, FsWatchRegistr
 
 /// fs_watch — start a notify watcher. Standalone mode emits the events
 /// to stderr (visible in grok's mcp logs) and stores the watcher handle
-/// so repeat calls dedupe and fs_unwatch can release resources.
-pub(super) async fn tool_fs_watch(args: Value, ctx: &Arc<HostMcpContext>) -> Result<Value, String> {
+/// so repeat calls from the same tab dedupe and fs_unwatch can release
+/// resources. Watch ownership is tab-bound: a second tab receives a distinct
+/// watcher even for the same canonical path.
+pub(super) async fn tool_fs_watch(
+    args: Value,
+    ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
+) -> Result<Value, String> {
+    let owner_tab_id = resolve_mcp_tab_id(tab_id, "fs_watch")?;
     let path = args
         .get("path")
         .and_then(|v| v.as_str())
@@ -52,15 +65,17 @@ pub(super) async fn tool_fs_watch(args: Value, ctx: &Arc<HostMcpContext>) -> Res
     if !target.exists() {
         return Err(format!("fs_watch: path does not exist: {}", path));
     }
-    let key = canonical_watch_key(&target)?;
+    let canonical_path = canonical_watch_key(&target)?;
 
     let mut watchers = fs_watchers().lock().await;
     cleanup_finished_watchers(&mut watchers);
-    if let Some(existing) = watchers.get(&key) {
+    if let Some(existing) = watchers.values().find(|registration| {
+        registration.owner_tab_id == owner_tab_id && registration.canonical_path == canonical_path
+    }) {
         return Ok(json!({
             "ok": true,
-            "watching": key,
-            "watchId": key,
+            "watching": existing.canonical_path,
+            "watchId": existing.watch_id,
             "alreadyWatching": true,
             "recursive": existing.recursive,
             "debounce_ms": existing.debounce_ms,
@@ -68,17 +83,21 @@ pub(super) async fn tool_fs_watch(args: Value, ctx: &Arc<HostMcpContext>) -> Res
         }));
     }
 
-    let path_owned = key.clone();
+    let path_owned = canonical_path.clone();
     let handle = tokio::spawn(async move {
         if let Err(e) = run_fs_watch_loop(path_owned.clone(), recursive, debounce_ms).await {
             eprintln!("fs_watch loop ended: {}", e);
         }
     });
     let started_at_ms = now_ms();
+    let watch_id = format!("fsw-{}", uuid::Uuid::new_v4());
     watchers.insert(
-        key.clone(),
+        watch_id.clone(),
         FsWatchRegistration {
             handle,
+            watch_id: watch_id.clone(),
+            canonical_path: canonical_path.clone(),
+            owner_tab_id,
             recursive,
             debounce_ms,
             started_at_ms,
@@ -87,8 +106,8 @@ pub(super) async fn tool_fs_watch(args: Value, ctx: &Arc<HostMcpContext>) -> Res
 
     Ok(json!({
         "ok": true,
-        "watching": key,
-        "watchId": key,
+        "watching": canonical_path,
+        "watchId": watch_id,
         "alreadyWatching": false,
         "recursive": recursive,
         "debounce_ms": debounce_ms,
@@ -99,13 +118,15 @@ pub(super) async fn tool_fs_watch(args: Value, ctx: &Arc<HostMcpContext>) -> Res
 pub(super) async fn tool_fs_unwatch(
     args: Value,
     ctx: &Arc<HostMcpContext>,
+    tab_id: Option<&str>,
 ) -> Result<Value, String> {
+    let owner_tab_id = resolve_mcp_tab_id(tab_id, "fs_unwatch")?;
     let raw_path = args.get("path").and_then(|v| v.as_str());
     let raw_watch_id = args
         .get("watchId")
         .or_else(|| args.get("watch_id"))
         .and_then(|v| v.as_str());
-    let key = if let Some(path) = raw_path {
+    let path = if let Some(path) = raw_path {
         let target = PathBuf::from(path);
         if !path_is_allowed(&target, &ctx.cwd) {
             return Err(format!(
@@ -114,27 +135,59 @@ pub(super) async fn tool_fs_unwatch(
                 ctx.cwd.display()
             ));
         }
-        canonical_watch_key(&target)?
+        Some(canonical_watch_key(&target)?)
     } else if let Some(watch_id) = raw_watch_id {
-        watch_id.to_string()
+        let Some(uuid) = watch_id.strip_prefix("fsw-") else {
+            return Err("fs_unwatch: watchId is not a ShellX watch capability".to_string());
+        };
+        if uuid::Uuid::parse_str(uuid).is_err() {
+            return Err("fs_unwatch: watchId is not a valid ShellX watch capability".to_string());
+        }
+        None
     } else {
         return Err("fs_unwatch: missing 'path' or 'watchId'".to_string());
     };
 
     let mut watchers = fs_watchers().lock().await;
     cleanup_finished_watchers(&mut watchers);
-    if let Some(registration) = watchers.remove(&key) {
+    let requested_path = path.clone();
+    let watch_id = match (path, raw_watch_id) {
+        (Some(canonical_path), _) => watchers
+            .iter()
+            .find(|(_, registration)| {
+                registration.owner_tab_id == owner_tab_id
+                    && registration.canonical_path == canonical_path
+            })
+            .map(|(watch_id, _)| watch_id.clone()),
+        (None, Some(watch_id)) => match watchers.get(watch_id) {
+            Some(registration) if registration.owner_tab_id == owner_tab_id => {
+                Some(watch_id.to_string())
+            }
+            Some(_) => return Err("fs_unwatch: watch belongs to another MCP tab".to_string()),
+            None => Some(watch_id.to_string()),
+        },
+        (None, None) => None,
+    };
+    let response_watch_id = watch_id
+        .clone()
+        .or_else(|| raw_watch_id.map(str::to_string))
+        .or(requested_path)
+        .unwrap_or_default();
+    if let Some(watch_id) = watch_id.filter(|watch_id| watchers.contains_key(watch_id)) {
+        let registration = watchers
+            .remove(&watch_id)
+            .expect("watch registration checked immediately before remove");
         registration.handle.abort();
         Ok(json!({
             "ok": true,
             "stopped": true,
-            "watchId": key
+            "watchId": watch_id
         }))
     } else {
         Ok(json!({
             "ok": true,
             "stopped": false,
-            "watchId": key
+            "watchId": response_watch_id
         }))
     }
 }

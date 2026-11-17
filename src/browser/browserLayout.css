@@ -94,7 +94,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--ink);
+  color: #f5f5f4;
   font-size: 13px;
   font-weight: 650;
   white-space: nowrap;
@@ -124,6 +124,13 @@
   color: var(--ink-3);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.shellx-browser-ownership-banner.agent,
+.shellx-browser-ownership-banner.delegated,
+.shellx-browser-ownership-banner.disposable {
+  --ink: #f5f5f4;
+  --ink-2: #a8a8a4;
+  --ink-3: #92928d;
 }
 .shellx-browser-ownership-banner.agent,
 .shellx-browser-ownership-banner.delegated {
@@ -794,6 +801,10 @@
   grid-auto-rows: max-content;
   overflow: auto;
   overscroll-behavior: contain;
+}
+.shellx-browser-download-folder-error {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .shellx-browser-history-list-row {
   min-width: 0;

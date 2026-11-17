@@ -1220,7 +1220,7 @@ function LeftFooter(): JSX.Element {
   const historyDisplayPath = "~/.shellx/sessions/";
  // Resolve the native location for the tooltip only. Keeping the compact
  // home-relative path in visible UI avoids exposing the operator's account
- // name or an isolated release-profile path in screenshots and screen shares.
+ // name or an isolated profile path in screenshots and screen shares.
   const [sessionLogPath, setSessionLogPath] = useState<string>(historyDisplayPath);
   useEffect(() => {
  // Live path resolution — only meaningful inside Tauri.

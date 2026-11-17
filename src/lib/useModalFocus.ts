@@ -80,7 +80,9 @@ export function useModalFocus(
         ? activeIndex <= 0 ? focusable.length - 1 : activeIndex - 1
         : activeIndex < 0 || activeIndex === focusable.length - 1 ? 0 : activeIndex + 1;
       event.preventDefault();
-      focusable[nextIndex]!.focus({ preventScroll: true });
+      // Keyboard navigation must reveal controls in scrollable modal bodies.
+      // Suppressing scrolling can leave the focused input behind the footer.
+      focusable[nextIndex]!.focus();
     };
 
     document.addEventListener("keydown", handleKeyDown, true);

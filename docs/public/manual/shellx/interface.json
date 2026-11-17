@@ -1,0 +1,853 @@
+{
+  "schema": "shellx.manual-interface.v1",
+  "handoff": {
+    "schema": "shellx.manual-handoff.v1",
+    "default": {
+      "availability": "not-routable",
+      "unavailableReason": "A direct in-app view is not available for this control yet."
+    }
+  },
+  "states": {
+    "shellx-workspace": {
+      "label": "ShellX workspace"
+    },
+    "command-palette": {
+      "label": "Find and commands"
+    },
+    "header-requests": {
+      "label": "Vault Request Center"
+    },
+    "header-plugins": {
+      "label": "Plugins"
+    },
+    "header-inbox": {
+      "label": "Connector Inbox"
+    },
+    "right-rail-tasks": {
+      "label": "Tasks rail"
+    },
+    "right-rail-tools": {
+      "label": "Tools rail"
+    },
+    "right-rail-git": {
+      "label": "Git rail"
+    },
+    "right-rail-preview": {
+      "label": "Preview rail"
+    },
+    "right-rail-plan": {
+      "label": "Plan rail"
+    },
+    "right-rail-files": {
+      "label": "Files rail"
+    },
+    "bottom-terminal": {
+      "label": "Terminal panel"
+    },
+    "bottom-trace": {
+      "label": "Trace panel"
+    },
+    "bottom-assets": {
+      "label": "Assets panel"
+    },
+    "bottom-logs": {
+      "label": "Logs panel"
+    },
+    "bottom-stderr": {
+      "label": "Stderr panel"
+    },
+    "settings-general": {
+      "label": "General settings"
+    },
+    "settings-vault": {
+      "label": "Vault settings"
+    },
+    "settings-connections": {
+      "label": "Connection settings"
+    },
+    "settings-connectors": {
+      "label": "Connector settings"
+    },
+    "settings-desktop": {
+      "label": "Desktop settings"
+    },
+    "settings-shellxagent": {
+      "label": "shellXagent settings"
+    },
+    "settings-data": {
+      "label": "Data settings"
+    },
+    "settings-about": {
+      "label": "About ShellX"
+    },
+    "browser-overview": {
+      "label": "ShellX Browser"
+    },
+    "browser-options": {
+      "label": "Browser settings"
+    },
+    "browser-save-menu": {
+      "label": "Save page menu"
+    },
+    "browser-save-copy-jobs": {
+      "label": "Save page copy jobs"
+    },
+    "browser-ads-menu": {
+      "label": "Ads filter menu"
+    },
+    "browser-history": {
+      "label": "Browser history"
+    },
+    "browser-bookmarks": {
+      "label": "Browser bookmarks"
+    },
+    "browser-bookmark-manager": {
+      "label": "Bookmark manager"
+    },
+    "browser-downloads": {
+      "label": "Browser downloads"
+    },
+    "browser-panel-chat": {
+      "label": "Browser Chat panel"
+    },
+    "browser-panel-requests": {
+      "label": "Browser Requests panel"
+    },
+    "browser-panel-actions": {
+      "label": "Browser Actions panel"
+    },
+    "browser-panel-evidence": {
+      "label": "Browser Evidence panel"
+    },
+    "browser-panel-errors": {
+      "label": "Browser Errors panel"
+    },
+    "task-manager-overview": {
+      "label": "Task Manager overview"
+    },
+    "task-manager-schedule": {
+      "label": "Task schedule"
+    },
+    "task-manager-providers": {
+      "label": "Task agents"
+    },
+    "task-manager-evidence": {
+      "label": "Task runs and receipts"
+    }
+  },
+  "features": {
+    "shellx.tasks.create": {
+      "state": "shellx-workspace"
+    },
+    "shellx.tasks.manager": {
+      "state": "task-manager-overview",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.tasks.manager"
+        },
+        "focusDebugId": "task-manager"
+      }
+    },
+    "shellx.tasks.providers": {
+      "state": "task-manager-providers"
+    },
+    "shellx.tasks.schedule": {
+      "state": "task-manager-schedule"
+    },
+    "shellx.tasks.evidence": {
+      "state": "task-manager-evidence"
+    },
+    "shellx.tasks.browser_teach": {
+      "state": "task-manager-overview",
+      "note": "Browser Teach opens this same Task Manager review surface with its approved workflow and Vault requirement identities attached."
+    },
+    "shellx.interface.header.about": {
+      "state": "settings-about",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.header.about"
+        },
+        "focusDebugId": "settings-tab-about"
+      }
+    },
+    "shellx.interface.header.find": {
+      "state": "shellx-workspace",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.header.find"
+        },
+        "focusDebugId": "find-sessions-input"
+      }
+    },
+    "shellx.interface.header.browser": {
+      "state": "browser-overview"
+    },
+    "shellx.interface.header.requests": {
+      "state": "header-requests"
+    },
+    "shellx.interface.header.inbox": {
+      "state": "header-inbox",
+      "note": "The connector Inbox is conditional and joins this header action group when a compatible connector is configured.",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.header.inbox"
+        },
+        "focusDebugId": "connector-inbox-modal"
+      }
+    },
+    "shellx.interface.header.plugins": {
+      "state": "header-plugins",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.header.plugins"
+        },
+        "focusDebugId": "plugins-modal"
+      }
+    },
+    "shellx.interface.header.theme": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.header.settings": {
+      "state": "settings-general",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.header.settings"
+        },
+        "focusDebugId": "settings-tab-general"
+      }
+    },
+    "shellx.interface.left.projects": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.left.open_chats": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.left.past_chats": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.session_history": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.right.tasks": {
+      "state": "right-rail-tasks",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.right.tasks"
+        },
+        "focusDebugId": "right-tab-tasks"
+      }
+    },
+    "shellx.interface.right.tools": {
+      "state": "right-rail-tools",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.right.tools"
+        },
+        "focusDebugId": "right-tab-tooling"
+      }
+    },
+    "shellx.interface.right.git": {
+      "state": "right-rail-git",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.right.git"
+        },
+        "focusDebugId": "right-tab-git"
+      }
+    },
+    "shellx.interface.right.preview": {
+      "state": "right-rail-preview",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.right.preview"
+        },
+        "focusDebugId": "right-tab-preview"
+      }
+    },
+    "shellx.interface.right.plan": {
+      "state": "right-rail-plan",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.right.plan"
+        },
+        "focusDebugId": "right-tab-plan"
+      }
+    },
+    "shellx.interface.right.files": {
+      "state": "right-rail-files",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.right.files"
+        },
+        "focusDebugId": "right-tab-files"
+      }
+    },
+    "shellx.interface.bottom.chat": {
+      "state": "shellx-workspace",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.bottom.chat"
+        },
+        "focusDebugId": "bottom-tab-chat"
+      }
+    },
+    "shellx.interface.bottom.terminal": {
+      "state": "bottom-terminal",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.bottom.terminal"
+        },
+        "focusDebugId": "bottom-tab-terminal"
+      }
+    },
+    "shellx.interface.bottom.trace": {
+      "state": "bottom-trace",
+      "note": "Trace opens the Activity Browser shown in this capture."
+    },
+    "shellx.interface.trace.files": {
+      "state": "bottom-trace"
+    },
+    "shellx.interface.trace.graph": {
+      "state": "bottom-trace"
+    },
+    "shellx.interface.trace.evidence": {
+      "state": "bottom-trace"
+    },
+    "shellx.interface.trace.timeline": {
+      "state": "bottom-trace"
+    },
+    "shellx.interface.trace.summary": {
+      "state": "bottom-trace"
+    },
+    "shellx.interface.bottom.assets": {
+      "state": "bottom-assets"
+    },
+    "shellx.interface.bottom.images": {
+      "state": "bottom-assets",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.bottom.images"
+        },
+        "focusDebugId": "bottom-tab-images"
+      }
+    },
+    "shellx.interface.bottom.videos": {
+      "state": "bottom-assets",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.bottom.videos"
+        },
+        "focusDebugId": "bottom-tab-videos"
+      }
+    },
+    "shellx.interface.bottom.logs": {
+      "state": "bottom-logs",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.bottom.logs"
+        },
+        "focusDebugId": "bottom-tab-logs"
+      }
+    },
+    "shellx.interface.bottom.stderr": {
+      "state": "bottom-stderr",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.bottom.stderr"
+        },
+        "focusDebugId": "bottom-tab-stderr"
+      }
+    },
+    "shellx.interface.composer.connection": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.composer.agent": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.composer.folder": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.composer.branch": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.command.connect": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.abort": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.new_session": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.close_tab": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.settings": {
+      "state": "command-palette",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.command.settings"
+        },
+        "focusDebugId": "settings-tab-general"
+      }
+    },
+    "shellx.interface.command.desktop": {
+      "state": "command-palette",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.command.desktop"
+        },
+        "focusDebugId": "settings-tab-desktop"
+      }
+    },
+    "shellx.interface.command.attach": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.screenshot": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.media_board": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.work_preview": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.preview_doctor": {
+      "state": "right-rail-preview",
+      "note": "The action is conditional; this capture shows its Preview destination while the idle command-palette capture truthfully omits the unavailable row."
+    },
+    "shellx.interface.command.toggle_terminal": {
+      "state": "command-palette",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.command.toggle_terminal"
+        },
+        "focusDebugId": "bottom-tab-terminal"
+      }
+    },
+    "shellx.interface.command.pull_request": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.vault": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.help": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.autonomy_auto": {
+      "state": "command-palette"
+    },
+    "shellx.interface.command.slash_commands": {
+      "state": "command-palette",
+      "note": "The exact slash rows are provider- and environment-specific; /commands is the captured example."
+    },
+    "shellx.interface.composer.attach": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.composer.screenshot": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.composer.voice": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.composer.help": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.composer.send": {
+      "state": "shellx-workspace"
+    },
+    "shellx.interface.settings.general": {
+      "state": "settings-general",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.settings.general"
+        },
+        "focusDebugId": "settings-tab-general"
+      }
+    },
+    "shellx.interface.settings.vault": {
+      "state": "settings-vault",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.settings.vault"
+        },
+        "focusDebugId": "settings-tab-vault"
+      }
+    },
+    "shellx.interface.vault.workspace.passwords": {
+      "state": "settings-vault"
+    },
+    "shellx.interface.vault.workspace.grants": {
+      "state": "settings-vault"
+    },
+    "shellx.interface.vault.workspace.setup": {
+      "state": "settings-vault"
+    },
+    "shellx.interface.vault.resource.password_key": {
+      "state": "settings-vault"
+    },
+    "shellx.interface.vault.resource.profile": {
+      "state": "settings-vault"
+    },
+    "shellx.interface.vault.resource.agent_wallet": {
+      "state": "settings-vault"
+    },
+    "shellx.interface.settings.connections": {
+      "state": "settings-connections",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.settings.connections"
+        },
+        "focusDebugId": "settings-tab-connections"
+      }
+    },
+    "shellx.interface.settings.connectors": {
+      "state": "settings-connectors",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.settings.connectors"
+        },
+        "focusDebugId": "settings-tab-connectors"
+      }
+    },
+    "shellx.interface.settings.desktop": {
+      "state": "settings-desktop",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.settings.desktop"
+        },
+        "focusDebugId": "settings-tab-desktop"
+      }
+    },
+    "shellx.interface.settings.shellxagent": {
+      "state": "settings-shellxagent",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.settings.shellxagent"
+        },
+        "focusDebugId": "settings-tab-shellxagent"
+      }
+    },
+    "shellx.interface.settings.data": {
+      "state": "settings-data",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.settings.data"
+        },
+        "focusDebugId": "settings-tab-data"
+      }
+    },
+    "shellx.interface.settings.about": {
+      "state": "settings-about",
+      "handoff": {
+        "schema": "shellx.manual-handoff.v1",
+        "availability": "supported",
+        "window": "main",
+        "intent": {
+          "kind": "feature-reveal",
+          "featureId": "shellx.interface.settings.about"
+        },
+        "focusDebugId": "settings-tab-about"
+      }
+    },
+    "shellx.browser.ui.new_tab": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.disposable_tab": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.agent_lock": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.personal_lock": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.handoff": {
+      "state": "browser-overview",
+      "note": "Handoff replaces the adjacent ownership action when an agent-controlled tab can be handed to the operator."
+    },
+    "shellx.browser.ui.take_back": {
+      "state": "browser-overview",
+      "note": "Take back appears in this ownership action group after a tab has been handed to the operator."
+    },
+    "shellx.browser.ui.right_panel_toggle": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.back": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.forward": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.reload": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.home": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.trust": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.address": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.copy_address": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.bookmark_current": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.vault_fill": {
+      "state": "browser-overview"
+    },
+    "shellx.browser.ui.downloads": {
+      "state": "browser-downloads"
+    },
+    "shellx.browser.ui.bookmarks": {
+      "state": "browser-bookmarks"
+    },
+    "shellx.browser.ui.history": {
+      "state": "browser-history"
+    },
+    "shellx.browser.ui.save": {
+      "state": "browser-save-menu"
+    },
+    "shellx.browser.ui.ads": {
+      "state": "browser-ads-menu"
+    },
+    "shellx.browser.ui.options": {
+      "state": "browser-options"
+    },
+    "shellx.browser.save.full_page": {
+      "state": "browser-save-menu"
+    },
+    "shellx.browser.save.window": {
+      "state": "browser-save-menu"
+    },
+    "shellx.browser.save.markdown": {
+      "state": "browser-save-menu"
+    },
+    "shellx.browser.save.links": {
+      "state": "browser-save-menu"
+    },
+    "shellx.browser.save.snapshot": {
+      "state": "browser-save-menu"
+    },
+    "shellx.browser.save.media": {
+      "state": "browser-save-copy-jobs"
+    },
+    "shellx.browser.save.code": {
+      "state": "browser-save-copy-jobs"
+    },
+    "shellx.browser.save.site": {
+      "state": "browser-save-copy-jobs"
+    },
+    "shellx.browser.ads.balanced": {
+      "state": "browser-ads-menu"
+    },
+    "shellx.browser.ads.strict": {
+      "state": "browser-ads-menu"
+    },
+    "shellx.browser.ads.off": {
+      "state": "browser-ads-menu"
+    },
+    "shellx.browser.options.color": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.homepage": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.profile": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.sidebar": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.personal_lock_enable": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.personal_lock_timeout": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.personal_lock_auth": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.personal_lock_pin": {
+      "state": "browser-options",
+      "note": "The Set PIN action replaces Enable after Session PIN is selected."
+    },
+    "shellx.browser.options.personal_lock_cover": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.personal_lock_pause": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.personal_lock_sleep": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.personal_lock_minimize": {
+      "state": "browser-options"
+    },
+    "shellx.browser.options.parallel_agents": {
+      "state": "browser-options"
+    },
+    "shellx.browser.panel.chat": {
+      "state": "browser-panel-chat"
+    },
+    "shellx.browser.panel.requests": {
+      "state": "browser-panel-requests"
+    },
+    "shellx.browser.panel.actions": {
+      "state": "browser-panel-actions"
+    },
+    "shellx.browser.panel.actions_tasks": {
+      "state": "browser-panel-actions"
+    },
+    "shellx.browser.panel.actions_receipts": {
+      "state": "browser-panel-actions"
+    },
+    "shellx.browser.panel.evidence": {
+      "state": "browser-panel-evidence"
+    },
+    "shellx.browser.panel.errors": {
+      "state": "browser-panel-errors"
+    },
+    "shellx.browser.panel.errors_console": {
+      "state": "browser-panel-errors"
+    },
+    "shellx.browser.sidecar.history_scopes": {
+      "state": "browser-history"
+    },
+    "shellx.browser.sidecar.history_filters": {
+      "state": "browser-history"
+    },
+    "shellx.browser.sidecar.clear_history": {
+      "state": "browser-history",
+      "note": "Clear history appears directly below the filters when at least one history entry exists."
+    },
+    "shellx.browser.sidecar.bookmark_list": {
+      "state": "browser-bookmarks"
+    },
+    "shellx.browser.sidecar.bookmark_manager": {
+      "state": "browser-bookmark-manager"
+    },
+    "shellx.browser.sidecar.download_folder": {
+      "state": "browser-downloads"
+    },
+    "shellx.browser.sidecar.download_list": {
+      "state": "browser-downloads"
+    }
+  }
+}

@@ -10,7 +10,7 @@ use tokio::time::{sleep, Duration};
 
 #[cfg(not(windows))]
 use crate::shellx_browser::eval_browser_engine_json;
-#[cfg(not(target_os = "linux"))]
+#[cfg(feature = "debug-api")]
 use crate::shellx_browser::BROWSER_WINDOW_LABEL;
 use crate::shellx_browser::{now_ms, BrowserScreenshotArtifact};
 #[cfg(windows)]
@@ -40,21 +40,7 @@ pub(crate) async fn capture_browser_screenshot_artifact(
         )
         .await;
     }
-    #[cfg(all(feature = "debug-api", target_os = "linux"))]
-    {
-        // WebKitGTK can snapshot the exact owned page viewport without a
-        // compositor-wide screenshot request. This keeps agent-driven Browser
-        // capture non-interactive on Wayland and under bare release displays.
-        let bytes = capture_linux_webkit_visible_png(app, engine_label).await?;
-        if bytes.len() > 16 * 1024 * 1024 {
-            return Err(format!(
-                "browser screenshot too large ({} bytes)",
-                bytes.len()
-            ));
-        }
-        persist_browser_screenshot_artifact(bytes, "browser-viewport", false, None, None).await
-    }
-    #[cfg(all(feature = "debug-api", not(target_os = "linux")))]
+    #[cfg(feature = "debug-api")]
     {
         let bytes = crate::debug_api::capture_window_label_png(app, BROWSER_WINDOW_LABEL).await?;
         if bytes.len() > 16 * 1024 * 1024 {
@@ -445,24 +431,4 @@ fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
     let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
     Some((width, height))
-}
-
-#[cfg(all(test, not(windows)))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn full_page_scroll_positions_cover_last_viewport_without_overshoot() {
-        assert_eq!(
-            browser_page_capture_scroll_positions(1_829, 700),
-            vec![0, 700, 1_129]
-        );
-        assert_eq!(browser_page_capture_scroll_positions(600, 700), vec![0]);
-    }
-
-    #[test]
-    fn full_page_capture_rejects_excessive_pixel_allocation() {
-        assert!(validate_browser_page_capture_pixels(4_000, 8_000).is_ok());
-        assert!(validate_browser_page_capture_pixels(4_001, 8_000).is_err());
-    }
 }

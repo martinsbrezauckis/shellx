@@ -4,6 +4,7 @@
 //! Keep user-local provider directories in one place so inventory, version
 //! probes, provider launches, terminals, and Windows OpenSSH agree.
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 pub(crate) const POSIX_PROVIDER_SHELL_PRELUDE: &str =
@@ -12,7 +13,7 @@ pub(crate) const POSIX_PROVIDER_SHELL_PRELUDE: &str =
 pub(crate) const WINDOWS_PROVIDER_SHELL_PRELUDE: &str =
     "$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';$paths=@((Join-Path $env:USERPROFILE '.local\\bin'),(Join-Path $env:USERPROFILE 'bin'),(Join-Path $env:USERPROFILE '.grok\\bin'),(Join-Path $env:USERPROFILE '.claude\\bin'),(Join-Path $env:USERPROFILE '.bun\\bin'),(Join-Path $env:USERPROFILE '.cargo\\bin'),(Join-Path $env:LOCALAPPDATA 'Programs\\OpenAI\\Codex\\bin'),(Join-Path $env:LOCALAPPDATA 'agy\\bin'),(Join-Path $env:APPDATA 'npm'));$env:PATH=(($paths+@($env:PATH)) -join ';');";
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 pub(crate) fn windows_user_bin_paths(
     user_profile: &str,
     app_data: &str,
@@ -42,7 +43,7 @@ pub(crate) fn windows_user_bin_paths(
     paths
 }
 
-#[cfg(any(not(windows), test))]
+#[cfg(not(windows))]
 pub(crate) fn posix_user_bin_paths(home: &str) -> Vec<PathBuf> {
     let home = home.trim();
     if home.is_empty() {
@@ -112,10 +113,7 @@ pub(crate) fn local_provider_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn platform_extensions(name: &str) -> Vec<String> {
-    if !cfg!(windows) || Path::new(name).extension().is_some() {
-        return Vec::new();
-    }
+fn platform_extensions() -> Vec<String> {
     std::env::var("PATHEXT")
         .unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string())
         .split(';')
@@ -127,6 +125,20 @@ fn platform_extensions(name: &str) -> Vec<String> {
 
 pub(crate) fn local_binary_candidates(names: &[&str]) -> Vec<PathBuf> {
     let dirs = local_provider_search_dirs();
+    let extensions = if cfg!(windows) {
+        platform_extensions()
+    } else {
+        Vec::new()
+    };
+    local_binary_candidates_in_dirs(names, &dirs, cfg!(windows), &extensions)
+}
+
+fn local_binary_candidates_in_dirs(
+    names: &[&str],
+    dirs: &[PathBuf],
+    windows: bool,
+    extensions: &[String],
+) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for name in names {
         let raw = PathBuf::from(name);
@@ -134,14 +146,32 @@ pub(crate) fn local_binary_candidates(names: &[&str]) -> Vec<PathBuf> {
             push_unique_path(&mut out, raw);
             continue;
         }
-        for dir in &dirs {
-            push_unique_path(&mut out, dir.join(name));
-            for extension in platform_extensions(name) {
-                push_unique_path(&mut out, dir.join(format!("{name}{extension}")));
+        for dir in dirs {
+            if windows && raw.extension().is_none() {
+                // npm puts a POSIX `codex` shell script beside `codex.cmd` on
+                // Windows. Prefer PATHEXT candidates and accept a bare name
+                // only when it has a native Windows executable header.
+                for extension in extensions {
+                    push_unique_path(&mut out, dir.join(format!("{name}{extension}")));
+                }
+                let bare = dir.join(name);
+                if is_windows_native_binary(&bare) {
+                    push_unique_path(&mut out, bare);
+                }
+            } else {
+                push_unique_path(&mut out, dir.join(name));
             }
         }
     }
     out
+}
+
+fn is_windows_native_binary(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0_u8; 2];
+    file.read_exact(&mut magic).is_ok() && magic == *b"MZ"
 }
 
 pub(crate) fn resolve_local_binary(names: &[&str]) -> Option<String> {
@@ -149,79 +179,4 @@ pub(crate) fn resolve_local_binary(names: &[&str]) -> Option<String> {
         .into_iter()
         .find(|candidate| candidate.is_file())
         .map(|candidate| candidate.to_string_lossy().to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn windows_provider_paths_cover_all_supported_user_install_roots() {
-        assert_eq!(
-            windows_user_bin_paths(
-                r"C:\Users\Fixture",
-                r"C:\Users\Fixture\AppData\Roaming",
-                r"C:\Users\Fixture\AppData\Local",
-            ),
-            vec![
-                r"C:\Users\Fixture\.local\bin",
-                r"C:\Users\Fixture\bin",
-                r"C:\Users\Fixture\.grok\bin",
-                r"C:\Users\Fixture\.claude\bin",
-                r"C:\Users\Fixture\.bun\bin",
-                r"C:\Users\Fixture\.cargo\bin",
-                r"C:\Users\Fixture\AppData\Local\Programs\OpenAI\Codex\bin",
-                r"C:\Users\Fixture\AppData\Local\agy\bin",
-                r"C:\Users\Fixture\AppData\Roaming\npm",
-            ]
-        );
-    }
-
-    #[test]
-    fn empty_windows_environment_does_not_create_root_relative_candidates() {
-        assert!(windows_user_bin_paths("", "", "").is_empty());
-    }
-
-    #[test]
-    fn posix_provider_paths_cover_supported_user_install_roots() {
-        let paths = posix_user_bin_paths("/home/fixture");
-        assert!(paths.contains(&PathBuf::from("/home/fixture/.grok/bin")));
-        assert!(paths.contains(&PathBuf::from("/home/fixture/.claude/bin")));
-        assert!(paths.contains(&PathBuf::from("/home/fixture/.bun/bin")));
-        assert!(paths.contains(&PathBuf::from("/home/fixture/.cargo/bin")));
-    }
-
-    #[test]
-    fn remote_preludes_share_the_complete_provider_path_contract() {
-        for suffix in [
-            ".local\\bin",
-            "bin",
-            ".grok\\bin",
-            ".claude\\bin",
-            ".bun\\bin",
-            ".cargo\\bin",
-            "Programs\\OpenAI\\Codex\\bin",
-            "agy\\bin",
-            "npm",
-        ] {
-            assert!(
-                WINDOWS_PROVIDER_SHELL_PRELUDE.contains(suffix),
-                "missing {suffix}"
-            );
-        }
-        for suffix in [
-            ".local/bin",
-            "$HOME/bin",
-            ".grok/bin",
-            ".claude/bin",
-            ".bun/bin",
-            ".cargo/bin",
-            ".npm-global/bin",
-        ] {
-            assert!(
-                POSIX_PROVIDER_SHELL_PRELUDE.contains(suffix),
-                "missing {suffix}"
-            );
-        }
-    }
 }

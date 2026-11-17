@@ -1006,15 +1006,42 @@ fn classify_ssh_remote_platform(output: &str) -> Option<SshRemotePlatform> {
     None
 }
 
-fn ssh_platform_probe_output(
+const SSH_SETUP_PROBE_DEADLINE: Duration = Duration::from_secs(8);
+const SSH_SETUP_REMOTE_DEADLINE: Duration = Duration::from_secs(6);
+const SSH_SETUP_STDOUT_LIMIT: usize = 64 * 1024;
+const SSH_SETUP_STDERR_LIMIT: usize = 64 * 1024;
+
+pub(crate) async fn ssh_platform_probe_output(
     host: &str,
     port: Option<u16>,
     key_path: Option<&str>,
     remote_command: &str,
+    runtime: SshRemoteRuntime,
+    wsl_distro: Option<&str>,
+) -> Result<std::process::Output, String> {
+    ssh_platform_probe_output_with_executable(
+        "ssh",
+        host,
+        port,
+        key_path,
+        remote_command,
+        runtime,
+        wsl_distro,
+    )
+    .await
+}
+
+async fn ssh_platform_probe_output_with_executable(
+    executable: &str,
+    host: &str,
+    port: Option<u16>,
+    key_path: Option<&str>,
+    remote_command: &str,
+    runtime: SshRemoteRuntime,
+    wsl_distro: Option<&str>,
 ) -> Result<std::process::Output, String> {
     validate_ssh_destination_arg(host)?;
-    use crate::winproc::NoWindowExt as _;
-    let mut command = std::process::Command::new("ssh");
+    let mut command = Command::new(executable);
     command
         .arg("-o")
         .arg("BatchMode=yes")
@@ -1027,13 +1054,64 @@ fn ssh_platform_probe_output(
     if let Some(key_path) = key_path.map(str::trim).filter(|value| !value.is_empty()) {
         command.arg("-i").arg(key_path);
     }
-    command
-        .arg("--")
-        .arg(host)
-        .arg(remote_command)
-        .no_window()
-        .output()
-        .map_err(|error| format!("SSH platform probe could not launch ssh: {error}"))
+    if runtime == SshRemoteRuntime::Windows {
+        let bounded = crate::remote_one_shot::bounded_ssh_windows_command(
+            remote_command,
+            SSH_SETUP_REMOTE_DEADLINE,
+        );
+        command.arg("--").arg(host).arg(bounded.command);
+        crate::bounded_command::run_bounded_output_with_stdin(
+            &mut command,
+            "SSH setup probe",
+            SSH_SETUP_PROBE_DEADLINE,
+            SSH_SETUP_STDOUT_LIMIT,
+            SSH_SETUP_STDERR_LIMIT,
+            &bounded.setup_stdin,
+        )
+        .await
+    } else {
+        command
+            .arg("--")
+            .arg(host)
+            .arg(crate::remote_one_shot::bounded_ssh_posix_command(
+                runtime,
+                wsl_distro,
+                remote_command,
+                SSH_SETUP_REMOTE_DEADLINE,
+            )?);
+        crate::bounded_command::run_bounded_output(
+            &mut command,
+            "SSH setup probe",
+            SSH_SETUP_PROBE_DEADLINE,
+            SSH_SETUP_STDOUT_LIMIT,
+            SSH_SETUP_STDERR_LIMIT,
+        )
+        .await
+    }
+}
+
+async fn wsl_setup_probe_output(
+    distro: &str,
+    payload: &str,
+    label: &str,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new("wsl.exe");
+    command.args([
+        "-d",
+        distro,
+        "-e",
+        "bash",
+        "-lc",
+        &crate::remote_one_shot::bounded_posix_one_shot(payload, SSH_SETUP_REMOTE_DEADLINE),
+    ]);
+    crate::bounded_command::run_bounded_output(
+        &mut command,
+        label,
+        SSH_SETUP_PROBE_DEADLINE,
+        SSH_SETUP_STDOUT_LIMIT,
+        SSH_SETUP_STDERR_LIMIT,
+    )
+    .await
 }
 
 fn ssh_probe_diagnostic(output: &std::process::Output) -> String {
@@ -1266,7 +1344,7 @@ fn grok_session_launch_args(autonomy_on: bool) -> Vec<String> {
 /// instead so stdin is ACP JSONL from byte zero.
 pub(crate) fn windows_native_ssh_dispatch_command() -> String {
     format!(
-        "{}$b=[Console]::In.ReadLine();if([string]::IsNullOrWhiteSpace($b)){{throw 'missing ShellX Windows SSH bootstrap'}};$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b));&([ScriptBlock]::Create($s));exit $LASTEXITCODE",
+        "{}$shellxBootstrapInput=[Console]::OpenStandardInput(1);$shellxBootstrapLine=[Collections.Generic.List[byte]]::new();while($true){{$shellxBootstrapByte=$shellxBootstrapInput.ReadByte();if($shellxBootstrapByte -lt 0){{throw 'missing ShellX Windows SSH bootstrap'}};if($shellxBootstrapByte -eq 10){{break}};if($shellxBootstrapLine.Count -ge 1048576){{throw 'ShellX Windows SSH bootstrap exceeds 1 MiB'}};$shellxBootstrapLine.Add([byte]$shellxBootstrapByte)}};$shellxBootstrapBase64=[Text.Encoding]::ASCII.GetString($shellxBootstrapLine.ToArray());if([string]::IsNullOrWhiteSpace($shellxBootstrapBase64)){{throw 'missing ShellX Windows SSH bootstrap'}};$shellxBootstrap=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($shellxBootstrapBase64));&([ScriptBlock]::Create($shellxBootstrap));exit $LASTEXITCODE",
         windows_remote_shell_prelude(),
     )
 }
@@ -1283,9 +1361,52 @@ fn windows_wsl_loopback_probe_command(distro: &str) -> String {
     encode_powershell_remote_command(&powershell)
 }
 
+const SSH_POSIX_STABLE_PROJECT_FILES_MARKER: &str = "SHELLX_POSIX_STABLE_PROJECT_FILES";
+
+fn posix_stable_project_files_probe_command(
+    runtime: SshRemoteRuntime,
+    wsl_distro: Option<&str>,
+) -> Result<String, String> {
+    // This is deliberately a small, side-effect-free capability probe. The
+    // transaction itself repeats every check before it opens a project file,
+    // so a changed remote runtime fails closed instead of relying on this
+    // earlier observation.
+    let probe = format!(
+        "python3 -c \"import os; required=('O_DIRECTORY','O_NOFOLLOW','O_CLOEXEC','O_NONBLOCK'); assert all(hasattr(os, name) for name in required); assert os.open in os.supports_dir_fd and os.rename in os.supports_dir_fd; print('{SSH_POSIX_STABLE_PROJECT_FILES_MARKER}')\""
+    );
+    wrap_ssh_posix_command(runtime, wsl_distro, &probe)
+}
+
+async fn ensure_posix_stable_project_file_capability(
+    host: &str,
+    port: Option<u16>,
+    key_path: Option<&str>,
+    runtime: SshRemoteRuntime,
+    wsl_distro: Option<&str>,
+) -> Result<(), String> {
+    let command = posix_stable_project_files_probe_command(runtime, wsl_distro)?;
+    let owner = if runtime == SshRemoteRuntime::WindowsWsl {
+        SshRemoteRuntime::Windows
+    } else {
+        SshRemoteRuntime::Posix
+    };
+    let output = ssh_platform_probe_output(host, port, key_path, &command, owner, None).await?;
+    if output.status.success()
+        && String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line.trim() == SSH_POSIX_STABLE_PROJECT_FILES_MARKER)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "SSH stable project-file capability requires Python 3 with descriptor-relative open/rename support: {}",
+        ssh_probe_diagnostic(&output),
+    ))
+}
+
 /// Verify that the selected connection runtime matches the actual SSH endpoint
 /// before ShellX sends filesystem or provider commands.
-pub(crate) fn ensure_ssh_remote_runtime(
+pub(crate) async fn ensure_ssh_remote_runtime(
     host: &str,
     port: Option<u16>,
     key_path: Option<&str>,
@@ -1301,7 +1422,10 @@ pub(crate) fn ensure_ssh_remote_runtime(
             port,
             key_path,
             &wrap_ssh_windows_command("[Console]::Out.WriteLine('SHELLX_WINDOWS')"),
-        )?;
+            SshRemoteRuntime::Windows,
+            None,
+        )
+        .await?;
         if windows.status.success()
             && classify_ssh_remote_platform(&String::from_utf8_lossy(&windows.stdout))
                 == Some(SshRemotePlatform::NativeWindows)
@@ -1320,7 +1444,15 @@ pub(crate) fn ensure_ssh_remote_runtime(
             Some(distro),
             "printf '%s\\n' SHELLX_WINDOWS_WSL_POSIX",
         )?;
-        let output = ssh_platform_probe_output(host, port, key_path, &marker)?;
+        let output = ssh_platform_probe_output(
+            host,
+            port,
+            key_path,
+            &marker,
+            SshRemoteRuntime::Windows,
+            None,
+        )
+        .await?;
         if output.status.success()
             && String::from_utf8_lossy(&output.stdout)
                 .lines()
@@ -1331,13 +1463,23 @@ pub(crate) fn ensure_ssh_remote_runtime(
                 port,
                 key_path,
                 &windows_wsl_loopback_probe_command(distro),
-            )?;
+                SshRemoteRuntime::Windows,
+                None,
+            )
+            .await?;
             if loopback.status.success()
                 && String::from_utf8_lossy(&loopback.stdout)
                     .lines()
                     .any(|line| line.trim() == "SHELLX_WINDOWS_WSL_LOOPBACK")
             {
-                return Ok(());
+                return ensure_posix_stable_project_file_capability(
+                    host,
+                    port,
+                    key_path,
+                    runtime,
+                    Some(distro),
+                )
+                .await;
             }
             return Err(format!(
                 "Windows + WSL command launch works for distro '{}', but WSL cannot reach Windows localhost, so ShellX's reverse host-MCP tunnel would be unavailable. Enable WSL mirrored networking in the remote Windows user's .wslconfig and restart WSL, or use an SSH server inside WSL. Loopback probe: {}",
@@ -1357,12 +1499,16 @@ pub(crate) fn ensure_ssh_remote_runtime(
         port,
         key_path,
         "sh -lc 'printf \"%s\\n\" SHELLX_POSIX'",
-    )?;
+        SshRemoteRuntime::Posix,
+        None,
+    )
+    .await?;
     if posix.status.success()
         && classify_ssh_remote_platform(&String::from_utf8_lossy(&posix.stdout))
             == Some(SshRemotePlatform::Posix)
     {
-        return Ok(());
+        return ensure_posix_stable_project_file_capability(host, port, key_path, runtime, None)
+            .await;
     }
 
     let windows = ssh_platform_probe_output(
@@ -1370,7 +1516,10 @@ pub(crate) fn ensure_ssh_remote_runtime(
         port,
         key_path,
         "cmd.exe /d /s /c \"echo SHELLX_WINDOWS\"",
-    )?;
+        SshRemoteRuntime::Windows,
+        None,
+    )
+    .await?;
     if windows.status.success()
         && classify_ssh_remote_platform(&String::from_utf8_lossy(&windows.stdout))
             == Some(SshRemotePlatform::NativeWindows)
@@ -1617,9 +1766,8 @@ impl GrokAcpSession {
         // When the caller specifies a distro but no explicit grok path,
         // we fall through to the WSL launch branch and default the path
         // to "grok" at consumption time (i.e. the remote $PATH lookup).
-        // Prior code reported `transport_kind() == "local"` when only
-        // distro was set, producing the misleading "POSIX path but local
-        // transport" /connect error flagged by the WSL test agent.
+        // A configured distro selects WSL transport before local transport,
+        // so POSIX paths are never delegated to the Windows-local runtime.
         let use_wsl = !use_ssh && self.wsl_distro.is_some();
         if let Some(ssh) = &self.ssh_config {
             validate_ssh_destination_arg(&ssh.host)?;
@@ -1659,7 +1807,8 @@ impl GrokAcpSession {
                 ssh_probe_key_path.as_deref(),
                 ssh.remote_runtime,
                 ssh.wsl_distro.as_deref(),
-            )?;
+            )
+            .await?;
         }
 
         // Path translation:
@@ -1679,8 +1828,8 @@ impl GrokAcpSession {
         // etc. resolve against the right filesystem.
         // SSH branch needs the REMOTE $HOME as an ABSOLUTE
         // path because grok's `session/new` rejects `~` with -32602
-        // "Path is not absolute". Probe the remote `$HOME` synchronously
-        // via `ssh -o BatchMode=yes <host> echo $HOME` with a hard 8s
+        // "Path is not absolute". Probe the remote `$HOME` asynchronously
+        // via a remotely owned one-shot command with a hard 8s local
         // timeout. If the probe fails (host down, key missing, BatchMode
         // refusal), we fall back to a sensible default and surface the
         // problem via the spawn error later — better than silently
@@ -1690,21 +1839,6 @@ impl GrokAcpSession {
                 .ssh_config
                 .as_ref()
                 .ok_or_else(|| "SSH transport selected without SSH configuration".to_string())?;
-            use crate::winproc::NoWindowExt as _;
-            let mut probe = std::process::Command::new("ssh");
-            probe.arg("-o").arg("BatchMode=yes");
-            probe.arg("-o").arg("ConnectTimeout=5");
-            probe.arg("-T");
-            if let Some(p) = ssh.port {
-                probe.arg("-p").arg(p.to_string());
-            }
-            if let Some(key_path) = ssh_probe_key_path.as_deref() {
-                probe.arg("-i").arg(key_path);
-            }
-            // We deliberately DO NOT use a key-vault-ref-resolved -i here
-            // because the resolver is async and this probe is sync; the
-            // user's ssh-agent / ssh-config must already be set up for
-            // the preset to work — same constraint as the main spawn.
             let home_command = if ssh.remote_runtime == SshRemoteRuntime::Windows {
                 wrap_ssh_windows_command("[Console]::Out.WriteLine($env:USERPROFILE)")
             } else {
@@ -1714,9 +1848,21 @@ impl GrokAcpSession {
                     "printf '%s\\n' \"$HOME\"",
                 )?
             };
-            probe.arg("--").arg(&ssh.host).arg(home_command);
-            probe.no_window();
-            match probe.output() {
+            let owner = if ssh.remote_runtime == SshRemoteRuntime::Posix {
+                SshRemoteRuntime::Posix
+            } else {
+                SshRemoteRuntime::Windows
+            };
+            match ssh_platform_probe_output(
+                &ssh.host,
+                ssh.port,
+                ssh_probe_key_path.as_deref(),
+                &home_command,
+                owner,
+                None,
+            )
+            .await
+            {
                 Ok(o) if o.status.success() => {
                     let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
                     let absolute = if ssh.remote_runtime == SshRemoteRuntime::Windows {
@@ -1802,9 +1948,8 @@ impl GrokAcpSession {
         // failed (no $HOME discovered → can't reach the host anyway,
         // the spawn will surface that). Also skips for local/wsl
         // (their spawn paths already fast-fail).
-        // // Before the `test -d` probe, run
-        // `ssh <host> -- mkdir -p -- <agent_cwd>` so the next probe
-        // succeeds without manual operator intervention.
+        // Create the remote agent directory before the availability probe so
+        // the next connection attempt can proceed without manual recovery.
         // Same safety bounds as WSL: absolute POSIX path only, no
         // `..` traversal, skip /proc /sys /dev system mounts. mkdir
         // failure is non-fatal — the probe will surface the issue
@@ -1814,30 +1959,22 @@ impl GrokAcpSession {
                 .ssh_config
                 .as_ref()
                 .ok_or_else(|| "SSH transport selected without SSH configuration".to_string())?;
-            use crate::winproc::NoWindowExt as _;
-
             if ssh.remote_runtime == SshRemoteRuntime::Windows {
-                let mut probe = std::process::Command::new("ssh");
-                probe.arg("-o").arg("BatchMode=yes");
-                probe.arg("-o").arg("ConnectTimeout=5");
-                probe.arg("-T");
-                if let Some(p) = ssh.port {
-                    probe.arg("-p").arg(p.to_string());
-                }
-                if let Some(key_path) = ssh_probe_key_path.as_deref() {
-                    probe.arg("-i").arg(key_path);
-                }
                 let path = powershell_single_quote(&agent_cwd);
                 let command = format!(
                     "{}$path={path};if(Test-Path -LiteralPath $path -PathType Container){{exit 0}};exit 1",
                     windows_remote_shell_prelude(),
                 );
-                probe
-                    .arg("--")
-                    .arg(&ssh.host)
-                    .arg(wrap_ssh_windows_command(&command));
-                probe.no_window();
-                match probe.output() {
+                match ssh_platform_probe_output(
+                    &ssh.host,
+                    ssh.port,
+                    ssh_probe_key_path.as_deref(),
+                    &wrap_ssh_windows_command(&command),
+                    SshRemoteRuntime::Windows,
+                    None,
+                )
+                .await
+                {
                     Ok(output) if output.status.success() => {
                         info!(
                             "SSH cwd probe OK: {} exists as a directory on native Windows host",
@@ -1853,10 +1990,7 @@ impl GrokAcpSession {
                         ));
                     }
                     Err(error) => {
-                        return Err(format!(
-                            "SSH cwd probe could not launch ssh: {}. (ssh client missing from PATH?)",
-                            error
-                        ));
+                        return Err(format!("SSH cwd probe failed: {}", error));
                     }
                 }
             } else {
@@ -1874,25 +2008,28 @@ impl GrokAcpSession {
                             agent_cwd, has_traversal, is_system
                         );
                     } else {
-                        let mut mk = std::process::Command::new("ssh");
-                        mk.arg("-o").arg("BatchMode=yes");
-                        mk.arg("-o").arg("ConnectTimeout=5");
-                        mk.arg("-T");
-                        if let Some(p) = ssh.port {
-                            mk.arg("-p").arg(p.to_string());
-                        }
-                        if let Some(key_path) = ssh_probe_key_path.as_deref() {
-                            mk.arg("-i").arg(key_path);
-                        }
                         let mkdir_command =
                             format!("mkdir -p -- {}", shell_quote_for_remote(&agent_cwd));
-                        mk.arg("--").arg(&ssh.host).arg(wrap_ssh_posix_command(
+                        let wrapped = wrap_ssh_posix_command(
                             ssh.remote_runtime,
                             ssh.wsl_distro.as_deref(),
                             &mkdir_command,
-                        )?);
-                        mk.no_window();
-                        match mk.output() {
+                        )?;
+                        let owner = if ssh.remote_runtime == SshRemoteRuntime::WindowsWsl {
+                            SshRemoteRuntime::Windows
+                        } else {
+                            SshRemoteRuntime::Posix
+                        };
+                        match ssh_platform_probe_output(
+                            &ssh.host,
+                            ssh.port,
+                            ssh_probe_key_path.as_deref(),
+                            &wrapped,
+                            owner,
+                            None,
+                        )
+                        .await
+                        {
                         Ok(o) if o.status.success() => {
                             info!(
                                 "SSH Bridge: auto-mkdir cwd '{}' on host '{}' ok",
@@ -1909,30 +2046,33 @@ impl GrokAcpSession {
                             );
                         }
                         Err(e) => warn!(
-                            "SSH Bridge: auto-mkdir spawn failed for cwd '{}': {} (continuing — probe will surface)",
+                            "SSH Bridge: auto-mkdir failed for cwd '{}': {} (continuing — probe will surface)",
                             agent_cwd, e
                         ),
                     }
                     }
                 }
 
-                let mut probe = std::process::Command::new("ssh");
-                probe.arg("-o").arg("BatchMode=yes");
-                probe.arg("-o").arg("ConnectTimeout=5");
-                probe.arg("-T");
-                if let Some(p) = ssh.port {
-                    probe.arg("-p").arg(p.to_string());
-                }
-                if let Some(key_path) = ssh_probe_key_path.as_deref() {
-                    probe.arg("-i").arg(key_path);
-                }
-                probe.arg("--").arg(&ssh.host).arg(wrap_ssh_posix_command(
+                let wrapped = wrap_ssh_posix_command(
                     ssh.remote_runtime,
                     ssh.wsl_distro.as_deref(),
                     &format!("test -d {}", shell_quote_for_remote(&agent_cwd)),
-                )?);
-                probe.no_window();
-                match probe.output() {
+                )?;
+                let owner = if ssh.remote_runtime == SshRemoteRuntime::WindowsWsl {
+                    SshRemoteRuntime::Windows
+                } else {
+                    SshRemoteRuntime::Posix
+                };
+                match ssh_platform_probe_output(
+                    &ssh.host,
+                    ssh.port,
+                    ssh_probe_key_path.as_deref(),
+                    &wrapped,
+                    owner,
+                    None,
+                )
+                .await
+                {
                     Ok(o) if o.status.success() => {
                         info!(
                             "SSH cwd probe OK: {} exists as directory on remote",
@@ -1950,10 +2090,7 @@ impl GrokAcpSession {
                         ));
                     }
                     Err(e) => {
-                        return Err(format!(
-                        "SSH cwd probe could not launch ssh: {}. (ssh client missing from PATH?)",
-                        e
-                    ));
+                        return Err(format!("SSH cwd probe failed: {}", e));
                     }
                 }
             }
@@ -1964,27 +2101,30 @@ impl GrokAcpSession {
         // Discover Linux $HOME inside the WSL distro (critical for ~/.grok/skills, ~/.grok/docs, etc.)
         if use_wsl {
             if let Some(distro) = &self.wsl_distro {
-                // Use synchronous std::process::Command here — this runs once at startup.
-                // Suppress console flash on Windows.
-                use crate::winproc::NoWindowExt as _;
-                if let Ok(output) = std::process::Command::new("wsl.exe")
-                    .args(["-d", distro, "--", "bash", "-c", "echo $HOME"])
-                    .no_window()
-                    .output()
+                match wsl_setup_probe_output(distro, "printf '%s\\n' \"$HOME\"", "WSL home probe")
+                    .await
                 {
-                    let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !home.is_empty() && home.starts_with('/') {
-                        self.linux_home = Some(home.clone());
-                        info!(
-                            "Discovered Linux $HOME inside WSL distro '{}': {}",
-                            distro, home
-                        );
-                    } else {
-                        warn!(
-                            "Could not reliably discover Linux $HOME for distro '{}'",
-                            distro
-                        );
+                    Ok(output) if output.status.success() => {
+                        let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if !home.is_empty() && home.starts_with('/') {
+                            self.linux_home = Some(home.clone());
+                            info!(
+                                "Discovered Linux $HOME inside WSL distro '{}': {}",
+                                distro, home
+                            );
+                        } else {
+                            warn!(
+                                "Could not reliably discover Linux $HOME for distro '{}'",
+                                distro
+                            );
+                        }
                     }
+                    Ok(output) => warn!(
+                        "WSL home probe exited {}: {}",
+                        output.status,
+                        ssh_probe_diagnostic(&output)
+                    ),
+                    Err(error) => warn!("WSL home probe failed: {}", error),
                 }
             }
         }
@@ -2179,9 +2319,8 @@ impl GrokAcpSession {
             // (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`)
             // which excludes `~/.local/bin` where the typical grok
             // install actually lives, so `execvpe(grok) failed: No
-            // such file or directory` and the session died in ~40ms
-            // (BUG-WSL-2 from WSL test pass).
-            // Fix: probe via `wsl.exe -d <distro> -e bash -lc 'command
+            // such file or directory` and the session died in ~40ms.
+            // Probe via `wsl.exe -d <distro> -e bash -lc 'command
             // -v grok'`. The login-shell flag (-l) loads ~/.profile /
             // ~/.bash_profile so the user's PATH is in effect; `-c`
             // runs the command. Capture stdout and trim. If the probe
@@ -2192,17 +2331,12 @@ impl GrokAcpSession {
             let probed_grok_path: Option<String> = if self.wsl_grok_path.is_some() {
                 None
             } else {
-                match tokio::process::Command::new("wsl.exe")
-                    .args([
-                        "-d",
-                        distro,
-                        "-e",
-                        "bash",
-                        "-lc",
-                        "command -v grok 2>/dev/null",
-                    ])
-                    .output()
-                    .await
+                match wsl_setup_probe_output(
+                    distro,
+                    "command -v grok 2>/dev/null",
+                    "WSL provider path probe",
+                )
+                .await
                 {
                     Ok(out) if out.status.success() => {
                         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -2248,16 +2382,8 @@ impl GrokAcpSession {
                         agent_cwd, has_traversal, is_system
                     );
                 } else {
-                    let mut mk = Command::new("wsl.exe");
-                    mk.args(["-d", distro, "-e", "mkdir", "-p", "--", &agent_cwd])
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped());
-                    #[cfg(target_os = "windows")]
-                    {
-                        mk.creation_flags(0x08000000);
-                    }
-                    match mk.output().await {
+                    let mkdir = format!("mkdir -p -- {}", shell_quote_for_remote(&agent_cwd));
+                    match wsl_setup_probe_output(distro, &mkdir, "WSL cwd creation").await {
                         Ok(out) if out.status.success() => {
                             info!(
                                 "WSL Bridge: auto-mkdir cwd '{}' on distro '{}' ok",
@@ -2272,7 +2398,7 @@ impl GrokAcpSession {
                             );
                         }
                         Err(e) => warn!(
-                            "WSL Bridge: auto-mkdir spawn failed for cwd '{}': {} (continuing)",
+                            "WSL Bridge: auto-mkdir failed for cwd '{}': {} (continuing)",
                             agent_cwd, e
                         ),
                     }
@@ -3139,7 +3265,7 @@ fn remove_session_marketplace_servers(servers: &mut Vec<serde_json::Value>) {
         server
             .get("name")
             .and_then(|value| value.as_str())
-            .map_or(true, |name| !name.starts_with("shellx-mp-"))
+            .is_none_or(|name| !name.starts_with("shellx-mp-"))
     });
 }
 
@@ -3494,7 +3620,12 @@ async fn read_loop(
                         tab_id_for_stderr.as_deref(),
                     );
                 }
-                debug!("[grok stderr] {}", line);
+                let trace_line = if crate::host_mcp::redact_if_credential_pattern(&line) {
+                    "<redacted: credential-shaped provider stderr>"
+                } else {
+                    line.as_str()
+                };
+                debug!("[grok stderr] {}", trace_line);
                 // Scan for auth failure
                 // signatures. On a hit, flip per-tab auth_healthy
                 // to false and emit a typed event so the UI / external
@@ -4987,11 +5118,10 @@ async fn handle_agent_request(
     app_handle: &Option<tauri::AppHandle>,
     wsl_distro: &Option<String>,
     linux_home: &Option<String>,
-    // When Some, fs/read_text_file + fs/write_text_file
-    // shell out to `ssh host -- cat / tee` so the read/write hits the
-    // remote filesystem (where grok is running) instead of the Windows
-    // host where shellX is running. None means local / WSL transport —
-    // existing tokio::fs path is used.
+    // When Some, fs/read_text_file + fs/write_text_file use a bounded,
+    // handle-bound transaction on the remote filesystem where Grok runs.
+    // None means local / WSL transport, where the existing tokio::fs path is
+    // used.
     ssh_config: &Option<SshSpawnConfig>,
     // Forwarded from read_loop for emit tagging.
     tab_id: Option<&str>,
@@ -5014,11 +5144,10 @@ async fn handle_agent_request(
                 Ok(v) => v,
                 Err(e) => return send_error_response(id, -32602, e, stdin).await,
             };
-            // When the agent is talking
-            // over SSH, route the read through the remote shell so the
-            // path is resolved on the remote filesystem. The legacy
-            // tokio::fs path runs on the Windows host and fails with
-            // os error 3 for any /home/<remote-user>/... path.
+            // SSH project access is one descriptor/handle-bound transaction
+            // against the session-owned cwd. Do not split a path guard from
+            // the later file open: a link or renamed ancestor can change a
+            // checked pathname before the second command uses it.
             if let Some(ssh) = ssh_config {
                 let remote_path =
                     resolve_remote_ssh_path(&path, cwd, linux_home, ssh.remote_runtime);
@@ -5030,7 +5159,9 @@ async fn handle_agent_request(
                 ) {
                     return send_error_response(id, -32603, e, stdin).await;
                 }
-                match ssh_read_file(ssh, &remote_path).await {
+                match crate::remote_project_file::read_scoped_remote_text(ssh, cwd, &remote_path)
+                    .await
+                {
                     Ok(content) => {
                         let content = acp_slice_text_by_line_limit(&content, line, limit);
                         if let Some(h) = app_handle {
@@ -5160,9 +5291,8 @@ async fn handle_agent_request(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            // Mirror the SSH branch of fs/read_text_file
-            // — route the write through `ssh host -- 'cat > path'` so it
-            // hits the remote filesystem.
+            // Mirror the SSH read transaction against the session-owned
+            // project root.
             if let Some(ssh) = ssh_config {
                 let remote_path =
                     resolve_remote_ssh_path(&path, cwd, linux_home, ssh.remote_runtime);
@@ -5174,7 +5304,14 @@ async fn handle_agent_request(
                 ) {
                     return send_error_response(id, -32603, e, stdin).await;
                 }
-                match ssh_write_file(ssh, &remote_path, &content).await {
+                match crate::remote_project_file::write_scoped_remote_text(
+                    ssh,
+                    cwd,
+                    &remote_path,
+                    &content,
+                )
+                .await
+                {
                     Ok(_) => {
                         if let Some(h) = app_handle {
                             emit_and_debug(
@@ -5646,20 +5783,7 @@ fn windows_to_wsl_path(win_path: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod windows_to_wsl_path_tests {
-    use super::windows_to_wsl_path;
 
-    #[test]
-    fn translates_ascii_windows_drives_without_slicing_unicode() {
-        assert_eq!(
-            windows_to_wsl_path(r"C:\Users\ExampleUser"),
-            "/mnt/c/Users/ExampleUser"
-        );
-        assert_eq!(windows_to_wsl_path("€:/not-a-drive"), "€:/not-a-drive");
-        assert_eq!(windows_to_wsl_path("/home/example"), "/home/example");
-    }
-}
 
 /// Resolve the path emitted by a remote
 /// grok against the remote cwd, without any Windows-side translation.
@@ -5857,163 +5981,98 @@ fn permission_registry_missing_response() -> serde_json::Value {
     serde_json::json!({ "outcome": { "outcome": "cancelled" } })
 }
 
-/// Shell out to `ssh -- host 'cat -- <path>'` and
-/// capture stdout. Errors surface ssh's stderr + the path that was
-/// attempted so the grok agent can self-correct.
-///
-/// We deliberately:
-/// * use BatchMode=yes + ConnectTimeout=5 to fail fast on stale tunnels.
-/// * NOT support `-i <keyfile>` here — same as the spawn path, the
-/// user's ssh-agent or `~/.ssh/config` must have the host set up.
-/// * not stream — read up to a 16 MiB cap mirroring the host MCP
-/// `fs_read_binary` limit. fs/read_text_file is for source files,
-/// not large blobs.
-pub(crate) async fn ssh_read_file(
-    ssh: &SshSpawnConfig,
-    remote_path: &str,
-) -> Result<String, String> {
-    validate_ssh_destination_arg(&ssh.host)?;
-    let mut cmd = tokio::process::Command::new("ssh");
-    cmd.arg("-o").arg("BatchMode=yes");
-    cmd.arg("-o").arg("ConnectTimeout=5");
-    cmd.arg("-T");
-    if let Some(p) = ssh.port {
-        cmd.arg("-p").arg(p.to_string());
-    }
-    cmd.arg("--").arg(&ssh.host);
-    let remote_command = if ssh.remote_runtime == SshRemoteRuntime::Windows {
-        let path = powershell_single_quote(remote_path);
-        wrap_ssh_windows_command(&format!(
-            "{}$path={path};$bytes=[IO.File]::ReadAllBytes($path);$stdout=[Console]::OpenStandardOutput();$stdout.Write($bytes,0,$bytes.Length);$stdout.Flush()",
-            windows_remote_shell_prelude(),
-        ))
-    } else {
-        wrap_ssh_posix_command(
-            ssh.remote_runtime,
-            ssh.wsl_distro.as_deref(),
-            &format!("cat -- {}", shell_quote_for_remote(remote_path)),
-        )?
-    };
-    cmd.arg(remote_command);
-    use crate::winproc::NoWindowExt as _;
-    cmd.no_window();
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
 
-    let out = cmd
-        .output()
-        .await
-        .map_err(|e| format!("ssh spawn failed: {}", e))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(format!(
-            "ssh cat exited {:?}: {}",
-            out.status.code(),
-            if stderr.is_empty() {
-                "no stderr".into()
-            } else {
-                stderr
-            }
-        ));
-    }
-    if out.stdout.len() > 16 * 1024 * 1024 {
-        return Err(format!(
-            "remote file too large ({} bytes); use shellx-host fs_read_binary for blobs",
-            out.stdout.len()
-        ));
-    }
-    String::from_utf8(out.stdout).map_err(|e| format!("UTF-8 decode error: {}", e))
+
+pub(crate) struct BoundedSshOutput {
+    pub(crate) status: std::process::ExitStatus,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
 }
 
-/// Pipe content to the remote filesystem through SSH using a
-/// temp-file + rename write. We pre-create the parent dir via
-/// `mkdir -p` in the same SSH call so deep paths don't fail on "no
-/// such file or directory" — mirrors the local atomic write behavior
-/// used by host-MCP fs_write. The temp file matters for `/goal`:
-/// a dropped SSH stream must not leave a truncated goal.md behind.
-pub(crate) async fn ssh_write_file(
-    ssh: &SshSpawnConfig,
-    remote_path: &str,
-    content: &str,
-) -> Result<(), String> {
-    validate_ssh_destination_arg(&ssh.host)?;
-    let mut cmd = tokio::process::Command::new("ssh");
-    cmd.arg("-o").arg("BatchMode=yes");
-    cmd.arg("-o").arg("ConnectTimeout=5");
-    cmd.arg("-T");
-    if let Some(p) = ssh.port {
-        cmd.arg("-p").arg(p.to_string());
-    }
-    cmd.arg("--").arg(&ssh.host);
-    let tmp_path = format!(
-        "{}.shellx.tmp.{}.{}",
-        remote_path,
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    );
-    let remote_command = if ssh.remote_runtime == SshRemoteRuntime::Windows {
-        let path = powershell_single_quote(remote_path);
-        let tmp = powershell_single_quote(&tmp_path);
-        wrap_ssh_windows_command(&format!(
-            "{prelude}$path={path};$tmp={tmp};$dir=Split-Path -Parent $path;if([string]::IsNullOrWhiteSpace($dir)){{throw 'remote path has no parent directory'}};New-Item -ItemType Directory -Force -Path $dir|Out-Null;$stdinStream=[Console]::OpenStandardInput();$output=[IO.File]::Open($tmp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{{$stdinStream.CopyTo($output)}}finally{{$output.Dispose()}};try{{Move-Item -LiteralPath $tmp -Destination $path -Force}}finally{{if(Test-Path -LiteralPath $tmp){{Remove-Item -LiteralPath $tmp -Force}}}}",
-            prelude = windows_remote_shell_prelude(),
-        ))
-    } else {
-        let q = shell_quote_for_remote(remote_path);
-        let tmp_q = shell_quote_for_remote(&tmp_path);
-        let command = format!(
-            "tmp={tmp}; trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM; \
-             mkdir -p -- \"$(dirname -- {path})\" && \
-             cat > \"$tmp\" && \
-             mv -f -- \"$tmp\" {path} && \
-             trap - EXIT HUP INT TERM",
-            tmp = tmp_q,
-            path = q
-        );
-        wrap_ssh_posix_command(ssh.remote_runtime, ssh.wsl_distro.as_deref(), &command)?
-    };
-    cmd.arg(remote_command);
+pub(crate) async fn run_bounded_ssh_capture(
+    mut command: tokio::process::Command,
+    stdout_cap: usize,
+    timeout: Duration,
+) -> Result<BoundedSshOutput, String> {
     use crate::winproc::NoWindowExt as _;
-    cmd.no_window();
-    cmd.stdin(std::process::Stdio::piped());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
+    use tokio::io::AsyncReadExt as _;
 
-    let mut child = cmd
+    const STDERR_CAP: u64 = 64 * 1024;
+    command.no_window();
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    let mut child = command
         .spawn()
-        .map_err(|e| format!("ssh spawn failed: {}", e))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt as _;
-        stdin
-            .write_all(content.as_bytes())
-            .await
-            .map_err(|e| format!("write stdin failed: {}", e))?;
-        stdin
-            .shutdown()
-            .await
-            .map_err(|e| format!("close stdin failed: {}", e))?;
-    }
-    let out = child
-        .wait_with_output()
-        .await
-        .map_err(|e| format!("ssh wait failed: {}", e))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        .map_err(|error| format!("ssh spawn failed: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "ssh stdout pipe is unavailable".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "ssh stderr pipe is unavailable".to_string())?;
+    let stdout_limit = stdout_cap.saturating_add(1) as u64;
+    let read = async move {
+        let mut stdout_bytes = Vec::with_capacity(stdout_cap.min(1024 * 1024));
+        let mut stderr_bytes = Vec::new();
+        let stdout_read = async {
+            stdout
+                .take(stdout_limit)
+                .read_to_end(&mut stdout_bytes)
+                .await
+        };
+        let stderr_read = async {
+            stderr
+                .take(STDERR_CAP.saturating_add(1))
+                .read_to_end(&mut stderr_bytes)
+                .await
+        };
+        let (stdout_result, stderr_result) = tokio::join!(stdout_read, stderr_read);
+        stdout_result.map_err(|error| format!("ssh stdout read failed: {error}"))?;
+        stderr_result.map_err(|error| format!("ssh stderr read failed: {error}"))?;
+        Ok::<_, String>((stdout_bytes, stderr_bytes))
+    };
+    let (stdout, mut stderr) = match tokio::time::timeout(timeout, read).await {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(error)) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(error);
+        }
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err("remote file read timed out".to_string());
+        }
+    };
+    if stdout.len() > stdout_cap {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
         return Err(format!(
-            "ssh write exited {:?}: {}",
-            out.status.code(),
-            if stderr.is_empty() {
-                "no stderr".into()
-            } else {
-                stderr
-            }
+            "remote file too large (more than {stdout_cap} bytes); use shellx-host fs_read_binary for blobs"
         ));
     }
-    Ok(())
+    let status = match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+        Ok(result) => result.map_err(|error| format!("ssh wait failed: {error}"))?,
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err("remote file read did not exit".to_string());
+        }
+    };
+    if stderr.len() > STDERR_CAP as usize {
+        stderr.truncate(STDERR_CAP as usize);
+        stderr.extend_from_slice(b"\n<stderr truncated>");
+    }
+    Ok(BoundedSshOutput {
+        status,
+        stdout,
+        stderr,
+    })
 }
+
+
 
 /// Convert WSL path (from agent inside WSL, e.g. /mnt/c/... or relative) back to Windows form for host tokio::fs.
 fn wsl_to_windows_path(wsl_path: &str) -> String {
@@ -6152,1112 +6211,7 @@ async fn send_error_response(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    fn unique_tab(prefix: &str) -> String {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        format!("test-{prefix}-{}-{nanos}", std::process::id())
-    }
-
-    #[test]
-    fn http_mcp_capability_accepts_current_and_legacy_initialize_shapes() {
-        assert!(acp_supports_http_mcp(&serde_json::json!({
-            "agentCapabilities": { "mcpCapabilities": { "http": true } }
-        })));
-        assert!(acp_supports_http_mcp(&serde_json::json!({
-            "capabilities": { "mcpCapabilities": { "http": true } }
-        })));
-        assert!(acp_supports_mcp_transport(
-            &serde_json::json!({
-                "agentCapabilities": { "mcpCapabilities": { "sse": true } }
-            }),
-            "sse"
-        ));
-    }
-
-    #[test]
-    fn http_mcp_capability_defaults_to_fail_closed() {
-        assert!(!acp_supports_http_mcp(&serde_json::json!({})));
-        assert!(!acp_supports_http_mcp(&serde_json::json!({
-            "agentCapabilities": { "mcpCapabilities": { "http": false } }
-        })));
-    }
-
-    #[test]
-    fn session_marketplace_refresh_removes_stale_owned_entries_only() {
-        let mut servers = vec![
-            serde_json::json!({ "name": "shellx-host-http", "type": "http" }),
-            serde_json::json!({ "name": "caller-server", "command": "/bin/tool" }),
-            serde_json::json!({ "name": "shellx-mp-disabled", "command": "/bin/old" }),
-            serde_json::json!({ "command": "/bin/unnamed" }),
-        ];
-
-        remove_session_marketplace_servers(&mut servers);
-
-        assert_eq!(servers.len(), 3);
-        assert!(servers
-            .iter()
-            .any(|server| server["name"] == "shellx-host-http"));
-        assert!(servers
-            .iter()
-            .any(|server| server["name"] == "caller-server"));
-        assert!(servers.iter().any(|server| server.get("name").is_none()));
-        assert!(!servers
-            .iter()
-            .any(|server| server["name"] == "shellx-mp-disabled"));
-    }
-
-    #[tokio::test]
-    async fn bounded_acp_reader_drops_overflow_and_resynchronizes() {
-        let input = b"12345678overflow\n{\"ok\":true}\r\n";
-        let mut reader = BufReader::new(input.as_slice());
-
-        assert_eq!(
-            read_acp_bounded_line(&mut reader, 8).await.unwrap(),
-            AcpBoundedLine::Overflow
-        );
-        assert_eq!(
-            read_acp_bounded_line(&mut reader, 64).await.unwrap(),
-            AcpBoundedLine::Line(br#"{"ok":true}"#.to_vec())
-        );
-        assert_eq!(
-            read_acp_bounded_line(&mut reader, 64).await.unwrap(),
-            AcpBoundedLine::Eof
-        );
-    }
-
-    #[tokio::test]
-    async fn transport_end_fails_and_drains_every_pending_response() {
-        let pending = Arc::new(TokioMutex::new(HashMap::new()));
-        let (sender_a, receiver_a) = oneshot::channel();
-        let (sender_b, receiver_b) = oneshot::channel();
-        pending.lock().await.insert(
-            41,
-            PendingAcpRequest {
-                method: "session/prompt".to_string(),
-                sender: sender_a,
-            },
-        );
-        pending.lock().await.insert(
-            42,
-            PendingAcpRequest {
-                method: "initialize".to_string(),
-                sender: sender_b,
-            },
-        );
-
-        let failed = fail_pending_acp_responses(&pending, "ACP transport ended: test").await;
-
-        assert_eq!(failed, 2);
-        assert!(pending.lock().await.is_empty());
-        for response in [receiver_a.await.unwrap(), receiver_b.await.unwrap()] {
-            assert_eq!(response["error"]["code"], -32098);
-            assert_eq!(response["error"]["message"], "ACP transport ended: test");
-        }
-    }
-
-    #[test]
-    fn resolve_path_rejects_traversal() {
-        assert_eq!(
-            resolve_path("../etc/passwd", "C:\\workspace", &None),
-            "C:\\workspace"
-        );
-        assert_eq!(resolve_path("foo/../../bar", "/tmp", &None), "/tmp");
-    }
-
-    #[test]
-    fn resolve_path_joins_relative() {
-        let p = resolve_path("src/lib.rs", "C:\\project", &None);
-        assert!(
-            p.replace('\\', "/").ends_with("project/src/lib.rs"),
-            "unexpected resolved path: {p:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn cancel_prompt_for_missing_tab_does_not_create_session() {
-        let registry = std::sync::Arc::new(SessionRegistry::new());
-        let tab = unique_tab("missing-cancel");
-
-        let cancelled = cancel_prompt_only_for_existing_tab(&registry, &tab)
-            .await
-            .expect("missing tab cancellation should be a harmless no-op");
-
-        assert!(
-            !cancelled,
-            "missing tab should report no prompt cancellation"
-        );
-        assert!(
-            registry.get_existing(&tab).await.is_none(),
-            "cancelling a missing tab must not create a ghost session"
-        );
-    }
-
-    #[test]
-    fn session_start_registry_rejects_parallel_connects_for_one_tab() {
-        let registry = SessionRegistry::new();
-        let tab = unique_tab("parallel-connect");
-        let mut first = registry
-            .begin_session_start(&tab)
-            .expect("first connect should own the startup slot");
-
-        let error = registry
-            .begin_session_start(&tab)
-            .err()
-            .expect("parallel connect must fail fast");
-        assert!(error.contains("already in progress"));
-
-        first.finish();
-        assert!(
-            registry.begin_session_start(&tab).is_ok(),
-            "a completed connect must release the startup slot"
-        );
-    }
-
-    #[tokio::test]
-    async fn session_start_cancellation_does_not_wait_for_session_mutex() {
-        let registry = SessionRegistry::new();
-        let tab = unique_tab("cancel-with-locked-session");
-        let session = registry.get_or_create(&tab).await;
-        let _session_guard = session.lock().await;
-        let mut lease = registry
-            .begin_session_start(&tab)
-            .expect("connect should register its cancellation token");
-
-        let cancellation = registry
-            .cancel_session_start(&tab)
-            .expect("abort should find the in-flight connect token");
-        tokio::time::timeout(Duration::from_millis(100), lease.cancelled())
-            .await
-            .expect("cancellation notification must not wait for the session mutex");
-        assert!(lease.is_cancelled());
-        assert!(registry.session_start_is_current(&tab, &cancellation));
-
-        lease.finish();
-        assert!(!registry.session_start_is_current(&tab, &cancellation));
-    }
-
-    #[test]
-    fn cancelled_session_start_stays_registered_until_cleanup_finishes() {
-        let registry = SessionRegistry::new();
-        let tab = unique_tab("cancelled-connect-cleanup");
-        let lease = registry
-            .begin_session_start(&tab)
-            .expect("connect should register its cancellation token");
-        let cancellation = registry
-            .cancel_session_start(&tab)
-            .expect("abort should find the startup token");
-
-        drop(lease);
-        assert!(
-            registry.session_start_is_current(&tab, &cancellation),
-            "dropping a cancelled handler must leave the token for abort cleanup"
-        );
-
-        registry.finish_session_start(&tab, &cancellation);
-        assert!(!registry.session_start_is_current(&tab, &cancellation));
-    }
-
-    #[test]
-    fn stale_session_start_cleanup_cannot_remove_a_new_generation() {
-        let registry = SessionRegistry::new();
-        let tab = unique_tab("connect-generation");
-        let mut first_lease = registry
-            .begin_session_start(&tab)
-            .expect("first connect should register");
-        let first_token = registry
-            .cancel_session_start(&tab)
-            .expect("first connect token should exist");
-        first_lease.finish();
-
-        let mut second_lease = registry
-            .begin_session_start(&tab)
-            .expect("second connect should register after the first finishes");
-        let second_token = registry
-            .cancel_session_start(&tab)
-            .expect("second connect token should exist");
-
-        registry.finish_session_start(&tab, &first_token);
-        assert!(
-            registry.session_start_is_current(&tab, &second_token),
-            "late cleanup from an old connect must not clear the current token"
-        );
-        second_lease.finish();
-    }
-
-    #[test]
-    fn remote_ssh_fs_path_validator_blocks_escape_and_sensitive_paths() {
-        let home = Some("/home/alice".to_string());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/write_text_file",
-            "/home/alice/project/goal.md",
-            &home,
-            SshRemoteRuntime::Posix,
-        )
-        .is_ok());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/write_text_file",
-            "/home/alice/project/../.ssh/authorized_keys",
-            &home,
-            SshRemoteRuntime::Posix,
-        )
-        .is_err());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/read_text_file",
-            "/home/alice/.grok/auth.json",
-            &home,
-            SshRemoteRuntime::Posix,
-        )
-        .is_err());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/write_text_file",
-            "/home/alice/.bashrc",
-            &home,
-            SshRemoteRuntime::Posix,
-        )
-        .is_err());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/write_text_file",
-            "/home/alice/.ssh/config",
-            &home,
-            SshRemoteRuntime::Posix,
-        )
-        .is_err());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/read_text_file",
-            "/home/alice/.config/gh/hosts.yml",
-            &home,
-            SshRemoteRuntime::Posix,
-        )
-        .is_err());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/read_text_file",
-            "/home/alice/.npmrc",
-            &home,
-            SshRemoteRuntime::Posix,
-        )
-        .is_err());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/write_text_file",
-            "/tmp/outside-home.txt",
-            &home,
-            SshRemoteRuntime::Posix,
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn native_windows_remote_paths_resolve_and_stay_in_user_profile() {
-        let home = Some(r"C:\Users\alice".to_string());
-        assert_eq!(
-            resolve_remote_ssh_path(
-                r"project/src/main.rs",
-                r"C:\Users\alice",
-                &home,
-                SshRemoteRuntime::Windows,
-            ),
-            r"C:\Users\alice\project\src\main.rs"
-        );
-        assert!(validate_remote_ssh_fs_path(
-            "fs/write_text_file",
-            r"C:\Users\alice\project\goal.md",
-            &home,
-            SshRemoteRuntime::Windows,
-        )
-        .is_ok());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/read_text_file",
-            r"C:\Users\alice\.ssh\config",
-            &home,
-            SshRemoteRuntime::Windows,
-        )
-        .is_err());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/write_text_file",
-            r"C:\Users\alice\project\..\outside.txt",
-            &home,
-            SshRemoteRuntime::Windows,
-        )
-        .is_err());
-        assert!(validate_remote_ssh_fs_path(
-            "fs/write_text_file",
-            r"D:\outside.txt",
-            &home,
-            SshRemoteRuntime::Windows,
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn remote_ssh_fs_path_validator_fails_closed_without_home_probe() {
-        let err = validate_remote_ssh_fs_path(
-            "fs/read_text_file",
-            "/tmp/outside-home.txt",
-            &None,
-            SshRemoteRuntime::Posix,
-        )
-        .expect_err("remote SSH fs validation must fail closed when $HOME probe is missing");
-        assert!(
-            err.contains("HOME") || err.contains("home"),
-            "error should explain the missing remote HOME boundary, got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn jsonrpc_message_deserializes_response() {
-        let raw = r#"{"jsonrpc":"2.0","id":42,"result":{"sessionId":"abc-123"}}"#;
-        let msg: JsonRpcMessage = serde_json::from_str(raw).unwrap();
-        assert_eq!(msg.id, Some(serde_json::json!(42)));
-        assert!(msg.result.is_some());
-        assert!(msg.method.is_none());
-    }
-
-    #[test]
-    fn current_grok_authentication_is_a_separate_headless_request() {
-        let initialize = serde_json::json!({
-            "authMethods": [
-                { "id": "cached_token", "name": "cached_token" },
-                { "id": "grok.com", "name": "Grok" }
-            ],
-            "_meta": { "defaultAuthMethodId": "cached_token" }
-        });
-        assert_eq!(
-            select_grok_headless_auth_method(&initialize).as_deref(),
-            Some("cached_token")
-        );
-
-        let authenticate = serde_json::to_value(AuthenticateParams {
-            method_id: "cached_token".to_string(),
-            meta: AuthenticateMeta { headless: true },
-        })
-        .unwrap();
-        assert_eq!(authenticate["methodId"], "cached_token");
-        assert_eq!(authenticate["_meta"]["headless"], true);
-
-        let session = serde_json::to_value(SessionNewParams {
-            cwd: r"C:\Users\FixtureUser".to_string(),
-            mcp_servers: vec![],
-        })
-        .unwrap();
-        assert!(session.get("authMethodId").is_none());
-    }
-
-    #[test]
-    fn grok_authentication_never_selects_interactive_browser_flow() {
-        let logged_out = serde_json::json!({
-            "authMethods": [{ "id": "grok.com", "name": "Grok" }]
-        });
-        assert_eq!(select_grok_headless_auth_method(&logged_out), None);
-
-        let api_key = serde_json::json!({
-            "authMethods": [
-                { "id": "cached_token" },
-                { "id": "xai.api_key" }
-            ]
-        });
-        assert_eq!(
-            select_grok_headless_auth_method(&api_key).as_deref(),
-            Some("xai.api_key")
-        );
-    }
-
-    #[test]
-    fn grok_acp_launches_are_version_stable() {
-        let interactive_compat = grok_session_launch_args(false);
-        assert_eq!(interactive_compat, vec!["--no-auto-update"]);
-
-        let auto = grok_session_launch_args(true);
-        assert_eq!(auto, vec!["--no-auto-update", "--always-approve"]);
-    }
-
-    #[test]
-    fn missing_permission_mode_resolves_to_shellx_full_auto() {
-        assert_eq!(SHELLX_DEFAULT_PERMISSION_MODE, "bypassPermissions");
-        assert_eq!(resolve_shellx_permission_mode(None), "bypassPermissions");
-        assert_eq!(
-            resolve_shellx_permission_mode(Some("plan".to_string())),
-            "plan"
-        );
-    }
-
-    #[test]
-    fn session_load_params_match_grok_docs() {
-        let params = SessionLoadParams {
-            session_id: "019e-old".to_string(),
-            cwd: "C:\\Users\\FixtureUser".to_string(),
-            mcp_servers: vec![serde_json::json!({"name": "shellx-host"})],
-        };
-
-        let value = serde_json::to_value(&params).unwrap();
-        assert_eq!(value["sessionId"], "019e-old");
-        assert_eq!(value["cwd"], "C:\\Users\\FixtureUser");
-        assert_eq!(value["mcpServers"][0]["name"], "shellx-host");
-        assert!(
-            value.get("authMethodId").is_none(),
-            "Grok ACP docs for session/load only advertise sessionId, cwd, and mcpServers"
-        );
-    }
-
-    #[test]
-    fn prompt_recent_activity_requires_session_update_after_prompt_start() {
-        let tab = unique_tab("prompt-activity");
-
-        record_prompt_activity(&tab);
-        assert!(
-            !prompt_has_recent_activity(&tab, std::time::Duration::from_secs(60)),
-            "activity before prompt start must not keep a future prompt alive"
-        );
-
-        record_prompt_start(&tab);
-        assert!(
-            !prompt_has_recent_activity(&tab, std::time::Duration::from_secs(60)),
-            "prompt start alone is not proof that Grok is still streaming"
-        );
-
-        record_prompt_activity(&tab);
-        assert!(
-            prompt_has_recent_activity(&tab, std::time::Duration::from_secs(60)),
-            "session/update after prompt start should prevent a false unresponsive timeout"
-        );
-
-        let _ = take_prompt_elapsed_ms(&tab);
-    }
-
-    #[test]
-    fn prompt_elapsed_drain_clears_recent_activity() {
-        let tab = unique_tab("prompt-activity-drain");
-
-        record_prompt_start(&tab);
-        record_prompt_activity(&tab);
-        assert!(prompt_has_recent_activity(
-            &tab,
-            std::time::Duration::from_secs(60)
-        ));
-
-        assert!(take_prompt_elapsed_ms(&tab).is_some());
-        assert!(
-            !prompt_has_recent_activity(&tab, std::time::Duration::from_secs(60)),
-            "completed prompts must not leave stale activity for the next timeout"
-        );
-    }
-
-    #[test]
-    fn jsonrpc_message_deserializes_notification() {
-        let raw = r#"{"jsonrpc":"2.0","method":"session/update","params":{"foo":"bar"}}"#;
-        let msg: JsonRpcMessage = serde_json::from_str(raw).unwrap();
-        assert_eq!(msg.method, Some("session/update".to_string()));
-        assert!(msg.id.is_none());
-    }
-
-    /// #390 regression — every payload routed through emit_and_debug
-    /// must come back stamped with `_meta.tabId = <tab_id>` so the React
-    /// filter at App.tsx:eventsForActiveTab can route the event to the
-    /// originating tab.
-    /// /// The leak shape we're guarding against: a SessionRegistry with two
-    /// tabs each emits a session_update; with stale tab_id capture or a
-    /// missing tag the events would leak into the wrong tab's view.
-    /// /// We can't instantiate a real `tauri::AppHandle` in a unit test
-    /// (it requires a running event loop), so we test the tagging helper
-    /// directly — it's the only code that touches the payload's `_meta`
-    /// shape, so a regression here is a regression in the leak surface.
-    /// Both the live `handle_notification` path and every typed-channel
-    /// site in acp.rs call the same helper, so this is sufficient.
-    #[test]
-    fn tag_with_tab_id_injects_meta_tabid_for_all_session_update_subtypes() {
-        // Mimic the shape `handle_notification` builds before emit:
-        // { type: "notification", method, params }.
-        // We sweep across every session_update sub-type we know acp.rs
-        // emits so a regression in tagging for any one shape is caught.
-        let sub_types = [
-            "agent_message_chunk",
-            "agent_thought_chunk",
-            "tool_call",
-            "tool_call_update",
-            "current_mode_update",
-            "available_commands_update",
-            "session_summary_generated",
-            "plan",
-        ];
-        for su in sub_types {
-            let payload = serde_json::json!({
-                "type": "notification",
-                "method": "session/update",
-                "params": {
-                    "sessionId": "abc-123",
-                    "update": { "sessionUpdate": su, "content": {"type":"text","text":"hi"} },
-                },
-            });
-
-            let tagged_a = tag_with_tab_id(payload.clone(), Some("tab-aaa"));
-            let tag = tagged_a
-                .pointer("/_meta/tabId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            assert_eq!(
-                tag, "tab-aaa",
-                "session_update sub-type '{}' must be tagged with the emitting tab's id",
-                su
-            );
-
-            // Re-tagging with a different tab MUST overwrite — proves
-            // there's no leaky cache or stale value path in the helper.
-            let tagged_b = tag_with_tab_id(tagged_a.clone(), Some("tab-bbb"));
-            let tag2 = tagged_b
-                .pointer("/_meta/tabId")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            assert_eq!(
-                tag2, "tab-bbb",
-                "re-tag must overwrite for sub-type '{}' — stale tag is the leak vector",
-                su
-            );
-
-            // tab_id=None must NOT introduce a `_meta.tabId` field —
-            // back-compat for legacy untagged emitters. (The React
-            // filter handles untagged via the `tabs.length <= 1`
-            // fallback, but Rust-side we must not invent a tag.)
-            let untagged_payload = serde_json::json!({
-                "type": "notification",
-                "method": "session/update",
-                "params": { "update": { "sessionUpdate": su } },
-            });
-            let tagged_none = tag_with_tab_id(untagged_payload, None);
-            assert!(
-                tagged_none.pointer("/_meta/tabId").is_none(),
-                "tab_id=None must not synthesize a tag for sub-type '{}'",
-                su
-            );
-        }
-    }
-
-    /// #390 regression — emitting events for two distinct tabs from the
-    /// same notification handler must produce two payloads that the
-    /// React filter can route independently. Asserts the cross-tab
-    /// non-interference invariant at the data layer (no shared mutable
-    /// state in tag_with_tab_id, no carry-over between calls).
-    #[test]
-    fn tag_with_tab_id_two_tabs_no_crosstalk() {
-        let p = serde_json::json!({
-            "type": "notification",
-            "method": "session/update",
-            "params": { "update": { "sessionUpdate": "agent_message_chunk" } },
-        });
-        let a = tag_with_tab_id(p.clone(), Some("tab-AAA"));
-        let b = tag_with_tab_id(p.clone(), Some("tab-BBB"));
-        assert_eq!(
-            a.pointer("/_meta/tabId").and_then(|v| v.as_str()),
-            Some("tab-AAA")
-        );
-        assert_eq!(
-            b.pointer("/_meta/tabId").and_then(|v| v.as_str()),
-            Some("tab-BBB")
-        );
-        // And the original input is left untouched (the helper consumes
-        // by value but the cloned input here proves no in-place mutation
-        // leak across callsites).
-        assert!(p.pointer("/_meta/tabId").is_none());
-    }
-
-    #[derive(Default)]
-    struct CapturingGrokLifecycleObserver {
-        seen: std::sync::Mutex<Vec<(String, serde_json::Value)>>,
-    }
-
-    impl GrokAcpLifecycleObserver for CapturingGrokLifecycleObserver {
-        fn observe(&self, tab_id: &str, envelope: &serde_json::Value) {
-            self.seen
-                .lock()
-                .expect("observer capture lock")
-                .push((tab_id.to_string(), envelope.clone()));
-        }
-    }
-
-    #[test]
-    fn lifecycle_observer_receives_only_its_exact_tagged_tab() {
-        let capture = std::sync::Arc::new(CapturingGrokLifecycleObserver::default());
-        let observer: Arc<dyn GrokAcpLifecycleObserver> = capture.clone();
-
-        let lifecycle = grok_lifecycle_notification_envelope(
-            "session/update",
-            &serde_json::json!({
-                "sessionId": "provider-session-that-must-not-be-forwarded",
-                "update": {
-                    "sessionUpdate": "tool_call_update",
-                    "rawOutput": { "command": "never forward this" },
-                },
-            }),
-        )
-        .expect("tool update has a lifecycle projection");
-
-        assert!(notify_grok_lifecycle_observer(
-            Some(&observer),
-            Some("task-tab-a"),
-            lifecycle,
-        ));
-        assert!(notify_grok_lifecycle_observer(
-            Some(&observer),
-            Some("task-tab-b"),
-            grok_lifecycle_prompt_complete_envelope(Some("completed"), None, false, None),
-        ));
-
-        let seen = capture.seen.lock().expect("observer capture lock").clone();
-        assert_eq!(seen.len(), 2);
-        assert_eq!(seen[0].0, "task-tab-a");
-        assert_eq!(
-            seen[0].1.pointer("/_meta/tabId").and_then(|v| v.as_str()),
-            Some("task-tab-a")
-        );
-        assert_eq!(seen[1].0, "task-tab-b");
-        assert_eq!(
-            seen[1].1.pointer("/_meta/tabId").and_then(|v| v.as_str()),
-            Some("task-tab-b")
-        );
-    }
-
-    #[test]
-    fn lifecycle_observer_absence_or_missing_tag_is_a_noop() {
-        let envelope =
-            grok_lifecycle_prompt_complete_envelope(Some("completed"), None, false, None);
-        assert!(!notify_grok_lifecycle_observer(
-            None,
-            Some("task-tab"),
-            envelope.clone(),
-        ));
-
-        let capture = std::sync::Arc::new(CapturingGrokLifecycleObserver::default());
-        let observer: Arc<dyn GrokAcpLifecycleObserver> = capture.clone();
-        assert!(!notify_grok_lifecycle_observer(
-            Some(&observer),
-            None,
-            envelope,
-        ));
-        assert!(capture
-            .seen
-            .lock()
-            .expect("observer capture lock")
-            .is_empty());
-    }
-
-    #[test]
-    fn lifecycle_observer_receives_synthetic_prompt_complete_before_ui_projection() {
-        let capture = std::sync::Arc::new(CapturingGrokLifecycleObserver::default());
-        let observer: Arc<dyn GrokAcpLifecycleObserver> = capture.clone();
-        let lifecycle = grok_lifecycle_prompt_complete_envelope(
-            Some("cancelled"),
-            Some(42),
-            true,
-            Some("user_aborted"),
-        );
-
-        assert!(notify_grok_lifecycle_observer(
-            Some(&observer),
-            Some("task-run-42"),
-            lifecycle,
-        ));
-
-        let seen = capture.seen.lock().expect("observer capture lock").clone();
-        assert_eq!(seen.len(), 1);
-        let envelope = &seen[0].1;
-        assert_eq!(
-            envelope.get("method").and_then(|value| value.as_str()),
-            Some("_x.ai/session/prompt_complete")
-        );
-        assert_eq!(
-            envelope
-                .pointer("/params/stopReason")
-                .and_then(|v| v.as_str()),
-            Some("cancelled")
-        );
-        assert_eq!(
-            envelope
-                .pointer("/params/elapsedMs")
-                .and_then(|v| v.as_u64()),
-            Some(42)
-        );
-        assert_eq!(
-            envelope
-                .pointer("/params/synthetic")
-                .and_then(|v| v.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            envelope
-                .pointer("/params/reasonDetail")
-                .and_then(|v| v.as_str()),
-            Some("user_aborted")
-        );
-    }
-
-    #[test]
-    fn lifecycle_projection_never_forwards_provider_text_prompt_or_permission_arguments() {
-        let provider_text = "provider output that must not enter the task lifecycle stream";
-        let prompt_body = "user prompt that must not enter the task lifecycle stream";
-        let update = grok_lifecycle_notification_envelope(
-            "session/update",
-            &serde_json::json!({
-                "sessionId": "provider-session",
-                "prompt": prompt_body,
-                "update": {
-                    "sessionUpdate": "agent_message_chunk",
-                    "content": { "text": provider_text },
-                    "rawOutput": { "text": provider_text, "command": "secret command" },
-                },
-            }),
-        )
-        .expect("non-empty message content is represented by a presence bit");
-        assert_eq!(
-            update,
-            serde_json::json!({
-                "method": "session/update",
-                "params": {
-                    "update": {
-                        "sessionUpdate": "agent_message_chunk",
-                        "contentPresent": true,
-                    },
-                },
-            })
-        );
-
-        let permission =
-            grok_lifecycle_permission_request_envelope(7, Some("acceptEdits"), "awaiting_decision");
-        assert_eq!(
-            permission,
-            serde_json::json!({
-                "method": "session/request_permission",
-                "params": {
-                    "requestId": 7,
-                    "permissionMode": "acceptEdits",
-                    "lifecycle": "awaiting_decision",
-                },
-            }),
-            "Task observers consume this finite permission lifecycle shape, never raw ACP options"
-        );
-        let rendered = format!("{update}{permission}");
-        for forbidden in [
-            provider_text,
-            prompt_body,
-            "secret command",
-            "provider-session",
-        ] {
-            assert!(
-                !rendered.contains(forbidden),
-                "redacted lifecycle projection leaked provider field {forbidden:?}"
-            );
-        }
-        assert!(permission.pointer("/params/options").is_none());
-        assert!(permission.pointer("/params/prompt").is_none());
-    }
-
-    /// AUDIT_OPUS_2026-05-26 H3: every payload headed for app.emit and
-    /// DebugHub must be credential-scrubbed. This helper is the only pure
-    /// part of that path we can exercise without spinning a Tauri app.
-    #[test]
-    fn event_payload_preparation_redacts_credentials_and_preserves_ids() {
-        let fake_token = ["xai-secret-token-", "123456789"].concat();
-        let payload = serde_json::json!({
-            "reqId": "12345",
-            "params": {
-                "sessionId": "019e63c3-1a17-7f13-883a-8e9b630f3339",
-                "toolCall": {
-                    "toolCallId": "019e63c3-1a17-7f13-883a-8e9b630f3339",
-                    "rawInput": {
-                        "headers": {
-                            "Authorization": format!("Bearer {fake_token}")
-                        },
-                        "command": "echo ok"
-                    }
-                },
-                "availableCommands": [
-                    "shellx-host-http__secret_get",
-                    "grok-shell-host__secret_set",
-                    "shellx-mp-git__git_status"
-                ]
-            }
-        });
-
-        let prepared = prepare_event_payload(payload, Some("tab-sec"));
-        assert_eq!(
-            prepared.pointer("/_meta/tabId").and_then(|v| v.as_str()),
-            Some("tab-sec")
-        );
-        assert_eq!(
-            prepared.pointer("/reqId").and_then(|v| v.as_str()),
-            Some("12345")
-        );
-        assert_eq!(
-            prepared
-                .pointer("/params/sessionId")
-                .and_then(|v| v.as_str()),
-            Some("019e63c3-1a17-7f13-883a-8e9b630f3339")
-        );
-        assert_eq!(
-            prepared
-                .pointer("/params/toolCall/toolCallId")
-                .and_then(|v| v.as_str()),
-            Some("019e63c3-1a17-7f13-883a-8e9b630f3339")
-        );
-        assert_eq!(
-            prepared
-                .pointer("/params/toolCall/rawInput/headers/Authorization")
-                .and_then(|v| v.as_str()),
-            Some("***REDACTED***")
-        );
-        assert_eq!(
-            prepared
-                .pointer("/params/availableCommands/0")
-                .and_then(|v| v.as_str()),
-            Some("shellx-host-http__secret_get")
-        );
-        assert_eq!(
-            prepared
-                .pointer("/params/availableCommands/1")
-                .and_then(|v| v.as_str()),
-            Some("grok-shell-host__secret_set")
-        );
-    }
-
-    #[test]
-    fn extracts_host_mcp_tool_name_from_failed_transport_content() {
-        let update = serde_json::json!({
-            "content": [{
-                "content": {
-                    "type": "text",
-                    "text": "Tool `grok-shell-host__goal_complete` failed via `use_tool`: Transport closed"
-                },
-                "type": "content"
-            }],
-            "rawOutput": {
-                "error": "tool_execution_failed",
-                "message": "Transport closed"
-            },
-            "sessionUpdate": "tool_call_update",
-            "status": "failed",
-            "toolCallId": "call-1"
-        });
-        assert_eq!(
-            extract_host_mcp_tool_name(&update).as_deref(),
-            Some("grok-shell-host__goal_complete")
-        );
-        assert!(update_contains_transport_closed(&update));
-    }
-
-    #[test]
-    fn ignores_non_shellx_tool_transport_failure() {
-        let update = serde_json::json!({
-            "content": [{
-                "content": {
-                    "type": "text",
-                    "text": "Tool `shellx-mp-git__git_status` failed: Transport closed"
-                },
-                "type": "content"
-            }],
-            "rawOutput": { "message": "Transport closed" },
-            "status": "failed"
-        });
-        assert_eq!(extract_host_mcp_tool_name(&update), None);
-        assert!(update_contains_transport_closed(&update));
-    }
-
-    #[test]
-    fn acp_read_text_file_line_limit_slice_matches_spec_shape() {
-        let content = "one\ntwo\nthree\nfour";
-        assert_eq!(
-            acp_slice_text_by_line_limit(content, Some(2), Some(2)),
-            "two\nthree\n"
-        );
-        assert_eq!(
-            acp_slice_text_by_line_limit(content, Some(4), Some(5)),
-            "four"
-        );
-        assert_eq!(
-            acp_slice_text_by_line_limit(content, Some(0), Some(1)),
-            "one\n"
-        );
-        assert_eq!(acp_slice_text_by_line_limit(content, Some(1), Some(0)), "");
-    }
-
-    #[test]
-    fn acp_read_text_file_param_validation_rejects_negative_line() {
-        let params = serde_json::json!({ "line": -1 });
-        let err = acp_optional_usize_param(&params, "line").unwrap_err();
-        assert!(err.contains("non-negative"), "got: {}", err);
-    }
-
-    #[test]
-    fn acp_read_text_file_denies_sensitive_host_path() {
-        let home_s = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .expect("test env must have HOME or USERPROFILE set");
-        let home = std::path::PathBuf::from(&home_s);
-        let vault = home.join(".shellx").join("vault.enc");
-        let vault_s = vault.to_string_lossy().to_string();
-        let path_buf = crate::host_mcp::validate_fs_path("fs/read_text_file", &vault_s)
-            .expect("validate_fs_path accepts the absolute path itself");
-        let containment = crate::host_mcp::enforce_home_containment(
-            "fs/read_text_file",
-            &path_buf,
-            crate::host_mcp::FsAccessKind::Read,
-        );
-        let err = containment.expect_err("vault.enc must be rejected for ACP reads");
-        assert!(
-            err.contains("sensitive") || err.contains("denylist"),
-            "denial reason should reference the denylist; got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn every_provider_terminal_method_has_one_actionable_rejection() {
-        for method in [
-            "terminal/create",
-            "terminal/output",
-            "terminal/wait_for_exit",
-            "terminal/kill",
-            "terminal/release",
-            "terminal/future_method",
-        ] {
-            for transport in ["local", "wsl", "ssh"] {
-                let (code, message) = provider_terminal_rejection(method, transport);
-                assert_eq!(code, -32601, "{method} on {transport}");
-                assert!(
-                    message.contains("shellx-host-http__Agent"),
-                    "{method} on {transport} must name the supported shell handoff: {message}"
-                );
-                assert!(
-                    message.contains("Do not instruct the user"),
-                    "{method} on {transport} must keep execution agent-owned: {message}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn external_cwd_validation_rejects_corruption_and_preserves_valid_paths() {
-        for invalid in [
-            "C:\\Users\\FixtureUser\0",
-            "C:\\Users\\FixtureUser\\0",
-            "C:\\bad|path",
-            "C:\\tab\there",
-        ] {
-            assert!(
-                sanitize_cwd_param(Some(invalid)).is_err(),
-                "corrupt cwd must be rejected: {invalid:?}"
-            );
-        }
-        assert_eq!(
-            sanitize_cwd_param(Some("C:\\Users\\FixtureUser")).unwrap(),
-            Some("C:\\Users\\FixtureUser".to_string())
-        );
-        assert_eq!(
-            sanitize_cwd_param(Some("/srv/test-project")).unwrap(),
-            Some("/srv/test-project".to_string())
-        );
-        assert_eq!(sanitize_cwd_param(None).unwrap(), None);
-        assert_eq!(sanitize_cwd_param(Some("")).unwrap(), None);
-    }
-
-    /// #382 M7 — proves the ACP fs/write_text_file local-write path
-    /// now routes through host_mcp's `validate_fs_path` +
-    /// `enforce_home_containment` denylist (REJECT for
-    /// `$HOME/.shellx/vault.enc`) and uses `atomic_write_string`
-    /// (SUCCESS for `$HOME/<sandbox>/test.txt`, no `.tmp` leftover).
-    /// /// Wired against the same helpers the production handler calls so
-    /// any regression in the validator denylist or in the tmp+rename
-    /// pair would surface here.
-    /// /// IMPORTANT: this test does NOT mutate the `HOME` / `USERPROFILE`
-    /// env vars. Sibling tests (e.g. `fs_write_atomic_roundtrip` in
-    /// host_mcp) run concurrently under the same process and pin their
-    /// fixture paths under the real HOME; mutating HOME here would
-    /// cause them to be rejected with "outside HOME tree". We instead
-    /// write into a unique sandbox subdir of the real HOME and clean up
-    /// at the end.
-    #[tokio::test]
-    async fn fs_write_text_file_denies_sensitive_and_atomic_succeeds() {
-        // Resolve real HOME (or USERPROFILE on Windows) without
-        // mutating it — see comment above.
-        let home_s = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .expect("test env must have HOME or USERPROFILE set");
-        let home = std::path::PathBuf::from(&home_s);
-
-        // Unique per-test sandbox under HOME so HOME containment passes
-        // for the legitimate-write case without colliding with concurrent
-        // tests' fixtures.
-        let sandbox = home.join(format!(
-            ".shellx-acp-m7-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&sandbox).expect("create sandbox under HOME");
-
-        // (a) sensitive path — must be REJECTED with a denylist error.
-        // We do NOT touch the real $HOME/.shellx/vault.enc; the
-        // denylist check is a pure substring on the resolved path,
-        // so we hand it a path that hits the denylist pattern
-        // without ever creating the file.
-        let vault = home.join(".shellx").join("vault.enc");
-        let vault_s = vault.to_string_lossy().to_string();
-        let path_buf = crate::host_mcp::validate_fs_path("fs/write_text_file", &vault_s)
-            .expect("validate_fs_path accepts the absolute path itself");
-        let containment = crate::host_mcp::enforce_home_containment(
-            "fs/write_text_file",
-            &path_buf,
-            crate::host_mcp::FsAccessKind::Write,
-        );
-        let err = containment.expect_err("vault.enc must be rejected");
-        assert!(
-            err.contains("sensitive") || err.contains("denylist"),
-            "denial reason should reference the denylist; got: {}",
-            err
-        );
-
-        // (b) ordinary HOME-rooted path — must succeed atomically and
-        // leave NO `.tmp` sibling. The sandbox dir is already under
-        // HOME, so containment passes.
-        let target = sandbox.join("test.txt");
-        let target_s = target.to_string_lossy().to_string();
-        let target_buf = crate::host_mcp::validate_fs_path("fs/write_text_file", &target_s)
-            .expect("validate_fs_path passes for sandbox path");
-        crate::host_mcp::enforce_home_containment(
-            "fs/write_text_file",
-            &target_buf,
-            crate::host_mcp::FsAccessKind::Write,
-        )
-        .expect("HOME containment passes for sandbox path");
-        crate::host_mcp::atomic_write_string(&target_buf, "hello atomic")
-            .await
-            .expect("atomic_write_string succeeds for HOME-rooted path");
-
-        // File materialized with the right bytes.
-        let read = std::fs::read_to_string(&target).expect("file exists post-rename");
-        assert_eq!(read, "hello atomic", "atomic write content roundtrip");
-
-        // No `.tmp` leftover next to the target — atomic rename took.
-        let leftovers: Vec<_> = std::fs::read_dir(&sandbox)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
-            .collect();
-        assert!(
-            leftovers.is_empty(),
-            "no .tmp sibling should remain after atomic rename; found: {:?}",
-            leftovers.iter().map(|e| e.file_name()).collect::<Vec<_>>()
-        );
-
-        // Best-effort cleanup; ignore errors so a failed earlier assert
-        // still surfaces the real failure rather than a teardown noise.
-        let _ = std::fs::remove_dir_all(&sandbox);
-    }
-}
 
 // ──────────── Transport enum ────────────
 //
@@ -7704,717 +6658,4 @@ pub fn validate_ssh_destination_arg(host: &str) -> Result<(), String> {
         return Err("ssh host cannot contain path separators".to_string());
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod transport_tests {
-    use super::*;
-
-    #[test]
-    fn release_grok_auth_references_canonical_homes_without_copying_credentials() {
-        let windows = release_grok_auth_environment_for(
-            ReleaseGrokAuthTransport::Local,
-            true,
-            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
-            Some(r"C:\Users\ReleaseUser"),
-            None,
-            true,
-            Some("HOME:PATH/l"),
-        )
-        .expect("Windows canonical auth reference")
-        .expect("Windows auth environment");
-        assert_eq!(windows.auth_path, r"C:\Users\ReleaseUser\.grok\auth.json");
-        assert_eq!(windows.wslenv, None);
-
-        let windows_with_trailing_separator = release_grok_auth_environment_for(
-            ReleaseGrokAuthTransport::Local,
-            true,
-            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
-            Some(r#"C:\Users\ReleaseUser\"#),
-            None,
-            true,
-            None,
-        )
-        .expect("Windows canonical auth reference with trailing separator")
-        .expect("Windows auth environment with trailing separator");
-        assert_eq!(
-            windows_with_trailing_separator.auth_path,
-            r"C:\Users\ReleaseUser\.grok\auth.json"
-        );
-
-        let windows_unc = release_grok_auth_environment_for(
-            ReleaseGrokAuthTransport::Local,
-            true,
-            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
-            Some(r"\\server\share\release-user"),
-            None,
-            true,
-            None,
-        )
-        .expect("Windows UNC canonical auth reference")
-        .expect("Windows UNC auth environment");
-        assert_eq!(
-            windows_unc.auth_path,
-            r"\\server\share\release-user\.grok\auth.json"
-        );
-
-        let wsl = release_grok_auth_environment_for(
-            ReleaseGrokAuthTransport::Wsl,
-            true,
-            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
-            Some(r"C:\Users\ReleaseUser"),
-            Some("/home/release-user"),
-            true,
-            Some("HOME:PATH/l"),
-        )
-        .expect("WSL canonical auth reference")
-        .expect("WSL auth environment");
-        assert_eq!(wsl.auth_path, "/home/release-user/.grok/auth.json");
-        assert_eq!(wsl.wslenv.as_deref(), Some("HOME:PATH/l:GROK_AUTH_PATH"));
-
-        let posix = release_grok_auth_environment_for(
-            ReleaseGrokAuthTransport::Local,
-            true,
-            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
-            Some("/Users/release-user"),
-            None,
-            false,
-            None,
-        )
-        .expect("POSIX canonical auth reference")
-        .expect("POSIX auth environment");
-        assert_eq!(posix.auth_path, "/Users/release-user/.grok/auth.json");
-        assert_eq!(posix.wslenv, None);
-    }
-
-    #[test]
-    fn release_grok_auth_reference_is_explicit_and_test_instance_only() {
-        assert_eq!(
-            release_grok_auth_environment_for(
-                ReleaseGrokAuthTransport::Local,
-                true,
-                None,
-                Some("/home/release-user"),
-                None,
-                false,
-                None,
-            )
-            .expect("inactive release auth mode"),
-            None
-        );
-        assert!(release_grok_auth_environment_for(
-            ReleaseGrokAuthTransport::Local,
-            false,
-            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
-            Some("/home/release-user"),
-            None,
-            false,
-            None,
-        )
-        .expect_err("production process must reject release auth references")
-        .contains("isolated test instance"));
-        assert!(release_grok_auth_environment_for(
-            ReleaseGrokAuthTransport::Wsl,
-            true,
-            Some(RELEASE_PROVIDER_AUTH_MODE_CANONICAL_REFERENCE),
-            Some(r"C:\Users\ReleaseUser"),
-            None,
-            true,
-            None,
-        )
-        .expect_err("WSL reference requires an explicit canonical WSL home")
-        .contains("WSL home"));
-    }
-
-    #[test]
-    fn ssh_remote_platform_signatures_are_unambiguous() {
-        assert_eq!(
-            classify_ssh_remote_platform("SHELLX_POSIX\n"),
-            Some(SshRemotePlatform::Posix)
-        );
-        assert_eq!(
-            classify_ssh_remote_platform("\r\nSHELLX_WINDOWS\r\n"),
-            Some(SshRemotePlatform::NativeWindows)
-        );
-        assert_eq!(classify_ssh_remote_platform("Darwin\n"), None);
-        assert!(SSH_NATIVE_WINDOWS_RUNTIME_REQUIRED.contains("Windows OpenSSH"));
-        assert!(SSH_NATIVE_WINDOWS_RUNTIME_REQUIRED.contains("native Windows runtime"));
-    }
-
-    /// Local-variant serialization round-trip — confirms the
-    /// camelCase + serde-tag shape we promised the React caller.
-    #[test]
-    fn transport_local_roundtrip() {
-        let t = Transport::Local { grok_path: None };
-        let v = serde_json::to_value(&t).unwrap();
-        assert_eq!(v["kind"], "local");
-        let back: Transport = serde_json::from_value(v).unwrap();
-        assert!(matches!(back, Transport::Local { .. }));
-    }
-
-    #[test]
-    fn session_transport_configuration_is_mutually_exclusive_and_local_path_wins() {
-        let mut session = GrokAcpSession::new();
-        session.set_wsl_config(
-            Some("Ubuntu-24.04".to_string()),
-            Some("/home/test/.grok/bin/grok".to_string()),
-        );
-        assert_eq!(session.transport_kind(), "wsl");
-        assert_eq!(session.local_grok_path(), None);
-
-        session.set_local_config(Some("  /owned/local/grok  ".to_string()));
-        assert_eq!(session.transport_kind(), "local");
-        assert_eq!(session.local_grok_path(), Some("/owned/local/grok"));
-        assert_eq!(session.resolved_local_grok_exe(), "/owned/local/grok");
-        assert_eq!(session.wsl_distro(), None);
-        assert_eq!(session.wsl_grok_path(), None);
-        assert!(session.ssh_config().is_none());
-
-        session.set_ssh_config(Some(SshSpawnConfig {
-            host: "fixture.example".to_string(),
-            port: Some(22),
-            key_vault_ref: None,
-            remote_grok_path: "grok".to_string(),
-            remote_runtime: SshRemoteRuntime::Posix,
-            wsl_distro: None,
-        }));
-        assert_eq!(session.transport_kind(), "ssh");
-        assert_eq!(session.local_grok_path(), None);
-        assert_eq!(session.wsl_distro(), None);
-        assert_eq!(session.wsl_grok_path(), None);
-
-        session.set_local_config(None);
-        assert_eq!(session.transport_kind(), "local");
-        assert_eq!(session.local_grok_path(), None);
-        assert!(session.ssh_config().is_none());
-    }
-
-    /// Ssh variant — full field set serializes/deserializes correctly.
-    #[test]
-    fn transport_ssh_roundtrip() {
-        let t = Transport::Ssh {
-            host: "user@example-host".to_string(),
-            port: Some(2222),
-            key_vault_ref: Some("connections.prod.ssh_key_path".to_string()),
-            remote_grok_path: "/home/user/.grok/bin/grok".to_string(),
-            remote_runtime: SshRemoteRuntime::WindowsWsl,
-            wsl_distro: Some("Ubuntu".to_string()),
-        };
-        let v = serde_json::to_value(&t).unwrap();
-        assert_eq!(v["kind"], "ssh");
-        assert_eq!(v["host"], "user@example-host");
-        assert_eq!(v["port"], 2222);
-        assert_eq!(v["remoteRuntime"], "windows_wsl");
-        assert_eq!(v["wslDistro"], "Ubuntu");
-        let back: Transport = serde_json::from_value(v).unwrap();
-        match back {
-            Transport::Ssh { host, port, .. } => {
-                assert_eq!(host, "user@example-host");
-                assert_eq!(port, Some(2222));
-            }
-            _ => panic!("wrong variant"),
-        }
-    }
-
-    #[test]
-    fn legacy_ssh_transport_defaults_to_direct_posix() {
-        let transport: Transport = serde_json::from_value(serde_json::json!({
-            "kind": "ssh",
-            "host": "user@example-host",
-            "remoteGrokPath": "grok"
-        }))
-        .expect("legacy SSH transport should deserialize");
-        assert!(matches!(
-            transport,
-            Transport::Ssh {
-                remote_runtime: SshRemoteRuntime::Posix,
-                wsl_distro: None,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn windows_wsl_wrapper_is_encoded_and_distro_is_bounded() {
-        let wrapped = wrap_ssh_posix_command(
-            SshRemoteRuntime::WindowsWsl,
-            Some("Ubuntu-24.04"),
-            "printf '%s\\n' SHELLX_OK",
-        )
-        .expect("Windows + WSL wrapper");
-        assert!(wrapped.starts_with("powershell.exe -NoLogo -NoProfile -NonInteractive"));
-        assert!(!wrapped.contains("SHELLX_OK"));
-        use base64::Engine as _;
-        let encoded = wrapped.split_whitespace().last().expect("encoded command");
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .expect("PowerShell base64");
-        let utf16 = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        let powershell = String::from_utf16(&utf16).expect("PowerShell UTF-16LE");
-        assert!(powershell.contains("source <(printf %s "));
-        assert!(powershell.contains("|base64 -d)"));
-        assert!(!powershell.contains("SHELLX_OK"));
-        assert!(validate_ssh_wsl_distro_arg(Some("Ubuntu-24.04")).is_ok());
-        assert!(validate_ssh_wsl_distro_arg(Some("Ubuntu; calc")).is_err());
-        assert!(wrap_ssh_posix_command(SshRemoteRuntime::WindowsWsl, None, "true").is_err());
-    }
-
-    #[test]
-    fn native_windows_grok_launcher_keeps_plain_values_out_of_argv() {
-        let script = windows_native_grok_launch_script(
-            r"C:\Users\Fixture O'Brien\project",
-            r"C:\Users\Fixture O'Brien\.grok\bin\grok.exe",
-            &["--always-approve".to_string()],
-        );
-        let wrapped = wrap_ssh_windows_command(&script);
-        assert!(wrapped.starts_with("powershell.exe -NoLogo -NoProfile -NonInteractive"));
-        assert!(wrapped.len() < 8_000);
-        assert!(!wrapped.contains("grok.exe"));
-        assert!(!wrapped.contains("--always-approve"));
-        assert!(!script.contains("[Console]::In.ReadLine"));
-        assert!(script.contains("config.toml"));
-        assert!(script.contains("$expected=($line -replace ' BEGIN.*$',' END')"));
-        assert!(script.contains("if($managed){foreach($held in $buffer)"));
-        assert!(script.contains("Set-Location -LiteralPath $work"));
-        assert!(script.contains("C:\\Users\\Fixture O''Brien\\project"));
-        assert!(script.contains("--rules"));
-        assert!(script.contains("agent"));
-        assert!(script.contains("stdio"));
-        assert!(!script.contains("Bearer "));
-    }
-
-    #[test]
-    fn native_windows_process_script_loads_and_removes_private_env_before_launch() {
-        let script = windows_native_process_script_with_env_file(
-            Some(r"C:\Users\Fixture O'Brien\project"),
-            "codex",
-            &["app-server".to_string()],
-            Some(r"C:\Users\Fixture O'Brien\.shellx\provider-env.ps1"),
-        );
-
-        assert!(script.contains(". $shellxEnv"));
-        assert!(script.contains("Remove-Item -LiteralPath $shellxEnv -Force"));
-        assert!(script.contains(r"C:\Users\Fixture O''Brien\.shellx\provider-env.ps1"));
-        assert!(script.contains("Set-Location -LiteralPath $work"));
-        assert!(script.contains("& 'codex' @a"));
-        assert!(script.contains("'app-server'"));
-        assert!(!script.contains("[Console]::In.ReadLine"));
-    }
-
-    #[test]
-    fn powershell_string_expression_encodes_unicode_quote_delimiters() {
-        let value = "C:\\work\\quote-'‘’‚‛-\"“”„‟-終.txt";
-        let expression = powershell_single_quote(value);
-
-        assert!(!expression.contains(value));
-        for (quote, codepoint) in [
-            ('‘', "2018"),
-            ('’', "2019"),
-            ('‚', "201A"),
-            ('‛', "201B"),
-            ('“', "201C"),
-            ('”', "201D"),
-            ('„', "201E"),
-            ('‟', "201F"),
-        ] {
-            assert!(!expression.contains(quote));
-            assert!(expression.contains(&format!("[char]0x{codepoint}")));
-        }
-        assert!(expression.contains("quote-''"));
-        assert!(expression.ends_with("'-終.txt')"));
-    }
-
-    /// Reserved-variant must fail loudly when spawn is attempted.
-    #[tokio::test]
-    async fn p_transport_2_variants_error_on_build() {
-        let t = Transport::WsDirect {
-            url: "ws://localhost:2419".to_string(),
-            secret_vault_ref: None,
-        };
-        assert!(t.is_p_transport_2());
-        let r = build_command_for_transport(&t, "/tmp", &[], |_| async {
-            Ok::<_, String>("ignored".to_string())
-        })
-        .await;
-        assert!(r.is_err(), "WsDirect must error today");
-        let msg = r.unwrap_err();
-        assert!(
-            msg.contains("reserved"),
-            "expected reserved-variant marker: {}",
-            msg
-        );
-    }
-
-    #[test]
-    fn shell_quote_handles_single_quotes() {
-        assert_eq!(shell_quote_for_remote("foo"), "'foo'");
-        assert_eq!(shell_quote_for_remote("foo'bar"), "'foo'\\''bar'");
-        assert_eq!(shell_quote_for_remote(""), "''");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn remote_shellx_mcp_cleanup_preserves_user_config_and_creates_nothing() {
-        let root = std::env::temp_dir().join(format!(
-            "shellx-remote-mcp-cleanup-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let config_dir = root.join(".grok");
-        std::fs::create_dir_all(&config_dir).unwrap();
-        let config = config_dir.join("config.toml");
-        std::fs::write(
-            &config,
-            "[mcp_servers.keep]\ncommand = \"keep\"\n\n# shellX:managed-mcp:shellx-host-http BEGIN\n[mcp_servers.shellx-host-http]\nurl = \"http://127.0.0.1:5758/mcp\"\n# shellX:managed-mcp:shellx-host-http END\n\n[mcp_servers.shellx-mp-old]\ncommand = \"old\"\n",
-        )
-        .unwrap();
-        let command = format!(
-            "{} true",
-            remote_shellx_mcp_cleanup_chain(&shell_quote_for_remote(
-                root.to_string_lossy().as_ref()
-            ))
-        );
-        assert!(std::process::Command::new("sh")
-            .args(["-c", &command])
-            .status()
-            .unwrap()
-            .success());
-        let updated = std::fs::read_to_string(&config).unwrap();
-        assert!(updated.contains("[mcp_servers.keep]"));
-        assert!(!updated.contains("shellx-host-http"));
-        assert!(!updated.contains("shellx-mp-old"));
-
-        let malformed = "[mcp_servers.keep]\ncommand = \"keep\"\n# shellX:managed-mcp:shellx-host-http BEGIN\n[mcp_servers.shellx-host-http]\nurl = \"http://127.0.0.1:5758/mcp\"\n[user.settings]\nvalue = \"preserve after incomplete marker\"\n";
-        std::fs::write(&config, malformed).unwrap();
-        let command = format!(
-            "{} true",
-            remote_shellx_mcp_cleanup_chain(&shell_quote_for_remote(
-                root.to_string_lossy().as_ref()
-            ))
-        );
-        assert!(std::process::Command::new("sh")
-            .args(["-c", &command])
-            .status()
-            .unwrap()
-            .success());
-        assert_eq!(std::fs::read_to_string(&config).unwrap(), malformed);
-
-        let absent = root.join("absent-project");
-        let command = format!(
-            "{} true",
-            remote_shellx_mcp_cleanup_chain(&shell_quote_for_remote(
-                absent.to_string_lossy().as_ref()
-            ))
-        );
-        assert!(std::process::Command::new("sh")
-            .args(["-c", &command])
-            .status()
-            .unwrap()
-            .success());
-        assert!(!absent.join(".grok/config.toml").exists());
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[tokio::test]
-    async fn ssh_spawn_command_reserves_stdin_for_acp() {
-        let transport = Transport::Ssh {
-            host: "user@example.com".to_string(),
-            port: None,
-            key_vault_ref: None,
-            remote_grok_path: "/home/user/.grok/bin/grok".to_string(),
-            remote_runtime: SshRemoteRuntime::Posix,
-            wsl_distro: None,
-        };
-        let cmd = build_command_for_transport(
-            &transport,
-            "/home/user/project",
-            &["--always-approve".to_string()],
-            |_| async { Ok::<_, String>("ignored".to_string()) },
-        )
-        .await
-        .expect("ssh command should build");
-        let rendered = format!("{:?}", cmd.as_std());
-        assert!(!rendered.contains("read -r"));
-        assert!(!rendered.contains(crate::mcp_http::MCP_TOKEN_ENV_VAR));
-        assert!(
-            rendered.contains("--rules") && rendered.contains("running inside ShellX"),
-            "SSH Grok should receive ShellX rules only in its launch command"
-        );
-        assert!(
-            rendered.contains("rm -f ~/.grok/skills/shellx-host/SKILL.md"),
-            "SSH setup should migrate the legacy global remote skill"
-        );
-        assert!(
-            rendered.contains("config.toml") && rendered.contains("cmp -s"),
-            "SSH launch should remove prior ShellX-owned project registrations"
-        );
-        assert!(
-            rendered.len() < 12_000,
-            "ssh argv should stay far below Windows CreateProcess limits, got {} chars",
-            rendered.len()
-        );
-    }
-
-    #[tokio::test]
-    async fn windows_wsl_ssh_spawn_keeps_bootstrap_below_windows_command_limit() {
-        let transport = Transport::Ssh {
-            host: "user@windows-host".to_string(),
-            port: None,
-            key_vault_ref: None,
-            remote_grok_path: "/home/user/.grok/bin/grok".to_string(),
-            remote_runtime: SshRemoteRuntime::WindowsWsl,
-            wsl_distro: Some("Ubuntu".to_string()),
-        };
-        let cmd = build_command_for_transport(
-            &transport,
-            "/home/user/project",
-            &["--always-approve".to_string()],
-            |_| async { Ok::<_, String>("ignored".to_string()) },
-        )
-        .await
-        .expect("Windows + WSL SSH command should build");
-        let remote = cmd
-            .as_std()
-            .get_args()
-            .last()
-            .expect("remote command")
-            .to_string_lossy();
-        assert!(remote.starts_with("powershell.exe "));
-        assert!(
-            remote.len() < 8_000,
-            "Windows OpenSSH bootstrap exceeds cmd.exe's practical command limit: {} bytes",
-            remote.len()
-        );
-    }
-
-    #[tokio::test]
-    async fn native_windows_ssh_spawn_reserves_stdin_for_acp() {
-        let transport = Transport::Ssh {
-            host: "user@windows-host".to_string(),
-            port: None,
-            key_vault_ref: None,
-            remote_grok_path: r"C:\Users\FixtureUser\.grok\bin\grok.exe".to_string(),
-            remote_runtime: SshRemoteRuntime::Windows,
-            wsl_distro: None,
-        };
-        let cmd = build_command_for_transport(
-            &transport,
-            r"C:\Users\FixtureUser\project",
-            &["--always-approve".to_string()],
-            |_| async { Ok::<_, String>("ignored".to_string()) },
-        )
-        .await
-        .expect("native Windows SSH command should build");
-        let args = cmd
-            .as_std()
-            .get_args()
-            .map(|arg| arg.to_string_lossy().to_string())
-            .collect::<Vec<_>>();
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["-o", "ExitOnForwardFailure=yes"]));
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["-o", "ServerAliveInterval=15"]));
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["-o", "ServerAliveCountMax=3"]));
-        let remote = cmd
-            .as_std()
-            .get_args()
-            .last()
-            .expect("remote command")
-            .to_string_lossy();
-        assert!(remote.starts_with("powershell.exe "));
-        assert!(remote.len() < 8_000);
-        assert!(!remote.contains("grok.exe"));
-        assert!(!remote.contains("--always-approve"));
-        use base64::Engine as _;
-        let encoded = remote.split_whitespace().last().expect("encoded command");
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .expect("PowerShell base64");
-        let utf16 = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        let script = String::from_utf16(&utf16).expect("PowerShell UTF-16LE");
-        assert!(!script.contains("[Console]::In.ReadLine"));
-        assert!(script.contains(r"C:\Users\FixtureUser\.grok\bin\grok.exe"));
-        assert!(script.contains("config.toml"));
-        assert!(script.contains("--always-approve"));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires SHELLX_WINDOWS_SSH_HOST and SHELLX_WINDOWS_SSH_HOME"]
-    async fn live_native_windows_ssh_file_roundtrip() {
-        let host =
-            std::env::var("SHELLX_WINDOWS_SSH_HOST").expect("SHELLX_WINDOWS_SSH_HOST is required");
-        let home =
-            std::env::var("SHELLX_WINDOWS_SSH_HOME").expect("SHELLX_WINDOWS_SSH_HOME is required");
-        let remote_path = format!(
-            "{}\\.shellx\\native-windows-file-test-{}.txt",
-            normalize_windows_remote_path(&home).trim_end_matches('\\'),
-            uuid::Uuid::new_v4()
-        );
-        let content = "ShellX native Windows SSH file roundtrip\n";
-        let ssh = SshSpawnConfig {
-            host,
-            port: None,
-            key_vault_ref: None,
-            remote_grok_path: "grok".to_string(),
-            remote_runtime: SshRemoteRuntime::Windows,
-            wsl_distro: None,
-        };
-
-        let write = ssh_write_file(&ssh, &remote_path, content).await;
-        let read = if write.is_ok() {
-            ssh_read_file(&ssh, &remote_path).await
-        } else {
-            Err("write failed before read".to_string())
-        };
-
-        let mut cleanup = tokio::process::Command::new("ssh");
-        cleanup
-            .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-T", "--"])
-            .arg(&ssh.host)
-            .arg(wrap_ssh_windows_command(&format!(
-                "$path={};if(Test-Path -LiteralPath $path -PathType Leaf){{Remove-Item -LiteralPath $path -Force}}",
-                powershell_single_quote(&remote_path)
-            )));
-        let cleanup_status = cleanup.status().await.expect("spawn cleanup ssh");
-
-        write.expect("native Windows SSH write");
-        assert_eq!(read.expect("native Windows SSH read"), content);
-        assert!(cleanup_status.success(), "remote fixture cleanup failed");
-    }
-
-    #[test]
-    fn ssh_destination_validation_rejects_option_like_values() {
-        assert!(validate_ssh_destination_arg("user@example.com").is_ok());
-        assert!(validate_ssh_destination_arg("ssh-host").is_ok());
-        assert!(validate_ssh_destination_arg("-oProxyCommand=sh").is_err());
-        assert!(validate_ssh_destination_arg("user@example.com -p 2222").is_err());
-        assert!(validate_ssh_destination_arg(" user@example.com").is_err());
-        assert!(validate_ssh_destination_arg("user@example.com\nProxyCommand=sh").is_err());
-        assert!(validate_ssh_destination_arg("../host").is_err());
-    }
-}
-
-#[cfg(test)]
-mod pending_permission_tests {
-    //! Correctness of PendingPermissionRegistry.
-    //!
-    //! Contract shared provider and host-tool permission paths rely on:
-    //! - insert(id) returns a Receiver that fires with the bool
-    //! passed to resolve(id, bool).
-    //! - resolve(unknown_id, _) returns false (no panic).
-    //! - forget(id) drops the Sender so the Receiver errors, and a
-    //! subsequent resolve(id, _) is a no-op returning false.
-    //! - Concurrent distinct ids do not cross-talk (HashMap routing
-    //! is by exact id match).
-    use super::*;
-    use std::sync::Arc;
-    use tokio::time::Duration;
-
-    #[test]
-    fn missing_permission_registry_response_fails_closed() {
-        let resp = permission_registry_missing_response();
-        assert_eq!(
-            resp.pointer("/outcome/outcome").and_then(|v| v.as_str()),
-            Some("cancelled")
-        );
-    }
-
-    #[tokio::test]
-    async fn insert_then_resolve_allow_delivers_true() {
-        let reg = Arc::new(PendingPermissionRegistry::new());
-        let id = "req-allow".to_string();
-        let rx = reg.insert(id.clone()).await;
-        let r = reg.clone();
-        let id2 = id.clone();
-        tokio::spawn(async move {
-            let _ = r.resolve(&id2, true).await;
-        });
-        let got = tokio::time::timeout(Duration::from_secs(1), rx)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(got, "Allow must deliver true to the awaiting handler");
-    }
-
-    #[tokio::test]
-    async fn insert_then_resolve_deny_delivers_false() {
-        let reg = Arc::new(PendingPermissionRegistry::new());
-        let id = "req-deny".to_string();
-        let rx = reg.insert(id.clone()).await;
-        let r = reg.clone();
-        let id2 = id.clone();
-        tokio::spawn(async move {
-            let _ = r.resolve(&id2, false).await;
-        });
-        let got = tokio::time::timeout(Duration::from_secs(1), rx)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(!got, "Deny must deliver false to the awaiting handler");
-    }
-
-    #[tokio::test]
-    async fn resolve_unknown_id_returns_false() {
-        let reg = PendingPermissionRegistry::new();
-        let r = reg.resolve("missing-id", true).await;
-        assert!(!r, "resolve of unknown id must return false");
-    }
-
-    #[tokio::test]
-    async fn forget_drops_sender_and_receiver_errors() {
-        let reg = PendingPermissionRegistry::new();
-        let id = "req-forget".to_string();
-        let rx = reg.insert(id.clone()).await;
-        reg.forget(&id).await;
-        // Receiver must error when a timeout/cancellation path drops Sender.
-        let res = tokio::time::timeout(Duration::from_millis(50), rx).await;
-        match res {
-            Ok(Err(_)) => { /* expected: Sender dropped */ }
-            Ok(Ok(_)) => panic!("forget must NOT deliver a value"),
-            Err(_) => panic!("forget must drop the sender promptly"),
-        }
-        assert!(!reg.resolve(&id, true).await);
-    }
-
-    #[tokio::test]
-    async fn concurrent_distinct_ids_deliver_correctly() {
-        // Two pending requests, two resolves — each must hit its own
-        // Receiver. Catches any HashMap-lookup cross-talk.
-        let reg = Arc::new(PendingPermissionRegistry::new());
-        let rx_a = reg.insert("a".to_string()).await;
-        let rx_b = reg.insert("b".to_string()).await;
-
-        let r1 = reg.clone();
-        let r2 = reg.clone();
-        tokio::spawn(async move {
-            let _ = r1.resolve("a", true).await;
-        });
-        tokio::spawn(async move {
-            let _ = r2.resolve("b", false).await;
-        });
-
-        let got_a = tokio::time::timeout(Duration::from_secs(1), rx_a)
-            .await
-            .unwrap()
-            .unwrap();
-        let got_b = tokio::time::timeout(Duration::from_secs(1), rx_b)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(got_a);
-        assert!(!got_b);
-    }
 }

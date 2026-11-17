@@ -402,6 +402,49 @@ pub(super) fn browser_workflow_url_from_state(
     json_string(Some(tab), "url")
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BrowserWorkflowReplayBinding {
+    recipe_path: String,
+    recipe_sha256: String,
+    expected_domain: Option<String>,
+}
+
+fn browser_workflow_replay_binding(
+    workflow: &Value,
+    supplied_recipe_path: Option<String>,
+) -> Result<BrowserWorkflowReplayBinding, String> {
+    let recipe_path = json_string(Some(workflow), "recipePath")
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            "browser workflow bookmark has no recipePath; resave the workflow".to_string()
+        })?;
+    if let Some(supplied_recipe_path) = supplied_recipe_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        if supplied_recipe_path != recipe_path {
+            return Err(
+                "browser_workflow_replay bookmark recipePath does not match its saved workflow binding"
+                    .to_string(),
+            );
+        }
+    }
+    let recipe_sha256 = json_string(Some(workflow), "recipeSha256")
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| {
+            value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit())
+        })
+        .ok_or_else(|| {
+            "browser workflow bookmark has no immutable recipeSha256 binding; resave the workflow"
+                .to_string()
+        })?;
+    Ok(BrowserWorkflowReplayBinding {
+        recipe_path,
+        recipe_sha256,
+        expected_domain: browser_workflow_filter_site_key(json_string(Some(workflow), "siteKey")),
+    })
+}
+
 pub(super) async fn tool_browser_workflow_save(
     args: Value,
     caller_session_id: Option<&str>,
@@ -432,9 +475,17 @@ pub(super) async fn tool_browser_workflow_save(
         &["browserTabId", "browser_tab_id", "browserTab"],
     );
     export_body.insert("reason".to_string(), Value::String(reason.clone()));
+    let mut export_body = Value::Object(export_body);
+    browser_ensure_agent_task_target(
+        "workflowSave",
+        &mut export_body,
+        timeout_secs,
+        caller_session_id,
+    )
+    .await?;
     let recipe = debug_api_post_json_for_caller(
         "/browser/recipes/export",
-        &Value::Object(export_body),
+        &export_body,
         timeout_secs,
         caller_session_id,
     )
@@ -497,6 +548,9 @@ pub(super) async fn tool_browser_workflow_save(
     if let Some(recipe_path) = json_string(Some(&recipe), "path") {
         agent_workflow.insert("recipePath".to_string(), Value::String(recipe_path));
     }
+    if let Some(recipe_sha256) = json_string(Some(&recipe), "sha256") {
+        agent_workflow.insert("recipeSha256".to_string(), Value::String(recipe_sha256));
+    }
     agent_workflow.insert("steps".to_string(), json!(steps));
     agent_workflow.insert("source".to_string(), Value::String("recipe".to_string()));
     agent_workflow.insert("health".to_string(), Value::String("fresh".to_string()));
@@ -547,22 +601,25 @@ pub(super) async fn tool_browser_workflow_replay(
 ) -> Result<Value, String> {
     let timeout_secs = browser_mcp_timeout_secs(&args, 30_000);
     let bookmark_id = mcp_arg_string(&args, &["bookmarkId", "bookmark_id"]);
-    let mut recipe_path = mcp_arg_string(&args, &["recipePath", "recipe_path"]);
+    let supplied_recipe_path = mcp_arg_string(&args, &["recipePath", "recipe_path"]);
     let mut bookmark_workflow = None;
-    if let Some(bookmark_id) = bookmark_id.as_deref() {
+    let mut bookmark_binding = None;
+    let recipe_path = if let Some(bookmark_id) = bookmark_id.as_deref() {
         let state =
             debug_api_get_json_for_caller("/browser/bookmarks", timeout_secs, caller_session_id)
                 .await?;
-        bookmark_workflow = browser_workflow_summary_from_bookmarks_state(&state, bookmark_id);
-        if recipe_path.is_none() {
-            recipe_path = bookmark_workflow
-                .as_ref()
-                .and_then(|workflow| json_string(Some(workflow), "recipePath"));
-        }
-    }
-    let recipe_path = recipe_path.ok_or_else(|| {
-        "browser_workflow_replay requires recipePath or bookmarkId with recipePath".to_string()
-    })?;
+        let workflow = browser_workflow_summary_from_bookmarks_state(&state, bookmark_id)
+            .ok_or_else(|| format!("browser workflow bookmark not found: {bookmark_id}"))?;
+        let binding = browser_workflow_replay_binding(&workflow, supplied_recipe_path.clone())?;
+        let recipe_path = binding.recipe_path.clone();
+        bookmark_binding = Some(binding);
+        bookmark_workflow = Some(workflow);
+        recipe_path
+    } else {
+        supplied_recipe_path.ok_or_else(|| {
+            "browser_workflow_replay requires recipePath or bookmarkId with recipePath".to_string()
+        })?
+    };
 
     let has_browser_tab_id =
         mcp_arg_string(&args, &["browserTabId", "browser_tab_id", "browserTab"]).is_some();
@@ -590,6 +647,17 @@ pub(super) async fn tool_browser_workflow_replay(
 
     let mut body = serde_json::Map::new();
     body.insert("recipePath".to_string(), Value::String(recipe_path.clone()));
+    if let Some(binding) = bookmark_binding.as_ref() {
+        body.insert(
+            "recipeSha256".to_string(),
+            Value::String(binding.recipe_sha256.clone()),
+        );
+        if !has_task_id && !has_browser_tab_id {
+            if let Some(expected_domain) = binding.expected_domain.as_ref() {
+                body.insert("expectedDomains".to_string(), json!([expected_domain]));
+            }
+        }
+    }
     body.insert("dryRun".to_string(), Value::Bool(dry_run));
     browser_insert_optional_string(&mut body, &args, "taskId", &["taskId", "task_id", "task"]);
     browser_insert_optional_string(

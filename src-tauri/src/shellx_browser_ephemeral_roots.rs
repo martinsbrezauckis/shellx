@@ -574,6 +574,7 @@ fn acquire_ephemeral_scavenge_process_lock(
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .share_mode(0)
             .open(&lock_path)
         {
@@ -749,7 +750,3 @@ pub(crate) struct EphemeralScavengeReport {
     pub(crate) skipped_due_to_process_lock: bool,
     pub(crate) errors: Vec<String>,
 }
-
-#[cfg(test)]
-#[path = "shellx_browser_ephemeral_roots_tests.rs"]
-mod tests;

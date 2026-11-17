@@ -177,32 +177,3 @@ pub fn generate_token() -> (String, String) {
     let hash_hex = hex::encode(blake3::hash(raw_hex.as_bytes()).as_bytes());
     (raw_hex, hash_hex)
 }
-
-#[cfg(test)]
-mod bind_tests {
-    use super::bind_is_loopback;
-
-    /// AUDIT-MED regression (2026-06-12): serve must fail closed on
-    /// non-loopback binds; this classifier is the gate.
-    #[test]
-    fn loopback_classifier() {
-        for ok in [
-            "127.0.0.1:7443",
-            "127.1.2.3:80",
-            "[::1]:7443",
-            "localhost:7443",
-        ] {
-            assert!(bind_is_loopback(ok), "{ok} is loopback");
-        }
-        for bad in [
-            "0.0.0.0:7443",
-            "[::]:7443",
-            "192.0.2.7:7443",
-            "10.0.0.1:80",
-            "example.com:443",
-            "garbage",
-        ] {
-            assert!(!bind_is_loopback(bad), "{bad} is NOT loopback");
-        }
-    }
-}

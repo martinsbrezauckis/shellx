@@ -41,53 +41,6 @@ interface McpEntryStatus {
   allKeysPresent: boolean;
 }
 
-const OWNED_DEBUG_MARKETPLACE: readonly McpEntryStatus[] = [
-  {
-    id: "release-owned-recommended",
-    name: "Release-owned recommended connector",
-    tier: "s",
-    kind: "stdio",
-    description: "Synthetic in-memory row for installed UI verification.",
-    category: "release-fixture",
-    vaultKeys: [],
-    installed: false,
-    enabled: false,
-    keysAvailable: [],
-    allKeysPresent: true,
-  },
-  {
-    id: "release-owned-installed-key",
-    name: "Release-owned installed connector",
-    tier: "a",
-    kind: "stdio",
-    description: "Synthetic installed row with one intentionally absent fixture key.",
-    category: "release-fixture",
-    vaultKeys: ["release-owned/installed-key"],
-    installed: true,
-    enabled: false,
-    keysAvailable: [false],
-    allKeysPresent: false,
-  },
-  {
-    id: "release-owned-uninstalled-key",
-    name: "Release-owned available connector",
-    tier: "a",
-    kind: "http",
-    description: "Synthetic available row with one intentionally absent fixture key.",
-    category: "release-fixture",
-    vaultKeys: ["release-owned/available-key"],
-    installed: false,
-    enabled: false,
-    keysAvailable: [false],
-    allKeysPresent: false,
-  },
-] as const;
-
-// The production lifecycle fixture filters the immutable catalog to two
-// offline rows while keeping every real Tauri mutation path enabled. The
-// Debug API accepts this mode only for an isolated final-candidate profile.
-const OWNED_PRODUCTION_MARKETPLACE_IDS = new Set(["context7", "github"]);
-
 const TIER_TITLES: Record<McpTier, string> = {
   s: "Recommended",
   a: "With key",
@@ -109,14 +62,9 @@ const DEFAULT_COLLAPSED: Set<McpTier> = new Set<McpTier>(["c"]);
 export function PluginsModal({
   open,
   onClose,
-  debugFixture,
 }: {
   open: boolean;
   onClose: () => void;
-  /** Release-driver projection. `owned-safe` is inert/in-memory;
-   * `owned-production` filters the real catalog inside an isolated candidate
-   * while retaining production marketplace and Vault mutations. */
-  debugFixture?: "owned-safe" | "owned-production" | null;
   /** Kept for caller compatibility. Session-scoped tool health now
    *  lives in the right-rail Tooling tab, not this global modal. */
   activeTabId?: string | null;
@@ -135,28 +83,25 @@ export function PluginsModal({
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
 
   const refetchMarketplace = useCallback(async () => {
-    if (debugFixture === "owned-safe") return;
     if (!inTauri()) return;
     setMpLoading(true);
     setMpError(null);
     try {
       const list = await invoke<McpEntryStatus[]>("mcp_marketplace_list");
-      setMarketplace(debugFixture === "owned-production"
-        ? list.filter((entry) => OWNED_PRODUCTION_MARKETPLACE_IDS.has(entry.id))
-        : list);
+      setMarketplace(list);
     } catch (err) {
       setMpError(typeof err === "string" ? err : String(err));
     } finally {
       setMpLoading(false);
     }
-  }, [debugFixture]);
+  }, []);
 
   // Fetch marketplace state on modal open.
   useEffect(() => {
     if (!open) return;
-    if (!inTauri() || debugFixture === "owned-safe") return;
+    if (!inTauri()) return;
     void refetchMarketplace();
-  }, [open, debugFixture, refetchMarketplace]);
+  }, [open, refetchMarketplace]);
 
   // Generic Tauri-call wrapper that flips pending state + refetches.
   const runMpAction = useCallback(
@@ -184,9 +129,7 @@ export function PluginsModal({
   );
 
   // ─── derived: marketplace grouped by tier ─────────────────────────
-  const effectiveMarketplace = debugFixture === "owned-safe"
-    ? OWNED_DEBUG_MARKETPLACE
-    : marketplace;
+  const effectiveMarketplace = marketplace;
   const tiers = useMemo<Record<McpTier, McpEntryStatus[]>>(() => {
     const out: Record<McpTier, McpEntryStatus[]> = { s: [], a: [], b: [], c: [] };
     for (const e of effectiveMarketplace) {
@@ -294,7 +237,7 @@ export function PluginsModal({
               <button
                 className="mp-action-btn mp-action-btn-primary"
                 onClick={() => void installTierSDefaults()}
-                disabled={mpLoading || debugFixture === "owned-safe"}
+                disabled={mpLoading}
               >
                 Enable Recommended
               </button>
@@ -353,7 +296,6 @@ export function PluginsModal({
                           void runMpAction(e.id, "mcp_marketplace_set_enabled", { enabled: en })
                         }
                         onRefresh={refetchMarketplace}
-                        debugFixture={debugFixture === "owned-safe"}
                       />
                     ))}
                   </div>
@@ -390,7 +332,6 @@ function MarketplaceRow({
   onUninstall,
   onSetEnabled,
   onRefresh,
-  debugFixture,
 }: {
   entry: McpEntryStatus;
   pending: boolean;
@@ -400,7 +341,6 @@ function MarketplaceRow({
   /** Refetches marketplace status after a vault write so the row
    *  re-evaluates `allKeysPresent` and the Add-key form collapses. */
   onRefresh: () => Promise<void> | void;
-  debugFixture: boolean;
 }): JSX.Element {
   const needsKey = entry.vaultKeys.length > 0 && !entry.allKeysPresent;
   // Inline key entry form. Each missing key gets its own
@@ -415,7 +355,6 @@ function MarketplaceRow({
   const [error, setError] = useState<string | null>(null);
   const keyFormId = `mcp-key-form-${entry.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const saveKey = useCallback(async (k: string) => {
-    if (debugFixture) return;
     const v = values[k];
     if (!v) return;
     setSaving(k);
@@ -431,7 +370,7 @@ function MarketplaceRow({
     } finally {
       setSaving(null);
     }
-  }, [values, onRefresh, debugFixture]);
+  }, [values, onRefresh]);
 
   let statusPill: JSX.Element;
   if (entry.installed && !entry.enabled) {
@@ -497,7 +436,7 @@ function MarketplaceRow({
             type="checkbox"
             data-debug-id="plugins-entry-toggle"
             checked={entry.enabled}
-            disabled={pending || debugFixture}
+            disabled={pending}
             onChange={(e) => onSetEnabled(e.target.checked)}
           />
           <span className="plugin-toggle-track">
@@ -505,7 +444,7 @@ function MarketplaceRow({
           </span>
           <span className="plugin-toggle-lbl">{entry.enabled ? "On" : "Off"}</span>
         </label>
-        <button className="mp-action-btn mp-action-btn-secondary" onClick={onUninstall} disabled={pending || debugFixture}>
+        <button className="mp-action-btn mp-action-btn-secondary" onClick={onUninstall} disabled={pending}>
           Remove
         </button>
       </div>
@@ -539,7 +478,7 @@ function MarketplaceRow({
         >
           {adding ? "Cancel" : "Add key"}
         </button>
-        <button data-debug-id="surface-components-pluginsmodal-10" className="mp-action-btn mp-action-btn-secondary" onClick={onInstall} disabled={pending || debugFixture}>
+        <button data-debug-id="surface-components-pluginsmodal-10" className="mp-action-btn mp-action-btn-secondary" onClick={onInstall} disabled={pending}>
           {pending ? "Enabling…" : "Enable anyway"}
         </button>
       </div>
@@ -547,7 +486,7 @@ function MarketplaceRow({
   } else {
     action = (
       <div className="mp-row-actions">
-        <button data-debug-id="surface-components-pluginsmodal-11" className="mp-action-btn mp-action-btn-primary" onClick={onInstall} disabled={pending || debugFixture}>
+        <button data-debug-id="surface-components-pluginsmodal-11" className="mp-action-btn mp-action-btn-primary" onClick={onInstall} disabled={pending}>
           {pending ? "Enabling…" : "Enable"}
         </button>
       </div>
@@ -613,13 +552,13 @@ function MarketplaceRow({
                     padding: "4px 8px",
                     font: "12px var(--mono, monospace)",
                   }}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !debugFixture) void saveKey(k); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") void saveKey(k); }}
                 />
                 <button data-debug-id="surface-components-pluginsmodal-13"
                   type="button"
                   className="mp-action-btn mp-action-btn-secondary"
                   onClick={() => void saveKey(k)}
-                  disabled={debugFixture || !values[k] || saving === k}
+                  disabled={!values[k] || saving === k}
                   style={{ minWidth: 60 }}
                 >
                   {saving === k

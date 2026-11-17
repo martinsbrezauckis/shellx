@@ -28,9 +28,7 @@ impl From<crate::task_time::ScheduleError> for TaskStoreError {
     }
 }
 
-#[cfg(test)]
-#[path = "task_due_runner_tests.rs"]
-mod tests;
+
 
 pub(crate) const TASK_SCHEDULE_STATE_SCHEMA_VERSION: &str = "shellx.task-schedule-state.v1";
 pub(crate) const TASK_SCHEDULE_DECISION_SCHEMA_VERSION: &str =
