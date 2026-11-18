@@ -709,7 +709,23 @@ fn windows_interrupted_native_finished_keeps_the_stage_until_engine_close() {
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_engine_label_release_retains_stage_until_the_gtk_terminal_callback() {
+    // Other lib tests temporarily change HOME under this shared lock. Keep the
+    // destination inside the actual current home without assuming ~/Downloads
+    // exists on a fresh CI runner or changing process-wide HOME ourselves.
+    let _env_lock = crate::test_env_lock();
+    let home = std::env::var_os("HOME").expect("Linux test home is configured");
+    let download_dir = tempfile::Builder::new()
+        .prefix("shellx-native-linux-download-test-")
+        .tempdir_in(home)
+        .expect("create an owned download destination inside the current home");
     let registry = ShellxBrowserRegistry::default();
+    registry
+        .update_download_folder(
+            crate::shellx_browser_transfers::BrowserDownloadFolderUpdateRequest {
+                download_folder: Some(download_dir.path().to_string_lossy().into_owned()),
+            },
+        )
+        .expect("select the existing fixture destination");
     let (transfer_id, engine_id, binding, source_url) = requested_native_download(&registry);
     let approval = registry
         .grant_transfer_for_user(mark_browser_transfer_operator_approved(
@@ -733,7 +749,10 @@ fn linux_engine_label_release_retains_stage_until_the_gtk_terminal_callback() {
         Some("slow-close.bin"),
     ) {
         BrowserNativeDownloadRequested::Start { destination, .. } => destination,
-        _ => panic!("approved native request receives a private stage"),
+        _ => panic!(
+            "approved native request receives a private stage: {:?}",
+            lock_or_recover(&registry.state).downloads
+        ),
     };
 
     registry.quarantine_native_downloads_for_engine(&engine_id);

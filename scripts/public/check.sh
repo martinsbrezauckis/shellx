@@ -7,12 +7,13 @@ pnpm run typecheck
 pnpm build
 pnpm run test:public
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
+# Collect every Rust test executable before returning a failure.
 if [[ "${RUNNER_OS:-}" == Windows ]]; then
   cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features debug-api,windows-test-manifest -- -D warnings
-  cargo test --manifest-path src-tauri/Cargo.toml --all-targets --features debug-api,windows-test-manifest
+  cargo test --manifest-path src-tauri/Cargo.toml --all-targets --features debug-api,windows-test-manifest --no-fail-fast
 else
   cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features debug-api -- -D warnings
-  cargo test --manifest-path src-tauri/Cargo.toml --all-targets --features debug-api
+  cargo test --manifest-path src-tauri/Cargo.toml --all-targets --features debug-api --no-fail-fast
 fi
 if [[ "${RUNNER_OS:-}" == Linux ]]; then
   cargo check --manifest-path src-tauri/Cargo.toml --all-targets --features debug-api

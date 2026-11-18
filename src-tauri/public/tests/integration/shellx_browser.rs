@@ -1613,6 +1613,59 @@ fn browser_action_model_covers_mvp_surface_without_faking_engine_work() {
         })
         .expect("task should start");
 
+    let unbound_click = registry
+        .apply_action(BrowserActionRequest {
+            task_id: Some(task.task_id.clone()),
+            action: "click".to_string(),
+            ref_id: Some("unobserved-button".to_string()),
+            ..BrowserActionRequest::default()
+        })
+        .expect("unbound click should return a structured denial");
+    assert_eq!(unbound_click.status, "blocked");
+    assert_eq!(
+        unbound_click.required_approval.as_deref(),
+        Some("finalActionApproval")
+    );
+    assert!(!unbound_click.requires_engine);
+    assert_eq!(unbound_click.receipt.kind, "browserActionBlocked");
+
+    // A synthetic observed button exercises target binding without claiming
+    // that a native engine clicked it.
+    registry
+        .record_engine_observation(
+            BrowserActionRequest {
+                task_id: Some(task.task_id.clone()),
+                action: "observe".to_string(),
+                ..BrowserActionRequest::default()
+            },
+            "observe",
+            BrowserObservation {
+                task_id: task.task_id.clone(),
+                snapshot_id: String::new(),
+                delta: None,
+                url: Some("https://example.com/".to_string()),
+                title: "Fixture page".to_string(),
+                text: String::new(),
+                markdown: String::new(),
+                refs: vec![serde_json::from_value(serde_json::json!({
+                    "refId": "safe-button",
+                    "role": "button",
+                    "label": "Continue",
+                    "selector": "#continue",
+                    "action": "click"
+                }))
+                .expect("observed button ref")],
+                dom_summary: BrowserDomSummary::default(),
+                form_fields: Vec::new(),
+                form_field_groups: Vec::new(),
+                accessibility_tree: Vec::new(),
+                privacy_stats: None,
+                untrusted_input: true,
+                requires_engine: false,
+            },
+        )
+        .expect("synthetic target observation should be recorded");
+
     for action in [
         "click",
         "type",
@@ -1626,7 +1679,14 @@ fn browser_action_model_covers_mvp_surface_without_faking_engine_work() {
             .apply_action(BrowserActionRequest {
                 task_id: Some(task.task_id.clone()),
                 action: action.to_string(),
-                ref_id: Some("page".to_string()),
+                ref_id: Some(
+                    if action == "click" {
+                        "safe-button"
+                    } else {
+                        "page"
+                    }
+                    .to_string(),
+                ),
                 ..BrowserActionRequest::default()
             })
             .expect("engine action should return structured response");

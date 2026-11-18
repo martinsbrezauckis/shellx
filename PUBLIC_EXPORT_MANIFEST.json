@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@5",
   "source": {
-    "commit": "bd8cdf6734e37e103da57b074c132fb9ef50c93c",
-    "tree": "546145699bb8014a01026729884ce63ed2c026d7"
+    "commit": "2a009ca5c6e70a715c35a021eb5d583e8ae7315b",
+    "tree": "a756c7df50db17107f2e0d5eefce1e04085acd58"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -49,8 +49,8 @@
   },
   "payload": {
     "fileCount": 1257,
-    "totalBytes": 22424311,
-    "digest": "49a087b968ddb0a5c4e4bad7efcbf083983bf26ed9b3629b281e9bdae276e67a"
+    "totalBytes": 22427669,
+    "digest": "e8ddcf4bf6a5f797eb5e2b2fcfc0355d8154d667c1885b4a639d03b97df5b7df"
   },
   "exclusions": {
     "fileCount": 819,
@@ -1082,7 +1082,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "5309adb35e83e250f7d671cbd9fe4c34ae6c9ffafad5a5e3264665999eada58e",
+      "sha256": "65f41b1a69ed84d0784da14e2e2d9b264d563a21c3844c0e1a9e89a685889e07",
       "bytes": 352,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
@@ -1137,8 +1137,8 @@
     {
       "path": "scripts/public/check.sh",
       "mode": "100644",
-      "sha256": "1164569e6b2e6da32e571190bf443b7eddfbe87a740660714a095ddd74c7f6ae",
-      "bytes": 854,
+      "sha256": "04a7051948ea90a44712dbc56a8d4e1cf89c29b0a3c6ff55cdf4ecffd42ba237",
+      "bytes": 949,
       "ruleId": "public-script-registry",
       "matchedBy": "registry",
       "matchedPath": "scripts/public/check.sh",
@@ -3557,8 +3557,8 @@
     {
       "path": "src-tauri/public/tests/integration/shellx_browser.rs",
       "mode": "100644",
-      "sha256": "5ed19e809a61332332fbe7b93218b21489a3522b36a63c54d3ab529c9de7e428",
-      "bytes": 97380,
+      "sha256": "a46443e260dba169bd37f9069072df18add0498b3a0c30b8cdfd3208df7f11cd",
+      "bytes": 99686,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
@@ -3931,8 +3931,8 @@
     {
       "path": "src-tauri/public/tests/unit/shellx_browser_native_download_tests.rs",
       "mode": "100644",
-      "sha256": "4cfa9f3b29a22bef0c4acab41960f2d7fca28a960287fe4375253f98fa18112b",
-      "bytes": 39649,
+      "sha256": "19cefaef52eb2b53603ae23d4d22b32e3b2a00ad64699c3821486455450f1ca3",
+      "bytes": 40606,
       "ruleId": "public-native-product-tests",
       "matchedBy": "prefix",
       "matchedPath": "src-tauri/public/tests/",
