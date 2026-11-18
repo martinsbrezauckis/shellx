@@ -1,8 +1,8 @@
 {
   "schema": "shellx/public-export-manifest@5",
   "source": {
-    "commit": "4360c5c842027234bc36867d746bbf2a95a7bc96",
-    "tree": "38be7b88667fac722d3c904c35861cf71a0f2dd1"
+    "commit": "bd8cdf6734e37e103da57b074c132fb9ef50c93c",
+    "tree": "546145699bb8014a01026729884ce63ed2c026d7"
   },
   "policy": {
     "schema": "shellx/public-export-policy@1",
@@ -49,8 +49,8 @@
   },
   "payload": {
     "fileCount": 1257,
-    "totalBytes": 22424226,
-    "digest": "b4f4bab77f779bc805ed75dff8a5349766cacbbc72ca23c6abe25d9fc39d6b39"
+    "totalBytes": 22424311,
+    "digest": "49a087b968ddb0a5c4e4bad7efcbf083983bf26ed9b3629b281e9bdae276e67a"
   },
   "exclusions": {
     "fileCount": 819,
@@ -81,8 +81,8 @@
     {
       "path": ".github/workflows/ci.yml",
       "mode": "100644",
-      "sha256": "5a125bfee0fd497aa99f4ac4b3ac306923470e2e8c5783321683da47704a0040",
-      "bytes": 3975,
+      "sha256": "3fdd812b53a0d695db303899f86004633928600c6cafa68f33b29a4bd14e9cb6",
+      "bytes": 4060,
       "ruleId": "public-automation",
       "matchedBy": "exact",
       "matchedPath": ".github/workflows/ci.yml",
@@ -1082,7 +1082,7 @@
     {
       "path": "PUBLIC_EXPORT_MANIFEST.txt",
       "mode": "100644",
-      "sha256": "2df81cbea6a968a53e9ab86de83cbdb0fcff6145b9abbb192ac3f6b16755151e",
+      "sha256": "5309adb35e83e250f7d671cbd9fe4c34ae6c9ffafad5a5e3264665999eada58e",
       "bytes": 352,
       "ruleId": "generated-export-metadata",
       "matchedBy": "generated",
