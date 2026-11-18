@@ -321,7 +321,10 @@ pub(crate) fn count_flight_sanitization(value: &Value) -> FlightSanitizationCoun
     }
 }
 
-
+#[cfg(test)]
+pub(crate) fn count_sanitization_losses(value: &Value) -> usize {
+    count_flight_sanitization(value).fidelity_loss_count
+}
 
 /// A compact UI/receipt catalog of the marker kinds that were actually written
 /// into an artifact. It carries no source text and remains bounded even when a
@@ -645,3 +648,7 @@ pub(crate) fn redact_flight_protected_values(value: &mut Value, protected_values
         _ => {}
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_flight_recorder_sanitization/tests.rs"]
+mod tests;

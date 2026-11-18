@@ -179,7 +179,6 @@ pub(super) struct GoalStartBody {
     /// Optional cwd override. Defaults to the session's cwd; if the
     /// session has none yet, defaults to env::current_dir.
     cwd: Option<String>,
-
 }
 
 pub(super) async fn goal_start_http(
@@ -195,7 +194,6 @@ pub(super) async fn goal_start_http(
     if body.objective.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "objective: must be non-empty").into_response();
     }
-
 
     // Resolve cwd: explicit body > existing session cwd > process cwd.
     // This is a read-only lookup: starting Goal mode for an unopened tab must
@@ -267,8 +265,6 @@ async fn goal_start_cwd(
     }
 }
 
-
-
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GoalTabBody {
@@ -282,7 +278,6 @@ pub(super) struct GoalTabBody {
     /// behavior.
     #[serde(default)]
     comment: Option<String>,
-
 }
 
 pub(super) async fn goal_stop_http(
@@ -643,3 +638,7 @@ pub(super) async fn goal_state_http(
     }))
     .into_response()
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_goals/tests.rs"]
+mod tests;

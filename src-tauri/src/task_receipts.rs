@@ -503,3 +503,7 @@ fn is_bounded_reason_code(value: &str, maximum: usize) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'.' | b'-' | b'_'))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/task_receipts/tests.rs"]
+mod tests;

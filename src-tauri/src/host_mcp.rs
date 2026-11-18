@@ -103,7 +103,8 @@ mod tool_specs_extended;
 mod vault_tools;
 
 use agent_tools::*;
-
+#[cfg(test)]
+use browser_action::browser_extract_action_from_format;
 use browser_action::{
     browser_action_body, browser_action_schema_properties, browser_ensure_agent_task_target,
     browser_insert_optional_string, browser_mcp_timeout_secs, tool_browser_action,
@@ -115,26 +116,44 @@ use browser_artifacts::{
     tool_browser_save_page, tool_browser_trace_open,
 };
 use browser_batch::tool_browser_run_steps;
-
+#[cfg(test)]
+use browser_batch::{
+    browser_run_steps_aggregate, browser_run_steps_allowed_action, browser_run_steps_failure_entry,
+    browser_run_steps_result_entry, browser_run_steps_step_args,
+};
 use browser_entry::{tool_browser_act, tool_browser_read};
-
+#[cfg(test)]
+use browser_output::browser_tabs_text_summary;
 use browser_output::{
     browser_action_text_summary, browser_compact_observe_result_for_mcp, browser_mcp_result,
     browser_mcp_usize_arg, compact_browser_summary_value, tool_browser_locks, tool_browser_tabs,
 };
 use browser_recovery::browser_mcp_maybe_recover_action;
-
+#[cfg(test)]
+use browser_recovery::{
+    browser_mcp_force_click_recovery_body, browser_mcp_locator_candidate_recovery_body,
+};
 use browser_specs::{browser_entry_tool_specs, browser_tool_specs};
-
+#[cfg(test)]
+use browser_state::browser_quiet_check_path;
 use browser_state::{
     browser_mcp_navigation_response_should_wait, browser_mcp_wait_for_navigation_settle,
     tool_browser_check, tool_browser_rendered_check, tool_browser_state,
 };
 use browser_teach::{tool_browser_teach_drafts, tool_browser_teach_prepare};
-
+#[cfg(test)]
+use browser_workflow::{
+    browser_workflow_apply_contract_block_reason, browser_workflow_contract_apply_block_reason,
+    browser_workflow_replay_metadata_update_body, browser_workflow_replay_summary_text,
+};
 use browser_workflow::{tool_browser_workflow_replay, tool_browser_workflow_save};
 use browser_workflow_catalog::tool_browser_workflows;
-
+#[cfg(test)]
+use browser_workflow_catalog::{
+    browser_workflow_recipe_path_from_bookmarks_state,
+    browser_workflow_summaries_from_bookmarks_state, browser_workflow_summary_from_bookmarks_state,
+    browser_workflows_text_summary, BrowserWorkflowFilters,
+};
 use build_completion::*;
 use build_receipts::*;
 use build_tools::*;
@@ -271,7 +290,13 @@ pub(crate) async fn abort_build_agent_watchers_for_run(run_id: &str) -> usize {
     count
 }
 
-
+#[cfg(test)]
+async fn build_agent_watcher_registered(key: &str) -> bool {
+    build_agent_watcher_registry()
+        .lock()
+        .await
+        .contains_key(key)
+}
 
 async fn try_register_build_agent_completion(key: String) -> bool {
     build_agent_completion_registry().lock().await.insert(key)
@@ -1377,3 +1402,7 @@ fn write_mcp_event_line(tool_name: &str, args: &Value, ok: bool) {
     };
     let _ = writeln!(f, "{}", line);
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/host_mcp/tests/mod.rs"]
+mod tests;

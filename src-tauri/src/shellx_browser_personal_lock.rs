@@ -557,3 +557,7 @@ fn pin_matches(salt: Option<&str>, expected: Option<&str>, pin: &str) -> bool {
     };
     pin_hash(salt, pin) == expected
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_personal_lock/tests.rs"]
+mod tests;

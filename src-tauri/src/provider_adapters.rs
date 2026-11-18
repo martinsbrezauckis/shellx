@@ -3144,3 +3144,7 @@ fn tail_chars(s: &str, max_chars: usize) -> String {
     }
     s.chars().skip(count - max_chars).collect()
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/provider_adapters/tests.rs"]
+mod tests;

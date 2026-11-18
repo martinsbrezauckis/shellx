@@ -39,7 +39,21 @@ pub(crate) fn browser_is_protected_fill_request(request: &BrowserActionRequest) 
     )
 }
 
-
+#[cfg(test)]
+pub(crate) fn register_browser_protected_value_locked(
+    state: &mut BrowserState,
+    task_id: &str,
+    value: &str,
+    source: &str,
+) {
+    register_browser_protected_value_for_scope_locked(
+        state,
+        Some(task_id.to_string()),
+        None,
+        value,
+        source,
+    );
+}
 
 pub(crate) fn register_browser_protected_value_for_scope_locked(
     state: &mut BrowserState,
@@ -513,3 +527,7 @@ impl ShellxBrowserRegistry {
         }))
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_protected_values/tests.rs"]
+mod tests;

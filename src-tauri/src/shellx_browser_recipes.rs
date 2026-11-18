@@ -296,7 +296,13 @@ impl ShellxBrowserRegistry {
 mod recipe_export_scope;
 use recipe_export_scope::resolve_recipe_export_scope;
 
-
+#[cfg(test)]
+pub(crate) fn browser_recipe_replay_plan(
+    request: &BrowserRecipeReplayRequest,
+) -> Result<BrowserRecipeReplayPlan, String> {
+    let recipe = browser_recipe_value_from_request(request)?;
+    browser_recipe_replay_plan_from_value(request, recipe)
+}
 
 fn browser_recipe_replay_plan_from_value(
     request: &BrowserRecipeReplayRequest,
@@ -420,7 +426,30 @@ pub(crate) fn browser_recipe_replay_response_step_result(
     }
 }
 
-
+#[cfg(test)]
+pub(crate) fn browser_recipe_value_from_request(
+    request: &BrowserRecipeReplayRequest,
+) -> Result<serde_json::Value, String> {
+    let inline_recipe = request.recipe.as_ref();
+    let recipe_path = request
+        .recipe_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if inline_recipe.is_some() && recipe_path.is_some() {
+        return Err(
+            "browser recipe replay accepts either recipe or recipePath, never both".to_string(),
+        );
+    }
+    if let Some(recipe) = inline_recipe {
+        return Ok(recipe.clone());
+    }
+    let path = recipe_path
+        .ok_or_else(|| "browser recipe replay requires recipe or recipePath".to_string())?;
+    let text = read_browser_recipe_artifact(path)?;
+    serde_json::from_str::<serde_json::Value>(&text)
+        .map_err(|e| format!("parse browser recipe {} failed: {}", path, e))
+}
 
 fn browser_recipe_value_from_request_with_receipts(
     request: &BrowserRecipeReplayRequest,
@@ -547,7 +576,12 @@ fn read_receipt_bound_browser_recipe_artifact(
     Ok(recipe)
 }
 
-
+#[cfg(test)]
+fn read_browser_recipe_artifact(path: &str) -> Result<String, String> {
+    let canonical = canonical_browser_recipe_artifact_path(path)?;
+    std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("read browser recipe {} failed: {}", canonical.display(), e))
+}
 
 fn canonical_browser_recipe_artifact_path(path: &str) -> Result<std::path::PathBuf, String> {
     let candidate = Path::new(path);
@@ -820,3 +854,11 @@ fn skipped_recipe_step(
         reason: reason.to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_recipes_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_recipes_fixture_tests.rs"]
+mod fixture_tests;

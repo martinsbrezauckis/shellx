@@ -42,3 +42,7 @@ pub(crate) fn optional_browser_mcp_caller_id_or_bad_request(
         )
     })
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_browser_caller/tests.rs"]
+mod tests;

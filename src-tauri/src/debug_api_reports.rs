@@ -1257,3 +1257,7 @@ pub(super) async fn state_subagents(
     }))
     .into_response()
 }
+
+#[cfg(test)]
+#[path = "../public/tests/qualification/debug_api_background_tasks_tests.rs"]
+mod background_tasks_tests;

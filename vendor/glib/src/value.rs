@@ -1470,3 +1470,196 @@ impl ToValueOptional for BoxedValue {
         value
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroI32;
+
+    use super::*;
+
+    #[test]
+    fn test_send_value() {
+        use std::thread;
+
+        let v = SendValue::from(&1i32);
+
+        // Must compile, while it must fail with Value
+        thread::spawn(move || drop(v)).join().unwrap();
+    }
+
+    #[test]
+    fn test_strv() {
+        let v = ["123", "456"].to_value();
+        assert_eq!(
+            v.get::<Vec<GString>>(),
+            Ok(vec![GString::from("123"), GString::from("456")])
+        );
+
+        let v = vec![String::from("123"), String::from("456")].to_value();
+        assert_eq!(
+            v.get::<Vec<GString>>(),
+            Ok(vec![GString::from("123"), GString::from("456")])
+        );
+    }
+
+    #[test]
+    fn test_from_to_value() {
+        let v = 123.to_value();
+        assert_eq!(v.get(), Ok(123));
+        assert_eq!(
+            v.get::<&str>(),
+            Err(ValueTypeMismatchError::new(Type::I32, Type::STRING).into())
+        );
+        assert_eq!(
+            v.get::<bool>(),
+            Err(ValueTypeMismatchError::new(Type::I32, Type::BOOL))
+        );
+
+        // Check if &str / str / Option<&str> etc can be converted and retrieved
+        let v_str = "test".to_value();
+        assert_eq!(v_str.get::<&str>(), Ok("test"));
+        assert_eq!(v_str.get::<Option<&str>>(), Ok(Some("test")));
+        assert_eq!(
+            v_str.get::<i32>(),
+            Err(ValueTypeMismatchError::new(Type::STRING, Type::I32))
+        );
+
+        let some_v = Some("test").to_value();
+        assert_eq!(some_v.get::<&str>(), Ok("test"));
+        assert_eq!(some_v.get_owned::<String>(), Ok("test".to_string()));
+        assert_eq!(
+            some_v.get_owned::<Option<String>>(),
+            Ok(Some("test".to_string()))
+        );
+        assert_eq!(some_v.get::<Option<&str>>(), Ok(Some("test")));
+        assert_eq!(
+            some_v.get::<i32>(),
+            Err(ValueTypeMismatchError::new(Type::STRING, Type::I32))
+        );
+
+        let none_str: Option<&str> = None;
+        let none_v = none_str.to_value();
+        assert_eq!(none_v.get::<Option<&str>>(), Ok(None));
+        assert_eq!(
+            none_v.get::<i32>(),
+            Err(ValueTypeMismatchError::new(Type::STRING, Type::I32))
+        );
+
+        // Check if owned T and Option<T> can be converted and retrieved
+        let v_str = String::from("test").to_value();
+        assert_eq!(v_str.get::<String>(), Ok(String::from("test")));
+        assert_eq!(
+            v_str.get::<Option<String>>(),
+            Ok(Some(String::from("test")))
+        );
+        assert_eq!(
+            v_str.get::<i32>(),
+            Err(ValueTypeMismatchError::new(Type::STRING, Type::I32))
+        );
+
+        let some_v = Some(String::from("test")).to_value();
+        assert_eq!(some_v.get::<String>(), Ok(String::from("test")));
+        assert_eq!(
+            some_v.get::<Option<String>>(),
+            Ok(Some(String::from("test")))
+        );
+        assert_eq!(
+            some_v.get::<i32>(),
+            Err(ValueTypeMismatchError::new(Type::STRING, Type::I32))
+        );
+
+        let none_str: Option<String> = None;
+        let none_v = none_str.to_value();
+        assert_eq!(none_v.get::<Option<String>>(), Ok(None));
+        assert_eq!(
+            none_v.get::<i32>(),
+            Err(ValueTypeMismatchError::new(Type::STRING, Type::I32))
+        );
+
+        let c_v = 'c'.to_value();
+        assert_eq!(c_v.get::<char>(), Ok('c'));
+
+        let c_v = 0xFFFFFFFFu32.to_value();
+        assert_eq!(
+            c_v.get::<char>(),
+            Err(InvalidCharError::CharConversionError)
+        );
+
+        // Check if &T and Option<&T> can be converted and retrieved
+        let v_str = String::from("test").to_value();
+        assert_eq!(v_str.get::<String>(), Ok(String::from("test")));
+        assert_eq!(
+            v_str.get::<Option<String>>(),
+            Ok(Some(String::from("test")))
+        );
+        assert_eq!(
+            v_str.get::<i32>(),
+            Err(ValueTypeMismatchError::new(Type::STRING, Type::I32))
+        );
+
+        let some_v = Some(&String::from("test")).to_value();
+        assert_eq!(some_v.get::<String>(), Ok(String::from("test")));
+        assert_eq!(
+            some_v.get::<Option<String>>(),
+            Ok(Some(String::from("test")))
+        );
+        assert_eq!(
+            some_v.get::<i32>(),
+            Err(ValueTypeMismatchError::new(Type::STRING, Type::I32))
+        );
+
+        let none_str: Option<&String> = None;
+        let none_v = none_str.to_value();
+        assert_eq!(none_v.get::<Option<String>>(), Ok(None));
+        assert_eq!(
+            none_v.get::<i32>(),
+            Err(ValueTypeMismatchError::new(Type::STRING, Type::I32))
+        );
+
+        // Check handling of NonZeroT
+        let v = NonZeroI32::new(123).unwrap().to_value();
+        assert_eq!(v.get::<NonZeroI32>(), Ok(NonZeroI32::new(123).unwrap()));
+
+        let v = 123i32.to_value();
+        assert_eq!(v.get::<NonZeroI32>(), Ok(NonZeroI32::new(123).unwrap()));
+
+        let v = 0i32.to_value();
+        assert_eq!(
+            v.get::<NonZeroI32>(),
+            Err(ValueTypeMismatchOrNoneError::UnexpectedNone)
+        );
+
+        assert_eq!(v.get::<Option<NonZeroI32>>(), Ok(None));
+    }
+
+    #[test]
+    fn test_transform() {
+        let v = 123.to_value();
+        let v2 = v
+            .transform::<String>()
+            .expect("Failed to transform to string");
+        assert_eq!(v2.get::<&str>(), Ok("123"));
+    }
+
+    #[test]
+    fn test_into_raw() {
+        unsafe {
+            let mut v = 123.to_value().into_raw();
+            assert_eq!(gobject_ffi::g_type_check_value(&v), ffi::GTRUE);
+            assert_eq!(gobject_ffi::g_value_get_int(&v), 123);
+            gobject_ffi::g_value_unset(&mut v);
+        }
+    }
+
+    #[test]
+    fn test_debug() {
+        fn value_debug_string<T: ToValue>(val: T) -> String {
+            format!("{:?}", val.to_value())
+        }
+
+        assert_eq!(value_debug_string(1u32), "(guint) 1");
+        assert_eq!(value_debug_string(2i32), "(gint) 2");
+        assert_eq!(value_debug_string(false), "(gboolean) FALSE");
+        assert_eq!(value_debug_string("FooBar"), r#"(gchararray) "FooBar""#);
+    }
+}

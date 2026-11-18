@@ -398,7 +398,9 @@ fn retained_native_download_finalization_error(
     }
 }
 
-
+#[cfg(all(test, any(unix, windows)))]
+#[path = "../public/tests/qualification/shellx_browser_native_download_artifacts_tests.rs"]
+mod tests;
 
 pub(crate) fn discard_native_browser_download_stage(
     stage: &BrowserNativeDownloadStage,

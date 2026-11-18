@@ -191,3 +191,7 @@ fn bound_metadata(metadata: &mut SessionLogMetadata) -> bool {
     }
     valid
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/session_log_metadata_index/tests.rs"]
+mod tests;

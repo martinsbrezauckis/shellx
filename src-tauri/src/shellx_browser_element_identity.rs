@@ -133,3 +133,7 @@ pub(crate) const BROWSER_ELEMENT_IDENTITY_SCRIPT: &str = r#"
     };
   };
 "#;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_element_identity/tests.rs"]
+mod tests;

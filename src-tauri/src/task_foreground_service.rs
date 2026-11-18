@@ -29,7 +29,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
-
+#[cfg(test)]
+#[path = "../public/tests/unit/task_foreground_service_tests.rs"]
+mod tests;
 
 #[path = "task_runtime_coordinator.rs"]
 mod task_runtime_coordinator;

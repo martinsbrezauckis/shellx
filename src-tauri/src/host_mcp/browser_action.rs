@@ -388,3 +388,7 @@ pub(super) fn browser_extract_action_from_format(
         )),
     }
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/host_mcp/browser_action/tests.rs"]
+mod tests;

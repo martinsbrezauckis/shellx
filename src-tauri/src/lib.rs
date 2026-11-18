@@ -121,10 +121,6 @@ mod debug_api_browser_state;
 #[cfg(feature = "debug-api")]
 mod debug_api_browser_teach;
 
-
-
-
-
 #[cfg(feature = "debug-api")]
 mod work_preview;
 
@@ -262,7 +258,14 @@ fn session_log_append_lock() -> &'static Mutex<()> {
     SESSION_LOG_APPEND_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 pub(crate) fn split_session_jsonl_records(content: &str) -> Vec<String> {
     let mut out = Vec::<String>::new();
@@ -511,7 +514,9 @@ pub fn inject_host_mcp_server_for_transport(
     inject_host_mcp_server(existing, tab_id)
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/lib/host_mcp_injection_tests.rs"]
+mod host_mcp_injection_tests;
 
 /// Connection source accepted by the Task-owned Grok initializer. A Task may
 /// use the explicit ambient local context, or the exact saved preset captured
@@ -980,7 +985,9 @@ async fn start_grok_session(
     })
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/lib/grok_session_initializer_tests.rs"]
+mod grok_session_initializer_tests;
 
 /// One embedded text context part sent alongside a user prompt.
 /// When non-empty, the renderer attaches one of these per
@@ -1460,14 +1467,11 @@ fn effective_preview_session_cwd(
 ) -> Option<String> {
     let registry_cwd = non_empty_string(registry_cwd);
 
-
     {
         let _ = frontend_cwd;
         registry_cwd
     }
 }
-
-
 
 fn non_empty_string(v: Option<String>) -> Option<String> {
     v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
@@ -3139,7 +3143,9 @@ fn parse_remote_find_entries(stdout: &[u8], include_hidden: bool) -> Vec<FsEntry
     entries
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/lib/file_listing_tests.rs"]
+mod file_listing_tests;
 
 #[tauri::command]
 async fn append_session_log(session_id: String, line: String) -> Result<(), String> {
@@ -4131,7 +4137,9 @@ enum TaskTarget {
     Registered { task_id: String },
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/lib/task_target_tests.rs"]
+mod task_target_tests;
 
 /// Task signal mapping. Pause/Resume use SIGSTOP/SIGCONT on Unix.
 /// Windows does not have a clean SIGSTOP equivalent without taking the
@@ -5297,10 +5305,6 @@ async fn resume_goal(
     Ok(())
 }
 
-
-
-
-
 #[tauri::command]
 async fn approve_goal_plan(
     #[allow(non_snake_case)] tab_id: String,
@@ -5349,7 +5353,6 @@ async fn approve_goal_plan(
                 }
             }
         }
-
     }
     Ok(flipped)
 }
@@ -5545,10 +5548,6 @@ fn build_approval_kickoff_prompt(state: Option<&build_types::BuildRunState>) -> 
     )
 }
 
-
-
-
-
 #[tauri::command]
 async fn approve_build_plan(
     #[allow(non_snake_case)] tab_id: String,
@@ -5592,7 +5591,6 @@ async fn approve_build_plan(
                 }
             }
         }
-
     }
     Ok(flipped)
 }
@@ -6248,18 +6246,9 @@ async fn outside_connectors_simulate(
     s.simulate_inbound(&id, input).await
 }
 
-
-
-
-
-
-
-
 fn isolated_test_instance_requested() -> bool {
     false
 }
-
-
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Data-dir migration from legacy `~/.grok-shell/` to current `~/.shellx/`.
@@ -6284,7 +6273,10 @@ pub fn migrate_data_dir_if_needed() {
     let home = std::env::var("HOME")
         .ok()
         .or_else(|| std::env::var("USERPROFILE").ok());
-
+    #[cfg(test)]
+    let home = std::env::var("SHELLX_HOME_OVERRIDE_FOR_TESTS")
+        .ok()
+        .or(home);
     let Some(home) = home else {
         eprintln!(
             "[shellx migrate] SHELLX_MIGRATE_DATA_DIR=1 but neither HOME \
@@ -6629,10 +6621,6 @@ pub fn run() {
     #[cfg(feature = "debug-api")]
     let builder = builder.manage(debug_hub.clone());
 
-
-
-
-
     builder
         .invoke_handler(tauri::generate_handler![
             installed_update::installed_update_package_kind,
@@ -6780,7 +6768,6 @@ pub fn run() {
             // .zip at a user-chosen save_path. Local + WSL transports
             // supported; SSH returns an explanatory error.
             crate::session_archive::archive_session_artifacts,
-
             crate::session_activity::read_session_activity_source,
             // shellXagent token reveal + regenerate. Settings UI →
             // click to reveal current key,
@@ -7198,3 +7185,27 @@ pub fn run() {
         .run(context)
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/lib/session_log_tests.rs"]
+mod session_log_tests;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/lib/migrate_data_dir_tests.rs"]
+mod migrate_data_dir_tests;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/lib/sensitive_path_tests.rs"]
+mod sensitive_path_tests;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/lib/preview_scope_tests.rs"]
+mod preview_scope_tests;
+
+#[cfg(test)]
+#[path = "../public/tests/qualification/updater_release_policy_tests.rs"]
+mod updater_release_policy_tests;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/lib/session_tooling_tests.rs"]
+mod session_tooling_tests;

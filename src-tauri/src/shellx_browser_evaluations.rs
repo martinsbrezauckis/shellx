@@ -972,3 +972,7 @@ fn safe_optional_text(value: Option<&str>) -> Option<String> {
 fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_evaluations_tests.rs"]
+mod tests;

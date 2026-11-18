@@ -332,7 +332,7 @@ pub(super) fn parse_wsl_unc_path(path: &std::path::Path) -> Result<Option<WslUnc
     }))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 pub(super) fn linux_path_is_within_root(path: &str, root: &str) -> bool {
     path == root || path.starts_with(&format!("{root}/"))
 }

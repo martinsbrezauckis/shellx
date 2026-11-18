@@ -63,3 +63,47 @@ pub fn register_boxed_type<T: BoxedType>() -> crate::Type {
         type_
     }
 }
+
+#[cfg(test)]
+mod test {
+    // We rename the current crate as glib, since the macros in glib-macros
+    // generate the glib namespace through the crate_ident_new utility,
+    // and that returns `glib` (and not `crate`) when called inside the glib crate
+    use crate as glib;
+    use crate::prelude::*;
+    use crate::translate::{FromGlibPtrBorrow, FromGlibPtrFull, IntoGlibPtr};
+
+    #[derive(Clone, Debug, PartialEq, Eq, glib::Boxed)]
+    #[boxed_type(name = "MyBoxed")]
+    struct MyBoxed(String);
+
+    #[test]
+    fn test_register() {
+        assert!(MyBoxed::static_type().is_valid());
+    }
+
+    #[test]
+    fn test_value() {
+        assert!(MyBoxed::static_type().is_valid());
+
+        let b = MyBoxed(String::from("abc"));
+        let v = b.to_value();
+        let b2 = v.get::<&MyBoxed>().unwrap();
+        assert_eq!(&b, b2);
+    }
+
+    #[test]
+    fn test_from_glib_borrow() {
+        assert!(MyBoxed::static_type().is_valid());
+
+        let b = MyBoxed(String::from("abc"));
+        let raw_ptr = unsafe { MyBoxed::into_glib_ptr(b) };
+
+        // test that the from_glib_borrow does not take ownership of the raw_ptr
+        let _ = unsafe { MyBoxed::from_glib_borrow(raw_ptr) };
+
+        let new_b = unsafe { MyBoxed::from_glib_full(raw_ptr) };
+
+        assert_eq!(new_b.0, "abc".to_string());
+    }
+}

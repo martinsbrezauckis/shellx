@@ -41,7 +41,12 @@ pub(crate) fn redact_trace_value(value: serde_json::Value) -> serde_json::Value 
     }
 }
 
-
+#[cfg(test)]
+pub(crate) fn browser_recipe_step_from_receipt(
+    receipt: &BrowserReceipt,
+) -> Option<serde_json::Value> {
+    browser_recipe_step_from_receipt_with_context(receipt, &BTreeSet::new(), false)
+}
 
 pub(crate) fn browser_recipe_step_from_receipt_with_context(
     receipt: &BrowserReceipt,
@@ -305,3 +310,7 @@ pub(crate) fn write_browser_json_artifact(
     crate::session_git::write_private_file(&path, &bytes, "Browser artifact")?;
     Ok((path.to_string_lossy().into_owned(), bytes.len(), sha256))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_artifacts/tests.rs"]
+mod tests;

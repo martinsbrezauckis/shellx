@@ -677,3 +677,7 @@ pub(super) async fn tool_vault_deposit(args: Value) -> Result<Value, String> {
         "secretExposed": false
     }))
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/host_mcp/vault_tools/vault_generate_tests.rs"]
+mod vault_generate_tests;

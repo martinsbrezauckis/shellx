@@ -347,3 +347,7 @@ fn rpc_error_message(value: &Value) -> String {
         .map(str::to_string)
         .unwrap_or_else(|| value.to_string())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/provider_codex_app_server/tests.rs"]
+mod tests;

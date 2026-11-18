@@ -355,3 +355,7 @@ fn is_proven_next_boundary(byte: u8) -> bool {
 fn is_json_whitespace(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/session_log_record_index/tests.rs"]
+mod tests;

@@ -2646,3 +2646,324 @@ pub unsafe trait TransparentType: Clone + Sized {
 unsafe impl<T: TransparentPtrType> TransparentType for T {
     type GlibType = <T as GlibPtrDefault>::GlibType;
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, fs};
+
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::{FileTest, GString};
+
+    #[test]
+    fn boolean() {
+        assert_eq!(true.into_glib(), ffi::GTRUE);
+        assert_eq!(false.into_glib(), ffi::GFALSE);
+        assert!(unsafe { bool::from_glib(ffi::GTRUE) });
+        assert!(!unsafe { bool::from_glib(ffi::GFALSE) });
+        assert!(unsafe { bool::from_glib(42) });
+    }
+
+    #[test]
+    fn ordering() {
+        assert_eq!(Ordering::Less.into_glib(), -1);
+        assert_eq!(Ordering::Equal.into_glib(), 0);
+        assert_eq!(Ordering::Greater.into_glib(), 1);
+        assert_eq!(Ordering::Less, unsafe { Ordering::from_glib(-42) });
+        assert_eq!(Ordering::Less, unsafe { Ordering::from_glib(-1) });
+        assert_eq!(Ordering::Equal, unsafe { Ordering::from_glib(0) });
+        assert_eq!(Ordering::Greater, unsafe { Ordering::from_glib(1) });
+        assert_eq!(Ordering::Greater, unsafe { Ordering::from_glib(42) });
+    }
+
+    #[test]
+    fn string() {
+        let s = "ABC";
+        let owned = "ABC".to_string();
+        let cstring = CString::new("ABC").unwrap();
+
+        let stash = s.to_glib_none();
+        assert_eq!(unsafe { CStr::from_ptr(stash.0) }, cstring.as_c_str());
+
+        let stash = owned.to_glib_none();
+        assert_eq!(unsafe { CStr::from_ptr(stash.0) }, cstring.as_c_str());
+
+        let ptr: *mut c_char = s.to_glib_full();
+        assert_eq!(unsafe { CStr::from_ptr(ptr) }, cstring.as_c_str());
+
+        unsafe {
+            ffi::g_free(ptr as *mut _);
+        }
+
+        let ptr: *mut c_char = owned.to_glib_full();
+        assert_eq!(unsafe { CStr::from_ptr(ptr) }, cstring.as_c_str());
+
+        assert_eq!(s, unsafe { String::from_glib_none(ptr) });
+        assert_eq!(owned, unsafe { String::from_glib_full(ptr) });
+    }
+
+    #[test]
+    fn string_hash_map() {
+        let mut map = HashMap::new();
+        map.insert("A".into(), "1".into());
+        map.insert("B".into(), "2".into());
+        map.insert("C".into(), "3".into());
+        let ptr: *mut ffi::GHashTable = map.to_glib_full();
+        let map = unsafe { HashMap::from_glib_full(ptr) };
+        assert_eq!(map.get("A"), Some(&"1".into()));
+        assert_eq!(map.get("B"), Some(&"2".into()));
+        assert_eq!(map.get("C"), Some(&"3".into()));
+    }
+
+    #[test]
+    fn string_array() {
+        let v = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let stash = v.to_glib_none();
+        let ptr: *mut *mut c_char = stash.0;
+        let ptr_copy = unsafe { ffi::g_strdupv(ptr) };
+
+        let actual: Vec<String> = unsafe { FromGlibPtrContainer::from_glib_full(ptr_copy) };
+        assert_eq!(v, actual);
+    }
+
+    #[test]
+    fn gstring_array() {
+        let v = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let stash = v.to_glib_none();
+        let ptr: *mut *mut c_char = stash.0;
+        let ptr_copy = unsafe { ffi::g_strdupv(ptr) };
+
+        let actual: Vec<GString> = unsafe { FromGlibPtrContainer::from_glib_full(ptr_copy) };
+        assert_eq!(v, actual);
+    }
+
+    #[test]
+    fn ptr_array() {
+        let strings = &["A", "B", "C"];
+        let (ptr, _stash) =
+            ToGlibContainerFromSlice::<*mut ffi::GPtrArray>::to_glib_none_from_slice(strings);
+        let v: Vec<GString> = unsafe { FromGlibPtrArrayContainerAsVec::from_glib_none_as_vec(ptr) };
+        assert_eq!(&v, strings);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn test_paths() {
+        let tmp_dir = tempdir().unwrap();
+
+        // Test if passing paths to GLib and getting them back
+        // gives us useful results
+        let dir_1 = tmp_dir.path().join("abcd");
+        fs::create_dir(&dir_1).unwrap();
+        assert_eq!(crate::path_get_basename(&dir_1), Path::new("abcd"));
+        assert_eq!(
+            crate::path_get_basename(dir_1.canonicalize().unwrap()),
+            Path::new("abcd")
+        );
+        // This currently fails on Windows because C:\\Users\\runneradmin
+        // gets shortened to C:\\Users\\RUNNER~1
+        #[cfg(not(windows))]
+        assert_eq!(
+            crate::path_get_dirname(dir_1.canonicalize().unwrap()),
+            tmp_dir.path()
+        );
+        assert!(crate::file_test(
+            &dir_1,
+            FileTest::EXISTS | FileTest::IS_DIR
+        ));
+        assert!(crate::file_test(
+            dir_1.canonicalize().unwrap(),
+            FileTest::EXISTS | FileTest::IS_DIR
+        ));
+
+        // And test with some non-ASCII characters
+        let dir_2 = tmp_dir.as_ref().join("øäöü");
+        fs::create_dir(&dir_2).unwrap();
+        assert_eq!(crate::path_get_basename(&dir_2), Path::new("øäöü"));
+        assert_eq!(
+            crate::path_get_basename(dir_2.canonicalize().unwrap()),
+            Path::new("øäöü")
+        );
+        // This currently fails on Windows because C:\\Users\\runneradmin
+        // gets shortened to C:\\Users\\RUNNER~1
+        #[cfg(not(windows))]
+        assert_eq!(
+            crate::path_get_dirname(dir_2.canonicalize().unwrap()),
+            tmp_dir.path()
+        );
+        assert!(crate::file_test(
+            &dir_2,
+            FileTest::EXISTS | FileTest::IS_DIR
+        ));
+        assert!(crate::file_test(
+            dir_2.canonicalize().unwrap(),
+            FileTest::EXISTS | FileTest::IS_DIR
+        ));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_paths() {
+        let t_dir = tempdir().unwrap();
+        let tmp_dir = t_dir.path().canonicalize().unwrap();
+
+        // Test if passing paths to GLib and getting them back
+        // gives us useful results
+        let dir_1 = tmp_dir.join("abcd");
+        fs::create_dir(&dir_1).unwrap();
+        assert_eq!(crate::path_get_basename(&dir_1), Path::new("abcd"));
+        assert_eq!(
+            crate::path_get_basename(dir_1.canonicalize().unwrap()),
+            Path::new("abcd")
+        );
+        assert_eq!(
+            crate::path_get_dirname(dir_1.canonicalize().unwrap()),
+            tmp_dir
+        );
+        assert!(crate::file_test(
+            &dir_1,
+            FileTest::EXISTS | FileTest::IS_DIR
+        ));
+        assert!(crate::file_test(
+            &dir_1.canonicalize().unwrap(),
+            FileTest::EXISTS | FileTest::IS_DIR
+        ));
+    }
+
+    #[test]
+    fn none_value() {
+        const CLONG_NONE: libc::c_long = -1;
+
+        #[derive(Debug, PartialEq, Eq)]
+        struct SpecialU32(u32);
+        impl IntoGlib for SpecialU32 {
+            type GlibType = libc::c_uint;
+            fn into_glib(self) -> libc::c_uint {
+                self.0 as libc::c_uint
+            }
+        }
+        impl OptionIntoGlib for SpecialU32 {
+            const GLIB_NONE: Self::GlibType = CLONG_NONE as libc::c_uint;
+        }
+
+        assert_eq!(SpecialU32(0).into_glib(), 0);
+        assert_eq!(SpecialU32(42).into_glib(), 42);
+        assert_eq!(Some(SpecialU32(0)).into_glib(), 0);
+        assert_eq!(Some(SpecialU32(42)).into_glib(), 42);
+        assert_eq!(
+            Option::None::<SpecialU32>.into_glib(),
+            SpecialU32::GLIB_NONE
+        );
+
+        impl TryFromGlib<libc::c_uint> for SpecialU32 {
+            type Error = GlibNoneError;
+            #[allow(clippy::unnecessary_cast)]
+            unsafe fn try_from_glib(val: libc::c_uint) -> Result<Self, GlibNoneError> {
+                if val == SpecialU32::GLIB_NONE {
+                    return Err(GlibNoneError);
+                }
+
+                Ok(SpecialU32(val as u32))
+            }
+        }
+
+        assert_eq!(unsafe { SpecialU32::try_from_glib(0) }, Ok(SpecialU32(0)));
+        assert_eq!(unsafe { SpecialU32::try_from_glib(42) }, Ok(SpecialU32(42)));
+        assert_eq!(
+            unsafe { SpecialU32::try_from_glib(SpecialU32::GLIB_NONE) },
+            Err(GlibNoneError)
+        );
+
+        assert_eq!(
+            unsafe { Option::<SpecialU32>::from_glib(0) },
+            Some(SpecialU32(0))
+        );
+        assert_eq!(
+            unsafe { Option::<SpecialU32>::from_glib(42) },
+            Some(SpecialU32(42))
+        );
+        assert!(unsafe { Option::<SpecialU32>::from_glib(SpecialU32::GLIB_NONE) }.is_none());
+    }
+
+    #[test]
+    fn invalid_value() {
+        use std::{convert::TryFrom, num::TryFromIntError};
+
+        #[derive(Debug, PartialEq, Eq)]
+        struct U32(u32);
+
+        impl TryFromGlib<libc::c_long> for U32 {
+            type Error = TryFromIntError;
+            unsafe fn try_from_glib(val: libc::c_long) -> Result<Self, TryFromIntError> {
+                Ok(U32(u32::try_from(val)?))
+            }
+        }
+
+        assert_eq!(unsafe { U32::try_from_glib(0) }, Ok(U32(0)));
+        assert_eq!(unsafe { U32::try_from_glib(42) }, Ok(U32(42)));
+        assert!(unsafe { U32::try_from_glib(-1) }.is_err());
+        assert!(unsafe { U32::try_from_glib(-42) }.is_err());
+    }
+
+    #[test]
+    fn none_or_invalid_value() {
+        use std::{convert::TryFrom, num::TryFromIntError};
+
+        #[derive(Debug, PartialEq, Eq)]
+        struct SpecialU32(u32);
+        impl IntoGlib for SpecialU32 {
+            type GlibType = libc::c_long;
+            fn into_glib(self) -> libc::c_long {
+                self.0 as libc::c_long
+            }
+        }
+        impl OptionIntoGlib for SpecialU32 {
+            const GLIB_NONE: Self::GlibType = -1;
+        }
+
+        assert_eq!(SpecialU32(0).into_glib(), 0);
+        assert_eq!(SpecialU32(42).into_glib(), 42);
+        assert_eq!(Some(SpecialU32(42)).into_glib(), 42);
+        assert_eq!(
+            Option::None::<SpecialU32>.into_glib(),
+            SpecialU32::GLIB_NONE
+        );
+
+        impl TryFromGlib<libc::c_long> for SpecialU32 {
+            type Error = GlibNoneOrInvalidError<TryFromIntError>;
+            unsafe fn try_from_glib(
+                val: libc::c_long,
+            ) -> Result<Self, GlibNoneOrInvalidError<TryFromIntError>> {
+                if val == SpecialU32::GLIB_NONE {
+                    return Err(GlibNoneOrInvalidError::None);
+                }
+
+                Ok(SpecialU32(u32::try_from(val)?))
+            }
+        }
+
+        assert_eq!(unsafe { SpecialU32::try_from_glib(0) }, Ok(SpecialU32(0)));
+        assert_eq!(unsafe { SpecialU32::try_from_glib(42) }, Ok(SpecialU32(42)));
+        assert!(unsafe { SpecialU32::try_from_glib(SpecialU32::GLIB_NONE) }
+            .unwrap_err()
+            .is_none());
+        assert!(unsafe { SpecialU32::try_from_glib(-42) }
+            .unwrap_err()
+            .is_invalid());
+
+        assert_eq!(
+            unsafe { Result::<Option<SpecialU32>, _>::from_glib(0) },
+            Ok(Some(SpecialU32(0)))
+        );
+        assert_eq!(
+            unsafe { Result::<Option<SpecialU32>, _>::from_glib(42) },
+            Ok(Some(SpecialU32(42)))
+        );
+        assert_eq!(
+            unsafe { Result::<Option<SpecialU32>, _>::from_glib(SpecialU32::GLIB_NONE) },
+            Ok(None)
+        );
+        assert!(unsafe { Result::<Option<SpecialU32>, _>::from_glib(-42) }.is_err());
+    }
+}

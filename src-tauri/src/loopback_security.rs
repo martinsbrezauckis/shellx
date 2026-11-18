@@ -79,3 +79,7 @@ pub(crate) fn subtle_eq(a: &[u8], b: &[u8]) -> bool {
     }
     diff == 0
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/loopback_security/tests.rs"]
+mod tests;

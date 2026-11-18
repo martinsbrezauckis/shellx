@@ -134,3 +134,7 @@ pub struct BuildBlockerRecheckResult {
     pub matched_receipt_id: Option<String>,
     pub matched_subagent_id: Option<String>,
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/build_types/tests.rs"]
+mod tests;

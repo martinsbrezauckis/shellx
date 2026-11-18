@@ -432,3 +432,7 @@ fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
     Some((width, height))
 }
+
+#[cfg(all(test, not(windows)))]
+#[path = "../public/tests/inline/shellx_browser_screenshot_capture/tests.rs"]
+mod tests;

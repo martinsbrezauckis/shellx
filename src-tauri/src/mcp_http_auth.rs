@@ -222,8 +222,14 @@ pub(crate) fn current_mcp_token() -> Result<String, String> {
     if let Some(authority) = MCP_TOKEN_AUTHORITY.get() {
         return Ok(authority.token.clone());
     }
-
-
+    #[cfg(test)]
+    {
+        // Unit-test callers exercise projection and routing without running
+        // Tauri setup. Keep those tests isolated from the real user profile;
+        // persistence/authority behavior is covered by the focused tests above.
+        Ok("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string())
+    }
+    #[cfg(not(test))]
     Err("Host MCP token authority is not initialized".to_string())
 }
 
@@ -231,7 +237,14 @@ pub(crate) fn current_mcp_token_source() -> Result<McpTokenSource, String> {
     if let Some(authority) = MCP_TOKEN_AUTHORITY.get() {
         return Ok(authority.source);
     }
-
-
+    #[cfg(test)]
+    {
+        Ok(McpTokenSource::ShellxMcpSecret)
+    }
+    #[cfg(not(test))]
     Err("Host MCP token authority is not initialized".to_string())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/mcp_http_auth/tests.rs"]
+mod tests;

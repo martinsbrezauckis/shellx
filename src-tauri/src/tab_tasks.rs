@@ -156,3 +156,15 @@ pub(crate) fn abort_tab(tab_id: &str) -> usize {
     }
     count
 }
+
+#[cfg(test)]
+fn registered(tab_id: &str, kind: TabTaskKind) -> bool {
+    lock_registry().contains_key(&TabTaskKey {
+        tab_id: tab_id.to_string(),
+        kind,
+    })
+}
+
+#[cfg(test)]
+#[path = "../public/tests/inline/tab_tasks/tests.rs"]
+mod tests;

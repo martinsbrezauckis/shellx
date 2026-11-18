@@ -132,7 +132,14 @@ impl ShellxBrowserRegistry {
     }
 }
 
-
+#[cfg(test)]
+pub(crate) fn upsert_browser_bookmark_locked(
+    state: &mut BrowserState,
+    request: BrowserBookmarkUpsertRequest,
+) -> Result<BrowserBookmarkResponse, String> {
+    let bookmark = upsert_browser_bookmark_collection(&mut state.bookmarks, request)?;
+    Ok(bookmark_response_after_commit(state, bookmark))
+}
 
 fn upsert_browser_bookmark_collection(
     bookmarks: &mut Vec<BrowserBookmark>,
@@ -873,3 +880,7 @@ pub(crate) fn bookmark_label_for_url(url: &str) -> String {
         .and_then(|parsed| parsed.host_str().map(|host| host.to_string()))
         .unwrap_or_else(|| "Saved page".to_string())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_bookmarks/tests.rs"]
+mod tests;

@@ -206,7 +206,24 @@ pub enum StructuredNoTaskStartReason {
     Unavailable,
 }
 
+/// One action for central Grok ACP / provider-session wiring. The adapter owns
+/// invoking existing paths; this module owns neither command construction nor
+/// process spawning.
+#[cfg(test)]
+#[allow(dead_code)]
+pub trait TaskExecutionDispatchAdapter {
+    type Error;
 
+    fn run_preflight(
+        &mut self,
+        plan: TaskProviderPreflightPlan,
+    ) -> Result<ExactTaskProviderCatalogueEntry, Self::Error>;
+
+    fn dispatch_provider(
+        &mut self,
+        plan: TaskProviderDispatchPlan,
+    ) -> Result<TaskDispatchObservation, Self::Error>;
+}
 
 /// Receipt writer implemented by the durable task store integration.
 pub trait TaskExecutionReceiptSink {
@@ -257,7 +274,11 @@ pub struct PendingTaskExecutionTransition<'runtime> {
 }
 
 impl PendingTaskExecutionTransition<'_> {
-
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn receipt(&self) -> &TaskExecutionReceiptPayload {
+        &self.receipt
+    }
 
     pub fn persist<S: TaskExecutionReceiptSink>(
         self,
@@ -295,7 +316,8 @@ impl PersistedTaskExecutionTransition {
         match self.action {
             CoordinatorAction::RunPreflight { candidate } => {
                 PersistedTaskExecutionAction::RunPreflight(Box::new(TaskProviderPreflightPlan {
-
+                    #[cfg(test)]
+                    plan: self.plan,
                     candidate,
                 }))
             }
@@ -327,14 +349,24 @@ pub enum PersistedTaskExecutionAction {
 /// Exact immutable inputs for a provider-catalogue rescan.
 #[derive(Debug)]
 pub struct TaskProviderPreflightPlan {
-
+    #[cfg(test)]
+    #[allow(dead_code)]
+    plan: TaskExecutionPlan,
     candidate: TaskExecutionCandidate,
 }
 
 impl TaskProviderPreflightPlan {
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn identity(&self) -> &TaskExecutionIdentity {
+        self.plan.identity()
+    }
 
-
-
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn target(&self) -> &TaskExecutionTarget {
+        self.plan.target()
+    }
 
     pub fn candidate(&self) -> &TaskExecutionCandidate {
         &self.candidate
@@ -362,9 +394,32 @@ impl TaskProviderDispatchPlan {
     }
 }
 
+/// Executes an already persisted external-action plan. It consumes the plan,
+/// making the normal adapter path one-shot.
+#[cfg(test)]
+#[allow(dead_code)]
+pub fn execute_persisted_action<A: TaskExecutionDispatchAdapter>(
+    action: PersistedTaskExecutionAction,
+    adapter: &mut A,
+) -> Result<Option<TaskExecutionAdapterResult>, A::Error> {
+    match action {
+        PersistedTaskExecutionAction::RunPreflight(plan) => adapter
+            .run_preflight(*plan)
+            .map(|entry| Some(TaskExecutionAdapterResult::Preflight(entry))),
+        PersistedTaskExecutionAction::DispatchProvider(plan) => adapter
+            .dispatch_provider(*plan)
+            .map(|observation| Some(TaskExecutionAdapterResult::Dispatch(observation))),
+        PersistedTaskExecutionAction::CommittedStartRecorded
+        | PersistedTaskExecutionAction::Notify(_) => Ok(None),
+    }
+}
 
-
-
+#[cfg(test)]
+#[allow(dead_code)]
+pub enum TaskExecutionAdapterResult {
+    Preflight(ExactTaskProviderCatalogueEntry),
+    Dispatch(TaskDispatchObservation),
+}
 
 /// Runtime wrapper around the already-landed ordered fallback coordinator.
 #[derive(Debug)]
@@ -384,7 +439,10 @@ impl TaskExecutionRuntime {
         &self.plan
     }
 
-
+    #[cfg(test)]
+    pub fn phase(&self) -> crate::task_provider_fallback::ExecutionPhaseKind {
+        self.coordinator.phase().kind()
+    }
 
     pub fn begin(
         &mut self,

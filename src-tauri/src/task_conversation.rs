@@ -294,7 +294,10 @@ impl TaskConversationArchive {
         Self::new_with_home(None)
     }
 
-
+    #[cfg(test)]
+    pub(crate) fn new_at(home: PathBuf) -> Self {
+        Self::new_with_home(Some(home))
+    }
 
     fn new_with_home(home: Option<PathBuf>) -> Self {
         let (sender, receiver) =
@@ -1646,3 +1649,7 @@ fn current_time_ms() -> i64 {
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/task_conversation/tests.rs"]
+mod tests;

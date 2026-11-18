@@ -745,3 +745,7 @@ fn browser_rendered_check_restriction_script() -> &'static str {
 })()
 "#
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_rendered_check/tests.rs"]
+mod tests;

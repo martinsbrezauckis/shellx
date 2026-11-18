@@ -2387,3 +2387,161 @@ impl<S: IntoGStr> IntoOptionalGStr for Option<S> {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::disallowed_names)]
+mod tests {
+    use std::ffi::CString;
+
+    use super::*;
+
+    #[test]
+    fn test_gstring() {
+        let data = CString::new("foo").unwrap();
+        let ptr = data.as_ptr();
+
+        unsafe {
+            let ptr_copy = ffi::g_strdup(ptr);
+            let gstring = GString::from_glib_full(ptr_copy);
+            assert_eq!(gstring.as_str(), "foo");
+            let foo: Box<str> = gstring.into();
+            assert_eq!(foo.as_ref(), "foo");
+        }
+    }
+
+    #[test]
+    fn test_owned_glib_string() {
+        let data = CString::new("foo").unwrap();
+        let ptr = data.as_ptr();
+        unsafe {
+            let ptr_copy = ffi::g_strdup(ptr);
+            let gstr = GString::from_glib_full(ptr_copy);
+            assert_eq!(gstr, "foo");
+        }
+    }
+
+    #[test]
+    fn test_gstring_from_str() {
+        let gstring: GString = "foo".into();
+        assert_eq!(gstring.as_str(), "foo");
+        let foo: Box<str> = gstring.into();
+        assert_eq!(foo.as_ref(), "foo");
+    }
+
+    #[test]
+    fn test_string_from_gstring() {
+        let gstring = GString::from("foo");
+        assert_eq!(gstring.as_str(), "foo");
+        let s = String::from(gstring);
+        assert_eq!(s, "foo");
+    }
+
+    #[test]
+    fn test_gstring_from_cstring() {
+        let cstr = CString::new("foo").unwrap();
+        let gstring = GString::try_from(cstr).unwrap();
+        assert_eq!(gstring.as_str(), "foo");
+        let foo: Box<str> = gstring.into();
+        assert_eq!(foo.as_ref(), "foo");
+    }
+
+    #[test]
+    fn test_string_from_gstring_from_cstring() {
+        let cstr = CString::new("foo").unwrap();
+        let gstring = GString::try_from(cstr).unwrap();
+        assert_eq!(gstring.as_str(), "foo");
+        let s = String::from(gstring);
+        assert_eq!(s, "foo");
+    }
+
+    #[test]
+    fn test_vec_u8_to_gstring() {
+        let v: &[u8] = b"foo";
+        let s: GString = GString::from_utf8(Vec::from(v)).unwrap();
+        assert_eq!(s.as_str(), "foo");
+    }
+
+    #[test]
+    fn test_as_ref_path() {
+        fn foo<P: AsRef<Path>>(_path: P) {}
+        let gstring: GString = "/my/path/".into();
+        let gstr: &GStr = gstring.as_gstr();
+        foo(gstr);
+        foo(gstring);
+    }
+
+    #[test]
+    fn test_from_glib_container() {
+        unsafe {
+            let test_a: GString = FromGlibContainer::from_glib_container_num(
+                ffi::g_strdup("hello_world\0".as_ptr() as *const _),
+                5,
+            );
+            assert_eq!("hello", test_a.as_str());
+
+            let test_b: GString = FromGlibContainer::from_glib_none_num("hello_world".as_ptr(), 5);
+            assert_eq!("hello", test_b.as_str());
+
+            let test_c: GString =
+                FromGlibContainer::from_glib_none_num(std::ptr::null::<std::os::raw::c_char>(), 0);
+            assert_eq!("", test_c.as_str());
+
+            let test_d: GString = FromGlibContainer::from_glib_none_num("".as_ptr(), 0);
+            assert_eq!("", test_d.as_str());
+
+            let test_e: GString =
+                FromGlibContainer::from_glib_container_num(ffi::g_strdup(std::ptr::null()), 0);
+            assert_eq!("", test_e.as_str());
+        }
+    }
+
+    #[test]
+    fn test_hashmap() {
+        use std::collections::HashMap;
+
+        let gstring = GString::from("foo");
+        assert_eq!(gstring.as_str(), "foo");
+        let mut h: HashMap<GString, i32> = HashMap::new();
+        h.insert(gstring, 42);
+        let gstring: GString = "foo".into();
+        assert!(h.contains_key(&gstring));
+    }
+
+    #[test]
+    fn test_gstring_from_ptr_lossy() {
+        let data = CString::new("foo").unwrap();
+        let ptr = data.as_ptr();
+
+        unsafe {
+            let gstring = GString::from_ptr_lossy(ptr);
+            assert_eq!(gstring.as_str(), "foo");
+            assert_eq!(ptr, gstring.as_ptr());
+        }
+
+        let data = b"foo\xF0\x90\x80bar\0";
+        let ptr = data.as_ptr();
+
+        unsafe {
+            let gstring = GString::from_ptr_lossy(ptr as *const _);
+            assert_eq!(gstring.as_str(), "foo���bar");
+            assert_ne!(ptr, gstring.as_ptr() as *const _);
+        }
+    }
+
+    #[test]
+    fn gformat() {
+        let s = gformat!("bla bla {} bla", 123);
+        assert_eq!(s, "bla bla 123 bla");
+    }
+
+    #[test]
+    fn layout() {
+        // ensure the inline variant is not wider than the other variants
+        enum NoInline {
+            _Native(Box<str>),
+            _Foreign(ptr::NonNull<c_char>, usize),
+        }
+        assert_eq!(mem::size_of::<GString>(), mem::size_of::<NoInline>());
+        assert_eq!(mem::size_of::<GString>(), mem::size_of::<String>());
+    }
+}

@@ -213,3 +213,7 @@ fn is_plausibly_text(buf: &[u8]) -> bool {
 }
 
 // ───── tests ─────
+
+#[cfg(test)]
+#[path = "../public/tests/inline/text_sniff/tests.rs"]
+mod tests;

@@ -700,3 +700,7 @@ fn trace_receipt_matches(
             .and_then(|value| value.as_str())
             == browser_tab_id
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_diagnostics/trace_export_scope_tests.rs"]
+mod trace_export_scope_tests;

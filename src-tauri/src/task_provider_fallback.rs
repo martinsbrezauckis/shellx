@@ -18,7 +18,14 @@ pub struct TaskExecutionCandidate {
 }
 
 impl TaskExecutionCandidate {
-
+    #[cfg(test)]
+    pub fn provider_default(provider_id: impl Into<String>, order: u16) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            model: ModelSelection::ProviderDefault,
+            order,
+        }
+    }
 }
 
 /// A provider default is distinct from an explicitly verified model identity.
@@ -32,7 +39,9 @@ pub enum ModelSelection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EvidenceClass {
     ProviderCapabilityScan,
-
+    #[cfg(test)]
+    #[allow(dead_code)]
+    TargetReachability,
     StructuredProviderStream,
     ProviderAdapter,
     ProviderSession,
@@ -220,7 +229,14 @@ impl ExecutionPhase {
         }
     }
 
-
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::NeedsAttention { .. } | Self::OutcomeUnknown { .. } | Self::Completed { .. }
+        )
+    }
 }
 
 /// An append-only decision record ready for a receipt writer.
@@ -371,9 +387,18 @@ impl TaskExecutionCoordinator {
         })
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn decisions(&self) -> &[ProviderRouteDecision] {
+        &self.decisions
+    }
 
-
-
+    /// Candidate orders that have received a dispatch action exactly once.
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn dispatched_orders(&self) -> impl Iterator<Item = u16> + '_ {
+        self.dispatched_orders.iter().copied()
+    }
 
     pub fn begin(
         &mut self,

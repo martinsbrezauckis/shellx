@@ -1122,8 +1122,6 @@ impl GoalOrchestrator {
         }
     }
 
-
-
     /// #350/#458: Per-turn silence watchdog. Scans every state once; if
     /// a tab has injected at least one continuation but no prompt-complete
     /// has arrived for `per_turn_timeout_ms` since the last injection,
@@ -2001,3 +1999,7 @@ pub type SharedGoalOrchestrator = Arc<GoalOrchestrator>;
 // ──────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "../public/tests/inline/goal_orchestrator/tests.rs"]
+mod tests;

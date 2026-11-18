@@ -4,8 +4,11 @@
 //! tracks provider CLI runs, exposes serializable state for the debug API, and
 //! will later own streaming process lifecycle.
 
-
+#[cfg(test)]
+#[path = "../public/tests/unit/provider_sessions/codex_app_server_canary_tests.rs"]
+mod codex_app_server_canary_tests;
 mod codex_app_server_events;
+
 mod codex_app_server_runtime;
 mod stream_reader;
 
@@ -405,10 +408,7 @@ pub struct ProviderSessionStartRequest {
     pub ssh_remote_runtime: crate::acp::SshRemoteRuntime,
     #[serde(rename = "sshWslDistro", alias = "ssh_wsl_distro", default)]
     pub ssh_wsl_distro: Option<String>,
-
 }
-
-
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -530,8 +530,6 @@ impl ProviderSessionRegistry {
             None => Self::default(),
         }
     }
-
-
 
     pub fn with_store_path(store_path: PathBuf) -> Self {
         Self {
@@ -1373,7 +1371,40 @@ impl ProviderSessionRegistry {
         let _ = write_provider_session_store(&path, &store);
     }
 
-
+    #[cfg(test)]
+    pub async fn attach_child_for_test(
+        &self,
+        tab_id: &str,
+        run_id: &str,
+        program: &str,
+        args: &[&str],
+    ) -> Result<(), String> {
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .no_window()
+            .kill_on_drop(true);
+        crate::winproc::apply_pdeathsig_preexec(&mut cmd);
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("spawn test child failed: {e}"))?;
+        if let Some(pid) = child.id() {
+            crate::winproc::tie_to_parent_lifetime(pid);
+        }
+        let (abort_tx, abort_rx) = oneshot::channel();
+        self.attach_abort_sender(tab_id, run_id, abort_tx)?;
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = abort_rx => {
+                    let _ = child.kill().await;
+                }
+                _ = child.wait() => {}
+            }
+        });
+        Ok(())
+    }
 }
 
 fn active_run_key(tab: &ProviderTabState, run_id: &str) -> Option<String> {
@@ -1822,7 +1853,6 @@ pub async fn start_provider_session(
     request: ProviderSessionStartRequest,
     emit: ProviderSessionEmit,
 ) -> Result<ProviderRunSnapshot, String> {
-
     let tab_id = request.tab_id.unwrap_or_else(|| "default".to_string());
     let explicit_conversation_id = request
         .provider_conversation_id
@@ -1949,8 +1979,6 @@ pub async fn start_provider_session(
     .await
 }
 
-
-
 struct ProviderSessionCommandStart {
     tab_id: String,
     cwd: String,
@@ -1971,7 +1999,34 @@ struct ProviderStreamTerminal {
     error: Option<String>,
 }
 
-
+#[cfg(test)]
+pub async fn start_provider_session_with_command_for_test(
+    registry: Arc<ProviderSessionRegistry>,
+    tab_id: String,
+    cwd: String,
+    prompt: String,
+    command: ProviderCommandSpec,
+    emit: ProviderSessionEmit,
+    timeout_ms: u64,
+) -> Result<ProviderRunSnapshot, String> {
+    start_provider_session_with_command(
+        registry,
+        ProviderSessionCommandStart {
+            tab_id,
+            cwd,
+            prompt,
+            command,
+            timeout_ms,
+            resume_from_provider_conversation_id: None,
+            persist_session: true,
+            permission_mode: ProviderPermissionMode::AcceptEdits,
+            shellx_tool_exposure: ProviderShellxToolExposure::default(),
+            ssh_key_vault_ref: None,
+        },
+        emit,
+    )
+    .await
+}
 
 async fn start_provider_session_with_command(
     registry: Arc<ProviderSessionRegistry>,
@@ -3773,3 +3828,7 @@ fn now_ms() -> i64 {
 fn lock_or_recover<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
     lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/provider_sessions/tests.rs"]
+mod tests;

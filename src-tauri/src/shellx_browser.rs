@@ -11,7 +11,8 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
-
+#[cfg(test)]
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State, Url};
 use tokio::sync::Mutex as AsyncMutex;
@@ -48,7 +49,8 @@ pub use crate::shellx_browser_flight_recorder_model::{
 use crate::shellx_browser_observations::observation_for_task;
 use crate::shellx_browser_profiles::{browser_profile_storage_root, default_profiles};
 use crate::shellx_browser_protected_values::BrowserProtectedValue;
-
+#[cfg(test)]
+use crate::shellx_browser_protected_values::BROWSER_SECRET_REDACTION_PLACEHOLDER;
 use crate::shellx_browser_tasks::{
     browser_agent_step_summary_for_task, find_task_index, resolve_task_id,
     task_control_blocked_response,
@@ -325,3 +327,7 @@ impl Default for ShellxBrowserRegistry {
         Self::new_with_settings_path(None)
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_tests.rs"]
+mod tests;

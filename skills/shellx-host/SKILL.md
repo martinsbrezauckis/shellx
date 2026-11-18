@@ -230,13 +230,19 @@ Host MCP Browser flow:
    `browser_act action=captureSecretToVault` with a durable `secretRef` instead of using
    clipboard reads, raw reveal, or hand-built selectors.
 4. `browser_act action=clickRef` / `browser_act action=fillRef` /
-   `browser_read action=waitFor` — act on refs returned by observe; click/fill
-   may also use a precise selector when it comes from a fixture, saved workflow,
-   or prior observation. Use tab lock fields when a tab is locked for an agent
-   run. If a visible ref click reports applied but a Google-style menu/page
+   `browser_read action=waitFor` — act on fresh refs returned by observe.
+   Automated clicks require a target in the current observation. Use its fresh
+   `refId`, or an exact selector that uniquely matches one observed ref with
+   a fingerprint. An
+   optional selector with `refId` must identify that same ref. Unobserved or
+   ambiguous selectors are blocked. Fill and wait actions may use a precise
+   selector when it comes from a fixture, saved workflow, or prior observation.
+   Use tab lock fields when a tab is locked
+   for an agent run. If a visible ref click reports applied but a Google-style menu/page
    state does not change, retry the same valid ref with `force=true` to dispatch
    native pointer input. Host MCP may recover stale click refs with a strict
-   `stepSummary.locatorCandidates` selector, or retry automatically only when a
+   `stepSummary.locatorCandidates` ref and matching selector from the current
+   observation, or retry automatically only when a
    normal click fails solely on `receivesEvents`; inspect `mcpRecovery` in the
    result when present.
    If an action returns `staleRef` or failed check `fingerprint`, ShellX did not
@@ -246,18 +252,12 @@ Host MCP Browser flow:
    across multiple geometry samples before clicking or filling. If `stable`
    still fails, treat the page as actively re-rendering and wait for its state
    transition instead of forcing the action; force never bypasses stability.
-   For split buttons/dropdowns where the whole-button ref still does not change
-   state, use `browser_act action=screenshot fullPage=true` and coordinate-click the visible
-   arrow/subtarget.
-   If a real rich
-   editor, canvas surface, or visual-only app overlay has no usable ref, take a
-   `browser_act action=screenshot` with `fullPage=true` and use the returned `pageSize` and
-   `cssScale` to convert image pixels into viewport CSS coordinates before
-   calling `browser_act action=clickAt` / `browser_act action=typeText`. Re-capture after Browser
-   resize/minimize/restore; scroll off-screen full-page targets into the visible
-   viewport before coordinate-clicking. Prefer refs for normal
-   controls; never use coordinate typing to bypass Vault-mediated credential
-   fills.
+   For split buttons, rich editors, canvas surfaces, or visual-only overlays
+   without a usable observed ref, hand the target to the native operator UI.
+   Automated `clickAt` is blocked because a viewport coordinate cannot be
+   bound to the observed control. Re-observe after page changes before
+   resuming automation; never use coordinate typing to bypass Vault-mediated
+   credential fills.
 5. `browser_act action=runSteps` — run a short ordered batch of generic Browser action steps,
    such as `navigate -> waitFor -> observe -> clickRef -> scroll -> select -> findText -> extractTable -> verify`, when
    the task is already clear and batching will reduce MCP round trips. This is
@@ -598,8 +598,8 @@ targeted `search_tool` queries:
 
 - `browser_navigate -> POST /browser/action` with `action: "navigate"` and `url`.
 - `browser_observe -> POST /browser/action` with `action: "observe"`.
-- `browser_click_ref -> POST /browser/action` with `action: "clickRef"`, `refId` or `selector`, and optional `force`.
-- `browser_click_at -> POST /browser/action` with `action: "clickAt"`, `x`, and `y`.
+- `browser_click_ref -> POST /browser/action` with `action: "clickRef"`, an observed `refId` or uniquely observed `selector`, optional matching `selector` with a ref, and optional `force`.
+- `browser_click_at -> POST /browser/action` with `action: "clickAt"`, `x`, and `y`; automated coordinate clicks return a blocked policy response.
 - `browser_fill_ref -> POST /browser/action` with `action: "fillRef"`, `refId` or `selector`, and `value`.
 - `browser_type_text -> POST /browser/action` with `action: "typeText"`, `x`, `y`, and `value`.
 - `browser_clear_site_data -> POST /browser/action` with `action: "clearSiteData"`.

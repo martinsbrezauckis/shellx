@@ -751,3 +751,7 @@ pub(crate) fn call_browser_engine_cdp_with_timeout(
         )
     })
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_actions/tests.rs"]
+mod tests;

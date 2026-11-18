@@ -435,7 +435,7 @@ pub fn taskkill_is_already_gone(_code: Option<i32>) -> bool {
     false
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 fn taskkill_tree_args(pid: u32) -> [String; 4] {
     [
         "/PID".to_string(),
@@ -673,3 +673,7 @@ pub async fn terminate_owned_tokio_child_tree(
         .await
         .map_err(|error| format!("owned child termination failed: {error}"))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/winproc/tests.rs"]
+mod tests;

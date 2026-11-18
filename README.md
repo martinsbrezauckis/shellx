@@ -22,6 +22,11 @@ artifacts when CI passes.
 - [ShellX Browser module guide](shellx-browser/README.md) — Browser profiles,
   compact agent tools, Vault/session grants, actions, receipts, and debugging.
 
+CI runs [the product checks](scripts/public/check.sh) on Linux, Windows and
+macOS: frontend typechecking and build, public product contracts, Rust tests,
+formatting and strict Clippy. Dependency audits run separately. Installed-app
+and authenticated-provider testing are separate release checks.
+
 ## Preview
 
 These previews use UI captured from the current installed release candidate.

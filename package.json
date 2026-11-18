@@ -31,7 +31,11 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "shellx-browser": "tsx scripts/public/shellx-browser-cli.ts"
+    "shellx-browser": "tsx scripts/public/shellx-browser-cli.ts",
+    "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
+    "test:public": "node scripts/public/run-public-test-suite.mjs",
+    "audit:rust": "node scripts/public/check-rustsec.mjs && node scripts/public/check-grype-rust.mjs",
+    "audit:dependencies": "pnpm audit --audit-level low"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",

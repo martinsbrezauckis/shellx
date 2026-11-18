@@ -631,7 +631,9 @@ pub(crate) fn scrub_credentials(value: &mut serde_json::Value) {
     }
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/mcp_http/scrub_tests.rs"]
+mod scrub_tests;
 
 async fn require_auth(
     State(cfg): State<AuthConfig>,
@@ -685,7 +687,6 @@ struct HealthResponse {
     ok: bool,
     #[serde(rename = "processId")]
     process_id: u32,
-
     #[serde(rename = "appVersion")]
     app_version: &'static str,
     #[serde(rename = "buildCommit")]
@@ -702,7 +703,6 @@ fn health_response(port: u16, token_source: &'static str) -> HealthResponse {
     HealthResponse {
         ok: true,
         process_id: std::process::id(),
-
         app_version: env!("CARGO_PKG_VERSION"),
         build_commit: crate::build_metadata::SHELLX_BUILD_COMMIT,
         mcp_port: port,
@@ -1517,3 +1517,7 @@ pub async fn start_mcp_server(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("mcp-http serve failed: {}", e))?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/mcp_http/tests.rs"]
+mod tests;

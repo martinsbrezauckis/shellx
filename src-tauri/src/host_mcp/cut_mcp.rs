@@ -550,3 +550,7 @@ pub(super) async fn tool_cut_act(args: Value) -> Result<Value, String> {
     let program = resolve_cutd_program()?;
     call_cut_tool(&program, &verb, arguments, timeout_ms(&args)).await
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/host_mcp/cut_mcp/tests.rs"]
+mod tests;

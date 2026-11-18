@@ -210,15 +210,6 @@ pub struct UiStatePatch {
     /// Renderer-reported resolution state for the current callouts.
     #[serde(rename = "debugHighlightResults", default)]
     pub debug_highlight_results: Option<Vec<DebugHighlightResult>>,
-
-
-
-
-
-
-
-
-
     /// Renderer-reported receipts for trusted-operator diagnostic actions.
     #[serde(rename = "debugActionResults", default)]
     pub debug_action_results: Option<Vec<serde_json::Value>>,
@@ -230,8 +221,6 @@ pub struct UiStatePatch {
     /// settings/help/palette/assets. Relayed only; not persisted in UiState.
     #[serde(rename = "openModal", default)]
     pub open_modal: Option<String>,
-
-
     /// Debug-driver renderer command for opening the non-approval Vault
     /// Request Center popover. Approval/deny buttons remain human-only.
     #[serde(rename = "vaultRequestCenterOpen", default)]
@@ -245,15 +234,6 @@ pub struct UiStatePatch {
     /// no transcript content is accepted or returned through this field.
     #[serde(rename = "refreshPastChats", default)]
     pub refresh_past_chats: Option<bool>,
-
-
-
-
-
-
-
-
-
     /// Trusted-operator bounded DOM click diagnostic. Relayed only; not persisted in UiState.
     #[serde(rename = "debugClick", default)]
     pub debug_click: Option<serde_json::Value>,

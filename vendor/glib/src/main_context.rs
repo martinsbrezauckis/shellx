@@ -205,3 +205,75 @@ impl<'a> Drop for ThreadDefaultContext<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{panic, ptr, thread};
+
+    use super::*;
+
+    #[test]
+    fn test_invoke() {
+        let c = MainContext::new();
+        let l = crate::MainLoop::new(Some(&c), false);
+
+        let l_clone = l.clone();
+        thread::spawn(move || {
+            c.invoke(move || l_clone.quit());
+        });
+
+        l.run();
+    }
+
+    fn is_same_context(a: &MainContext, b: &MainContext) -> bool {
+        ptr::eq(a.to_glib_none().0, b.to_glib_none().0)
+    }
+
+    #[test]
+    fn test_with_thread_default() {
+        let a = MainContext::new();
+        let b = MainContext::new();
+
+        assert!(!is_same_context(&a, &b));
+
+        a.with_thread_default(|| {
+            let t = MainContext::thread_default().unwrap();
+            assert!(is_same_context(&a, &t));
+
+            b.with_thread_default(|| {
+                let t = MainContext::thread_default().unwrap();
+                assert!(is_same_context(&b, &t));
+            })
+            .unwrap();
+
+            let t = MainContext::thread_default().unwrap();
+            assert!(is_same_context(&a, &t));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_with_thread_default_is_panic_safe() {
+        let a = MainContext::new();
+        let b = MainContext::new();
+
+        assert!(!is_same_context(&a, &b));
+
+        a.with_thread_default(|| {
+            let t = MainContext::thread_default().unwrap();
+            assert!(is_same_context(&a, &t));
+
+            let result = panic::catch_unwind(|| {
+                b.with_thread_default(|| {
+                    panic!();
+                })
+                .unwrap();
+            });
+            assert!(result.is_err());
+
+            let t = MainContext::thread_default().unwrap();
+            assert!(is_same_context(&a, &t));
+        })
+        .unwrap();
+    }
+}

@@ -13,7 +13,7 @@ pub(crate) const POSIX_PROVIDER_SHELL_PRELUDE: &str =
 pub(crate) const WINDOWS_PROVIDER_SHELL_PRELUDE: &str =
     "$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';$paths=@((Join-Path $env:USERPROFILE '.local\\bin'),(Join-Path $env:USERPROFILE 'bin'),(Join-Path $env:USERPROFILE '.grok\\bin'),(Join-Path $env:USERPROFILE '.claude\\bin'),(Join-Path $env:USERPROFILE '.bun\\bin'),(Join-Path $env:USERPROFILE '.cargo\\bin'),(Join-Path $env:LOCALAPPDATA 'Programs\\OpenAI\\Codex\\bin'),(Join-Path $env:LOCALAPPDATA 'agy\\bin'),(Join-Path $env:APPDATA 'npm'));$env:PATH=(($paths+@($env:PATH)) -join ';');";
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 pub(crate) fn windows_user_bin_paths(
     user_profile: &str,
     app_data: &str,
@@ -43,7 +43,7 @@ pub(crate) fn windows_user_bin_paths(
     paths
 }
 
-#[cfg(not(windows))]
+#[cfg(any(not(windows), test))]
 pub(crate) fn posix_user_bin_paths(home: &str) -> Vec<PathBuf> {
     let home = home.trim();
     if home.is_empty() {
@@ -180,3 +180,7 @@ pub(crate) fn resolve_local_binary(names: &[&str]) -> Option<String> {
         .find(|candidate| candidate.is_file())
         .map(|candidate| candidate.to_string_lossy().to_string())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/provider_runtime/tests.rs"]
+mod tests;

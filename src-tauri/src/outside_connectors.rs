@@ -1167,3 +1167,7 @@ struct DiscordCurrentUser {
     id: String,
     username: String,
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/outside_connectors/tests.rs"]
+mod tests;

@@ -473,3 +473,7 @@ fn now_ms() -> i64 {
         .try_into()
         .unwrap_or(i64::MAX)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/task_provider_catalog/tests.rs"]
+mod tests;

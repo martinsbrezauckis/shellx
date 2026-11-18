@@ -886,3 +886,7 @@ impl ShellxBrowserRegistry {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_vault/tests.rs"]
+mod tests;

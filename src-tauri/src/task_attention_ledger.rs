@@ -15,7 +15,9 @@ use crate::task_store::{PersistedTaskStore, TaskStoreError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 
-
+#[cfg(test)]
+#[path = "../public/tests/unit/task_attention_ledger_tests.rs"]
+mod tests;
 
 #[path = "task_attention_ledger_validation.rs"]
 mod validation;

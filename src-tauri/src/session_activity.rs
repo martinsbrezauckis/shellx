@@ -43,7 +43,15 @@ impl FilteredUpdatesRead {
         }
     }
 
-
+    #[cfg(test)]
+    fn content(content: String) -> Self {
+        Self {
+            jsonl: filter_updates_jsonl(&content),
+            present: true,
+            too_large: None,
+            note: None,
+        }
+    }
 }
 
 struct DiscoveredScratchDir {
@@ -1146,7 +1154,10 @@ fn read_filtered_updates_jsonl(path: &PathBuf) -> Result<FilteredUpdatesRead, St
     })
 }
 
-
+#[cfg(test)]
+fn filter_updates_jsonl(content: &str) -> String {
+    filter_update_lines(content.lines().map(str::to_string))
+}
 
 fn filter_update_lines(lines: impl Iterator<Item = String>) -> String {
     let mut out = String::new();
@@ -1691,3 +1702,7 @@ fn urlencoded_cwd(cwd: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/session_activity/tests.rs"]
+mod tests;

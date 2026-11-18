@@ -317,3 +317,401 @@ pub trait ObjectImplExt: sealed::Sealed + ObjectSubclass {
 }
 
 impl<T: ObjectImpl> ObjectImplExt for T {}
+
+#[cfg(test)]
+mod test {
+    use std::cell::RefCell;
+
+    use super::*;
+    // We rename the current crate as glib, since the macros in glib-macros
+    // generate the glib namespace through the crate_ident_new utility,
+    // and that returns `glib` (and not `crate`) when called inside the glib crate
+    use crate as glib;
+
+    mod imp {
+        use super::*;
+
+        // A dummy `Object` to test setting an `Object` property and returning an `Object` in signals
+        #[derive(Default)]
+        pub struct ChildObject;
+
+        #[glib::object_subclass]
+        impl ObjectSubclass for ChildObject {
+            const NAME: &'static str = "ChildObject";
+            type Type = super::ChildObject;
+        }
+
+        impl ObjectImpl for ChildObject {}
+
+        #[derive(Default)]
+        pub struct SimpleObject {
+            name: RefCell<Option<String>>,
+            construct_name: RefCell<Option<String>>,
+            constructed: RefCell<bool>,
+        }
+
+        #[glib::object_subclass]
+        impl ObjectSubclass for SimpleObject {
+            const NAME: &'static str = "SimpleObject";
+            type Type = super::SimpleObject;
+            type Interfaces = (super::Dummy,);
+        }
+
+        impl ObjectImpl for SimpleObject {
+            fn properties() -> &'static [ParamSpec] {
+                use once_cell::sync::Lazy;
+                static PROPERTIES: Lazy<Vec<ParamSpec>> = Lazy::new(|| {
+                    vec![
+                        crate::ParamSpecString::builder("name").build(),
+                        crate::ParamSpecString::builder("construct-name")
+                            .construct_only()
+                            .build(),
+                        crate::ParamSpecBoolean::builder("constructed")
+                            .read_only()
+                            .build(),
+                        crate::ParamSpecObject::builder::<super::ChildObject>("child").build(),
+                    ]
+                });
+
+                PROPERTIES.as_ref()
+            }
+
+            fn signals() -> &'static [super::Signal] {
+                use once_cell::sync::Lazy;
+                static SIGNALS: Lazy<Vec<super::Signal>> = Lazy::new(|| {
+                    vec![
+                        super::Signal::builder("name-changed")
+                            .param_types([String::static_type()])
+                            .build(),
+                        super::Signal::builder("change-name")
+                            .param_types([String::static_type()])
+                            .return_type::<String>()
+                            .action()
+                            .class_handler(|_, args| {
+                                let obj = args[0]
+                                    .get::<super::SimpleObject>()
+                                    .expect("Failed to get Object from args[0]");
+                                let new_name = args[1]
+                                    .get::<String>()
+                                    .expect("Failed to get Object from args[1]");
+                                let imp = obj.imp();
+
+                                let old_name = imp.name.replace(Some(new_name));
+
+                                obj.emit_by_name::<()>("name-changed", &[&*imp.name.borrow()]);
+
+                                Some(old_name.to_value())
+                            })
+                            .build(),
+                        super::Signal::builder("create-string")
+                            .return_type::<String>()
+                            .build(),
+                        super::Signal::builder("create-child-object")
+                            .return_type::<super::ChildObject>()
+                            .build(),
+                    ]
+                });
+
+                SIGNALS.as_ref()
+            }
+
+            fn set_property(&self, _id: usize, value: &Value, pspec: &crate::ParamSpec) {
+                match pspec.name() {
+                    "name" => {
+                        let name = value
+                            .get()
+                            .expect("type conformity checked by 'Object::set_property'");
+                        self.name.replace(name);
+                        self.obj()
+                            .emit_by_name::<()>("name-changed", &[&*self.name.borrow()]);
+                    }
+                    "construct-name" => {
+                        let name = value
+                            .get()
+                            .expect("type conformity checked by 'Object::set_property'");
+                        self.construct_name.replace(name);
+                    }
+                    "child" => {
+                        // not stored, only used to test `set_property` with `Objects`
+                    }
+                    _ => unimplemented!(),
+                }
+            }
+
+            fn property(&self, _id: usize, pspec: &crate::ParamSpec) -> Value {
+                match pspec.name() {
+                    "name" => self.name.borrow().to_value(),
+                    "construct-name" => self.construct_name.borrow().to_value(),
+                    "constructed" => self.constructed.borrow().to_value(),
+                    _ => unimplemented!(),
+                }
+            }
+
+            fn constructed(&self) {
+                self.parent_constructed();
+
+                debug_assert_eq!(self as *const _, self.obj().imp() as *const _);
+
+                *self.constructed.borrow_mut() = true;
+            }
+        }
+
+        #[derive(Clone, Copy)]
+        #[repr(C)]
+        pub struct DummyInterface {
+            parent: gobject_ffi::GTypeInterface,
+        }
+
+        #[glib::object_interface]
+        unsafe impl ObjectInterface for DummyInterface {
+            const NAME: &'static str = "Dummy";
+        }
+    }
+
+    wrapper! {
+        pub struct ChildObject(ObjectSubclass<imp::ChildObject>);
+    }
+
+    wrapper! {
+        pub struct SimpleObject(ObjectSubclass<imp::SimpleObject>);
+    }
+
+    wrapper! {
+        pub struct Dummy(ObjectInterface<imp::DummyInterface>);
+    }
+
+    unsafe impl<T: ObjectSubclass> IsImplementable<T> for Dummy {}
+
+    #[test]
+    fn test_create() {
+        let type_ = SimpleObject::static_type();
+        let obj = Object::with_type(type_);
+
+        assert!(obj.type_().is_a(Dummy::static_type()));
+
+        // Assert that the object representation is equivalent to the underlying C GObject pointer
+        assert_eq!(
+            mem::size_of::<SimpleObject>(),
+            mem::size_of::<ffi::gpointer>()
+        );
+        assert_eq!(obj.as_ptr() as ffi::gpointer, unsafe {
+            *(&obj as *const _ as *const ffi::gpointer)
+        });
+
+        assert!(obj.property::<bool>("constructed"));
+
+        let weak = obj.downgrade();
+        drop(obj);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn test_properties() {
+        let type_ = SimpleObject::static_type();
+        let obj = Object::with_type(type_);
+
+        assert!(obj.type_().is_a(Dummy::static_type()));
+
+        let properties = obj.list_properties();
+        assert_eq!(properties.len(), 4);
+        assert_eq!(properties[0].name(), "name");
+        assert_eq!(properties[1].name(), "construct-name");
+        assert_eq!(properties[2].name(), "constructed");
+        assert_eq!(properties[3].name(), "child");
+    }
+
+    #[test]
+    fn test_create_child_object() {
+        let obj: ChildObject = Object::new();
+
+        assert_eq!(&obj, obj.imp().obj().as_ref());
+    }
+
+    #[test]
+    fn test_builder() {
+        let obj = Object::builder::<SimpleObject>()
+            .property("construct-name", "meh")
+            .property("name", "initial")
+            .build();
+
+        assert_eq!(
+            obj.property::<String>("construct-name"),
+            String::from("meh")
+        );
+
+        assert_eq!(obj.property::<String>("name"), String::from("initial"));
+    }
+
+    #[test]
+    fn test_set_property() {
+        let obj = Object::builder::<SimpleObject>()
+            .property("construct-name", "meh")
+            .property("name", "initial")
+            .build();
+
+        assert_eq!(
+            obj.property::<String>("construct-name"),
+            String::from("meh")
+        );
+
+        assert_eq!(
+            obj.property::<String>("construct-name"),
+            String::from("meh")
+        );
+
+        assert_eq!(obj.property::<String>("name"), String::from("initial"));
+        obj.set_property("name", "test");
+        assert_eq!(obj.property::<String>("name"), String::from("test"));
+
+        let child = Object::with_type(ChildObject::static_type());
+        obj.set_property("child", &child);
+    }
+
+    #[test]
+    #[should_panic = "property 'construct-name' of type 'SimpleObject' is not writable"]
+    fn test_set_property_non_writable() {
+        let obj = Object::builder::<SimpleObject>()
+            .property("construct-name", "meh")
+            .property("name", "initial")
+            .build();
+
+        obj.set_property("construct-name", "test");
+    }
+
+    #[test]
+    #[should_panic = "property 'test' of type 'SimpleObject' not found"]
+    fn test_set_property_not_found() {
+        let obj = Object::builder::<SimpleObject>()
+            .property("construct-name", "meh")
+            .property("name", "initial")
+            .build();
+
+        obj.set_property("test", true);
+    }
+
+    #[test]
+    #[should_panic = "property 'constructed' of type 'SimpleObject' is not writable"]
+    fn test_set_property_not_writable() {
+        let obj = Object::builder::<SimpleObject>()
+            .property("construct-name", "meh")
+            .property("name", "initial")
+            .build();
+
+        obj.set_property("constructed", false);
+    }
+
+    #[test]
+    #[should_panic = "property 'name' of type 'SimpleObject' can't be set from the given type (expected: 'gchararray', got: 'gboolean')"]
+    fn test_set_property_wrong_type() {
+        let obj = Object::builder::<SimpleObject>()
+            .property("construct-name", "meh")
+            .property("name", "initial")
+            .build();
+
+        obj.set_property("name", false);
+    }
+
+    #[test]
+    #[should_panic = "property 'child' of type 'SimpleObject' can't be set from the given type (expected: 'ChildObject', got: 'SimpleObject')"]
+    fn test_set_property_wrong_type_2() {
+        let obj = Object::builder::<SimpleObject>()
+            .property("construct-name", "meh")
+            .property("name", "initial")
+            .build();
+
+        let other_obj = Object::with_type(SimpleObject::static_type());
+
+        obj.set_property("child", &other_obj);
+    }
+
+    #[test]
+    #[should_panic = "Can't set construct property 'construct-name' for type 'SimpleObject' twice"]
+    fn test_construct_property_set_twice() {
+        let _obj = Object::builder::<SimpleObject>()
+            .property("construct-name", "meh")
+            .property("construct-name", "meh2")
+            .build();
+    }
+
+    #[test]
+    fn test_signals() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let obj = Object::builder::<SimpleObject>()
+            .property("name", "old-name")
+            .build();
+
+        let name_changed_triggered = Arc::new(AtomicBool::new(false));
+        let name_changed_clone = name_changed_triggered.clone();
+        obj.connect("name-changed", false, move |args| {
+            let _obj = args[0].get::<Object>().expect("Failed to get args[0]");
+            let name = args[1].get::<&str>().expect("Failed to get args[1]");
+
+            assert_eq!(name, "new-name");
+            name_changed_clone.store(true, Ordering::Relaxed);
+
+            None
+        });
+
+        assert_eq!(obj.property::<String>("name"), String::from("old-name"));
+        assert!(!name_changed_triggered.load(Ordering::Relaxed));
+
+        assert_eq!(
+            obj.emit_by_name::<String>("change-name", &[&"new-name"]),
+            "old-name"
+        );
+        assert!(name_changed_triggered.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_signal_return_expected_type() {
+        let obj = Object::with_type(SimpleObject::static_type());
+
+        obj.connect("create-string", false, move |_args| {
+            Some("return value".to_value())
+        });
+
+        let signal_id = imp::SimpleObject::signals()[2].signal_id();
+
+        let value = obj.emit::<String>(signal_id, &[]);
+        assert_eq!(value, "return value");
+    }
+
+    #[test]
+    fn test_callback_validity() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let obj = Object::builder::<SimpleObject>()
+            .property("name", "old-name")
+            .build();
+
+        let name_changed_triggered = Arc::new(AtomicBool::new(false));
+        let name_changed_clone = name_changed_triggered.clone();
+
+        obj.connect_notify(Some("name"), move |_, _| {
+            name_changed_clone.store(true, Ordering::Relaxed);
+        });
+        obj.notify("name");
+        assert!(name_changed_triggered.load(Ordering::Relaxed));
+    }
+
+    // Note: can't test type mismatch in signals since panics accross FFI boundaries
+    // are UB. See https://github.com/gtk-rs/glib/issues/518
+
+    #[test]
+    fn test_signal_return_expected_object_type() {
+        let obj = Object::with_type(SimpleObject::static_type());
+
+        obj.connect("create-child-object", false, move |_args| {
+            Some(Object::with_type(ChildObject::static_type()).to_value())
+        });
+        let value: glib::Object = obj.emit_by_name("create-child-object", &[]);
+        assert!(value.type_().is_a(ChildObject::static_type()));
+    }
+}

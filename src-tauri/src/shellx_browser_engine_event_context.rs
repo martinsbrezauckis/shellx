@@ -28,7 +28,15 @@ pub(crate) struct BrowserEngineEventContexts {
 }
 
 impl ShellxBrowserRegistry {
-
+    #[cfg(test)]
+    pub(crate) fn begin_engine_event_binding(&self, engine_id: &str) -> String {
+        let engine_id = clean_string(engine_id);
+        let context = {
+            let state = lock_or_recover(&self.state);
+            browser_engine_event_context_from_snapshot(&state, &engine_id)
+        };
+        self.begin_engine_event_binding_for_context(&engine_id, context)
+    }
 
     pub(crate) fn begin_engine_event_binding_for_context(
         &self,
@@ -224,5 +232,23 @@ impl ShellxBrowserRegistry {
             contexts.current = previous;
             contexts.synchronizing = false;
         }
+    }
+}
+
+#[cfg(test)]
+fn browser_engine_event_context_from_snapshot(
+    state: &crate::shellx_browser::BrowserState,
+    engine_id: &str,
+) -> BrowserEngineEventContext {
+    let engine = state
+        .engine_pool
+        .engines
+        .iter()
+        .find(|engine| engine.engine_id == engine_id)
+        .or_else(|| (state.engine.engine_id == engine_id).then_some(&state.engine));
+    BrowserEngineEventContext {
+        task_id: engine.and_then(|engine| engine.task_id.clone()),
+        browser_tab_id: engine.and_then(|engine| engine.browser_tab_id.clone()),
+        profile_id: engine.and_then(|engine| engine.profile_id.clone()),
     }
 }

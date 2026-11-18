@@ -102,7 +102,10 @@ pub(super) async fn events_recent(
     }
 }
 
-
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+#[path = "../public/tests/inline/debug_api_events/tests.rs"]
+mod tests;
 
 pub(super) async fn events_ws(
     State(s): State<ApiState>,

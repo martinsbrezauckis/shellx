@@ -539,3 +539,7 @@ fn collect_raw_value(raw: &str, end: u64, collector: &mut PageCollector) -> Resu
 fn is_json_whitespace(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/session_log_page/tests.rs"]
+mod tests;

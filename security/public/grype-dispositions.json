@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "shellx.grype-dispositions.v1",
+  "entries": [
+    {
+      "advisoryId": "GHSA-wrw7-89jp-8q8g",
+      "package": "glib",
+      "versions": [
+        "0.18.5"
+      ],
+      "expiresOn": "2026-12-17",
+      "reason": "The resolved glib 0.18.5 source carries the exact gtk-rs VariantStrIter soundness backport; Grype identifies the unchanged compatibility version rather than the patched source bytes.",
+      "evidence": [
+        "The publicly exported vendor/glib source has the exact gtk-rs VariantStrIter out-parameter backport commit ea720152f28e293ef4362ee844ee5cc499f32d2a; vendor/glib/UPSTREAM binds crates.io package SHA-256 233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5.",
+        "The public GLib verifier checks the full patched vendor tree digest 9580323e2dcaa8d924521b0d88e435e6c7e7e83c5984a8d6b183cb601f7cfb89, exact mutable out-parameter source, active Cargo patch, and path-resolved glib 0.18.5 lock entry. Any source or provenance drift blocks the disposition."
+      ],
+      "upgradeCondition": "Remove this version-only scanner disposition when the Tauri Linux stack reaches glib 0.20 or later, or when Grype recognizes an official patched 0.18 release; reject any change that disables or alters the sealed backport in the meantime."
+    }
+  ]
+}

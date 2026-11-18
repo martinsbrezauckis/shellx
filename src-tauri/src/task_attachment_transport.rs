@@ -793,3 +793,7 @@ fn safe_extension(source: &str) -> String {
 fn sha256_digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/task_attachment_transport_tests.rs"]
+mod tests;

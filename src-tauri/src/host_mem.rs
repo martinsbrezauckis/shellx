@@ -70,13 +70,25 @@ const MAX_MEM_LIST_BYTES: usize = 2 * 1024 * 1024;
 
 // ───── path resolution ─────
 
-
+#[cfg(test)]
+static TEST_DB_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 /// Resolve `~/.shellx/memory.db`. Honors `HOME` on Unix and
 /// `USERPROFILE` on Windows. The directory is created if missing
 /// (mkdir -p). Returns an error string suitable for the MCP envelope.
 fn resolve_db_path() -> Result<PathBuf, String> {
-
+    #[cfg(test)]
+    {
+        if let Ok(guard) = TEST_DB_PATH.lock() {
+            if let Some(p) = guard.as_ref() {
+                if let Some(parent) = p.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("create override parent: {}", e))?;
+                }
+                return Ok(p.clone());
+            }
+        }
+    }
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "neither HOME nor USERPROFILE is set".to_string())?;
@@ -443,3 +455,7 @@ pub async fn delete(args: Value) -> Result<Value, String> {
 }
 
 // ───── tests ─────
+
+#[cfg(test)]
+#[path = "../public/tests/inline/host_mem/tests.rs"]
+mod tests;

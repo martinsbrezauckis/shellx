@@ -445,7 +445,6 @@ pub(super) async fn vault_get_http(
     vault_raw_reveal_denied_response()
 }
 
-
 fn vault_write_denied_response() -> Response {
     (
         StatusCode::FORBIDDEN,
@@ -463,11 +462,9 @@ fn vault_write_denied_response() -> Response {
 
 /// Product Debug API routes preserve a generic denial for direct Vault writes.
 /// Neither route reads request bodies or changes Vault entries.
-
 pub(super) async fn vault_set_http() -> Response {
     vault_write_denied_response()
 }
-
 
 pub(super) async fn vault_delete_http() -> Response {
     vault_write_denied_response()

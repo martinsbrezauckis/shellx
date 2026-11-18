@@ -163,7 +163,12 @@ pub struct TaskLocalTime {
     pub minute: u8,
 }
 
-
+#[cfg(test)]
+impl TaskLocalTime {
+    pub const fn new(hour: u8, minute: u8) -> Self {
+        Self { hour, minute }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -849,3 +854,7 @@ fn optional_text(
         .map(|value| required_text(label, value, maximum))
         .transpose()
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/task_model/tests.rs"]
+mod tests;

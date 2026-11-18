@@ -717,3 +717,7 @@ pub(crate) fn infer_mime_type_from_path(path: &str) -> Option<String> {
     };
     Some(mime.to_string())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_transfer_artifacts/tests.rs"]
+mod tests;

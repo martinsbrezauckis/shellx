@@ -13,7 +13,8 @@ use crate::task_time::{
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc, Weekday};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
-
+#[cfg(test)]
+use std::collections::BTreeSet;
 use std::collections::HashSet;
 
 /// A schedule count is deliberately capped because this is an in-process,
@@ -51,9 +52,27 @@ pub struct OccurrenceIdentityScope {
     pub revision_id: String,
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScheduledOccurrence {
+    pub scheduled_for: DateTime<Utc>,
+    pub occurrence_id: String,
+}
 
-
-
+#[cfg(test)]
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DuePlan {
+    /// Ordered oldest-to-newest, ready for a store to claim atomically.
+    pub occurrences: Vec<ScheduledOccurrence>,
+    /// Persist this bounded, data-only record with the store's append-only
+    /// receipt. It explains selection and suppression decisions without task
+    /// instructions, provider output, secrets, or local paths.
+    pub receipt: ScheduleDecisionReceipt,
+    /// The caller may persist this only after it records the plan or skips it.
+    pub evaluated_through: DateTime<Utc>,
+}
 
 /// A serializable scheduling decision for the durable receipt journal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,9 +294,109 @@ pub(crate) fn schedule_decision_receipt(
     Ok(receipt)
 }
 
+/// Plan occurrences in the `(after, now]` window without touching a clock or
+/// store. `known_occurrence_ids` is supplied by the durable occurrence store;
+/// it prevents a crash-recovery caller from asking to start an already claimed
+/// occurrence a second time.
+#[cfg(test)]
+#[allow(dead_code)]
+pub fn plan_due_occurrences(
+    schedule: &Schedule,
+    scope: &OccurrenceIdentityScope,
+    after: DateTime<Utc>,
+    now: DateTime<Utc>,
+    policy: MissedRunPolicy,
+    known_occurrence_ids: &BTreeSet<String>,
+) -> Result<DuePlan, ScheduleError> {
+    schedule.validate()?;
+    scope.validate()?;
+    if now <= after {
+        let mut receipt = ScheduleDecisionReceipt::new(schedule, scope, after, now, policy);
+        receipt.decisions.push(ScheduleDecision::EmptyWindow);
+        return Ok(DuePlan {
+            occurrences: Vec::new(),
+            receipt,
+            evaluated_through: now,
+        });
+    }
+    if matches!(policy, MissedRunPolicy::Skip) {
+        let mut receipt = ScheduleDecisionReceipt::new(schedule, scope, after, now, policy);
+        receipt
+            .decisions
+            .push(ScheduleDecision::MissedWindowSkipped);
+        return Ok(DuePlan {
+            occurrences: Vec::new(),
+            receipt,
+            evaluated_through: now,
+        });
+    }
 
+    if matches!(policy, MissedRunPolicy::NeedsAttention) {
+        let mut receipt = ScheduleDecisionReceipt::new(schedule, scope, after, now, policy);
+        receipt
+            .decisions
+            .push(ScheduleDecision::NeedsAttentionRequired);
+        return Ok(DuePlan {
+            occurrences: Vec::new(),
+            receipt,
+            evaluated_through: now,
+        });
+    }
 
+    let timezone = schedule.timezone()?;
+    match policy {
+        MissedRunPolicy::Skip => unreachable!("handled above"),
+        MissedRunPolicy::NeedsAttention => unreachable!("handled above"),
+        MissedRunPolicy::RunOnceWhenAvailable => {
+            let mut receipt = ScheduleDecisionReceipt::new(schedule, scope, after, now, policy);
+            let selected_scheduled_for = previous_scheduled_at(schedule, timezone, now)?
+                .filter(|scheduled_for| *scheduled_for > after);
+            let occurrences = match selected_scheduled_for.as_ref() {
+                Some(scheduled_for) => {
+                    let candidate = scheduled_occurrence(scope, *scheduled_for)?;
+                    if known_occurrence_ids.contains(&candidate.occurrence_id) {
+                        receipt
+                            .decisions
+                            .push(ScheduleDecision::KnownOccurrenceSuppressed {
+                                occurrence_id: candidate.occurrence_id,
+                                scheduled_for: *scheduled_for,
+                            });
+                        Vec::new()
+                    } else {
+                        receipt.decisions.push(ScheduleDecision::OccurrencePlanned {
+                            occurrence_id: candidate.occurrence_id.clone(),
+                            scheduled_for: *scheduled_for,
+                        });
+                        vec![candidate]
+                    }
+                }
+                _ => Vec::new(),
+            };
+            receipt
+                .decisions
+                .push(ScheduleDecision::RunOnceWhenAvailableSelected {
+                    selected_scheduled_for,
+                });
+            Ok(DuePlan {
+                occurrences,
+                receipt,
+                evaluated_through: now,
+            })
+        }
+    }
+}
 
+#[cfg(test)]
+#[allow(dead_code)]
+fn scheduled_occurrence(
+    scope: &OccurrenceIdentityScope,
+    scheduled_for: DateTime<Utc>,
+) -> Result<ScheduledOccurrence, ScheduleError> {
+    Ok(ScheduledOccurrence {
+        occurrence_id: occurrence_id(scope, scheduled_for)?,
+        scheduled_for,
+    })
+}
 
 fn instant_from_millis(at_ms: i64) -> Result<DateTime<Utc>, ScheduleError> {
     Utc.timestamp_millis_opt(at_ms)

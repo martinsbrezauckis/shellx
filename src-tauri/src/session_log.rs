@@ -601,3 +601,7 @@ fn read_exact_range(file: &mut std::fs::File, offset: u64, len: usize) -> Result
         .map_err(|e| format!("read failed: {e}"))?;
     Ok(bytes)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/session_log/tests.rs"]
+mod tests;

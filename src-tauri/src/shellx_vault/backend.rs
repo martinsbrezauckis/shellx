@@ -3,7 +3,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
+#[cfg(test)]
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -196,7 +197,14 @@ fn stable_default_profile_dir() -> PathBuf {
     shared_default_profile_dir().unwrap_or_else(|_| legacy_shellx_profile_dir())
 }
 
-
+#[cfg(test)]
+fn stable_default_profile_dir_without_env_override() -> PathBuf {
+    let mut input = vault_broker::profile::current_profile_input();
+    input.override_dir = None;
+    vault_broker::profile::resolve_profile_dirs(input)
+        .map(|dirs| dirs.canonical_dir)
+        .unwrap_or_else(|_| legacy_shellx_profile_dir())
+}
 
 fn shared_default_profile_dir() -> Result<PathBuf, String> {
     vault_broker::profile::resolve_current_profile_dirs()
@@ -228,9 +236,19 @@ fn home_dir_from_env(home: Option<OsString>, userprofile: Option<OsString>) -> O
         .map(PathBuf::from)
 }
 
+#[cfg(test)]
+fn normalize_guard_path(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    while normalized.ends_with('/') && normalized.len() > 1 {
+        normalized.pop();
+    }
+    normalized.to_ascii_lowercase()
+}
 
-
-
+#[cfg(test)]
+fn paths_match_for_guard(left: &Path, right: &Path) -> bool {
+    normalize_guard_path(left) == normalize_guard_path(right)
+}
 
 fn profile_path(profile_dir: &Path) -> PathBuf {
     vault_broker::profile::canonical_profile_path(profile_dir)
@@ -413,15 +431,22 @@ pub struct ShellxVaultBackend {
     // Retaining it until publication makes a failed confirmation retry report the
     // import that its eventual durable flush performed.
     staged_legacy_import_receipt: tokio::sync::Mutex<Option<LegacyImportReceipt>>,
-
-
-
-
+    #[cfg(test)]
+    compat_flush_fail_after_saves: tokio::sync::Mutex<Option<usize>>,
+    #[cfg(test)]
+    compat_confirmation_profile_write_fail_once: tokio::sync::Mutex<bool>,
+    #[cfg(test)]
+    allow_global_legacy_vault: bool,
+    #[cfg(test)]
+    legacy_vault_fixture: tokio::sync::Mutex<Option<Vec<(String, String)>>>,
     grants: tokio::sync::Mutex<BrokerGrantPolicy>,
-
+    #[cfg(test)]
+    debug_audit: tokio::sync::Mutex<Vec<e2e_test_support::VaultDebugAuditRecord>>,
 }
 
-
+#[cfg(test)]
+#[path = "../../public/tests/unit/shellx_vault/backend_e2e_test_support.rs"]
+mod e2e_test_support;
 
 const REMEMBERED_UNLOCK_RETRY_COOLDOWN_MS: i64 = 15_000;
 
@@ -436,7 +461,8 @@ struct LocalVaultServer {
     token: String,
 }
 
-
+#[cfg(test)]
+use e2e_test_support::MAX_DEBUG_AUDIT_RECORDS;
 
 #[derive(Clone)]
 struct VaultBridgeSession {
@@ -479,9 +505,39 @@ impl RememberedDeviceStore for OsRememberedDeviceStore {
     }
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct MemoryRememberedDeviceStore {
+    values: Mutex<BTreeMap<String, String>>,
+}
 
+#[cfg(test)]
+impl RememberedDeviceStore for MemoryRememberedDeviceStore {
+    fn get(&self, account: &str) -> Result<Option<String>, String> {
+        Ok(self
+            .values
+            .lock()
+            .map_err(|_| "remembered device memory store poisoned".to_string())?
+            .get(account)
+            .cloned())
+    }
 
+    fn set(&self, account: &str, value: &str) -> Result<(), String> {
+        self.values
+            .lock()
+            .map_err(|_| "remembered device memory store poisoned".to_string())?
+            .insert(account.to_string(), value.to_string());
+        Ok(())
+    }
 
+    fn delete(&self, account: &str) -> Result<(), String> {
+        self.values
+            .lock()
+            .map_err(|_| "remembered device memory store poisoned".to_string())?
+            .remove(account);
+        Ok(())
+    }
+}
 
 fn remembered_device_entry(account: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(REMEMBERED_DEVICE_KEYRING_SERVICE, account)
@@ -503,7 +559,8 @@ impl Default for ShellxVaultBackend {
             profile_dir,
             initial_status,
             Arc::new(OsRememberedDeviceStore),
-
+            #[cfg(test)]
+            true,
         )
     }
 }
@@ -513,17 +570,38 @@ impl ShellxVaultBackend {
         &self.profile_dir
     }
 
+    #[cfg(test)]
+    pub fn for_test(profile_dir: PathBuf) -> Self {
+        Self::with_remembered_device_store_for_test(
+            profile_dir,
+            Arc::new(MemoryRememberedDeviceStore::default()),
+        )
+    }
 
+    #[cfg(test)]
+    pub(crate) async fn set_legacy_vault_fixture_for_test(&self, pairs: Vec<(String, String)>) {
+        *self.legacy_vault_fixture.lock().await = Some(pairs);
+    }
 
-
-
-
+    #[cfg(test)]
+    fn with_remembered_device_store_for_test(
+        profile_dir: PathBuf,
+        remembered_device_store: Arc<dyn RememberedDeviceStore>,
+    ) -> Self {
+        let initial_status = load_persisted_profile_status(&profile_path(&profile_dir));
+        Self::with_initial_status_and_store(
+            profile_dir,
+            initial_status,
+            remembered_device_store,
+            false,
+        )
+    }
 
     fn with_initial_status_and_store(
         profile_dir: PathBuf,
         mut initial_status: ShellxVaultStatus,
         remembered_device_store: Arc<dyn RememberedDeviceStore>,
-
+        #[cfg(test)] allow_global_legacy_vault: bool,
     ) -> Self {
         let grants = match read_persisted_grants(&grants_path(&profile_dir)) {
             Ok(grants) => grants,
@@ -549,12 +627,17 @@ impl ShellxVaultBackend {
             compat_values: tokio::sync::Mutex::new(BTreeMap::new()),
             compat_meta: tokio::sync::Mutex::new(BTreeMap::new()),
             staged_legacy_import_receipt: tokio::sync::Mutex::new(None),
-
-
-
-
+            #[cfg(test)]
+            compat_flush_fail_after_saves: tokio::sync::Mutex::new(None),
+            #[cfg(test)]
+            compat_confirmation_profile_write_fail_once: tokio::sync::Mutex::new(false),
+            #[cfg(test)]
+            allow_global_legacy_vault,
+            #[cfg(test)]
+            legacy_vault_fixture: tokio::sync::Mutex::new(None),
             grants: tokio::sync::Mutex::new(grants),
-
+            #[cfg(test)]
+            debug_audit: tokio::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -1231,8 +1314,18 @@ impl ShellxVaultBackend {
         }
         self.flush_compat_cache_to_session(&session_to_activate)
             .await?;
-
-
+        #[cfg(test)]
+        let injected_profile_write_failure = {
+            let mut fail_once = self
+                .compat_confirmation_profile_write_fail_once
+                .lock()
+                .await;
+            std::mem::take(&mut *fail_once)
+        };
+        #[cfg(test)]
+        if injected_profile_write_failure {
+            return Err("injected confirmation profile write failure".to_string());
+        }
         self.write_profile(&profile)?;
         *self.pending_profile.lock().await = Some(profile.clone());
         let activated_session = self
@@ -1275,7 +1368,16 @@ impl ShellxVaultBackend {
         let metadata = self.compat_meta.lock().await.clone();
         for (key, value) in staged {
             let meta = metadata.get(&key).cloned().unwrap_or_default();
-
+            #[cfg(test)]
+            {
+                let mut fail_after = self.compat_flush_fail_after_saves.lock().await;
+                if let Some(remaining) = fail_after.as_mut() {
+                    if *remaining == 0 {
+                        return Err("injected compat cache flush failure".to_string());
+                    }
+                    *remaining -= 1;
+                }
+            }
             save_compat_item(session, &key, &value, meta).await?;
         }
         self.compat_values.lock().await.clear();
@@ -1284,7 +1386,10 @@ impl ShellxVaultBackend {
     }
 
     async fn legacy_vault_detected(&self) -> bool {
-
+        #[cfg(test)]
+        if !self.allow_global_legacy_vault {
+            return self.legacy_vault_fixture.lock().await.is_some();
+        }
         legacy_vault_path()
             .map(|path| path.exists())
             .unwrap_or(false)
@@ -1296,7 +1401,15 @@ impl ShellxVaultBackend {
             return Err("vault setup must be started first".into());
         }
         drop(pending);
-
+        #[cfg(test)]
+        if !self.allow_global_legacy_vault {
+            return Ok(self
+                .legacy_vault_fixture
+                .lock()
+                .await
+                .clone()
+                .unwrap_or_default());
+        }
         if !legacy_vault_path()
             .map(|path| path.exists())
             .unwrap_or(false)
@@ -1356,7 +1469,24 @@ impl ShellxVaultBackend {
         if self.session.lock().await.is_none() {
             return Ok(legacy_import_noop_receipt());
         }
-
+        #[cfg(test)]
+        if !self.allow_global_legacy_vault {
+            let Some(fixture) = self.legacy_vault_fixture.lock().await.clone() else {
+                return Ok(legacy_import_noop_receipt());
+            };
+            let pairs = LEGACY_XAI_IMPORT_KEYS
+                .iter()
+                .filter_map(|key| {
+                    fixture
+                        .iter()
+                        .find(|(candidate, _)| candidate.trim() == *key)
+                        .map(|(_, value)| ((*key).to_string(), value.clone()))
+                })
+                .collect();
+            return self
+                .import_legacy_xai_pairs_for_existing_vault_locked(pairs)
+                .await;
+        }
         if !legacy_vault_path()
             .map(|path| path.exists())
             .unwrap_or(false)
@@ -1376,7 +1506,15 @@ impl ShellxVaultBackend {
             .await
     }
 
-
+    #[cfg(test)]
+    async fn import_legacy_xai_pairs_for_existing_vault(
+        &self,
+        pairs: Vec<(String, String)>,
+    ) -> Result<LegacyImportReceipt, String> {
+        let _transition = self.state_transition.lock().await;
+        self.import_legacy_xai_pairs_for_existing_vault_locked(pairs)
+            .await
+    }
 
     async fn import_legacy_xai_pairs_for_existing_vault_locked(
         &self,
@@ -2540,3 +2678,11 @@ fn typed_resource_item_from_compat(
     }
     .to_vault_item()
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/unit/shellx_vault/backend_reliability_tests.rs"]
+mod reliability_tests;
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/shellx_vault/backend/tests.rs"]
+mod tests;

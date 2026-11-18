@@ -174,7 +174,9 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 use crate::acp::SessionRegistry;
 
-
+#[cfg(test)]
+#[path = "../public/tests/qualification/session_archive_regression_tests.rs"]
+mod regression_tests;
 
 #[derive(Serialize)]
 pub struct ArchiveSummary {
@@ -1148,3 +1150,7 @@ fn validate_remote_path_component(label: &str, value: &str) -> Result<(), String
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/session_archive/tests.rs"]
+mod tests;

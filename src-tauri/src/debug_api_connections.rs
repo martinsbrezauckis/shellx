@@ -275,7 +275,9 @@ fn reject_agent_cli_setup_inline_preset(preset_present: bool) -> Result<(), Stri
     Ok(())
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_connections/agent_cli_setup_route_tests.rs"]
+mod agent_cli_setup_route_tests;
 
 pub(super) fn bad_agent_cli_setup_response(message: String) -> Response {
     (

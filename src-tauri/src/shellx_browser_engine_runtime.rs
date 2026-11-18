@@ -1,4 +1,5 @@
-
+#[cfg(test)]
+use base64::Engine as _;
 use std::sync::Arc;
 use tauri::webview::NewWindowResponse;
 use tauri::{
@@ -338,7 +339,7 @@ fn browser_webview_should_navigate(
         && !pending_url.is_some_and(|pending| browser_runtime_urls_match(pending, target_url))
 }
 
-#[cfg(windows)]
+#[cfg(any(test, windows))]
 fn browser_strict_native_filter_is_available() -> bool {
     cfg!(windows)
 }
@@ -972,3 +973,7 @@ pub(crate) fn engine_bounds_rect(bounds: BrowserEngineBounds) -> Result<Rect, St
         size: Size::Logical(LogicalSize::new(bounds.width, bounds.height)),
     })
 }
+
+#[cfg(test)]
+#[path = "../public/tests/qualification/shellx_browser_engine_runtime_tests.rs"]
+mod tests;

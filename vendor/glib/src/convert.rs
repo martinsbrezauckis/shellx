@@ -401,3 +401,48 @@ pub fn normalize(str: impl AsRef<str>, mode: NormalizeMode) -> GString {
         from_glib_full(str)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn convert_ascii() {
+        assert!(super::convert(b"Hello", "utf-8", "ascii").is_ok());
+        assert!(super::convert(b"He\xaallo", "utf-8", "ascii").is_err());
+        assert_eq!(
+            super::convert_with_fallback(b"H\xc3\xa9llo", "ascii", "utf-8", crate::NONE_STR)
+                .unwrap()
+                .0
+                .as_slice(),
+            b"H\\u00e9llo"
+        );
+        assert_eq!(
+            super::convert_with_fallback(b"H\xc3\xa9llo", "ascii", "utf-8", Some("_"))
+                .unwrap()
+                .0
+                .as_slice(),
+            b"H_llo"
+        );
+    }
+    #[test]
+    fn iconv() {
+        let mut conv = super::IConv::new("utf-8", "ascii").unwrap();
+        assert!(conv.convert(b"Hello").is_ok());
+        assert!(conv.convert(b"He\xaallo").is_err());
+        assert!(super::IConv::new("utf-8", "badcharset123456789").is_none());
+    }
+    #[test]
+    fn filename_charsets() {
+        let _ = super::filename_charsets();
+    }
+
+    #[test]
+    fn utf8_and_utf32() {
+        let utf32 = ['A', 'b', '🤔'];
+        let utf8 = super::utf32_to_utf8(utf32);
+        assert_eq!(utf8, "Ab🤔");
+
+        let utf8 = "🤔 ț";
+        let utf32 = super::utf8_to_utf32(utf8);
+        assert_eq!(utf32.as_slice(), &['🤔', ' ', 'ț']);
+    }
+}

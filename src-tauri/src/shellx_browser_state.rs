@@ -988,3 +988,7 @@ impl ShellxBrowserRegistry {
         jobs
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_state_tests.rs"]
+mod tests;

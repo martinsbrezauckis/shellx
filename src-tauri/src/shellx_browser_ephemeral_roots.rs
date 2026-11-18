@@ -750,3 +750,7 @@ pub(crate) struct EphemeralScavengeReport {
     pub(crate) skipped_due_to_process_lock: bool,
     pub(crate) errors: Vec<String>,
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_ephemeral_roots_tests.rs"]
+mod tests;

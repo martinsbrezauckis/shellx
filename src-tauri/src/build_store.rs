@@ -88,8 +88,6 @@ pub fn build_run_dir(base: &Path, tab_id: &str, run_id: &str) -> PathBuf {
         .join(sanitize_build_slug(run_id))
 }
 
-
-
 pub fn write_state(base: &Path, state: &BuildRunState) -> Result<(), String> {
     let dir = prepare_private_run_dir(base, &state.tab_id, &state.run_id)?;
     let path = dir.join("state.json");
@@ -231,3 +229,7 @@ pub fn read_receipts_with_errors(
     }
     Ok((receipts, errors))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/build_store/tests.rs"]
+mod tests;

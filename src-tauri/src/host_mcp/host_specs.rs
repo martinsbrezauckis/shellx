@@ -118,3 +118,7 @@ pub(super) fn route_host_entry(
     };
     Ok((action.to_string(), params))
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/host_mcp/host_specs/tests.rs"]
+mod tests;

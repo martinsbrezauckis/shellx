@@ -738,3 +738,33 @@ fn is_newer_than_windows81() -> bool {
     let os = windows_version::OsVersion::current();
     os.major > 6
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simple_toast() {
+        let toast = Toast::new(Toast::POWERSHELL_APP_ID);
+        toast
+            .hero(
+                &Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/test/flower.jpeg"),
+                "flower",
+            )
+            .icon(
+                &Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/test/chick.jpeg"),
+                IconCrop::Circular,
+                "chicken",
+            )
+            .title("title")
+            .text1("line1")
+            .text2("line2")
+            .duration(Duration::Short)
+            //.sound(Some(Sound::Loop(LoopableSound::Call)))
+            //.sound(Some(Sound::SMS))
+            .sound(None)
+            .show()
+            // silently consume errors
+            .expect("notification failed");
+    }
+}

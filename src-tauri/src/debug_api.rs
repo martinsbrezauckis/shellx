@@ -325,7 +325,6 @@ pub struct UiState {
     /// Bounded operator-command delivery, independent of renderer observations.
     #[serde(default)]
     pub command_stream: ui_state_http::UiCommandStream,
-
     /// Current panel sizes (percentages 0..100). Mirrors the React
     /// `react-resizable-panels` group sizes; localStorage persists in
     /// the renderer, this struct is the cross-session debug view.
@@ -712,8 +711,6 @@ impl DebugHub {
             }),
             tx,
             ui_state: StdMutex::new({
-
-
                 {
                     UiState::default()
                 }
@@ -970,7 +967,10 @@ impl DebugHub {
             .collect()
     }
 
-
+    #[cfg(test)]
+    pub(crate) fn buffered_bytes(&self) -> usize {
+        lock_or_recover(&self.buffer, "DebugHub buffer").bytes
+    }
 }
 
 pub use ui_state_http::UiStatePatch;
@@ -1375,12 +1375,9 @@ pub async fn start_debug_server(app: AppHandle) -> Result<(), String> {
         )
         .layer(DefaultBodyLimit::max(32 * 1024 * 1024));
 
-
     let router = router
         .route("/vault/set", post(vault_set_http))
         .route("/vault/delete", post(vault_delete_http));
-
-
 
     let router = router.with_state(app_state);
 
@@ -1683,7 +1680,6 @@ struct HealthResponse {
     ok: bool,
     #[serde(rename = "processId")]
     process_id: u32,
-
     #[serde(rename = "appVersion")]
     app_version: &'static str,
     #[serde(rename = "debugApiVersion")]
@@ -1710,7 +1706,6 @@ fn health_response(port: u16, hub: &DebugHub) -> HealthResponse {
     HealthResponse {
         ok: true,
         process_id: std::process::id(),
-
         app_version: env!("CARGO_PKG_VERSION"),
         debug_api_version: DEBUG_API_VERSION,
         build_commit: crate::build_metadata::SHELLX_BUILD_COMMIT,
@@ -1728,3 +1723,7 @@ async fn health(State(state): State<ApiState>) -> impl IntoResponse {
     let hub = state.hub();
     Json(health_response(debug_api_port(), &hub))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/debug_api_tests.rs"]
+mod tests;

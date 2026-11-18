@@ -386,3 +386,7 @@ fn direct_request_command(normalized: &str) -> &str {
     }
     command
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/task_intent/tests.rs"]
+mod tests;

@@ -67,7 +67,26 @@ pub(crate) fn browser_tab_handoff_review_fingerprint(
 }
 
 impl ShellxBrowserRegistry {
-
+    #[cfg(test)]
+    pub(crate) fn tab_handoff_review_fingerprint(
+        &self,
+        browser_tab_id: &str,
+        task_id: &str,
+    ) -> Result<String, String> {
+        let state = lock_or_recover(&self.state);
+        let tab_idx = find_tab_index(&state, browser_tab_id)?;
+        let task_idx = find_task_index(&state, task_id)?;
+        let profile = state
+            .profiles
+            .iter()
+            .find(|profile| profile.profile_id == state.tabs[tab_idx].profile_id)
+            .ok_or_else(|| "Browser handoff profile is unavailable".to_string())?;
+        Ok(browser_tab_handoff_review_fingerprint(
+            &state.tabs[tab_idx],
+            profile,
+            &state.tasks[task_idx],
+        ))
+    }
 
     pub fn delegate_tab_to_agent(
         &self,
@@ -143,3 +162,7 @@ impl ShellxBrowserRegistry {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_tab_handoff/tests.rs"]
+mod tests;

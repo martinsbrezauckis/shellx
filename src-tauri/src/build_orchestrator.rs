@@ -373,13 +373,9 @@ Status: TODO\n\
         Ok(())
     }
 
-
-
     pub async fn clear_tab(&self, tab_id: &str) {
         self.states.write().await.remove(tab_id);
     }
-
-
 
     pub async fn get_receipts(&self, tab_id: &str) -> Result<Vec<BuildReceipt>, String> {
         let state = self
@@ -2448,3 +2444,7 @@ fn now_ms() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/build_orchestrator/tests.rs"]
+mod tests;

@@ -273,3 +273,7 @@ fn sanitize_console_details(details: Option<serde_json::Value>) -> serde_json::V
         details
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_reports/tests.rs"]
+mod tests;

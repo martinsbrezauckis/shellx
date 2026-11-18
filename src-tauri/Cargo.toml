@@ -25,6 +25,38 @@ autoexamples = false
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[test]]
+name = "task_execution_runtime"
+path = "public/tests/integration/task_execution_runtime.rs"
+
+[[test]]
+name = "shellx_browser"
+path = "public/tests/integration/shellx_browser.rs"
+
+[[test]]
+name = "provider_adapters"
+path = "public/tests/integration/provider_adapters.rs"
+
+[[test]]
+name = "shellx_browser_evaluations"
+path = "public/tests/integration/shellx_browser_evaluations.rs"
+
+[[test]]
+name = "shellx_browser_flight_recorder"
+path = "public/tests/integration/shellx_browser_flight_recorder.rs"
+
+[[test]]
+name = "task_schedule"
+path = "public/tests/integration/task_schedule.rs"
+
+[[test]]
+name = "skill_install_e2e"
+path = "public/tests/integration/skill_install_e2e.rs"
+
+[[test]]
+name = "task_provider_fallback"
+path = "public/tests/integration/task_provider_fallback.rs"
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 cc = "1"
@@ -263,6 +295,10 @@ windows-sys = { version = "0.61", features = [
 # minimal-build opt-out.
 default = ["debug-api"]
 debug-api = ["dep:axum", "dep:tower-http"]
+# Test-only Windows linker support. Production builds do not select it.
+windows-test-manifest = []
+
+[dev-dependencies]
 
 # notify-rust 4.18 uses the 0.7.x Windows toast wrapper API; retain the
 # compatible patched source for that dependency interface.

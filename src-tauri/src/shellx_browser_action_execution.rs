@@ -131,3 +131,7 @@ fn browser_result_waits_for_actionability(
         .iter()
         .all(|check| check == "stable" || (force_click && check == "receivesEvents"))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_action_execution/tests.rs"]
+mod tests;

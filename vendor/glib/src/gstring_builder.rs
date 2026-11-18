@@ -312,3 +312,56 @@ impl fmt::Write for GStringBuilder {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn append() {
+        let mut s = crate::GStringBuilder::new("");
+        assert_eq!(&*s, "");
+        s.append("Hello");
+        s.append(" ");
+        s.append("there!");
+        assert_eq!(&*s, "Hello there!");
+        assert_eq!(s.into_string().as_str(), "Hello there!");
+    }
+
+    #[test]
+    fn prepend() {
+        let mut s = crate::GStringBuilder::new("456");
+        assert_eq!(&*s, "456");
+        s.prepend("123");
+        assert_eq!(&*s, "123456");
+    }
+
+    #[test]
+    fn default() {
+        let s1: crate::GStringBuilder = Default::default();
+        assert_eq!(&*s1, "");
+    }
+
+    #[test]
+    fn display() {
+        let s: crate::GStringBuilder = crate::GStringBuilder::new("This is a string.");
+        assert_eq!(&format!("{s}"), "This is a string.");
+    }
+
+    #[test]
+    fn eq() {
+        let a1 = crate::GStringBuilder::new("a");
+        let a2 = crate::GStringBuilder::new("a");
+        let b = crate::GStringBuilder::new("b");
+        assert_eq!(a1, a2);
+        assert_ne!(a1, b);
+        assert_ne!(a2, b);
+    }
+
+    #[test]
+    fn write() {
+        use std::fmt::Write;
+
+        let mut s = crate::GStringBuilder::default();
+        write!(&mut s, "bla bla {} bla", 123).unwrap();
+        assert_eq!(&*s, "bla bla 123 bla");
+    }
+}

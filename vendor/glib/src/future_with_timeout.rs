@@ -48,3 +48,56 @@ pub async fn future_with_timeout<T>(
 ) -> Result<T, FutureWithTimeoutError> {
     future_with_timeout_with_priority(crate::Priority::default(), timeout, fut).await
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use futures_util::FutureExt;
+
+    use super::*;
+    use crate::{MainContext, MainLoop};
+
+    #[test]
+    fn test_future_with_timeout() {
+        let c = MainContext::new();
+
+        let fut = future::pending::<()>();
+        let result = c.block_on(future_with_timeout(Duration::from_millis(20), fut));
+        assert_eq!(result, Err(FutureWithTimeoutError));
+
+        let fut = future::ready(());
+        let result = c.block_on(future_with_timeout(Duration::from_millis(20), fut));
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn test_future_with_timeout_send() {
+        let c = MainContext::new();
+        let l = MainLoop::new(Some(&c), false);
+
+        let l_clone = l.clone();
+        let fut = future::pending::<()>();
+        c.spawn(
+            future_with_timeout(Duration::from_millis(20), fut).then(move |result| {
+                l_clone.quit();
+                assert_eq!(result, Err(FutureWithTimeoutError));
+                futures_util::future::ready(())
+            }),
+        );
+
+        l.run();
+
+        let l_clone = l.clone();
+        let fut = future::ready(());
+        c.spawn(
+            future_with_timeout(Duration::from_millis(20), fut).then(move |result| {
+                l_clone.quit();
+                assert_eq!(result, Ok(()));
+                futures_util::future::ready(())
+            }),
+        );
+
+        l.run();
+    }
+}

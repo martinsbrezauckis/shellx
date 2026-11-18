@@ -676,3 +676,11 @@ fn path_is_within(path: &str, root: &str, separator: char) -> bool {
             .strip_prefix(root)
             .is_some_and(|rest| rest.starts_with(separator))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/qualification/remote_project_file_integrity_tests.rs"]
+mod integrity_tests;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/remote_project_file/tests.rs"]
+mod tests;

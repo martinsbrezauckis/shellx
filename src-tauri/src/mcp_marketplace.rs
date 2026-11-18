@@ -1504,3 +1504,7 @@ fn powershell_catalog_arg(arg: &str) -> String {
     }
     format!("({})", fragments.join("+"))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/mcp_marketplace/tests.rs"]
+mod tests;

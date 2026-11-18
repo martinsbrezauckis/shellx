@@ -40,3 +40,7 @@ async fn reject_invalid_browser_caller_header(request: Request, next: Next) -> R
         Err(response) => *response,
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_browser/tests.rs"]
+mod tests;

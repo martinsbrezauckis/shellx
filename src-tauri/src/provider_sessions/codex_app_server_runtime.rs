@@ -466,3 +466,7 @@ async fn write_codex_app_server_message(
     })?
     .map_err(|error| format!("Codex app-server stdin write failed: {error}"))
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/provider_sessions/codex_app_server_runtime/tests.rs"]
+mod tests;

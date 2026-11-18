@@ -288,9 +288,37 @@ fn zeroize_plaintext_values(state: &mut Plaintext) {
     }
 }
 
+#[cfg(test)]
+fn persist_plaintext_then_zeroize<T, F>(state: &mut Plaintext, persist: F) -> Result<T, String>
+where
+    F: FnOnce(&Plaintext) -> Result<T, String>,
+{
+    let result = persist(state);
+    zeroize_plaintext_values(state);
+    result
+}
 
-
-
+/// Encrypt a plaintext map under the given AEAD cipher. Generates a
+/// fresh 96-bit nonce via OsRng on every call.
+#[cfg(test)]
+fn encrypt_envelope(cipher: &ChaCha20Poly1305, state: &Plaintext) -> Result<Envelope, String> {
+    let plaintext = Zeroizing::new(
+        serde_json::to_vec(state).map_err(|e| format!("vault: plaintext serialize: {}", e))?,
+    );
+    let mut nonce_bytes = [0u8; 12];
+    rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext.as_slice())
+        .map_err(|e| format!("vault: encrypt failed: {}", e))?;
+    Ok(Envelope {
+        version: VAULT_VERSION,
+        kdf: "os-keyring".to_string(),
+        cipher: "chacha20poly1305".to_string(),
+        nonce: B64.encode(nonce_bytes),
+        ciphertext: B64.encode(ciphertext),
+    })
+}
 
 /// Decrypt an envelope into a plaintext map. Rejects unsupported
 /// versions / ciphers so a future format change can't be silently
@@ -546,3 +574,7 @@ fn keyfile_path() -> Result<PathBuf, String> {
 }
 
 // ───── tests ─────
+
+#[cfg(test)]
+#[path = "../public/tests/inline/vault/tests.rs"]
+mod tests;

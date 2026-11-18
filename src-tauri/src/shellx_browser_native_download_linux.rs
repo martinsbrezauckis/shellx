@@ -465,3 +465,7 @@ fn local_webkit_destination_path(destination: &std::path::Path) -> Option<&str> 
 fn path_from_webkit_destination(destination: &str) -> PathBuf {
     PathBuf::from(destination)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_native_download_linux/tests.rs"]
+mod tests;

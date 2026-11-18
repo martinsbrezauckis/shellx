@@ -736,3 +736,7 @@ pub(super) async fn tool_browser_workflow_replay(
         false,
     ))
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/host_mcp/browser_workflow/replay_binding_tests.rs"]
+mod replay_binding_tests;

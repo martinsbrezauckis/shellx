@@ -31,12 +31,20 @@ use rusqlite::{params, Connection, OpenFlags};
 use serde_json::Value;
 use std::path::PathBuf;
 
-
+#[cfg(test)]
+thread_local! {
+    static TEST_DB_PATH: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
 
 /// Default file location: `~/.shellx/subagents.db`. Lives alongside
 /// the existing memory.db so backup/cleanup tools see them together.
 fn configured_db_path() -> Result<PathBuf, String> {
-
+    #[cfg(test)]
+    {
+        if let Some(p) = TEST_DB_PATH.with(|slot| slot.borrow().clone()) {
+            return Ok(p);
+        }
+    }
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "neither HOME nor USERPROFILE is set".to_string())?;
@@ -245,7 +253,31 @@ pub fn upsert(
     Ok(())
 }
 
-
+/// Read all subagent rows ordered newest-first by mtime. Optional
+/// `max_age_ms` filter caps the window so a long-running shellX
+/// session doesn't surface week-old completed rows. Default cap is
+/// 24 hours — anything older is GC-fodder for `gc_older_than_ms`.
+///
+/// Returns JSON-friendly rows matching the same wire shape as the
+/// old `subagent::list_summaries` (camelCase keys, optional fields
+/// serialized as null when None).
+#[cfg(test)]
+fn list_recent(max_age_ms: Option<i64>) -> Result<Vec<Value>, String> {
+    let conn = open_db()?;
+    match reconcile_dead_running_rows(&conn) {
+        Ok(updated) if updated > 0 => {
+            tracing::warn!(
+                "subagents stale-state reconciliation marked {} dead running row(s) failed",
+                updated
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!("subagents stale-state reconciliation failed: {}", e);
+        }
+    }
+    query_recent(&conn, max_age_ms)
+}
 
 /// Pure diagnostic snapshot for GET/read surfaces. It never creates the
 /// profile directory or database, initializes/migrates schema, reconciles
@@ -462,3 +494,7 @@ fn gc_with_connection(conn: &Connection, older_than_ms: i64) -> Result<usize, St
     )
     .map_err(|e| format!("subagents gc: {}", e))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/host_subagents/tests.rs"]
+mod tests;

@@ -120,7 +120,9 @@ pub(crate) fn acquire_store_lock(root: &Path) -> Result<OwnedStoreLock, TaskStor
     Ok(OwnedStoreLock { file: lock_file })
 }
 
-
+#[cfg(all(test, unix))]
+#[path = "../public/tests/inline/task_store_persistence/lock_tests.rs"]
+mod lock_tests;
 
 pub(crate) fn hydrate_terminal_receipt_index(store: &mut PersistedTaskStore) -> Result<(), String> {
     for receipt in &store.receipts.entries {

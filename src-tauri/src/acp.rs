@@ -5783,7 +5783,9 @@ fn windows_to_wsl_path(win_path: &str) -> String {
     }
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/acp/windows_to_wsl_path_tests.rs"]
+mod windows_to_wsl_path_tests;
 
 /// Resolve the path emitted by a remote
 /// grok against the remote cwd, without any Windows-side translation.
@@ -5981,8 +5983,6 @@ fn permission_registry_missing_response() -> serde_json::Value {
     serde_json::json!({ "outcome": { "outcome": "cancelled" } })
 }
 
-
-
 pub(crate) struct BoundedSshOutput {
     pub(crate) status: std::process::ExitStatus,
     pub(crate) stdout: Vec<u8>,
@@ -6071,8 +6071,6 @@ pub(crate) async fn run_bounded_ssh_capture(
         stderr,
     })
 }
-
-
 
 /// Convert WSL path (from agent inside WSL, e.g. /mnt/c/... or relative) back to Windows form for host tokio::fs.
 fn wsl_to_windows_path(wsl_path: &str) -> String {
@@ -6211,7 +6209,9 @@ async fn send_error_response(
     }
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/acp/tests.rs"]
+mod tests;
 
 // ──────────── Transport enum ────────────
 //
@@ -6659,3 +6659,15 @@ pub fn validate_ssh_destination_arg(host: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/qualification/acp_setup_probe_regression_tests.rs"]
+mod setup_probe_regression_tests;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/acp/transport_tests.rs"]
+mod transport_tests;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/acp/pending_permission_tests.rs"]
+mod pending_permission_tests;

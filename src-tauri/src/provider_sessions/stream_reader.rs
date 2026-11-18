@@ -159,3 +159,7 @@ fn provider_reader_diagnostic_event(
     event.raw_reference = Some(content_reference(message.as_bytes(), true));
     event
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/provider_sessions/stream_reader/tests.rs"]
+mod tests;

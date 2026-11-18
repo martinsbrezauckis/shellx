@@ -975,3 +975,7 @@ fn developer_inspection_script() -> &'static str {
 })()
 "#
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_developer_inspection_tests.rs"]
+mod tests;

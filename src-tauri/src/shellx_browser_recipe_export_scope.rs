@@ -1,7 +1,8 @@
 use crate::shellx_browser::{
     clean_string, validate_optional_task_and_tab, BrowserRecipeExportRequest,
 };
-
+#[cfg(test)]
+use crate::shellx_browser::{lock_or_recover, ShellxBrowserRegistry};
 use crate::shellx_browser_caller::{
     ensure_browser_task_control_authority, BrowserTaskControlAuthority,
 };
@@ -105,3 +106,7 @@ pub(crate) fn resolve_recipe_export_scope(
     validate_optional_task_and_tab(state, Some(task_id.as_str()), browser_tab_id.as_deref())?;
     Ok((Some(task_id), browser_tab_id))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_recipe_export_scope/export_scope_tests.rs"]
+mod export_scope_tests;

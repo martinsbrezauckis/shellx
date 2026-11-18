@@ -685,3 +685,7 @@ fn task_error_response(status: StatusCode, code: &'static str, message: &str) ->
     )
         .into_response()
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_tasks/tests.rs"]
+mod tests;

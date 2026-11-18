@@ -744,7 +744,6 @@ fn provider_connector_start_request(
         ssh_key_vault_ref: run.ssh_key_vault_ref.clone(),
         ssh_remote_runtime: run.ssh_remote_runtime,
         ssh_wsl_distro: run.ssh_wsl_distro.clone(),
-
     }
 }
 
@@ -1708,3 +1707,7 @@ fn atomic_write_private(path: &Path, body: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/outside_connector_runtime/tests.rs"]
+mod tests;

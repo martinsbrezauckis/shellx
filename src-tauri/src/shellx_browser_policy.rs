@@ -38,3 +38,7 @@ fn fixed_policy_error(requested: &str) -> String {
         BROWSER_TASK_AUTONOMY_POLICY_FIXED, requested
     )
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_policy/tests.rs"]
+mod tests;

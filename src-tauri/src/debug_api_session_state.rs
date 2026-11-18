@@ -464,14 +464,6 @@ pub(super) fn debug_ui_patch_sensitive_selector_denial(patch: &UiStatePatch) -> 
     None
 }
 
-
-
-
-
-
-
-
-
 pub(super) fn debug_ui_sensitive_value_reason(value: &serde_json::Value) -> Option<&'static str> {
     match value {
         serde_json::Value::String(text) => debug_ui_sensitive_text_reason(text),
@@ -548,17 +540,6 @@ pub(super) async fn set_ui_state(
     State(s): State<ApiState>,
     Json(body): Json<UiStatePatch>,
 ) -> Response {
-
-
-
-
-
-
-
-
-
-
-
     if let Some(message) = debug_ui_build_tab_mutation_rejection(&s, &body).await {
         return (
             StatusCode::CONFLICT,

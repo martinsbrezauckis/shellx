@@ -310,7 +310,10 @@ async fn browser_settle_snapshot(
     }
 }
 
-
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+#[path = "../public/tests/inline/debug_api_browser_state/tests.rs"]
+mod tests;
 
 pub(crate) async fn browser_tabs_http(State(s): State<ApiState>, headers: HeaderMap) -> Response {
     let registry = match browser_registry(&s) {

@@ -20,7 +20,9 @@ use crate::task_provider_dispatch::task_runtime_tab_id;
 use crate::task_receipts::{TaskReceipt, TaskReceiptKind};
 use crate::task_store::{lock, PersistedTaskStore, TaskStore, TaskStoreError};
 
-
+#[cfg(test)]
+#[path = "../public/tests/unit/task_result_evidence_tests.rs"]
+mod tests;
 
 pub(crate) const TASK_RESULT_EVIDENCE_SCHEMA_VERSION: &str = "shellx.task-result-evidence.v1";
 const MAX_BROWSER_TASKS_PER_RESULT: usize = 8;

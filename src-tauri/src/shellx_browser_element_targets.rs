@@ -40,6 +40,46 @@ impl ShellxBrowserRegistry {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
+            if ref_id
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                let observed = self.resolve_engine_target(
+                    requested_browser_tab_id,
+                    requested_task_id,
+                    ref_id,
+                    None,
+                )?;
+                if observed.selector.as_deref() != Some(selector) {
+                    return Err("Browser selector does not match the observed refId".to_string());
+                }
+                return Ok(observed);
+            }
+            let observed = {
+                let state = lock_or_recover(&self.state);
+                let task_id = requested_task_id
+                    .as_deref()
+                    .map(clean_string)
+                    .filter(|value| !value.is_empty())
+                    .or_else(|| {
+                        requested_browser_tab_id.as_deref().and_then(|tab_id| {
+                            state
+                                .tabs
+                                .iter()
+                                .find(|tab| tab.browser_tab_id == clean_string(tab_id))
+                                .and_then(|tab| tab.task_id.clone())
+                        })
+                    })
+                    .or_else(|| state.active_task_id.clone());
+                task_id
+                    .as_deref()
+                    .and_then(|task_id| state.tasks.iter().find(|task| task.task_id == task_id))
+                    .and_then(|task| task.last_observation.as_ref())
+                    .and_then(|observation| target_for_observation_selector(observation, selector))
+            };
+            if let Some(observed) = observed {
+                return Ok(observed);
+            }
             return Ok(BrowserResolvedEngineTarget {
                 selector: Some(selector.to_string()),
                 expected_fingerprint: None,
@@ -119,12 +159,38 @@ fn target_for_observation_ref(
         .refs
         .iter()
         .find(|candidate| candidate.ref_id == ref_id)
-        .map(|candidate| BrowserResolvedEngineTarget {
-            selector: candidate
-                .raw_selector
-                .clone()
-                .or_else(|| candidate.selector.clone()),
-            expected_fingerprint: candidate.fingerprint.clone(),
-            locator: candidate.raw_locator.clone(),
-        })
+        .map(target_from_observation_ref)
+}
+
+fn target_for_observation_selector(
+    observation: &BrowserObservation,
+    selector: &str,
+) -> Option<BrowserResolvedEngineTarget> {
+    let mut matches = observation.refs.iter().filter(|candidate| {
+        candidate
+            .raw_selector
+            .as_deref()
+            .or(candidate.selector.as_deref())
+            == Some(selector)
+    });
+    let candidate = matches.next()?;
+    (matches.next().is_none()
+        && candidate
+            .fingerprint
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()))
+    .then(|| target_from_observation_ref(candidate))
+}
+
+fn target_from_observation_ref(
+    candidate: &crate::shellx_browser::BrowserObservationRef,
+) -> BrowserResolvedEngineTarget {
+    BrowserResolvedEngineTarget {
+        selector: candidate
+            .raw_selector
+            .clone()
+            .or_else(|| candidate.selector.clone()),
+        expected_fingerprint: candidate.fingerprint.clone(),
+        locator: candidate.raw_locator.clone(),
+    }
 }

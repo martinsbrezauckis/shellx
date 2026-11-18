@@ -336,3 +336,7 @@ pub(crate) fn handle_native_browser_download_event(
         _ => true,
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_native_download_runtime/tests.rs"]
+mod tests;

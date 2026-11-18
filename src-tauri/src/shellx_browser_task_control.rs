@@ -364,3 +364,7 @@ impl ShellxBrowserRegistry {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_task_control/tests.rs"]
+mod tests;

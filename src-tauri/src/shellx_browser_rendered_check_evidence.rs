@@ -146,3 +146,7 @@ pub(crate) async fn evaluate_hidden_renderer_evidence(
         .cloned()
         .filter(|value| !value.is_null()))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_rendered_check_evidence/tests.rs"]
+mod tests;

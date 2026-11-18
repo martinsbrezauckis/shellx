@@ -353,3 +353,7 @@ pub(crate) fn browser_accessibility_tree_with_refs(
     synthetic.extend(merged.drain(..).take(remaining));
     synthetic
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_observations/tests.rs"]
+mod tests;

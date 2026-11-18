@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use super::cut_mcp::{call_cut_tool, resolve_cutd_program};
 
 const CUT_STATUS_TIMEOUT_MS: u64 = 12_000;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 const CUT_WINDOWS_APP_BASENAME: &str = "shellx-cut.exe";
 
 /// The narrow, operator-visible state of the parent desktop-host ShellX Cut
@@ -305,7 +305,7 @@ fn cut_open_target(program: &Path) -> Option<CutOpenTarget> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 fn windows_cut_application(program: &Path) -> Option<PathBuf> {
     Some(program.parent()?.join(CUT_WINDOWS_APP_BASENAME))
 }
@@ -334,3 +334,7 @@ fn launch_cut_for_operator(target: CutOpenTarget) -> Result<(), String> {
         Err("ShellX Cut has no safe editor launcher for this desktop target.".to_string())
     }
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/host_mcp/cut_status/tests.rs"]
+mod tests;

@@ -2230,3 +2230,7 @@ fn resolve_local_grok_binary() -> String {
     }
     "grok".to_string()
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/grok_env/tests.rs"]
+mod tests;

@@ -4427,3 +4427,116 @@ impl<'a, T: crate::clone::Downgrade + ObjectType> crate::clone::Downgrade
         <T as crate::clone::Downgrade>::downgrade(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::Cell,
+        rc::Rc,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+    };
+
+    use super::*;
+
+    #[test]
+    fn new() {
+        let obj: Object = Object::new();
+        drop(obj);
+    }
+
+    #[test]
+    fn data() {
+        let obj: Object = Object::new();
+        unsafe {
+            obj.set_data::<String>("foo", "hello".into());
+            let data = obj.data::<String>("foo").unwrap();
+            assert_eq!(data.as_ref(), "hello");
+            let data2 = obj.steal_data::<String>("foo").unwrap();
+            assert_eq!(data2, "hello");
+        }
+    }
+
+    #[test]
+    fn weak_ref() {
+        let obj: Object = Object::new();
+
+        let weakref: WeakRef<Object> = WeakRef::new();
+        weakref.set(Some(&obj));
+        assert!(weakref.upgrade().is_some());
+        weakref.set(None);
+        assert!(weakref.upgrade().is_none());
+
+        let weakref = WeakRef::new();
+        weakref.set(Some(&obj));
+        assert!(weakref.upgrade().is_some());
+
+        drop(obj);
+        assert!(weakref.upgrade().is_none());
+    }
+
+    #[test]
+    fn weak_ref_notify() {
+        let obj: Object = Object::new();
+
+        let handle = obj.add_weak_ref_notify(|| {
+            unreachable!();
+        });
+
+        handle.disconnect();
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_weak = Arc::downgrade(&called);
+        let handle = obj.add_weak_ref_notify(move || {
+            called_weak.upgrade().unwrap().store(true, Ordering::SeqCst);
+        });
+
+        drop(obj);
+        assert!(called.load(Ordering::SeqCst));
+        handle.disconnect();
+
+        let obj: Object = Object::new();
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_weak = Arc::downgrade(&called);
+        obj.add_weak_ref_notify(move || {
+            called_weak.upgrade().unwrap().store(true, Ordering::SeqCst);
+        });
+
+        drop(obj);
+        assert!(called.load(Ordering::SeqCst));
+
+        let obj: Object = Object::new();
+
+        let called = Rc::new(Cell::new(false));
+        let called_weak = Rc::downgrade(&called);
+        obj.add_weak_ref_notify_local(move || {
+            called_weak.upgrade().unwrap().set(true);
+        });
+
+        drop(obj);
+        assert!(called.get());
+    }
+
+    #[test]
+    fn test_value() {
+        let obj1: Object = Object::new();
+        let v = obj1.to_value();
+        let obj2 = v.get::<&Object>().unwrap();
+
+        assert_eq!(obj1.as_ptr(), obj2.as_ptr());
+    }
+
+    #[test]
+    fn test_borrow_hashing() {
+        let mut m = std::collections::HashSet::new();
+        let boxed_object = crate::BoxedAnyObject::new("");
+
+        m.insert(boxed_object.clone());
+
+        let object: &Object = std::borrow::Borrow::borrow(&boxed_object);
+        assert_eq!(m.get(object), Some(&boxed_object));
+    }
+}

@@ -622,3 +622,7 @@ pub fn schedule_probes_for_tab_with_hint(
         let _ = handles;
     });
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/mcp_health/tests.rs"]
+mod tests;

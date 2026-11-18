@@ -422,3 +422,7 @@ fn is_native_stage_marker_name(name: &str) -> bool {
     };
     native_stage_marker_name(stage_file_name).ok().as_deref() == Some(name)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_native_download_stage_recovery/tests.rs"]
+mod tests;

@@ -545,7 +545,9 @@ pub(super) async fn connect(
     }
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_session_lifecycle/tests.rs"]
+mod tests;
 
 #[derive(Deserialize)]
 pub(super) struct PromptBody {

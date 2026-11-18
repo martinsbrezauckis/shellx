@@ -318,3 +318,7 @@ pub(crate) fn bounded_ssh_windows_command(
         setup_stdin,
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/remote_one_shot/tests.rs"]
+mod tests;

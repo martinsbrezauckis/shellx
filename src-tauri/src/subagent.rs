@@ -659,7 +659,61 @@ fn agent_output_cap() -> usize {
     v.max(4 * 1024)
 }
 
-
+/// Audit finding #380 M5 — read an `AsyncRead` stream into a bounded
+/// ring-buffer keeping at most `cap` bytes (the TAIL of the stream).
+/// Returns `(captured_bytes, total_bytes_seen)` where `captured_bytes`
+/// is the on-the-wire representation including a
+/// `[OUTPUT TRUNCATED — N bytes total]\n` sentinel prepended IFF
+/// `total_bytes_seen > cap`.
+///
+/// Why TAIL rather than HEAD: the leading lines of a grok subagent's
+/// output are typically banner/auth/setup noise; the failure-relevant
+/// content is usually the last few KiB before exit or hang. Keeping
+/// the head would optimise for the wrong forensic question.
+///
+/// Implementation: O(total_bytes_seen) reads, O(cap) memory. After
+/// each chunk we trim the front-end excess in place. The 4 KiB read
+/// buffer matches typical pipe chunk sizes; smaller reads would
+/// inflate context-switch overhead, larger would inflate worst-case
+/// momentary memory by up to one read.
+#[cfg(test)]
+pub(crate) async fn read_stream_capped<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    cap: usize,
+) -> (Vec<u8>, usize) {
+    let mut buf: Vec<u8> = Vec::with_capacity(cap.min(8 * 1024));
+    let mut total: usize = 0;
+    let mut tmp = [0u8; 4096];
+    loop {
+        match reader.read(&mut tmp).await {
+            Ok(0) => break, // EOF
+            Ok(n) => {
+                total = total.saturating_add(n);
+                buf.extend_from_slice(&tmp[..n]);
+                if buf.len() > cap {
+                    let extra = buf.len() - cap;
+                    buf.drain(0..extra);
+                }
+            }
+            Err(_) => break, // Stream closed mid-read; capture what we have.
+        }
+    }
+    if total > cap {
+        // Prepend sentinel so the consumer can see truncation occurred
+        // AND the real size. We re-allocate once here — fine since this
+        // runs exactly once per child exit.
+        let sentinel = format!(
+            "[OUTPUT TRUNCATED — {} bytes total, last {} kept]\n",
+            total, cap
+        );
+        let mut out = Vec::with_capacity(sentinel.len() + buf.len());
+        out.extend_from_slice(sentinel.as_bytes());
+        out.extend_from_slice(&buf);
+        (out, total)
+    } else {
+        (buf, total)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SubagentStream {
@@ -2435,3 +2489,7 @@ fn percentile(samples: &mut [u128], pct: f64) -> Value {
 }
 
 // ─────────────────────────── Tests ───────────────────────────
+
+#[cfg(test)]
+#[path = "../public/tests/inline/subagent/tests.rs"]
+mod tests;

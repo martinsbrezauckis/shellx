@@ -107,3 +107,7 @@ fn recipe_step_string(step: &serde_json::Value, key: &str) -> Option<String> {
 fn recipe_step_bool(step: &serde_json::Value, key: &str) -> Option<bool> {
     step.get(key).and_then(|value| value.as_bool())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_recipe_analysis/tests.rs"]
+mod tests;

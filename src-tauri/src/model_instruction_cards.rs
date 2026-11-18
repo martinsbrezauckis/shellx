@@ -920,3 +920,7 @@ fn antigravity_media_provenance() -> CardProvenance {
         native_capability_evidence: MODEL_CARD_NATIVE_CAPABILITY_EVIDENCE.to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/model_instruction_cards/tests.rs"]
+mod tests;

@@ -680,3 +680,7 @@ fn is_exact_snapshot_id(value: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/task_execution_store_adapter_tests.rs"]
+mod tests;

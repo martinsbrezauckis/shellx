@@ -185,3 +185,7 @@ pub(super) async fn tool_browser_act(
         _ => unreachable!("browser_act class table and dispatcher must stay synchronized"),
     }
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/host_mcp/browser_entry/tests.rs"]
+mod tests;

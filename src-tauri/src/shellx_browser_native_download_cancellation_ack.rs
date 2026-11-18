@@ -11,9 +11,9 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(test, not(target_os = "linux")))]
 const MAX_PENDING_NATIVE_DOWNLOAD_CANCELLATION_KEYS: usize = 1024;
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(test, not(target_os = "linux")))]
 const MAX_PENDING_NATIVE_DOWNLOAD_CANCELLATIONS_PER_KEY: usize = 1024;
 const CANCELLATION_ACK_CAPACITY_ERROR: &str =
     "native Browser download cancellation acknowledgement capacity is unknown; restart ShellX before approving another native download";
@@ -38,7 +38,7 @@ struct NativeDownloadCancellationKey {
 }
 
 #[derive(Clone, Debug)]
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(test, not(target_os = "linux")))]
 pub(crate) enum BrowserNativeDownloadCancellationAcknowledgement {
     /// This event does not correspond to a known rejected native request and
     /// must continue through ordinary completion handling.
@@ -52,7 +52,7 @@ pub(crate) enum BrowserNativeDownloadCancellationAcknowledgement {
 }
 
 impl NativeDownloadCancellationAcks {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(test, not(target_os = "linux")))]
     pub(super) fn record_rejected_request(
         &mut self,
         engine_id: &str,
@@ -101,7 +101,7 @@ impl NativeDownloadCancellationAcks {
 
     /// Returns `None` if this callback was not a tracked cancellation and
     /// otherwise whether its exact key is now fully drained.
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(test, not(target_os = "linux")))]
     fn consume(&mut self, engine_id: &str, event_binding: &str, source_url: &str) -> Option<bool> {
         let key = NativeDownloadCancellationKey::new(engine_id, event_binding, source_url);
         let current = self.pending.get_mut(&key)?;
@@ -130,7 +130,7 @@ impl ShellxBrowserRegistry {
     /// Consume a non-Linux rejected native request before ordinary Finished
     /// handling. This method intentionally receives no path or success claim:
     /// the caller has already established Wry's `Finished(false, ..)` shape.
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(test, not(target_os = "linux")))]
     pub(crate) fn acknowledge_native_download_cancellation(
         &self,
         engine_id: &str,
@@ -241,3 +241,7 @@ impl ShellxBrowserRegistry {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_native_download_cancellation_ack/tests.rs"]
+mod tests;

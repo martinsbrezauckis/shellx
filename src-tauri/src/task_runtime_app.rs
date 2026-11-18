@@ -744,3 +744,7 @@ pub(crate) fn install_task_runtime(
 
     Ok(state)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/task_runtime_app/notification_tests.rs"]
+mod notification_tests;

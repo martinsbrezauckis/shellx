@@ -365,3 +365,7 @@ pub struct BrowserTabResponse {
     pub tab: BrowserTabSnapshot,
     pub receipt: BrowserReceipt,
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_engine_model/native_security_capability_tests.rs"]
+mod native_security_capability_tests;

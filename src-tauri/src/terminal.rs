@@ -353,7 +353,7 @@ fn default_shell() -> String {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn windows_user_bin_path_candidates(
     user_profile: &str,
     app_data: &str,
@@ -969,3 +969,7 @@ pub async fn pty_kill(
 }
 
 // ───── tests ─────
+
+#[cfg(test)]
+#[path = "../public/tests/inline/terminal/tests.rs"]
+mod tests;

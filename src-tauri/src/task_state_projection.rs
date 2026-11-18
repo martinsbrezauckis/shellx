@@ -19,7 +19,9 @@ use crate::task_trace_evidence::{TaskTraceEvidenceIncompleteReason, TaskTraceEvi
 use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
-
+#[cfg(test)]
+#[path = "../public/tests/unit/task_state_projection_tests.rs"]
+mod tests;
 
 pub(crate) const TASK_STATE_PROJECTION_SCHEMA_VERSION: &str = "shellx.task-state-projection.v1";
 pub(crate) const MAX_TASK_ATTENTION_ITEMS: usize = 24;

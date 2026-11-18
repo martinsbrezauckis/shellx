@@ -9,7 +9,9 @@ pub(crate) mod task_attention_ledger;
 mod task_store_occurrences;
 #[path = "task_store_persistence.rs"]
 mod task_store_persistence;
-
+#[cfg(test)]
+#[path = "../public/tests/unit/task_store_tests.rs"]
+mod tests;
 
 use crate::task_attachments::{
     TaskAttachmentLedger, TaskAttachmentRecord, TaskAttachmentRegistration,

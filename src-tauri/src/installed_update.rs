@@ -147,3 +147,7 @@ async fn package_query_has_owner<const N: usize>(
 
     output.status.success() && output.stdout.iter().any(|byte| !byte.is_ascii_whitespace())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/installed_update/tests.rs"]
+mod tests;

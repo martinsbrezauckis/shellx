@@ -985,3 +985,7 @@ pub(crate) const BROWSER_ENGINE_CONTROL_SCRIPT: &str = r#"
   }
 })()
 "#;
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_scripts_tests.rs"]
+mod tests;

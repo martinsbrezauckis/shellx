@@ -304,3 +304,7 @@ pub(super) fn reject_sensitive_fs_path(tool: &str, path: &std::path::Path) -> Re
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/host_mcp/filesystem_policy/tests.rs"]
+mod tests;

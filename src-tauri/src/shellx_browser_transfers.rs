@@ -718,3 +718,7 @@ fn native_download_decline_is_eligible(
 pub(super) fn is_sha256_hex(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_transfers/tests.rs"]
+mod tests;

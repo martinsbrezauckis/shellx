@@ -2242,3 +2242,7 @@ pub async fn git_session_create_worktree(
     )
     .await
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/session_git/tests.rs"]
+mod tests;

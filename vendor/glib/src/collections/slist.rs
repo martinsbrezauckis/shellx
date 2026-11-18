@@ -713,3 +713,175 @@ impl<T: TransparentPtrType> Iterator for IntoIter<T> {
 }
 
 impl<T: TransparentPtrType> FusedIterator for IntoIter<T> {}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    // checker-ignore-item
+    fn from_glib_full() {
+        let items = [
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 12.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 13.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 14.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 15.0).unwrap(),
+        ];
+        let mut list = unsafe {
+            let mut list = ffi::g_slist_append(
+                ptr::null_mut(),
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_full(&items[0]) as ffi::gpointer,
+            );
+            list = ffi::g_slist_append(
+                list,
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_full(&items[1]) as ffi::gpointer,
+            );
+            list = ffi::g_slist_append(
+                list,
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_full(&items[2]) as ffi::gpointer,
+            );
+            list = ffi::g_slist_append(
+                list,
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_full(&items[3]) as ffi::gpointer,
+            );
+            SList::<crate::DateTime>::from_glib_full(list)
+        };
+        assert!(!list.is_empty());
+
+        let list_items = list.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        let list_items = list.iter_mut().map(|d| d.clone()).collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        let list_items = list.into_iter().collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        let list = unsafe { SList::<crate::DateTime>::from_glib_full(ptr::null_mut()) };
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    // checker-ignore-item
+    fn from_glib_container() {
+        let items = [
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 12.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 13.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 14.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 15.0).unwrap(),
+        ];
+        let mut list = unsafe {
+            let mut list = ffi::g_slist_append(
+                ptr::null_mut(),
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_none(&items[0]).0 as ffi::gpointer,
+            );
+            list = ffi::g_slist_append(
+                list,
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_none(&items[1]).0 as ffi::gpointer,
+            );
+            list = ffi::g_slist_append(
+                list,
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_none(&items[2]).0 as ffi::gpointer,
+            );
+            list = ffi::g_slist_append(
+                list,
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_none(&items[3]).0 as ffi::gpointer,
+            );
+            SList::<crate::DateTime>::from_glib_container(list)
+        };
+        assert!(!list.is_empty());
+
+        let list_items = list.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        let list_items = list.iter_mut().map(|d| d.clone()).collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        let list_items = list.into_iter().collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        let list = unsafe { SList::<crate::DateTime>::from_glib_full(ptr::null_mut()) };
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    // checker-ignore-item
+    fn from_glib_none() {
+        let items = [
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 12.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 13.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 14.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 15.0).unwrap(),
+        ];
+        let mut list = unsafe {
+            let mut list = ffi::g_slist_append(
+                ptr::null_mut(),
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_none(&items[0]).0 as ffi::gpointer,
+            );
+            list = ffi::g_slist_append(
+                list,
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_none(&items[1]).0 as ffi::gpointer,
+            );
+            list = ffi::g_slist_append(
+                list,
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_none(&items[2]).0 as ffi::gpointer,
+            );
+            list = ffi::g_slist_append(
+                list,
+                ToGlibPtr::<*mut ffi::GDateTime>::to_glib_none(&items[3]).0 as ffi::gpointer,
+            );
+            let res = SList::<crate::DateTime>::from_glib_none(list);
+            ffi::g_slist_free(list);
+            res
+        };
+        assert!(!list.is_empty());
+
+        let list_items = list.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        let list_items = list.iter_mut().map(|d| d.clone()).collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        let list_items = list.into_iter().collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        let list = unsafe { SList::<crate::DateTime>::from_glib_full(ptr::null_mut()) };
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    // checker-ignore-item
+    fn safe_api() {
+        let items = [
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 12.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 13.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 14.0).unwrap(),
+            crate::DateTime::from_utc(2021, 11, 20, 23, 41, 15.0).unwrap(),
+        ];
+
+        let mut list = items[1..3].iter().cloned().collect::<SList<_>>();
+        assert_eq!(list.len(), 2);
+        list.push_front(items[0].clone());
+        assert_eq!(list.len(), 3);
+        list.push_back(items[3].clone());
+        assert_eq!(list.len(), 4);
+
+        let list_items = list.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(&items[..], &list_items);
+
+        assert_eq!(list.front(), Some(&items[0]));
+        assert_eq!(list.back(), Some(&items[3]));
+        assert_eq!(list.pop_front().as_ref(), Some(&items[0]));
+        assert_eq!(list.len(), 3);
+
+        list.reverse();
+        let mut list_items = list.iter().cloned().collect::<Vec<_>>();
+        list_items.reverse();
+        assert_eq!(&items[1..], &list_items);
+
+        let list2 = list.clone();
+        let mut list_items = list2.iter().cloned().collect::<Vec<_>>();
+        list_items.reverse();
+        assert_eq!(&items[1..], &list_items);
+    }
+}

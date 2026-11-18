@@ -523,3 +523,7 @@ pub fn shellx_browser_approve_developer_mode_host(
 ) -> Result<BrowserDeveloperModeUpdateResponse, String> {
     approve_browser_developer_mode_host_from_operator(&registry, request)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_developer_mode/tests.rs"]
+mod tests;

@@ -34,3 +34,7 @@ pub(crate) fn browser_download_destination_dir(
     enforce_home_containment("browser_download_destination", &path, FsAccessKind::Write)?;
     Ok(path)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_transfer_privacy/tests.rs"]
+mod tests;

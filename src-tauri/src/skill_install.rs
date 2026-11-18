@@ -1225,3 +1225,7 @@ pub fn host_skill_status() -> HostSkillStatus {
 pub fn workflow_skill_statuses() -> Vec<WorkflowSkillStatus> {
     Vec::new()
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/skill_install/tests.rs"]
+mod tests;

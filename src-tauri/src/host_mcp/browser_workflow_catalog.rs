@@ -307,7 +307,14 @@ pub(super) fn browser_workflow_summaries_from_bookmarks_state(
         .unwrap_or_default()
 }
 
-
+#[cfg(test)]
+pub(super) fn browser_workflow_recipe_path_from_bookmarks_state(
+    state: &Value,
+    bookmark_id: &str,
+) -> Option<String> {
+    browser_workflow_summary_from_bookmarks_state(state, bookmark_id)
+        .and_then(|workflow| json_string(Some(&workflow), "recipePath"))
+}
 
 pub(super) fn browser_workflow_summary_from_bookmarks_state(
     state: &Value,

@@ -274,3 +274,7 @@ impl Drop for OwnedCommandChild {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "../public/tests/inline/bounded_command/tests.rs"]
+mod tests;

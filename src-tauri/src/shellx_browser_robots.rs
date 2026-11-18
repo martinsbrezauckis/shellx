@@ -301,3 +301,7 @@ impl ShellxBrowserRegistry {
         Ok(job)
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_robots/tests.rs"]
+mod tests;

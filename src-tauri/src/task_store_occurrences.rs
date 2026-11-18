@@ -24,7 +24,57 @@ pub(crate) struct TaskNotificationAttempt {
 }
 
 impl TaskStore {
-
+    /// Insert the single deterministic durable row for one scheduled instant.
+    /// This is scheduler-facing state only; it never dispatches a provider.
+    #[cfg(test)]
+    pub(crate) fn create_occurrence(
+        &self,
+        task_id: &str,
+        revision_id: &str,
+        scheduled_at_ms: i64,
+        now_ms: i64,
+    ) -> Result<TaskOccurrence, TaskStoreError> {
+        let task_id = task_id.to_string();
+        let revision_id = revision_id.to_string();
+        self.transaction(move |state| {
+            let definition = active_definition(state, &task_id)?;
+            let revision = revision_for_task(state, &task_id, &revision_id)?;
+            let occurrence_id =
+                deterministic_occurrence_id(&task_id, &revision.revision_id, scheduled_at_ms)
+                    .map_err(TaskStoreError::Invalid)?;
+            if let Some(existing) = state.occurrences.get(&occurrence_id) {
+                return Ok(existing.clone());
+            }
+            let occurrence = TaskOccurrence {
+                occurrence_id: occurrence_id.clone(),
+                task_id,
+                revision_id,
+                revision_number: revision.revision_number,
+                revision_hash: revision.canonical_sha256.clone(),
+                scheduled_at_ms,
+                state: TaskOccurrenceState::Pending,
+                attempts: Vec::new(),
+                active_lease: None,
+                created_at_ms: now_ms,
+                updated_at_ms: now_ms,
+            };
+            state.occurrences.insert(occurrence_id, occurrence.clone());
+            append_execution_receipt(
+                state,
+                &definition,
+                &revision,
+                &occurrence,
+                TaskReceiptKind::OccurrenceCreated,
+                TaskExecutionTransition::OccurrenceCreated,
+                None,
+                None,
+                None,
+                None,
+                now_ms,
+            )?;
+            Ok(occurrence)
+        })
+    }
 
     /// Create one operator-requested occurrence for the exact current
     /// immutable revision. The definition/revision CAS and pending row are
@@ -96,7 +146,17 @@ impl TaskStore {
         })
     }
 
-
+    #[cfg(test)]
+    pub(crate) fn get_occurrence(
+        &self,
+        occurrence_id: &str,
+    ) -> Result<TaskOccurrence, TaskStoreError> {
+        lock(&self.state)
+            .occurrences
+            .get(occurrence_id)
+            .cloned()
+            .ok_or(TaskStoreError::NotFound)
+    }
 
     /// Return the durable occurrence together with the exact immutable
     /// revision it references. This is a read-only binding lookup for the
@@ -127,7 +187,24 @@ impl TaskStore {
         Ok((occurrence, revision))
     }
 
-
+    /// Claim an occurrence once. An expired lease is marked outcomeUnknown,
+    /// never automatically reassigned.
+    #[cfg(test)]
+    pub(crate) fn claim_occurrence(
+        &self,
+        occurrence_id: &str,
+        owner_id: &str,
+        lease_duration_ms: i64,
+        now_ms: i64,
+    ) -> Result<TaskOccurrence, TaskStoreError> {
+        self.claim_occurrence_with_limits(
+            occurrence_id,
+            owner_id,
+            lease_duration_ms,
+            u8::MAX,
+            now_ms,
+        )
+    }
 
     /// Atomically claim an occurrence only when both the caller's current
     /// global budget and the immutable revision's per-task budget have room.

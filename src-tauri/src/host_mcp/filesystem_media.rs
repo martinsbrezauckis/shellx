@@ -236,7 +236,19 @@ fn vision_remote_generated_media_sensitive_parent(path: &str) -> Option<&'static
     }
 }
 
-
+#[cfg(test)]
+pub(super) fn validate_vision_remote_media_path(
+    tool: &str,
+    remote_path: &str,
+    cwd: Option<&str>,
+) -> Result<String, String> {
+    validate_vision_remote_media_path_for_runtime(
+        tool,
+        remote_path,
+        cwd,
+        crate::acp::SshRemoteRuntime::Posix,
+    )
+}
 
 pub(super) fn validate_vision_remote_media_path_for_runtime(
     tool: &str,

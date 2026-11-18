@@ -287,3 +287,7 @@ pub(crate) const BROWSER_DOM_TRAVERSAL_SCRIPT: &str = r#"
     return parts.join("\n").slice(0, max);
   };
 "#;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_dom_traversal/tests.rs"]
+mod tests;

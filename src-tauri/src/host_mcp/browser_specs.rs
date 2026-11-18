@@ -141,7 +141,7 @@ pub(super) fn browser_tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "browser_click_ref",
-            "description": "Click a native ShellX Browser observation ref or precise selector through Debug API `/browser/action` with action `clickRef`. Agent flow: browser_navigate if needed, browser_observe first to get refs, then click; use selector only when the task already has a stable selector from a fixture, saved workflow, or prior observation. If notActionable/notFound, inspect stepSummary.failedChecks, actionability.coveringElement, and stepSummary.locatorCandidates before retrying from a fresh observe. If status is staleRef or failedChecks contains fingerprint, ShellX did not act: re-observe and use the replacement ref; force and locator recovery must not bypass identity validation. Pass `lockLeaseId`/owner fields for locked agent tabs.",
+            "description": "Click a native ShellX Browser observation ref through Debug API `/browser/action` with action `clickRef`. Agent flow: browser_navigate if needed, browser_observe first to get refs, then click. A selector may accompany refId only when it names that same observed target; selector-only clicks require one exact fingerprinted match in the current observation and execute with that ref's identity check. Unobserved or ambiguous selectors are blocked. If notActionable/notFound, inspect stepSummary.failedChecks, actionability.coveringElement, and stepSummary.locatorCandidates before retrying from a fresh observe. If status is staleRef or failedChecks contains fingerprint, ShellX did not act: re-observe and use the replacement ref; force and locator recovery must not bypass identity validation. Pass `lockLeaseId`/owner fields for locked agent tabs.",
             "inputSchema": {
                 "type": "object",
                 "properties": browser_action_schema_properties(),
@@ -153,7 +153,7 @@ pub(super) fn browser_tool_specs() -> Vec<Value> {
         }),
         json!({
             "name": "browser_click_at",
-            "description": "Click native ShellX Browser viewport coordinates through Debug API `/browser/action` with action `clickAt`. Use only after browser_observe/browser_screenshot when a real page surface, canvas editor, rich editor, or visual-only app overlay has no usable DOM ref. Coordinates are CSS viewport pixels inside the current Browser page, not screen pixels; with browser_screenshot fullPage=true, divide image pixels by cssScale before calling, re-capture after Browser resize/minimize/restore, and scroll off-screen full-page targets into the visible viewport before coordinate-clicking. Prefer browser_click_ref whenever a ref exists.",
+            "description": "Request a native ShellX Browser viewport coordinate click through Debug API `/browser/action` with action `clickAt`. Automated coordinate clicks are blocked by Browser action policy because a coordinate cannot be bound to an observed control. Use browser_observe and browser_click_ref for a visible observed target; use the native operator UI for visual-only page controls.",
             "inputSchema": {
                 "type": "object",
                 "properties": browser_action_schema_properties(),

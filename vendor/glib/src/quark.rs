@@ -88,3 +88,16 @@ impl IntoGlib for Option<Quark> {
         self.map(|s| s.0.get()).unwrap_or(0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_str() {
+        let q1 = Quark::from_str("some-quark");
+        let q2 = Quark::try_from_str("some-quark");
+        assert_eq!(Some(q1), q2);
+        assert_eq!(q1.as_str(), "some-quark");
+    }
+}

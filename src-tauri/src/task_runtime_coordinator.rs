@@ -996,3 +996,7 @@ fn current_time_ms() -> i64 {
         .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/task_runtime_coordinator_tests.rs"]
+mod tests;

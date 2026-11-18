@@ -215,3 +215,7 @@ impl GrokAcpSession {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/acp_requests/tests.rs"]
+mod tests;

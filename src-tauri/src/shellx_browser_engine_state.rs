@@ -970,3 +970,7 @@ impl ShellxBrowserRegistry {
         }))
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_engine_event_context_tests.rs"]
+mod event_context_tests;

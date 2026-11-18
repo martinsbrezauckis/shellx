@@ -450,7 +450,11 @@ pub(crate) fn native_download_permit_matches_current_engine_context_locked(
 #[path = "shellx_browser_native_download_lifecycle.rs"]
 mod native_download_lifecycle;
 pub(crate) use native_download_lifecycle::quarantine_native_downloads_for_engine_locked;
-
+#[cfg(test)]
+use native_download_lifecycle::{
+    native_download_completion_path_matches_stage,
+    native_download_finished_callback_establishes_quiescence,
+};
 
 fn native_download_destination_is_available(
     configured_destination: Option<&str>,
@@ -471,3 +475,7 @@ fn native_download_destination_is_available(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_native_download_tests.rs"]
+mod tests;

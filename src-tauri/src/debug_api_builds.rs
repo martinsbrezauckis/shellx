@@ -7,7 +7,6 @@ pub(super) struct BuildStartBody {
     tab_id: Option<String>,
     objective: String,
     cwd: Option<String>,
-
 }
 
 #[derive(Deserialize, Default)]
@@ -18,7 +17,6 @@ pub(super) struct BuildTabBody {
     summary: Option<String>,
     #[serde(default)]
     inject: Option<bool>,
-
 }
 
 #[derive(Deserialize)]
@@ -65,7 +63,6 @@ pub(super) async fn build_start_http(
         return (StatusCode::BAD_REQUEST, "objective: must be non-empty").into_response();
     }
 
-
     let registry = s
         .app
         .state::<std::sync::Arc<crate::acp::SessionRegistry>>()
@@ -108,13 +105,11 @@ pub(super) async fn build_start_http(
         .await
     {
         Ok(state) => {
-
             let kickoff_prompt =
                 crate::build_orchestrator::BuildOrchestrator::plan_kickoff_text_for_path(
                     &body.objective,
                     &state.scratchboard_path,
                 );
-
 
             let response = serde_json::json!({
                 "ok": true,
@@ -257,12 +252,6 @@ pub(super) async fn build_stop_http(
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
-
-
-
-
-
-
 
 pub(super) async fn build_pause_http(
     State(s): State<ApiState>,
@@ -718,3 +707,7 @@ pub(super) async fn build_receipts_http(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_builds/public_request_shape_tests.rs"]
+mod public_request_shape_tests;

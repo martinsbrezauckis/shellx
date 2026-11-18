@@ -293,3 +293,7 @@ fn install_send_to_shortcut(exe: &str) -> Result<(), String> {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Err(if stderr.is_empty() { stdout } else { stderr })
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/desktop_integration/tests.rs"]
+mod tests;

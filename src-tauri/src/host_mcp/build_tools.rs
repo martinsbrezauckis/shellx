@@ -108,43 +108,6 @@ pub(super) async fn post_preview_diagnose_to_debug_api(
     }
 }
 
-pub(super) async fn post_preview_start_to_debug_api(
-    tab_id: &str,
-    body: Value,
-) -> Result<Value, String> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "HOME/USERPROFILE is not set".to_string())?;
-    let shellx_dir = std::path::PathBuf::from(home).join(".shellx");
-    let token = crate::debug_api::current_debug_token()?;
-    let port = std::fs::read_to_string(shellx_dir.join("debug-api.port"))
-        .unwrap_or_else(|_| "5757".to_string());
-    let url = format!(
-        "http://127.0.0.1:{}/preview/work/start?tabId={}",
-        port.trim(),
-        encode_query_component(tab_id)
-    );
-    let send = reqwest::Client::new()
-        .post(url)
-        .bearer_auth(token.trim())
-        .json(&body)
-        .send();
-    let response = tokio::time::timeout(std::time::Duration::from_secs(240), send)
-        .await
-        .map_err(|_| "debug-api preview_start post timed out".to_string())?
-        .map_err(|e| format!("debug-api preview_start post failed: {}", e))?;
-    let status = response.status();
-    let text = response.text().await.unwrap_or_default();
-    if status.is_success() {
-        serde_json::from_str(&text).map_err(|e| format!("debug-api preview_start JSON: {}", e))
-    } else {
-        Err(format!(
-            "debug-api preview_start returned {}: {}",
-            status, text
-        ))
-    }
-}
-
 pub(super) fn encode_query_component(input: &str) -> String {
     let mut out = String::new();
     for byte in input.bytes() {
@@ -249,14 +212,21 @@ pub(super) async fn resolve_preview_cwd(ctx: &Arc<HostMcpContext>, tab: &str) ->
 
     let app_handle = ctx.app_handle.as_ref()?;
     let registry = app_handle.try_state::<Arc<crate::acp::SessionRegistry>>()?;
-    let session = registry.get_existing(tab).await?;
-    let guard = session.lock().await;
-    let info = guard.get_debug_session_info();
-    info.get("cwd")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
+    if let Some(session) = registry.get_existing(tab).await {
+        let guard = session.lock().await;
+        let info = guard.get_debug_session_info();
+        return info
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
+    }
+    app_handle
+        .try_state::<Arc<crate::provider_sessions::ProviderSessionRegistry>>()?
+        .state_for_tab_preferred(tab)
+        .active_run
+        .map(|run| run.cwd)
 }
 
 pub(super) async fn tool_build_state(args: Value, tab_id: Option<&str>) -> Result<Value, String> {
@@ -379,13 +349,7 @@ pub(super) async fn tool_preview_start(
 ) -> Result<Value, String> {
     use tauri::Manager as _;
 
-    let tab = args
-        .get("tabId")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or(resolve_mcp_tab_id(tab_id, "preview_start")?);
+    let tab = preview_start_caller_tab(&args, tab_id)?;
     let cwd = args
         .get("cwd")
         .and_then(|v| v.as_str())
@@ -396,7 +360,7 @@ pub(super) async fn tool_preview_start(
         Some(cwd) => cwd,
         None => resolve_preview_cwd(ctx, &tab)
             .await
-            .unwrap_or_else(|| ctx.cwd.display().to_string()),
+            .ok_or_else(|| "preview_start: calling tab has no active session cwd".to_string())?,
     };
     let kind = args
         .get("kind")
@@ -429,19 +393,13 @@ pub(super) async fn tool_preview_start(
                 .map_err(|e| format!("preview_start request decode: {}", e))?;
         serde_json::to_value(
             manager
-                .start(request)
+                .start_for_mcp(&tab, request)
                 .await
                 .map_err(|e| format!("preview_start: {}", e))?,
         )
         .map_err(|e| format!("preview_start response encode: {}", e))?
     } else {
-        post_preview_start_to_debug_api(
-            body.get("tabId")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default(),
-            body.clone(),
-        )
-        .await?
+        return Err("preview_start: live tab session authority is unavailable".to_string());
     };
 
     let status = state
@@ -463,6 +421,19 @@ pub(super) async fn tool_preview_start(
         "structuredContent": state,
         "isError": status == "failed"
     }))
+}
+
+pub(super) fn preview_start_caller_tab(
+    args: &Value,
+    tab_id: Option<&str>,
+) -> Result<String, String> {
+    let tab = resolve_mcp_tab_id(tab_id, "preview_start")?;
+    if let Some(target) = args.get("tabId") {
+        if target.as_str().is_none_or(|value| value.trim() != tab) {
+            return Err("preview_start: tabId must match the authenticated MCP tab".to_string());
+        }
+    }
+    Ok(tab)
 }
 
 pub(super) async fn tool_preview_diagnose(

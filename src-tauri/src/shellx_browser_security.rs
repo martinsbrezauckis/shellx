@@ -581,3 +581,7 @@ pub(crate) fn insecure_credential_denial_for_taskless_tab(
         receipt,
     })
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_security/domain_policy_tests.rs"]
+mod domain_policy_tests;

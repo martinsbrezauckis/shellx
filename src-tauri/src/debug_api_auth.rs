@@ -362,3 +362,7 @@ pub(super) async fn add_api_version(request: Request<Body>, next: Next) -> Respo
         .insert("X-API-Version", HeaderValue::from_static(DEBUG_API_VERSION));
     response
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_auth/tests.rs"]
+mod tests;

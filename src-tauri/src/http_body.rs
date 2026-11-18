@@ -50,3 +50,7 @@ fn append_bounded_chunk(
     body.extend_from_slice(chunk);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/http_body/tests.rs"]
+mod tests;

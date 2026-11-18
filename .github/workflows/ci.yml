@@ -1,28 +1,56 @@
-# ShellX public build verification
-#
-# This public workflow verifies that the exported application source installs
-# and produces the production frontend bundle. Developer tests, fixtures,
-# platform qualification, and dependency-audit workflows remain private
-# maintainer verification.
-
-name: Public build
+# Public product checks on all shipping operating systems. No signing or publishing.
+name: CI
 
 on:
   push:
-    branches:
-      - master
-      - main
+    branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: shellx-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
+
 jobs:
-  frontend:
-    name: Production frontend build
-    runs-on: ubuntu-latest
+  check:
+    name: Product checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux native build dependencies
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Dpkg::Use-Pty=0 -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ./src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 10.33.0
@@ -31,5 +59,53 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Build production frontend bundle
-        run: pnpm build
+      - name: Install fake Grok CLI for native test discovery
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-grok"
+          cat > "$RUNNER_TEMP/fake-grok/grok" <<'SH'
+          #!/usr/bin/env bash
+          if [[ "${1:-}" == "--version" ]]; then echo "grok fake-ci"; exit 0; fi
+          echo "fake grok shim for CI" >&2
+          exit 0
+          SH
+          chmod +x "$RUNNER_TEMP/fake-grok/grok"
+          echo "GROK_BIN=$RUNNER_TEMP/fake-grok/grok" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/fake-grok" >> "$GITHUB_PATH"
+      - name: Direct public product checks
+        run: bash scripts/public/check.sh
+
+  dependencies:
+    name: Dependency audits
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify pnpm audit disposition fails closed
+        run: node scripts/public/test-pnpm-audit-disposition.mjs
+      - name: Full pnpm audit with exact 0.3.62 disposition
+        run: node scripts/public/check-pnpm-audit.mjs
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.26.4
+      - name: Install cargo-audit
+        env:
+          CARGO_HTTP_MULTIPLEXING: "false"
+        run: cargo install cargo-audit --locked --version 0.22.2
+      - name: RustSec audit
+        run: node scripts/public/check-rustsec.mjs
+      - name: Install Grype
+        run: go install github.com/anchore/grype/cmd/grype@v0.114.0
+      - name: Grype Rust/GHSA audit
+        run: node scripts/public/check-grype-rust.mjs

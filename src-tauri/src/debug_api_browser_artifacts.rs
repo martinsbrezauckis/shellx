@@ -779,3 +779,7 @@ pub(crate) async fn browser_report_http(
             .into_response(),
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/debug_api_browser_artifacts_tests.rs"]
+mod evidence_caller_tests;

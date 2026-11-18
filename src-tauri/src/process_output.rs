@@ -72,3 +72,7 @@ where
         total_bytes,
     })
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/process_output/tests.rs"]
+mod tests;

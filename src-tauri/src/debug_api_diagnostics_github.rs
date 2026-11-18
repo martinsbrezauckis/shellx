@@ -274,7 +274,9 @@ pub(super) async fn diagnostics_run(
     .into_response()
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_diagnostics_github/pr_request_schema_tests.rs"]
+mod pr_request_schema_tests;
 
 pub(super) fn diagnostics_settings_status(settings_path: &std::path::Path) -> (bool, String) {
     if !settings_path.exists() {
@@ -510,7 +512,6 @@ pub(super) struct PrCreateBody {
         default
     )]
     pub(super) confirm_remote_create: bool,
-
 }
 
 pub(super) async fn github_pr_create(

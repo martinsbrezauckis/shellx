@@ -884,3 +884,7 @@ fn tab_summary(tab: &crate::shellx_browser::BrowserTabSnapshot) -> Value {
 fn clean_optional_id(value: Option<&str>) -> Option<String> {
     value.map(clean_string).filter(|value| !value.is_empty())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_flight_recorder_tests.rs"]
+mod tests;

@@ -139,3 +139,7 @@ fn compact_draft(draft: &Value) -> Value {
         "createdAtMs": draft.get("createdAtMs"),
     })
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/host_mcp/browser_teach/tests.rs"]
+mod tests;

@@ -128,3 +128,7 @@ pub async fn tail_loop(handle: AppHandle, hub: Arc<DebugHub>) {
 }
 
 use tokio::io::AsyncReadExt as _;
+
+#[cfg(test)]
+#[path = "../public/tests/inline/mcp_events_tail/tests.rs"]
+mod tests;

@@ -491,3 +491,7 @@ impl std::fmt::Display for TaskRuntimeAuthorityError {
 }
 
 impl std::error::Error for TaskRuntimeAuthorityError {}
+
+#[cfg(test)]
+#[path = "../public/tests/unit/task_runtime_authority_tests.rs"]
+mod tests;

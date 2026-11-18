@@ -218,3 +218,37 @@ unsafe extern "C" fn spawn_func(func: ffi::gpointer, _data: ffi::gpointer) {
     let func: Box<Box<dyn FnOnce()>> = Box::from_raw(func as *mut _);
     func()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_push() {
+        use std::sync::mpsc;
+
+        let p = ThreadPool::exclusive(1).unwrap();
+        let (sender, receiver) = mpsc::channel();
+
+        let handle = p
+            .push(move || {
+                sender.send(true).unwrap();
+                123
+            })
+            .unwrap();
+
+        assert_eq!(handle.join().unwrap(), 123);
+        assert_eq!(receiver.recv(), Ok(true));
+    }
+
+    #[test]
+    fn test_push_future() {
+        let c = crate::MainContext::new();
+        let p = ThreadPool::shared(None).unwrap();
+
+        let fut = p.push_future(|| true).unwrap();
+
+        let res = c.block_on(fut);
+        assert!(res.unwrap());
+    }
+}

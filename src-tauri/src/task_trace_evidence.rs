@@ -8,7 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
-
+#[cfg(test)]
+use crate::task_conversation::TaskConversationDurableFlushProof;
 use crate::task_conversation::{TaskConversationEvidenceSnapshot, TaskConversationFlushSummary};
 use crate::task_execution_runtime::TaskExecutionIdentity;
 use crate::task_model::{TaskDefinitionRevision, TaskOccurrence, TaskOccurrenceState};
@@ -16,7 +17,9 @@ use crate::task_provider_dispatch::task_runtime_tab_id;
 use crate::task_receipts::{TaskReceipt, TaskReceiptKind};
 use crate::task_store::{lock, PersistedTaskStore, TaskStore, TaskStoreError};
 
-
+#[cfg(test)]
+#[path = "../public/tests/unit/task_trace_evidence_tests.rs"]
+mod tests;
 
 pub(crate) const TASK_TRACE_EVIDENCE_SCHEMA_VERSION: &str = "shellx.task-trace-evidence.v1";
 pub(crate) const MAX_TRACE_EVIDENCE_RETRY_BATCH: usize = 32;

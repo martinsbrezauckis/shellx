@@ -90,7 +90,9 @@ pub(super) async fn permission_respond(
     }
 }
 
-
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_providers/provider_permission_decision_tests.rs"]
+mod provider_permission_decision_tests;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ProviderAdaptersStateQuery {
@@ -294,7 +296,6 @@ pub(super) async fn provider_sessions_start_http(
     State(s): State<ApiState>,
     Json(body): Json<crate::provider_sessions::ProviderSessionStartRequest>,
 ) -> Response {
-
     let tab_id_for_autonomy = body.tab_id.clone().unwrap_or_else(|| "default".to_string());
     let provider_permission_mode = body.permission_mode.clone().unwrap_or_default();
     let shellx_autonomy = provider_permission_mode_to_shellx_autonomy(&provider_permission_mode);
@@ -337,19 +338,6 @@ pub(super) async fn provider_sessions_start_http(
             .into_response(),
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 pub(super) async fn commit_provider_autonomy_after_start<T, E>(
     registry: &crate::acp::SessionRegistry,

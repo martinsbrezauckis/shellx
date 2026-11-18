@@ -154,7 +154,19 @@ const AGENT_SCAN_SPECS: &[AgentScanSpec] = &[
 ];
 
 impl ConnectionPreset {
-
+    /// Generate a fresh preset with a stable UUID-derived id.
+    #[cfg(test)]
+    pub fn new(label: String, transport: Transport) -> Self {
+        let now = now_ms();
+        Self {
+            id: format!("conn-{}", uuid::Uuid::new_v4()),
+            label,
+            transport,
+            created_ms: now,
+            last_used_ms: 0,
+            provider_scan: Vec::new(),
+        }
+    }
 }
 
 /// On-disk wrapper. Keeps a version tag so a v2 schema can migrate
@@ -1501,3 +1513,7 @@ fn now_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/connections/tests.rs"]
+mod tests;

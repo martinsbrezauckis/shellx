@@ -410,3 +410,73 @@ pub fn unix_signal_stream_with_priority(
         })
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{thread, time::Duration};
+
+    use futures_util::{future::FutureExt, stream::StreamExt};
+
+    use super::*;
+
+    #[test]
+    fn test_timeout() {
+        let c = MainContext::new();
+
+        c.block_on(timeout_future(Duration::from_millis(20)));
+    }
+
+    #[test]
+    fn test_timeout_send() {
+        let c = MainContext::new();
+        let l = crate::MainLoop::new(Some(&c), false);
+
+        let l_clone = l.clone();
+        c.spawn(timeout_future(Duration::from_millis(20)).then(move |()| {
+            l_clone.quit();
+            futures_util::future::ready(())
+        }));
+
+        l.run();
+    }
+
+    #[test]
+    fn test_interval() {
+        let c = MainContext::new();
+
+        let mut count = 0;
+
+        {
+            let count = &mut count;
+            c.block_on(
+                interval_stream(Duration::from_millis(20))
+                    .take(2)
+                    .for_each(|()| {
+                        *count += 1;
+
+                        futures_util::future::ready(())
+                    })
+                    .map(|_| ()),
+            );
+        }
+
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_timeout_and_channel() {
+        let c = MainContext::default();
+
+        let res = c.block_on(timeout_future(Duration::from_millis(20)).then(|()| {
+            let (sender, receiver) = oneshot::channel();
+
+            thread::spawn(move || {
+                sender.send(1).unwrap();
+            });
+
+            receiver.then(|i| futures_util::future::ready(i.unwrap()))
+        }));
+
+        assert_eq!(res, 1);
+    }
+}

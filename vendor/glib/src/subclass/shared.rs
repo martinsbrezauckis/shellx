@@ -153,3 +153,143 @@ pub fn register_shared_type<T: SharedType>() -> crate::Type {
         type_
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    // We rename the current crate as glib, since the macros in glib-macros
+    // generate the glib namespace through the crate_ident_new utility,
+    // and that returns `glib` (and not `crate`) when called inside the glib crate
+    use crate as glib;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct MySharedInner {
+        foo: String,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, glib::SharedBoxed)]
+    #[shared_boxed_type(name = "MySharedArc")]
+    struct MySharedArc(std::sync::Arc<MySharedInner>);
+
+    #[derive(Clone, Debug, PartialEq, Eq, glib::SharedBoxed)]
+    #[shared_boxed_type(name = "MySharedRc")]
+    struct MySharedRc(std::rc::Rc<MySharedInner>);
+
+    #[test]
+    fn test_register() {
+        assert_ne!(crate::Type::INVALID, MySharedArc::static_type());
+        assert_ne!(crate::Type::INVALID, MySharedRc::static_type());
+    }
+
+    #[test]
+    fn test_value_arc() {
+        assert_ne!(crate::Type::INVALID, MySharedArc::static_type());
+
+        let b = MySharedArc::from_refcounted(std::sync::Arc::new(MySharedInner {
+            foo: String::from("abc"),
+        }));
+        let v = b.to_value();
+        let b2 = v.get::<MySharedArc>().unwrap();
+        assert!(std::sync::Arc::ptr_eq(&b.0, &b2.0));
+    }
+
+    #[test]
+    fn test_value_rc() {
+        assert_ne!(crate::Type::INVALID, MySharedRc::static_type());
+
+        let b = MySharedRc::from_refcounted(std::rc::Rc::new(MySharedInner {
+            foo: String::from("abc"),
+        }));
+        let v = b.to_value();
+        let b2 = v.get::<MySharedRc>().unwrap();
+        assert!(std::rc::Rc::ptr_eq(&b.0, &b2.0));
+    }
+
+    #[test]
+    fn same_ffi_pointer_arc() {
+        assert_ne!(crate::Type::INVALID, MySharedArc::static_type());
+
+        let b = MySharedArc::from_refcounted(std::sync::Arc::new(MySharedInner {
+            foo: String::from("abc"),
+        }));
+
+        let inner_raw_ptr = std::sync::Arc::into_raw(b.clone().0);
+
+        assert_eq!(std::sync::Arc::strong_count(&b.0), 2);
+
+        let inner_raw_ptr_clone =
+            unsafe { <MySharedArc as SharedType>::RefCountedType::ref_(inner_raw_ptr) };
+
+        assert_eq!(std::sync::Arc::strong_count(&b.0), 3);
+        assert!(std::ptr::eq(inner_raw_ptr, inner_raw_ptr_clone));
+
+        let _ = unsafe { <MySharedArc as SharedType>::RefCountedType::from_raw(inner_raw_ptr) };
+        let _ =
+            unsafe { <MySharedArc as SharedType>::RefCountedType::from_raw(inner_raw_ptr_clone) };
+        assert_eq!(std::sync::Arc::strong_count(&b.0), 1);
+    }
+
+    #[test]
+    fn same_ffi_pointer_rc() {
+        assert_ne!(crate::Type::INVALID, MySharedRc::static_type());
+
+        let b = MySharedRc::from_refcounted(std::rc::Rc::new(MySharedInner {
+            foo: String::from("abc"),
+        }));
+
+        let inner_raw_ptr = std::rc::Rc::into_raw(b.clone().0);
+
+        assert_eq!(std::rc::Rc::strong_count(&b.0), 2);
+
+        let inner_raw_ptr_clone =
+            unsafe { <MySharedRc as SharedType>::RefCountedType::ref_(inner_raw_ptr) };
+
+        assert_eq!(std::rc::Rc::strong_count(&b.0), 3);
+        assert!(std::ptr::eq(inner_raw_ptr, inner_raw_ptr_clone));
+
+        let _ = unsafe { <MySharedRc as SharedType>::RefCountedType::from_raw(inner_raw_ptr) };
+        let _ =
+            unsafe { <MySharedRc as SharedType>::RefCountedType::from_raw(inner_raw_ptr_clone) };
+        assert_eq!(std::rc::Rc::strong_count(&b.0), 1);
+    }
+
+    #[test]
+    fn from_glib_borrow_arc() {
+        assert_ne!(crate::Type::INVALID, MySharedRc::static_type());
+
+        let b = MySharedArc::from_refcounted(std::sync::Arc::new(MySharedInner {
+            foo: String::from("abc"),
+        }));
+
+        let inner_raw_ptr = std::sync::Arc::into_raw(b.clone().0);
+
+        assert_eq!(std::sync::Arc::strong_count(&b.0), 2);
+
+        unsafe {
+            let _ = MySharedArc::from_glib_borrow(inner_raw_ptr);
+            assert_eq!(std::sync::Arc::strong_count(&b.0), 2);
+        }
+
+        assert_eq!(std::sync::Arc::strong_count(&b.0), 2);
+    }
+
+    #[test]
+    fn from_glib_borrow_rc() {
+        assert_ne!(crate::Type::INVALID, MySharedRc::static_type());
+
+        let b = MySharedRc::from_refcounted(std::rc::Rc::new(MySharedInner {
+            foo: String::from("abc"),
+        }));
+
+        let inner_raw_ptr = std::rc::Rc::into_raw(b.clone().0);
+
+        assert_eq!(std::rc::Rc::strong_count(&b.0), 2);
+
+        unsafe {
+            let _ = MySharedRc::from_glib_borrow(inner_raw_ptr);
+            assert_eq!(std::rc::Rc::strong_count(&b.0), 2);
+        }
+
+        assert_eq!(std::rc::Rc::strong_count(&b.0), 2);
+    }
+}

@@ -130,3 +130,7 @@ pub fn manual_deep_link_take_pending_main(
 ) -> Option<PendingManualOpen> {
     state.take_main()
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/manual_deep_link/tests.rs"]
+mod tests;

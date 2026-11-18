@@ -737,3 +737,7 @@ fn receipt_kind_wire(kind: TaskAttachmentReceiptKind) -> &'static str {
         TaskAttachmentReceiptKind::Reclaimed => "reclaimed",
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/task_attachments_tests.rs"]
+mod tests;

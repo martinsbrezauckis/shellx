@@ -546,3 +546,7 @@ fn restore_browser_webview_window_geometry<R: tauri::Runtime>(window: &tauri::We
         let _ = window.center();
     }
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_window_open_runtime/tests.rs"]
+mod tests;

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
+#[cfg(test)]
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -17,9 +18,12 @@ const INSTALLER_DOWNLOAD_TIMEOUT_SECS: u64 = 120;
 const MAX_INSTALLER_BYTES: u64 = 8 * 1024 * 1024;
 const PENDING_CONFIRMATION_TTL_MS: i64 = 30 * 60 * 1000;
 const INSTALL_OUTPUT_TAIL_CHARS: usize = 12_000;
-
-
-
+#[cfg(test)]
+const RELEASE_TEST_SETUP_PRESET_ID: &str = "release-surface-agent-cli-setup";
+#[cfg(test)]
+const RELEASE_TEST_NPM_COMMAND: &str = "npm install -g @openai/codex";
+#[cfg(test)]
+const RELEASE_TEST_NPM_RECEIPT: &str = "release-agent-cli-install-receipt.json";
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1122,8 +1126,6 @@ async fn execute_prepared_install(
     let started_at_ms = now_ms();
     let command = prepared.confirmation.command.clone();
 
-
-
     let output = execute_install_command(&prepared).await;
     let cleanup_error = cleanup_prepared_install(&prepared).await.err();
     let finished_at_ms = now_ms();
@@ -1178,9 +1180,84 @@ async fn execute_install_command(prepared: &PreparedInstall) -> Result<CommandOu
     }
 }
 
-
-
-
+#[cfg(test)]
+fn release_test_npm_shim_path(
+    prepared: &PreparedInstall,
+    isolated_test_instance: bool,
+    profile_root: Option<&Path>,
+) -> Result<Option<PathBuf>, String> {
+    if prepared.preset.id != RELEASE_TEST_SETUP_PRESET_ID {
+        return Ok(None);
+    }
+    if !isolated_test_instance {
+        return Err(
+            "agent_cli_setup.confirm: release setup preset requires an isolated final-test profile"
+                .to_string(),
+        );
+    }
+    if prepared.confirmation.provider_id != "codex-cli"
+        || prepared.confirmation.method_id != "npm"
+        || prepared.confirmation.command != RELEASE_TEST_NPM_COMMAND
+        || prepared.confirmation.shell != "posix-or-cmd"
+        || prepared.staged.is_some()
+    {
+        return Err(
+            "agent_cli_setup.confirm: release setup preset requires the exact Codex npm recipe"
+                .to_string(),
+        );
+    }
+    let profile_root = profile_root.ok_or_else(|| {
+        "agent_cli_setup.confirm: isolated release profile root is unavailable".to_string()
+    })?;
+    let profile_name = profile_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let run_id = profile_name
+        .strip_prefix("shellx-final-webdriver-")
+        .unwrap_or_default();
+    if !(16..=64).contains(&run_id.len())
+        || !run_id
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(
+            "agent_cli_setup.confirm: isolated release profile name is invalid".to_string(),
+        );
+    }
+    let receipt = profile_root.join(".shellx").join(RELEASE_TEST_NPM_RECEIPT);
+    if receipt.exists() {
+        return Err("agent_cli_setup.confirm: owned npm receipt already exists".to_string());
+    }
+    let shim = profile_root
+        .join(".local")
+        .join("bin")
+        .join(if cfg!(target_os = "windows") {
+            "npm.CMD"
+        } else {
+            "npm"
+        });
+    let metadata = std::fs::symlink_metadata(&shim).map_err(|error| {
+        format!("agent_cli_setup.confirm: owned npm shim is unavailable: {error}")
+    })?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > 16 * 1024
+    {
+        return Err(
+            "agent_cli_setup.confirm: owned npm shim must be a bounded regular file".to_string(),
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err("agent_cli_setup.confirm: owned npm shim is not executable".to_string());
+        }
+    }
+    Ok(Some(shim))
+}
 
 #[derive(Debug)]
 struct CommandOutput {
@@ -1375,3 +1452,7 @@ fn now_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/agent_cli_setup/tests.rs"]
+mod tests;

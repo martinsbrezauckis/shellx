@@ -135,3 +135,26 @@ impl Hash for ByteArray {
         Hash::hash_slice(&self[..], state)
     }
 }
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn various() {
+        let ba = ByteArray::from(b"foobar");
+        assert_eq!(ba, b"foobar" as &[u8]);
+    }
+
+    #[test]
+    fn hash() {
+        let b1 = ByteArray::from(b"this is a test");
+        let b2 = ByteArray::from(b"this is a test");
+        let b3 = ByteArray::from(b"test");
+        let mut set = HashSet::new();
+        set.insert(b1);
+        assert!(set.contains(&b2));
+        assert!(!set.contains(&b3));
+    }
+}

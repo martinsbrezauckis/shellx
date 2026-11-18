@@ -198,7 +198,21 @@ impl ShellxBrowserRegistry {
         Ok(normalized)
     }
 
-
+    /// Removes only the Personal Browser Lock settings and verifier owned by
+    /// an attested isolated release-test profile. Shipping callers cannot
+    /// reach this method: the sole HTTP bridge is gated by
+    /// `isolated_test_instance_requested` and accepts no secret material.
+    #[cfg(test)]
+    pub(crate) fn reset_personal_lock_for_isolated_test(
+        &self,
+    ) -> Result<BrowserPersonalLockSettings, String> {
+        let mut state = lock_or_recover(&self.state);
+        state.personal_lock = BrowserPersonalLockSettings::default();
+        state.personal_lock_pin_salt = None;
+        state.personal_lock_pin_hash = None;
+        self.persist_browser_settings_locked(&state)?;
+        Ok(state.personal_lock.clone())
+    }
 }
 
 fn default_browser_settings_path() -> PathBuf {
@@ -361,3 +375,7 @@ fn hydrated_personal_lock(
     lock.updated_at_ms = now_ms();
     lock
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_persistence/tests.rs"]
+mod tests;

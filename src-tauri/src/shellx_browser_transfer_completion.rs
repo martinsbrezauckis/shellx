@@ -27,7 +27,24 @@ impl ShellxBrowserRegistry {
         self.complete_transfer("download", request, false, false)
     }
 
-
+    #[cfg(test)]
+    pub(crate) fn complete_download_from_protected_artifact(
+        &self,
+        request: BrowserTransferCompleteRequest,
+        artifact: &ProtectedBrowserNativeDownloadArtifact,
+    ) -> Result<BrowserFileTransferEntry, String> {
+        let protected = artifact.artifact();
+        if request.final_path.as_deref() != Some(protected.final_path.as_str())
+            || request.bytes != Some(protected.bytes)
+            || request.sha256.as_deref() != Some(protected.sha256.as_str())
+        {
+            return Err(
+                "protected native Browser artifact identity does not match completion request"
+                    .to_string(),
+            );
+        }
+        self.complete_transfer("download", request, true, false)
+    }
 
     /// Commit an artifact whose exact operator approval was consumed when the
     /// native WebView began writing its private stage. A long-running accepted

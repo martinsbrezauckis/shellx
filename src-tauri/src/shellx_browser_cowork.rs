@@ -452,3 +452,7 @@ pub async fn shellx_browser_send_cowork_prompt(
         receipt,
     })
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_cowork/tests.rs"]
+mod tests;

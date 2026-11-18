@@ -465,8 +465,6 @@ impl WorkPreviewManager {
         request: WorkPreviewStartRequest,
     ) -> Result<WorkPreviewState, String> {
         let tab_id = sanitize_tab_id(request.tab_id.as_deref());
-        self.stop(&tab_id).await?;
-
         let ctx = self
             .resolve_context(
                 &tab_id,
@@ -474,13 +472,44 @@ impl WorkPreviewManager {
                 request.session_id.clone(),
                 request.session_cwd.clone(),
                 request.transport.clone(),
+                false,
             )
             .await?;
+        self.start_with_context(tab_id, request, ctx).await
+    }
+
+    /// MCP callers must use their authenticated tab's live execution target.
+    /// Resolve it once before stopping the previous preview so a closed tab
+    /// cannot be re-resolved as a local host process during startup.
+    pub async fn start_for_mcp(
+        self: &Arc<Self>,
+        tab_id: &str,
+        request: WorkPreviewStartRequest,
+    ) -> Result<WorkPreviewState, String> {
+        if request.tab_id.as_deref() != Some(tab_id) {
+            return Err(
+                "preview_start: target tab differs from the authenticated caller".to_string(),
+            );
+        }
+        let ctx = self
+            .resolve_context(tab_id, &request.cwd, None, None, None, true)
+            .await?;
+        self.start_with_context(tab_id.to_string(), request, ctx)
+            .await
+    }
+
+    async fn start_with_context(
+        self: &Arc<Self>,
+        tab_id: String,
+        request: WorkPreviewStartRequest,
+        ctx: PreviewContext,
+    ) -> Result<WorkPreviewState, String> {
         let requested_kind = parse_kind(request.kind.as_deref())?;
         let static_entry_hint = request.entry.clone();
         let detected = self
             .detect_for_context(&tab_id, &ctx, requested_kind, static_entry_hint.as_deref())
             .await?;
+        self.stop(&tab_id).await?;
 
         {
             let state = WorkPreviewState {
@@ -610,6 +639,7 @@ impl WorkPreviewManager {
         requested_session_id: Option<String>,
         requested_session_cwd: Option<String>,
         requested_transport: Option<String>,
+        require_active_session: bool,
     ) -> Result<PreviewContext, String> {
         let fallback = requested_cwd.trim();
         if fallback.is_empty() {
@@ -619,10 +649,18 @@ impl WorkPreviewManager {
         if let Some(registry) = self.session_registry.as_ref() {
             if let Some(session) = registry.get_existing(tab_id).await {
                 let guard = session.lock().await;
+                if require_active_session
+                    && guard.get_debug_session_info()["hasActiveChild"] != true
+                {
+                    return Err("preview_start: calling tab has no active ACP session".to_string());
+                }
                 let command_cwd = fallback.to_string();
                 let session_cwd = requested_session_cwd
                     .clone()
                     .or_else(|| guard.get_cwd_for_restart());
+                if require_active_session && session_cwd.is_none() {
+                    return Err("preview_start: active ACP session has no project cwd".to_string());
+                }
                 let session_id = guard
                     .get_debug_session_info()
                     .get("sessionId")
@@ -700,11 +738,11 @@ impl WorkPreviewManager {
 
         if let Some(provider_registry) = self.provider_registry.as_ref() {
             let state = provider_registry.state_for_tab_preferred(tab_id);
-            if let Some(run) = state
-                .active_run
-                .as_ref()
-                .or_else(|| state.recent_runs.first())
-            {
+            if let Some(run) = state.active_run.as_ref().or_else(|| {
+                (!require_active_session)
+                    .then(|| state.recent_runs.first())
+                    .flatten()
+            }) {
                 match run.transport {
                     ProviderExecutionTransport::Wsl => {
                         let distro = run
@@ -773,6 +811,10 @@ impl WorkPreviewManager {
                     }
                 }
             }
+        }
+
+        if require_active_session {
+            return Err("preview_start: calling tab has no active session".to_string());
         }
 
         let normalized = crate::session_git::normalize_local_windows_cwd(fallback);
@@ -2069,7 +2111,10 @@ fn parse_kind(kind: Option<&str>) -> Result<Option<WorkPreviewKind>, String> {
     }
 }
 
-
+#[cfg(test)]
+fn detect_kind(root: &Path, requested: Option<WorkPreviewKind>) -> Result<WorkPreviewKind, String> {
+    Ok(detect_local_preview(root, requested, None)?.kind)
+}
 
 fn detect_local_preview(
     root: &Path,
@@ -3894,3 +3939,7 @@ fn now_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/work_preview/tests.rs"]
+mod tests;

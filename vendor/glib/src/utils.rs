@@ -189,3 +189,90 @@ pub fn uri_unescape_segment(
         })
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{env, sync::Mutex};
+
+    //Mutex to prevent run environment tests parallel
+    static LOCK: once_cell::sync::Lazy<Mutex<()>> = once_cell::sync::Lazy::new(|| Mutex::new(()));
+
+    const VAR_NAME: &str = "function_environment_test";
+
+    fn check_getenv(val: &str) {
+        let _data = LOCK.lock().unwrap();
+
+        env::set_var(VAR_NAME, val);
+        assert_eq!(env::var_os(VAR_NAME), Some(val.into()));
+        assert_eq!(crate::getenv(VAR_NAME), Some(val.into()));
+
+        let environ = crate::environ();
+        assert_eq!(crate::environ_getenv(&environ, VAR_NAME), Some(val.into()));
+    }
+
+    fn check_setenv(val: &str) {
+        let _data = LOCK.lock().unwrap();
+
+        crate::setenv(VAR_NAME, val, true).unwrap();
+        assert_eq!(env::var_os(VAR_NAME), Some(val.into()));
+    }
+
+    #[test]
+    fn getenv() {
+        check_getenv("Test");
+        check_getenv("Тест"); // "Test" in Russian
+    }
+
+    #[test]
+    fn setenv() {
+        check_setenv("Test");
+        check_setenv("Тест"); // "Test" in Russian
+    }
+
+    #[test]
+    fn test_filename_from_uri() {
+        use std::path::PathBuf;
+
+        use crate::GString;
+        let uri: GString = "file:///foo/bar.txt".into();
+        if let Ok((filename, hostname)) = crate::filename_from_uri(&uri) {
+            assert_eq!(filename, PathBuf::from(r"/foo/bar.txt"));
+            assert_eq!(hostname, None);
+        } else {
+            unreachable!();
+        }
+
+        let uri: GString = "file://host/foo/bar.txt".into();
+        if let Ok((filename, hostname)) = crate::filename_from_uri(&uri) {
+            assert_eq!(filename, PathBuf::from(r"/foo/bar.txt"));
+            assert_eq!(hostname, Some(GString::from("host")));
+        } else {
+            unreachable!();
+        }
+    }
+
+    #[test]
+    fn test_uri_parsing() {
+        use crate::GString;
+        assert_eq!(
+            crate::uri_parse_scheme("foo://bar"),
+            Some(GString::from("foo"))
+        );
+        assert_eq!(crate::uri_parse_scheme("foo"), None);
+
+        let escaped = crate::uri_escape_string("&foo", crate::NONE_STR, true);
+        assert_eq!(escaped, GString::from("%26foo"));
+
+        let unescaped = crate::uri_unescape_string(escaped.as_str(), crate::GStr::NONE);
+        assert_eq!(unescaped, Some(GString::from("&foo")));
+
+        assert_eq!(
+            crate::uri_unescape_segment(Some("/foo"), crate::NONE_STR, crate::NONE_STR),
+            Some(GString::from("/foo"))
+        );
+        assert_eq!(
+            crate::uri_unescape_segment(Some("/foo%"), crate::NONE_STR, crate::NONE_STR),
+            None
+        );
+    }
+}

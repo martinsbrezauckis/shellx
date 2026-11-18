@@ -348,3 +348,7 @@ fn bounded_i64(value: Option<&Value>) -> Option<i64> {
         .and_then(Value::as_i64)
         .filter(|value| value.unsigned_abs() <= 1_000_000_000)
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/shellx_browser_evidence/durable/tests.rs"]
+mod tests;

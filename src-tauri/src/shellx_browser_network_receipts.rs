@@ -292,7 +292,23 @@ pub(crate) fn required_approval_for_browser_request(
         return None;
     }
 
+    // Coordinates have no stable observed identity: a page can place a different
+    // control at the same point after observation.
+    if action == "clickAt" || (action != "press" && (request.x.is_some() || request.y.is_some())) {
+        return Some("finalActionApproval");
+    }
     let target = observed_action_target(request, observation);
+    if target.is_none()
+        && (action != "press"
+            || request.selector.is_some()
+            || request.ref_id.is_some()
+            || matches!(
+                request.key.as_deref(),
+                Some("Enter" | "enter" | "Return" | "return" | " " | "Space" | "space")
+            ))
+    {
+        return Some("finalActionApproval");
+    }
     let text = target
         .map(browser_risk_target_text)
         .unwrap_or_else(|| normalize_risk_text(request.selector.as_deref()));
@@ -446,6 +462,32 @@ fn observed_action_target<'a>(
     observation: Option<&'a BrowserObservation>,
 ) -> Option<&'a BrowserObservationRef> {
     let observation = observation?;
+    if let Some(selector) = request
+        .selector
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let mut matches = observation.refs.iter().filter(|reference| {
+            reference
+                .raw_selector
+                .as_deref()
+                .or(reference.selector.as_deref())
+                == Some(selector)
+                && request
+                    .ref_id
+                    .as_deref()
+                    .is_none_or(|ref_id| ref_id == reference.ref_id)
+        });
+        let reference = matches.next()?;
+        return (matches.next().is_none()
+            && (request.ref_id.is_some()
+                || reference
+                    .fingerprint
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty())))
+        .then_some(reference);
+    }
     if let Some(ref_id) = request
         .ref_id
         .as_deref()
@@ -459,19 +501,7 @@ fn observed_action_target<'a>(
         {
             return Some(reference);
         }
-    }
-    if let Some(selector) = request
-        .selector
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if let Some(reference) = observation.refs.iter().find(|reference| {
-            reference.selector.as_deref() == Some(selector)
-                || reference.raw_selector.as_deref() == Some(selector)
-        }) {
-            return Some(reference);
-        }
+        return None;
     }
     let (Some(x), Some(y)) = (request.x, request.y) else {
         return None;
@@ -572,3 +602,7 @@ pub(crate) fn next_browser_evidence_sequence(state: &mut BrowserState) -> u64 {
     state.next_evidence_sequence = state.next_evidence_sequence.saturating_add(1);
     state.next_evidence_sequence
 }
+
+#[cfg(test)]
+#[path = "../public/tests/unit/shellx_browser_network_receipts_tests.rs"]
+mod browser_action_risk_tests;

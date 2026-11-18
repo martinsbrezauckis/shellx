@@ -478,3 +478,7 @@ fn agent_task_partial_response(
     )
         .into_response()
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/debug_api_task_agent/tests.rs"]
+mod tests;

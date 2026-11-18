@@ -245,3 +245,81 @@ impl fmt::Display for BoolError {
 }
 
 impl error::Error for BoolError {}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::CString;
+
+    use super::*;
+    use crate::prelude::*;
+
+    #[test]
+    fn test_error_matches() {
+        let e = Error::new(crate::FileError::Failed, "Failed");
+        assert!(e.matches(crate::FileError::Failed));
+        assert!(!e.matches(crate::FileError::Again));
+        assert!(!e.matches(crate::KeyFileError::NotFound));
+    }
+
+    #[test]
+    fn test_error_kind() {
+        let e = Error::new(crate::FileError::Failed, "Failed");
+        assert_eq!(e.kind::<crate::FileError>(), Some(crate::FileError::Failed));
+        assert_eq!(e.kind::<crate::KeyFileError>(), None);
+    }
+
+    #[test]
+    fn test_into_raw() {
+        unsafe {
+            let e: *mut ffi::GError =
+                Error::new(crate::FileError::Failed, "Failed").into_glib_ptr();
+            assert_eq!((*e).domain, ffi::g_file_error_quark());
+            assert_eq!((*e).code, ffi::G_FILE_ERROR_FAILED);
+            assert_eq!(
+                CStr::from_ptr((*e).message),
+                CString::new("Failed").unwrap().as_c_str()
+            );
+
+            ffi::g_error_free(e);
+        }
+    }
+
+    #[test]
+    fn test_bool_error() {
+        let from_static_msg = bool_error!("Static message");
+        assert_eq!(from_static_msg.to_string(), "Static message");
+
+        let from_dynamic_msg = bool_error!("{} message", "Dynamic");
+        assert_eq!(from_dynamic_msg.to_string(), "Dynamic message");
+
+        let false_static_res = result_from_gboolean!(ffi::GFALSE, "Static message");
+        assert!(false_static_res.is_err());
+        let static_err = false_static_res.err().unwrap();
+        assert_eq!(static_err.to_string(), "Static message");
+
+        let true_static_res = result_from_gboolean!(ffi::GTRUE, "Static message");
+        assert!(true_static_res.is_ok());
+
+        let false_dynamic_res = result_from_gboolean!(ffi::GFALSE, "{} message", "Dynamic");
+        assert!(false_dynamic_res.is_err());
+        let dynamic_err = false_dynamic_res.err().unwrap();
+        assert_eq!(dynamic_err.to_string(), "Dynamic message");
+
+        let true_dynamic_res = result_from_gboolean!(ffi::GTRUE, "{} message", "Dynamic");
+        assert!(true_dynamic_res.is_ok());
+    }
+
+    #[test]
+    fn test_value() {
+        let e1 = Error::new(crate::FileError::Failed, "Failed");
+        // This creates a copy ...
+        let v = e1.to_value();
+        // ... so we have to get the raw pointer from inside the value to check for equality.
+        let ptr =
+            unsafe { gobject_ffi::g_value_get_boxed(v.to_glib_none().0) as *const ffi::GError };
+
+        let e2 = v.get::<&Error>().unwrap();
+
+        assert_eq!(ptr, e2.to_glib_none().0);
+    }
+}

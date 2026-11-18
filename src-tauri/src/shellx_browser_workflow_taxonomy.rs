@@ -52,3 +52,7 @@ pub(crate) fn canonical_workflow_task_type(value: Option<String>) -> Option<Stri
     };
     Some(canonical.to_string())
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_workflow_taxonomy/tests.rs"]
+mod tests;

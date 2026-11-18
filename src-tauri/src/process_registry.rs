@@ -475,7 +475,34 @@ impl ProcessRegistry {
         }
     }
 
-
+    /// Remove one exact finished release-test Host MCP record after its
+    /// isolated installed-candidate lifecycle has been proven. Production
+    /// callers cannot use this to hide arbitrary task history: identity,
+    /// source, tab, command label, and terminal status must all match.
+    #[cfg(test)]
+    pub async fn release_test_forget_owned_host_mcp(
+        &self,
+        task_id: &str,
+        tab_id: &str,
+        command: &str,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        let record = inner
+            .records
+            .get(task_id)
+            .ok_or_else(|| format!("unknown release-test taskId: {task_id}"))?;
+        if record.source != ProcessSource::HostMcp
+            || record.tab_id.as_deref() != Some(tab_id)
+            || record.cmd != command
+        {
+            return Err("release-test Host MCP record ownership did not match".to_string());
+        }
+        if record.status == ProcessStatus::Running {
+            return Err("release-test Host MCP record is still running".to_string());
+        }
+        inner.records.remove(task_id);
+        Ok(())
+    }
 
     /// Return JSON snapshots for every registered process. The list
     /// includes both live and finished tasks; the consumer can filter.
@@ -823,3 +850,7 @@ fn normalize_signal_name(signal_name: &str) -> Result<&'static str, String> {
 }
 
 // ───── tests ─────
+
+#[cfg(test)]
+#[path = "../public/tests/inline/process_registry/tests.rs"]
+mod tests;

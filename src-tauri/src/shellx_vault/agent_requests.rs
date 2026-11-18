@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt};
-
+#[cfg(test)]
+use vault_broker::agent_requests::AgentState;
 use vault_broker::agent_requests::{
     now_ms, AgentCommandResult, AgentResourceDescriptor, AgentStateStore,
 };
@@ -37,7 +38,12 @@ fn store(backend: &ShellxVaultBackend) -> Result<AgentStateStore, String> {
         .map_err(|error| error.to_string())
 }
 
-
+#[cfg(test)]
+pub(crate) fn debug_reset_agent_state(backend: &ShellxVaultBackend) -> Result<(), String> {
+    let guard = store(backend)?.lock().map_err(|error| error.to_string())?;
+    let mut state = AgentState::default();
+    guard.save(&mut state).map_err(|error| error.to_string())
+}
 
 fn device_id() -> String {
     format!("shellx-desktop-{}", std::env::consts::OS)
@@ -360,3 +366,7 @@ fn redact_exact_secrets<'a>(output: &str, secrets: impl Iterator<Item = &'a Stri
     }
     redacted
 }
+
+#[cfg(test)]
+#[path = "../../public/tests/inline/shellx_vault/agent_requests/tests.rs"]
+mod tests;

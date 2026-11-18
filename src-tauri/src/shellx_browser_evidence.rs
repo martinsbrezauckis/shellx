@@ -201,3 +201,7 @@ fn browser_evidence_identity_key(row: &Value) -> Option<String> {
                 .map(|id| format!("evaluation:{id}"))
         })
 }
+
+#[cfg(test)]
+#[path = "../public/tests/inline/shellx_browser_evidence/tests.rs"]
+mod tests;
